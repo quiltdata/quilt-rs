@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{manifest::ContentHash, RemoteManifest};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommitState {
     pub timestamp: chrono::DateTime<chrono::Utc>,
     pub hash: String,
@@ -12,13 +12,13 @@ pub struct CommitState {
     pub prev_hashes: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PathState {
     pub timestamp: chrono::DateTime<chrono::Utc>,
     pub hash: ContentHash,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, specta::Type)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PackageLineage {
     pub commit: Option<CommitState>,
     pub remote: RemoteManifest,
@@ -45,7 +45,7 @@ impl PackageLineage {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, specta::Type)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DomainLineage {
     #[serde(default = "BTreeMap::new")]
     pub packages: BTreeMap<String, PackageLineage>,

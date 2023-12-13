@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use url::Url;
+use url::{Url, form_urlencoded};
 
 const LATEST_TAG: &str = "latest";
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "_tag", content = "value")]
 pub enum RevisionPointer {
     Hash(String),
@@ -18,7 +18,7 @@ impl Default for RevisionPointer {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct S3PackageURI {
     pub bucket: String,
     pub namespace: String,

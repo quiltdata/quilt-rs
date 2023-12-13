@@ -8,14 +8,14 @@ use super::{Change, ChangeSet};
 
 pub type JsonObject = serde_json::Map<String, serde_json::Value>;
 
-#[derive(Debug, Deserialize, PartialEq, Eq, Serialize, specta::Type)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct ManifestHeader {
     pub version: String,
     pub message: Option<String>,
     pub user_meta: Option<JsonObject>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize, specta::Type)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", content = "value")]
 pub enum ContentHash {
     SHA256(String),
@@ -51,7 +51,7 @@ impl From<ManifestRow> for Quilt3ManifestRow {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, specta::Type)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ManifestRow {
     pub logical_key: String,
     // XXX: use Url to have validated string?
@@ -85,7 +85,7 @@ impl TryFrom<Quilt3ManifestRow> for ManifestRow {
     }
 }
 
-#[derive(Debug, Deserialize, PartialEq, Serialize, specta::Type)]
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
 pub struct Manifest {
     pub header: ManifestHeader,
     pub rows: Vec<ManifestRow>,
