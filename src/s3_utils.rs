@@ -3,6 +3,7 @@ use std::{
     sync::RwLock,
 };
 
+use aws_config::BehaviorVersion;
 use aws_types::region::Region;
 use lazy_static::lazy_static;
 
@@ -53,7 +54,7 @@ pub async fn get_client_for_region(region: aws_types::region::Region) -> aws_sdk
         }
     }
 
-    let config = aws_config::from_env().region(region.clone()).load().await;
+    let config = aws_config::defaults(BehaviorVersion {}).region(region.clone()).load().await;
     let client = aws_sdk_s3::Client::new(&config);
 
     let mut map = REGION_CLIENTS.write().unwrap();

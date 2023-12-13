@@ -9,10 +9,10 @@ use tokio::{
     fs::{create_dir_all, read_dir, remove_dir_all, File},
     io::AsyncWriteExt,
 };
+#[allow(unused_imports)]
 use tokio_stream::StreamExt;
 use url::Url;
 
-pub mod context;
 pub mod lineage;
 pub mod manifest;
 pub mod storage;
@@ -1074,50 +1074,6 @@ impl InstalledPackage {
         Ok(())
     }
 
-    // // XXX: store incoming / outgoing commits?
-    // fn sync(&self) -> Result<(), String> {
-    //     // get the most recent pull/tag
-    //     // get the most recent commit
-    //
-    //     // push the most recent commit
-    //     self.push()?;
-    //
-    //     Err("not implemented".into())
-    // }
-
-    // XXX: "pull"?
-    async fn merge(&self) -> Result<Option<Conflict>, String> {
-        // Update the Working Domain from the Archival Domain so "sync" can succeed
-
-        // 1. Get the RemoteHash from $REMOTE/.quilt/named_packages/<pkg_prefix/pkg_suffix>/latest
-        // 2. Copy the RemoteManifest from $REMOTE/.quilt/packages/<RemoteHash> to $DOMAIN/.quilt/packages/<RemoteHash>
-        // 3. Compare RemoteManifest with the LocalManifest from $DOMAIN/.quilt/packages/<commit/hash>
-        // 4. Succeed if every logical_key in RemoteManifest either:
-        //   1. Is NOT a key of commit/paths
-        //   2. Has a multihash which matches either commit/paths/<logical_key>/multihash
-        //      or is in commit/paths/<logical_key>/pulled_hashes
-
-        // On success:
-        // 1. Update data.json:<install folder>/pull using the RemoteManifest
-        // 2. Update RemoteManifest using the physical keys in commit/paths,
-        //    calculate the new top-level MergedHash,
-        //    and save in $DOMAIN/.quilt/packages/<MergedHash>
-        // 3. Write that hash into <tag> and "latest" under $DOMAIN/.quilt/named_packages/<pkg_prefix/pkg_suffix>
-        // 4. Clear data.json:<install folder>/commit (or save in a backup file)
-        // 5. BONUS: If the entire LocalManifest was already downloaded,
-        //           also download the rest of RemoteManifest
-
-        // Failure implies there are Conflicted logical_keys whose
-        // RemoteManifest's multihash does not match the current or pulled hashes
-        // from the corresponding LocalManifest entry.
-        // On failure:
-        // 1. Create a ConflictFolder at $DOMAIN/.quilt/conflicts/<RemoteHash>/
-        // 2. Download the physical_key for each Conflicted logical_key in
-        //    RemoteManifest into <ConflictFolder>/logical_key
-        // 3. Ask the operating system to open the remote files in ConflictFolder
-
-        Err("not implemented".into())
-    }
 
     pub async fn certify_latest(&self) -> Result<(), String> {
         let mut lineage = self.lineage().await?;
@@ -1169,21 +1125,6 @@ pub struct Conflict {
     package: InstalledPackage,
     changes: ChangeSet<String, PackageFileFingerprint>,
     folder: PathBuf,
-}
-
-impl Conflict {
-    pub async fn resolve(&self) -> Result<(), String> {
-        // Tell the user to click "Merge" after they either:
-        // a. decide to keep the local files (i.e., ignore ConflictFolder)
-        // b. copy the remote files from ConflictFolder into the working directory (i.e., override working files)
-        // c. manually merge them both together somehow
-        // XXX: is this just a "commit"?
-        Err("not implemented".into())
-    }
-
-    pub async fn abort(&self) -> Result<(), String> {
-        Ok(())
-    }
 }
 
 #[cfg(test)]
