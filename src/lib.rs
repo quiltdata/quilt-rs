@@ -46,6 +46,6 @@ mod tests {
             height: 1,
         };
 
-        assert!(smaller.can_hold(&larger));
+        assert!(larger.can_hold(&smaller));
     }
 }
