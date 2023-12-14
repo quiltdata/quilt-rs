@@ -9,6 +9,9 @@ use std::fmt;
 use std::path::PathBuf;
 use object_store::path::Path;
 use std::io;
+use multihash::Hash;
+use multihash::ContentHash;
+
 union UPath {
     file: PathBuf,
     object: Path,
@@ -23,7 +26,7 @@ impl UPath {
         unimplemented!()
     }
 
-    pub async fn hash(&self, algorithm: String) -> String {
+    pub async fn hash(&self, algorithm: ContentHash) -> Hash {
         // TODO: Implement hash method
         unimplemented!()
     }
