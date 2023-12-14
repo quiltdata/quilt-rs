@@ -10,8 +10,9 @@ pub struct Entry4 {
 }
 
 impl Entry4 {
-    pub async fn new(row4: Row4) -> Self {
+    pub async fn new(parent: Manifest4, row4: Row4) -> Self {
         Entry4 {
+            parent,
             row4,
         }
     }
