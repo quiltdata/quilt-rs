@@ -1,12 +1,11 @@
 use futures::stream::{self, StreamExt, TryStreamExt};
-#[allow(unused_imports)]
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tokio::sync::Mutex;
 
 mod quilt;
 mod s3_utils;
 pub use crate::quilt::{
-    manifest::JsonObject, Manifest, S3PackageURI, RemoteManifest, LocalDomain,
+    manifest::JsonObject, Manifest, ManifestHeader, S3PackageURI, RemoteManifest, LocalDomain,
 };
 
 // Types

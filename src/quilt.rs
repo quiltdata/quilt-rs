@@ -9,8 +9,6 @@ use tokio::{
     fs::{create_dir_all, read_dir, remove_dir_all, File},
     io::AsyncWriteExt,
 };
-#[allow(unused_imports)]
-use tokio_stream::StreamExt;
 use url::Url;
 
 pub mod lineage;
