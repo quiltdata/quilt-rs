@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+* export Manifest structs
+* add wrappers
+* add tests
+
 ## [0.1.1] - 2023-12-13
 
 * Added metadata
