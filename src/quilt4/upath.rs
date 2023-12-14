@@ -3,6 +3,7 @@
 //! local filesystem or remote object_store.
 //! It is used to represent the path to a file or directory in a local domain,
 //! or the path to an object or prefix in a remote object store.
+//! It will eventually also support web and document stores.
 //! 
 
 use std::fmt;
