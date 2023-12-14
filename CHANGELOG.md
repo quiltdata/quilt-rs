@@ -1,6 +1,11 @@
 # CHANGELOG
 
-## [Unreleased]
+## [0.2.0] - 2023-12-13
+
+* export Manifest structs
+* add installed_packages
+* add manifest_from_uri
+* main prints manifest for uri
 
 ## [0.1.1] - 2023-12-13
 
