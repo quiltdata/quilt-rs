@@ -9,15 +9,15 @@ pub use crate::quilt::{
 
 // Types
 
-#[derive(Serialize)]
-pub struct InstallablePackage {
+#[derive(Debug, Serialize)]
+pub struct AvailablePackage {
     namespace: String,
     lineage: PackageLineage,
     // XXX: state and stuff
 }
 
 #[allow(dead_code)]
-impl InstallablePackage {
+impl AvailablePackage {
     pub async fn from_quilt(package: &InstalledPackage) -> Result<Self, String> {
         let lineage = package.lineage().await?;
         Ok(Self {
@@ -162,10 +162,10 @@ pub async fn browse_remote_package(
 
 pub async fn list_installed_packages(
     local_domain: Mutex<LocalDomain>,
-) -> Result<Vec<InstallablePackage>, String> {
+) -> Result<Vec<AvailablePackage>, String> {
     let packages = local_domain.lock().await.list_installed_packages().await?;
     stream::iter(packages.into_iter())
-        .then(|p| async move { InstallablePackage::from_quilt(&p).await })
+        .then(|p| async move { AvailablePackage::from_quilt(&p).await })
         .try_collect()
         .await
 }
