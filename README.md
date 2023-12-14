@@ -1,2 +1,3 @@
 # quilt-rs
-Quilt in Rust
+
+Rust library for accessing Quilt data packages.
