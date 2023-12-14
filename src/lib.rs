@@ -37,9 +37,6 @@ pub async fn installed_packages() -> Result<Vec<AvailablePackage>, String> {
     let installed_packages: Vec<AvailablePackage> = list_installed_packages(local_domain.into())
         .await
         .expect("Failed to list installed packages");
-    println!("installed_packages: {:#?}", installed_packages);
-    assert!(installed_packages.len() > 0);
-    installed_packages.len();
     Ok(installed_packages)
 }
 
