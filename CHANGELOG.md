@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## [0.3.0] - 2023-12-14
+
+* stub quilt4 module
+
 ## [0.2.0] - 2023-12-13
 
 * export Manifest structs
