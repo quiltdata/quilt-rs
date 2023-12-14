@@ -9,8 +9,6 @@ use tokio::{
     fs::{create_dir_all, read_dir, remove_dir_all, File},
     io::AsyncWriteExt,
 };
-#[allow(unused_imports)]
-use tokio_stream::StreamExt;
 use url::Url;
 
 pub mod lineage;
@@ -1145,13 +1143,13 @@ mod tests {
     #[ignore]
     fn flow() {
         // ## Setup
-        let test_uri_string = "quilt+s3://quilt-t4-staging#package=test/sync&path=README.md";
+        let test_uri_string = "quilt+s3://quilt-example#package=akarve/test_dest&path=README.md";
         let test_uri = S3PackageURI::try_from(test_uri_string).expect("Failed to parse URI");
         assert_eq!(
             test_uri,
             S3PackageURI {
-                bucket: "quilt-t4-staging".into(),
-                namespace: "test/sync".into(),
+                bucket: "quilt-example".into(),
+                namespace: "akarve/test_dest".into(),
                 path: Some("README.md".into()),
                 revision: RevisionPointer::default(),
             }
@@ -1162,7 +1160,7 @@ mod tests {
         //
         // let stage_bucket = fs::MemoryFS::from_strs([("key", "contents")]);
 
-        // let buckets = s3::MemoryBuckets::from([(String::from("quilt-t4-staging"), stage_bucket)]);
+        // let buckets = s3::MemoryBuckets::from([(String::from("quilt-example"), stage_bucket)]);
 
         // let context = TestContext::new(&root_fs, &buckets);
 
@@ -1265,8 +1263,8 @@ mod tests {
         //
         // // TODO: inject new remote latest
         // let expected_remote_latest = RemoteManifest {
-        //     bucket: "quilt-t4-staging".into(),
-        //     namespace: "test/sync".into(),
+        //     bucket: "quilt-example".into(),
+        //     namespace: "akarve/test_dest".into(),
         //     hash: "abc".into(),
         // };
         //
