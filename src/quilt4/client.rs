@@ -25,11 +25,30 @@ impl Client {
         }
     }
 
-    pub async fn domain_from_key(key: &str) -> Option<Domain> {
+    pub async fn manifest3_from_uri(uri_string: String) -> Result<Manifest, Error> {
+        let uri = S3PackageURI::try_from(uri_string.as_str()).expect("Failed to parse URI");
+        let manifest: Manifest = browse_remote_package(local_domain.into(), uri)
+            .await
+            .expect("Failed to browse remote package");
+        println!("manifest: {:#?}", manifest);
+        Ok(manifest)
+    }
+
+    pub async fn domain_from_key(registry_uri: &str) -> Option<Domain> {
         // TODO: Implement domain extraction logic
         None
     }
-      
+
+    pub async fn domain_keys(&self) -> Vec<String> {
+        // TODO: Implement stub for domain_keys
+        unimplemented!()
+    }
+
+    pub async fn domain_objects(&self, domain: &str) -> Vec<Domain> {
+        // TODO: Implement stub for domain_objects
+        unimplemented!()
+    }
+
     pub async fn domain_from_uri(uri: &str) -> Option<Domain> {
         // TODO: Implement domain extraction logic
         None
@@ -40,19 +59,12 @@ impl Client {
         None
     }
 
-
-    pub async fn manifest_from_uri(uri_string: String) -> Result<Manifest4, Error> {
-        let uri = S3PackageURI::try_from(uri_string.as_str()).expect("Failed to parse URI");
-        let manifest: Manifest = browse_remote_package(local_domain.into(), uri)
-            .await
-            .expect("Failed to browse remote package");
-        println!("manifest: {:#?}", manifest);
-        assert!(manifest.rows.len() > 0);
-        manifest.rows.len();
-        Ok(manifest)
+    pub async fn manifest_from_uri(uri: &str) -> Option<Manifest4> {
+        // TODO: Implement manifest extraction logic
+        None
     }
 
-    pub async fn entry_from_uri(uri: &str) -> Option<String> {
+    pub async fn entry_from_uri(uri: &str) -> Option<Entry4> {
         // TODO: Implement entry extraction logic
         None
     }
