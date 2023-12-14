@@ -5,8 +5,9 @@ use tokio::sync::Mutex;
 
 mod quilt;
 mod s3_utils;
-
-use crate::quilt::{manifest::JsonObject, Manifest, S3PackageURI};
+pub use crate::quilt::{
+    manifest::JsonObject, Manifest, S3PackageURI, RemoteManifest, LocalDomain,
+};
 
 // Types
 
