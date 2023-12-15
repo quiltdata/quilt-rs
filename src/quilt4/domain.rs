@@ -3,6 +3,12 @@
 //! It wraps a UPath containing both the "registry" (named manifests)
 //! and the "store" (immutable blobs).
 
+use super:: {
+    client::Client,
+    upath::UPath,
+    namespace::Namespace,
+};
+
 pub struct Domain {
     parent: Client,
     path: UPath,

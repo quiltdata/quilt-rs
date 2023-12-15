@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## [0.3.1] - 2023-12-14
+
+* expose quilt4 module
+
 ## [0.3.0] - 2023-12-14
 
 * stub quilt4 module

@@ -6,28 +6,28 @@
 //! It will eventually also support web and document stores.
 //! 
 
-use std::fmt;
 use std::path::PathBuf;
 use object_store::path::Path;
 use std::io;
-use multihash::Hash;
-use multihash::ContentHash;
+use multihash::Multihash;
 
-union UPath {
+
+#[derive(Debug, Clone, Copy)]
+pub union UPath {
     file: PathBuf,
     object: Path,
 }
 
 impl UPath {
-    pub async fn read_bytes(&self) -> io::Result<bytes> { unimplemented!() }
-    pub async fn write_bytes(&self, input: bytes) -> io::Result<bytes> { unimplemented!() }
+    pub async fn read_bytes(&self) -> io::Result<Vec<u8>> { unimplemented!() }
+    pub async fn write_bytes(&self, input: Vec<u8>) -> io::Result<Vec<u8>> { unimplemented!() }
 
     pub async fn parent(&self) -> Option<UPath> {
         // TODO: Implement parent method
         unimplemented!()
     }
 
-    pub async fn hash(&self, algorithm: ContentHash) -> Hash {
+    pub async fn hash(&self, algorithm: String) -> Multihash<128> {
         // TODO: Implement hash method
         unimplemented!()
     }
@@ -36,4 +36,6 @@ impl UPath {
         // TODO: Implement is_folder method
         unimplemented!()
     }
+
+
 }

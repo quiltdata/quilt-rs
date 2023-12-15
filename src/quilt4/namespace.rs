@@ -3,6 +3,12 @@
 //! that are accessed by a "prefix/suffix".
 //! 
 
+use super::{
+    domain::Domain,
+    upath::UPath,
+    manifest::Manifest4,
+};
+
 pub struct Namespace {
     parent: Domain,
     path: UPath,

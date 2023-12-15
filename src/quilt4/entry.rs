@@ -4,6 +4,12 @@
 //! Entry wraps a Row4 with a reference to its parent Manifest4.
 //! It is the primary unit of data in a Manifest4.
 //! 
+
+use super::{
+    manifest::Manifest4,
+    row4::Row4,
+};
+
 pub struct Entry4 {
     parent: Manifest4,
     row4: Row4,

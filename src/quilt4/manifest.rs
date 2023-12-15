@@ -12,15 +12,24 @@
 //! and the existing types will be obsoleted.
 //! 
 
+use super::{
+    namespace::Namespace,
+    upath::UPath,
+    table4::Table,
+    entry::Entry4,
+};
+
 pub struct Manifest4 {
+    parent: Namespace,
+    table: Table,
     path: Option<UPath>,
-    table: Table4,
 }
 
 impl Manifest4 {
-    pub async fn new(parent: Domain, path: Option<UPath>) -> Self {
-        Namespace {
+    pub async fn new(parent: Namespace, table: Table, path: Option<UPath>) -> Self {
+        Manifest4 {
             parent,
+            table,
             path,
         }
     }
