@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## [0.3.2] - 2023-12-14
+
+* get_client
+* use client in UPath
+
 ## [0.3.1] - 2023-12-14
 
 * expose quilt4 module
