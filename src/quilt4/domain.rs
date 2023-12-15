@@ -11,20 +11,25 @@ use super:: {
 
 #[derive(Clone, Debug)]
 pub struct Domain {
-    parent: Client,
+    _client: Client,
     path: UPath,
 }
 
 impl Domain {
-    pub async fn new(parent: Client, path: UPath) -> Self {
+    pub async fn new(_client: Client, path: UPath) -> Self {
         Domain {
-            parent,
+            _client,
             path,
         }
     }
 
+    #[allow(dead_code)]
+    pub fn get_client(&self) -> &Client {
+        &self._client
+    }
+
     pub fn to_string(&self) -> String {
-        format!("Domain({})^{}", self.path.to_string(), self.parent.to_string())
+        format!("Domain({})^{}", self.path.to_string(), self._client.to_string())
     }        
 
     pub async fn namespace_from_key(_pkg_name: &str) -> Option<Namespace> {

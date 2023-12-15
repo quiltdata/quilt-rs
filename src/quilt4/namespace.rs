@@ -4,6 +4,7 @@
 //! 
 
 use super::{
+    client::Client,
     domain::Domain,
     upath::UPath,
     manifest::Manifest4,
@@ -11,20 +12,25 @@ use super::{
 
 #[derive(Clone, Debug)]
 pub struct Namespace {
-    parent: Domain,
+    _domain: Domain,
     path: UPath,
 }
 
 impl Namespace {
-    pub async fn new(parent: Domain, path: UPath) -> Self {
+    pub async fn new(_domain: Domain, path: UPath) -> Self {
         Namespace {
-            parent,
+            _domain,
             path,
         }
     }
 
+    #[allow(dead_code)]
+    pub fn get_client(&self) -> &Client {
+        self._domain.get_client()
+    }
+
     pub fn to_string(&self) -> String {
-        format!("Namespace({})^{}", self.path.to_string(), self.parent.to_string())
+        format!("Namespace({})^{}", self.path.to_string(), self._domain.to_string())
     }
 
     pub async fn manifest_from_key(_manifest_tag: &str) -> Option<Manifest4> {

@@ -11,6 +11,7 @@ use object_store::path::Path;
 use std::io;
 use multihash::Multihash;
 
+use super::client::Client;
 
 #[derive(Clone, Debug)]
 // FIXME: This should be a union, not a struct
@@ -28,8 +29,8 @@ impl UPath {
         }
     }
 
-    pub async fn read_bytes(&self) -> io::Result<Vec<u8>> { unimplemented!() }
-    pub async fn write_bytes(&self, _input: Vec<u8>) -> io::Result<Vec<u8>> { unimplemented!() }
+    pub async fn read_bytes(&self, _client: Client) -> io::Result<Vec<u8>> { unimplemented!() }
+    pub async fn write_bytes(&self, _client: Client, _input: Vec<u8>) -> io::Result<Vec<u8>> { unimplemented!() }
 
     pub async fn parent(&self) -> Option<UPath> {
         // TODO: Implement parent method
