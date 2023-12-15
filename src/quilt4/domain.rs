@@ -9,6 +9,7 @@ use super:: {
     namespace::Namespace,
 };
 
+#[derive(Clone, Debug)]
 pub struct Domain {
     parent: Client,
     path: UPath,
@@ -22,7 +23,11 @@ impl Domain {
         }
     }
 
-    pub async fn namespace_from_key(pkg_name: &str) -> Option<Namespace> {
+    pub fn to_string(&self) -> String {
+        format!("Domain({})^{}", self.path.to_string(), self.parent.to_string())
+    }        
+
+    pub async fn namespace_from_key(_pkg_name: &str) -> Option<Namespace> {
         // TODO: Implement stub for namespace_from_key
         unimplemented!()
     }
@@ -32,7 +37,7 @@ impl Domain {
         unimplemented!()
     }
 
-    pub async fn namespace_objects(&self, namespace: &str) -> Vec<Namespace> {
+    pub async fn namespace_objects(&self) -> Vec<Namespace> {
         // TODO: Implement stub for namespace_objects
         unimplemented!()
     }

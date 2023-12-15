@@ -10,41 +10,33 @@ use std::path::PathBuf;
 use object_store::path::Path;
 use std::io;
 use multihash::Multihash;
-use std::mem::ManuallyDrop;
 
 
-#[derive(Clone)]
-pub union UPath {
-    object: ManuallyDrop<Path>,
-    file: ManuallyDrop<PathBuf>,
+#[derive(Clone, Debug)]
+// FIXME: This should be a union, not a struct
+pub struct UPath {
+    object: Option<Path>,
+    file: Option<PathBuf>,
 }
 
 impl UPath {
-    pub fn new_object(path: Path) -> Self {
-        Self { object: ManuallyDrop::new(path) }
-    }
-
-    pub fn new_file(path: PathBuf) -> Self {
-        Self { file: ManuallyDrop::new(path) }
-    }
-
-    pub fn as_object(&self) -> &Path {
-        unsafe { &*self.object }
-    }
-
-    pub fn as_file(&self) -> &PathBuf {
-        unsafe { &*self.file }
+    pub fn to_string(&self) -> String {
+        if self.object.is_some() {
+            format!("UPath(object:{:?})", self.object)
+        } else {
+            format!("UPath(file:{:?})", self.file)
+        }
     }
 
     pub async fn read_bytes(&self) -> io::Result<Vec<u8>> { unimplemented!() }
-    pub async fn write_bytes(&self, input: Vec<u8>) -> io::Result<Vec<u8>> { unimplemented!() }
+    pub async fn write_bytes(&self, _input: Vec<u8>) -> io::Result<Vec<u8>> { unimplemented!() }
 
     pub async fn parent(&self) -> Option<UPath> {
         // TODO: Implement parent method
         unimplemented!()
     }
 
-    pub async fn hash(&self, algorithm: String) -> Multihash<128> {
+    pub async fn hash(&self, _algorithm: String) -> Multihash<128> {
         // TODO: Implement hash method
         unimplemented!()
     }

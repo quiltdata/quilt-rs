@@ -24,8 +24,9 @@ use super::{
     domain::Domain, namespace::Namespace, manifest::Manifest4, entry::Entry4
 };
 
+#[derive(Clone, Debug)]
 pub struct Client {
-    s3_clients: HashMap<Region, S3Client>,
+    _s3_clients: HashMap<Region, S3Client>,
 }
 
 impl Client {
@@ -36,11 +37,15 @@ impl Client {
     }
 
     pub async fn new() -> Self {
-        let cwd = std::env::current_dir().unwrap();
         Client {
-            s3_clients: HashMap::new(),
+            _s3_clients: HashMap::new(),
         }
     }
+
+
+    pub fn to_string(&self) -> String {
+        format!("Client({})", std::env::current_dir().unwrap().to_string_lossy())
+    }        
 
     pub async fn manifest3_from_uri(&self, uri_string: String) -> Result<Manifest, Error> {
         let uri = S3PackageURI::try_from(uri_string.as_str()).expect("Failed to parse URI");
@@ -52,7 +57,7 @@ impl Client {
         Ok(manifest)
     }
 
-    pub async fn domain_from_key(registry_uri: &str) -> Option<Domain> {
+    pub async fn domain_from_key(_registry_uri: &str) -> Option<Domain> {
         // Implementation goes here
         unimplemented!()
     }
@@ -62,27 +67,27 @@ impl Client {
         unimplemented!()
     }
 
-    pub async fn domain_objects(&self, domain: &str) -> Vec<Domain> {
+    pub async fn domain_objects(&self) -> Vec<Domain> {
         // Implementation goes here
         unimplemented!()
     }
 
-    pub async fn domain_from_uri(uri: &str) -> Option<Domain> {
+    pub async fn domain_from_uri(_uri: &str) -> Option<Domain> {
         // Implementation goes here
         unimplemented!()
     }
 
-    pub async fn namespace_from_uri(uri: &str) -> Option<Namespace> {
+    pub async fn namespace_from_uri(_uri: &str) -> Option<Namespace> {
         // Implementation goes here
         unimplemented!()
     }
 
-    pub async fn manifest_from_uri(uri: &str) -> Option<Manifest4> {
+    pub async fn manifest_from_uri(_uri: &str) -> Option<Manifest4> {
         // Implementation goes here
         unimplemented!()
     }
 
-    pub async fn entry_from_uri(uri: &str) -> Option<Entry4> {
+    pub async fn entry_from_uri(_uri: &str) -> Option<Entry4> {
         // Implementation goes here
         unimplemented!()
     }

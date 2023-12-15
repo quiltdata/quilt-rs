@@ -22,7 +22,9 @@ pub struct Table {
 
 impl Table {
     pub fn to_string(&self) -> String {
-        format!("Table({})", self.path4.as_ref().unwrap().to_string())
+        format!("Table({})", self.path4.as_ref().unwrap().to_string()) +
+        &format!("({:?})\n", self.path3) +
+        &format!("[\n{:?}\n]", self.records)
     }
     // Read quilt3's JSONL format
     pub fn read3(&self) -> Result<Self, ArrowError> {
@@ -49,7 +51,7 @@ impl Table {
     }
 
     // Get a row from the table
-    pub fn get_row(&self, name: &String) -> Option<Row4> {
+    pub fn get_row(&self, _name: &String) -> Option<Row4> {
         // Implementation goes here
         unimplemented!()
     }
