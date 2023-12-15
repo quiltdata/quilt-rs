@@ -1,7 +1,7 @@
 //!
 //! # Entry
 //! 
-//! Entry wraps a Row4 with a reference to its parent Manifest4.
+//! Entry wraps a Row4 with a reference to its _manifest Manifest4.
 //! It is the primary unit of data in a Manifest4.
 //! 
 
@@ -12,19 +12,19 @@ use super::{
 
 #[derive(Clone, Debug)]
 pub struct Entry4 {
-    parent: Manifest4,
+    _manifest: Manifest4,
     row4: Row4,
 }
 
 impl Entry4 {   
-    pub async fn new(parent: Manifest4, row4: Row4) -> Self {
+    pub async fn new(_manifest: Manifest4, row4: Row4) -> Self {
         Entry4 {
-            parent,
+            _manifest,
             row4,
         }
     }
     pub fn to_string(&self) -> String {
-        format!("Entry4({})^{}", self.row4.to_string(), self.parent.to_string())
+        format!("Entry4({})^{}", self.row4.to_string(), self._manifest.to_string())
     }        
 
 }

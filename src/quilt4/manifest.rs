@@ -21,15 +21,15 @@ use super::{
 
 #[derive(Clone, Debug)]
 pub struct Manifest4 {
-    parent: Namespace,
+    _namespace: Namespace,
     table: Table,
     path: Option<UPath>,
 }
 
 impl Manifest4 {
-    pub async fn new(parent: Namespace, table: Table, path: Option<UPath>) -> Self {
+    pub async fn new(_namespace: Namespace, table: Table, path: Option<UPath>) -> Self {
         Manifest4 {
-            parent,
+            _namespace,
             table,
             path,
         }
@@ -37,9 +37,9 @@ impl Manifest4 {
 
     pub fn to_string(&self) -> String {
         if self.path.is_some() {
-            format!("Manifest4({})^{}", self.path.as_ref().unwrap().to_string(), self.parent.to_string())
+            format!("Manifest4({})^{}", self.path.as_ref().unwrap().to_string(), self._namespace.to_string())
         } else {
-            format!("Manifest4({})^{}", self.table.to_string(), self.parent.to_string())
+            format!("Manifest4({})^{}", self.table.to_string(), self._namespace.to_string())
         }
     }
 

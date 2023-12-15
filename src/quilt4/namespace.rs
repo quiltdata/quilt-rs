@@ -11,20 +11,20 @@ use super::{
 
 #[derive(Clone, Debug)]
 pub struct Namespace {
-    parent: Domain,
+    _domain: Domain,
     path: UPath,
 }
 
 impl Namespace {
-    pub async fn new(parent: Domain, path: UPath) -> Self {
+    pub async fn new(_domain: Domain, path: UPath) -> Self {
         Namespace {
-            parent,
+            _domain,
             path,
         }
     }
 
     pub fn to_string(&self) -> String {
-        format!("Namespace({})^{}", self.path.to_string(), self.parent.to_string())
+        format!("Namespace({})^{}", self.path.to_string(), self._domain.to_string())
     }
 
     pub async fn manifest_from_key(_manifest_tag: &str) -> Option<Manifest4> {
