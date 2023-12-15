@@ -4,6 +4,7 @@
 //! 
 
 use super::{
+    client::Client,
     domain::Domain,
     upath::UPath,
     manifest::Manifest4,
@@ -21,6 +22,11 @@ impl Namespace {
             _domain,
             path,
         }
+    }
+
+    #[allow(dead_code)]
+    pub fn get_client(&self) -> &Client {
+        self._domain.get_client()
     }
 
     pub fn to_string(&self) -> String {

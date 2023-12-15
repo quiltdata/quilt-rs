@@ -23,6 +23,11 @@ impl Domain {
         }
     }
 
+    #[allow(dead_code)]
+    pub fn get_client(&self) -> &Client {
+        &self._client
+    }
+
     pub fn to_string(&self) -> String {
         format!("Domain({})^{}", self.path.to_string(), self._client.to_string())
     }        

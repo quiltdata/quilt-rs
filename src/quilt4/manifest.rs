@@ -13,6 +13,7 @@
 //! 
 
 use super::{
+    client::Client,
     namespace::Namespace,
     upath::UPath,
     table::Table,
@@ -41,6 +42,11 @@ impl Manifest4 {
         } else {
             format!("Manifest4({})^{}", self.table.to_string(), self._namespace.to_string())
         }
+    }
+
+    #[allow(dead_code)]
+    pub fn get_client(&self) -> &Client {
+        self._namespace.get_client()
     }
 
     pub async fn entry_from_key(_entry: &str) -> Option<Entry4> {
