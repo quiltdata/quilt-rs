@@ -9,7 +9,7 @@ pub use quilt4:: {
     domain::Domain,
     entry::Entry4,
     manifest::Manifest4,
-    table4::Table,
+    table::Table,
     row4::Row4,
     upath::UPath,
 };

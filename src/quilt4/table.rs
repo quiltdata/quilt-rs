@@ -11,8 +11,9 @@ use super::{
     row4::Row4,
 };
 
-static HEADER_ROW: String = String::from(".");
+const HEADER_ROW: &str = ".";
 
+#[derive(Clone, Debug)]
 pub struct Table {
     records: Vec<Row4>,
     path3: Option<UPath>,
@@ -20,6 +21,9 @@ pub struct Table {
 }
 
 impl Table {
+    pub fn to_string(&self) -> String {
+        format!("Table({})", self.path4.as_ref().unwrap().to_string())
+    }
     // Read quilt3's JSONL format
     pub fn read3(&self) -> Result<Self, ArrowError> {
         // Implementation goes here
@@ -51,7 +55,7 @@ impl Table {
     }
 
     pub fn get_header(&self) -> Option<Row4> {
-        self.get_row(&HEADER_ROW)
+        self.get_row(&HEADER_ROW.to_string())
     }
 
     pub fn list_rows(&self) -> Vec<Row4> {
