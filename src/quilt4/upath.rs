@@ -10,15 +10,32 @@ use std::path::PathBuf;
 use object_store::path::Path;
 use std::io;
 use multihash::Multihash;
+use std::mem::ManuallyDrop;
 
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone)]
 pub union UPath {
-    file: PathBuf,
-    object: Path,
+    object: ManuallyDrop<Path>,
+    file: ManuallyDrop<PathBuf>,
 }
 
 impl UPath {
+    pub fn new_object(path: Path) -> Self {
+        Self { object: ManuallyDrop::new(path) }
+    }
+
+    pub fn new_file(path: PathBuf) -> Self {
+        Self { file: ManuallyDrop::new(path) }
+    }
+
+    pub fn as_object(&self) -> &Path {
+        unsafe { &*self.object }
+    }
+
+    pub fn as_file(&self) -> &PathBuf {
+        unsafe { &*self.file }
+    }
+
     pub async fn read_bytes(&self) -> io::Result<Vec<u8>> { unimplemented!() }
     pub async fn write_bytes(&self, input: Vec<u8>) -> io::Result<Vec<u8>> { unimplemented!() }
 
