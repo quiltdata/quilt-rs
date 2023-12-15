@@ -12,20 +12,38 @@
 //! and the existing types will be obsoleted.
 //! 
 
+use super::{
+    namespace::Namespace,
+    upath::UPath,
+    table::Table,
+    entry::Entry4,
+};
+
+#[derive(Clone, Debug)]
 pub struct Manifest4 {
+    parent: Namespace,
+    table: Table,
     path: Option<UPath>,
-    table: Table4,
 }
 
 impl Manifest4 {
-    pub async fn new(parent: Domain, path: Option<UPath>) -> Self {
-        Namespace {
+    pub async fn new(parent: Namespace, table: Table, path: Option<UPath>) -> Self {
+        Manifest4 {
             parent,
+            table,
             path,
         }
     }
 
-    pub async fn entry_from_key(pkg_name: &str) -> Option<Entry4> {
+    pub fn to_string(&self) -> String {
+        if self.path.is_some() {
+            format!("Manifest4({})^{}", self.path.as_ref().unwrap().to_string(), self.parent.to_string())
+        } else {
+            format!("Manifest4({})^{}", self.table.to_string(), self.parent.to_string())
+        }
+    }
+
+    pub async fn entry_from_key(_entry: &str) -> Option<Entry4> {
         // TODO: Implement stub for entry_keys
         unimplemented!()
     }
@@ -35,7 +53,7 @@ impl Manifest4 {
         unimplemented!()
     }
 
-    pub async fn entry_objects(&self, entry: &str) -> Vec<Entry4> {
+    pub async fn entry_objects(&self) -> Vec<Entry4> {
         // TODO: Implement stub for entry_objects
         unimplemented!()
     }

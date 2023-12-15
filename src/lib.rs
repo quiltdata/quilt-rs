@@ -1,7 +1,19 @@
 use aws_sdk_s3::Error; // Import the Error type from the aws_sdk_s3 crate
 mod api;
 mod quilt;
+mod quilt4;
 mod s3_utils;
+
+pub use quilt4:: {
+    client::Client,
+    domain::Domain,
+    entry::Entry4,
+    manifest::Manifest4,
+    table::Table,
+    row4::Row4,
+    upath::UPath,
+};
+
 
 pub use api::LocalDomain;
 pub use api::Manifest;

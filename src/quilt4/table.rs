@@ -4,51 +4,64 @@
 //! and provides methods to read/write (decode/encode) quilt3's JSONL format
 //! 
 
-use arrow::array::{Array, ArrayRef, StringArray, Table};
-use arrow::datatypes::{DataType, Field, Schema};
-use arrow::error::ArrowError;
+use arrow::error::ArrowError; 
 
-use std::collections::HashMap;
+use super::{
+    upath::UPath,
+    row4::Row4,
+};
 
 const HEADER_ROW: &str = ".";
 
-pub struct Table4 {
-    table: arrow::Table,
+#[derive(Clone, Debug)]
+pub struct Table {
+    records: Vec<Row4>,
     path3: Option<UPath>,
     path4: Option<UPath>,
 }
 
-impl Table4 {
+impl Table {
+    pub fn to_string(&self) -> String {
+        format!("Table({})", self.path4.as_ref().unwrap().to_string()) +
+        &format!("({:?})\n", self.path3) +
+        &format!("[\n{:?}\n]", self.records)
+    }
     // Read quilt3's JSONL format
     pub fn read3(&self) -> Result<Self, ArrowError> {
         // Implementation goes here
+        unimplemented!()
     }
 
     // Write quilt3's JSONL format
     pub fn write3(&self) -> Result<(), ArrowError> {
         // Implementation goes here
+        unimplemented!()
     }
 
     // Read quilt4's Parquet format
     pub fn read4(&self) -> Result<Self, ArrowError> {
         // Implementation goes here
+        unimplemented!()
     }
 
     // Write quilt4's Parquet format
     pub fn write4(&self) -> Result<(), ArrowError> {
         // Implementation goes here
+        unimplemented!()
     }
 
     // Get a row from the table
-    pub fn get_row(&self, name: &string) -> Option<Row4> {
+    pub fn get_row(&self, _name: &String) -> Option<Row4> {
         // Implementation goes here
+        unimplemented!()
     }
 
     pub fn get_header(&self) -> Option<Row4> {
-        self.get_row(HEADER_ROW);
+        self.get_row(&HEADER_ROW.to_string())
     }
 
     pub fn list_rows(&self) -> Vec<Row4> {
         // Implementation goes here
+        unimplemented!()
     }
 }
