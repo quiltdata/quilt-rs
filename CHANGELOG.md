@@ -1,11 +1,12 @@
 # CHANGELOG
 
-## [0.3.3] - 2023-12-16
+## [0.3.3] - UNRELEASED
 
-* get_client as macro
 * test get_manifest3
 * add tests/example domain
 * store shared test data in its own crate
+* stub UPath
+* get_client as macro
 
 ## [0.3.2] - 2023-12-14
 

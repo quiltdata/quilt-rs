@@ -17,7 +17,7 @@ pub enum TestFile {
     Domain,
 }
 
-pub fn local_domain_uri(key: TestFile) -> String {
+pub fn local_uri(key: TestFile) -> String {
     let files: HashMap<TestFile,&str> = HashMap::from ([
         (TestFile::Parquet, TEST_LOCAL_PARQUET),
         (TestFile::Json, TEST_LOCAL_JSONL),
@@ -31,25 +31,37 @@ pub fn local_domain_uri(key: TestFile) -> String {
     format!("file://{}", path_string)
 }
 
+pub fn local_uri_domain() -> String {
+    local_uri(TestFile::Domain)
+}
+
+pub fn local_uri_parquet() -> String {
+    local_uri(TestFile::Parquet)
+}
+
+pub fn local_uri_json() -> String {
+    local_uri(TestFile::Json)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_local_domain_uri_parquet() {
+    fn test_local_uri_parquet() {
         let expected = format!("file://{}/tests/test_domain/packages/12201234.parquet", std::env::current_dir().unwrap().to_string_lossy());
-        assert_eq!(local_domain_uri(TestFile::Parquet), expected);
+        assert_eq!(local_uri_parquet(), expected);
     }
 
     #[test]
-    fn test_local_domain_uri_json() {
+    fn test_local_uri_json() {
         let expected = format!("file://{}/tests/test_domain/.quilt/packages/5f1b1e4928dbb5d700cfd37ed5f5180134d1ad93a0a700f17e43275654c262f4", std::env::current_dir().unwrap().to_string_lossy());
-        assert_eq!(local_domain_uri(TestFile::Json), expected);
+        assert_eq!(local_uri_json(), expected);
     }
 
     #[test]
-    fn test_local_domain_uri_domain() {
+    fn test_local_uri_domain() {
         let expected = format!("file://{}/tests/test_domain", std::env::current_dir().unwrap().to_string_lossy());
-        assert_eq!(local_domain_uri(TestFile::Domain), expected);
+        assert_eq!(local_uri_domain(), expected);
     }
 }

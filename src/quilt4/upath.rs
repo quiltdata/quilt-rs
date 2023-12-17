@@ -7,11 +7,7 @@
 //! 
 
 use std::path::PathBuf;
-use object_store::{
-    aws::{resolve_bucket_region, AmazonS3Builder},
-    path::Path,
-    ClientOptions, GetOptions, ObjectStore,
-};
+use object_store::path::Path;
 use std::io;
 use multihash::Multihash;
 
@@ -20,26 +16,39 @@ use super::client::Client;
 #[derive(Clone, Debug)]
 // FIXME: This should be a union, not a struct
 pub struct UPath {
-    uri: String,
-    object: Option<Path>,
-    file: Option<PathBuf>,
+    pub uri: String,
+    pub file_path: Option<PathBuf>,
+    pub object_path: Option<Path>,
+    pub object_bucket: Option<String>,
 }
 
 impl UPath {
     pub fn new(uri: String) -> Self {
-        UPath {
-            uri: uri.clone(),
-            object: None,
-            file: None,
+        if uri.starts_with("s3://") {
+            // split on the first '/' after the bucket name
+            let mut parts = uri.splitn(2, '/');
+            let bucket = parts.next().unwrap();
+            let path = parts.next().unwrap();
+            return UPath {
+                uri: uri.clone(),
+                file_path: None,
+                object_path: Some(Path::from(path)),
+                object_bucket: Some(bucket.to_string()),
+            }
+        } else if uri.starts_with("file://"){
+            let path = Some(PathBuf::from(uri.clone()));
+            return UPath {
+                uri: uri.clone(),
+                file_path: path,
+                object_path: None,
+                object_bucket: None,
+            }
         }
+        panic!("UPath::new() failed to parse uri: {}", uri);
     }
 
     pub fn to_string(&self) -> String {
-        if self.object.is_some() {
-            format!("UPath(object:{:?})", self.object)
-        } else {
-            format!("UPath(file:{:?})", self.file)
-        }
+        format!("UPath({})", self.uri)
     }
 
     pub async fn read_bytes(&self, _client: Client) -> io::Result<Vec<u8>> { unimplemented!() }
@@ -68,8 +77,12 @@ mod tests {
     use super::*;
     #[test]
     fn test_new() {
-        let local = shared::TEST_DOMAIN;
-        let upath = UPath::new("s3://my-bucket/path/to/file".to_string());
-        assert_eq!(upath.uri, "s3://my-bucket/path/to/file".to_string());
+        let local_uri = shared::local_uri_parquet();
+        let upath = UPath::new(local_uri.clone());
+        assert_eq!(upath.uri, local_uri);
+        let upath_string = upath.to_string();
+        assert_eq!(upath_string, format!("UPath({})", local_uri));
+        assert_eq!(upath.object_path, None);
+        assert_eq!(upath.file_path, Some(PathBuf::from(local_uri)));
     }
 }
