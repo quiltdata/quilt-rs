@@ -57,7 +57,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_manifest_from_uri() {
-        let uri = shared::TEST_URI_STRING.to_string();
+        let uri = utils::TEST_URI_STRING.to_string();
         let manifest = manifest_from_uri(uri).await;
         assert!(manifest.is_ok());
         assert!(manifest.unwrap().rows.len() > 0);

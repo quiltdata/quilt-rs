@@ -77,7 +77,7 @@ mod tests {
     use super::*;
     #[test]
     fn test_new() {
-        let local_uri = shared::local_uri_parquet();
+        let local_uri = utils::local_uri_parquet();
         let upath = UPath::new(local_uri.clone());
         assert_eq!(upath.uri, local_uri);
         let upath_string = upath.to_string();
