@@ -7,7 +7,11 @@
 //! 
 
 use std::path::PathBuf;
-use object_store::path::Path;
+use object_store::{
+    aws::{resolve_bucket_region, AmazonS3Builder},
+    path::Path,
+    ClientOptions, GetOptions, ObjectStore,
+};
 use std::io;
 use multihash::Multihash;
 
@@ -16,11 +20,20 @@ use super::client::Client;
 #[derive(Clone, Debug)]
 // FIXME: This should be a union, not a struct
 pub struct UPath {
+    uri: String,
     object: Option<Path>,
     file: Option<PathBuf>,
 }
 
 impl UPath {
+    pub fn new(uri: String) -> Self {
+        UPath {
+            uri: uri.clone(),
+            object: None,
+            file: None,
+        }
+    }
+
     pub fn to_string(&self) -> String {
         if self.object.is_some() {
             format!("UPath(object:{:?})", self.object)
@@ -48,4 +61,15 @@ impl UPath {
     }
 
 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_new() {
+        let local = shared::TEST_DOMAIN;
+        let upath = UPath::new("s3://my-bucket/path/to/file".to_string());
+        assert_eq!(upath.uri, "s3://my-bucket/path/to/file".to_string());
+    }
 }
