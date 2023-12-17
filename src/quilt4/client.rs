@@ -92,3 +92,24 @@ impl Client {
         unimplemented!()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_manifest3_from_uri() {
+        // Arrange
+        let client = Client::new().await;
+        let uri_string = "quilt+s3://quilt-example#package=akarve/test_dest".to_string();
+
+        // Act
+        let result = client.manifest3_from_uri(uri_string).await;
+
+        // Assert
+        assert!(result.is_ok());
+        let manifest = result.unwrap();
+        assert!(manifest.rows.len() > 0);
+    }
+
+}
