@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## [0.3.3] - 2023-12-16
+
+* get_client as macro
+* test get_manifest3
+
 ## [0.3.2] - 2023-12-14
 
 * get_client
