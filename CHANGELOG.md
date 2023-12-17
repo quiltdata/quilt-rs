@@ -4,7 +4,8 @@
 
 * get_client as macro
 * test get_manifest3
-* add test domain
+* add tests/example domain
+* store shared test data in its own crate
 
 ## [0.3.2] - 2023-12-14
 

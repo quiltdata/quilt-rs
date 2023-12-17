@@ -2,7 +2,9 @@ use quilt_rs::manifest_from_uri;
 use quilt_rs::installed_packages;
 use quilt_rs::Client;
 
-static URI_STRING: &str = "quilt+s3://quilt-example#package=akarve/test_dest";
+extern crate shared;
+
+static URI_STRING: &str = shared::TEST_URI_STRING;
 
 #[tokio::test]
 async fn test_browse_remote_package() {
