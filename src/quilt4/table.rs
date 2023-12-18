@@ -4,18 +4,19 @@
 //! and provides methods to read/write (decode/encode) quilt3's JSONL format
 //! 
 
-use arrow::{error::ArrowError, record_batch::RecordBatch}; 
+use arrow::error::ArrowError;
 
 use super::{
     upath::UPath,
     row4::Row4,
 };
+use serde::{Deserialize, Serialize};
 
 const HEADER_ROW: &str = ".";
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Table {
-    records: RecordBatch, // Vec<RecordBatch>? DataFusion?
+    // records: RecordBatch, // Vec<RecordBatch>? DataFusion?
     path3: Option<UPath>,
     path4: Option<UPath>,
 }
@@ -23,8 +24,8 @@ pub struct Table {
 impl Table {
     pub fn to_string(&self) -> String {
         format!("Table({})", self.path4.as_ref().unwrap().to_string()) +
-        &format!("({:?})\n", self.path3) +
-        &format!("[\n{:?}\n]", self.records)
+        &format!("({:?})\n", self.path3)
+        //+ &format!("[\n{:?}\n]", self.records)
     }
     // Read quilt3's JSONL format
     pub fn read3(&self) -> Result<Self, ArrowError> {

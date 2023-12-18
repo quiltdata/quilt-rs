@@ -9,8 +9,9 @@ use super::{
     manifest::Manifest4,
     row4::Row4,
 };
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Entry4 {
     _manifest: Manifest4,
     row4: Row4,

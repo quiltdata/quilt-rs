@@ -8,8 +8,9 @@ use super::{
     upath::UPath,
     manifest::Manifest4,
 };
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Namespace {
     _domain: Domain,
     path: UPath,

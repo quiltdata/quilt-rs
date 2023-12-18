@@ -5,8 +5,9 @@
 
 use std::collections::HashMap;
 use serde_json::Value as Json;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Row3Hash {
     value: String,
     _type: String, // FIXME: This should be a HashType enum
