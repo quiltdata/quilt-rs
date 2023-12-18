@@ -12,21 +12,45 @@ use std::io;
 use multihash::Multihash;
 
 use super::client::Client;
+use super::uri::UriParser;
 
 #[derive(Clone, Debug)]
 // FIXME: This should be a union, not a struct
 pub struct UPath {
-    object: Option<Path>,
-    file: Option<PathBuf>,
+    pub uri: String,
+    pub file_path: Option<PathBuf>,
+    pub object_path: Option<Path>,
+    pub object_bucket: Option<String>,
 }
 
 impl UPath {
-    pub fn to_string(&self) -> String {
-        if self.object.is_some() {
-            format!("UPath(object:{:?})", self.object)
+    pub fn new(uri_string: String) -> Self {
+        let uri = UriParser::try_from(&uri_string).unwrap();
+        let file_path = if uri.scheme == "file" {
+            Some(PathBuf::from(uri.path.clone()))
         } else {
-            format!("UPath(file:{:?})", self.file)
+            None
+        };
+        let object_path = if uri.scheme == "s3" {
+            Some(Path::from(uri.path.clone()))
+        } else {
+            None
+        };
+        let object_bucket = if uri.scheme == "s3" {
+            Some(uri.host)
+        } else {
+            None
+        };
+        UPath {
+            uri: uri_string,
+            file_path,
+            object_path,
+            object_bucket,
         }
+    }
+
+    pub fn to_string(&self) -> String {
+        format!("UPath({})", self.uri)
     }
 
     pub async fn read_bytes(&self, _client: Client) -> io::Result<Vec<u8>> { unimplemented!() }
@@ -48,4 +72,22 @@ impl UPath {
     }
 
 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_new_local() {
+        let local_uri = utils::local_uri_parquet();
+        let upath = UPath::new(local_uri.clone());
+        println!("upath: {:?}", upath);
+        assert_eq!(upath.uri, local_uri);
+        let upath_string = upath.to_string();
+        assert_eq!(upath_string, format!("UPath({})", local_uri));
+        assert_eq!(upath.object_bucket, None);
+        assert_eq!(upath.object_path, None);
+        let fpath = upath.file_path.unwrap();
+        assert_eq!(local_uri, format!("file://{}", fpath.to_string_lossy()));
+    }
 }

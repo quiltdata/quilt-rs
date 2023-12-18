@@ -1,6 +1,6 @@
 [package]
 name = "quilt-rs"
-version = "0.3.2"
+version = "0.4.0"
 edition = "2021"
 description = "Rust library for accessing Quilt data packages."
 documentation = "https://docs.quiltdata.com"
@@ -36,3 +36,4 @@ url = "2.5.0"
 [dev-dependencies]
 temp_testdir = "0.2.3"
 tokio-test = "0.4.3"
+utils = { path = "utils" }

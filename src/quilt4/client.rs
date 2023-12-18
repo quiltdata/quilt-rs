@@ -31,7 +31,7 @@ pub struct Client {
 
 impl Client {
 
-    pub fn local_domain() -> LocalDomain {
+    pub fn domain3() -> LocalDomain {
         let cwd = std::env::current_dir().unwrap();
         LocalDomain::new(cwd)
     }
@@ -49,7 +49,7 @@ impl Client {
 
     pub async fn manifest3_from_uri(&self, uri_string: String) -> Result<Manifest, Error> {
         let uri = S3PackageURI::try_from(uri_string.as_str()).expect("Failed to parse URI");
-        let local = Client::local_domain().into();
+        let local = Client::domain3().into();
         let manifest: Manifest = browse_remote_package(local, uri)
             .await
             .expect("Failed to browse remote package");
@@ -90,5 +90,15 @@ impl Client {
     pub async fn entry_from_uri(_uri: &str) -> Option<Entry4> {
         // Implementation goes here
         unimplemented!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_client_new() {
+        assert!(Client::new().await.to_string().contains("Client"));
     }
 }

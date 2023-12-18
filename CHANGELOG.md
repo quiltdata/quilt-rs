@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## [0.4.0] - 2023-12-17
+
+* test get_manifest3
+* add tests/example domain
+* store shared test data in its own crate
+* stub UPath
+* implement UriParser and UriQuilt
+
 ## [0.3.2] - 2023-12-14
 
 * get_client
