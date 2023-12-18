@@ -12,6 +12,7 @@ use std::io;
 use multihash::Multihash;
 
 use super::client::Client;
+use super::uri::UriParser;
 
 #[derive(Clone, Debug)]
 // FIXME: This should be a union, not a struct
@@ -23,28 +24,29 @@ pub struct UPath {
 }
 
 impl UPath {
-    pub fn new(uri: String) -> Self {
-        if uri.starts_with("s3://") {
-            // split on the first '/' after the bucket name
-            let mut parts = uri.splitn(2, '/');
-            let bucket = parts.next().unwrap();
-            let path = parts.next().unwrap();
-            return UPath {
-                uri: uri.clone(),
-                file_path: None,
-                object_path: Some(Path::from(path)),
-                object_bucket: Some(bucket.to_string()),
-            }
-        } else if uri.starts_with("file://"){
-            let path = Some(PathBuf::from(uri.clone()));
-            return UPath {
-                uri: uri.clone(),
-                file_path: path,
-                object_path: None,
-                object_bucket: None,
-            }
+    pub fn new(uri_string: String) -> Self {
+        let uri = UriParser::try_from(&uri_string).unwrap();
+        let file_path = if uri.scheme == "file" {
+            Some(PathBuf::from(uri.path.clone()))
+        } else {
+            None
+        };
+        let object_path = if uri.scheme == "s3" {
+            Some(Path::from(uri.path.clone()))
+        } else {
+            None
+        };
+        let object_bucket = if uri.scheme == "s3" {
+            Some(uri.host)
+        } else {
+            None
+        };
+        UPath {
+            uri: uri_string,
+            file_path,
+            object_path,
+            object_bucket,
         }
-        panic!("UPath::new() failed to parse uri: {}", uri);
     }
 
     pub fn to_string(&self) -> String {
@@ -76,13 +78,16 @@ impl UPath {
 mod tests {
     use super::*;
     #[test]
-    fn test_new() {
+    fn test_new_local() {
         let local_uri = utils::local_uri_parquet();
         let upath = UPath::new(local_uri.clone());
+        println!("upath: {:?}", upath);
         assert_eq!(upath.uri, local_uri);
         let upath_string = upath.to_string();
         assert_eq!(upath_string, format!("UPath({})", local_uri));
+        assert_eq!(upath.object_bucket, None);
         assert_eq!(upath.object_path, None);
-        assert_eq!(upath.file_path, Some(PathBuf::from(local_uri)));
+        let fpath = upath.file_path.unwrap();
+        assert_eq!(local_uri, format!("file://{}", fpath.to_string_lossy()));
     }
 }
