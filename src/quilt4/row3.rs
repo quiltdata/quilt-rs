@@ -21,7 +21,7 @@ impl Row3Hash {
 #[derive(Clone, Debug)]
 pub struct Row3 {
     logical_key: String,
-    physical_key: Vec<String>,
+    physical_keys: Vec<String>,
     size: usize,
     hash: Row3Hash,
     meta: HashMap<String, Json>,
@@ -30,7 +30,7 @@ pub struct Row3 {
 impl Row3 {
     pub fn to_string(&self) -> String {
         format!("Row3({})", self.logical_key) +
-        &format!("@{}", self.physical_key[0].to_string()) +
+        &format!("@{}", self.physical_keys[0].to_string()) +
         &format!("^{}", self.size.to_string()) + 
         &format!("#{}", self.hash.to_string()) +
         &format!("${}", self.meta.len().to_string())

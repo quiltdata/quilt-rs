@@ -18,6 +18,7 @@ impl Default for RevisionPointer {
     }
 }
 
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UriQuilt {
     pub domain: String,
@@ -34,8 +35,7 @@ pub struct UriParser {
     pub fragments: HashMap<String, String>,
     pub quilt: Option<UriQuilt>
 }
-
-
+// TODO: replace with URL Crate
 
 fn make_domain(uri_parser: &UriParser) -> String {
     let mut domain = uri_parser.scheme.clone();

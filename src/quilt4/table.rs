@@ -4,7 +4,7 @@
 //! and provides methods to read/write (decode/encode) quilt3's JSONL format
 //! 
 
-use arrow::error::ArrowError; 
+use arrow::{error::ArrowError, record_batch::RecordBatch}; 
 
 use super::{
     upath::UPath,
@@ -15,7 +15,7 @@ const HEADER_ROW: &str = ".";
 
 #[derive(Clone, Debug)]
 pub struct Table {
-    records: Vec<Row4>,
+    records: RecordBatch, // Vec<RecordBatch>? DataFusion?
     path3: Option<UPath>,
     path4: Option<UPath>,
 }
@@ -59,8 +59,9 @@ impl Table {
     pub fn get_header(&self) -> Option<Row4> {
         self.get_row(&HEADER_ROW.to_string())
     }
+    // TBD: Store header metadata as PARQUET Metadata?
 
-    pub fn list_rows(&self) -> Vec<Row4> {
+    pub fn list_names(&self) -> Vec<Row4> {
         // Implementation goes here
         unimplemented!()
     }
