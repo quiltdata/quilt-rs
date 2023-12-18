@@ -6,7 +6,6 @@
 //! 
 
 use super::{
-    client::Client,
     manifest::Manifest4,
     row4::Row4,
 };
@@ -27,9 +26,4 @@ impl Entry4 {
     pub fn to_string(&self) -> String {
         format!("Entry4({})^{}", self.row4.to_string(), self._manifest.to_string())
     }        
-
-    #[allow(dead_code)]
-    pub fn get_client(&self) -> &Client {
-        self._manifest.get_client()
-    }
 }
