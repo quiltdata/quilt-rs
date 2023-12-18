@@ -22,28 +22,47 @@ impl Default for RevisionPointer {
 pub struct UriParser {
     pub scheme: String,
     pub domain: String,
-    pub namespace: Option<String>,
-    pub revision: Option<RevisionPointer>,
-    pub query: Option<HashMap<String, String>>,
-    pub fragments: Option<HashMap<String, String>>,
+    pub query: HashMap<String, String>,
+    pub namespace: String,
+    pub revision: RevisionPointer,
+    pub path: String,
+    pub fragments: HashMap<String, String>,
 }
 
+fn mapify(input: &str) -> HashMap<String, String> {
+    form_urlencoded::parse(input.as_bytes())
+        .into_owned()
+        .collect()
+}
+
+fn normalize_input(input: &str) -> String {
+    let split = input.split_once("://");
+    if split.is_some() {
+        return input.to_string();
+    }
+    let body = if input.starts_with("/") {
+        input.to_string()
+    } else {
+        let cwd = std::env::current_dir().unwrap();
+        cwd.join(input).canonicalize().unwrap().to_string_lossy().to_string()
+    };
+    format!("file://localhost{}", body)
+}
 impl TryFrom<&str> for UriParser {
     type Error = String;
 
     fn try_from(input: &str) -> Result<Self, Self::Error> {
-        let parsed_url = Url::parse(input).map_err(|err| err.to_string())?;
 
-        let fragment = parsed_url.fragment().ok_or("missing fragment")?;
-        let mut params: HashMap<_, _> = form_urlencoded::parse(fragment.as_bytes())
-            .into_owned()
-            .collect();
+        let uri_string = normalize_input(input);
+        let parsed_url = Url::parse(&uri_string).map_err(|err| err.to_string())?;
+        let scheme = parsed_url.scheme().to_string();
+        let domain = parsed_url.host_str().ok_or("localhost")?.to_string();
+        let query = mapify(parsed_url.query().ok_or("")?);
+        let mut fragments = mapify(parsed_url.fragment().ok_or("")?);
+        let pkg_spec = fragments.remove("package").ok_or("")?;
+        let path = fragments.remove("path").ok_or("")?;
 
-        let pkg_spec = params
-            .remove("package")
-            .ok_or("fragment must contain package")?;
-
-        let (namespace, revision) = match pkg_spec.split_once('@') {
+        let (namespace, revision) = match pkg_spec.split_once(['@',':']) {
             Some((namespace, top_hash)) => (
                 namespace.to_string(),
                 RevisionPointer::Hash(top_hash.into()),
@@ -51,21 +70,14 @@ impl TryFrom<&str> for UriParser {
             None => (pkg_spec, RevisionPointer::default()),
         };
 
-        let path = params.remove("path");
-
-        if !params.is_empty() {
-            return Err(format!("unexpected fragment params: {:?}", params));
-        }
-
-        let domain = parsed_url.host_str().ok_or("missing domain")?.to_string();
-
         Ok(Self {
-            scheme: parsed_url.scheme().to_string(),
+            scheme,
             domain,
+            query,
             namespace,
             revision,
             path,
-            query: None,
+            fragments,
         })
     }
 }

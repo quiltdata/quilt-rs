@@ -1,3 +1,4 @@
+pub mod uri;
 pub mod upath;
 pub mod row3;
 pub mod row4;
