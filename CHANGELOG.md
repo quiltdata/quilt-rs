@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## [0.4.2] - 2023-12-18
+
+- use aptos-openapi-link for poem serialization
+- remove Removed fields (but skip)
+
 ## [0.4.1] - 2023-12-18
 
 ### Added
