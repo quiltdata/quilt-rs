@@ -5,7 +5,7 @@ on:
       - main
     paths:
       - "Cargo.toml"
-      - ".github/workflows/release.yml"
+      - ".github/workflows/release.yaml"
 
 jobs:
   publish:
