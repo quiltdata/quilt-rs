@@ -5,8 +5,9 @@
 //! It provides methods to decode/encode quilt3's JSONL format
 //!
 
-use multihash::Multihash;
+// use multihash::Multihash;
 use serde_json::Value as Json;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::{
@@ -14,14 +15,14 @@ use super::{
     row3::Row3,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Row4 {
     name: String,
     // scheme: Enum<file,s3,https>
     place: String,
     path: Option<UPath>,
     size: usize,
-    hash: Multihash<256>, // TODO: save as bytes versus encoded string
+    hash: String, // TODO: save as bytes versus encoded string
     info: HashMap<String, Json>, // system metadata
     meta: HashMap<String, Json>, // user metadata
 }
@@ -32,7 +33,7 @@ impl Row4 {
         let result = format!("Row4({})", self.name) +
         &format!("@{}", self.place) +
         &format!("^{:?}", self.size) +
-        &format!("#{:?}", self.hash.digest()) +
+        &format!("#{:?}", self.hash) +
         &format!("$${:?}", self.info) +
         &format!("${:?}", self.meta);
         if self.path.is_some() {

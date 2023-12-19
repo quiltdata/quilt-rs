@@ -10,10 +10,11 @@
 //! Initially, it also wraps Project 4F's local domain to support quilt-server.
 
 use std::collections::HashMap;
-use aws_sdk_s3::Client as S3Client;
-use aws_sdk_s3::Error;
-use aws_types::region::Region;
 use std::convert::TryFrom;
+use serde::{Deserialize, Serialize};
+use aws_sdk_s3::Error;
+// use aws_sdk_s3::Client as S3Client;
+// use aws_types::region::Region;
 
 use crate::api::LocalDomain;
 use crate::api::Manifest;
@@ -24,9 +25,9 @@ use super::{
     domain::Domain, namespace::Namespace, manifest::Manifest4, entry::Entry4
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Client {
-    _s3_clients: HashMap<Region, S3Client>,
+    _s3_clients: HashMap<String, String>,
 }
 
 impl Client {

@@ -8,8 +8,9 @@ use super:: {
     upath::UPath,
     namespace::Namespace,
 };
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Domain {
     _client: Client,
     path: UPath,

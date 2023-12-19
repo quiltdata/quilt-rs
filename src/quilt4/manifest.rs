@@ -18,8 +18,9 @@ use super::{
     table::Table,
     entry::Entry4,
 };
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Manifest4 {
     _namespace: Namespace,
     table: Table,
