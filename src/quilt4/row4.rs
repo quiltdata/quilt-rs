@@ -5,7 +5,7 @@
 //! It provides methods to decode/encode quilt3's JSONL format
 //!
 
-// use multihash::Multihash;
+use multihash::Multihash;
 use serde_json::Value as Json;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -24,7 +24,8 @@ pub struct Row4 {
     place: String,
     path: Option<UPath>,
     size: usize,
-    hash: String, // TODO: save as bytes versus encoded string
+    #[serde(skip)]
+    hash: Multihash<256>, // TODO: save as bytes versus encoded string
     info: HashMap<String, Json>, // system metadata
     meta: HashMap<String, Json>, // user metadata
 }

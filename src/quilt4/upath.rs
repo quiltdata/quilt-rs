@@ -7,7 +7,7 @@
 //! 
 
 use std::path::PathBuf;
-// use object_store::path::Path;
+use object_store::path::Path;
 use std::io;
 use multihash::Multihash;
 use serde::{Deserialize, Serialize};
@@ -22,7 +22,8 @@ use super::uri::UriParser;
 pub struct UPath {
     pub uri: String,
     pub file_path: Option<PathBuf>,
-    pub object_path: Option<String>,
+    #[serde(skip)]
+    pub object_path: Option<Path>,
     pub object_bucket: Option<String>,
 }
 
@@ -35,7 +36,7 @@ impl UPath {
             None
         };
         let object_path = if uri.scheme == "s3" {
-            Some(uri.path.clone()) // Path::from
+            Some(Path::from(uri.path.clone()))
         } else {
             None
         };
