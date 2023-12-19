@@ -26,6 +26,13 @@ pub struct Table {
 }
 
 impl Table {
+    pub async fn new(path: Option<UPath>) -> Self {
+        Table {
+            records: None,
+            path3: None,
+            path4: path.clone(),
+        }
+    }
     pub fn to_string(&self) -> String {
         format!("Table({})", self.path4.as_ref().unwrap().to_string()) +
         &format!("({:?})\n", self.path3) +
