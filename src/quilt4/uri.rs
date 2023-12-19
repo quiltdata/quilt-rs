@@ -2,6 +2,9 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use url::{Url, form_urlencoded};
+use aptos_openapi_link::impl_poem_type;
+impl_poem_type!(UriQuilt, "object", ());
+impl_poem_type!(UriParser, "object", ());
 
 const LATEST_TAG: &str = "latest";
 

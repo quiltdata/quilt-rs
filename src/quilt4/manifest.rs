@@ -19,6 +19,8 @@ use super::{
     entry::Entry4,
 };
 use serde::{Deserialize, Serialize};
+use aptos_openapi_link::impl_poem_type;
+impl_poem_type!(Manifest4, "object", ());
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Manifest4 {

@@ -13,8 +13,8 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use serde::{Deserialize, Serialize};
 use aws_sdk_s3::Error;
-// use aws_sdk_s3::Client as S3Client;
-// use aws_types::region::Region;
+use aws_sdk_s3::Client as S3Client;
+use aws_types::region::Region;
 
 use crate::api::LocalDomain;
 use crate::api::Manifest;
@@ -24,10 +24,13 @@ use crate::api::browse_remote_package;
 use super::{
     domain::Domain, namespace::Namespace, manifest::Manifest4, entry::Entry4
 };
+use aptos_openapi_link::impl_poem_type;
+impl_poem_type!(Client, "object", ());
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Client {
-    _s3_clients: HashMap<String, String>,
+    #[serde(skip)]
+    _s3_clients: HashMap<Region, S3Client>,
 }
 
 impl Client {
