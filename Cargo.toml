@@ -13,6 +13,7 @@ repository = "https://github.com/quiltdata/quilt-rs"
 path = "src/lib.rs"
 
 [dependencies]
+aptos-openapi-link = "0.1.0"
 arrow = "49.0.0"
 async-trait = "0.1.74"
 aws-config = "1.1.1"
