@@ -5,18 +5,22 @@
 //! 
 
 use arrow::error::ArrowError;
+use arrow::record_batch::RecordBatch;
 
 use super::{
     upath::UPath,
     row4::Row4,
 };
 use serde::{Deserialize, Serialize};
+use aptos_openapi_link::impl_poem_type;
+impl_poem_type!(Table, "object", ());
 
 const HEADER_ROW: &str = ".";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Table {
-    // records: RecordBatch, // Vec<RecordBatch>? DataFusion?
+    #[serde(skip)]
+    records: Option<RecordBatch>, // Vec<RecordBatch>? DataFusion?
     path3: Option<UPath>,
     path4: Option<UPath>,
 }
@@ -24,8 +28,8 @@ pub struct Table {
 impl Table {
     pub fn to_string(&self) -> String {
         format!("Table({})", self.path4.as_ref().unwrap().to_string()) +
-        &format!("({:?})\n", self.path3)
-        //+ &format!("[\n{:?}\n]", self.records)
+        &format!("({:?})\n", self.path3) +
+        &format!("[\n{:?}\n]", self.records)
     }
     // Read quilt3's JSONL format
     pub fn read3(&self) -> Result<Self, ArrowError> {
