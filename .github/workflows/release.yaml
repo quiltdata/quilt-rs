@@ -4,7 +4,7 @@ on:
     branches:
       - main
     paths:
-      - "**/Cargo.toml"
+      - "Cargo.toml"
       - ".github/workflows/release.yml"
 
 jobs:
