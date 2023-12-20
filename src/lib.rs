@@ -4,6 +4,8 @@ mod quilt;
 mod quilt4;
 mod s3_utils;
 
+pub use quilt;
+
 pub use quilt4:: {
     client::Client,
     domain::Domain,
