@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## [0.5.0] * 2023-12-20
+
+* Remove Poem dependency
+
 ## [0.4.4] * 2023-12-20
 
 * Use tracing::info! instead of println!
