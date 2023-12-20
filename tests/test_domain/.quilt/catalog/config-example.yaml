@@ -1,0 +1,32 @@
+---
+ui:
+  nav:
+    files: true
+    packages: true
+    queries: true
+  actions:
+    copyPackage: true
+    createPackage: true
+    revisePackage: true
+  package_description:
+    .*:
+      message: true
+      user_meta:
+        - $.Date
+        - $.Parts.0.1
+        - $.Parts.1.*
+    examples/metadata:
+      message: true
+      user_meta:
+        - $.cell_surface_area
+        - $.dna_surface_area
+        - $.flipdim
+        - $.angle[0]
+  package_description_multiline: false
+  sourceBuckets:
+    s3://quilt-example: {}
+  search:
+    mode: objects
+  blocks:
+    meta: true
+version: '1'

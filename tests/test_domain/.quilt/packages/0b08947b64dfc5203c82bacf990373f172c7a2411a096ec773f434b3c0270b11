@@ -1,0 +1,2 @@
+{"version": "v0", "message": "initial"}
+{"logical_key": "README.md", "physical_keys": ["s3://udp-spec/manual/force/README.md?versionId=B0zNSMELW__87yfYtZcfcdBw3qxHkFhm"], "size": 88, "hash": {"type": "SHA256", "value": "dd53e8f2bdb383f56ebfc759661effc3244da9ab1d37cb73f6eed8cf9edbbc05"}, "meta": {}}

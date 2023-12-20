@@ -1,0 +1,14 @@
+---
+version: '1'
+ui:
+  nav:
+    files: true
+    packages: true
+    queries: true
+  sourceBuckets:
+    s3://quilt-example: {}
+    s3://quilt-ernest-staging: {}
+  actions:
+    copyPackage: true
+    createPackage: true
+    revisePackage: true

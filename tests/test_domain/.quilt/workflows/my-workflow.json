@@ -1,0 +1,31 @@
+{
+    "$id": "quilt-my-workflow",
+	"$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+	"required": ["Name", "Owner", "Date", "Type"],
+    "properties": {
+        "Name": {
+            "type": "string"
+        },
+        "Owner": {
+            "type": "string",
+			"enum": ["Kevin", "Aneesh", "Ernest"]
+        },
+        "Date": {
+            "type": "string",
+            "format": "date",
+			"description": "YYYY-MM-DD"
+        },
+		"Notebook URL": {
+		  	"format": "uri",
+			"description": "Link to IDBS or Benchling"
+		},
+		"Type": {
+		  "type": "string",
+		  "enum": ["NGS", "CRISPR"]
+		},
+		"Notes": {
+		  	"type": "string"
+		}
+	}
+}
