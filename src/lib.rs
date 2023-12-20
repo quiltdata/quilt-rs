@@ -1,11 +1,10 @@
 use aws_sdk_s3::Error; // Import the Error type from the aws_sdk_s3 crate
 use tracing::info;
 mod api;
-mod quilt;
 mod quilt4;
 mod s3_utils;
 
-pub use quilt;
+pub mod quilt;
 
 pub use quilt4:: {
     client::Client,
