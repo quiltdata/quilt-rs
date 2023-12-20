@@ -80,12 +80,13 @@ impl UPath {
 
 #[cfg(test)]
 mod tests {
+    use tracing::info;
     use super::*;
     #[test]
     fn test_new_local() {
         let local_uri = utils::local_uri_parquet();
         let upath = UPath::new(local_uri.clone());
-        println!("upath: {:?}", upath);
+        info!("upath: {:?}", upath);
         assert_eq!(upath.uri, local_uri);
         let upath_string = upath.to_string();
         assert_eq!(upath_string, format!("UPath({})", local_uri));

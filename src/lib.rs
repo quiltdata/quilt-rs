@@ -1,4 +1,5 @@
 use aws_sdk_s3::Error; // Import the Error type from the aws_sdk_s3 crate
+use tracing::info;
 mod api;
 mod quilt;
 mod quilt4;
@@ -39,7 +40,7 @@ pub async fn manifest_from_uri(uri_string: String) -> Result<Manifest, Error> {
     let manifest: Manifest = browse_remote_package(local_domain.into(), uri)
         .await
         .expect("Failed to browse remote package");
-    println!("manifest: {:#?}", manifest);
+    info!("manifest: {:#?}", manifest);
     assert!(manifest.rows.len() > 0);
     manifest.rows.len();
     Ok(manifest)

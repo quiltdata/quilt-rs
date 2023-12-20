@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use aws_sdk_s3::Error;
 use aws_sdk_s3::Client as S3Client;
 use aws_types::region::Region;
+use tracing::info;
 
 use crate::api::LocalDomain;
 use crate::api::Manifest;
@@ -57,7 +58,7 @@ impl Client {
         let manifest: Manifest = browse_remote_package(local, uri)
             .await
             .expect("Failed to browse remote package");
-        println!("manifest: {:#?}", manifest);
+        info!("manifest: {:#?}", manifest);
         Ok(manifest)
     }
 
