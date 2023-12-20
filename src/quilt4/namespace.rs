@@ -9,8 +9,6 @@ use super::{
     manifest::Manifest4,
 };
 use serde::{Deserialize, Serialize};
-use aptos_openapi_link::impl_poem_type;
-impl_poem_type!(Namespace, "object", ());
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Namespace {

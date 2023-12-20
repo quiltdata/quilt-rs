@@ -6,9 +6,6 @@
 use std::collections::HashMap;
 use serde_json::Value as Json;
 use serde::{Deserialize, Serialize};
-use aptos_openapi_link::impl_poem_type;
-impl_poem_type!(Row3Hash, "object", ());
-impl_poem_type!(Row3, "object", ());
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Row3Hash {

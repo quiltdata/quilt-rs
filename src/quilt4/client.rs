@@ -25,8 +25,6 @@ use crate::api::browse_remote_package;
 use super::{
     domain::Domain, namespace::Namespace, manifest::Manifest4, entry::Entry4
 };
-use aptos_openapi_link::impl_poem_type;
-impl_poem_type!(Client, "object", ());
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Client {
@@ -41,7 +39,7 @@ impl Client {
         LocalDomain::new(cwd)
     }
 
-    pub async fn new() -> Self {
+    pub fn new() -> Self {
         Client {
             _s3_clients: HashMap::new(),
         }
@@ -104,6 +102,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_client_new() {
-        assert!(Client::new().await.to_string().contains("Client"));
+        assert!(Client::new().to_string().contains("Client"));
     }
 }

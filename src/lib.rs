@@ -15,6 +15,8 @@ pub use quilt4:: {
     table::Table,
     row4::Row4,
     upath::UPath,
+    uri::UriParser,
+    uri::UriQuilt,
 };
 
 pub use api::LocalDomain;

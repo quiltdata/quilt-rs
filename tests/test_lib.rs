@@ -14,7 +14,7 @@ async fn test_browse_remote_package() {
 #[tokio::test]
 async fn test_manifest3_from_uri() {
     // Arrange
-    let client = Client::new().await;
+    let client = Client::new();
 
     // Act
     let result = client.manifest3_from_uri(utils::TEST_URI_STRING.to_string()).await;
