@@ -11,8 +11,6 @@ use object_store::path::Path;
 use std::io;
 use multihash::Multihash;
 use serde::{Deserialize, Serialize};
-use aptos_openapi_link::impl_poem_type;
-impl_poem_type!(UPath, "object", ());
 
 use super::client::Client;
 use super::uri::UriParser;

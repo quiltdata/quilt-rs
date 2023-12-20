@@ -9,8 +9,6 @@ use super:: {
     namespace::Namespace,
 };
 use serde::{Deserialize, Serialize};
-use aptos_openapi_link::impl_poem_type;
-impl_poem_type!(Domain, "object", ());
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Domain {

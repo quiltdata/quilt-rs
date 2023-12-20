@@ -9,8 +9,6 @@ use multihash::Multihash;
 use serde_json::Value as Json;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use aptos_openapi_link::impl_poem_type;
-impl_poem_type!(Row4, "object", ());
 
 use super::{
     upath::UPath,
