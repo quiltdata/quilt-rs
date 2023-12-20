@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## [0.4.4] * 2023-12-20
+
+* Use tracing::info! instead of println!
+
 ## [0.4.3] * 2023-12-19
 
 * Expose quilt for QuiltSync transition

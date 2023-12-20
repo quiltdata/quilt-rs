@@ -6,6 +6,9 @@ on:
     paths:
       - "Cargo.toml"
       - ".github/workflows/release.yaml"
+env:
+  PACKAGE_VERSION: ""
+  PUBLISHED_VERSION: ""
 
 jobs:
   publish:

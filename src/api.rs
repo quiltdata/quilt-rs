@@ -1,6 +1,7 @@
 use futures::stream::{self, StreamExt, TryStreamExt};
 use serde::Serialize;
 use tokio::sync::Mutex;
+use tracing::info;
 
 pub use crate::quilt::{
     manifest::JsonObject, Manifest, ManifestHeader, S3PackageURI, RemoteManifest, LocalDomain,
@@ -105,7 +106,7 @@ pub async fn install_package(
     paths: Vec<String>,
     // force? for overwriting
 ) -> Result<(), String> {
-    println!("install_package({remote:?}, {paths:?})");
+    info!("install_package({remote:?}, {paths:?})");
     let installed_package = local_domain.lock().await.install_package(&remote).await?;
 
     installed_package.install_paths(&paths).await?;
@@ -120,7 +121,7 @@ pub async fn install_package_paths(
     paths: Vec<String>,
     // force? for overwriting
 ) -> Result<(), String> {
-    println!("install_package_paths({namespace}, {paths:?})");
+    info!("install_package_paths({namespace}, {paths:?})");
     local_domain
         .lock()
         .await
@@ -136,7 +137,7 @@ pub async fn uninstall_package(
     local_domain: Mutex<LocalDomain>,
     namespace: String,
 ) -> Result<(), String> {
-    println!("uninstall_package({namespace:?})");
+    info!("uninstall_package({namespace:?})");
     local_domain.lock().await.uninstall_package(namespace).await
 }
 
@@ -144,7 +145,7 @@ pub async fn browse_remote_manifest(
     local_domain: Mutex<LocalDomain>,
     remote: RemoteManifest,
 ) -> Result<Manifest, String> {
-    println!("browse_remote_manifest({remote:?})");
+    info!("browse_remote_manifest({remote:?})");
     local_domain
         .lock()
         .await
@@ -156,7 +157,7 @@ pub async fn browse_remote_package(
     local_domain: Mutex<LocalDomain>,
     uri: S3PackageURI,
 ) -> Result<Manifest, String> {
-    println!("browse_remote_package({uri:?})");
+    info!("browse_remote_package({uri:?})");
     local_domain.lock().await.browse_uri(&uri).await
 }
 
@@ -192,7 +193,7 @@ pub async fn commit(
     message: String,
     user_meta: Option<JsonObject>,
 ) -> Result<(), String> {
-    println!("commit('{namespace}', '{message}', {user_meta:?})");
+    info!("commit('{namespace}', '{message}', {user_meta:?})");
     let package = local_domain
         .lock()
         .await
@@ -207,7 +208,7 @@ pub async fn push_package(
     local_domain: Mutex<LocalDomain>,
     namespace: String,
 ) -> Result<(), String> {
-    println!("push_package({namespace})");
+    info!("push_package({namespace})");
     let package = local_domain
         .lock()
         .await
@@ -224,7 +225,7 @@ pub async fn pull_package(
     local_domain: Mutex<LocalDomain>,
     namespace: String,
 ) -> Result<(), String> {
-    println!("pull_package({namespace})");
+    info!("pull_package({namespace})");
     let package = local_domain
         .lock()
         .await
@@ -240,7 +241,7 @@ pub async fn certify_latest(
     local_domain: Mutex<LocalDomain>,
     namespace: String,
 ) -> Result<(), String> {
-    println!("certify_latest({namespace:?})");
+    info!("certify_latest({namespace:?})");
     local_domain
         .lock()
         .await
@@ -256,7 +257,7 @@ pub async fn reset_to_latest(
     local_domain: Mutex<LocalDomain>,
     namespace: String,
 ) -> Result<(), String> {
-    println!("reset_to_latest({namespace:?})");
+    info!("reset_to_latest({namespace:?})");
     local_domain
         .lock()
         .await

@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, HashSet};
 use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
+use tracing::info;
 
 use super::{Change, ChangeSet};
 
@@ -156,7 +157,7 @@ impl Manifest {
         let mut hasher = Sha256::new();
 
         let meta_str = serde_json::to_string(&self.header).unwrap();
-        println!("meta str: {}", meta_str);
+        info!("meta str: {}", meta_str);
         hasher.update(meta_str);
 
         for row in &self.rows {
@@ -179,7 +180,7 @@ impl Manifest {
             }
 
             let value_str = serde_json::to_string(&value).unwrap();
-            println!("value str: {}", value_str);
+            info!("value str: {}", value_str);
             hasher.update(value_str);
         }
 
