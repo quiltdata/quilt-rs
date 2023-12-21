@@ -14,7 +14,7 @@ path = "src/lib.rs"
 
 [dependencies]
 arrow = "49.0.0"
-async-trait = "0.1.74"
+async-trait = "0.1.75"
 aws-config = "1.1.1"
 aws-sdk-s3 = "1.8.0"
 aws-types = "1.1.1"
