@@ -30,7 +30,7 @@ impl Table {
         }
     }
     pub fn to_string(&self) -> String {
-        format!("Table({})", self.path4.as_ref().unwrap().to_string())
+        format!("Table({:?})", self.path4)
             + &format!("({:?})\n", self.path3)
             + &format!("[\n{:?}\n]", self.records)
     }
@@ -48,15 +48,18 @@ impl Table {
 
     // Read quilt4's Parquet format
     pub fn read4(&self) -> Result<Self, ArrowError> {
-        let path = self
+        let upath = self
             .path4
             .as_ref()
-            .ok_or(ArrowError::NotYetImplemented("only path4 supported".into()))?
-            .file_path
-            .as_ref()
-            .ok_or(ArrowError::NotYetImplemented(
-                "only file_path supported".into(),
-            ))?;
+            .ok_or(ArrowError::NotYetImplemented("only path4 supported".into()))?;
+        let path = match upath {
+            UPath::Local(path) => path,
+            UPath::S3 { bucket: _, path: _ } => {
+                return Err(ArrowError::NotYetImplemented(
+                    "s3 not implemented yet".into(),
+                ))
+            }
+        };
         let file = std::fs::File::open(&path)?;
         let mut reader_stream = ParquetRecordBatchReaderBuilder::try_new(file)?.build()?;
 
@@ -103,7 +106,7 @@ mod tests {
 
     #[test]
     fn read_existing() {
-        let table = Table::new(Some(UPath::new(&local_uri_parquet())));
+        let table = Table::new(Some(UPath::parse(&local_uri_parquet()).unwrap()));
         let new_table = table.read4().unwrap();
         dbg!(&new_table);
         assert!(new_table.records.len() == 1);

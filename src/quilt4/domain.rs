@@ -25,7 +25,7 @@ impl Domain {
     }
 
     pub fn to_string(&self) -> String {
-        format!("Domain({})^{}", self.path.to_string(), self._client.to_string())
+        format!("Domain({:?})^{}", self.path, self._client.to_string())
     }        
 
     pub async fn namespace_from_key(_pkg_name: &str) -> Option<Namespace> {

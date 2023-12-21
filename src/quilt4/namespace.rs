@@ -25,7 +25,7 @@ impl Namespace {
     }
 
     pub fn to_string(&self) -> String {
-        format!("Namespace({})^{}", self.path.to_string(), self._domain.to_string())
+        format!("Namespace({:?})^{}", self.path, self._domain.to_string())
     }
 
     pub async fn manifest_from_key(_manifest_tag: &str) -> Option<Manifest4> {

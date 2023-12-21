@@ -38,7 +38,7 @@ impl Manifest4 {
 
     pub fn to_string(&self) -> String {
         if self.path.is_some() {
-            format!("Manifest4({})^{}", self.path.as_ref().unwrap().to_string(), self._namespace.to_string())
+            format!("Manifest4({:?})^{}", self.path, self._namespace.to_string())
         } else {
             format!("Manifest4({})^{}", self.table.to_string(), self._namespace.to_string())
         }
