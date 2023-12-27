@@ -324,13 +324,13 @@ impl LocalDomain {
 
     pub async fn get_installed_package(
         &self,
-        namespace: &String,
+        namespace: &str,
     ) -> Result<Option<InstalledPackage>, String> {
         let lineage = self.read_lineage().await?;
         if lineage.packages.contains_key(namespace) {
             Ok(Some(InstalledPackage {
                 domain: self.to_owned(),
-                namespace: namespace.clone(),
+                namespace: namespace.to_owned(),
             }))
         } else {
             Ok(None)
@@ -905,7 +905,7 @@ impl InstalledPackage {
         // keeping track of the resulting versionIds
         //
         // TODO: FAIL if the remote bucket does NOT support versioning (as it would be destructive)
-        let client = crate::s3_utils::get_client_for_bucket(remote.bucket.clone()).await?;
+        let client = crate::s3_utils::get_client_for_bucket(&remote.bucket).await?;
 
         // ignore removed items, upload changed and new items
         for row in local_manifest.rows.iter_mut() {

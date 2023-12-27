@@ -20,7 +20,7 @@ impl S3Uri {
 
 pub async fn get_object_bytes(uri: &S3Uri) -> Result<Vec<u8>, String> {
     // real impl
-    let client = crate::s3_utils::get_client_for_bucket(uri.bucket.clone()).await?;
+    let client = crate::s3_utils::get_client_for_bucket(&uri.bucket).await?;
 
     let result = client.get_object().bucket(&uri.bucket).key(&uri.key);
 
@@ -60,7 +60,7 @@ pub async fn put_object_contents(
     uri: &S3Uri,
     contents: impl Into<ByteStream>,
 ) -> Result<(), String> {
-    let client = crate::s3_utils::get_client_for_bucket(uri.bucket.clone()).await?;
+    let client = crate::s3_utils::get_client_for_bucket(&uri.bucket).await?;
     client
         .put_object()
         .bucket(&uri.bucket)

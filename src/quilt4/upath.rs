@@ -26,8 +26,8 @@ pub struct UPath {
 }
 
 impl UPath {
-    pub fn new(uri_string: String) -> Self {
-        let uri = UriParser::try_from(&uri_string).unwrap();
+    pub fn new(uri_string: &str) -> Self {
+        let uri = UriParser::try_from(uri_string).unwrap();
         let file_path = if uri.scheme == "file" {
             Some(PathBuf::from(uri.path.clone()))
         } else {
@@ -44,7 +44,7 @@ impl UPath {
             None
         };
         UPath {
-            uri: uri_string,
+            uri: uri_string.to_owned(),
             file_path,
             object_path,
             object_bucket,
@@ -63,7 +63,7 @@ impl UPath {
         unimplemented!()
     }
 
-    pub async fn hash(&self, _algorithm: String) -> Multihash<128> {
+    pub async fn hash(&self, _algorithm: &str) -> Multihash<128> {
         // TODO: Implement hash method
         unimplemented!()
     }
@@ -83,7 +83,7 @@ mod tests {
     #[test]
     fn test_new_local() {
         let local_uri = utils::local_uri_parquet();
-        let upath = UPath::new(local_uri.clone());
+        let upath = UPath::new(&local_uri);
         info!("upath: {:?}", upath);
         assert_eq!(upath.uri, local_uri);
         let upath_string = upath.to_string();

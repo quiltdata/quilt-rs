@@ -79,7 +79,7 @@ impl Table {
     }
 
     // Get a row from the table
-    pub fn get_row(&self, _name: &String) -> Option<Row4> {
+    pub fn get_row(&self, _name: &str) -> Option<Row4> {
         // Implementation goes here
         unimplemented!()
     }
@@ -103,7 +103,7 @@ mod tests {
 
     #[test]
     fn read_existing() {
-        let table = Table::new(Some(UPath::new(local_uri_parquet())));
+        let table = Table::new(Some(UPath::new(&local_uri_parquet())));
         let new_table = table.read4().unwrap();
         dbg!(&new_table);
         assert!(new_table.records.len() == 1);

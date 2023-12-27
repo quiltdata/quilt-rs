@@ -74,7 +74,7 @@ fn mapify(input: &str) -> HashMap<String, String> {
         .collect()
 }
 
-fn normalize_input(input: &String) -> String {
+fn normalize_input(input: &str) -> String {
     let split = input.split_once("://");
     if split.is_some() {
         return input.to_string();
@@ -93,10 +93,10 @@ fn normalize_input(input: &String) -> String {
     format!("file://{}", body)
 }
 
-impl TryFrom<&String> for UriParser {
+impl TryFrom<&str> for UriParser {
     type Error = String;
 
-    fn try_from(input: &String) -> Result<Self, Self::Error> {
+    fn try_from(input: &str) -> Result<Self, Self::Error> {
 
         let uri_string = normalize_input(input);
         let parsed_url = Url::parse(&uri_string).map_err(|err| err.to_string())?;
@@ -134,7 +134,7 @@ mod tests {
     fn test_try_from_uri() {
         // Test valid input
         let input = "quilt+s3://example.com?param1=value1&param2=value2#package=my/package&path=my_path";
-        let result = UriParser::try_from(&input.to_string());
+        let result = UriParser::try_from(input);
         assert!(result.is_ok());
         let uri_parser = result.unwrap();
         assert_eq!(uri_parser.scheme, "quilt+s3");
@@ -154,7 +154,7 @@ mod tests {
     fn test_try_from_relative() {
         // Test valid input
         let input = "./my_domain/folder";
-        let result = UriParser::try_from(&input.to_string());
+        let result = UriParser::try_from(input);
         assert!(result.is_ok());
         let uri_parser = result.unwrap();
         assert_eq!(uri_parser.scheme, "file");

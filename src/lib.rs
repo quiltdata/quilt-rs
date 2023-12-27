@@ -34,10 +34,10 @@ pub use api::browse_remote_package;
 pub use api::browse_remote_manifest;
 pub use api::list_installed_packages;
 
-pub async fn manifest_from_uri(uri_string: String) -> Result<Manifest, Error> {
+pub async fn manifest_from_uri(uri_string: &str) -> Result<Manifest, Error> {
     let path_buf = std::env::current_dir().unwrap();
     let local_domain = LocalDomain::new(path_buf);
-    let uri = S3PackageURI::try_from(uri_string.as_str()).expect("Failed to parse URI");
+    let uri = S3PackageURI::try_from(uri_string).expect("Failed to parse URI");
     let manifest: Manifest = browse_remote_package(local_domain.into(), uri)
         .await
         .expect("Failed to browse remote package");
@@ -62,7 +62,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_manifest_from_uri() {
-        let uri = utils::TEST_URI_STRING.to_string();
+        let uri = utils::TEST_URI_STRING;
         let manifest = manifest_from_uri(uri).await;
         assert!(manifest.is_ok());
         assert!(manifest.unwrap().rows.len() > 0);

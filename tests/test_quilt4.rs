@@ -1,7 +1,7 @@
 use quilt_rs::*;
 use utils::local_uri_parquet;
 
-pub async fn make_manifest(path_name: String) -> Manifest4 {
+pub async fn make_manifest(path_name: &str) -> Manifest4 {
     let up = UPath::new(path_name);
     let cl = Client::new();
     let dom = Domain::new(cl.clone(), up.clone()).await;
@@ -17,7 +17,7 @@ pub async fn make_manifest(path_name: String) -> Manifest4 {
  
 #[tokio::test]
 async fn test_quilt4_manifest() {
-    let manifest = make_manifest(local_uri_parquet()).await;
+    let manifest = make_manifest(&local_uri_parquet()).await;
     // serialize manifest to Json using Serde
     let json = serde_json::to_string(&manifest).unwrap();
     assert!(json.contains("test"));

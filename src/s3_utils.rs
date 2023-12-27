@@ -28,10 +28,10 @@ lazy_static! {
     static ref REGION_CLIENTS: RwLock<HashMap<Region, aws_sdk_s3::Client>> = RwLock::new(HashMap::new());
 }
 
-pub async fn get_region_for_bucket(bucket: String) -> Result<Region, String> {
+pub async fn get_region_for_bucket(bucket: &str) -> Result<Region, String> {
     {
         let map = BUCKET_REGIONS.read().unwrap();
-        if let Some(region) = map.get(&bucket) {
+        if let Some(region) = map.get(bucket) {
             return Ok(region.clone());
         }
     }
@@ -40,7 +40,7 @@ pub async fn get_region_for_bucket(bucket: String) -> Result<Region, String> {
     let region = find_bucket_region(&http_client, &bucket).await?;
 
     let mut map = BUCKET_REGIONS.write().unwrap();
-    match map.entry(bucket) {
+    match map.entry(bucket.to_owned()) {
         Entry::Occupied(entry) => Ok(entry.get().clone()),
         Entry::Vacant(entry) => Ok(entry.insert(Region::new(region)).clone()),
     }
@@ -65,7 +65,7 @@ pub async fn get_client_for_region(region: aws_types::region::Region) -> aws_sdk
     }
 }
 
-pub async fn get_client_for_bucket(bucket: String) -> Result<aws_sdk_s3::Client, String> {
+pub async fn get_client_for_bucket(bucket: &str) -> Result<aws_sdk_s3::Client, String> {
     let region = get_region_for_bucket(bucket).await?.clone();
     Ok(get_client_for_region(region).await)
 }
