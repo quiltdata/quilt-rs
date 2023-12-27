@@ -6,7 +6,8 @@
 
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
-use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use parquet::arrow::ParquetRecordBatchStreamBuilder;
+use tokio_stream::StreamExt;
 
 use super::{row4::Row4, upath::UPath};
 use serde::{Deserialize, Serialize};
@@ -47,7 +48,7 @@ impl Table {
     }
 
     // Read quilt4's Parquet format
-    pub fn read4(&self) -> Result<Self, ArrowError> {
+    pub async fn read4(&self) -> Result<Self, ArrowError> {
         let upath = self
             .path4
             .as_ref()
@@ -60,11 +61,11 @@ impl Table {
                 ))
             }
         };
-        let file = std::fs::File::open(&path)?;
-        let mut reader_stream = ParquetRecordBatchReaderBuilder::try_new(file)?.build()?;
+        let file = tokio::fs::File::open(&path).await?;
+        let mut reader_stream = ParquetRecordBatchStreamBuilder::new(file).await?.build()?;
 
         let mut records = vec![];
-        while let Some(item) = reader_stream.next() {
+        while let Some(item) = reader_stream.next().await {
             records.push(item?);
         }
 
@@ -104,10 +105,10 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn read_existing() {
+    #[tokio::test]
+    async fn read_existing() {
         let table = Table::new(Some(UPath::parse(&local_uri_parquet()).unwrap()));
-        let new_table = table.read4().unwrap();
+        let new_table = table.read4().await.unwrap();
         dbg!(&new_table);
         assert!(new_table.records.len() == 1);
         assert!(new_table.records[0].num_rows() == 2);
