@@ -5,6 +5,7 @@ mod quilt4;
 mod s3_utils;
 
 pub mod quilt;
+pub mod data_yaml;
 
 pub use quilt4:: {
     client::Client,
