@@ -23,7 +23,7 @@ pub async fn find_bucket_region(client: &reqwest::Client, bucket: &str) -> Resul
 }
 
 lazy_static! {
-    // static ref HTTP_CLIENT: reqwest::Client = reqwest::Client::new();
+    static ref HTTP_CLIENT: reqwest::Client = reqwest::Client::new();
     static ref BUCKET_REGIONS: RwLock<HashMap<String, Region>> = RwLock::new(HashMap::new());
     static ref REGION_CLIENTS: RwLock<HashMap<Region, aws_sdk_s3::Client>> = RwLock::new(HashMap::new());
 }
@@ -36,8 +36,7 @@ pub async fn get_region_for_bucket(bucket: &str) -> Result<Region, String> {
         }
     }
 
-    let http_client = reqwest::Client::new(); // TODO: use a global here, too.
-    let region = find_bucket_region(&http_client, &bucket).await?;
+    let region = find_bucket_region(&HTTP_CLIENT, &bucket).await?;
 
     let mut map = BUCKET_REGIONS.write().unwrap();
     match map.entry(bucket.to_owned()) {
