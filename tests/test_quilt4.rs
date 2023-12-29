@@ -2,11 +2,11 @@ use quilt_rs::*;
 use utils::local_uri_parquet;
 
 pub async fn make_manifest(path_name: &str) -> Manifest4 {
-    let up = UPath::new(path_name);
+    let up = UPath::parse(path_name).unwrap();
     let cl = Client::new();
     let dom = Domain::new(cl.clone(), up.clone()).await;
     let nam = Namespace::new(dom, up.clone()).await;
-    let tab = Table::new(Some(up.clone())).read4().unwrap();
+    let tab = Table::new(Some(up.clone())).read4().await.unwrap();
     let manifest = Manifest4::new(
         nam.clone(),
         tab.clone(),
