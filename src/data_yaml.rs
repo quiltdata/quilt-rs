@@ -6,7 +6,7 @@
 /// and store them in the `env` field (unless overriden by the YAML file).
 /// 
 /// Every Entry contains a user, timestamp, action, and either a uri or a folder (or both).
-/// Typically, `quilt-rs` methods will log uri entriews in a registry,
+/// Typically, `quilt-rs` methods will log uri entries in a registry,
 /// and `quilt4` methods will log folder entries in a working directory.
 /// TBD: should those be two disjoint data structures?
 /// 
