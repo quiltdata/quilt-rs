@@ -16,7 +16,7 @@ use super::{
     namespace::Namespace,
     upath::UPath,
     table::Table,
-    entry::Entry4,
+    // entry::Entry4,
 };
 #[derive(Clone, Debug)]
 pub struct Manifest4<'a> {

@@ -2,7 +2,7 @@
 use async_trait::async_trait;
 #[async_trait]
 pub trait StringMap<'a, T> {
-  async fn get(&self, key: &str) -> Option<&T>;
+  async fn get(&self, key: &str) -> Option<T>;
   async fn insert(&mut self, key: &str, value: &T);
   async fn iter(&self) -> StringIterator;
 }
