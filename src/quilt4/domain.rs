@@ -33,32 +33,8 @@ impl Domain {
     pub fn to_string(&self) -> String {
         format!("Domain({:?})^{}", self.path, self._client.to_string())
     }        
-
-    pub async fn namespace_from_key(_pkg_name: &str) -> Option<Namespace> {
-        // TODO: Implement stub for namespace_from_key
-        unimplemented!()
-    }
-
-    pub async fn namespace_keys(&self) -> Vec<String> {
-        // TODO: Implement stub for namespace_keys
-        unimplemented!()
-    }
-
-    pub async fn namespace_objects(&self) -> Vec<Namespace> {
-        // TODO: Implement stub for namespace_objects
-        unimplemented!()
-    }
 }
 
-
-impl Iterator for Domain {
-  type Item = String;
-
-  fn next(&mut self) -> Option<Self::Item> {
-    // Implement the logic for iterating over the Domain struct
-    unimplemented!()
-  }
-}
 
 // TODO: cache Namespace objects for reuse
 #[async_trait]
@@ -69,7 +45,7 @@ impl<'a> StringMap<'a, Namespace<'a>> for Domain {
     Some(&namespace)
   }
 
-  async fn insert(&mut self, _key: &str, namespace: Namespace<'a>) {
+  async fn insert(&mut self, _key: &str, namespace: &Namespace) {
     let path: UPath = self.names.join(_key);
     namespace.relax(&self).await;
   }

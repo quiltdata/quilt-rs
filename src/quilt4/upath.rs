@@ -62,7 +62,7 @@ impl UPath {
     }
 
     pub async fn list(&self, _client: Client, depth: u8) -> Vec<Self> {
-      unimplemented!(depth)
+      unimplemented!("UPath::list({})", depth)
     }
 
     pub async fn exists(&self, _client: Client) -> bool { unimplemented!() }
