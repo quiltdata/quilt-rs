@@ -61,14 +61,14 @@ impl UPath {
         Self::parse(&uri.to_string()).unwrap()
     }
 
-    pub async fn list(&self, _client: Client, depth: u8) -> Vec<Self> {
+    pub async fn list(&self, _client: &Client, depth: u8) -> Vec<Self> {
       unimplemented!("UPath::list({})", depth)
     }
 
-    pub async fn exists(&self, _client: Client) -> bool { unimplemented!() }
+    pub async fn exists(&self, _client: &Client) -> bool { unimplemented!() }
 
-    pub async fn read_bytes(&self, _client: Client) -> io::Result<Vec<u8>> { unimplemented!() }
-    pub async fn write_bytes(&self, _client: Client, _input: Vec<u8>) -> io::Result<Vec<u8>> { unimplemented!() }
+    pub async fn read_bytes(&self, _client: &Client) -> io::Result<Vec<u8>> { unimplemented!() }
+    pub async fn write_bytes(&self, _client: &Client, _input: Vec<u8>) -> io::Result<Vec<u8>> { unimplemented!() }
 
     pub async fn parent(&self) -> Option<UPath> {
         // TODO: Implement parent method

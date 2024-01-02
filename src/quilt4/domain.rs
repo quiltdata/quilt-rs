@@ -38,7 +38,7 @@ impl Domain {
 // TODO: cache Namespace objects for reuse
 #[async_trait]
 impl<'a> StringMap<'a, Namespace<'a>> for Domain {
-    async fn get(&self, _key: &str) -> Option<Namespace> {
+    async fn get(&self, _key: &str) -> Option<Namespace<'a>> {
       let path: UPath = self.names.join(_key);
       let namespace = Namespace::new(self, path);
       Some(namespace)
@@ -46,11 +46,11 @@ impl<'a> StringMap<'a, Namespace<'a>> for Domain {
 
     async fn insert(&mut self, _key: &str, namespace: &Namespace) {
       let path: UPath = self.names.join(_key);
-      namespace.relax(&self).await;
+      namespace.relax(&self, path).await;
     }
 
     async fn iter(&self) -> StringIterator {
-      let items = self.names.list(self._client, 2).await;
+      let items = self.names.list(&self._client, 2).await;
       let string_items = items.iter().map(|item| item.to_string()).collect();
       StringIterator::new(string_items)
     }

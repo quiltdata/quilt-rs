@@ -27,12 +27,12 @@ impl<'a> Namespace<'a> {
     format!("Namespace({:?})^{}", self.path, self._domain.to_string())
   }
 
-  pub async fn relax(&self, target_domain: &Domain) -> Self {
+  pub async fn relax(&self, target_domain: &Domain, target_path: UPath) -> Self {
     // create a "relaxed" version of this Namespace in the target Domain
     // by copying all of the Manifests from this Namespace to the target Domain
     // and then returning a new Namespace object in the target Domain
     // that points to the copied Manifests
-    unimplemented!("Namespace::relax{}", target_domain.to_string())
+    unimplemented!("Namespace::relax{}@{}", target_domain.to_string(), target_path.to_string())
   }
 
   pub async fn manifest_from_key(_manifest_tag: &str) -> Option<Manifest4> {
