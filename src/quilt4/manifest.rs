@@ -19,42 +19,27 @@ use super::{
     entry::Entry4,
 };
 #[derive(Clone, Debug)]
-pub struct Manifest4 {
-    _namespace: &Namespace,
-    table: &Table,
+pub struct Manifest4<'a> {
+    _namespace: &'a Namespace<'a>,
+    table: &'a Table,
     path: Option<UPath>,
 }
 
-impl Manifest4 {
-    pub async fn new(_namespace: &Namespace, table: &Table, path: Option<UPath>) -> Self {
-        Manifest4 {
-            _namespace,
-            table,
-            path,
-        }
+impl<'a> Manifest4<'a> {
+  pub fn new(_namespace: &'a Namespace, table: &'a Table, path: Option<UPath>) -> Self {
+    Manifest4 {
+      _namespace,
+      table,
+      path,
     }
+  }
 
-    pub fn to_string(&self) -> String {
-        if self.path.is_some() {
-            format!("Manifest4({:?})^{}", self.path, self._namespace.to_string())
-        } else {
-            format!("Manifest4({})^{}", self.table.to_string(), self._namespace.to_string())
-        }
+  pub fn to_string(&self) -> String {
+    if self.path.is_some() {
+      format!("Manifest4({:?})^{}", self.path, self._namespace.to_string())
+    } else {
+      format!("Manifest4({})^{}", self.table.to_string(), self._namespace.to_string())
     }
-
-    pub async fn entry_from_key(_entry: &str) -> Option<Entry4> {
-        // TODO: Implement stub for entry_keys
-        unimplemented!()
-    }
-
-    pub async fn entry_keys(&self) -> Vec<String> {
-        // TODO: Implement stub for entry_keys
-        unimplemented!()
-    }
-
-    pub async fn entry_objects(&self) -> Vec<Entry4> {
-        // TODO: Implement stub for entry_objects
-        unimplemented!()
-    }
-    
+  }
 }
+
