@@ -18,17 +18,15 @@ use super::{
     table::Table,
     entry::Entry4,
 };
-use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug)]
 pub struct Manifest4 {
-    _namespace: Namespace,
-    table: Table,
+    _namespace: &Namespace,
+    table: &Table,
     path: Option<UPath>,
 }
 
 impl Manifest4 {
-    pub async fn new(_namespace: Namespace, table: Table, path: Option<UPath>) -> Self {
+    pub async fn new(_namespace: &Namespace, table: &Table, path: Option<UPath>) -> Self {
         Manifest4 {
             _namespace,
             table,

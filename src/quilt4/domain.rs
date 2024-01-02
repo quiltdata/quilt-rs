@@ -9,10 +9,9 @@ use super:: {
     namespace::Namespace,
     string_map::{StringMap, StringIterator},
 };
-use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug)]
 pub struct Domain {
     _client: Client,
     path: UPath,
