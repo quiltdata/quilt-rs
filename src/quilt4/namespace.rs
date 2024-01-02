@@ -11,13 +11,14 @@ use super::{
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Namespace {
-    _domain: Domain,
+pub struct Namespace<'a> {
+    #[serde(skip)]
+    _domain: &'a Domain,
     path: UPath,
 }
 
 impl Namespace {
-    pub async fn new(_domain: Domain, path: UPath) -> Self {
+    pub fn new(_domain: &Domain, path: UPath) -> Self {
         Namespace {
             _domain,
             path,
@@ -26,6 +27,14 @@ impl Namespace {
 
     pub fn to_string(&self) -> String {
         format!("Namespace({:?})^{}", self.path, self._domain.to_string())
+    }
+
+    pub async fn relax(&self, target_domain: &Domain) -> Self {
+      /// create a "relaxed" version of this Namespace in the target Domain
+      /// by copying all of the Manifests from this Namespace to the target Domain
+      /// and then returning a new Namespace object in the target Domain
+      /// that points to the copied Manifests
+      unimplemented!("Namespace::relax")
     }
 
     pub async fn manifest_from_key(_manifest_tag: &str) -> Option<Manifest4> {

@@ -7,20 +7,26 @@ use super:: {
     client::Client,
     upath::UPath,
     namespace::Namespace,
+    string_map::{StringMap, StringIterator},
 };
 use serde::{Deserialize, Serialize};
+use async_trait::async_trait;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Domain {
     _client: Client,
     path: UPath,
+    names: UPath,
 }
 
+static NAMESPACE_PATH: &'static str = ".quilt/named_packages";
 impl Domain {
-    pub async fn new(_client: Client, path: UPath) -> Self {
+    pub fn new(_client: Client, path: UPath) -> Self {
+        let names = path.join(NAMESPACE_PATH);
         Domain {
             _client,
             path,
+            names,
         }
     }
 
@@ -44,3 +50,33 @@ impl Domain {
     }
 }
 
+
+impl Iterator for Domain {
+  type Item = String;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    // Implement the logic for iterating over the Domain struct
+    unimplemented!()
+  }
+}
+
+// TODO: cache Namespace objects for reuse
+#[async_trait]
+impl<'a> StringMap<'a, Namespace<'a>> for Domain {
+  async fn get(&self, _key: &str) -> Option<&Namespace<'a>> {
+    let path: UPath = self.names.join(_key);
+    let namespace = Namespace::new(self, path);
+    Some(&namespace)
+  }
+
+  async fn insert(&mut self, _key: &str, namespace: Namespace<'a>) {
+    let path: UPath = self.names.join(_key);
+    namespace.relax(&self).await;
+  }
+
+  async fn iter(&self) -> StringIterator {
+    let items = self.names.list(self._client, 2).await;
+    let string_items = items.iter().map(|item| item.to_string()).collect();
+    StringIterator::new(string_items)
+  }
+}
