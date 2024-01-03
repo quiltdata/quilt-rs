@@ -73,7 +73,8 @@ impl<'a> StringMap<'a, String> for Namespace<'a> {
 
     async fn insert(&mut self, _key: &str, hash: &String) {
       let tag_path = self.path.join(_key);
-      tag_path.write_bytes(self.get_client(), hash.as_bytes()).await;
+      let result = tag_path.write_bytes(self.get_client(), hash.as_bytes()).await;
+      result.expect("Failed to write hash");
     }
 
     async fn iter(&self) -> StringIterator {

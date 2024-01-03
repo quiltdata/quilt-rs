@@ -25,11 +25,15 @@ pub struct Manifest4<'a> {
 }
 
 impl<'a> Manifest4<'a> {
-  pub async fn from_path(_client: &'a Client, path: UPath) -> Self {
-    let table = Table::new(Some(path));
-    Manifest4 {
-      _client,
-      table: table,
+  pub async fn from_path(_client: &'a Client, path: UPath) ->Option<Self> {
+    if path.exists(_client).await {
+      let table = Table::new(Some(path));
+      Some(Manifest4 {
+        _client,
+        table,
+      })
+    } else {
+      None
     }
   }
   
