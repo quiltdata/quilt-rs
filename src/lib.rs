@@ -7,7 +7,8 @@ mod s3_utils;
 pub mod quilt;
 
 pub use quilt4:: {
-    client::Client,
+    string_map::StringMap,
+    client::{Client, GetClient},
     domain::Domain,
     entry::Entry4,
     manifest::Manifest4,

@@ -13,33 +13,43 @@
 //! 
 
 use super::{
-    namespace::Namespace,
+    client::Client,
     upath::UPath,
     table::Table,
     // entry::Entry4,
 };
 #[derive(Clone, Debug)]
 pub struct Manifest4<'a> {
-    _namespace: &'a Namespace<'a>,
-    table: &'a Table,
-    path: Option<UPath>,
+    _client: &'a Client,
+    table: Table,
 }
 
 impl<'a> Manifest4<'a> {
-  pub fn new(_namespace: &'a Namespace, table: &'a Table, path: Option<UPath>) -> Self {
+  pub async fn from_path(_client: &'a Client, path: UPath) -> Self {
+    let table = Table::new(Some(path));
     Manifest4 {
-      _namespace,
+      _client,
+      table: table,
+    }
+  }
+  
+  pub fn new(_client: &'a Client, table: Table) -> Self {
+    Manifest4 {
+      _client,
       table,
-      path,
     }
   }
 
   pub fn to_string(&self) -> String {
-    if self.path.is_some() {
-      format!("Manifest4({:?})^{}", self.path, self._namespace.to_string())
-    } else {
-      format!("Manifest4({})^{}", self.table.to_string(), self._namespace.to_string())
-    }
+    format!("Manifest4({})", self.table.to_string())
+  }
+
+  pub fn hash(&self) -> String {
+    unimplemented!()
+  }
+
+  pub async fn write4(&self, _client: &Client, _path: UPath) {
+    unimplemented!()
   }
 }
 

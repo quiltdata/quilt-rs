@@ -68,7 +68,7 @@ impl UPath {
     pub async fn exists(&self, _client: &Client) -> bool { unimplemented!() }
 
     pub async fn read_bytes(&self, _client: &Client) -> io::Result<Vec<u8>> { unimplemented!() }
-    pub async fn write_bytes(&self, _client: &Client, _input: Vec<u8>) -> io::Result<Vec<u8>> { unimplemented!() }
+    pub async fn write_bytes(&self, _client: &Client, _input: &[u8]) -> io::Result<Vec<u8>> { unimplemented!() }
 
     pub async fn parent(&self) -> Option<UPath> {
         // TODO: Implement parent method
