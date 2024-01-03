@@ -13,7 +13,6 @@ use super::{
 };
 
 use async_trait::async_trait;
-use object_store::path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Debug)]
@@ -72,7 +71,7 @@ impl<'a> StringMap<'a, String> for Namespace<'a> {
         Some(hash_string)
     }
 
-    async fn insert(&mut self, _key: &str, hash: String) {
+    async fn insert(&mut self, _key: &str, hash: &String) {
       let tag_path = self.path.join(_key);
       tag_path.write_bytes(self.get_client(), hash.as_bytes()).await;
     }
