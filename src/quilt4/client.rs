@@ -26,6 +26,10 @@ use super::{
     domain::Domain, namespace::Namespace, manifest::Manifest4, entry::Entry4
 };
 
+pub trait GetClient {
+    fn get_client(&self) -> &Client;
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Client {
     #[serde(skip)]

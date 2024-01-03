@@ -2,6 +2,7 @@ pub mod uri;
 pub mod upath;
 pub mod row3;
 pub mod row4;
+pub mod string_map;
 pub mod table;
 pub mod client;
 pub mod domain;

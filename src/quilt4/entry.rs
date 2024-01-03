@@ -9,16 +9,15 @@ use super::{
     manifest::Manifest4,
     row4::Row4,
 };
-use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Entry4 {
-    _manifest: Manifest4,
+#[derive(Clone, Debug)]
+pub struct Entry4<'a> {
+    _manifest: &'a Manifest4<'a>,
     row4: Row4,
 }
 
-impl Entry4 {   
-    pub async fn new(_manifest: Manifest4, row4: Row4) -> Self {
+impl<'a> Entry4<'a> {   
+    pub async fn new(_manifest: &'a Manifest4<'a>, row4: Row4) -> Self {
         Entry4 {
             _manifest,
             row4,

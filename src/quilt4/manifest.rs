@@ -13,50 +13,47 @@
 //! 
 
 use super::{
-    namespace::Namespace,
+    client::Client,
     upath::UPath,
     table::Table,
-    entry::Entry4,
+    // entry::Entry4,
 };
-use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Manifest4 {
-    _namespace: Namespace,
+#[derive(Clone, Debug)]
+pub struct Manifest4<'a> {
+    _client: &'a Client,
     table: Table,
-    path: Option<UPath>,
 }
 
-impl Manifest4 {
-    pub async fn new(_namespace: Namespace, table: Table, path: Option<UPath>) -> Self {
-        Manifest4 {
-            _namespace,
-            table,
-            path,
-        }
+impl<'a> Manifest4<'a> {
+  pub async fn from_path(_client: &'a Client, path: UPath) ->Option<Self> {
+    if path.exists(_client).await {
+      let table = Table::new(Some(path));
+      Some(Manifest4 {
+        _client,
+        table,
+      })
+    } else {
+      None
     }
+  }
+  
+  pub fn new(_client: &'a Client, table: Table) -> Self {
+    Manifest4 {
+      _client,
+      table,
+    }
+  }
 
-    pub fn to_string(&self) -> String {
-        if self.path.is_some() {
-            format!("Manifest4({:?})^{}", self.path, self._namespace.to_string())
-        } else {
-            format!("Manifest4({})^{}", self.table.to_string(), self._namespace.to_string())
-        }
-    }
+  pub fn to_string(&self) -> String {
+    format!("Manifest4({})", self.table.to_string())
+  }
 
-    pub async fn entry_from_key(_entry: &str) -> Option<Entry4> {
-        // TODO: Implement stub for entry_keys
-        unimplemented!()
-    }
+  pub fn hash(&self) -> String {
+    unimplemented!()
+  }
 
-    pub async fn entry_keys(&self) -> Vec<String> {
-        // TODO: Implement stub for entry_keys
-        unimplemented!()
-    }
-
-    pub async fn entry_objects(&self) -> Vec<Entry4> {
-        // TODO: Implement stub for entry_objects
-        unimplemented!()
-    }
-    
+  pub async fn write4(&self, _client: &Client, _path: UPath) {
+    unimplemented!()
+  }
 }
+

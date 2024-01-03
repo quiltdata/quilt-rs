@@ -19,13 +19,11 @@ use tokio_stream::StreamExt;
 use crate::s3_utils::get_region_for_bucket;
 
 use super::{row4::Row4, upath::UPath};
-use serde::{Deserialize, Serialize};
 
 const HEADER_ROW: &str = ".";
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug)]
 pub struct Table {
-    #[serde(skip)]
     records: Vec<RecordBatch>, // Vec<RecordBatch>? DataFusion?
     path3: Option<UPath>,
     path4: Option<UPath>,

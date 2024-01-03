@@ -4,7 +4,7 @@ use quilt_rs::Client;
 
 #[tokio::test]
 async fn test_browse_remote_package() {
-    let manifest = manifest_from_uri(utils::TEST_URI_STRING.to_string()).await.unwrap();
+    let manifest = manifest_from_uri(utils::TEST_URI_STRING).await.unwrap();
     assert!(manifest.rows.len() > 0);
     let installed = installed_packages().await.unwrap();
     println!("installed: {:#?}", installed)
@@ -17,7 +17,7 @@ async fn test_manifest3_from_uri() {
     let client = Client::new();
 
     // Act
-    let result = client.manifest3_from_uri(utils::TEST_URI_STRING.to_string()).await;
+    let result = client.manifest3_from_uri(utils::TEST_URI_STRING).await;
 
     // Assert
     assert!(result.is_ok());
