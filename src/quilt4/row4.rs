@@ -17,15 +17,15 @@ use super::{
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Row4 {
-    name: String,
+    pub name: String,
     // scheme: Enum<file,s3,https>
-    place: String,
-    path: Option<UPath>,
-    size: usize,
+    pub place: String,
+    pub path: Option<UPath>,
+    pub size: u64,
     #[serde(skip)]
-    hash: Multihash<256>, // TODO: save as bytes versus encoded string
-    info: HashMap<String, Json>, // system metadata
-    meta: HashMap<String, Json>, // user metadata
+    pub hash: Multihash<256>,
+    pub info: HashMap<String, Json>, // system metadata
+    pub meta: HashMap<String, Json>, // user metadata
 }
 
 impl Row4 {
