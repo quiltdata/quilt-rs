@@ -11,7 +11,6 @@
 
 use std::collections::HashMap;
 use std::convert::TryFrom;
-use serde::{Deserialize, Serialize};
 use aws_sdk_s3::Error;
 use aws_sdk_s3::Client as S3Client;
 use aws_types::region::Region;
@@ -29,34 +28,32 @@ pub trait GetClient {
     fn get_client(&self) -> &Client;
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug)]
 pub struct Client {
-    #[serde(skip)]
     _s3_clients: HashMap<Region, S3Client>,
+    // TODO: lock
+    cache_domain: LocalDomain,
 }
 
 impl Client {
-
-    pub fn domain3() -> LocalDomain {
-        let cwd = std::env::current_dir().unwrap();
-        LocalDomain::new(cwd)
-    }
-
-    pub fn new() -> Self {
+    pub fn new(cache_domain: LocalDomain) -> Self {
         Client {
             _s3_clients: HashMap::new(),
+            cache_domain,
         }
     }
 
+    pub fn cache_domain(&self) -> &LocalDomain {
+        &self.cache_domain
+    }
 
     pub fn to_string(&self) -> String {
         format!("Client({})", std::env::current_dir().unwrap().to_string_lossy())
-    }        
+    }
 
     pub async fn manifest3_from_uri(&self, uri_string: &str) -> Result<Manifest, Error> {
         let uri = S3PackageURI::try_from(uri_string).expect("Failed to parse URI");
-        let local = Client::domain3();
-        let manifest = local.browse_uri(&uri).await.expect("Failed to browse remote package");
+        let manifest = self.cache_domain.browse_uri(&uri).await.expect("Failed to browse remote package");
         info!("manifest: {:#?}", manifest);
         Ok(manifest)
     }
@@ -99,10 +96,13 @@ impl Client {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
 
     #[tokio::test]
     async fn test_client_new() {
-        assert!(Client::new().to_string().contains("Client"));
+        let domain = LocalDomain::new(PathBuf::new());
+        assert!(Client::new(domain).to_string().contains("Client"));
     }
 }

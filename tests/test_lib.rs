@@ -1,3 +1,4 @@
+use quilt_rs::LocalDomain;
 use quilt_rs::manifest_from_uri;
 use quilt_rs::installed_packages;
 use quilt_rs::Client;
@@ -14,7 +15,8 @@ async fn test_browse_remote_package() {
 #[tokio::test]
 async fn test_manifest3_from_uri() {
     // Arrange
-    let client = Client::new();
+    let temp_dir = temp_testdir::TempDir::default();
+    let client = Client::new(LocalDomain::new(temp_dir.to_path_buf()));
 
     // Act
     let result = client.manifest3_from_uri(utils::TEST_URI_STRING).await;
