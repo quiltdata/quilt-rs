@@ -15,7 +15,7 @@ use super::{
     row3::Row3,
 };
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct Row4 {
     pub name: String,
     // scheme: Enum<file,s3,https>

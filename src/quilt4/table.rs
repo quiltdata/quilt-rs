@@ -12,15 +12,20 @@ use std::{
 
 use arrow::{
     array::{GenericByteArray, UInt64Array},
-    datatypes::{BinaryType, Utf8Type},
+    datatypes::{BinaryType, DataType, Field, Schema, Utf8Type},
     error::ArrowError,
+    record_batch::RecordBatch,
 };
 use aws_sdk_s3::config::ProvideCredentials;
 use multihash::Multihash;
 use object_store::{aws::AmazonS3Builder, ObjectStore};
-use parquet::arrow::{
-    async_reader::{AsyncFileReader, ParquetObjectReader},
-    ParquetRecordBatchStreamBuilder,
+use parquet::{
+    arrow::{
+        async_reader::{AsyncFileReader, ParquetObjectReader},
+        AsyncArrowWriter, ParquetRecordBatchStreamBuilder,
+    },
+    basic::Compression,
+    file::properties::WriterProperties,
 };
 use tokio_stream::StreamExt;
 
@@ -193,9 +198,59 @@ impl Table {
     }
 
     // Write quilt4's Parquet format
-    pub fn write4(&self) -> Result<(), ArrowError> {
-        // Implementation goes here
-        unimplemented!()
+    pub async fn write4(&self) -> Result<(), ArrowError> {
+        let upath = self
+            .path4
+            .as_ref()
+            .ok_or(ArrowError::NotYetImplemented("only path4 supported".into()))?;
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("name", DataType::Utf8, false),
+            Field::new("place", DataType::Utf8, false),
+            Field::new("size", DataType::UInt64, false),
+            Field::new("multihash", DataType::Binary, false),
+            Field::new("meta.json", DataType::Utf8, false),
+            Field::new("info.json", DataType::Utf8, false),
+        ]));
+
+        let props = WriterProperties::builder()
+            .set_compression(Compression::SNAPPY)
+            .build();
+
+        match upath {
+            UPath::Local(path) => {
+                let file = tokio::fs::File::create(path).await?;
+                let mut writer =
+                    AsyncArrowWriter::try_new(file, schema.clone(), 10 * 1024, Some(props))
+                        .unwrap();
+
+                for row in self.records.values() {
+                    let hash: &[u8] = &row.hash.to_bytes();
+                    let batch = RecordBatch::try_new(
+                        schema.clone(),
+                        vec![
+                            Arc::new(GenericByteArray::<Utf8Type>::from(vec![row.name.as_str()])),
+                            Arc::new(GenericByteArray::<Utf8Type>::from(vec![row.place.as_str()])),
+                            Arc::new(UInt64Array::from(vec![row.size])),
+                            Arc::new(GenericByteArray::<BinaryType>::from(vec![hash])),
+                            Arc::new(GenericByteArray::<Utf8Type>::from(vec![
+                                serde_json::to_string(&row.meta).unwrap(),
+                            ])),
+                            Arc::new(GenericByteArray::<Utf8Type>::from(vec![
+                                serde_json::to_string(&row.info).unwrap(),
+                            ])),
+                        ],
+                    )?;
+                    writer.write(&batch).await?;
+                }
+                writer.close().await?;
+
+                Ok(())
+            }
+            UPath::S3 { bucket: _, path: _ } => Err(ArrowError::NotYetImplemented(
+                "only local path4 supported".into(),
+            )),
+        }
     }
 
     // Get a row from the table
@@ -222,14 +277,37 @@ mod tests {
 
     #[tokio::test]
     async fn read_existing_local() {
-        let table = Table::new(Some(UPath::parse(&local_uri_parquet()).unwrap()));
-        let new_table = table.read4().await.unwrap();
-        assert_eq!(new_table.records.len(), 3);
+        let empty = Table::new(Some(UPath::parse(&local_uri_parquet()).unwrap()));
+        let table = empty.read4().await.unwrap();
+        assert_eq!(table.records.len(), 3);
 
-        let header = new_table.get_header().unwrap();
+        let header = table.get_header().unwrap();
         assert_eq!(header.size, 0);
 
-        let readme = new_table.get_row("READ ME.md").unwrap();
+        let readme = table.get_row("READ ME.md").unwrap();
         assert_eq!(readme.size, 33);
+    }
+
+    #[tokio::test]
+    async fn read_write_local() {
+        let empty = Table::new(Some(UPath::parse(&local_uri_parquet()).unwrap()));
+        let table1 = empty.read4().await.unwrap();
+        assert_eq!(table1.records.len(), 3);
+
+        let temp_dir = temp_testdir::TempDir::default();
+        let temp_file = temp_dir.join("test.parquet");
+        let temp_path = UPath::Local(temp_file);
+
+        let table2 = Table {
+            records: table1.records.clone(),
+            path3: None,
+            path4: Some(temp_path),
+        };
+        table2.write4().await.unwrap();
+
+        let table3 = table2.read4().await.unwrap();
+
+        assert_eq!(table3.records.len(), 3);
+        assert_eq!(table3.records, table2.records);
     }
 }
