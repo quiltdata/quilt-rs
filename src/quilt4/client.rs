@@ -17,10 +17,9 @@ use aws_sdk_s3::Client as S3Client;
 use aws_types::region::Region;
 use tracing::info;
 
-use crate::api::LocalDomain;
-use crate::api::Manifest;
-use crate::api::S3PackageURI;
-use crate::api::browse_remote_package;
+use crate::LocalDomain;
+use crate::Manifest;
+use crate::S3PackageURI;
 
 use super::{
     domain::Domain, namespace::Namespace, manifest::Manifest4, entry::Entry4
@@ -56,10 +55,8 @@ impl Client {
 
     pub async fn manifest3_from_uri(&self, uri_string: &str) -> Result<Manifest, Error> {
         let uri = S3PackageURI::try_from(uri_string).expect("Failed to parse URI");
-        let local = Client::domain3().into();
-        let manifest: Manifest = browse_remote_package(local, uri)
-            .await
-            .expect("Failed to browse remote package");
+        let local = Client::domain3();
+        let manifest = local.browse_uri(&uri).await.expect("Failed to browse remote package");
         info!("manifest: {:#?}", manifest);
         Ok(manifest)
     }
