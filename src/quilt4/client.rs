@@ -19,6 +19,9 @@ use tracing::info;
 use crate::LocalDomain;
 use crate::Manifest;
 use crate::S3PackageURI;
+use crate::Table;
+use crate::UPath;
+use crate::quilt::RemoteManifest;
 
 use super::{
     domain::Domain, namespace::Namespace, manifest::Manifest4, entry::Entry4
@@ -83,9 +86,17 @@ impl Client {
         unimplemented!()
     }
 
-    pub async fn manifest_from_uri(_uri: &str) -> Option<Manifest4> {
-        // Implementation goes here
-        unimplemented!()
+    pub async fn manifest_from_uri(&self, uri_string: &str) -> Result<Manifest4, Error> {
+        let uri = S3PackageURI::try_from(uri_string).expect("Failed to parse URI");
+        let remote_manifest = RemoteManifest::resolve(&uri).await.expect("Failed to resolve URI");
+        let cached = self.cache_domain.cache_remote_manifest(&remote_manifest).await.expect("Failed to cache the manifest");
+
+        let path = self.cache_domain.manifest_cache_path(&cached.bucket, &cached.hash);
+        let upath = UPath::Local(path);
+        let table = Table::read_from_upath(&upath).await.expect("Failed to read the manifest");
+        let manifest = Manifest4::new(upath, Some(table));
+
+        Ok(manifest)
     }
 
     pub async fn entry_from_uri(_uri: &str) -> Option<Entry4> {
