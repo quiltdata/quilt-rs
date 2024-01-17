@@ -12,17 +12,32 @@ async fn test_browse_remote_package() {
     //assert!(installed.len() > 0);
 }
 
+// #[tokio::test]
+// async fn test_manifest3_from_uri() {
+//     // Arrange
+//     let temp_dir = temp_testdir::TempDir::default();
+//     let client = Client::new(LocalDomain::new(temp_dir.to_path_buf()));
+
+//     // Act
+//     let result = client.manifest3_from_uri(utils::TEST_URI_STRING).await;
+
+//     // Assert
+//     assert!(result.is_ok());
+//     let manifest = result.unwrap();
+//     assert!(manifest.rows.len() > 0);
+// }
+
 #[tokio::test]
-async fn test_manifest3_from_uri() {
+async fn test_manifest_from_uri() {
     // Arrange
     let temp_dir = temp_testdir::TempDir::default();
     let client = Client::new(LocalDomain::new(temp_dir.to_path_buf()));
 
     // Act
-    let result = client.manifest3_from_uri(utils::TEST_URI_STRING).await;
+    let result = client.manifest_from_uri(utils::TEST_URI_STRING).await;
 
     // Assert
     assert!(result.is_ok());
     let manifest = result.unwrap();
-    assert!(manifest.rows.len() > 0);
+    assert!(manifest.table().unwrap().records.len() > 0);
 }

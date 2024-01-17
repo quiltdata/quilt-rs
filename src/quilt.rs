@@ -3,11 +3,12 @@ use std::{
     path::PathBuf,
 };
 
-use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::{error::SdkError, primitives::ByteStream};
+use multihash::Multihash;
 use serde::{Deserialize, Serialize};
 use tokio::{
     fs::{create_dir_all, read_dir, remove_dir_all, File},
-    io::AsyncWriteExt,
+    io::{AsyncReadExt, AsyncWriteExt},
 };
 use url::Url;
 
@@ -16,7 +17,7 @@ pub mod manifest;
 pub mod storage;
 pub mod uri;
 
-use crate::s3_utils;
+use crate::{quilt4::table::HEADER_ROW, s3_utils, Row4, Table, UPath};
 
 pub use self::{
     // context::Context,
@@ -193,21 +194,95 @@ impl LocalDomain {
 
         let cache_path = self.manifest_cache_path(&manifest.bucket, &manifest.hash);
 
+        // TODO: who is responsible for this?
+        create_dir_all(&cache_path.parent().unwrap())
+            .await
+            .map_err(|err| err.to_string())?;
+
         if !fs::exists(&cache_path).await {
             // Does not exist yet
-            let obj_uri = s3::S3Uri {
-                bucket: manifest.bucket.clone(),
-                key: format!("{}/{}", MANIFEST_DIR, &manifest.hash),
-                version: None,
-            };
+            let client = crate::s3_utils::get_client_for_bucket(&manifest.bucket).await?;
 
-            let contents = s3::get_object_contents(&obj_uri)
-                .await
-                .map_err(|err| format!("Failed to download manifest from {obj_uri:?}: {err}"))?;
+            let result = client
+                .get_object()
+                .bucket(&manifest.bucket)
+                .key(format!("1220{}/{}.parquet", MANIFEST_DIR, &manifest.hash))
+                .send()
+                .await;
 
-            fs::write(&cache_path, contents.as_bytes())
-                .await
-                .map_err(|err| format!("Failed to write manifest to {cache_path:?}: {err}"))?;
+            match result {
+                Ok(output) => {
+                    let mut contents = Vec::new();
+                    output
+                        .body
+                        .into_async_read()
+                        .read_to_end(&mut contents)
+                        .await
+                        .map_err(|err| err.to_string())?;
+
+                    fs::write(&cache_path, &contents).await.map_err(|err| {
+                        format!("Failed to write manifest to {cache_path:?}: {err}")
+                    })?;
+                }
+                Err(SdkError::ServiceError(err)) if err.err().is_no_such_key() => {
+                    // Fallback: Download the JSONL manifest.
+                    let result = client
+                        .get_object()
+                        .bucket(&manifest.bucket)
+                        .key(format!("{}/{}", MANIFEST_DIR, &manifest.hash))
+                        .send()
+                        .await
+                        .map_err(|err| {
+                            err.into_service_error()
+                                .meta()
+                                .message()
+                                .unwrap_or("failed to download s3 object")
+                                .to_string()
+                        })?;
+
+                    let quilt3_manifest =
+                        Manifest::from_file(result.body.into_async_read()).await?;
+                    let header = Row4 {
+                        name: HEADER_ROW.into(),
+                        place: HEADER_ROW.into(),
+                        path: None,
+                        size: 0,
+                        hash: Multihash::default(),
+                        info: HashMap::new(),
+                        meta: HashMap::new(),
+                    };
+                    let mut records = BTreeMap::new();
+                    for row in quilt3_manifest.rows {
+                        let ContentHash::SHA256(hash) = row.hash;
+                        let hash_bytes = hex::decode(hash).map_err(|err| err.to_string())?;
+                        records.insert(
+                            row.logical_key.clone(),
+                            Row4 {
+                                name: row.logical_key,
+                                place: row.physical_key,
+                                path: None,
+                                size: row.size,
+                                hash: Multihash::wrap(0x16, &hash_bytes).unwrap(),
+                                info: HashMap::new(),
+                                meta: HashMap::new(),
+                            },
+                        );
+                    }
+                    let table = Table { header, records };
+                    table
+                        .write_to_upath(&UPath::Local(cache_path))
+                        .await
+                        .map_err(|err| err.to_string())?;
+                }
+                Err(err) => {
+                    return Err(err
+                        .into_service_error()
+                        .meta()
+                        .message()
+                        .unwrap_or("failed to download s3 object")
+                        .to_string());
+                }
+            }
         }
 
         Ok(CachedManifest {
@@ -1071,7 +1146,6 @@ impl InstalledPackage {
 
         Ok(())
     }
-
 
     pub async fn certify_latest(&self) -> Result<(), String> {
         let mut lineage = self.lineage().await?;

@@ -14,10 +14,8 @@ use std::convert::TryFrom;
 use aws_sdk_s3::Error;
 use aws_sdk_s3::Client as S3Client;
 use aws_types::region::Region;
-use tracing::info;
 
 use crate::LocalDomain;
-use crate::Manifest;
 use crate::S3PackageURI;
 use crate::Table;
 use crate::UPath;
@@ -54,12 +52,12 @@ impl Client {
         format!("Client({})", std::env::current_dir().unwrap().to_string_lossy())
     }
 
-    pub async fn manifest3_from_uri(&self, uri_string: &str) -> Result<Manifest, Error> {
-        let uri = S3PackageURI::try_from(uri_string).expect("Failed to parse URI");
-        let manifest = self.cache_domain.browse_uri(&uri).await.expect("Failed to browse remote package");
-        info!("manifest: {:#?}", manifest);
-        Ok(manifest)
-    }
+    // pub async fn manifest3_from_uri(&self, uri_string: &str) -> Result<Manifest, Error> {
+    //     let uri = S3PackageURI::try_from(uri_string).expect("Failed to parse URI");
+    //     let manifest = self.cache_domain.browse_uri(&uri).await.expect("Failed to browse remote package");
+    //     info!("manifest: {:#?}", manifest);
+    //     Ok(manifest)
+    // }
 
     pub async fn domain_from_key(_registry_uri: &str) -> Option<Domain> {
         // Implementation goes here

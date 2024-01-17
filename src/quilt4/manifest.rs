@@ -28,6 +28,14 @@ impl Manifest4 {
         Manifest4 { path, table }
     }
 
+    pub fn path(&self) -> &UPath {
+        &self.path
+    }
+
+    pub fn table(&self) -> Option<&Table> {
+        self.table.as_ref()
+    }
+
     pub fn to_string(&self) -> String {
         format!("Manifest4({:?}, {:?})", self.path, self.table)
     }

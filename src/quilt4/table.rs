@@ -34,7 +34,7 @@ use crate::s3_utils::get_region_for_bucket;
 
 use super::{row4::Row4, upath::UPath};
 
-const HEADER_ROW: &str = ".";
+pub const HEADER_ROW: &str = ".";
 
 #[derive(Clone, Debug)]
 pub struct Table {
