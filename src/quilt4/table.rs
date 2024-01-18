@@ -37,34 +37,12 @@ const HEADER_ROW: &str = ".";
 
 #[derive(Clone, Debug)]
 pub struct Table {
-    records: BTreeMap<String, Row4>,
-    path3: Option<UPath>,
-    path4: Option<UPath>,
+    pub records: BTreeMap<String, Row4>,
 }
 
 impl Table {
-    pub fn new(path: Option<UPath>) -> Self {
-        Table {
-            records: BTreeMap::new(),
-            path3: None,
-            path4: path.clone(),
-        }
-    }
     pub fn to_string(&self) -> String {
-        format!("Table({:?})", self.path4)
-            + &format!("({:?})\n", self.path3)
-            + &format!("[\n{:?}\n]", self.records)
-    }
-    // Read quilt3's JSONL format
-    pub fn read3(&self) -> Result<Self, ArrowError> {
-        // Implementation goes here
-        unimplemented!()
-    }
-
-    // Write quilt3's JSONL format
-    pub fn write3(&self) -> Result<(), ArrowError> {
-        // Implementation goes here
-        unimplemented!()
+        format!("Table({:?})", self.records)
     }
 
     async fn read_rows_impl<T>(reader: T) -> Result<BTreeMap<String, Row4>, ArrowError>
@@ -144,12 +122,7 @@ impl Table {
     }
 
     // Read quilt4's Parquet format
-    pub async fn read4(&self) -> Result<Self, ArrowError> {
-        let upath = self
-            .path4
-            .as_ref()
-            .ok_or(ArrowError::NotYetImplemented("only path4 supported".into()))?;
-
+    pub async fn read_from_upath(upath: &UPath) -> Result<Self, ArrowError> {
         let records = match upath {
             UPath::Local(path) => {
                 let file = tokio::fs::File::open(&path).await?;
@@ -190,20 +163,11 @@ impl Table {
             }
         }?;
 
-        Ok(Self {
-            records,
-            path3: self.path3.clone(),
-            path4: self.path4.clone(),
-        })
+        Ok(Self { records })
     }
 
     // Write quilt4's Parquet format
-    pub async fn write4(&self) -> Result<(), ArrowError> {
-        let upath = self
-            .path4
-            .as_ref()
-            .ok_or(ArrowError::NotYetImplemented("only path4 supported".into()))?;
-
+    pub async fn write_to_upath(&self, upath: &UPath) -> Result<(), ArrowError> {
         let schema = Arc::new(Schema::new(vec![
             Field::new("name", DataType::Utf8, false),
             Field::new("place", DataType::Utf8, false),
@@ -277,8 +241,9 @@ mod tests {
 
     #[tokio::test]
     async fn read_existing_local() {
-        let empty = Table::new(Some(UPath::parse(&local_uri_parquet()).unwrap()));
-        let table = empty.read4().await.unwrap();
+        let table = Table::read_from_upath(&UPath::parse(&local_uri_parquet()).unwrap())
+            .await
+            .unwrap();
         assert_eq!(table.records.len(), 3);
 
         let header = table.get_header().unwrap();
@@ -290,24 +255,22 @@ mod tests {
 
     #[tokio::test]
     async fn read_write_local() {
-        let empty = Table::new(Some(UPath::parse(&local_uri_parquet()).unwrap()));
-        let table1 = empty.read4().await.unwrap();
+        let table1 = Table::read_from_upath(&UPath::parse(&local_uri_parquet()).unwrap())
+            .await
+            .unwrap();
         assert_eq!(table1.records.len(), 3);
 
         let temp_dir = temp_testdir::TempDir::default();
         let temp_file = temp_dir.join("test.parquet");
         let temp_path = UPath::Local(temp_file);
 
-        let table2 = Table {
-            records: table1.records.clone(),
-            path3: None,
-            path4: Some(temp_path),
-        };
-        table2.write4().await.unwrap();
+        table1.write_to_upath(&temp_path).await.unwrap();
 
-        let table3 = table2.read4().await.unwrap();
+        let table2 = Table::read_from_upath(&temp_path)
+            .await
+            .unwrap();
 
-        assert_eq!(table3.records.len(), 3);
-        assert_eq!(table3.records, table2.records);
+        assert_eq!(table2.records.len(), 3);
+        assert_eq!(table2.records, table1.records);
     }
 }
