@@ -30,9 +30,9 @@ impl AvailablePackage {
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct InstalledPackageState {
-    remote: RemoteManifest,
-    compatible: bool,
-    modified: bool, // expose changed paths? diff?
+    pub remote: RemoteManifest,
+    pub compatible: bool,
+    pub modified: bool, // expose changed paths? diff?
 }
 
 #[allow(dead_code)]
@@ -50,11 +50,11 @@ impl InstalledPackageState {
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct InstallPreflightCheck {
     // whether it's safe to automatically install the package/paths
-    safe: bool,
-    path_valid: bool,
+    pub safe: bool,
+    pub path_valid: bool,
     // resolved remote manifest location
-    remote: RemoteManifest,
-    installed: Option<InstalledPackageState>,
+    pub remote: RemoteManifest,
+    pub installed: Option<InstalledPackageState>,
 }
 
 // Commands

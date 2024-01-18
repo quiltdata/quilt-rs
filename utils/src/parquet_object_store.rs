@@ -11,7 +11,7 @@ use object_store::{
 use parquet::arrow::{async_reader::ParquetObjectReader, ParquetRecordBatchStreamBuilder};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ManifestRow {
+pub struct ManifestRow {
     name: String,
     place: String,
     size: i64,

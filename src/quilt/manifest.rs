@@ -23,7 +23,7 @@ pub enum ContentHash {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-struct Quilt3ManifestRow {
+pub struct Quilt3ManifestRow {
     pub logical_key: String,
     pub physical_keys: Vec<String>,
     pub hash: ContentHash,
