@@ -23,17 +23,6 @@ pub struct Manifest4 {
 }
 
 impl Manifest4 {
-  pub async fn from_path(path: UPath) ->Option<Self> {
-    if path.exists().await {
-      let table = Table::new(Some(path));
-      Some(Manifest4 {
-        table,
-      })
-    } else {
-      None
-    }
-  }
-  
   pub fn new(table: Table) -> Self {
     Manifest4 {
       table,
