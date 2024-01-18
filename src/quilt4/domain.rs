@@ -40,25 +40,25 @@ impl<'a> Domain<'a> {
     format!("Domain({:?})^{}", self.path, self._client.to_string())
   }
 
-  pub async fn get_latest<'a1, 'a2, 'a3>(&'a2 self, name: &'a3 str) -> Option<Manifest4<'a>> where 'a2: 'a {
+  pub async fn get_latest(&self, name: &str) -> Manifest4 {
     let namespace = self.get(name).await.unwrap();
     let hash_value = namespace.get(&NAMESPACE_LATEST).await.unwrap();
     let manifest = self.get_manifest(&hash_value).await;
     manifest
   }
 
-  pub async fn get_manifest<'a1, 'a2, 'a3>(&'a2 self, hash: &'a3 str) -> Option<Manifest4<'a>> where 'a2: 'a {
+  pub async fn get_manifest(&self, hash: &str) -> Manifest4 {
     let filename = format!("{}.parquet", hash);
     let path: UPath = self.manifests.join(&filename);
-    let manifest = Manifest4::from_path(self.get_client(), path).await;
+    let manifest = Manifest4::new(path, None);
     manifest
     // FIXME: lifetime may not live long enough
   }
 
-  pub async fn insert_manifest(&mut self, manifest: &Manifest4<'a>) {
+  pub async fn insert_manifest(&mut self, manifest: &Manifest4) {
       let key = manifest.hash();
       let man_path = self.manifests.join(&key);
-      manifest.write4(self.get_client(), man_path).await;
+      manifest.write(man_path).await;
   }
  
 }
