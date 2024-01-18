@@ -445,6 +445,21 @@ impl InstalledPackage {
             .cloned()
     }
 
+    pub async fn bucket(&self) -> Result<String, String> {
+        self.lineage().await.map(|l| l.remote.bucket)
+    }
+
+    pub async fn to_uri_string(&self) -> Result<String, String> {
+        self.lineage()
+            .await
+            .map(|l| format!(
+                "s3://{}/{}@{}",
+                l.remote.bucket,
+                self.namespace,
+                l.current_hash()
+            ))
+    }   
+
     pub async fn write_lineage(&self, lineage: PackageLineage) -> Result<(), String> {
         let mut domain_lineage = self.domain.read_lineage().await?;
         domain_lineage
