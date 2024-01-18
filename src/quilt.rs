@@ -33,6 +33,8 @@ const OBJECTS_DIR: &str = ".quilt/objects";
 const LINEAGE_FILE: &str = ".quilt/data.json";
 const INSTALLED_DIR: &str = ".quilt/installed";
 
+const MULTIHASH_SHA256: u64 = 0x16;
+
 pub fn tag_key(namespace: &str, tag: &str) -> String {
     format!("{TAGS_DIR}/{namespace}/{tag}")
 }
@@ -92,10 +94,13 @@ pub struct CachedManifest {
 }
 
 impl CachedManifest {
-    pub async fn read(&self) -> Result<Manifest, String> {
-        let path = self.domain.manifest_cache_path(&self.bucket, &self.hash);
-        let file = fs::open(&path).await?;
-        Manifest::from_file(file).await
+    pub async fn read(&self) -> Result<Table, String> {
+        let pathbuf = self.domain.manifest_cache_path(&self.bucket, &self.hash);
+        let path = UPath::Local(pathbuf);
+        let table = Table::read_from_upath(&path)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(table)
     }
 }
 
@@ -106,13 +111,16 @@ pub struct InstalledManifest {
 }
 
 impl InstalledManifest {
-    pub async fn read(&self) -> Result<Manifest, String> {
-        let path = self
+    pub async fn read(&self) -> Result<Table, String> {
+        let pathbuf = self
             .package
             .domain
             .installed_manifest_path(&self.package.namespace, &self.hash);
-        let file = fs::open(&path).await?;
-        Manifest::from_file(file).await
+        let path = UPath::Local(pathbuf);
+        let table = Table::read_from_upath(&path)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(table)
     }
 }
 
@@ -262,7 +270,7 @@ impl LocalDomain {
                                 place: row.physical_key,
                                 path: None,
                                 size: row.size,
-                                hash: Multihash::wrap(0x16, &hash_bytes).unwrap(),
+                                hash: Multihash::wrap(MULTIHASH_SHA256, &hash_bytes).unwrap(),
                                 info: HashMap::new(),
                                 meta: HashMap::new(),
                             },
@@ -292,14 +300,11 @@ impl LocalDomain {
         })
     }
 
-    pub async fn browse_remote_manifest(
-        &self,
-        remote: &RemoteManifest,
-    ) -> Result<Manifest, String> {
+    pub async fn browse_remote_manifest(&self, remote: &RemoteManifest) -> Result<Table, String> {
         self.cache_remote_manifest(remote).await?.read().await
     }
 
-    pub async fn browse_uri(&self, uri: &S3PackageURI) -> Result<Manifest, String> {
+    pub async fn browse_uri(&self, uri: &S3PackageURI) -> Result<Table, String> {
         // resolve uri to the manifest location and hash
         let remote_manifest = RemoteManifest::resolve(uri).await?;
         self.browse_remote_manifest(&remote_manifest).await
@@ -459,13 +464,13 @@ impl From<&UpstreamState> for UpstreamDiscreteState {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PackageFileFingerprint {
     pub size: u64,
-    pub hash: ContentHash,
+    pub hash: Multihash<256>,
 }
 
-#[derive(Debug, PartialEq, Default, Serialize)]
+#[derive(Debug, PartialEq, Default)]
 pub struct InstalledPackageStatus {
     // current commit vs upstream state
     pub upstream: UpstreamState,
@@ -559,17 +564,14 @@ impl InstalledPackage {
             self.write_lineage(lineage.clone()).await?;
         }
 
-        let manifest = self.manifest().await?.read().await?;
+        let table = self.manifest().await?.read().await?;
 
         let work_dir = self.working_folder();
 
         let mut orig_paths = HashMap::new();
         for path in lineage.paths.keys() {
-            let idx = manifest.find_path(path).ok_or("no such path")?;
-            let row = &manifest.rows[idx];
-            let ContentHash::SHA256(hash) = &row.hash;
-
-            orig_paths.insert(PathBuf::from(path), (hash.clone(), row.size));
+            let row = table.get_row(path).ok_or("no such path")?;
+            orig_paths.insert(PathBuf::from(path), (row.hash.clone(), row.size));
         }
 
         let mut queue = VecDeque::new();
@@ -599,9 +601,12 @@ impl InstalledPackage {
                 } else if file_type.is_file() {
                     let file_metadata =
                         dir_entry.metadata().await.map_err(|err| err.to_string())?;
-                    let file_hash = sha256::try_async_digest(&file_path)
+                    let sha256_hash = sha256::try_async_digest(&file_path)
                         .await
                         .map_err(|err| err.to_string())?;
+                    let file_hash =
+                        Multihash::wrap(MULTIHASH_SHA256, &hex::decode(sha256_hash).unwrap())
+                            .unwrap();
 
                     let relative_path = file_path.strip_prefix(&work_dir).unwrap();
                     if let Some((orig_hash, orig_size)) = orig_paths.remove(relative_path) {
@@ -611,11 +616,11 @@ impl InstalledPackage {
                                 Change {
                                     current: Some(PackageFileFingerprint {
                                         size: file_metadata.len(),
-                                        hash: ContentHash::SHA256(file_hash),
+                                        hash: file_hash,
                                     }),
                                     previous: Some(PackageFileFingerprint {
                                         size: orig_size,
-                                        hash: ContentHash::SHA256(orig_hash),
+                                        hash: orig_hash,
                                     }),
                                 },
                             );
@@ -626,7 +631,7 @@ impl InstalledPackage {
                             Change {
                                 current: Some(PackageFileFingerprint {
                                     size: file_metadata.len(),
-                                    hash: ContentHash::SHA256(file_hash),
+                                    hash: file_hash,
                                 }),
                                 previous: None,
                             },
@@ -645,7 +650,7 @@ impl InstalledPackage {
                     current: None,
                     previous: Some(PackageFileFingerprint {
                         size: orig_size,
-                        hash: ContentHash::SHA256(orig_hash),
+                        hash: orig_hash,
                     }),
                 },
             );
@@ -695,14 +700,13 @@ impl InstalledPackage {
         //   add installed package entry:
         //     remote: RemoteManifest
 
-        let mut manifest = self.manifest().await?.read().await?;
+        let mut table = self.manifest().await?.read().await?;
 
         for path in paths {
             // TODO: Consider using a hashmap or treemap for manifest.rows
-            let idx = manifest.find_path(path).ok_or("no such path")?;
-            let row = &mut manifest.rows[idx];
+            let row = table.records.get_mut(path).ok_or("no such path")?;
 
-            let parsed_url = Url::parse(&row.physical_key).map_err(|err| err.to_string())?;
+            let parsed_url = Url::parse(&row.place).map_err(|err| err.to_string())?;
             if parsed_url.scheme() != "s3" {
                 return Err("invalid scheme".into());
             }
@@ -711,8 +715,8 @@ impl InstalledPackage {
             let query: HashMap<_, _> = parsed_url.query_pairs().into_owned().collect();
             let version_id = query.get("versionId").ok_or("missing versionId")?; // TODO
 
-            let ContentHash::SHA256(hash) = &row.hash;
-            let object_dest = objects_dir.join(hash);
+            // TODO: remove the 1220?
+            let object_dest = objects_dir.join(hex::encode(row.hash.to_bytes()));
 
             if !fs::exists(&object_dest).await {
                 let mut file = File::create(&object_dest)
@@ -749,15 +753,15 @@ impl InstalledPackage {
                 file.flush().await.map_err(|err| err.to_string())?;
             }
 
-            row.physical_key = Url::from_file_path(&object_dest).unwrap().to_string();
+            row.place = Url::from_file_path(&object_dest).unwrap().to_string();
 
-            let working_dest = working_dir.join(&row.logical_key);
+            let working_dest = working_dir.join(&row.name);
             tokio::fs::copy(&object_dest, &working_dest)
                 .await
                 .map_err(|err| err.to_string())?;
             let timestamp = fs::get_file_modified_ts(&working_dest).await?;
             lineage.paths.insert(
-                row.logical_key.to_owned(),
+                row.name.to_owned(),
                 PathState {
                     timestamp,
                     hash: row.hash.to_owned(),
@@ -771,7 +775,8 @@ impl InstalledPackage {
             .domain
             .installed_manifest_path(&self.namespace, lineage.current_hash());
 
-        fs::write(&installed_manifest_path, manifest.to_jsonlines().as_bytes())
+        table
+            .write_to_upath(&UPath::Local(installed_manifest_path))
             .await
             .map_err(|err| err.to_string())?;
 
@@ -869,18 +874,12 @@ impl InstalledPackage {
 
         let work_dir = self.working_folder();
 
-        let mut manifest = self.manifest().await?.read().await?;
-
-        // TODO: We should just make Manifest.rows as HashMap or a BTreeMap.
-        let mut entry_map: HashMap<_, _> = manifest
-            .rows
-            .into_iter()
-            .map(|row| (row.logical_key.to_owned(), row))
-            .collect();
+        let mut table = self.manifest().await?.read().await?;
 
         for (logical_key, Change { current, previous }) in status.changes {
             if let Some(previous) = previous {
-                let removed = entry_map
+                let removed = table
+                    .records
                     .remove(&logical_key)
                     .ok_or(format!("cannot remove {}", logical_key))?;
                 if removed.size != previous.size || removed.hash != previous.hash {
@@ -892,19 +891,21 @@ impl InstalledPackage {
                 package_lineage.paths.remove(&logical_key);
             }
             if let Some(current) = current {
-                let ContentHash::SHA256(hash) = &current.hash;
-                let object_dest = objects_dir.join(hash);
+                let object_dest = objects_dir.join(hex::encode(current.hash.to_bytes()));
                 let new_physical_key = Url::from_file_path(&object_dest).unwrap().into();
 
-                if entry_map
+                if table
+                    .records
                     .insert(
                         logical_key.to_owned(),
-                        ManifestRow {
-                            logical_key: logical_key.to_owned(),
-                            physical_key: new_physical_key,
-                            hash: current.hash.clone(),
+                        Row4 {
+                            name: logical_key.to_owned(),
+                            place: new_physical_key,
+                            path: None,
                             size: current.size,
-                            meta: None,
+                            hash: current.hash.clone(),
+                            info: HashMap::new(),
+                            meta: HashMap::new(),
                         },
                     )
                     .is_some()
@@ -928,20 +929,20 @@ impl InstalledPackage {
             }
         }
 
-        manifest.rows = entry_map.values().cloned().collect();
-        manifest
-            .rows
-            .sort_unstable_by(|a, b| a.logical_key.cmp(&b.logical_key));
-        manifest.header.message = Some(message);
-        manifest.header.user_meta = user_meta;
+        table.header.info.insert("message".into(), message.into());
+        // TODO
+        // if let Some(user_meta) = user_meta {
+        //     table.header.meta = user_meta;
+        // }
 
-        let new_top_hash = manifest.top_hash();
+        let new_top_hash = table.top_hash();
 
         let new_manifest_path = self
             .domain
             .installed_manifest_path(&self.namespace, &new_top_hash);
 
-        fs::write(&new_manifest_path, manifest.to_jsonlines().as_bytes())
+        table
+            .write_to_upath(&UPath::Local(new_manifest_path))
             .await
             .map_err(|err| err.to_string())?;
 
@@ -983,22 +984,22 @@ impl InstalledPackage {
         let client = crate::s3_utils::get_client_for_bucket(&remote.bucket).await?;
 
         // ignore removed items, upload changed and new items
-        for row in local_manifest.rows.iter_mut() {
-            if let Some(remote_row) = remote_manifest.get(&row.logical_key) {
+        for row in local_manifest.records.values_mut() {
+            if let Some(remote_row) = remote_manifest.records.get(&row.name) {
                 if remote_row.eq(row) {
-                    row.physical_key = remote_row.physical_key.to_owned();
+                    row.place = remote_row.place.to_owned();
                     continue;
                 }
             }
 
-            let local_url = Url::parse(&row.physical_key).unwrap();
+            let local_url = Url::parse(&row.place).unwrap();
             let file_path: PathBuf = local_url.to_file_path().unwrap();
 
             let body = ByteStream::from_path(&file_path)
                 .await
                 .map_err(|err| err.to_string())?;
 
-            let s3_key = format!("{}/{}", self.namespace, row.logical_key);
+            let s3_key = format!("{}/{}", self.namespace, row.place);
             println!("uploading to s3({}): {}", remote.bucket, s3_key);
 
             // TODO: upload in parallel. use a stream?
@@ -1024,7 +1025,7 @@ impl InstalledPackage {
             println!("got remote url: {}", remote_url);
 
             // "Relax" the manifest by using those new remote keys
-            row.physical_key = remote_url.to_string();
+            row.place = remote_url.to_string();
         }
 
         let top_hash = local_manifest.top_hash();
@@ -1038,20 +1039,24 @@ impl InstalledPackage {
             .domain
             .manifest_cache_path(&new_remote.bucket, &new_remote.hash);
 
-        fs::write(&cache_path, local_manifest.to_jsonlines().as_bytes())
+        local_manifest
+            .write_to_upath(&UPath::Local(cache_path.clone()))
             .await
-            .map_err(|err| format!("Failed to write manifest to {cache_path:?}: {err}"))?;
+            .map_err(|err| err.to_string())?;
 
         // Push the (cached) relaxed manifest to the remote, don't tag it yet
         let manifest_key = format!("{MANIFEST_DIR}/{}", new_remote.hash);
         println!("writing remote manifest to {manifest_key}");
 
         // TODO: FAIL if the manifest with this hash already exists
+        let body = ByteStream::from_path(&cache_path)
+            .await
+            .map_err(|err| err.to_string())?;
         client
             .put_object()
             .bucket(&new_remote.bucket)
             .key(&manifest_key)
-            .body(local_manifest.to_jsonlines().as_bytes().to_owned().into())
+            .body(body)
             .send()
             .await
             .map_err(|err| err.to_string())?;
@@ -1141,7 +1146,10 @@ impl InstalledPackage {
         self.write_lineage(lineage).await?;
 
         let manifest = self.manifest().await?.read().await?;
-        let paths_to_install = paths.into_iter().filter(|x| manifest.has_path(x)).collect();
+        let paths_to_install = paths
+            .into_iter()
+            .filter(|x| manifest.records.contains_key(x))
+            .collect();
         self.install_paths(&paths_to_install).await?;
 
         Ok(())
@@ -1186,7 +1194,10 @@ impl InstalledPackage {
         self.write_lineage(lineage).await?;
 
         let manifest = self.manifest().await?.read().await?;
-        let paths_to_install = paths.into_iter().filter(|x| manifest.has_path(x)).collect();
+        let paths_to_install = paths
+            .into_iter()
+            .filter(|x| manifest.records.contains_key(x))
+            .collect();
         self.install_paths(&paths_to_install).await
     }
 }
@@ -1303,11 +1314,19 @@ mod tests {
                 Change {
                     current: Some(PackageFileFingerprint {
                         size: timestamp.len() as u64,
-                        hash: ContentHash::SHA256(sha256::digest(&timestamp)),
+                        hash: Multihash::wrap(
+                            MULTIHASH_SHA256,
+                            &hex::decode(sha256::digest(&timestamp)).unwrap(),
+                        )
+                        .unwrap(),
                     }),
                     previous: Some(PackageFileFingerprint {
                         size: old_readme.len() as u64,
-                        hash: ContentHash::SHA256(sha256::digest(&old_readme)),
+                        hash: Multihash::wrap(
+                            MULTIHASH_SHA256,
+                            &hex::decode(sha256::digest(&old_readme)).unwrap(),
+                        )
+                        .unwrap(),
                     }),
                 },
             )]),

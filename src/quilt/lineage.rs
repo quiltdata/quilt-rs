@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+use multihash::Multihash;
+use serde::{Deserialize, Serialize, Deserializer, de::Error, Serializer};
 
-use super::{manifest::ContentHash, RemoteManifest};
+use super::RemoteManifest;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommitState {
@@ -15,7 +16,19 @@ pub struct CommitState {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PathState {
     pub timestamp: chrono::DateTime<chrono::Utc>,
-    pub hash: ContentHash,
+    #[serde(serialize_with = "multihash_to_str", deserialize_with = "str_to_multihash")]
+    pub hash: Multihash<256>,
+}
+
+fn multihash_to_str<S: Serializer>(hash: &Multihash<256>, serializer: S) -> Result<S::Ok, S::Error> {
+    let s = hex::encode(hash.to_bytes());
+    serializer.serialize_str(&s)
+}
+
+fn str_to_multihash<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Multihash<256>, D::Error> {
+    let s = String::deserialize(deserializer)?;
+    let bytes = hex::decode(s).map_err(Error::custom)?;
+    Multihash::from_bytes(&bytes).map_err(Error::custom)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
