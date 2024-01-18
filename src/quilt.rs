@@ -83,7 +83,7 @@ impl RemoteManifest {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CachedManifest {
     pub domain: LocalDomain,
     pub bucket: String,
@@ -116,7 +116,7 @@ impl InstalledManifest {
 }
 
 // XXX: is this necessary?
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct S3Domain {
     bucket: String,
 }
@@ -338,19 +338,19 @@ impl LocalDomain {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Change<T> {
-    current: Option<T>,
-    previous: Option<T>,
+    pub current: Option<T>,
+    pub previous: Option<T>,
 }
 
 pub type ChangeSet<K, T> = BTreeMap<K, Change<T>>;
 
-#[derive(Debug, PartialEq, Eq, Default, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize)]
 pub struct UpstreamState {
-    commit_pending: bool, // whether there's a commit to be pushed
-    behind: bool,         // whether **base** and **latest** revisions differ
-    ahead: bool,          // whether **base** and **current** revisions differ
+    pub commit_pending: bool, // whether there's a commit to be pushed
+    pub behind: bool,         // whether **base** and **latest** revisions differ
+    pub ahead: bool,          // whether **base** and **current** revisions differ
 }
 
 impl UpstreamState {
@@ -364,7 +364,7 @@ impl UpstreamState {
 }
 
 // XXX: do we  actually need this? two-flag (ahead-behind) logic seems simple enough
-#[derive(Debug, PartialEq, Eq, Default, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize)]
 pub enum UpstreamDiscreteState {
     #[default]
     UpToDate,
@@ -397,6 +397,7 @@ pub struct InstalledPackageStatus {
     pub upstream_state: UpstreamDiscreteState,
     pub dirty: bool, // whether there are uncommitted changes
     // file changes vs current commit
+    // set to default on clone
     pub changes: ChangeSet<String, PackageFileFingerprint>,
     // XXX: meta?
 }
@@ -411,6 +412,17 @@ impl InstalledPackageStatus {
             upstream,
             dirty: !changes.is_empty(),
             changes,
+        }
+    }
+}
+
+impl Clone for InstalledPackageStatus {
+    fn clone(&self) -> Self {
+        Self {
+            upstream: self.upstream.clone(),
+            upstream_state: self.upstream_state.clone(),
+            dirty: self.dirty,
+            changes: Default::default(),
         }
     }
 }

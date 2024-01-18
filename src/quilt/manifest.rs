@@ -9,7 +9,7 @@ use super::{Change, ChangeSet};
 
 pub type JsonObject = serde_json::Map<String, serde_json::Value>;
 
-#[derive(Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct ManifestHeader {
     pub version: String,
     pub message: Option<String>,
@@ -86,7 +86,7 @@ impl TryFrom<Quilt3ManifestRow> for ManifestRow {
     }
 }
 
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Manifest {
     pub header: ManifestHeader,
     pub rows: Vec<ManifestRow>,

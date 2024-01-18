@@ -10,7 +10,7 @@ use object_store::{
 };
 use parquet::arrow::{async_reader::ParquetObjectReader, ParquetRecordBatchStreamBuilder};
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct ManifestRow {
     name: String,
     place: String,

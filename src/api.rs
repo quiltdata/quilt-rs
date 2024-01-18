@@ -10,10 +10,10 @@ pub use crate::quilt::{
 
 // Types
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct AvailablePackage {
-    namespace: String,
-    lineage: PackageLineage,
+    pub namespace: String,
+    pub lineage: PackageLineage,
     // XXX: state and stuff
 }
 

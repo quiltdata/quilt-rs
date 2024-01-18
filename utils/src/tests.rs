@@ -10,7 +10,7 @@ pub static TEST_LOCAL_JSONL: &str = ".quilt/packages/5f1b1e4928dbb5d700cfd37ed5f
 
 pub static TEST_S3_URI: &str = "s3://quilt-example/akarve/test_dest/README.md";
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TestFile {
     Parquet,
     Json,
