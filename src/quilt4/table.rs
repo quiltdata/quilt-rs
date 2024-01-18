@@ -247,6 +247,10 @@ impl Table {
         // Implementation goes here
         unimplemented!()
     }
+
+    pub fn top_hash(&self) -> String {
+        unimplemented!()
+    }
 }
 
 #[cfg(test)]
