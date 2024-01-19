@@ -6,6 +6,7 @@ use std::{
 use aws_sdk_s3::{error::SdkError, primitives::ByteStream};
 use multihash::Multihash;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tokio::{
     fs::{create_dir_all, read_dir, remove_dir_all, File},
     io::{AsyncReadExt, AsyncWriteExt},
@@ -256,13 +257,18 @@ impl LocalDomain {
                         path: None,
                         size: 0,
                         hash: Multihash::default(),
-                        info: HashMap::new(),
-                        meta: HashMap::new(),
+                        info: serde_json::json!({
+                            "message": quilt3_manifest.header.message,
+                            "version": quilt3_manifest.header.version,
+                        }),
+                        meta: quilt3_manifest.header.user_meta.unwrap_or_default().into(),
                     };
                     let mut records = BTreeMap::new();
                     for row in quilt3_manifest.rows {
                         let ContentHash::SHA256(hash) = row.hash;
                         let hash_bytes = hex::decode(hash).map_err(|err| err.to_string())?;
+                        let mut info = row.meta.unwrap_or_default();
+                        let meta = info.remove("user_meta").unwrap_or_default();
                         records.insert(
                             row.logical_key.clone(),
                             Row4 {
@@ -271,8 +277,8 @@ impl LocalDomain {
                                 path: None,
                                 size: row.size,
                                 hash: Multihash::wrap(MULTIHASH_SHA256, &hash_bytes).unwrap(),
-                                info: HashMap::new(),
-                                meta: HashMap::new(),
+                                info: info.into(),
+                                meta,
                             },
                         );
                     }
@@ -904,8 +910,8 @@ impl InstalledPackage {
                             path: None,
                             size: current.size,
                             hash: current.hash.clone(),
-                            info: HashMap::new(),
-                            meta: HashMap::new(),
+                            info: serde_json::Value::default(),
+                            meta: serde_json::Value::default(),
                         },
                     )
                     .is_some()
@@ -929,11 +935,13 @@ impl InstalledPackage {
             }
         }
 
-        table.header.info.insert("message".into(), message.into());
-        // TODO
-        // if let Some(user_meta) = user_meta {
-        //     table.header.meta = user_meta;
-        // }
+        table.header.info = json!({
+            "message": message,
+            "version": "v0",
+        });
+        if let Some(user_meta) = user_meta {
+            table.header.meta = user_meta.into();
+        }
 
         let new_top_hash = table.top_hash();
 
