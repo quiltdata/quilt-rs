@@ -41,9 +41,13 @@ pub async fn install_temporarily(
     result
 }
 
-pub async fn installed_packages() -> Result<Vec<InstalledPackage>, String> {
-    let path_buf = std::env::current_dir().unwrap();
+pub async fn installed_packages(dir: Option<String>) -> Result<Vec<InstalledPackage>, String> {
+    let path_buf = match dir {
+        Some(dir) => std::path::PathBuf::from(dir),
+        None => std::env::current_dir().unwrap(),
+    };
     let local_domain = LocalDomain::new(path_buf);
+    println!("local_domain: {:?}", local_domain);
     let installed_packages = local_domain
         .list_installed_packages()
         .await
@@ -51,3 +55,27 @@ pub async fn installed_packages() -> Result<Vec<InstalledPackage>, String> {
     Ok(installed_packages)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_installed_packages_in_cwd() {
+        let result = installed_packages(None).await;
+        assert!(result.is_ok());
+        let packages = result.unwrap();
+        let count = packages.len();
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_installed_packages_in_test_domain() {
+        let dir = utils::TEST_DOMAIN.to_string();
+        let result = installed_packages(Some(dir.to_string())).await;
+        assert!(result.is_ok());
+        let packages = result.unwrap();
+        println!("packages[{}]: {:?}", utils::TEST_DOMAIN, packages);
+        let count = packages.len();
+        assert!(count == 0); // TODO: add data.json to fix this
+    }
+}
