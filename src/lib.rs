@@ -20,7 +20,7 @@ pub use quilt4::{
     uri::UriQuilt,
 };
 
-pub use quilt::{InstalledPackage, LocalDomain, Manifest, S3PackageURI};
+pub use quilt::{InstalledPackage, LocalDomain, Manifest, RemoteManifest, S3PackageURI};
 
 pub async fn manifest_from_uri(uri_string: &str) -> Result<Manifest, Error> {
     let path_buf = std::env::current_dir().unwrap();
@@ -34,6 +34,27 @@ pub async fn manifest_from_uri(uri_string: &str) -> Result<Manifest, Error> {
     assert!(manifest.rows.len() > 0);
     manifest.rows.len();
     Ok(manifest)
+}
+
+use temp_dir::TempDir;
+
+pub async fn install_temporarily(
+    bucket: &str,
+    namespace: &str,
+    hash: &str,
+) -> Result<InstalledPackage, String> {
+    let temp_folder = TempDir::new().unwrap();
+    let loc = LocalDomain::new(temp_folder.path().to_path_buf());
+    let remote_manifest = RemoteManifest {
+        bucket: bucket.to_string(),
+        namespace: namespace.to_string(),
+        hash: hash.to_string(),
+    };
+    println!("remote_manifest: {:?}", remote_manifest);
+
+    let result = loc.install_package(&remote_manifest).await;
+    println!("result: {:?}", result);
+    result
 }
 
 pub async fn installed_packages() -> Result<Vec<InstalledPackage>, String> {
