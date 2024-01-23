@@ -1238,7 +1238,8 @@ mod tests {
     #[ignore]
     fn flow() {
         // ## Setup
-        let test_uri_string = utils::TEST_URI_STRING;
+        let test_uri_string = "quilt+s3://quilt-example#package=akarve/test_dest&path=README.md";
+
         let test_uri = S3PackageURI::try_from(test_uri_string).expect("Failed to parse URI");
         assert_eq!(
             test_uri,
