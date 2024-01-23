@@ -1,8 +1,6 @@
-use aws_sdk_s3::Error; // Import the Error type from the aws_sdk_s3 crate
-use tracing::info;
-mod api;
-mod quilt4;
-mod s3_utils;
+pub mod api;
+pub mod quilt4;
+pub mod s3_utils;
 
 pub mod quilt;
 pub mod data_yaml;
@@ -36,17 +34,25 @@ pub use api::browse_remote_package;
 pub use api::browse_remote_manifest;
 pub use api::list_installed_packages;
 
-pub async fn manifest_from_uri(uri_string: &str) -> Result<Manifest, Error> {
-    let path_buf = std::env::current_dir().unwrap();
-    let local_domain = LocalDomain::new(path_buf);
-    let uri = S3PackageURI::try_from(uri_string).expect("Failed to parse URI");
-    let manifest: Manifest = browse_remote_package(local_domain.into(), uri)
-        .await
-        .expect("Failed to browse remote package");
-    info!("manifest: {:#?}", manifest);
-    assert!(manifest.rows.len() > 0);
-    manifest.rows.len();
-    Ok(manifest)
+use temp_dir::TempDir;
+
+pub async fn install_temporarily(
+    bucket: &str,
+    namespace: &str,
+    hash: &str,
+) -> Result<InstalledPackage, String> {
+    let temp_folder = TempDir::new().unwrap();
+    let loc = LocalDomain::new(temp_folder.path().to_path_buf());
+    let remote_manifest = RemoteManifest {
+        bucket: bucket.to_string(),
+        namespace: namespace.to_string(),
+        hash: hash.to_string(),
+    };
+    println!("remote_manifest: {:?}", remote_manifest);
+
+    let result = loc.install_package(&remote_manifest).await;
+    println!("result: {:?}", result);
+    result
 }
 
 pub async fn installed_packages() -> Result<Vec<AvailablePackage>, String> {
@@ -56,17 +62,4 @@ pub async fn installed_packages() -> Result<Vec<AvailablePackage>, String> {
         .await
         .expect("Failed to list installed packages");
     Ok(installed_packages)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_manifest_from_uri() {
-        let uri = utils::TEST_URI_STRING;
-        let manifest = manifest_from_uri(uri).await;
-        assert!(manifest.is_ok());
-        assert!(manifest.unwrap().rows.len() > 0);
-    }
 }
