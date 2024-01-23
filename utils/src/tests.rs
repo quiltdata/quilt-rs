@@ -1,5 +1,11 @@
 use std::collections::HashMap;
 
+// pub static TEST_REGION: &str = "us-east=1";
+pub static TEST_BUCKET: &str = "quilt-example";
+pub static TEST_PACKAGE: &str = "akarve/test_dest";
+pub static TEST_FILE: &str = "README.md";
+pub static TEST_HASH: &str = "6c3758a4d2bf8fe730be5d12f5e095950dc123c373f55f66ca4b3ced74772b22";
+
 pub static TEST_URI_STRING: &str = "quilt+s3://quilt-example#package=akarve/test_dest";
 
 pub static TEST_DOMAIN: &str = "tests/test_domain";
@@ -15,6 +21,14 @@ pub enum TestFile {
     Parquet,
     Json,
     Domain,
+}
+
+pub fn remote_quilt_uri() -> String {
+    format!("quilt+s3://{}#package={}&path={}", TEST_BUCKET, TEST_PACKAGE, TEST_FILE)
+}
+
+pub fn remote_s3_uri() -> String {
+    format!("s3://{}/{}", TEST_BUCKET, TEST_PACKAGE)
 }
 
 pub fn local_uri(key: TestFile) -> String {
