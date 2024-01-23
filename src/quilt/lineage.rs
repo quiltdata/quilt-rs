@@ -21,7 +21,7 @@ pub struct PathState {
 }
 
 fn multihash_to_str<S: Serializer>(hash: &Multihash<256>, serializer: S) -> Result<S::Ok, S::Error> {
-    let s = hex::encode(hash.digest());
+    let s = hex::encode(hash.to_bytes());
     serializer.serialize_str(&s)
 }
 
