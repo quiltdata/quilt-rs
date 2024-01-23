@@ -261,7 +261,10 @@ impl LocalDomain {
                             "message": quilt3_manifest.header.message,
                             "version": quilt3_manifest.header.version,
                         }),
-                        meta: quilt3_manifest.header.user_meta.unwrap_or_default().into(),
+                        meta: match quilt3_manifest.header.user_meta {
+                            Some(meta) => meta.into(),
+                            None => serde_json::Value::Null,
+                        },
                     };
                     let mut records = BTreeMap::new();
                     for row in quilt3_manifest.rows {
@@ -721,8 +724,7 @@ impl InstalledPackage {
             let query: HashMap<_, _> = parsed_url.query_pairs().into_owned().collect();
             let version_id = query.get("versionId").ok_or("missing versionId")?; // TODO
 
-            // TODO: remove the 1220?
-            let object_dest = objects_dir.join(hex::encode(row.hash.to_bytes()));
+            let object_dest = objects_dir.join(hex::encode(row.hash.digest()));
 
             if !fs::exists(&object_dest).await {
                 let mut file = File::create(&object_dest)
@@ -897,7 +899,7 @@ impl InstalledPackage {
                 package_lineage.paths.remove(&logical_key);
             }
             if let Some(current) = current {
-                let object_dest = objects_dir.join(hex::encode(current.hash.to_bytes()));
+                let object_dest = objects_dir.join(hex::encode(current.hash.digest()));
                 let new_physical_key = Url::from_file_path(&object_dest).unwrap().into();
 
                 if table

@@ -39,5 +39,7 @@ async fn test_manifest_from_uri() {
     // Assert
     assert!(result.is_ok());
     let manifest = result.unwrap();
-    assert!(manifest.table().unwrap().records.len() > 0);
+    let table = manifest.table().unwrap();
+    assert!(table.records.len() > 0);
+    assert_eq!(table.top_hash(), "6c3758a4d2bf8fe730be5d12f5e095950dc123c373f55f66ca4b3ced74772b22");
 }
