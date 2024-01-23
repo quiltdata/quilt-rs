@@ -27,6 +27,7 @@ use parquet::{
     basic::Compression,
     file::properties::WriterProperties,
 };
+use sha2::{Digest, Sha256};
 use tokio::io::AsyncWrite;
 use tokio_stream::StreamExt;
 
@@ -249,7 +250,44 @@ impl Table {
     }
 
     pub fn top_hash(&self) -> String {
-        unimplemented!()
+        // TODO: Make sure floats are Python-compatible!
+        let mut hasher = Sha256::new();
+
+        let mut header_meta = match self.header.info.as_object() {
+            Some(meta) => meta.clone(),
+            None => serde_json::Map::default(),
+        };
+        if self.header.meta.is_object() {
+            header_meta.insert("user_meta".into(), self.header.meta.clone());
+        }
+
+        let header_str = serde_json::to_string(&header_meta).unwrap();
+        hasher.update(header_str);
+
+        for row in self.records.values() {
+            let mut row_meta = match row.info.as_object() {
+                Some(meta) => meta.clone(),
+                None => serde_json::Map::default(),
+            };
+            if row.meta.is_object() {
+                row_meta.insert("user_meta".into(), row.meta.clone());
+            }
+
+            let value = serde_json::json!({
+                "logical_key": row.name,
+                "size": row.size,
+                "hash": {
+                    "type": "SHA256",
+                    "value": hex::encode(row.hash.digest()),
+                },
+                "meta": row_meta,
+            });
+
+            let value_str = serde_json::to_string(&value).unwrap();
+            hasher.update(value_str);
+        }
+
+        hex::encode(hasher.finalize())
     }
 }
 
