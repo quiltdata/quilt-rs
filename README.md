@@ -17,3 +17,12 @@ cargo update
 cargo test
 cargo publish
 ```
+
+## Coverage
+
+```bash
+cargo install taurpalin
+cargo taurpalin
+# OR
+cargo run --release -- tarpaulin --engine llvm --follow-exec --post-test-delay 10
+```
