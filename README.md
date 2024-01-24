@@ -22,7 +22,6 @@ cargo publish
 
 ```bash
 cargo install taurpalin
-cargo taurpalin
-# OR
-cargo run --release -- tarpaulin --engine llvm --follow-exec --post-test-delay 10
+cargo tarpaulin --out html
+open tarpaulin-report.html
 ```
