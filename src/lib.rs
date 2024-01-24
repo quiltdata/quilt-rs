@@ -1,17 +1,11 @@
 mod quilt4;
 mod s3_utils;
 
-pub mod data_yaml;
 pub mod quilt;
 
 pub use quilt4::{
-    client::{Client, GetClient},
-    domain::Domain,
-    entry::Entry4,
     manifest::Manifest4,
-    namespace::Namespace,
     row4::Row4,
-    string_map::StringMap,
     table::Table,
     upath::UPath,
     uri::UriParser,
