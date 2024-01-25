@@ -1,5 +1,5 @@
 use quilt_rs::install_temporarily;
-use utils::{TEST_BUCKET, TEST_PACKAGE, TEST_HASH};
+use quilt_rs::utils::{TEST_BUCKET, TEST_PACKAGE, TEST_HASH};
 
 #[tokio::test]
 async fn test_local_manifest() {
