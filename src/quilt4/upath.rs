@@ -94,7 +94,7 @@ mod tests {
 
     #[test]
     fn test_new_local() {
-        let local_uri = utils::local_uri_parquet();
+        let local_uri = crate::utils::local_uri_parquet();
         let upath = UPath::parse(&local_uri).unwrap();
         info!("upath: {:?}", upath);
         assert_eq!(upath.to_uri().to_string(), local_uri);
@@ -106,8 +106,8 @@ mod tests {
 
     #[test]
     fn test_new_s3() {
-        let upath = UPath::parse(utils::TEST_S3_URI).unwrap();
-        assert_eq!(upath.to_uri().to_string(), utils::TEST_S3_URI);
+        let upath = UPath::parse(crate::utils::TEST_S3_URI).unwrap();
+        assert_eq!(upath.to_uri().to_string(), crate::utils::TEST_S3_URI);
         assert_eq!(upath, UPath::S3 { bucket: "quilt-example".into(), path: "akarve/test_dest/README.md".into() });
     }
 
