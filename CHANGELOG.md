@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## [0.5.1] * 2024-01-25
+
+* Add Parquet support
+* Remove dead code
+* Cleanup tests
+
 ## [0.5.0] * 2023-12-20
 
 * Remove Poem dependency
