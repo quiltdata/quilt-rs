@@ -1,6 +1,5 @@
 pub mod helpers;
-pub mod parquet_object_store;
-
+// pub mod parquet_object_store;
 
 pub static TEST_REGION: &str = "us-east=1";
 pub static TEST_BUCKET: &str = "quilt-example";

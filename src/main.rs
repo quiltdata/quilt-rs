@@ -1,6 +1,6 @@
 use quilt_rs::install_temporarily;
 use tracing::info;
-use crate::utils::{TEST_BUCKET, TEST_PACKAGE, TEST_HASH};
+use quilt_rs::utils::{TEST_BUCKET, TEST_PACKAGE, TEST_HASH};
 
 #[tokio::main]
 async fn main() {
