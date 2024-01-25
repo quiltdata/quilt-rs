@@ -48,6 +48,10 @@ pub fn tag_uri(bucket: &str, namespace: &str, tag: &str) -> s3::S3Uri {
     }
 }
 
+fn parquet_manifest_filename(top_hash: &str) -> String {
+    format!("1220{}.parquet", top_hash)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteManifest {
     pub bucket: String,
@@ -215,7 +219,11 @@ impl LocalDomain {
             let result = client
                 .get_object()
                 .bucket(&manifest.bucket)
-                .key(format!("1220{}/{}.parquet", MANIFEST_DIR, &manifest.hash))
+                .key(format!(
+                    "{}/{}",
+                    MANIFEST_DIR,
+                    parquet_manifest_filename(&manifest.hash)
+                ))
                 .send()
                 .await;
 
@@ -1055,7 +1063,10 @@ impl InstalledPackage {
             .map_err(|err| err.to_string())?;
 
         // Push the (cached) relaxed manifest to the remote, don't tag it yet
-        let manifest_key = format!("{MANIFEST_DIR}/{}", new_remote.hash);
+        let manifest_key = format!(
+            "{MANIFEST_DIR}/{}",
+            parquet_manifest_filename(&new_remote.hash)
+        );
         println!("writing remote manifest to {manifest_key}");
 
         // TODO: FAIL if the manifest with this hash already exists
