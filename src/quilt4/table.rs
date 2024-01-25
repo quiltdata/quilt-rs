@@ -27,16 +27,19 @@ use parquet::{
     basic::Compression,
     file::properties::WriterProperties,
 };
+use sha2::{Digest, Sha256};
+use tokio::io::AsyncWrite;
 use tokio_stream::StreamExt;
 
 use crate::s3_utils::get_region_for_bucket;
 
 use super::{row4::Row4, upath::UPath};
 
-const HEADER_ROW: &str = ".";
+pub const HEADER_ROW: &str = ".";
 
 #[derive(Clone, Debug)]
 pub struct Table {
+    pub header: Row4,
     pub records: BTreeMap<String, Row4>,
 }
 
@@ -45,7 +48,7 @@ impl Table {
         format!("Table({:?})", self.records)
     }
 
-    async fn read_rows_impl<T>(reader: T) -> Result<BTreeMap<String, Row4>, ArrowError>
+    async fn read_rows_impl<T>(reader: T) -> Result<Self, ArrowError>
     where
         T: AsyncFileReader + Unpin + Send + 'static,
     {
@@ -53,6 +56,7 @@ impl Table {
             .await?
             .build()?;
 
+        let mut header: Option<Row4> = None;
         let mut records = BTreeMap::new();
         while let Some(item) = stream.try_next().await? {
             let name_column = item
@@ -101,29 +105,35 @@ impl Table {
                         .map_err(|err| ArrowError::SchemaError(err.to_string()))?
                 };
 
-                records.insert(
-                    name.into(),
-                    Row4 {
-                        name: name.into(),
-                        place: place_column.value(idx).into(),
-                        path: None,
-                        size: size_column.value(idx),
-                        hash,
-                        info: serde_json::from_str(info_column.value(idx))
-                            .map_err(|err| ArrowError::SchemaError(err.to_string()))?,
-                        meta: serde_json::from_str(meta_column.value(idx))
-                            .map_err(|err| ArrowError::SchemaError(err.to_string()))?,
-                    },
-                );
+                let row = Row4 {
+                    name: name.into(),
+                    place: place_column.value(idx).into(),
+                    path: None,
+                    size: size_column.value(idx),
+                    hash,
+                    info: serde_json::from_str(info_column.value(idx))
+                        .map_err(|err| ArrowError::SchemaError(err.to_string()))?,
+                    meta: serde_json::from_str(meta_column.value(idx))
+                        .map_err(|err| ArrowError::SchemaError(err.to_string()))?,
+                };
+
+                if name == HEADER_ROW {
+                    header = Some(row);
+                } else {
+                    records.insert(name.into(), row);
+                }
             }
         }
 
-        Ok(records)
+        Ok(Table {
+            header: header.ok_or(ArrowError::SchemaError("missing header row".into()))?,
+            records,
+        })
     }
 
     // Read quilt4's Parquet format
     pub async fn read_from_upath(upath: &UPath) -> Result<Self, ArrowError> {
-        let records = match upath {
+        match upath {
             UPath::Local(path) => {
                 let file = tokio::fs::File::open(&path).await?;
                 Table::read_rows_impl(file).await
@@ -161,9 +171,31 @@ impl Table {
                 let reader = ParquetObjectReader::new(Arc::new(s3), obj_meta);
                 Table::read_rows_impl(reader).await
             }
-        }?;
+        }
+    }
 
-        Ok(Self { records })
+    async fn write_row_impl<T>(writer: &mut AsyncArrowWriter<T>, schema: Arc<Schema>, row: &Row4) -> Result<(), ArrowError>
+    where
+        T: AsyncWrite + Unpin + Send,
+    {
+        let hash: &[u8] = &row.hash.to_bytes();
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(GenericByteArray::<Utf8Type>::from(vec![row.name.as_str()])),
+                Arc::new(GenericByteArray::<Utf8Type>::from(vec![row.place.as_str()])),
+                Arc::new(UInt64Array::from(vec![row.size])),
+                Arc::new(GenericByteArray::<BinaryType>::from(vec![hash])),
+                Arc::new(GenericByteArray::<Utf8Type>::from(vec![
+                    serde_json::to_string(&row.meta).unwrap(),
+                ])),
+                Arc::new(GenericByteArray::<Utf8Type>::from(vec![
+                    serde_json::to_string(&row.info).unwrap(),
+                ])),
+            ],
+        )?;
+        writer.write(&batch).await?;
+        Ok(())
     }
 
     // Write quilt4's Parquet format
@@ -188,24 +220,9 @@ impl Table {
                     AsyncArrowWriter::try_new(file, schema.clone(), 10 * 1024, Some(props))
                         .unwrap();
 
+                Table::write_row_impl(&mut writer, schema.clone(), &self.header).await?;
                 for row in self.records.values() {
-                    let hash: &[u8] = &row.hash.to_bytes();
-                    let batch = RecordBatch::try_new(
-                        schema.clone(),
-                        vec![
-                            Arc::new(GenericByteArray::<Utf8Type>::from(vec![row.name.as_str()])),
-                            Arc::new(GenericByteArray::<Utf8Type>::from(vec![row.place.as_str()])),
-                            Arc::new(UInt64Array::from(vec![row.size])),
-                            Arc::new(GenericByteArray::<BinaryType>::from(vec![hash])),
-                            Arc::new(GenericByteArray::<Utf8Type>::from(vec![
-                                serde_json::to_string(&row.meta).unwrap(),
-                            ])),
-                            Arc::new(GenericByteArray::<Utf8Type>::from(vec![
-                                serde_json::to_string(&row.info).unwrap(),
-                            ])),
-                        ],
-                    )?;
-                    writer.write(&batch).await?;
+                    Table::write_row_impl(&mut writer, schema.clone(), row).await?;
                 }
                 writer.close().await?;
 
@@ -222,8 +239,8 @@ impl Table {
         self.records.get(name)
     }
 
-    pub fn get_header(&self) -> Option<&Row4> {
-        self.get_row(&HEADER_ROW)
+    pub fn get_header(&self) -> &Row4 {
+        &self.header
     }
     // TBD: Store header metadata as PARQUET Metadata?
 
@@ -231,11 +248,52 @@ impl Table {
         // Implementation goes here
         unimplemented!()
     }
+
+    pub fn top_hash(&self) -> String {
+        // TODO: Make sure floats are Python-compatible!
+        let mut hasher = Sha256::new();
+
+        let mut header_meta = match self.header.info.as_object() {
+            Some(meta) => meta.clone(),
+            None => serde_json::Map::default(),
+        };
+        if self.header.meta.is_object() {
+            header_meta.insert("user_meta".into(), self.header.meta.clone());
+        }
+
+        let header_str = serde_json::to_string(&header_meta).unwrap();
+        hasher.update(header_str);
+
+        for row in self.records.values() {
+            let mut row_meta = match row.info.as_object() {
+                Some(meta) => meta.clone(),
+                None => serde_json::Map::default(),
+            };
+            if row.meta.is_object() {
+                row_meta.insert("user_meta".into(), row.meta.clone());
+            }
+
+            let value = serde_json::json!({
+                "logical_key": row.name,
+                "size": row.size,
+                "hash": {
+                    "type": "SHA256",
+                    "value": hex::encode(row.hash.digest()),
+                },
+                "meta": row_meta,
+            });
+
+            let value_str = serde_json::to_string(&value).unwrap();
+            hasher.update(value_str);
+        }
+
+        hex::encode(hasher.finalize())
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use utils::local_uri_parquet;
+    use crate::utils::local_uri_parquet;
 
     use super::*;
 
@@ -244,9 +302,9 @@ mod tests {
         let table = Table::read_from_upath(&UPath::parse(&local_uri_parquet()).unwrap())
             .await
             .unwrap();
-        assert_eq!(table.records.len(), 3);
+        assert_eq!(table.records.len(), 2);
 
-        let header = table.get_header().unwrap();
+        let header = table.get_header();
         assert_eq!(header.size, 0);
 
         let readme = table.get_row("READ ME.md").unwrap();
@@ -258,7 +316,7 @@ mod tests {
         let table1 = Table::read_from_upath(&UPath::parse(&local_uri_parquet()).unwrap())
             .await
             .unwrap();
-        assert_eq!(table1.records.len(), 3);
+        assert_eq!(table1.records.len(), 2);
 
         let temp_dir = temp_testdir::TempDir::default();
         let temp_file = temp_dir.join("test.parquet");
@@ -270,7 +328,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(table2.records.len(), 3);
+        assert_eq!(table2.records.len(), 2);
         assert_eq!(table2.records, table1.records);
     }
 }
