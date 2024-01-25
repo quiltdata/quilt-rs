@@ -13,23 +13,20 @@
 //! 
 
 use super::{
-    client::Client,
     upath::UPath,
     table::Table,
     // entry::Entry4,
 };
 #[derive(Clone, Debug)]
-pub struct Manifest4<'a> {
-    _client: &'a Client,
+pub struct Manifest4 {
     table: Table,
 }
 
-impl<'a> Manifest4<'a> {
-  pub async fn from_path(_client: &'a Client, path: UPath) ->Option<Self> {
-    if path.exists(_client).await {
+impl Manifest4 {
+  pub async fn from_path(path: UPath) ->Option<Self> {
+    if path.exists().await {
       let table = Table::new(Some(path));
       Some(Manifest4 {
-        _client,
         table,
       })
     } else {
@@ -37,9 +34,8 @@ impl<'a> Manifest4<'a> {
     }
   }
   
-  pub fn new(_client: &'a Client, table: Table) -> Self {
+  pub fn new(table: Table) -> Self {
     Manifest4 {
-      _client,
       table,
     }
   }
@@ -52,7 +48,7 @@ impl<'a> Manifest4<'a> {
     unimplemented!()
   }
 
-  pub async fn write4(&self, _client: &Client, _path: UPath) {
+  pub async fn write4(&self, _path: UPath) {
     unimplemented!()
   }
 }

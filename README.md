@@ -17,3 +17,11 @@ cargo update
 cargo test
 cargo publish
 ```
+
+## Coverage
+
+```bash
+cargo install taurpalin
+cargo tarpaulin --out html
+open tarpaulin-report.html
+```
