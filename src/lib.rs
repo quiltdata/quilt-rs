@@ -2,6 +2,7 @@ mod quilt4;
 mod s3_utils;
 
 pub mod quilt;
+pub mod utils;
 
 pub use quilt4::{
     manifest::Manifest4,
