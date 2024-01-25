@@ -293,7 +293,7 @@ impl Table {
 
 #[cfg(test)]
 mod tests {
-    use utils::local_uri_parquet;
+    use crate::utils::local_uri_parquet;
 
     use super::*;
 

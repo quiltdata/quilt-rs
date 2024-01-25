@@ -2,6 +2,7 @@ mod quilt4;
 mod s3_utils;
 
 pub mod quilt;
+pub mod utils;
 
 pub use quilt4::{
     manifest::Manifest4,
@@ -64,11 +65,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_installed_packages_in_test_domain() {
-        let dir = utils::TEST_DOMAIN.to_string();
+        let dir = crate::utils::TEST_DOMAIN.to_string();
         let result = installed_packages(Some(dir.to_string())).await;
         assert!(result.is_ok());
         let packages = result.unwrap();
-        println!("packages[{}]: {:?}", utils::TEST_DOMAIN, packages);
+        println!("packages[{}]: {:?}", crate::utils::TEST_DOMAIN, packages);
         let count = packages.len();
         assert!(count == 0); // TODO: add data.json to fix this
     }
