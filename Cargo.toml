@@ -18,7 +18,7 @@ async-trait = "0.1.75"
 aws-config = "1.1.1"
 aws-sdk-s3 = "1.11.0"
 aws-types = "1.1.1"
-chrono = { version = "0.4.31", features = ["serde"] }
+chrono = { version = "0.4.33", features = ["serde"] }
 figment = { version = "0.10.12", features = ["env", "yaml"] }
 futures = "0.3.30"
 hex = "0.4.3"
