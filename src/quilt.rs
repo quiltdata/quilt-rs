@@ -1082,6 +1082,49 @@ impl InstalledPackage {
             .await
             .map_err(|err| err.to_string())?;
 
+        // Upload a quilt3 manifest for backward compatibility.
+        let quilt3_manifest = Manifest {
+            header: ManifestHeader {
+                version: "v0".into(),
+                message: local_manifest
+                    .header
+                    .info
+                    .get("message")
+                    .map(|v| v.as_str())
+                    .flatten()
+                    .map(|s| s.to_string()),
+                user_meta: local_manifest.header.meta.as_object().cloned(),
+            },
+            rows: local_manifest
+                .records
+                .values()
+                .map(|row| {
+                    let mut meta = match row.info.as_object() {
+                        Some(meta) => meta.clone(),
+                        None => serde_json::Map::default(),
+                    };
+                    if row.meta.is_object() {
+                        meta.insert("user_meta".into(), row.meta.clone());
+                    }
+                    ManifestRow {
+                        logical_key: row.name.clone(),
+                        physical_key: row.place.clone(),
+                        hash: ContentHash::SHA256(hex::encode(row.hash.digest())),
+                        size: row.size,
+                        meta: Some(meta),
+                    }
+                })
+                .collect(),
+        };
+        client
+            .put_object()
+            .bucket(&new_remote.bucket)
+            .key(format!("{MANIFEST_DIR}/{}", &new_remote.hash))
+            .body(quilt3_manifest.to_jsonlines().as_bytes().to_vec().into())
+            .send()
+            .await
+            .map_err(|err| err.to_string())?;
+
         println!("uploaded remote manifest: {new_remote:?}");
 
         // Tag the new commit.
