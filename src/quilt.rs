@@ -437,8 +437,8 @@ impl LocalDomain {
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct Change<T> {
-    current: Option<T>,
-    previous: Option<T>,
+    pub current: Option<T>,
+    pub previous: Option<T>,
 }
 
 pub type ChangeSet<K, T> = BTreeMap<K, Change<T>>;
