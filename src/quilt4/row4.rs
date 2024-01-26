@@ -6,26 +6,22 @@
 //!
 
 use multihash::Multihash;
-use serde_json::Value as Json;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 use super::{
     upath::UPath,
     row3::Row3,
 };
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Row4 {
     pub name: String,
     // scheme: Enum<file,s3,https>
     pub place: String,
     pub path: Option<UPath>,
     pub size: u64,
-    #[serde(skip)]
     pub hash: Multihash<256>,
-    pub info: HashMap<String, Json>, // system metadata
-    pub meta: HashMap<String, Json>, // user metadata
+    pub info: serde_json::Value, // system metadata
+    pub meta: serde_json::Value, // user metadata
 }
 
 impl Row4 {

@@ -3,11 +3,13 @@ use std::{
     path::PathBuf,
 };
 
-use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::{error::SdkError, primitives::ByteStream};
+use multihash::Multihash;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tokio::{
     fs::{create_dir_all, read_dir, remove_dir_all, File},
-    io::AsyncWriteExt,
+    io::{AsyncReadExt, AsyncWriteExt},
 };
 use url::Url;
 
@@ -16,7 +18,7 @@ pub mod manifest;
 pub mod storage;
 pub mod uri;
 
-use crate::s3_utils;
+use crate::{quilt4::table::HEADER_ROW, s3_utils, Row4, Table, UPath};
 
 pub use self::{
     // context::Context,
@@ -32,6 +34,8 @@ const OBJECTS_DIR: &str = ".quilt/objects";
 const LINEAGE_FILE: &str = ".quilt/data.json";
 const INSTALLED_DIR: &str = ".quilt/installed";
 
+const MULTIHASH_SHA256: u64 = 0x16;
+
 pub fn tag_key(namespace: &str, tag: &str) -> String {
     format!("{TAGS_DIR}/{namespace}/{tag}")
 }
@@ -42,6 +46,10 @@ pub fn tag_uri(bucket: &str, namespace: &str, tag: &str) -> s3::S3Uri {
         key: tag_key(namespace, tag),
         version: None,
     }
+}
+
+fn parquet_manifest_filename(top_hash: &str) -> String {
+    format!("1220{}.parquet", top_hash)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,10 +99,13 @@ pub struct CachedManifest {
 }
 
 impl CachedManifest {
-    pub async fn read(&self) -> Result<Manifest, String> {
-        let path = self.domain.manifest_cache_path(&self.bucket, &self.hash);
-        let file = fs::open(&path).await?;
-        Manifest::from_file(file).await
+    pub async fn read(&self) -> Result<Table, String> {
+        let pathbuf = self.domain.manifest_cache_path(&self.bucket, &self.hash);
+        let path = UPath::Local(pathbuf);
+        let table = Table::read_from_upath(&path)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(table)
     }
 }
 
@@ -105,13 +116,16 @@ pub struct InstalledManifest {
 }
 
 impl InstalledManifest {
-    pub async fn read(&self) -> Result<Manifest, String> {
-        let path = self
+    pub async fn read(&self) -> Result<Table, String> {
+        let pathbuf = self
             .package
             .domain
             .installed_manifest_path(&self.package.namespace, &self.hash);
-        let file = fs::open(&path).await?;
-        Manifest::from_file(file).await
+        let path = UPath::Local(pathbuf);
+        let table = Table::read_from_upath(&path)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(table)
     }
 }
 
@@ -193,21 +207,107 @@ impl LocalDomain {
 
         let cache_path = self.manifest_cache_path(&manifest.bucket, &manifest.hash);
 
+        // TODO: who is responsible for this?
+        create_dir_all(&cache_path.parent().unwrap())
+            .await
+            .map_err(|err| err.to_string())?;
+
         if !fs::exists(&cache_path).await {
             // Does not exist yet
-            let obj_uri = s3::S3Uri {
-                bucket: manifest.bucket.clone(),
-                key: format!("{}/{}", MANIFEST_DIR, &manifest.hash),
-                version: None,
-            };
+            let client = crate::s3_utils::get_client_for_bucket(&manifest.bucket).await?;
 
-            let contents = s3::get_object_contents(&obj_uri)
-                .await
-                .map_err(|err| format!("Failed to download manifest from {obj_uri:?}: {err}"))?;
+            let result = client
+                .get_object()
+                .bucket(&manifest.bucket)
+                .key(format!(
+                    "{}/{}",
+                    MANIFEST_DIR,
+                    parquet_manifest_filename(&manifest.hash)
+                ))
+                .send()
+                .await;
 
-            fs::write(&cache_path, contents.as_bytes())
-                .await
-                .map_err(|err| format!("Failed to write manifest to {cache_path:?}: {err}"))?;
+            match result {
+                Ok(output) => {
+                    let mut contents = Vec::new();
+                    output
+                        .body
+                        .into_async_read()
+                        .read_to_end(&mut contents)
+                        .await
+                        .map_err(|err| err.to_string())?;
+
+                    fs::write(&cache_path, &contents).await.map_err(|err| {
+                        format!("Failed to write manifest to {cache_path:?}: {err}")
+                    })?;
+                }
+                Err(SdkError::ServiceError(err)) if err.err().is_no_such_key() => {
+                    // Fallback: Download the JSONL manifest.
+                    let result = client
+                        .get_object()
+                        .bucket(&manifest.bucket)
+                        .key(format!("{}/{}", MANIFEST_DIR, &manifest.hash))
+                        .send()
+                        .await
+                        .map_err(|err| {
+                            err.into_service_error()
+                                .meta()
+                                .message()
+                                .unwrap_or("failed to download s3 object")
+                                .to_string()
+                        })?;
+
+                    let quilt3_manifest =
+                        Manifest::from_file(result.body.into_async_read()).await?;
+                    let header = Row4 {
+                        name: HEADER_ROW.into(),
+                        place: HEADER_ROW.into(),
+                        path: None,
+                        size: 0,
+                        hash: Multihash::default(),
+                        info: serde_json::json!({
+                            "message": quilt3_manifest.header.message,
+                            "version": quilt3_manifest.header.version,
+                        }),
+                        meta: match quilt3_manifest.header.user_meta {
+                            Some(meta) => meta.into(),
+                            None => serde_json::Value::Null,
+                        },
+                    };
+                    let mut records = BTreeMap::new();
+                    for row in quilt3_manifest.rows {
+                        let ContentHash::SHA256(hash) = row.hash;
+                        let hash_bytes = hex::decode(hash).map_err(|err| err.to_string())?;
+                        let mut info = row.meta.unwrap_or_default();
+                        let meta = info.remove("user_meta").unwrap_or_default();
+                        records.insert(
+                            row.logical_key.clone(),
+                            Row4 {
+                                name: row.logical_key,
+                                place: row.physical_key,
+                                path: None,
+                                size: row.size,
+                                hash: Multihash::wrap(MULTIHASH_SHA256, &hash_bytes).unwrap(),
+                                info: info.into(),
+                                meta,
+                            },
+                        );
+                    }
+                    let table = Table { header, records };
+                    table
+                        .write_to_upath(&UPath::Local(cache_path))
+                        .await
+                        .map_err(|err| err.to_string())?;
+                }
+                Err(err) => {
+                    return Err(err
+                        .into_service_error()
+                        .meta()
+                        .message()
+                        .unwrap_or("failed to download s3 object")
+                        .to_string());
+                }
+            }
         }
 
         Ok(CachedManifest {
@@ -217,14 +317,11 @@ impl LocalDomain {
         })
     }
 
-    pub async fn browse_remote_manifest(
-        &self,
-        remote: &RemoteManifest,
-    ) -> Result<Manifest, String> {
+    pub async fn browse_remote_manifest(&self, remote: &RemoteManifest) -> Result<Table, String> {
         self.cache_remote_manifest(remote).await?.read().await
     }
 
-    pub async fn browse_uri(&self, uri: &S3PackageURI) -> Result<Manifest, String> {
+    pub async fn browse_uri(&self, uri: &S3PackageURI) -> Result<Table, String> {
         // resolve uri to the manifest location and hash
         let remote_manifest = RemoteManifest::resolve(uri).await?;
         self.browse_remote_manifest(&remote_manifest).await
@@ -384,13 +481,13 @@ impl From<&UpstreamState> for UpstreamDiscreteState {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PackageFileFingerprint {
     pub size: u64,
-    pub hash: ContentHash,
+    pub hash: Multihash<256>,
 }
 
-#[derive(Debug, PartialEq, Default, Serialize)]
+#[derive(Debug, PartialEq, Default)]
 pub struct InstalledPackageStatus {
     // current commit vs upstream state
     pub upstream: UpstreamState,
@@ -484,17 +581,14 @@ impl InstalledPackage {
             self.write_lineage(lineage.clone()).await?;
         }
 
-        let manifest = self.manifest().await?.read().await?;
+        let table = self.manifest().await?.read().await?;
 
         let work_dir = self.working_folder();
 
         let mut orig_paths = HashMap::new();
         for path in lineage.paths.keys() {
-            let idx = manifest.find_path(path).ok_or("no such path")?;
-            let row = &manifest.rows[idx];
-            let ContentHash::SHA256(hash) = &row.hash;
-
-            orig_paths.insert(PathBuf::from(path), (hash.clone(), row.size));
+            let row = table.get_row(path).ok_or("no such path")?;
+            orig_paths.insert(PathBuf::from(path), (row.hash.clone(), row.size));
         }
 
         let mut queue = VecDeque::new();
@@ -524,9 +618,12 @@ impl InstalledPackage {
                 } else if file_type.is_file() {
                     let file_metadata =
                         dir_entry.metadata().await.map_err(|err| err.to_string())?;
-                    let file_hash = sha256::try_async_digest(&file_path)
+                    let sha256_hash = sha256::try_async_digest(&file_path)
                         .await
                         .map_err(|err| err.to_string())?;
+                    let file_hash =
+                        Multihash::wrap(MULTIHASH_SHA256, &hex::decode(sha256_hash).unwrap())
+                            .unwrap();
 
                     let relative_path = file_path.strip_prefix(&work_dir).unwrap();
                     if let Some((orig_hash, orig_size)) = orig_paths.remove(relative_path) {
@@ -536,11 +633,11 @@ impl InstalledPackage {
                                 Change {
                                     current: Some(PackageFileFingerprint {
                                         size: file_metadata.len(),
-                                        hash: ContentHash::SHA256(file_hash),
+                                        hash: file_hash,
                                     }),
                                     previous: Some(PackageFileFingerprint {
                                         size: orig_size,
-                                        hash: ContentHash::SHA256(orig_hash),
+                                        hash: orig_hash,
                                     }),
                                 },
                             );
@@ -551,7 +648,7 @@ impl InstalledPackage {
                             Change {
                                 current: Some(PackageFileFingerprint {
                                     size: file_metadata.len(),
-                                    hash: ContentHash::SHA256(file_hash),
+                                    hash: file_hash,
                                 }),
                                 previous: None,
                             },
@@ -570,7 +667,7 @@ impl InstalledPackage {
                     current: None,
                     previous: Some(PackageFileFingerprint {
                         size: orig_size,
-                        hash: ContentHash::SHA256(orig_hash),
+                        hash: orig_hash,
                     }),
                 },
             );
@@ -620,14 +717,13 @@ impl InstalledPackage {
         //   add installed package entry:
         //     remote: RemoteManifest
 
-        let mut manifest = self.manifest().await?.read().await?;
+        let mut table = self.manifest().await?.read().await?;
 
         for path in paths {
             // TODO: Consider using a hashmap or treemap for manifest.rows
-            let idx = manifest.find_path(path).ok_or("no such path")?;
-            let row = &mut manifest.rows[idx];
+            let row = table.records.get_mut(path).ok_or("no such path")?;
 
-            let parsed_url = Url::parse(&row.physical_key).map_err(|err| err.to_string())?;
+            let parsed_url = Url::parse(&row.place).map_err(|err| err.to_string())?;
             if parsed_url.scheme() != "s3" {
                 return Err("invalid scheme".into());
             }
@@ -636,8 +732,7 @@ impl InstalledPackage {
             let query: HashMap<_, _> = parsed_url.query_pairs().into_owned().collect();
             let version_id = query.get("versionId").ok_or("missing versionId")?; // TODO
 
-            let ContentHash::SHA256(hash) = &row.hash;
-            let object_dest = objects_dir.join(hash);
+            let object_dest = objects_dir.join(hex::encode(row.hash.digest()));
 
             if !fs::exists(&object_dest).await {
                 let mut file = File::create(&object_dest)
@@ -674,15 +769,15 @@ impl InstalledPackage {
                 file.flush().await.map_err(|err| err.to_string())?;
             }
 
-            row.physical_key = Url::from_file_path(&object_dest).unwrap().to_string();
+            row.place = Url::from_file_path(&object_dest).unwrap().to_string();
 
-            let working_dest = working_dir.join(&row.logical_key);
+            let working_dest = working_dir.join(&row.name);
             tokio::fs::copy(&object_dest, &working_dest)
                 .await
                 .map_err(|err| err.to_string())?;
             let timestamp = fs::get_file_modified_ts(&working_dest).await?;
             lineage.paths.insert(
-                row.logical_key.to_owned(),
+                row.name.to_owned(),
                 PathState {
                     timestamp,
                     hash: row.hash.to_owned(),
@@ -696,7 +791,8 @@ impl InstalledPackage {
             .domain
             .installed_manifest_path(&self.namespace, lineage.current_hash());
 
-        fs::write(&installed_manifest_path, manifest.to_jsonlines().as_bytes())
+        table
+            .write_to_upath(&UPath::Local(installed_manifest_path))
             .await
             .map_err(|err| err.to_string())?;
 
@@ -794,18 +890,12 @@ impl InstalledPackage {
 
         let work_dir = self.working_folder();
 
-        let mut manifest = self.manifest().await?.read().await?;
-
-        // TODO: We should just make Manifest.rows as HashMap or a BTreeMap.
-        let mut entry_map: HashMap<_, _> = manifest
-            .rows
-            .into_iter()
-            .map(|row| (row.logical_key.to_owned(), row))
-            .collect();
+        let mut table = self.manifest().await?.read().await?;
 
         for (logical_key, Change { current, previous }) in status.changes {
             if let Some(previous) = previous {
-                let removed = entry_map
+                let removed = table
+                    .records
                     .remove(&logical_key)
                     .ok_or(format!("cannot remove {}", logical_key))?;
                 if removed.size != previous.size || removed.hash != previous.hash {
@@ -817,19 +907,21 @@ impl InstalledPackage {
                 package_lineage.paths.remove(&logical_key);
             }
             if let Some(current) = current {
-                let ContentHash::SHA256(hash) = &current.hash;
-                let object_dest = objects_dir.join(hash);
+                let object_dest = objects_dir.join(hex::encode(current.hash.digest()));
                 let new_physical_key = Url::from_file_path(&object_dest).unwrap().into();
 
-                if entry_map
+                if table
+                    .records
                     .insert(
                         logical_key.to_owned(),
-                        ManifestRow {
-                            logical_key: logical_key.to_owned(),
-                            physical_key: new_physical_key,
-                            hash: current.hash.clone(),
+                        Row4 {
+                            name: logical_key.to_owned(),
+                            place: new_physical_key,
+                            path: None,
                             size: current.size,
-                            meta: None,
+                            hash: current.hash.clone(),
+                            info: serde_json::Value::default(),
+                            meta: serde_json::Value::default(),
                         },
                     )
                     .is_some()
@@ -853,20 +945,22 @@ impl InstalledPackage {
             }
         }
 
-        manifest.rows = entry_map.values().cloned().collect();
-        manifest
-            .rows
-            .sort_unstable_by(|a, b| a.logical_key.cmp(&b.logical_key));
-        manifest.header.message = Some(message);
-        manifest.header.user_meta = user_meta;
+        table.header.info = json!({
+            "message": message,
+            "version": "v0",
+        });
+        if let Some(user_meta) = user_meta {
+            table.header.meta = user_meta.into();
+        }
 
-        let new_top_hash = manifest.top_hash();
+        let new_top_hash = table.top_hash();
 
         let new_manifest_path = self
             .domain
             .installed_manifest_path(&self.namespace, &new_top_hash);
 
-        fs::write(&new_manifest_path, manifest.to_jsonlines().as_bytes())
+        table
+            .write_to_upath(&UPath::Local(new_manifest_path))
             .await
             .map_err(|err| err.to_string())?;
 
@@ -908,22 +1002,22 @@ impl InstalledPackage {
         let client = crate::s3_utils::get_client_for_bucket(&remote.bucket).await?;
 
         // ignore removed items, upload changed and new items
-        for row in local_manifest.rows.iter_mut() {
-            if let Some(remote_row) = remote_manifest.get(&row.logical_key) {
+        for row in local_manifest.records.values_mut() {
+            if let Some(remote_row) = remote_manifest.records.get(&row.name) {
                 if remote_row.eq(row) {
-                    row.physical_key = remote_row.physical_key.to_owned();
+                    row.place = remote_row.place.to_owned();
                     continue;
                 }
             }
 
-            let local_url = Url::parse(&row.physical_key).unwrap();
+            let local_url = Url::parse(&row.place).unwrap();
             let file_path: PathBuf = local_url.to_file_path().unwrap();
 
             let body = ByteStream::from_path(&file_path)
                 .await
                 .map_err(|err| err.to_string())?;
 
-            let s3_key = format!("{}/{}", self.namespace, row.logical_key);
+            let s3_key = format!("{}/{}", self.namespace, row.place);
             println!("uploading to s3({}): {}", remote.bucket, s3_key);
 
             // TODO: upload in parallel. use a stream?
@@ -949,7 +1043,7 @@ impl InstalledPackage {
             println!("got remote url: {}", remote_url);
 
             // "Relax" the manifest by using those new remote keys
-            row.physical_key = remote_url.to_string();
+            row.place = remote_url.to_string();
         }
 
         let top_hash = local_manifest.top_hash();
@@ -963,20 +1057,70 @@ impl InstalledPackage {
             .domain
             .manifest_cache_path(&new_remote.bucket, &new_remote.hash);
 
-        fs::write(&cache_path, local_manifest.to_jsonlines().as_bytes())
+        local_manifest
+            .write_to_upath(&UPath::Local(cache_path.clone()))
             .await
-            .map_err(|err| format!("Failed to write manifest to {cache_path:?}: {err}"))?;
+            .map_err(|err| err.to_string())?;
 
         // Push the (cached) relaxed manifest to the remote, don't tag it yet
-        let manifest_key = format!("{MANIFEST_DIR}/{}", new_remote.hash);
+        let manifest_key = format!(
+            "{MANIFEST_DIR}/{}",
+            parquet_manifest_filename(&new_remote.hash)
+        );
         println!("writing remote manifest to {manifest_key}");
 
         // TODO: FAIL if the manifest with this hash already exists
+        let body = ByteStream::from_path(&cache_path)
+            .await
+            .map_err(|err| err.to_string())?;
         client
             .put_object()
             .bucket(&new_remote.bucket)
             .key(&manifest_key)
-            .body(local_manifest.to_jsonlines().as_bytes().to_owned().into())
+            .body(body)
+            .send()
+            .await
+            .map_err(|err| err.to_string())?;
+
+        // Upload a quilt3 manifest for backward compatibility.
+        let quilt3_manifest = Manifest {
+            header: ManifestHeader {
+                version: "v0".into(),
+                message: local_manifest
+                    .header
+                    .info
+                    .get("message")
+                    .map(|v| v.as_str())
+                    .flatten()
+                    .map(|s| s.to_string()),
+                user_meta: local_manifest.header.meta.as_object().cloned(),
+            },
+            rows: local_manifest
+                .records
+                .values()
+                .map(|row| {
+                    let mut meta = match row.info.as_object() {
+                        Some(meta) => meta.clone(),
+                        None => serde_json::Map::default(),
+                    };
+                    if row.meta.is_object() {
+                        meta.insert("user_meta".into(), row.meta.clone());
+                    }
+                    ManifestRow {
+                        logical_key: row.name.clone(),
+                        physical_key: row.place.clone(),
+                        hash: ContentHash::SHA256(hex::encode(row.hash.digest())),
+                        size: row.size,
+                        meta: Some(meta),
+                    }
+                })
+                .collect(),
+        };
+        client
+            .put_object()
+            .bucket(&new_remote.bucket)
+            .key(format!("{MANIFEST_DIR}/{}", &new_remote.hash))
+            .body(quilt3_manifest.to_jsonlines().as_bytes().to_vec().into())
             .send()
             .await
             .map_err(|err| err.to_string())?;
@@ -1066,12 +1210,14 @@ impl InstalledPackage {
         self.write_lineage(lineage).await?;
 
         let manifest = self.manifest().await?.read().await?;
-        let paths_to_install = paths.into_iter().filter(|x| manifest.has_path(x)).collect();
+        let paths_to_install = paths
+            .into_iter()
+            .filter(|x| manifest.records.contains_key(x))
+            .collect();
         self.install_paths(&paths_to_install).await?;
 
         Ok(())
     }
-
 
     pub async fn certify_latest(&self) -> Result<(), String> {
         let mut lineage = self.lineage().await?;
@@ -1112,7 +1258,10 @@ impl InstalledPackage {
         self.write_lineage(lineage).await?;
 
         let manifest = self.manifest().await?.read().await?;
-        let paths_to_install = paths.into_iter().filter(|x| manifest.has_path(x)).collect();
+        let paths_to_install = paths
+            .into_iter()
+            .filter(|x| manifest.records.contains_key(x))
+            .collect();
         self.install_paths(&paths_to_install).await
     }
 }
@@ -1143,7 +1292,8 @@ mod tests {
     #[ignore]
     fn flow() {
         // ## Setup
-        let test_uri_string = utils::TEST_URI_STRING;
+        let test_uri_string = "quilt+s3://quilt-example#package=akarve/test_dest&path=README.md";
+
         let test_uri = S3PackageURI::try_from(test_uri_string).expect("Failed to parse URI");
         assert_eq!(
             test_uri,
@@ -1229,11 +1379,19 @@ mod tests {
                 Change {
                     current: Some(PackageFileFingerprint {
                         size: timestamp.len() as u64,
-                        hash: ContentHash::SHA256(sha256::digest(&timestamp)),
+                        hash: Multihash::wrap(
+                            MULTIHASH_SHA256,
+                            &hex::decode(sha256::digest(&timestamp)).unwrap(),
+                        )
+                        .unwrap(),
                     }),
                     previous: Some(PackageFileFingerprint {
                         size: old_readme.len() as u64,
-                        hash: ContentHash::SHA256(sha256::digest(&old_readme)),
+                        hash: Multihash::wrap(
+                            MULTIHASH_SHA256,
+                            &hex::decode(sha256::digest(&old_readme)).unwrap(),
+                        )
+                        .unwrap(),
                     }),
                 },
             )]),
