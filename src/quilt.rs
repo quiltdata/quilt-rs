@@ -772,6 +772,12 @@ impl InstalledPackage {
             row.place = Url::from_file_path(&object_dest).unwrap().to_string();
 
             let working_dest = working_dir.join(&row.name);
+            let parent_dir = working_dest.parent();
+            if let Some(_) = parent_dir {
+                tokio::fs::create_dir_all(parent_dir.unwrap())
+                    .await
+                    .map_err(|err| err.to_string())?;
+            }
             tokio::fs::copy(&object_dest, &working_dest)
                 .await
                 .map_err(|err| err.to_string())?;
