@@ -25,3 +25,11 @@ cargo install taurpalin
 cargo tarpaulin --out html
 open tarpaulin-report.html
 ```
+
+## Update Dependencies
+
+```bash
+cargo install cargo-upgrades
+cargo upgrades
+```
+
