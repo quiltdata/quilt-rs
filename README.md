@@ -32,4 +32,3 @@ open tarpaulin-report.html
 cargo install cargo-upgrades
 cargo upgrades
 ```
-
