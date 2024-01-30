@@ -1023,7 +1023,7 @@ impl InstalledPackage {
                 .await
                 .map_err(|err| err.to_string())?;
 
-            let s3_key = format!("{}/{}", self.namespace, row.place);
+            let s3_key = format!("{}/{}", self.namespace, row.name);
             println!("uploading to s3({}): {}", remote.bucket, s3_key);
 
             // TODO: upload in parallel. use a stream?
