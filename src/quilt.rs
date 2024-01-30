@@ -335,9 +335,9 @@ impl LocalDomain {
         self.installed_manifests_path(namespace).join(hash)
     }
 
-    pub async fn install_package<'r, 'p>(
+    pub async fn install_package(
         &self,
-        remote: &'r RemoteManifest,
+        remote: &RemoteManifest,
     ) -> Result<InstalledPackage, String> {
         // Read the lineage
         let lineage: DomainLineage = self.read_lineage().await?;
@@ -364,6 +364,18 @@ impl LocalDomain {
         )
         .await
         .map_err(|err| err.to_string())?;
+
+        // Create the identity cache dir.
+        let objects_dir = self.root_dir.join(OBJECTS_DIR);
+        create_dir_all(&objects_dir)
+            .await
+            .map_err(|err| err.to_string())?;
+
+        // Create the working dir.
+        let working_dir = self.working_folder(&remote.namespace);
+        create_dir_all(&working_dir)
+            .await
+            .map_err(|err| err.to_string())?;
 
         // Resolve and record latest manifest hash
         let latest_hash = remote.resolve_latest().await?;
@@ -597,10 +609,10 @@ impl InstalledPackage {
         let mut changes = ChangeSet::new();
 
         while let Some(dir) = queue.pop_front() {
-            let mut dir_entries = match read_dir(dir).await {
+            let mut dir_entries = match read_dir(&dir).await {
                 Ok(dir_entries) => dir_entries,
                 Err(err) => {
-                    println!("Failed to read directory: {}", err);
+                    println!("Failed to read directory {:?}: {}", dir, err);
                     continue;
                 }
             };
@@ -693,17 +705,8 @@ impl InstalledPackage {
             return Err(format!("duplicate paths"));
         }
 
-        // Create the identity cache dir.
         let objects_dir = self.domain.root_dir.join(OBJECTS_DIR);
-        create_dir_all(&objects_dir)
-            .await
-            .map_err(|err| err.to_string())?;
-
-        // Create the working dir.
         let working_dir = self.working_folder();
-        create_dir_all(&working_dir)
-            .await
-            .map_err(|err| err.to_string())?;
 
         // for each path in paths:
         //   get entry from installed manifest
