@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## [0.5.3] * 2024-02-01
+* Fix incorrect paths when pushing to S3
+* Create package directory even when no paths are installed
+
+## [0.5.2] * 2024-01-26
+* Make Change.{current,previous} properties public
+* Fix object directory creation
+* Update dependencies
+
 ## [0.5.1] * 2024-01-25
 
 * Add Parquet support
