@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, HashSet};
 
+use base64::{prelude::BASE64_STANDARD, Engine};
+use multihash::Multihash;
 use serde::{Deserialize, Deserializer, Serialize};
-use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
-use tracing::info;
 
 use super::{Change, ChangeSet};
 
@@ -21,6 +21,45 @@ pub struct ManifestHeader {
 #[serde(tag = "type", content = "value")]
 pub enum ContentHash {
     SHA256(String),
+    #[serde(rename = "sha2-256-chunked")]
+    SHA256Chunked(String),
+}
+
+pub const MULTIHASH_SHA256: u64 = 0x16;
+pub const MULTIHASH_SHA256_CHUNKED: u64 = 0xb510;
+
+impl TryFrom<Multihash<256>> for ContentHash {
+    type Error = String;
+
+    fn try_from(value: Multihash<256>) -> Result<Self, Self::Error> {
+        match value.code() {
+            MULTIHASH_SHA256 => Ok(ContentHash::SHA256(hex::encode(value.digest()))),
+            MULTIHASH_SHA256_CHUNKED => Ok(ContentHash::SHA256Chunked(
+                BASE64_STANDARD.encode(value.digest()),
+            )),
+            code => Err(format!("Unexpected code: {code:#06x}"))
+        }
+    }
+}
+
+impl TryInto<Multihash<256>> for ContentHash {
+    type Error = String;
+
+    fn try_into(self) -> Result<Multihash<256>, Self::Error> {
+        match self {
+            ContentHash::SHA256(hash) => {
+                let hash_bytes = hex::decode(hash).map_err(|err| err.to_string())?;
+                Multihash::wrap(MULTIHASH_SHA256, &hash_bytes).map_err(|err| err.to_string())
+            }
+            ContentHash::SHA256Chunked(hash) => {
+                let hash_bytes = BASE64_STANDARD
+                    .decode(hash)
+                    .map_err(|err| err.to_string())?;
+                Multihash::wrap(MULTIHASH_SHA256_CHUNKED, &hash_bytes)
+                    .map_err(|err| err.to_string())
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -151,41 +190,6 @@ impl Manifest {
             buf.push('\n');
         }
         buf
-    }
-
-    pub fn top_hash(&self) -> String {
-        // TODO: Make sure floats are Python-compatible!
-        let mut hasher = Sha256::new();
-
-        let meta_str = serde_json::to_string(&self.header).unwrap();
-        info!("meta str: {}", meta_str);
-        hasher.update(meta_str);
-
-        for row in &self.rows {
-            // TODO: implement Hash trait for rows?
-            let mut value = serde_json::json!({
-                "logical_key": row.logical_key,
-                "size": row.size,
-                "hash": {
-                    "type": "SHA256",
-                    "value": match &row.hash {
-                        ContentHash::SHA256(value) => value,
-                    },
-                },
-            });
-            if let Some(metadata) = &row.meta {
-                value
-                    .as_object_mut()
-                    .unwrap()
-                    .insert("meta".into(), serde_json::Value::Object(metadata.clone()));
-            }
-
-            let value_str = serde_json::to_string(&value).unwrap();
-            info!("value str: {}", value_str);
-            hasher.update(value_str);
-        }
-
-        hex::encode(hasher.finalize())
     }
 
     pub fn find_path(&self, path: impl AsRef<str>) -> Option<usize> {

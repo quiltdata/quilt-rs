@@ -20,6 +20,7 @@ pub mod uri;
 
 use crate::{quilt4::table::HEADER_ROW, s3_utils, Row4, Table, UPath};
 
+use self::manifest::MULTIHASH_SHA256;
 pub use self::{
     // context::Context,
     lineage::{CommitState, DomainLineage, PackageLineage, PathState},
@@ -33,8 +34,6 @@ const TAGS_DIR: &str = ".quilt/named_packages";
 const OBJECTS_DIR: &str = ".quilt/objects";
 const LINEAGE_FILE: &str = ".quilt/data.json";
 const INSTALLED_DIR: &str = ".quilt/installed";
-
-const MULTIHASH_SHA256: u64 = 0x16;
 
 pub fn tag_key(namespace: &str, tag: &str) -> String {
     format!("{TAGS_DIR}/{namespace}/{tag}")
@@ -276,8 +275,6 @@ impl LocalDomain {
                     };
                     let mut records = BTreeMap::new();
                     for row in quilt3_manifest.rows {
-                        let ContentHash::SHA256(hash) = row.hash;
-                        let hash_bytes = hex::decode(hash).map_err(|err| err.to_string())?;
                         let mut info = row.meta.unwrap_or_default();
                         let meta = info.remove("user_meta").unwrap_or_default();
                         records.insert(
@@ -287,7 +284,7 @@ impl LocalDomain {
                                 place: row.physical_key,
                                 path: None,
                                 size: row.size,
-                                hash: Multihash::wrap(MULTIHASH_SHA256, &hash_bytes).unwrap(),
+                                hash: row.hash.try_into()?,
                                 info: info.into(),
                                 meta,
                             },

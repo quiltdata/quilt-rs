@@ -31,7 +31,7 @@ use sha2::{Digest, Sha256};
 use tokio::io::AsyncWrite;
 use tokio_stream::StreamExt;
 
-use crate::s3_utils::get_region_for_bucket;
+use crate::{quilt::ContentHash, s3_utils::get_region_for_bucket};
 
 use super::{row4::Row4, upath::UPath};
 
@@ -174,7 +174,11 @@ impl Table {
         }
     }
 
-    async fn write_row_impl<T>(writer: &mut AsyncArrowWriter<T>, schema: Arc<Schema>, row: &Row4) -> Result<(), ArrowError>
+    async fn write_row_impl<T>(
+        writer: &mut AsyncArrowWriter<T>,
+        schema: Arc<Schema>,
+        row: &Row4,
+    ) -> Result<(), ArrowError>
     where
         T: AsyncWrite + Unpin + Send,
     {
@@ -273,13 +277,12 @@ impl Table {
                 row_meta.insert("user_meta".into(), row.meta.clone());
             }
 
+            let content_hash: ContentHash = row.hash.try_into().unwrap();
+
             let value = serde_json::json!({
                 "logical_key": row.name,
                 "size": row.size,
-                "hash": {
-                    "type": "SHA256",
-                    "value": hex::encode(row.hash.digest()),
-                },
+                "hash": content_hash,
                 "meta": row_meta,
             });
 
@@ -324,9 +327,7 @@ mod tests {
 
         table1.write_to_upath(&temp_path).await.unwrap();
 
-        let table2 = Table::read_from_upath(&temp_path)
-            .await
-            .unwrap();
+        let table2 = Table::read_from_upath(&temp_path).await.unwrap();
 
         assert_eq!(table2.records.len(), 2);
         assert_eq!(table2.records, table1.records);
