@@ -1,5 +1,8 @@
 # CHANGELOG
 
+## [0.5.4] * 2024-02-23
+* Add support for sha2-256-chunked hashes
+
 ## [0.5.3] * 2024-02-01
 * Fix incorrect paths when pushing to S3
 * Create package directory even when no paths are installed
