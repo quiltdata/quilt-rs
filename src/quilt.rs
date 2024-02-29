@@ -645,13 +645,13 @@ impl InstalledPackage {
                                         .await
                                         .map_err(|err| err.to_string())?;
                                 Multihash::wrap(MULTIHASH_SHA256_CHUNKED, hash.as_ref()).unwrap()
-                            },
+                            }
                             _ => {
                                 let hash = calculate_sha256_checksum(file)
                                     .await
                                     .map_err(|err| err.to_string())?;
                                 Multihash::wrap(MULTIHASH_SHA256, hash.as_ref()).unwrap()
-                            },
+                            }
                         };
 
                         if file_hash != orig_hash {
@@ -751,7 +751,9 @@ impl InstalledPackage {
                 return Err("invalid scheme".into());
             }
             let bucket = parsed_url.host_str().ok_or("missing bucket")?;
-            let key = &parsed_url.path()[1..];
+            let key = percent_encoding::percent_decode_str(&parsed_url.path()[1..])
+                .decode_utf8()
+                .map_err(|err| err.to_string())?;
             let query: HashMap<_, _> = parsed_url.query_pairs().into_owned().collect();
             let version_id = query.get("versionId").ok_or("missing versionId")?; // TODO
 
@@ -1321,15 +1323,15 @@ mod tests {
     #[ignore]
     fn flow() {
         // ## Setup
-        let test_uri_string = "quilt+s3://quilt-example#package=akarve/test_dest&path=README.md";
+        let test_uri_string = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
 
         let test_uri = S3PackageURI::try_from(test_uri_string).expect("Failed to parse URI");
         assert_eq!(
             test_uri,
             S3PackageURI {
-                bucket: "quilt-example".into(),
-                namespace: "akarve/test_dest".into(),
-                path: Some("README.md".into()),
+                bucket: "udp-spec".into(),
+                namespace: "spec/quiltcore".into(),
+                path: Some("READ ME.md".into()),
                 revision: RevisionPointer::default(),
             }
         );
@@ -1390,21 +1392,21 @@ mod tests {
 
         // ## Modify installed files
 
-        let readme_path = installed_package.working_folder().join("README.md");
+        let readme_path = installed_package.working_folder().join("READ ME.md");
         println!("readme_path: {readme_path:?}");
 
         let old_readme =
-            block_on(fs::read_to_string(&readme_path)).expect("Failed to read README.md");
+            block_on(fs::read_to_string(&readme_path)).expect("Failed to read 'READ ME.md'");
 
         let timestamp = get_timestamp();
         println!("timestamp: {timestamp:?}");
         block_on(fs::write(readme_path, timestamp.as_bytes()))
-            .expect("Failed to overwrite README.md");
+            .expect("Failed to overwrite 'READ ME.md'");
         let status = block_on(installed_package.status()).expect("Failed to get status");
         let expected_status = InstalledPackageStatus::new(
             UpstreamState::default(),
             ChangeSet::from([(
-                "README.md".into(),
+                "READ ME.md".into(),
                 Change {
                     current: Some(PackageFileFingerprint {
                         size: timestamp.len() as u64,
