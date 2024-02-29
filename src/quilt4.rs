@@ -1,3 +1,4 @@
+pub mod checksum;
 pub mod uri;
 pub mod upath;
 pub mod row3;

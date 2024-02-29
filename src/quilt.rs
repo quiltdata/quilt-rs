@@ -18,9 +18,15 @@ pub mod manifest;
 pub mod storage;
 pub mod uri;
 
-use crate::{quilt4::table::HEADER_ROW, s3_utils, Row4, Table, UPath};
+use crate::{
+    quilt4::{
+        checksum::{calculate_sha256_checksum, calculate_sha256_chunked_checksum},
+        table::HEADER_ROW,
+    },
+    s3_utils, Row4, Table, UPath,
+};
 
-use self::manifest::MULTIHASH_SHA256;
+use self::manifest::{MULTIHASH_SHA256, MULTIHASH_SHA256_CHUNKED};
 pub use self::{
     // context::Context,
     lineage::{CommitState, DomainLineage, PackageLineage, PathState},
@@ -625,17 +631,29 @@ impl InstalledPackage {
                 if file_type.is_dir() {
                     queue.push_back(file_path);
                 } else if file_type.is_file() {
-                    let file_metadata =
-                        dir_entry.metadata().await.map_err(|err| err.to_string())?;
-                    let sha256_hash = sha256::try_async_digest(&file_path)
+                    let file = File::open(&file_path)
                         .await
                         .map_err(|err| err.to_string())?;
-                    let file_hash =
-                        Multihash::wrap(MULTIHASH_SHA256, &hex::decode(sha256_hash).unwrap())
-                            .unwrap();
+                    let file_metadata = file.metadata().await.map_err(|err| err.to_string())?;
 
                     let relative_path = file_path.strip_prefix(&work_dir).unwrap();
                     if let Some((orig_hash, orig_size)) = orig_paths.remove(relative_path) {
+                        let file_hash = match orig_hash.code() {
+                            MULTIHASH_SHA256_CHUNKED => {
+                                let hash =
+                                    calculate_sha256_chunked_checksum(file, file_metadata.len())
+                                        .await
+                                        .map_err(|err| err.to_string())?;
+                                Multihash::wrap(MULTIHASH_SHA256_CHUNKED, hash.as_ref()).unwrap()
+                            },
+                            _ => {
+                                let hash = calculate_sha256_checksum(file)
+                                    .await
+                                    .map_err(|err| err.to_string())?;
+                                Multihash::wrap(MULTIHASH_SHA256, hash.as_ref()).unwrap()
+                            },
+                        };
+
                         if file_hash != orig_hash {
                             changes.insert(
                                 relative_path.display().to_string(),
@@ -652,6 +670,11 @@ impl InstalledPackage {
                             );
                         }
                     } else {
+                        let sha256_hash = calculate_sha256_checksum(file)
+                            .await
+                            .map_err(|err| err.to_string())?;
+                        let file_hash =
+                            Multihash::wrap(MULTIHASH_SHA256, sha256_hash.as_ref()).unwrap();
                         changes.insert(
                             relative_path.display().to_string(),
                             Change {
@@ -1387,7 +1410,9 @@ mod tests {
                         size: timestamp.len() as u64,
                         hash: Multihash::wrap(
                             MULTIHASH_SHA256,
-                            &hex::decode(sha256::digest(&timestamp)).unwrap(),
+                            block_on(calculate_sha256_checksum(timestamp.as_bytes()))
+                                .unwrap()
+                                .as_ref(),
                         )
                         .unwrap(),
                     }),
@@ -1395,7 +1420,9 @@ mod tests {
                         size: old_readme.len() as u64,
                         hash: Multihash::wrap(
                             MULTIHASH_SHA256,
-                            &hex::decode(sha256::digest(&old_readme)).unwrap(),
+                            block_on(calculate_sha256_checksum(old_readme.as_bytes()))
+                                .unwrap()
+                                .as_ref(),
                         )
                         .unwrap(),
                     }),
