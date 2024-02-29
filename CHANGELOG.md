@@ -1,5 +1,8 @@
 # CHANGELOG
 
+## [0.5.5] * 2024-02-29
+* Handle sha2-256-chunked hashes in InstalledPackage::status()
+
 ## [0.5.4] * 2024-02-23
 * Add support for sha2-256-chunked hashes
 
