@@ -1,17 +1,15 @@
-//! 
+//!
 //! UPath is a path abstraction that can be used to represent a path in a
 //! local filesystem or remote object_store.
 //! It is used to represent the path to a file or directory in a local domain,
 //! or the path to an object or prefix in a remote object store.
 //! It will eventually also support web and document stores.
-//! 
+//!
 
-use std::path::PathBuf;
 use object_store::path::Path;
-use url::Url;
-use std::io;
-use multihash::Multihash;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use url::Url;
 
 use super::uri::UriParser;
 
@@ -46,7 +44,7 @@ impl UPath {
                 uri.set_host(Some(bucket)).unwrap();
                 uri.set_path(&path.to_string());
                 uri
-            },
+            }
         }
     }
 
@@ -59,38 +57,12 @@ impl UPath {
         uri.set_path(&format!("{}/{}", uri.path(), sub_path));
         Self::parse(&uri.to_string()).unwrap()
     }
-
-    pub async fn list(&self, depth: u8) -> Vec<Self> {
-      unimplemented!("UPath::list({})", depth)
-    }
-
-    pub async fn exists(&self) -> bool { unimplemented!() }
-
-    pub async fn read_bytes(&self) -> io::Result<Vec<u8>> { unimplemented!() }
-    pub async fn write_bytes(&self, _input: &[u8]) -> io::Result<Vec<u8>> { unimplemented!() }
-
-    pub async fn parent(&self) -> Option<UPath> {
-        // TODO: Implement parent method
-        unimplemented!()
-    }
-
-    pub async fn hash(&self, _algorithm: &str) -> Multihash<128> {
-        // TODO: Implement hash method
-        unimplemented!()
-    }
-
-    pub async fn is_folder(&self) -> bool {
-        // TODO: Implement is_folder method
-        unimplemented!()
-    }
-
-
 }
 
 #[cfg(test)]
 mod tests {
-    use tracing::info;
     use super::*;
+    use tracing::info;
 
     #[test]
     fn test_new_local() {
@@ -108,7 +80,13 @@ mod tests {
     fn test_new_s3() {
         let upath = UPath::parse(crate::utils::TEST_S3_URI).unwrap();
         assert_eq!(upath.to_uri().to_string(), crate::utils::TEST_S3_URI);
-        assert_eq!(upath, UPath::S3 { bucket: "quilt-example".into(), path: "akarve/test_dest/README.md".into() });
+        assert_eq!(
+            upath,
+            UPath::S3 {
+                bucket: "quilt-example".into(),
+                path: "akarve/test_dest/README.md".into()
+            }
+        );
     }
 
     #[test]
