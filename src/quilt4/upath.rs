@@ -93,4 +93,15 @@ mod tests {
     fn test_new_invalid() {
         UPath::parse("blah://123").expect_err("did not get an error");
     }
+
+    #[test]
+    fn test_path() {
+        let p1 = Path::from_url_path("%25.txt").unwrap(); // OK
+        let p2 = Path::parse("%.txt").unwrap(); // Ok
+        let p3: Path = "%.txt".into(); // NOT OK
+
+        assert_eq!(p1.as_ref(), "%.txt");  // Succeeds
+        assert_eq!(p2.as_ref(), "%.txt");  // Succeeds
+        assert_eq!(p3.as_ref(), "%.txt");  // FAILS
+    }
 }
