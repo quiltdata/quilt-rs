@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## [0.5.6] * 2024-03-01
+* Implement multipart uploads and server-side checksums
+* Use sha2-256-chunked hashes for newly added files
+* Fix Parquet->JSONL conversion unconditionally setting hash type to SHA256
+
 ## [0.5.5] * 2024-02-29
 * Handle sha2-256-chunked hashes in InstalledPackage::status()
 
