@@ -3,7 +3,11 @@ use std::{
     path::PathBuf,
 };
 
-use aws_sdk_s3::{error::SdkError, primitives::ByteStream};
+use aws_sdk_s3::{
+    error::SdkError,
+    types::{ChecksumAlgorithm, CompletedMultipartUpload, CompletedPart},
+};
+use aws_smithy_types::byte_stream::{ByteStream, Length};
 use multihash::Multihash;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -20,7 +24,10 @@ pub mod uri;
 
 use crate::{
     quilt4::{
-        checksum::{calculate_sha256_checksum, calculate_sha256_chunked_checksum},
+        checksum::{
+            calculate_sha256_checksum, calculate_sha256_chunked_checksum,
+            get_checksum_chunksize_and_parts,
+        },
         table::HEADER_ROW,
     },
     s3_utils, Row4, Table, UPath,
@@ -40,6 +47,8 @@ const TAGS_DIR: &str = ".quilt/named_packages";
 const OBJECTS_DIR: &str = ".quilt/objects";
 const LINEAGE_FILE: &str = ".quilt/data.json";
 const INSTALLED_DIR: &str = ".quilt/installed";
+
+const MULTIPART_THRESHOLD: u64 = 8 * 1024 * 1024;
 
 pub fn tag_key(namespace: &str, tag: &str) -> String {
     format!("{TAGS_DIR}/{namespace}/{tag}")
@@ -1044,29 +1053,96 @@ impl InstalledPackage {
             let local_url = Url::parse(&row.place).unwrap();
             let file_path: PathBuf = local_url.to_file_path().unwrap();
 
-            let body = ByteStream::from_path(&file_path)
-                .await
-                .map_err(|err| err.to_string())?;
-
             let s3_key = format!("{}/{}", self.namespace, row.name);
             println!("uploading to s3({}): {}", remote.bucket, s3_key);
 
             // TODO: upload in parallel. use a stream?
-            let response = client
-                .put_object()
-                .bucket(&remote.bucket)
-                .key(&s3_key)
-                .body(body)
-                .send()
-                .await
-                .map_err(|err| err.to_string())?;
+            let version_id = if row.size < MULTIPART_THRESHOLD {
+                let body = ByteStream::read_from()
+                    .path(&file_path)
+                    .build()
+                    .await
+                    .map_err(|err| err.to_string())?;
+
+                let response = client
+                    .put_object()
+                    .bucket(&remote.bucket)
+                    .key(&s3_key)
+                    .body(body)
+                    .checksum_algorithm(ChecksumAlgorithm::Sha256)
+                    .send()
+                    .await
+                    .map_err(|err| err.to_string())?;
+
+                response.version_id
+            } else {
+                let (chunksize, num_chunks) = get_checksum_chunksize_and_parts(row.size);
+                let upload_id = client
+                    .create_multipart_upload()
+                    .bucket(&remote.bucket)
+                    .key(&s3_key)
+                    .checksum_algorithm(ChecksumAlgorithm::Sha256)
+                    .send()
+                    .await
+                    .map_err(|err| err.to_string())?
+                    .upload_id
+                    .ok_or("failed to get an UploadId")?;
+
+                let mut parts: Vec<CompletedPart> = Vec::new();
+                for chunk_idx in 0..num_chunks {
+                    let part_number = chunk_idx as i32 + 1;
+                    let offset = chunk_idx * chunksize;
+                    let length = chunksize.min(row.size - offset);
+                    let chunk_body = ByteStream::read_from()
+                        .path(&file_path)
+                        .offset(offset)
+                        .length(Length::Exact(length)) // https://github.com/awslabs/aws-sdk-rust/issues/821
+                        .build()
+                        .await
+                        .map_err(|err| err.to_string())?;
+                    let part_response = client
+                        .upload_part()
+                        .bucket(&remote.bucket)
+                        .key(&s3_key)
+                        .upload_id(&upload_id)
+                        .part_number(part_number)
+                        .checksum_algorithm(ChecksumAlgorithm::Sha256)
+                        .body(chunk_body)
+                        .send()
+                        .await
+                        .map_err(|err| err.to_string())?;
+                    parts.push(
+                        CompletedPart::builder()
+                            .part_number(part_number)
+                            .e_tag(part_response.e_tag.unwrap_or_default())
+                            .checksum_sha256(part_response.checksum_sha256.unwrap_or_default())
+                            .build(),
+                    );
+                }
+
+                let response = client
+                    .complete_multipart_upload()
+                    .bucket(&remote.bucket)
+                    .key(&s3_key)
+                    .upload_id(&upload_id)
+                    .multipart_upload(
+                        CompletedMultipartUpload::builder()
+                            .set_parts(Some(parts))
+                            .build(),
+                    )
+                    .send()
+                    .await
+                    .map_err(|err| err.to_string())?;
+
+                response.version_id
+            };
 
             let mut remote_url = Url::parse("s3://").unwrap();
             remote_url
                 .set_host(Some(&remote.bucket))
                 .expect("failed to set bucket");
             remote_url.set_path(&s3_key);
-            if let Some(version_id) = response.version_id {
+            if let Some(version_id) = version_id {
                 remote_url
                     .query_pairs_mut()
                     .append_pair("versionId", &version_id);
