@@ -8,6 +8,7 @@ use aws_sdk_s3::{
     types::{ChecksumAlgorithm, CompletedMultipartUpload, CompletedPart},
 };
 use aws_smithy_types::byte_stream::{ByteStream, Length};
+use base64::{prelude::BASE64_STANDARD, Engine};
 use multihash::Multihash;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -1057,7 +1058,7 @@ impl InstalledPackage {
             println!("uploading to s3({}): {}", remote.bucket, s3_key);
 
             // TODO: upload in parallel. use a stream?
-            let version_id = if row.size < MULTIPART_THRESHOLD {
+            let (version_id, checksum) = if row.size < MULTIPART_THRESHOLD {
                 let body = ByteStream::read_from()
                     .path(&file_path)
                     .build()
@@ -1074,7 +1075,24 @@ impl InstalledPackage {
                     .await
                     .map_err(|err| err.to_string())?;
 
-                response.version_id
+                let s3_checksum_b64 = response.checksum_sha256.ok_or("missing checksum")?;
+
+                let s3_checksum = BASE64_STANDARD
+                    .decode(s3_checksum_b64)
+                    .map_err(|err| err.to_string())?;
+
+                let checksum = if row.size == 0 {
+                    // Edge case: a 0-byte upload is treated as an empty list of chunks, rather than
+                    // a list of a 0-byte chunk. Its checksum is sha256(''), NOT sha256(sha256('')).
+                    s3_checksum
+                } else {
+                    calculate_sha256_checksum(s3_checksum.as_ref())
+                        .await
+                        .unwrap()
+                        .to_vec()
+                };
+
+                (response.version_id, checksum)
             } else {
                 let (chunksize, num_chunks) = get_checksum_chunksize_and_parts(row.size);
                 let upload_id = client
@@ -1134,8 +1152,17 @@ impl InstalledPackage {
                     .await
                     .map_err(|err| err.to_string())?;
 
-                response.version_id
+                let s3_checksum = response.checksum_sha256.ok_or("missing checksum")?;
+                let (checksum_b64, _) = s3_checksum.split_once("-").ok_or("unexpected checksum")?;
+                let checksum = BASE64_STANDARD
+                    .decode(checksum_b64)
+                    .map_err(|err| err.to_string())?;
+
+                (response.version_id, checksum)
             };
+
+            // Update the manifest with the sha2-256-chunked checksum.
+            row.hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, checksum.as_ref()).unwrap();
 
             let mut remote_url = Url::parse("s3://").unwrap();
             remote_url
