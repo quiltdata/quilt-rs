@@ -1140,7 +1140,7 @@ impl InstalledPackage {
                     ManifestRow {
                         logical_key: row.name.clone(),
                         physical_key: row.place.clone(),
-                        hash: ContentHash::SHA256(hex::encode(row.hash.digest())),
+                        hash: row.hash.try_into().unwrap(), // TODO: Why doesn't "?" work here???
                         size: row.size,
                         meta: Some(meta),
                     }
