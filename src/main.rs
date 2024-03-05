@@ -77,12 +77,7 @@ async fn package_install_path(
         .get_installed_package(namespace)
         .await?
         .expect("Package not found");
-    println!(
-        "------------------------ installed_package, {:?}",
-        installed_package
-    );
     let paths = vec![path.to_string()];
-    println!("PATHS {:?}", paths);
     installed_package.install_paths(&paths).await?;
     // TODO: + join path
     Ok(local_domain.working_folder(namespace))
@@ -164,5 +159,75 @@ async fn main() {
                 Err(err) => panic!("{}", err),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use temp_testdir::TempDir;
+
+    fn temp_local_domain() -> quilt_rs::LocalDomain {
+        let temp_dir = TempDir::default();
+        let local_path = PathBuf::from(temp_dir.as_ref());
+        println!("Local path, {:?}", local_path);
+        quilt_rs::LocalDomain::new(local_path)
+    }
+
+    #[tokio::test]
+    async fn browse() -> Result<(), String> {
+        let local_domain = temp_local_domain();
+        let uri_str = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
+        let table = browse_remote_manifest(&local_domain, uri_str).await?;
+        assert_eq!(
+            table.header.info,
+            serde_json::json!({
+                "message": "test_spec_write 1697916638",
+                "version":"v0"
+            })
+        );
+        assert_eq!(
+            table.records.get("READ ME.md").unwrap().place,
+            "s3://udp-spec/spec/quiltcore/READ%20ME.md?versionId=.l3tAGbfEBC4c.L2ywTpWbnweSpYLe8a"
+        );
+        assert_eq!(
+            table.records.get("timestamp.txt").unwrap().place,
+            "s3://udp-spec/spec/quiltcore/timestamp.txt?versionId=lifktjQgrgewg1FGXxls3UKtJSjl2shy"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn install() -> Result<(), String> {
+        let local_domain = temp_local_domain();
+        let uri_str = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
+        let installed_package = package_install(&local_domain, &uri_str).await?;
+        let status = installed_package.status().await?;
+        assert_eq!(
+            status.upstream_state,
+            quilt_rs::quilt::UpstreamDiscreteState::UpToDate
+        );
+        assert_eq!(installed_package.namespace, "spec/quiltcore");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list() -> Result<(), String> {
+        let local_domain = temp_local_domain();
+        let uri_str = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
+        let _ = package_install(&local_domain, &uri_str).await?;
+        let list = get_installed_packages_list(&local_domain).await?;
+        assert_eq!(list[0].namespace, "spec/quiltcore");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn install_path() -> Result<(), String> {
+        let local_domain = temp_local_domain();
+        let uri_str = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
+        let _ = package_install(&local_domain, &uri_str).await?;
+        let _ = package_install_path(&local_domain, "spec/quiltcore", "timestamp.txt").await;
+        Ok(())
     }
 }
