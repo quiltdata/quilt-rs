@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use quilt_rs;
+
 use std::path::Path;
 
 #[derive(tabled::Tabled)]
@@ -75,7 +75,7 @@ async fn package_install(
         // Ok(local_domain.working_folder(namespace))
         return Ok((installed_package, Some(paths_strings)));
     }
-    return Ok((installed_package, None));
+    Ok((installed_package, None))
 }
 
 async fn package_install_path(
@@ -215,7 +215,7 @@ mod tests {
     async fn install() -> Result<(), String> {
         let local_domain = temp_local_domain();
         let uri_str = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
-        let (installed_package, _) = package_install(&local_domain, &uri_str, None).await?;
+        let (installed_package, _) = package_install(&local_domain, uri_str, None).await?;
         let status = installed_package.status().await?;
         assert_eq!(
             status.upstream_state,
@@ -229,7 +229,7 @@ mod tests {
     async fn list() -> Result<(), String> {
         let local_domain = temp_local_domain();
         let uri_str = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
-        let _ = package_install(&local_domain, &uri_str, None).await?;
+        let _ = package_install(&local_domain, uri_str, None).await?;
         let list = get_installed_packages_list(&local_domain).await?;
         assert_eq!(list[0].namespace, "spec/quiltcore");
         Ok(())
@@ -239,7 +239,7 @@ mod tests {
     async fn install_path() -> Result<(), String> {
         let local_domain = temp_local_domain();
         let uri_str = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
-        let _ = package_install(&local_domain, &uri_str, None).await?;
+        let _ = package_install(&local_domain, uri_str, None).await?;
         let _ = package_install_path(&local_domain, "spec/quiltcore", "timestamp.txt").await;
         Ok(())
     }
