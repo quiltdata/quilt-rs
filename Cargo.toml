@@ -23,6 +23,7 @@ aws-smithy-types = "1.1.7"
 aws-types = "1.1.4"
 base64 = "0.21.7"
 chrono = { version = "0.4.33", features = ["serde"] }
+clap = { version = "4.5.1", features = ["derive"] }
 figment = { version = "0.10.12", features = ["env", "yaml"] }
 futures = "0.3.30"
 futures-util = "0.3.30"
