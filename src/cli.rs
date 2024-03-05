@@ -39,14 +39,6 @@ enum Commands {
         path: Option<Vec<String>>,
         uri: String,
     },
-    // TODO: add as parameter to Install command
-    /// Install package to installed package
-    InstallPath {
-        #[arg(short, long)]
-        namespace: String,
-        #[arg(short, long)]
-        path: String,
-    },
     /// List installed packages
     List,
 }
@@ -64,7 +56,7 @@ async fn package_install(
     local_domain: &quilt_rs::LocalDomain,
     uri_str: &str,
     paths: Option<Vec<String>>,
-) -> Result<(quilt_rs::InstalledPackage, Option<Vec<String>>), String> {
+) -> Result<(quilt_rs::InstalledPackage, Option<Vec<std::path::PathBuf>>), String> {
     let uri = quilt_rs::S3PackageURI::try_from(uri_str)?;
     let installed_package = match local_domain.get_installed_package(&uri.namespace).await? {
         Some(i) => i,
@@ -74,29 +66,31 @@ async fn package_install(
         }
     };
 
+    let package_folder = local_domain.working_folder(&uri.namespace);
+    let mut paths_output = Vec::new();
+
+    if uri.path.is_some() {
+        let paths_strings = vec![uri.path.unwrap()];
+        installed_package.install_paths(&paths_strings).await?;
+        for path in paths_strings {
+            paths_output.push(package_folder.clone().join(path));
+        }
+        return Ok((installed_package, Some(paths_output)));
+    }
+
     if paths.is_some() {
         let paths_strings = paths.unwrap();
         installed_package.install_paths(&paths_strings).await?;
-        // TODO: + join path
-        // Ok(local_domain.working_folder(namespace))
-        return Ok((installed_package, Some(paths_strings)));
+        for path in paths_strings {
+            paths_output.push(package_folder.clone().join(path));
+        }
+        return Ok((installed_package, Some(paths_output)));
     }
-    Ok((installed_package, None))
-}
-
-async fn package_install_path(
-    local_domain: &quilt_rs::LocalDomain,
-    namespace: &str,
-    path: &str,
-) -> Result<std::path::PathBuf, String> {
-    let installed_package = local_domain
-        .get_installed_package(namespace)
-        .await?
-        .expect("Package not found");
-    let paths = vec![path.to_string()];
-    installed_package.install_paths(&paths).await?;
-    // TODO: + join path
-    Ok(local_domain.working_folder(namespace))
+    if paths_output.is_empty() {
+        Ok((installed_package, None))
+    } else {
+        Ok((installed_package, Some(paths_output)))
+    }
 }
 
 async fn get_installed_packages_list(
@@ -157,16 +151,6 @@ pub async fn init() {
                 Err(err) => panic!("{}", err),
             }
         }
-        Commands::InstallPath { namespace, path } => {
-            tracing::debug!("Installing path {} to {}", path, namespace);
-            match package_install_path(&local_domain, namespace.as_str(), path.as_str()).await {
-                Ok(resolved_path) => print_stdout(format!(
-                    "Path {:?} installed to the package {}",
-                    resolved_path, namespace,
-                )),
-                Err(err) => panic!("{}", err),
-            }
-        }
         Commands::List => {
             tracing::debug!("Listing installed packages");
             match get_installed_packages_list(&local_domain).await {
@@ -220,7 +204,7 @@ mod tests {
     #[tokio::test]
     async fn install() -> Result<(), String> {
         let local_domain = temp_local_domain();
-        let uri_str = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
+        let uri_str = "quilt+s3://udp-spec#package=spec/quiltcore";
         let (installed_package, _) = package_install(&local_domain, uri_str, None).await?;
         let status = installed_package.status().await?;
         assert_eq!(
@@ -232,21 +216,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn install_path() -> Result<(), String> {
+        let local_domain = temp_local_domain();
+        let uri_str = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
+        let (installed_package, _) = package_install(&local_domain, uri_str, None).await?;
+        let lineage = installed_package.lineage().await?;
+        assert!(lineage.paths.get("READ ME.md").is_some());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn install_paths() -> Result<(), String> {
+        let local_domain = temp_local_domain();
+        let uri_str = "quilt+s3://udp-spec#package=spec/quiltcore";
+        let (installed_package, _) = package_install(
+            &local_domain,
+            uri_str,
+            Some(vec!["READ ME.md".to_string(), "timestamp.txt".to_string()]),
+        )
+        .await?;
+        let lineage = installed_package.lineage().await?;
+        assert!(lineage.paths.get("timestamp.txt").is_some());
+        assert!(lineage.paths.get("READ ME.md").is_some());
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn list() -> Result<(), String> {
         let local_domain = temp_local_domain();
         let uri_str = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
         let _ = package_install(&local_domain, uri_str, None).await?;
         let list = get_installed_packages_list(&local_domain).await?;
         assert_eq!(list[0].namespace, "spec/quiltcore");
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn install_path() -> Result<(), String> {
-        let local_domain = temp_local_domain();
-        let uri_str = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
-        let _ = package_install(&local_domain, uri_str, None).await?;
-        let _ = package_install_path(&local_domain, "spec/quiltcore", "timestamp.txt").await;
         Ok(())
     }
 }
