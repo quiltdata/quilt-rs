@@ -3,6 +3,7 @@ use std::{
     path::PathBuf,
 };
 
+use arrow::error::ArrowError;
 use aws_sdk_s3::{
     error::SdkError,
     types::{ChecksumAlgorithm, CompletedMultipartUpload, CompletedPart},
@@ -10,8 +11,10 @@ use aws_sdk_s3::{
 use aws_smithy_types::byte_stream::{ByteStream, Length};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use multihash::Multihash;
+use parquet::data_type::AsBytes;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use tokio::{
     fs::{create_dir_all, read_dir, remove_dir_all, File},
     io::{AsyncReadExt, AsyncWriteExt},
@@ -26,7 +29,7 @@ pub mod uri;
 use crate::{
     quilt4::{
         checksum::{
-            calculate_sha256_checksum, calculate_sha256_chunked_checksum,
+            self, calculate_sha256_checksum, calculate_sha256_chunked_checksum,
             get_checksum_chunksize_and_parts,
         },
         table::HEADER_ROW,
@@ -49,7 +52,7 @@ const OBJECTS_DIR: &str = ".quilt/objects";
 const LINEAGE_FILE: &str = ".quilt/data.json";
 const INSTALLED_DIR: &str = ".quilt/installed";
 
-const MULTIPART_THRESHOLD: u64 = 8 * 1024 * 1024;
+const MULTIPART_THRESHOLD: u64 = checksum::MULTIPART_THRESHOLD;
 
 pub fn tag_key(namespace: &str, tag: &str) -> String {
     format!("{TAGS_DIR}/{namespace}/{tag}")
@@ -65,6 +68,10 @@ pub fn tag_uri(bucket: &str, namespace: &str, tag: &str) -> s3::S3Uri {
 
 fn parquet_manifest_filename(top_hash: &str) -> String {
     format!("1220{}.parquet", top_hash)
+}
+
+fn get_manifest_key(hash: &str) -> String {
+    format!("{MANIFEST_DIR}/{}", parquet_manifest_filename(hash))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,10 +106,39 @@ impl RemoteManifest {
             .await
     }
 
-    pub async fn update_latest(&self, hash: String) -> Result<(), Error> {
-        tag_uri(&self.bucket, &self.namespace, "latest")
-            .put_contents(hash.into_bytes())
+    async fn put_tag(&self, tag: &str, hash: &str) -> Result<(), Error> {
+        tag_uri(&self.bucket, &self.namespace, tag)
+            .put_contents(hash.as_bytes().to_vec())
             .await
+    }
+
+    async fn put_timestamp_tag(
+        &self,
+        timestamp: chrono::DateTime<chrono::Utc>,
+        hash: &str,
+    ) -> Result<(), Error> {
+        self.put_tag(&timestamp.timestamp().to_string(), hash).await
+    }
+
+    pub async fn update_latest(&self, hash: &str) -> Result<(), Error> {
+        self.put_tag("latest", hash).await
+    }
+
+    async fn upload_from(&self, manifest_path: &PathBuf) -> Result<(), Error> {
+        // TODO: FAIL if the manifest with this hash already exists?
+        let body = ByteStream::from_path(manifest_path).await?;
+        let s3uri = self.as_s3_uri();
+        println!("writing remote manifest to {}", s3uri.key);
+
+        s3uri.put_contents(body).await
+    }
+
+    pub fn as_s3_uri(&self) -> s3::S3Uri {
+        s3::S3Uri {
+            bucket: self.bucket.clone(),
+            key: get_manifest_key(&self.hash),
+            version: None,
+        }
     }
 }
 
@@ -178,6 +214,21 @@ impl LocalDomain {
 
     pub fn manifest_cache_path(&self, bucket: &str, hash: &str) -> PathBuf {
         self.root_dir.join(MANIFEST_DIR).join(bucket).join(hash)
+    }
+
+    pub async fn cache_manifest(
+        &self,
+        manifest: &Table,
+        bucket: &str,
+        hash: &str,
+    ) -> Result<PathBuf, ArrowError> {
+        let cache_path = self.root_dir.join(MANIFEST_DIR).join(bucket).join(hash);
+        // TODO: who is responsible for this?
+        create_dir_all(&cache_path.parent().unwrap()).await?;
+        manifest
+            .write_to_upath(&UPath::Local(cache_path.clone()))
+            .await
+            .map(|_| cache_path)
     }
 
     pub fn working_folder(&self, namespace: &str) -> PathBuf {
@@ -424,9 +475,114 @@ impl LocalDomain {
         &self,
         uri: &s3::S3Uri,
         target_uri: S3PackageURI,
-    ) -> Result<(Table, Vec<String>), Error> {
+    ) -> Result<RemoteManifest, Error> {
         println!("Source URI: {:?}, target URI: {:?}", uri, target_uri);
-        Err(Error::Unimplemented)
+        // TODO: TODOs in .expect()
+        // TODO: make get_object_attributes() calls concurrently across list_objects() pages
+        // XXX: validate prefix
+        let client = crate::s3_utils::get_client_for_bucket(&uri.bucket)
+            .await
+            .expect("TODO");
+
+        // FIXME: we need real API to build manifests
+        let header = Row4 {
+            name: HEADER_ROW.into(),
+            place: HEADER_ROW.into(),
+            path: None,
+            size: 0,
+            hash: Multihash::default(),
+            info: serde_json::json!({
+                "message": "TODO: ???",
+                "version": "TODO: ???",
+            }),
+            meta: serde_json::Value::Null, // TODO: accept user meta?
+        };
+        let mut records: BTreeMap<String, Row4> = BTreeMap::new();
+
+        let prefix_len = uri.key.len();
+        let mut p = client
+            .list_objects_v2()
+            .bucket(&uri.bucket)
+            .prefix(&uri.key)
+            .into_paginator()
+            .send();
+        while let Some(page) = p.next().await {
+            let page = page.expect("TODO");
+            let page_contents = page.contents.as_ref().expect("TODO");
+
+            async fn _get_obj_attrs<'a>(
+                client: aws_sdk_s3::Client,
+                bucket: &str,
+                key: &'a str,
+            ) -> (
+                &'a str,
+                aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput,
+            ) {
+                let attrs = client
+                    .get_object_attributes()
+                    .bucket(bucket)
+                    .key(key)
+                    .object_attributes(aws_sdk_s3::types::ObjectAttributes::Checksum)
+                    .object_attributes(aws_sdk_s3::types::ObjectAttributes::ObjectParts)
+                    .object_attributes(aws_sdk_s3::types::ObjectAttributes::ObjectSize)
+                    .max_parts(10_000) // TODO: use const
+                    .send()
+                    .await
+                    .expect("TODO");
+                (key, attrs)
+            }
+
+            for (key, attrs) in futures::future::join_all(page_contents.iter().map(|obj| {
+                _get_obj_attrs(client.clone(), &uri.bucket, obj.key.as_ref().expect("TODO"))
+            }))
+            .await
+            {
+                if attrs.delete_marker.is_some() && attrs.delete_marker.expect("TODO") {
+                    // XXX: do something different?
+                    continue;
+                }
+                let name = &key[prefix_len..];
+                // FIXME: we assume that objects have hash and it's compatible with sha-256-chunked
+                let s3_checksum = get_compatible_chunked_checksum(&attrs).unwrap();
+                let hash =
+                    Multihash::wrap(MULTIHASH_SHA256_CHUNKED, s3_checksum.as_bytes()).unwrap();
+                records.insert(
+                    name.into(),
+                    Row4 {
+                        name: name.into(),
+                        place: s3::make_s3_url(&uri.bucket, &key, attrs.version_id.as_deref())
+                            .into(),
+                        path: None, // WTF is this?
+                        // This shouldn't be empty because we requested it
+                        // XXX: can we use `as u64` safely here?
+                        size: attrs.object_size.expect("TODO") as u64,
+                        hash,
+                        info: serde_json::Value::Null, // XXX: is this right?
+                        meta: serde_json::Value::Null, // XXX: is this right?
+                    },
+                );
+            }
+        }
+
+        let table = Table { header, records };
+        let new_remote = RemoteManifest {
+            bucket: target_uri.bucket,
+            namespace: target_uri.namespace,
+            hash: table.top_hash(),
+        };
+        // FIXME: we need real API to push manifest to S3 without copying files
+        let cache_path = self
+            .cache_manifest(&table, &new_remote.bucket, &new_remote.hash)
+            .await?;
+        // FIXME: write legacy template as push does?
+        new_remote.upload_from(&cache_path).await?;
+        let top_hash = table.top_hash();
+        new_remote
+            .put_timestamp_tag(chrono::Utc::now(), &top_hash)
+            .await?;
+        new_remote.update_latest(&top_hash).await?;
+
+        return Ok(new_remote);
     }
 }
 
@@ -1112,16 +1268,7 @@ impl InstalledPackage {
             // Update the manifest with the sha2-256-chunked checksum.
             row.hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, checksum.as_ref()).unwrap();
 
-            let mut remote_url = Url::parse("s3://").unwrap();
-            remote_url
-                .set_host(Some(&remote.bucket))
-                .expect("failed to set bucket");
-            remote_url.set_path(&s3_key);
-            if let Some(version_id) = version_id {
-                remote_url
-                    .query_pairs_mut()
-                    .append_pair("versionId", &version_id);
-            }
+            let remote_url = s3::make_s3_url(&remote.bucket, &s3_key, version_id.as_deref());
             println!("got remote url: {}", remote_url);
 
             // "Relax" the manifest by using those new remote keys
@@ -1137,29 +1284,11 @@ impl InstalledPackage {
         // Cache the relaxed manifest
         let cache_path = self
             .domain
-            .manifest_cache_path(&new_remote.bucket, &new_remote.hash);
-
-        local_manifest
-            .write_to_upath(&UPath::Local(cache_path.clone()))
+            .cache_manifest(&local_manifest, &new_remote.bucket, &new_remote.hash)
             .await?;
 
         // Push the (cached) relaxed manifest to the remote, don't tag it yet
-        let manifest_key = format!(
-            "{MANIFEST_DIR}/{}",
-            parquet_manifest_filename(&new_remote.hash)
-        );
-        println!("writing remote manifest to {manifest_key}");
-
-        // TODO: FAIL if the manifest with this hash already exists
-        let body = ByteStream::from_path(&cache_path).await?;
-        client
-            .put_object()
-            .bucket(&new_remote.bucket)
-            .key(&manifest_key)
-            .body(body)
-            .send()
-            .await
-            .map_err(|err| Error::S3(err.to_string()))?;
+        new_remote.upload_from(&cache_path).await?;
 
         // Upload a quilt3 manifest for backward compatibility.
         let quilt3_manifest = Manifest {
@@ -1211,19 +1340,9 @@ impl InstalledPackage {
         // create it with the value of {self.commit.hash}
         // TODO: Otherwise try again with the current timestamp as the tag
         // (e.g., try five times with exponential backoff, then Error)
-
-        client
-            .put_object()
-            .bucket(&new_remote.bucket)
-            .key(&format!(
-                "{TAGS_DIR}/{}/{}",
-                new_remote.namespace,
-                commit.timestamp.timestamp(),
-            ))
-            .body(new_remote.hash.as_bytes().to_vec().into())
-            .send()
-            .await
-            .map_err(|err| Error::S3(err.to_string()))?;
+        new_remote
+            .put_timestamp_tag(commit.timestamp, &new_remote.hash)
+            .await?;
 
         // Check the hash of remote's latest manifest
         lineage.latest_hash = new_remote.resolve_latest().await?;
@@ -1235,7 +1354,7 @@ impl InstalledPackage {
         // Try certifying latest if tracking
         if lineage.base_hash == lineage.latest_hash {
             // remote latest has not been updated, certifying the new latest
-            lineage.remote.update_latest(top_hash.clone()).await?;
+            lineage.remote.update_latest(&top_hash).await?;
             lineage.latest_hash = top_hash.clone();
             lineage.base_hash = top_hash.clone();
         }
@@ -1299,7 +1418,7 @@ impl InstalledPackage {
     pub async fn certify_latest(&self) -> Result<(), Error> {
         let mut lineage = self.lineage().await?;
         let new_latest = lineage.remote.hash.clone();
-        lineage.remote.update_latest(new_latest.clone()).await?;
+        lineage.remote.update_latest(&new_latest).await?;
         lineage.latest_hash = new_latest.clone();
         lineage.base_hash = new_latest;
         self.write_lineage(lineage).await
@@ -1340,6 +1459,32 @@ impl InstalledPackage {
             .collect();
         self.install_paths(&paths_to_install).await
     }
+}
+
+fn get_compatible_chunked_checksum(
+    attrs: &aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput,
+) -> Option<Vec<u8>> {
+    // TODO: get checksums from multipart objects
+    let checksum = attrs.checksum.as_ref()?;
+    let checksum_sha256 = checksum.checksum_sha256.as_ref()?;
+    // XXX: defer decoding until we know it's compatible?
+    let checksum_sha256_decoded = BASE64_STANDARD
+        .decode(checksum_sha256.as_bytes())
+        .expect("AWS checksum must be valid base64");
+    let object_size = attrs.object_size.expect("ObjectSize must be requested");
+    if (object_size as u64) < MULTIPART_THRESHOLD {
+        if let Some(object_parts) = &attrs.object_parts {
+            if object_parts
+                .total_parts_count
+                .expect("ObjectParts is expected to have TotalParts")
+                == 1
+            {
+                return Some(checksum_sha256_decoded);
+            }
+        }
+        return Some(Sha256::digest(checksum_sha256_decoded).as_slice().into());
+    }
+    None
 }
 
 // a conflict is identified by the identifiers of the two conflicting manifests

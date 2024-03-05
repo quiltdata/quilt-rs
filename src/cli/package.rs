@@ -1,3 +1,5 @@
+use quilt_rs::RemoteManifest;
+
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
 use crate::cli::Error;
@@ -10,17 +12,12 @@ pub struct Input {
 
 #[derive(Debug)]
 pub struct Output {
-    manifest: quilt_rs::Table,
-    paths: Vec<String>,
+    remote_manifest: RemoteManifest,
 }
 
 impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut output = vec![format!("Manifest {:?} created", self.manifest,)];
-        for path in &self.paths {
-            output.push(format!("Path: {:?}", path));
-        }
-        write!(f, "{}", output.join("\n"))
+        write!(f, "Manifest {} created", self.remote_manifest.as_s3_uri())
     }
 }
 
@@ -40,6 +37,6 @@ pub async fn model(
 ) -> Result<Output, Error> {
     let uri = quilt_rs::quilt::storage::s3::S3Uri::try_from(uri_string.as_str())?;
     let target_uri = quilt_rs::S3PackageURI::try_from(target_string.as_str())?;
-    let (manifest, paths) = local_domain.package_s3_prefix(&uri, target_uri).await?;
-    Ok(Output { manifest, paths })
+    let remote_manifest = local_domain.package_s3_prefix(&uri, target_uri).await?;
+    Ok(Output { remote_manifest })
 }
