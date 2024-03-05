@@ -66,8 +66,14 @@ async fn package_install(
     paths: Option<Vec<String>>,
 ) -> Result<(quilt_rs::InstalledPackage, Option<Vec<String>>), String> {
     let uri = quilt_rs::S3PackageURI::try_from(uri_str)?;
-    let remote_manifest = quilt_rs::RemoteManifest::resolve(&uri).await?;
-    let installed_package = local_domain.install_package(&remote_manifest).await?;
+    let installed_package = match local_domain.get_installed_package(&uri.namespace).await? {
+        Some(i) => i,
+        None => {
+            let remote_manifest = quilt_rs::RemoteManifest::resolve(&uri).await?;
+            local_domain.install_package(&remote_manifest).await?
+        }
+    };
+
     if paths.is_some() {
         let paths_strings = paths.unwrap();
         installed_package.install_paths(&paths_strings).await?;
