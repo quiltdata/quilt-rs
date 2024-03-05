@@ -2,6 +2,19 @@ use clap::{Parser, Subcommand};
 use quilt_rs;
 use std::path::Path;
 
+#[derive(tabled::Tabled)]
+struct RemoteManifestHeader {
+    info: String,
+    meta: String,
+}
+
+#[derive(tabled::Tabled)]
+struct RemoteManifestEntry {
+    name: String,
+    place: String,
+    size: u64,
+}
+
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -68,13 +81,24 @@ async fn main() {
             tracing::debug!("Browsing {}", uri_string);
             match browse_remote_manifest(&local_domain, uri_string.as_str()).await {
                 Ok(manifest_contents) => {
-                    // TODO: use tables
-                    print_stdout(format!("Info:\t{:?}", manifest_contents.header.info));
-                    print_stdout(format!("Meta:\t{:?}", manifest_contents.header.meta));
-                    for (name, entry) in manifest_contents.records {
-                        let entry_output = serde_json::json!({"name": entry.name, "place": entry.place, "size": entry.size});
-                        print_stdout(format!("{}:\t{}", name, entry_output));
+                    let mut header_table = tabled::Table::new(vec![RemoteManifestHeader {
+                        info: manifest_contents.header.info.to_string(),
+                        meta: manifest_contents.header.meta.to_string(),
+                    }]);
+                    header_table.with(tabled::settings::Panel::header("Remote manifest header"));
+                    print_stdout(header_table.to_string());
+
+                    let mut entries = Vec::new();
+                    for (_name, entry) in manifest_contents.records {
+                        entries.push(RemoteManifestEntry {
+                            name: entry.name.to_string(),
+                            place: entry.place.to_string(),
+                            size: entry.size,
+                        });
                     }
+                    let mut entries_table = tabled::Table::new(&entries);
+                    entries_table.with(tabled::settings::Panel::header("Remote manifest entries"));
+                    print_stdout(entries_table.to_string());
                 }
 
                 Err(err) => panic!("{}", err),
