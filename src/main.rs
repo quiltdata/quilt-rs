@@ -18,7 +18,7 @@ struct RemoteManifestEntry {
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 struct Args {
-    /// Path to local domain
+    /// Path to local domain. Should be absolute path when installing paths
     #[arg(short, long)]
     domain: String,
 
@@ -37,6 +37,14 @@ enum Commands {
     Install {
         #[arg(short, long)]
         uri: String,
+    },
+    // TODO: add as parameter to Install command
+    /// Install package to installed package
+    InstallPath {
+        #[arg(short, long)]
+        namespace: String,
+        #[arg(short, long)]
+        path: String,
     },
     /// List installed packages
     List,
@@ -58,6 +66,26 @@ async fn package_install(
     let uri = quilt_rs::S3PackageURI::try_from(uri_str)?;
     let remote_manifest = quilt_rs::RemoteManifest::resolve(&uri).await?;
     local_domain.install_package(&remote_manifest).await
+}
+
+async fn package_install_path(
+    local_domain: &quilt_rs::LocalDomain,
+    namespace: &str,
+    path: &str,
+) -> Result<std::path::PathBuf, String> {
+    let installed_package = local_domain
+        .get_installed_package(namespace)
+        .await?
+        .expect("Package not found");
+    println!(
+        "------------------------ installed_package, {:?}",
+        installed_package
+    );
+    let paths = vec![path.to_string()];
+    println!("PATHS {:?}", paths);
+    installed_package.install_paths(&paths).await?;
+    // TODO: + join path
+    Ok(local_domain.working_folder(namespace))
 }
 
 async fn get_installed_packages_list(
@@ -111,6 +139,16 @@ async fn main() {
                     "Package {:?} installed to {:?}",
                     installed_package,
                     local_domain.working_folder(&installed_package.namespace),
+                )),
+                Err(err) => panic!("{}", err),
+            }
+        }
+        Commands::InstallPath { namespace, path } => {
+            tracing::debug!("Installing path {} to {}", path, namespace);
+            match package_install_path(&local_domain, namespace.as_str(), path.as_str()).await {
+                Ok(resolved_path) => print_stdout(format!(
+                    "Path {:?} installed to the package {}",
+                    resolved_path, namespace,
                 )),
                 Err(err) => panic!("{}", err),
             }
