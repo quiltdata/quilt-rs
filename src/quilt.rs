@@ -10,8 +10,10 @@ use aws_sdk_s3::{
 use aws_smithy_types::byte_stream::{ByteStream, Length};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use multihash::Multihash;
+use parquet::data_type::AsBytes;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use tokio::{
     fs::{create_dir_all, read_dir, remove_dir_all, File},
     io::{AsyncReadExt, AsyncWriteExt},
@@ -26,8 +28,7 @@ pub mod uri;
 use crate::{
     quilt4::{
         checksum::{
-            calculate_sha256_checksum, calculate_sha256_chunked_checksum,
-            get_checksum_chunksize_and_parts,
+            self, calculate_sha256_checksum, calculate_sha256_chunked_checksum, get_checksum_chunksize_and_parts
         },
         table::HEADER_ROW,
     },
@@ -49,7 +50,7 @@ const OBJECTS_DIR: &str = ".quilt/objects";
 const LINEAGE_FILE: &str = ".quilt/data.json";
 const INSTALLED_DIR: &str = ".quilt/installed";
 
-const MULTIPART_THRESHOLD: u64 = 8 * 1024 * 1024;
+const MULTIPART_THRESHOLD: u64 = checksum::MULTIPART_THRESHOLD;
 
 pub fn tag_key(namespace: &str, tag: &str) -> String {
     format!("{TAGS_DIR}/{namespace}/{tag}")
@@ -1164,16 +1165,7 @@ impl InstalledPackage {
             // Update the manifest with the sha2-256-chunked checksum.
             row.hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, checksum.as_ref()).unwrap();
 
-            let mut remote_url = Url::parse("s3://").unwrap();
-            remote_url
-                .set_host(Some(&remote.bucket))
-                .expect("failed to set bucket");
-            remote_url.set_path(&s3_key);
-            if let Some(version_id) = version_id {
-                remote_url
-                    .query_pairs_mut()
-                    .append_pair("versionId", &version_id);
-            }
+            let remote_url = make_s3_url(&remote.bucket, &s3_key, version_id.as_deref());
             println!("got remote url: {}", remote_url);
 
             // "Relax" the manifest by using those new remote keys
@@ -1399,6 +1391,124 @@ impl InstalledPackage {
         self.install_paths(&paths_to_install).await
     }
 }
+
+
+fn make_s3_url(bucket: &str, s3_key: &str, version_id: Option<&str>) -> Url {
+    let mut remote_url = Url::parse("s3://").unwrap();
+    remote_url
+        .set_host(Some(bucket))
+        .expect("failed to set bucket");
+    remote_url.set_path(s3_key);
+    if let Some(version_id) = version_id {
+        remote_url
+            .query_pairs_mut()
+            .append_pair("versionId", version_id);
+    }
+    remote_url
+}
+
+
+fn get_compatible_chunked_checksum(attrs: &aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput) -> Option<Vec<u8>> {
+    // TODO: get checksums from multipart objects
+    let checksum = attrs.checksum.as_ref()?;
+    let checksum_sha256 = checksum.checksum_sha256.as_ref()?;
+    // XXX: defer decoding until we know it's compatible?
+    let checksum_sha256_decoded = BASE64_STANDARD.decode(checksum_sha256.as_bytes())
+        .expect("AWS checksum must be valid base64");
+    let object_size = attrs.object_size.expect("ObjectSize must be requested");
+    if (object_size as u64) < MULTIPART_THRESHOLD {
+        if let Some(object_parts) = &attrs.object_parts {
+            if object_parts.total_parts_count.expect("ObjectParts is expected to have TotalParts") == 1 {
+                return Some(checksum_sha256_decoded);
+            }
+        }
+        return Some(Sha256::digest(checksum_sha256_decoded).as_slice().into());
+    }
+    None
+}
+
+pub async fn package_s3_prefix(pkg_name: &str, uri: &s3::S3Uri) {
+    // TODO: TODOs in .expect()
+    // TODO: make get_object_attributes() calls concurrently
+    // XXX: validate prefix
+    let client = crate::s3_utils::get_client_for_bucket(&uri.bucket).await.expect("TODO");
+
+    // FIXME: we need real API to build manifests
+    let header = Row4 {
+        name: HEADER_ROW.into(),
+        place: HEADER_ROW.into(),
+        path: None,
+        size: 0,
+        hash: Multihash::default(),
+        info: serde_json::json!({
+            "message": "TODO: ???",
+            "version": "TODO: ???",
+        }),
+        meta: serde_json::Value::Null, // TODO: accept user meta?
+    };
+    let mut records: BTreeMap<String, Row4> = BTreeMap::new();
+
+    let prefix_len = uri.key.len();
+    let mut p = client.list_objects_v2()
+        .bucket(&uri.bucket)
+        .prefix(&uri.key).
+        into_paginator().send();
+    while let Some(page) = p.next().await {
+        let page = page.expect("TODO");
+        for obj in page.contents.as_ref().expect("TODO") {
+            dbg!(obj);
+            let key = obj.key.as_ref().expect("TODO");
+            let attrs = client.get_object_attributes()
+                .bucket(&uri.bucket)
+                .key(key)
+                .object_attributes(aws_sdk_s3::types::ObjectAttributes::Checksum)
+                .object_attributes(aws_sdk_s3::types::ObjectAttributes::ObjectParts)
+                .object_attributes(aws_sdk_s3::types::ObjectAttributes::ObjectSize)
+                .max_parts(10_000) // TODO: use const
+                .send().await.expect("TODO");
+            dbg!(&attrs);
+            if attrs.delete_marker.is_some() && attrs.delete_marker.expect("TODO") {
+                // XXX: do something different?
+                continue;
+            }
+            let name = &key[prefix_len..];
+            // FIXME: we assume that objects have hash and it's compatible with sha-256-chunked
+            let s3_checksum = get_compatible_chunked_checksum(&attrs);
+            let hash = Multihash::wrap(
+                MULTIHASH_SHA256_CHUNKED,
+                s3_checksum.unwrap().as_bytes(),
+            )
+            .unwrap();
+            records.insert(
+                name.into(),
+                Row4 {
+                    name: name.into(),
+                    place: make_s3_url(&uri.bucket, &key, attrs.version_id.as_deref()).into(),
+                    path: None, // WTF is this?
+                    // This shouldn't be empty because we requested it
+                    // XXX: can we use `as u64` safely here?
+                    size: attrs.object_size.expect("TODO") as u64,
+                    hash,
+                    info: serde_json::Value::Null, // XXX: is this right?
+                    meta: serde_json::Value::Null, // XXX: is this right?
+                },
+            );
+            dbg!(name);
+        }
+    }
+
+    dbg!(&records);
+
+    let table = Table {
+        header,
+        records,
+    };
+    // FIXME: we need real API to push manifest to S3 without copying files
+    table.write_to_upath(
+        &UPath::Local(format!("{}.parquet", pkg_name.replace('/', "_")).into())
+    ).await.expect("TODO");
+}
+
 
 // a conflict is identified by the identifiers of the two conflicting manifests
 #[derive(Debug, PartialEq)]
