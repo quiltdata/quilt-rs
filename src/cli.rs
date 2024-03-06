@@ -29,15 +29,13 @@ struct Args {
 #[derive(Subcommand)]
 enum Commands {
     /// Browse remote manifest
-    Browse {
-        #[arg(short, long)]
-        uri: String,
-    },
+    Browse { uri: String },
     /// Install package
     Install {
         #[arg(short, long)]
         path: Option<Vec<String>>,
         #[arg(short, long)]
+        namespace: Option<String>,
         uri: String,
     },
     /// List installed packages
@@ -69,17 +67,29 @@ async fn browse_remote_manifest(
     let remote_manifest = quilt_rs::RemoteManifest::resolve(&uri).await?;
     local_domain.browse_remote_manifest(&remote_manifest).await
 }
+//
+// struct PackageInstallArgs {
+//     local_domain: quilt_rs::LocalDomain,
+//     namespace: Option<String>,
+//     paths: Option<Vec<String>>,
+//     uri_str: String,
+// }
 
 async fn package_install(
     local_domain: &quilt_rs::LocalDomain,
     uri_str: &str,
     paths: Option<Vec<String>>,
+    namespace: Option<String>,
 ) -> Result<(quilt_rs::InstalledPackage, Option<Vec<std::path::PathBuf>>), String> {
     let uri_opt = parse_uri(uri_str)?;
     match uri_opt {
         Uri::S3PackageURI(uri) => {
-            let installed_package = match local_domain.get_installed_package(&uri.namespace).await?
+            let namespace = namespace.or(Some(uri.namespace.clone()));
+            let installed_package = match local_domain
+                .get_installed_package(&namespace.unwrap())
+                .await?
             {
+                // FIXME: check the actual remote_manifest
                 Some(i) => i,
                 None => {
                     let remote_manifest = quilt_rs::RemoteManifest::resolve(&uri).await?;
@@ -114,8 +124,11 @@ async fn package_install(
             }
         }
         Uri::S3URI(uri) => {
+            if namespace.is_none() {
+                panic!("Namespace is required when using s3:// URLs");
+            }
             println!("package_s3_prefix {:?}", uri);
-            quilt_rs::quilt::package_s3_prefix("test/test", &uri).await;
+            quilt_rs::quilt::package_s3_prefix(&namespace.unwrap(), &uri).await;
             Err("FIXME: Should return installed package".into())
         }
     }
@@ -166,11 +179,11 @@ pub async fn init() {
         }
         Commands::Install {
             path,
+            namespace,
             uri: uri_string,
         } => {
             tracing::debug!("Installing {}", uri_string);
-            println!("PATH: {:?}", path);
-            match package_install(&local_domain, uri_string.as_str(), None).await {
+            match package_install(&local_domain, uri_string.as_str(), path, namespace).await {
                 Ok((installed_package, _)) => print_stdout(format!(
                     "Package {:?} installed to {:?}",
                     installed_package,
@@ -233,7 +246,7 @@ mod tests {
     async fn install() -> Result<(), String> {
         let local_domain = temp_local_domain();
         let uri_str = "quilt+s3://udp-spec#package=spec/quiltcore";
-        let (installed_package, _) = package_install(&local_domain, uri_str, None).await?;
+        let (installed_package, _) = package_install(&local_domain, uri_str, None, None).await?;
         let status = installed_package.status().await?;
         assert_eq!(
             status.upstream_state,
@@ -247,7 +260,7 @@ mod tests {
     async fn install_path() -> Result<(), String> {
         let local_domain = temp_local_domain();
         let uri_str = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
-        let (installed_package, _) = package_install(&local_domain, uri_str, None).await?;
+        let (installed_package, _) = package_install(&local_domain, uri_str, None, None).await?;
         let lineage = installed_package.lineage().await?;
         assert!(lineage.paths.get("READ ME.md").is_some());
         Ok(())
@@ -261,6 +274,7 @@ mod tests {
             &local_domain,
             uri_str,
             Some(vec!["READ ME.md".to_string(), "timestamp.txt".to_string()]),
+            None,
         )
         .await?;
         let lineage = installed_package.lineage().await?;
@@ -273,7 +287,7 @@ mod tests {
     async fn list() -> Result<(), String> {
         let local_domain = temp_local_domain();
         let uri_str = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
-        let _ = package_install(&local_domain, uri_str, None).await?;
+        let _ = package_install(&local_domain, uri_str, None, None).await?;
         let list = get_installed_packages_list(&local_domain).await?;
         assert_eq!(list[0].namespace, "spec/quiltcore");
         Ok(())
