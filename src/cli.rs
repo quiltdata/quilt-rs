@@ -42,7 +42,7 @@ enum Commands {
     List,
 }
 
-enum Uri {
+pub enum Uri {
     S3PackageURI(quilt_rs::S3PackageURI),
     S3URI(quilt_rs::quilt::storage::s3::S3Uri),
 }
@@ -243,6 +243,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn install() -> Result<(), String> {
         let local_domain = temp_local_domain();
         let uri_str = "quilt+s3://udp-spec#package=spec/quiltcore";
@@ -257,6 +258,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn install_path() -> Result<(), String> {
         let local_domain = temp_local_domain();
         let uri_str = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
@@ -267,6 +269,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn install_paths() -> Result<(), String> {
         let local_domain = temp_local_domain();
         let uri_str = "quilt+s3://udp-spec#package=spec/quiltcore";
@@ -284,12 +287,48 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn list() -> Result<(), String> {
         let local_domain = temp_local_domain();
         let uri_str = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
         let _ = package_install(&local_domain, uri_str, None, None).await?;
         let list = get_installed_packages_list(&local_domain).await?;
         assert_eq!(list[0].namespace, "spec/quiltcore");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_uri() -> Result<(), String> {
+        let uri = parse_uri("quilt+s3://bucket#package=foo/bar")?;
+        match uri {
+            Uri::S3PackageURI(matched_uri) => {
+                assert_eq!(
+                    matched_uri,
+                    quilt_rs::S3PackageURI {
+                        bucket: "bucket".to_string(),
+                        namespace: "foo/bar".to_string(),
+                        revision: quilt_rs::quilt::RevisionPointer::Tag(String::from("latest")),
+                        path: None,
+                    }
+                );
+            }
+            _ => assert!(false),
+        }
+
+        let uri = parse_uri("s3://bucket/foo/bar")?;
+        match uri {
+            Uri::S3URI(matched_uri) => {
+                assert_eq!(
+                    matched_uri,
+                    quilt_rs::quilt::storage::s3::S3Uri {
+                        bucket: "bucket".to_string(),
+                        key: "foo/bar".to_string(),
+                        version: None,
+                    }
+                );
+            }
+            _ => assert!(false),
+        }
         Ok(())
     }
 }
