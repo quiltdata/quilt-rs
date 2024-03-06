@@ -37,10 +37,28 @@ enum Commands {
     Install {
         #[arg(short, long)]
         path: Option<Vec<String>>,
+        #[arg(short, long)]
         uri: String,
     },
     /// List installed packages
     List,
+}
+
+enum Uri {
+    S3PackageURI(quilt_rs::S3PackageURI),
+    S3URI(quilt_rs::quilt::storage::s3::S3Uri),
+}
+
+fn parse_uri(uri: &str) -> Result<Uri, String> {
+    if uri.starts_with("quilt+s3") {
+        return Ok(Uri::S3PackageURI(quilt_rs::S3PackageURI::try_from(uri)?));
+    }
+    if uri.starts_with("s3") {
+        return Ok(Uri::S3URI(quilt_rs::quilt::storage::s3::S3Uri::try_from(
+            uri,
+        )?));
+    }
+    Err("Invalid scheme".into())
 }
 
 async fn browse_remote_manifest(
@@ -57,39 +75,49 @@ async fn package_install(
     uri_str: &str,
     paths: Option<Vec<String>>,
 ) -> Result<(quilt_rs::InstalledPackage, Option<Vec<std::path::PathBuf>>), String> {
-    let uri = quilt_rs::S3PackageURI::try_from(uri_str)?;
-    let installed_package = match local_domain.get_installed_package(&uri.namespace).await? {
-        Some(i) => i,
-        None => {
-            let remote_manifest = quilt_rs::RemoteManifest::resolve(&uri).await?;
-            local_domain.install_package(&remote_manifest).await?
-        }
-    };
+    let uri_opt = parse_uri(uri_str)?;
+    match uri_opt {
+        Uri::S3PackageURI(uri) => {
+            let installed_package = match local_domain.get_installed_package(&uri.namespace).await?
+            {
+                Some(i) => i,
+                None => {
+                    let remote_manifest = quilt_rs::RemoteManifest::resolve(&uri).await?;
+                    local_domain.install_package(&remote_manifest).await?
+                }
+            };
 
-    let package_folder = local_domain.working_folder(&uri.namespace);
-    let mut paths_output = Vec::new();
+            let package_folder = local_domain.working_folder(&uri.namespace);
+            let mut paths_output = Vec::new();
 
-    if uri.path.is_some() {
-        let paths_strings = vec![uri.path.unwrap()];
-        installed_package.install_paths(&paths_strings).await?;
-        for path in paths_strings {
-            paths_output.push(package_folder.clone().join(path));
-        }
-        return Ok((installed_package, Some(paths_output)));
-    }
+            if uri.path.is_some() {
+                let paths_strings = vec![uri.path.unwrap()];
+                installed_package.install_paths(&paths_strings).await?;
+                for path in paths_strings {
+                    paths_output.push(package_folder.clone().join(path));
+                }
+                return Ok((installed_package, Some(paths_output)));
+            }
 
-    if paths.is_some() {
-        let paths_strings = paths.unwrap();
-        installed_package.install_paths(&paths_strings).await?;
-        for path in paths_strings {
-            paths_output.push(package_folder.clone().join(path));
+            if paths.is_some() {
+                let paths_strings = paths.unwrap();
+                installed_package.install_paths(&paths_strings).await?;
+                for path in paths_strings {
+                    paths_output.push(package_folder.clone().join(path));
+                }
+                return Ok((installed_package, Some(paths_output)));
+            }
+            if paths_output.is_empty() {
+                Ok((installed_package, None))
+            } else {
+                Ok((installed_package, Some(paths_output)))
+            }
         }
-        return Ok((installed_package, Some(paths_output)));
-    }
-    if paths_output.is_empty() {
-        Ok((installed_package, None))
-    } else {
-        Ok((installed_package, Some(paths_output)))
+        Uri::S3URI(uri) => {
+            println!("package_s3_prefix {:?}", uri);
+            quilt_rs::quilt::package_s3_prefix("test/test", &uri).await;
+            Err("FIXME: Should return installed package".into())
+        }
     }
 }
 
