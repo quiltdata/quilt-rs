@@ -82,6 +82,9 @@ async fn get_installed_packages_list(
     local_domain.list_installed_packages().await
 }
 
+// TODO: add struct StdOut, struct StdErr
+// TODO: add enum Std {StdOut(str), StdErr(str)}
+// TODO: return Std from every command and pass to print
 fn print_stdout(str: String) {
     println!("{}", str);
 }
@@ -354,7 +357,6 @@ mod tests {
     async fn list() -> Result<(), String> {
         let local_domain = temp_local_domain();
         let uri_str = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md".to_string();
-
         let model = Model::new(local_domain.clone());
         let _ = model
             .package_install(PackageInstallArgs {
