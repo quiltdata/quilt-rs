@@ -61,11 +61,11 @@ async fn install_package_from_remote_manifest(
     uri: &quilt_rs::S3PackageURI,
     namespace: Option<String>,
 ) -> Result<(String, quilt_rs::InstalledPackage), String> {
-    let namespace = namespace.or(Some(uri.namespace.clone())).unwrap();
+    let namespace = namespace.unwrap_or(uri.namespace.clone());
     let installed_package = local_domain.get_installed_package(&namespace).await?;
-    if installed_package.is_some() {
+    if let Some(installed_package) = installed_package {
         // FIXME: check the actual remote_manifest
-        return Ok((namespace, installed_package.unwrap()));
+        return Ok((namespace, installed_package));
     }
     let remote_manifest = quilt_rs::RemoteManifest::resolve(uri).await?;
     Ok((
@@ -88,7 +88,7 @@ struct Entries {
 }
 
 fn get_entries(
-    root: &std::path::PathBuf,
+    root: &std::path::Path,
     uri_path: Option<String>,
     arg_paths: Option<Vec<String>>,
 ) -> Entries {
@@ -96,14 +96,14 @@ fn get_entries(
     let mut paths = Vec::new();
     if uri_path.is_some() {
         let logical_key = uri_path.unwrap();
-        paths.push(root.clone().join(&logical_key));
+        paths.push(root.to_path_buf().join(&logical_key));
         keys.push(logical_key);
     }
     if arg_paths.is_some() {
         let logical_keys = arg_paths.unwrap();
         keys.extend_from_slice(&logical_keys);
         for logical_key in logical_keys {
-            paths.push(root.clone().join(logical_key));
+            paths.push(root.to_path_buf().join(logical_key));
         }
     }
     Entries {
@@ -127,8 +127,8 @@ pub async fn model(
             let package_dir = local_domain.working_folder(&namespace);
             let Entries { keys, paths } = get_entries(&package_dir, uri.path, paths);
 
-            if keys.is_some() {
-                install_paths(&installed_package, keys.unwrap()).await?;
+            if let Some(keys) = keys {
+                install_paths(&installed_package, keys).await?;
             }
 
             Ok(Output {
