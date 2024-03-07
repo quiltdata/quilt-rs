@@ -27,7 +27,7 @@ pub struct Input {
 
 pub struct Output {
     installed_package: quilt_rs::InstalledPackage,
-    package_folder: std::path::PathBuf,
+    package_dir: std::path::PathBuf,
     paths: Option<Vec<std::path::PathBuf>>,
 }
 
@@ -35,7 +35,7 @@ impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut output = vec![format!(
             "Package {:?} installed to {:?}",
-            self.installed_package, self.package_folder,
+            self.installed_package, self.package_dir,
         )];
         match &self.paths {
             Some(paths) => {
@@ -56,6 +56,62 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
     }
 }
 
+async fn install_package_from_remote_manifest(
+    local_domain: &quilt_rs::LocalDomain,
+    uri: &quilt_rs::S3PackageURI,
+    namespace: Option<String>,
+) -> Result<(String, quilt_rs::InstalledPackage), String> {
+    let namespace = namespace.or(Some(uri.namespace.clone())).unwrap();
+    let installed_package = local_domain.get_installed_package(&namespace).await?;
+    if installed_package.is_some() {
+        // FIXME: check the actual remote_manifest
+        return Ok((namespace, installed_package.unwrap()));
+    }
+    let remote_manifest = quilt_rs::RemoteManifest::resolve(uri).await?;
+    Ok((
+        namespace,
+        local_domain.install_package(&remote_manifest).await?,
+    ))
+}
+
+async fn install_paths(
+    installed_package: &quilt_rs::InstalledPackage,
+    paths: Vec<String>,
+) -> Result<Vec<String>, String> {
+    installed_package.install_paths(&paths).await?;
+    Ok(paths)
+}
+
+struct Entries {
+    paths: Option<Vec<std::path::PathBuf>>,
+    keys: Option<Vec<String>>,
+}
+
+fn get_entries(
+    root: &std::path::PathBuf,
+    uri_path: Option<String>,
+    arg_paths: Option<Vec<String>>,
+) -> Entries {
+    let mut keys = Vec::new();
+    let mut paths = Vec::new();
+    if uri_path.is_some() {
+        let logical_key = uri_path.unwrap();
+        paths.push(root.clone().join(&logical_key));
+        keys.push(logical_key);
+    }
+    if arg_paths.is_some() {
+        let logical_keys = arg_paths.unwrap();
+        keys.extend_from_slice(&logical_keys);
+        for logical_key in logical_keys {
+            paths.push(root.clone().join(logical_key));
+        }
+    }
+    Entries {
+        paths: if paths.is_empty() { None } else { Some(paths) },
+        keys: if keys.is_empty() { None } else { Some(keys) },
+    }
+}
+
 pub async fn model(
     local_domain: &quilt_rs::LocalDomain,
     Input {
@@ -66,60 +122,20 @@ pub async fn model(
 ) -> Result<Output, String> {
     match parse_uri(&uri)? {
         Uri::S3PackageURI(uri) => {
-            let namespace = namespace.or(Some(uri.namespace.clone()));
-            let installed_package = match local_domain
-                .get_installed_package(&namespace.unwrap())
-                .await?
-            {
-                // FIXME: check the actual remote_manifest
-                Some(i) => i,
-                None => {
-                    let remote_manifest = quilt_rs::RemoteManifest::resolve(&uri).await?;
-                    local_domain.install_package(&remote_manifest).await?
-                }
-            };
+            let (namespace, installed_package) =
+                install_package_from_remote_manifest(local_domain, &uri, namespace).await?;
+            let package_dir = local_domain.working_folder(&namespace);
+            let Entries { keys, paths } = get_entries(&package_dir, uri.path, paths);
 
-            let package_folder = local_domain.working_folder(&uri.namespace);
-            let mut paths_output = Vec::new();
-
-            if uri.path.is_some() {
-                let paths_strings = vec![uri.path.unwrap()];
-                installed_package.install_paths(&paths_strings).await?;
-                for path in paths_strings {
-                    paths_output.push(package_folder.clone().join(path));
-                }
-                return Ok(Output {
-                    installed_package,
-                    package_folder,
-                    paths: Some(paths_output),
-                });
+            if keys.is_some() {
+                install_paths(&installed_package, keys.unwrap()).await?;
             }
 
-            if paths.is_some() {
-                let paths_strings = paths.unwrap();
-                installed_package.install_paths(&paths_strings).await?;
-                for path in paths_strings {
-                    paths_output.push(package_folder.clone().join(path));
-                }
-                return Ok(Output {
-                    installed_package,
-                    package_folder,
-                    paths: Some(paths_output),
-                });
-            }
-            if paths_output.is_empty() {
-                Ok(Output {
-                    installed_package,
-                    package_folder,
-                    paths: None,
-                })
-            } else {
-                Ok(Output {
-                    installed_package,
-                    package_folder,
-                    paths: Some(paths_output),
-                })
-            }
+            Ok(Output {
+                installed_package,
+                package_dir,
+                paths,
+            })
         }
         Uri::S3URI(uri) => {
             if namespace.is_none() {
