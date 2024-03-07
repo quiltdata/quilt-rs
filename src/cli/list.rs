@@ -1,25 +1,31 @@
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
 
-// TODO: instead of `fn command` output struct CommandOutput from model
-//       and use `impl fmt::Display` for it
-pub async fn command(m: impl Commands) -> Std {
-    match m.get_installed_packages_list().await {
-        Ok(installed_packages_list) => {
-            let mut output: Vec<String> = Vec::new();
-            for installed_package in installed_packages_list {
-                output.push(format!("InstalledPackage<{}>", installed_package.namespace));
-            }
-            Std::Out(output.join("\n"))
+pub struct Output {
+    installed_packages_list: Vec<quilt_rs::InstalledPackage>,
+}
+
+impl std::fmt::Display for Output {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut output: Vec<String> = Vec::new();
+        for installed_package in &self.installed_packages_list {
+            output.push(format!("InstalledPackage<{}>", installed_package.namespace));
         }
+        write!(f, "{}", output.join("\n"))
+    }
+}
+
+pub async fn command(m: impl Commands) -> Std {
+    match m.list().await {
+        Ok(output) => Std::Out(output.to_string()),
         Err(err) => Std::Err(err),
     }
 }
 
-pub async fn model(
-    local_domain: &quilt_rs::LocalDomain,
-) -> Result<Vec<quilt_rs::InstalledPackage>, String> {
-    local_domain.list_installed_packages().await
+pub async fn model(local_domain: &quilt_rs::LocalDomain) -> Result<Output, String> {
+    Ok(Output {
+        installed_packages_list: local_domain.list_installed_packages().await?,
+    })
 }
 
 #[cfg(test)]
@@ -37,8 +43,11 @@ mod tests {
         let uri = quilt_rs::S3PackageURI::try_from(uri_str)?;
         let remote_manifest = quilt_rs::RemoteManifest::resolve(&uri).await?;
         let _ = local_domain.install_package(&remote_manifest).await?;
-        let list = model(&local_domain).await?;
-        assert_eq!(list[0].namespace, "spec/quiltcore");
+        let output = model(&local_domain).await?;
+        assert_eq!(
+            output.installed_packages_list[0].namespace,
+            "spec/quiltcore"
+        );
         Ok(())
     }
 }

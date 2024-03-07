@@ -9,7 +9,7 @@ mod model;
 mod output;
 
 use model::Model;
-use output::print as print_stdout_v2;
+use output::print;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -46,30 +46,26 @@ pub async fn init() {
 
     match args.command {
         Commands::Browse { uri } => {
-            let args = browse::CommandArgs { uri };
+            let args = browse::Input { uri };
             tracing::debug!("Browsing {:?}", args);
-            let output = browse::command(m, args).await;
-            print_stdout_v2(output);
+            print(browse::command(m, args).await);
         }
         Commands::Install {
             path,
             namespace,
-            uri: uri_str,
+            uri,
         } => {
-            let args = install::CommandArgs {
-                uri_str,
-                paths: path,
+            let args = install::Input {
                 namespace,
+                paths: path,
+                uri,
             };
             tracing::debug!("Installing {:?}", args);
-            let output = install::command(m, args).await;
-            print_stdout_v2(output);
+            print(install::command(m, args).await);
         }
         Commands::List => {
             tracing::debug!("Listing installed packages");
-            let output = list::command(m).await;
-            print_stdout_v2(output);
+            print(list::command(m).await);
         }
     }
 }
-

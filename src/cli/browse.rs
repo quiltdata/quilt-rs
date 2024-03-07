@@ -1,6 +1,15 @@
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
 
+pub struct Output {
+    manifest: quilt_rs::Table,
+}
+
+#[derive(Debug)]
+pub struct Input {
+    pub uri: String,
+}
+
 #[derive(tabled::Tabled)]
 struct RemoteManifestHeader {
     info: String,
@@ -14,48 +23,49 @@ struct RemoteManifestEntry {
     size: u64,
 }
 
-#[derive(Debug)]
-pub struct CommandArgs {
-    pub uri: String,
+impl std::fmt::Display for Output {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut output: Vec<String> = Vec::new();
+        let mut header_table = tabled::Table::new(vec![RemoteManifestHeader {
+            info: self.manifest.header.info.to_string(),
+            meta: self.manifest.header.meta.to_string(),
+        }]);
+        header_table.with(tabled::settings::Panel::header("Remote manifest header"));
+        output.push(header_table.to_string());
+
+        let mut entries = Vec::new();
+        for (_name, entry) in &self.manifest.records {
+            entries.push(RemoteManifestEntry {
+                name: entry.name.to_string(),
+                place: entry.place.to_string(),
+                size: entry.size,
+            });
+        }
+        let mut entries_table = tabled::Table::new(&entries);
+        entries_table.with(tabled::settings::Panel::header("Remote manifest entries"));
+        output.push(entries_table.to_string());
+        write!(f, "{}", output.join("\n"))
+    }
 }
 
-// TODO: instead of `fn command` output struct CommandOutput from model
-//       and use `impl fmt::Display` for it
-pub async fn command(m: impl Commands, args: CommandArgs) -> Std {
+pub async fn command(m: impl Commands, args: Input) -> Std {
     match m.browse_remote_manifest(args).await {
-        Ok(manifest_contents) => {
-            let mut output: Vec<String> = Vec::new();
-            let mut header_table = tabled::Table::new(vec![RemoteManifestHeader {
-                info: manifest_contents.header.info.to_string(),
-                meta: manifest_contents.header.meta.to_string(),
-            }]);
-            header_table.with(tabled::settings::Panel::header("Remote manifest header"));
-            output.push(header_table.to_string());
-
-            let mut entries = Vec::new();
-            for (_name, entry) in manifest_contents.records {
-                entries.push(RemoteManifestEntry {
-                    name: entry.name.to_string(),
-                    place: entry.place.to_string(),
-                    size: entry.size,
-                });
-            }
-            let mut entries_table = tabled::Table::new(&entries);
-            entries_table.with(tabled::settings::Panel::header("Remote manifest entries"));
-            output.push(entries_table.to_string());
-            Std::Out(output.join("\n"))
-        }
+        Ok(output) => Std::Out(output.to_string()),
         Err(err) => Std::Err(err),
     }
 }
 
 pub async fn model(
     local_domain: &quilt_rs::LocalDomain,
-    CommandArgs { uri: uri_string }: CommandArgs,
-) -> Result<quilt_rs::Table, String> {
-    let uri = quilt_rs::S3PackageURI::try_from(uri_string.as_str())?;
+    Input { uri }: Input,
+) -> Result<Output, String> {
+    let uri = quilt_rs::S3PackageURI::try_from(uri.as_str())?;
     let remote_manifest = quilt_rs::RemoteManifest::resolve(&uri).await?;
-    local_domain.browse_remote_manifest(&remote_manifest).await
+    Ok(Output {
+        manifest: local_domain
+            .browse_remote_manifest(&remote_manifest)
+            .await?,
+    })
 }
 
 #[cfg(test)]
@@ -70,20 +80,20 @@ mod tests {
         let local_path = PathBuf::from(temp_dir.as_ref());
         let local_domain = quilt_rs::LocalDomain::new(local_path);
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md".to_string();
-        let table = model(&local_domain, CommandArgs { uri }).await?;
+        let output = model(&local_domain, Input { uri }).await?;
         assert_eq!(
-            table.header.info,
+            output.manifest.header.info,
             serde_json::json!({
                 "message": "test_spec_write 1697916638",
                 "version":"v0"
             })
         );
         assert_eq!(
-            table.records.get("READ ME.md").unwrap().place,
+            output.manifest.records.get("READ ME.md").unwrap().place,
             "s3://udp-spec/spec/quiltcore/READ%20ME.md?versionId=.l3tAGbfEBC4c.L2ywTpWbnweSpYLe8a"
         );
         assert_eq!(
-            table.records.get("timestamp.txt").unwrap().place,
+            output.manifest.records.get("timestamp.txt").unwrap().place,
             "s3://udp-spec/spec/quiltcore/timestamp.txt?versionId=lifktjQgrgewg1FGXxls3UKtJSjl2shy"
         );
         Ok(())
