@@ -161,7 +161,7 @@ mod tests {
                     }
                 );
             }
-            _ => assert!(false),
+            _ => panic!(),
         }
 
         let uri = parse_uri("s3://bucket/foo/bar")?;
@@ -176,7 +176,7 @@ mod tests {
                     }
                 );
             }
-            _ => assert!(false),
+            _ => panic!(),
         }
         Ok(())
     }

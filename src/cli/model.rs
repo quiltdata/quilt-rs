@@ -13,17 +13,17 @@ pub trait Commands {
 
     async fn browse_remote_manifest(&self, args: browse::Input) -> Result<browse::Output, String> {
         let local_domain = &self.get_local_domain().lock().await;
-        browse::model(&local_domain, args).await
+        browse::model(local_domain, args).await
     }
 
     async fn package_install(&self, args: install::Input) -> Result<install::Output, String> {
         let local_domain = &self.get_local_domain().lock().await;
-        install::model(&local_domain, args).await
+        install::model(local_domain, args).await
     }
 
     async fn list(&self) -> Result<list::Output, String> {
         let local_domain = &self.get_local_domain().lock().await;
-        list::model(&local_domain).await
+        list::model(local_domain).await
     }
 }
 

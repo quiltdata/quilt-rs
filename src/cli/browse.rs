@@ -34,7 +34,7 @@ impl std::fmt::Display for Output {
         output.push(header_table.to_string());
 
         let mut entries = Vec::new();
-        for (_name, entry) in &self.manifest.records {
+        for entry in self.manifest.records.values() {
             entries.push(RemoteManifestEntry {
                 name: entry.name.to_string(),
                 place: entry.place.to_string(),
