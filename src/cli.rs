@@ -60,33 +60,27 @@ fn parse_uri(uri: &str) -> Result<Uri, String> {
     Err("Invalid scheme".into())
 }
 
-async fn browse_remote_manifest(
-    local_domain: &quilt_rs::LocalDomain,
-    uri_str: &str,
-) -> Result<quilt_rs::Table, String> {
-    let uri = quilt_rs::S3PackageURI::try_from(uri_str)?;
-    let remote_manifest = quilt_rs::RemoteManifest::resolve(&uri).await?;
-    local_domain.browse_remote_manifest(&remote_manifest).await
-}
-
 struct PackageInstallArgs {
-    local_domain: quilt_rs::LocalDomain,
     namespace: Option<String>,
     paths: Option<Vec<String>>,
     uri_str: String,
 }
 
-async fn get_installed_packages_list(
-    local_domain: &quilt_rs::LocalDomain,
-) -> Result<Vec<quilt_rs::InstalledPackage>, String> {
-    local_domain.list_installed_packages().await
+struct BrowseRemoteManifestArgs {
+    uri_str: String,
 }
 
-// TODO: add struct StdOut, struct StdErr
-// TODO: add enum Std {StdOut(str), StdErr(str)}
-// TODO: return Std from every command and pass to print
-fn print_stdout(str: String) {
-    println!("{}", str);
+#[derive(Debug)]
+enum Std {
+    Out(String),
+    Err(String),
+}
+
+fn print_stdout_v2(output: Std) {
+    match output {
+        Std::Out(str) => println!("{}", str),
+        Std::Err(str) => tracing::error!("{}", str),
+    }
 }
 
 struct Model {
@@ -96,10 +90,19 @@ struct Model {
 trait CommandsModel {
     fn get_local_domain(&self) -> &sync::Mutex<quilt_rs::LocalDomain>;
 
+    async fn browse_remote_manifest(
+        &self,
+        BrowseRemoteManifestArgs { uri_str }: BrowseRemoteManifestArgs,
+    ) -> Result<quilt_rs::Table, String> {
+        let uri = quilt_rs::S3PackageURI::try_from(uri_str.as_str())?;
+        let remote_manifest = quilt_rs::RemoteManifest::resolve(&uri).await?;
+        let local_domain = &self.get_local_domain().lock().await;
+        local_domain.browse_remote_manifest(&remote_manifest).await
+    }
+
     async fn package_install(
         &self,
         PackageInstallArgs {
-            local_domain,
             uri_str,
             paths,
             namespace,
@@ -115,6 +118,7 @@ trait CommandsModel {
         match parse_uri(&uri_str)? {
             Uri::S3PackageURI(uri) => {
                 let namespace = namespace.or(Some(uri.namespace.clone()));
+                let local_domain = &self.get_local_domain().lock().await;
                 let installed_package = match local_domain
                     .get_installed_package(&namespace.unwrap())
                     .await?
@@ -163,6 +167,11 @@ trait CommandsModel {
             }
         }
     }
+
+    async fn get_installed_packages_list(&self) -> Result<Vec<quilt_rs::InstalledPackage>, String> {
+        let local_domain = &self.get_local_domain().lock().await;
+        local_domain.list_installed_packages().await
+    }
 }
 
 impl CommandsModel for Model {
@@ -179,13 +188,57 @@ impl Model {
     }
 }
 
-async fn command_package_install(model: impl CommandsModel, args: PackageInstallArgs) {
+async fn command_browse_remote_manifest(
+    model: impl CommandsModel,
+    args: BrowseRemoteManifestArgs,
+) -> Std {
+    match model.browse_remote_manifest(args).await {
+        Ok(manifest_contents) => {
+            let mut output: Vec<String> = Vec::new();
+            let mut header_table = tabled::Table::new(vec![RemoteManifestHeader {
+                info: manifest_contents.header.info.to_string(),
+                meta: manifest_contents.header.meta.to_string(),
+            }]);
+            header_table.with(tabled::settings::Panel::header("Remote manifest header"));
+            output.push(header_table.to_string());
+
+            let mut entries = Vec::new();
+            for (_name, entry) in manifest_contents.records {
+                entries.push(RemoteManifestEntry {
+                    name: entry.name.to_string(),
+                    place: entry.place.to_string(),
+                    size: entry.size,
+                });
+            }
+            let mut entries_table = tabled::Table::new(&entries);
+            entries_table.with(tabled::settings::Panel::header("Remote manifest entries"));
+            output.push(entries_table.to_string());
+            Std::Out(output.join("\n"))
+        }
+        Err(err) => Std::Err(err),
+    }
+}
+
+async fn command_package_install(model: impl CommandsModel, args: PackageInstallArgs) -> Std {
     match model.package_install(args).await {
-        Ok((installed_package, package_folder, _)) => print_stdout(format!(
+        Ok((installed_package, package_folder, _)) => Std::Out(format!(
             "Package {:?} installed to {:?}",
             installed_package, package_folder,
         )),
-        Err(err) => panic!("{}", err),
+        Err(err) => Std::Err(err),
+    }
+}
+
+async fn command_get_installed_packages_list(model: impl CommandsModel) -> Std {
+    match model.get_installed_packages_list().await {
+        Ok(installed_packages_list) => {
+            let mut output: Vec<String> = Vec::new();
+            for installed_package in installed_packages_list {
+                output.push(format!("InstalledPackage<{}>", installed_package.namespace));
+            }
+            Std::Out(output.join("\n"))
+        }
+        Err(err) => Std::Err(err),
     }
 }
 
@@ -196,32 +249,11 @@ pub async fn init() {
     let model = Model::new(local_domain.clone());
 
     match args.command {
-        Commands::Browse { uri: uri_string } => {
-            tracing::debug!("Browsing {}", uri_string);
-            match browse_remote_manifest(&local_domain, uri_string.as_str()).await {
-                Ok(manifest_contents) => {
-                    let mut header_table = tabled::Table::new(vec![RemoteManifestHeader {
-                        info: manifest_contents.header.info.to_string(),
-                        meta: manifest_contents.header.meta.to_string(),
-                    }]);
-                    header_table.with(tabled::settings::Panel::header("Remote manifest header"));
-                    print_stdout(header_table.to_string());
-
-                    let mut entries = Vec::new();
-                    for (_name, entry) in manifest_contents.records {
-                        entries.push(RemoteManifestEntry {
-                            name: entry.name.to_string(),
-                            place: entry.place.to_string(),
-                            size: entry.size,
-                        });
-                    }
-                    let mut entries_table = tabled::Table::new(&entries);
-                    entries_table.with(tabled::settings::Panel::header("Remote manifest entries"));
-                    print_stdout(entries_table.to_string());
-                }
-
-                Err(err) => panic!("{}", err),
-            }
+        Commands::Browse { uri: uri_str } => {
+            tracing::debug!("Browsing {}", uri_str);
+            let args = BrowseRemoteManifestArgs { uri_str };
+            let output = command_browse_remote_manifest(model, args).await;
+            print_stdout_v2(output);
         }
         Commands::Install {
             path,
@@ -229,27 +261,18 @@ pub async fn init() {
             uri: uri_str,
         } => {
             tracing::debug!("Installing {}", uri_str);
-            command_package_install(
-                model,
-                PackageInstallArgs {
-                    local_domain,
-                    uri_str,
-                    paths: path,
-                    namespace,
-                },
-            )
-            .await
+            let args = PackageInstallArgs {
+                uri_str,
+                paths: path,
+                namespace,
+            };
+            let output = command_package_install(model, args).await;
+            print_stdout_v2(output);
         }
         Commands::List => {
             tracing::debug!("Listing installed packages");
-            match get_installed_packages_list(&local_domain).await {
-                Ok(installed_packages_list) => {
-                    for installed_package in installed_packages_list {
-                        print_stdout(format!("{:?}", installed_package));
-                    }
-                }
-                Err(err) => panic!("{}", err),
-            }
+            let output = command_get_installed_packages_list(model).await;
+            print_stdout_v2(output);
         }
     }
 }
@@ -270,8 +293,11 @@ mod tests {
     #[tokio::test]
     async fn browse() -> Result<(), String> {
         let local_domain = temp_local_domain();
-        let uri_str = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
-        let table = browse_remote_manifest(&local_domain, uri_str).await?;
+        let uri_str = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md".to_string();
+        let model = Model::new(local_domain.clone());
+        let table = model
+            .browse_remote_manifest(BrowseRemoteManifestArgs { uri_str })
+            .await?;
         assert_eq!(
             table.header.info,
             serde_json::json!({
@@ -298,7 +324,6 @@ mod tests {
         let model = Model::new(local_domain.clone());
         let (installed_package, _, _) = model
             .package_install(PackageInstallArgs {
-                local_domain,
                 uri_str,
                 paths: None,
                 namespace: None,
@@ -321,7 +346,6 @@ mod tests {
         let model = Model::new(local_domain.clone());
         let (installed_package, _, _) = model
             .package_install(PackageInstallArgs {
-                local_domain,
                 uri_str,
                 paths: None,
                 namespace: None,
@@ -340,7 +364,6 @@ mod tests {
         let model = Model::new(local_domain.clone());
         let (installed_package, _, _) = model
             .package_install(PackageInstallArgs {
-                local_domain,
                 uri_str,
                 paths: Some(vec!["READ ME.md".to_string(), "timestamp.txt".to_string()]),
                 namespace: None,
@@ -360,13 +383,12 @@ mod tests {
         let model = Model::new(local_domain.clone());
         let _ = model
             .package_install(PackageInstallArgs {
-                local_domain: local_domain.clone(),
                 uri_str,
                 namespace: None,
                 paths: None,
             })
             .await?;
-        let list = get_installed_packages_list(&local_domain).await?;
+        let list = model.get_installed_packages_list().await?;
         assert_eq!(list[0].namespace, "spec/quiltcore");
         Ok(())
     }
