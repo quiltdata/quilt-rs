@@ -507,12 +507,22 @@ impl LocalDomain {
         );
         self.write_lineage(&lineage).await?;
 
+        let mut keys = Vec::new();
+        let mut paths = Vec::new();
+        for row in manifest.records.values() {
+            keys.push(row.name.clone());
+            paths.push(working_dir.join(&row.name))
+        }
+
+        let installed_package = InstalledPackage {
+            domain: self.to_owned(),
+            namespace: namespace.to_string(),
+        };
+        installed_package.install_paths(&keys).await?;
+
         Ok((
-            InstalledPackage {
-                domain: self.to_owned(),
-                namespace: namespace.to_string(),
-            },
-            None,
+            installed_package,
+            if paths.is_empty() { None } else { Some(paths) },
         ))
     }
 }
