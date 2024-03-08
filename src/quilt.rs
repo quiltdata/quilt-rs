@@ -189,6 +189,7 @@ impl LocalDomain {
         self.root_dir.join(namespace)
     }
 
+    // TODO: use tokio::fs::read
     pub async fn read_lineage(&self) -> Result<DomainLineage, String> {
         let lineage_path = self.root_dir.join(LINEAGE_FILE);
         let contents = fs::read_to_string(&lineage_path).await.or_else(|err| {
@@ -349,15 +350,96 @@ impl LocalDomain {
         self.installed_manifests_path(namespace).join(hash)
     }
 
+    async fn create_objects_dir(&self) -> Result<PathBuf, String> {
+        let objects_dir = self.root_dir.join(OBJECTS_DIR);
+        create_dir_all(&objects_dir)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(objects_dir)
+    }
+
+    async fn create_working_dir(&self, namespace: &str) -> Result<PathBuf, String> {
+        let working_dir = self.working_folder(namespace);
+        create_dir_all(&working_dir)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(working_dir)
+    }
+
+    async fn write_manifest_to_installed_dir(
+        &self,
+        manifest: &Table,
+        namespace: &str,
+    ) -> Result<String, String> {
+        let hash = manifest.top_hash();
+        let installed_manifest_path = self.installed_manifest_path(namespace, &hash);
+        create_dir_all(&installed_manifest_path.parent().unwrap())
+            .await
+            .map_err(|err| err.to_string())?;
+        manifest
+            .write_to_upath(&UPath::Local(installed_manifest_path))
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(hash)
+    }
+
+    async fn copy_cached_manifest_to_installed_dir(
+        &self,
+        remote_manifest: &RemoteManifest,
+    ) -> Result<String, String> {
+        let installed_manifest_path =
+            self.installed_manifest_path(&remote_manifest.namespace, &remote_manifest.hash);
+        create_dir_all(&installed_manifest_path.parent().unwrap())
+            .await
+            .map_err(|err| err.to_string())?;
+        tokio::fs::copy(
+            self.manifest_cache_path(&remote_manifest.bucket, &remote_manifest.hash),
+            installed_manifest_path,
+        )
+        .await
+        .map_err(|err| err.to_string())?;
+        Ok(remote_manifest.hash.clone())
+    }
+
+    async fn write_package_to_lineage(
+        &self,
+        remote_manifest: &RemoteManifest,
+        hash: String,
+    ) -> Result<(), String> {
+        let lineage: DomainLineage = self.read_lineage().await?;
+        let mut lineage = lineage;
+        lineage.packages.insert(
+            remote_manifest.namespace.to_string(),
+            PackageLineage::from_remote(remote_manifest.clone(), hash),
+        );
+        self.write_lineage(&lineage).await?;
+        Ok(())
+    }
+
+    async fn install_all_paths(
+        &self,
+        installed_package: &InstalledPackage,
+        manifest: &Table,
+    ) -> Result<Vec<PathBuf>, String> {
+        let working_dir = installed_package.working_folder();
+        let mut keys = Vec::new();
+        let mut paths = Vec::new();
+        for row in manifest.records.values() {
+            keys.push(row.name.clone());
+            paths.push(working_dir.join(&row.name))
+        }
+
+        installed_package.install_paths(&keys).await?;
+        Ok(paths)
+    }
+
     pub async fn install_package(
         &self,
         remote: &RemoteManifest,
     ) -> Result<InstalledPackage, String> {
-        // Read the lineage
-        let lineage: DomainLineage = self.read_lineage().await?;
-
         // bail if already installed
         // TODO: if compatible (same remote), just return the installed package
+        let lineage = self.read_lineage().await?;
         if lineage.packages.contains_key(&remote.namespace) {
             return Err(format!(
                 "Package '{}' is already installed",
@@ -366,42 +448,14 @@ impl LocalDomain {
         }
 
         self.cache_remote_manifest(remote).await?;
-
-        // Make an "installed" copy of the remote manifest.
-        let installed_manifest_path = self.installed_manifest_path(&remote.namespace, &remote.hash);
-        create_dir_all(&installed_manifest_path.parent().unwrap())
-            .await
-            .map_err(|err| err.to_string())?;
-        tokio::fs::copy(
-            self.manifest_cache_path(&remote.bucket, &remote.hash),
-            installed_manifest_path,
-        )
-        .await
-        .map_err(|err| err.to_string())?;
-
-        // Create the identity cache dir.
-        let objects_dir = self.root_dir.join(OBJECTS_DIR);
-        create_dir_all(&objects_dir)
-            .await
-            .map_err(|err| err.to_string())?;
-
-        // Create the working dir.
-        let working_dir = self.working_folder(&remote.namespace);
-        create_dir_all(&working_dir)
-            .await
-            .map_err(|err| err.to_string())?;
+        self.copy_cached_manifest_to_installed_dir(remote).await?;
+        self.create_objects_dir().await?;
+        self.create_working_dir(&remote.namespace).await?;
 
         // Resolve and record latest manifest hash
         let latest_hash = remote.resolve_latest().await?;
-        // Update the lineage (with empty paths).
-        let mut lineage = lineage;
-        lineage.packages.insert(
-            remote.namespace.clone(),
-            PackageLineage::from_remote(remote.to_owned(), latest_hash),
-        );
-        self.write_lineage(&lineage).await?;
+        self.write_package_to_lineage(remote, latest_hash).await?;
 
-        // Create the package.
         Ok(InstalledPackage {
             domain: self.to_owned(),
             namespace: remote.namespace.clone(),
@@ -467,58 +521,31 @@ impl LocalDomain {
     ) -> Result<(InstalledPackage, Option<Vec<PathBuf>>), String> {
         let manifest = package_s3_prefix(uri).await?;
 
-        // Move to "installed" dir
-        let hash = manifest.top_hash();
-        let installed_manifest_path = self.installed_manifest_path(namespace, &hash);
-        create_dir_all(&installed_manifest_path.parent().unwrap())
-            .await
-            .map_err(|err| err.to_string())?;
-        manifest
-            .write_to_upath(&UPath::Local(installed_manifest_path))
-            .await
-            .map_err(|err| err.to_string())?;
+        let hash = self
+            .write_manifest_to_installed_dir(&manifest, namespace)
+            .await?;
 
-        // Create the identity cache dir.
-        let objects_dir = self.root_dir.join(OBJECTS_DIR);
-        create_dir_all(&objects_dir)
-            .await
-            .map_err(|err| err.to_string())?;
+        self.create_objects_dir().await?;
+        self.create_working_dir(&namespace).await?;
 
-        // Create the working dir.
-        let working_dir = self.working_folder(namespace);
-        create_dir_all(&working_dir)
-            .await
-            .map_err(|err| err.to_string())?;
-
-        let lineage: DomainLineage = self.read_lineage().await?;
-        // Update the lineage (with empty paths).
-        let mut lineage = lineage;
-        lineage.packages.insert(
-            namespace.to_string(),
-            PackageLineage::from_remote(
-                RemoteManifest {
-                    // HACK: there is no remote manifest
-                    bucket: uri.bucket.clone(),
-                    namespace: namespace.to_string(),
-                    hash: hash.clone(),
-                },
-                hash.clone(),
-            ),
-        );
-        self.write_lineage(&lineage).await?;
-
-        let mut keys = Vec::new();
-        let mut paths = Vec::new();
-        for row in manifest.records.values() {
-            keys.push(row.name.clone());
-            paths.push(working_dir.join(&row.name))
-        }
+        self.write_package_to_lineage(
+            &RemoteManifest {
+                // HACK: there is no remote manifest
+                bucket: uri.bucket.clone(),
+                namespace: namespace.to_string(),
+                hash: hash.clone(),
+            },
+            hash.clone(),
+        )
+        .await?;
 
         let installed_package = InstalledPackage {
             domain: self.to_owned(),
             namespace: namespace.to_string(),
         };
-        installed_package.install_paths(&keys).await?;
+        let paths = self
+            .install_all_paths(&installed_package, &manifest)
+            .await?;
 
         Ok((
             installed_package,
