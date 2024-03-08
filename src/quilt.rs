@@ -469,7 +469,7 @@ impl LocalDomain {
 
         // Move to "installed" dir
         let hash = manifest.top_hash();
-        let installed_manifest_path = self.installed_manifest_path(&namespace, &hash);
+        let installed_manifest_path = self.installed_manifest_path(namespace, &hash);
         create_dir_all(&installed_manifest_path.parent().unwrap())
             .await
             .map_err(|err| err.to_string())?;
@@ -485,7 +485,7 @@ impl LocalDomain {
             .map_err(|err| err.to_string())?;
 
         // Create the working dir.
-        let working_dir = self.working_folder(&namespace);
+        let working_dir = self.working_folder(namespace);
         create_dir_all(&working_dir)
             .await
             .map_err(|err| err.to_string())?;
