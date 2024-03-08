@@ -159,14 +159,6 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use temp_testdir::TempDir;
-    use tokio::sync;
-
-    fn temp_local_domain() -> sync::Mutex<quilt_rs::LocalDomain> {
-        let temp_dir = TempDir::default();
-        let local_path = PathBuf::from(temp_dir.as_ref());
-        println!("Local path, {:?}", local_path);
-        sync::Mutex::new(quilt_rs::LocalDomain::new(local_path))
-    }
 
     #[test]
     fn test_parse_uri() -> Result<(), String> {
@@ -204,10 +196,15 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn test_installing_package_without_paths() -> Result<(), String> {
-        let local_domain = temp_local_domain();
-        let local_domain = local_domain.lock().await;
+        let temp_dir = TempDir::default();
+        let local_path = PathBuf::from(temp_dir.as_ref());
+        if let Err(err) = std::fs::create_dir_all(&local_path) {
+            panic!("{}", err.to_string());
+        }
+        println!("Local path, {:?}", local_path);
+        let local_domain = quilt_rs::LocalDomain::new(local_path);
+
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore".to_string();
         let output = model(
             &local_domain,
@@ -228,10 +225,15 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn test_installing_package_with_one_path() -> Result<(), String> {
-        let local_domain = temp_local_domain();
-        let local_domain = local_domain.lock().await;
+        let temp_dir = TempDir::default();
+        let local_path = PathBuf::from(temp_dir.as_ref());
+        if let Err(err) = std::fs::create_dir_all(&local_path) {
+            panic!("{}", err.to_string());
+        }
+        println!("Local path, {:?}", local_path);
+        let local_domain = quilt_rs::LocalDomain::new(local_path);
+
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md".to_string();
         let output = model(
             &local_domain,
@@ -248,10 +250,15 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn test_installing_package_with_paths() -> Result<(), String> {
-        let local_domain = temp_local_domain();
-        let local_domain = local_domain.lock().await;
+        let temp_dir = TempDir::default();
+        let local_path = PathBuf::from(temp_dir.as_ref());
+        if let Err(err) = std::fs::create_dir_all(&local_path) {
+            panic!("{}", err.to_string());
+        }
+        println!("Local path, {:?}", local_path);
+        let local_domain = quilt_rs::LocalDomain::new(local_path);
+
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore".to_string();
         let output = model(
             &local_domain,
