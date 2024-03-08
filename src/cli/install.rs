@@ -60,17 +60,17 @@ async fn install_package_from_remote_manifest(
     local_domain: &quilt_rs::LocalDomain,
     uri: &quilt_rs::S3PackageURI,
     namespace: Option<String>,
-) -> Result<(String, quilt_rs::InstalledPackage), String> {
+) -> Result<(quilt_rs::InstalledPackage, String), String> {
     let namespace = namespace.unwrap_or(uri.namespace.clone());
     let installed_package = local_domain.get_installed_package(&namespace).await?;
     if let Some(installed_package) = installed_package {
         // FIXME: check the actual remote_manifest
-        return Ok((namespace, installed_package));
+        return Ok((installed_package, namespace));
     }
     let remote_manifest = quilt_rs::RemoteManifest::resolve(uri).await?;
     Ok((
-        namespace,
         local_domain.install_package(&remote_manifest).await?,
+        namespace,
     ))
 }
 
@@ -122,7 +122,7 @@ pub async fn model(
 ) -> Result<Output, String> {
     match parse_uri(&uri)? {
         Uri::S3PackageURI(uri) => {
-            let (namespace, installed_package) =
+            let (installed_package, namespace) =
                 install_package_from_remote_manifest(local_domain, &uri, namespace).await?;
             let package_dir = local_domain.working_folder(&namespace);
             let Entries { keys, paths } = get_entries(&package_dir, uri.path, paths);
@@ -141,9 +141,15 @@ pub async fn model(
             if namespace.is_none() {
                 panic!("Namespace is required when using s3:// URLs");
             }
-            println!("package_s3_prefix {:?}", uri);
-            quilt_rs::quilt::package_s3_prefix(&namespace.unwrap(), &uri).await;
-            Err("FIXME: Should return installed package".into())
+            let namespace = namespace.unwrap();
+            let package_dir = local_domain.working_folder(&namespace);
+            let (installed_package, paths) =
+                local_domain.package_s3_prefix(&namespace, &uri).await?;
+            Ok(Output {
+                installed_package,
+                package_dir,
+                paths,
+            })
         }
     }
 }

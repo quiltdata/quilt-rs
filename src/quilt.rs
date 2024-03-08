@@ -459,6 +459,62 @@ impl LocalDomain {
             Ok(None)
         }
     }
+
+    pub async fn package_s3_prefix(
+        &self,
+        namespace: &str,
+        uri: &s3::S3Uri,
+    ) -> Result<(InstalledPackage, Option<Vec<PathBuf>>), String> {
+        let manifest = package_s3_prefix(uri).await?;
+
+        // Move to "installed" dir
+        let hash = manifest.top_hash();
+        let installed_manifest_path = self.installed_manifest_path(&namespace, &hash);
+        create_dir_all(&installed_manifest_path.parent().unwrap())
+            .await
+            .map_err(|err| err.to_string())?;
+        manifest
+            .write_to_upath(&UPath::Local(installed_manifest_path))
+            .await
+            .map_err(|err| err.to_string())?;
+
+        // Create the identity cache dir.
+        let objects_dir = self.root_dir.join(OBJECTS_DIR);
+        create_dir_all(&objects_dir)
+            .await
+            .map_err(|err| err.to_string())?;
+
+        // Create the working dir.
+        let working_dir = self.working_folder(&namespace);
+        create_dir_all(&working_dir)
+            .await
+            .map_err(|err| err.to_string())?;
+
+        let lineage: DomainLineage = self.read_lineage().await?;
+        // Update the lineage (with empty paths).
+        let mut lineage = lineage;
+        lineage.packages.insert(
+            namespace.to_string(),
+            PackageLineage::from_remote(
+                RemoteManifest {
+                    // HACK: there is no remote manifest
+                    bucket: uri.bucket.clone(),
+                    namespace: namespace.to_string(),
+                    hash: hash.clone(),
+                },
+                hash.clone(),
+            ),
+        );
+        self.write_lineage(&lineage).await?;
+
+        Ok((
+            InstalledPackage {
+                domain: self.to_owned(),
+                namespace: namespace.to_string(),
+            },
+            None,
+        ))
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -1392,7 +1448,6 @@ impl InstalledPackage {
     }
 }
 
-
 fn make_s3_url(bucket: &str, s3_key: &str, version_id: Option<&str>) -> Url {
     let mut remote_url = Url::parse("s3://").unwrap();
     remote_url
@@ -1427,11 +1482,13 @@ fn get_compatible_chunked_checksum(attrs: &aws_sdk_s3::operation::get_object_att
     None
 }
 
-pub async fn package_s3_prefix(pkg_name: &str, uri: &s3::S3Uri) {
+pub async fn package_s3_prefix(uri: &s3::S3Uri) -> Result<Table, String> {
     // TODO: TODOs in .expect()
     // TODO: make get_object_attributes() calls concurrently
     // XXX: validate prefix
-    let client = crate::s3_utils::get_client_for_bucket(&uri.bucket).await.expect("TODO");
+    let client = crate::s3_utils::get_client_for_bucket(&uri.bucket)
+        .await
+        .expect("TODO");
 
     // FIXME: we need real API to build manifests
     let header = Row4 {
@@ -1449,24 +1506,29 @@ pub async fn package_s3_prefix(pkg_name: &str, uri: &s3::S3Uri) {
     let mut records: BTreeMap<String, Row4> = BTreeMap::new();
 
     let prefix_len = uri.key.len();
-    let mut p = client.list_objects_v2()
+    let mut p = client
+        .list_objects_v2()
         .bucket(&uri.bucket)
-        .prefix(&uri.key).
-        into_paginator().send();
+        .prefix(&uri.key)
+        .into_paginator()
+        .send();
     while let Some(page) = p.next().await {
         let page = page.expect("TODO");
         println!("PAGE {:?}", page);
         for obj in page.contents.as_ref().expect("TODO") {
             dbg!(obj);
             let key = obj.key.as_ref().expect("TODO");
-            let attrs = client.get_object_attributes()
+            let attrs = client
+                .get_object_attributes()
                 .bucket(&uri.bucket)
                 .key(key)
                 .object_attributes(aws_sdk_s3::types::ObjectAttributes::Checksum)
                 .object_attributes(aws_sdk_s3::types::ObjectAttributes::ObjectParts)
                 .object_attributes(aws_sdk_s3::types::ObjectAttributes::ObjectSize)
                 .max_parts(10_000) // TODO: use const
-                .send().await.expect("TODO");
+                .send()
+                .await
+                .expect("TODO");
             dbg!(&attrs);
             if attrs.delete_marker.is_some() && attrs.delete_marker.expect("TODO") {
                 // XXX: do something different?
@@ -1475,11 +1537,8 @@ pub async fn package_s3_prefix(pkg_name: &str, uri: &s3::S3Uri) {
             let name = &key[prefix_len..];
             // FIXME: we assume that objects have hash and it's compatible with sha-256-chunked
             let s3_checksum = get_compatible_chunked_checksum(&attrs);
-            let hash = Multihash::wrap(
-                MULTIHASH_SHA256_CHUNKED,
-                s3_checksum.unwrap().as_bytes(),
-            )
-            .unwrap();
+            let hash =
+                Multihash::wrap(MULTIHASH_SHA256_CHUNKED, s3_checksum.unwrap().as_bytes()).unwrap();
             records.insert(
                 name.into(),
                 Row4 {
@@ -1500,16 +1559,8 @@ pub async fn package_s3_prefix(pkg_name: &str, uri: &s3::S3Uri) {
 
     dbg!(&records);
 
-    let table = Table {
-        header,
-        records,
-    };
-    // FIXME: we need real API to push manifest to S3 without copying files
-    table.write_to_upath(
-        &UPath::Local(format!("{}.parquet", pkg_name.replace('/', "_")).into())
-    ).await.expect("TODO");
+    Ok(Table { header, records })
 }
-
 
 // a conflict is identified by the identifiers of the two conflicting manifests
 #[derive(Debug, PartialEq)]
