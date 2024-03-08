@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio::{
-    fs::{create_dir_all, read_dir, remove_dir_all, File},
+    fs::{create_dir_all, read, read_dir, remove_dir_all, File},
     io::{AsyncReadExt, AsyncWriteExt},
 };
 use url::Url;
@@ -189,10 +189,9 @@ impl LocalDomain {
         self.root_dir.join(namespace)
     }
 
-    // TODO: use tokio::fs::read
     pub async fn read_lineage(&self) -> Result<DomainLineage, String> {
         let lineage_path = self.root_dir.join(LINEAGE_FILE);
-        let contents = fs::read_to_string(&lineage_path).await.or_else(|err| {
+        let contents = read(&lineage_path).await.or_else(|err| {
             if err.kind() == std::io::ErrorKind::NotFound {
                 Ok("{}".into())
             } else {
@@ -203,7 +202,7 @@ impl LocalDomain {
             }
         })?;
 
-        DomainLineage::try_from(&contents[..])
+        DomainLineage::try_from(contents)
     }
 
     pub async fn write_lineage(&self, lineage: &DomainLineage) -> Result<(), String> {
