@@ -526,7 +526,7 @@ impl LocalDomain {
             .await?;
 
         self.create_objects_dir().await?;
-        self.create_working_dir(&namespace).await?;
+        self.create_working_dir(namespace).await?;
 
         self.write_package_to_lineage(
             &RemoteManifest {
