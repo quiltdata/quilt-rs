@@ -5,6 +5,8 @@ use multihash::Multihash;
 use serde::{Deserialize, Deserializer, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 
+use crate::Error;
+
 use super::{Change, ChangeSet};
 
 pub type JsonObject = serde_json::Map<String, serde_json::Value>;
@@ -13,7 +15,7 @@ pub type JsonObject = serde_json::Map<String, serde_json::Value>;
 pub struct ManifestHeader {
     pub version: String,
     pub message: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]  // Attempt to be quilt3-compatible.
+    #[serde(skip_serializing_if = "Option::is_none")] // Attempt to be quilt3-compatible.
     pub user_meta: Option<JsonObject>,
 }
 
@@ -29,7 +31,7 @@ pub const MULTIHASH_SHA256: u64 = 0x16;
 pub const MULTIHASH_SHA256_CHUNKED: u64 = 0xb510;
 
 impl TryFrom<Multihash<256>> for ContentHash {
-    type Error = String;
+    type Error = Error;
 
     fn try_from(value: Multihash<256>) -> Result<Self, Self::Error> {
         match value.code() {
@@ -37,26 +39,31 @@ impl TryFrom<Multihash<256>> for ContentHash {
             MULTIHASH_SHA256_CHUNKED => Ok(ContentHash::SHA256Chunked(
                 BASE64_STANDARD.encode(value.digest()),
             )),
-            code => Err(format!("Unexpected code: {code:#06x}"))
+            code => Err(Error::InvalidMultihash(format!(
+                "Unexpected code: {:#06x}",
+                code
+            ))),
         }
     }
 }
 
 impl TryInto<Multihash<256>> for ContentHash {
-    type Error = String;
+    type Error = Error;
 
     fn try_into(self) -> Result<Multihash<256>, Self::Error> {
         match self {
             ContentHash::SHA256(hash) => {
-                let hash_bytes = hex::decode(hash).map_err(|err| err.to_string())?;
-                Multihash::wrap(MULTIHASH_SHA256, &hash_bytes).map_err(|err| err.to_string())
+                let hash_bytes =
+                    hex::decode(hash).map_err(|err| Error::InvalidMultihash(err.to_string()))?;
+                Multihash::wrap(MULTIHASH_SHA256, &hash_bytes)
+                    .map_err(|err| Error::InvalidMultihash(err.to_string()))
             }
             ContentHash::SHA256Chunked(hash) => {
                 let hash_bytes = BASE64_STANDARD
                     .decode(hash)
-                    .map_err(|err| err.to_string())?;
+                    .map_err(|err| Error::InvalidMultihash(err.to_string()))?;
                 Multihash::wrap(MULTIHASH_SHA256_CHUNKED, &hash_bytes)
-                    .map_err(|err| err.to_string())
+                    .map_err(|err| Error::InvalidMultihash(err.to_string()))
             }
         }
     }
@@ -109,7 +116,7 @@ impl ManifestRow {
 }
 
 impl TryFrom<Quilt3ManifestRow> for ManifestRow {
-    type Error = String;
+    type Error = Error;
 
     fn try_from(row: Quilt3ManifestRow) -> Result<Self, Self::Error> {
         Ok(ManifestRow {
@@ -118,7 +125,7 @@ impl TryFrom<Quilt3ManifestRow> for ManifestRow {
                 .physical_keys
                 .into_iter()
                 .next()
-                .ok_or("empty physical_keys")?,
+                .ok_or(Error::ManifestHeader("Physical key is missing".to_string()))?,
             hash: row.hash,
             size: row.size,
             meta: row.meta,
@@ -134,28 +141,34 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    pub async fn from_file<F: AsyncRead + Unpin + Send>(file: F) -> Result<Self, String> {
+    pub async fn from_file<F: AsyncRead + Unpin + Send>(file: F) -> Result<Self, Error> {
         let reader = BufReader::new(file);
         let mut lines = reader.lines();
 
-        let header = lines
-            .next_line()
-            .await
-            .map_err(|err| err.to_string())?
-            .ok_or("missing manifest header")?;
+        let header = lines.next_line().await.map_err(|err| {
+            Error::ManifestHeader(format!(
+                "Failed to read the manifest header: {}",
+                err.to_string()
+            ))
+        })?;
 
-        let header: ManifestHeader =
-            serde_json::from_str(&header).map_err(|err| err.to_string())?;
+        let Some(header) = header else {
+            return Err(Error::ManifestHeader("Empty manifest".into()));
+        };
+
+        let header: ManifestHeader = serde_json::from_str(&header)?;
 
         if header.version != "v0" {
-            return Err("invalid manifest version".into());
+            return Err(Error::ManifestHeader(format!(
+                "Unsupported manifest version: {}",
+                header.version
+            )));
         }
 
         let mut rows = Vec::new();
 
-        while let Some(line) = lines.next_line().await.map_err(|err| err.to_string())? {
-            let row: Quilt3ManifestRow =
-                serde_json::from_str(&line).map_err(|err| err.to_string())?;
+        while let Some(line) = lines.next_line().await? {
+            let row: Quilt3ManifestRow = serde_json::from_str(&line)?;
             rows.push(ManifestRow::try_from(row)?);
         }
 

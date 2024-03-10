@@ -1,6 +1,8 @@
 use aws_sdk_s3::primitives::ByteStream;
 use tokio::io::AsyncReadExt;
 
+use crate::Error;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct S3Uri {
     pub bucket: String,
@@ -9,16 +11,16 @@ pub struct S3Uri {
 }
 
 impl S3Uri {
-    pub async fn get_contents(&self) -> Result<String, String> {
+    pub async fn get_contents(&self) -> Result<String, Error> {
         get_object_contents(self).await
     }
 
-    pub async fn put_contents(&self, contents: impl Into<ByteStream>) -> Result<(), String> {
+    pub async fn put_contents(&self, contents: impl Into<ByteStream>) -> Result<(), Error> {
         put_object_contents(self, contents).await
     }
 }
 
-pub async fn get_object_bytes(uri: &S3Uri) -> Result<Vec<u8>, String> {
+pub async fn get_object_bytes(uri: &S3Uri) -> Result<Vec<u8>, Error> {
     // real impl
     let client = crate::s3_utils::get_client_for_bucket(&uri.bucket).await?;
 
@@ -29,13 +31,10 @@ pub async fn get_object_bytes(uri: &S3Uri) -> Result<Vec<u8>, String> {
         None => result,
     };
 
-    let result = result.send().await.map_err(|err| {
-        err.into_service_error()
-            .meta()
-            .message()
-            .unwrap_or("failed to download s3 object")
-            .to_string()
-    })?;
+    let result = result
+        .send()
+        .await
+        .map_err(|err| Error::S3(err.to_string()))?;
 
     let mut contents = Vec::new();
 
@@ -43,23 +42,22 @@ pub async fn get_object_bytes(uri: &S3Uri) -> Result<Vec<u8>, String> {
         .body
         .into_async_read()
         .read_to_end(&mut contents)
-        .await
-        .map_err(|err| err.to_string())?;
+        .await?;
 
     Ok(contents)
 
     // TODO: fake impl
 }
 
-pub async fn get_object_contents(uri: &S3Uri) -> Result<String, String> {
+pub async fn get_object_contents(uri: &S3Uri) -> Result<String, Error> {
     let bytes = get_object_bytes(uri).await?;
-    String::from_utf8(bytes).map_err(|err| err.to_string())
+    Ok(String::from_utf8(bytes).map_err(|err| Error::Utf8(err.utf8_error()))?)
 }
 
 pub async fn put_object_contents(
     uri: &S3Uri,
     contents: impl Into<ByteStream>,
-) -> Result<(), String> {
+) -> Result<(), Error> {
     let client = crate::s3_utils::get_client_for_bucket(&uri.bucket).await?;
     client
         .put_object()
@@ -68,13 +66,7 @@ pub async fn put_object_contents(
         .body(contents.into())
         .send()
         .await
-        .map_err(|err| {
-            err.into_service_error()
-                .meta()
-                .message()
-                .unwrap_or("failed to upload s3 object")
-                .to_string()
-        })?;
+        .map_err(|err| Error::S3(err.to_string()))?;
 
     Ok(())
 }
@@ -85,7 +77,7 @@ pub async fn put_object_contents(
 //     buckets: &'a MemoryBuckets,
 // }
 //
-// async fn get_object_contents(uri: &S3Uri) -> Result<String, String> {
+// async fn get_object_contents(uri: &S3Uri) -> Result<String, Error> {
 //     // TODO: support versioning?
 //     self.buckets.get(&uri.bucket).ok_or("bucket not found")?.get(&uri.key).ok_or(String::from("key not found")).cloned()
 // }

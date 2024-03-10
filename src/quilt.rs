@@ -31,7 +31,7 @@ use crate::{
         },
         table::HEADER_ROW,
     },
-    s3_utils, Row4, Table, UPath,
+    s3_utils, Error, Row4, Table, UPath,
 };
 
 use self::manifest::{MULTIHASH_SHA256, MULTIHASH_SHA256_CHUNKED};
@@ -75,7 +75,7 @@ pub struct RemoteManifest {
 }
 
 impl RemoteManifest {
-    pub async fn resolve(uri: &S3PackageURI) -> Result<Self, String> {
+    pub async fn resolve(uri: &S3PackageURI) -> Result<Self, Error> {
         // resolve the actual hash
         let top_hash = match &uri.revision {
             RevisionPointer::Hash(top_hash) => top_hash.clone(),
@@ -93,13 +93,13 @@ impl RemoteManifest {
         })
     }
 
-    pub async fn resolve_latest(&self) -> Result<String, String> {
+    pub async fn resolve_latest(&self) -> Result<String, Error> {
         tag_uri(&self.bucket, &self.namespace, "latest")
             .get_contents()
             .await
     }
 
-    pub async fn update_latest(&self, hash: String) -> Result<(), String> {
+    pub async fn update_latest(&self, hash: String) -> Result<(), Error> {
         tag_uri(&self.bucket, &self.namespace, "latest")
             .put_contents(hash.into_bytes())
             .await
@@ -114,12 +114,10 @@ pub struct CachedManifest {
 }
 
 impl CachedManifest {
-    pub async fn read(&self) -> Result<Table, String> {
+    pub async fn read(&self) -> Result<Table, Error> {
         let pathbuf = self.domain.manifest_cache_path(&self.bucket, &self.hash);
         let path = UPath::Local(pathbuf);
-        let table = Table::read_from_upath(&path)
-            .await
-            .map_err(|err| err.to_string())?;
+        let table = Table::read_from_upath(&path).await?;
         Ok(table)
     }
 }
@@ -131,15 +129,13 @@ pub struct InstalledManifest {
 }
 
 impl InstalledManifest {
-    pub async fn read(&self) -> Result<Table, String> {
+    pub async fn read(&self) -> Result<Table, Error> {
         let pathbuf = self
             .package
             .domain
             .installed_manifest_path(&self.package.namespace, &self.hash);
         let path = UPath::Local(pathbuf);
-        let table = Table::read_from_upath(&path)
-            .await
-            .map_err(|err| err.to_string())?;
+        let table = Table::read_from_upath(&path).await?;
         Ok(table)
     }
 }
@@ -188,34 +184,29 @@ impl LocalDomain {
         self.root_dir.join(namespace)
     }
 
-    pub async fn read_lineage(&self) -> Result<DomainLineage, String> {
+    pub async fn read_lineage(&self) -> Result<DomainLineage, Error> {
         let lineage_path = self.root_dir.join(LINEAGE_FILE);
         let contents = fs::read_to_string(&lineage_path).await.or_else(|err| {
             if err.kind() == std::io::ErrorKind::NotFound {
                 Ok("{}".into())
             } else {
-                Err(format!(
-                    "Failed to read the lineage file: {}",
-                    err.to_string()
-                ))
+                Err(err)
             }
         })?;
 
         DomainLineage::try_from(&contents[..])
     }
 
-    pub async fn write_lineage(&self, lineage: &DomainLineage) -> Result<(), String> {
+    pub async fn write_lineage(&self, lineage: &DomainLineage) -> Result<(), Error> {
         let lineage_path = self.root_dir.join(LINEAGE_FILE);
-        let contents = serde_json::to_string_pretty(lineage).map_err(|err| err.to_string())?;
-        fs::write(lineage_path, contents.as_bytes())
-            .await
-            .map_err(|err| err.to_string())
+        let contents = serde_json::to_string_pretty(lineage)?;
+        fs::write(lineage_path, contents.as_bytes()).await
     }
 
     pub async fn cache_remote_manifest(
         &self,
         manifest: &RemoteManifest,
-    ) -> Result<CachedManifest, String> {
+    ) -> Result<CachedManifest, Error> {
         // check if the manifest is already cached
         // if not, download and cache it
         // return cached manifest
@@ -223,9 +214,7 @@ impl LocalDomain {
         let cache_path = self.manifest_cache_path(&manifest.bucket, &manifest.hash);
 
         // TODO: who is responsible for this?
-        create_dir_all(&cache_path.parent().unwrap())
-            .await
-            .map_err(|err| err.to_string())?;
+        create_dir_all(&cache_path.parent().unwrap()).await?;
 
         if !fs::exists(&cache_path).await {
             // Does not exist yet
@@ -249,12 +238,8 @@ impl LocalDomain {
                         .body
                         .into_async_read()
                         .read_to_end(&mut contents)
-                        .await
-                        .map_err(|err| err.to_string())?;
-
-                    fs::write(&cache_path, &contents).await.map_err(|err| {
-                        format!("Failed to write manifest to {cache_path:?}: {err}")
-                    })?;
+                        .await?;
+                    fs::write(&cache_path, &contents).await?;
                 }
                 Err(SdkError::ServiceError(err)) if err.err().is_no_such_key() => {
                     // Fallback: Download the JSONL manifest.
@@ -264,13 +249,7 @@ impl LocalDomain {
                         .key(format!("{}/{}", MANIFEST_DIR, &manifest.hash))
                         .send()
                         .await
-                        .map_err(|err| {
-                            err.into_service_error()
-                                .meta()
-                                .message()
-                                .unwrap_or("failed to download s3 object")
-                                .to_string()
-                        })?;
+                        .map_err(|err| Error::S3(err.to_string()))?;
 
                     let quilt3_manifest =
                         Manifest::from_file(result.body.into_async_read()).await?;
@@ -307,18 +286,10 @@ impl LocalDomain {
                         );
                     }
                     let table = Table { header, records };
-                    table
-                        .write_to_upath(&UPath::Local(cache_path))
-                        .await
-                        .map_err(|err| err.to_string())?;
+                    table.write_to_upath(&UPath::Local(cache_path)).await?
                 }
                 Err(err) => {
-                    return Err(err
-                        .into_service_error()
-                        .meta()
-                        .message()
-                        .unwrap_or("failed to download s3 object")
-                        .to_string());
+                    return Err(Error::S3(err.to_string()));
                 }
             }
         }
@@ -330,11 +301,11 @@ impl LocalDomain {
         })
     }
 
-    pub async fn browse_remote_manifest(&self, remote: &RemoteManifest) -> Result<Table, String> {
+    pub async fn browse_remote_manifest(&self, remote: &RemoteManifest) -> Result<Table, Error> {
         self.cache_remote_manifest(remote).await?.read().await
     }
 
-    pub async fn browse_uri(&self, uri: &S3PackageURI) -> Result<Table, String> {
+    pub async fn browse_uri(&self, uri: &S3PackageURI) -> Result<Table, Error> {
         // resolve uri to the manifest location and hash
         let remote_manifest = RemoteManifest::resolve(uri).await?;
         self.browse_remote_manifest(&remote_manifest).await
@@ -351,44 +322,34 @@ impl LocalDomain {
     pub async fn install_package(
         &self,
         remote: &RemoteManifest,
-    ) -> Result<InstalledPackage, String> {
+    ) -> Result<InstalledPackage, Error> {
         // Read the lineage
         let lineage: DomainLineage = self.read_lineage().await?;
 
         // bail if already installed
         // TODO: if compatible (same remote), just return the installed package
         if lineage.packages.contains_key(&remote.namespace) {
-            return Err(format!(
-                "Package '{}' is already installed",
-                remote.namespace
-            ));
+            return Err(Error::PackageAlreadyInstalled(remote.namespace.clone()));
         }
 
         self.cache_remote_manifest(remote).await?;
 
         // Make an "installed" copy of the remote manifest.
         let installed_manifest_path = self.installed_manifest_path(&remote.namespace, &remote.hash);
-        create_dir_all(&installed_manifest_path.parent().unwrap())
-            .await
-            .map_err(|err| err.to_string())?;
+        create_dir_all(&installed_manifest_path.parent().unwrap()).await?;
         tokio::fs::copy(
             self.manifest_cache_path(&remote.bucket, &remote.hash),
             installed_manifest_path,
         )
-        .await
-        .map_err(|err| err.to_string())?;
+        .await?;
 
         // Create the identity cache dir.
         let objects_dir = self.root_dir.join(OBJECTS_DIR);
-        create_dir_all(&objects_dir)
-            .await
-            .map_err(|err| err.to_string())?;
+        create_dir_all(&objects_dir).await?;
 
         // Create the working dir.
         let working_dir = self.working_folder(&remote.namespace);
-        create_dir_all(&working_dir)
-            .await
-            .map_err(|err| err.to_string())?;
+        create_dir_all(&working_dir).await?;
 
         // Resolve and record latest manifest hash
         let latest_hash = remote.resolve_latest().await?;
@@ -407,14 +368,14 @@ impl LocalDomain {
         })
     }
 
-    pub async fn uninstall_package(&self, namespace: impl AsRef<str>) -> Result<(), String> {
+    pub async fn uninstall_package(&self, namespace: impl AsRef<str>) -> Result<(), Error> {
         let namespace = namespace.as_ref();
         let mut lineage = self.read_lineage().await?;
 
         lineage
             .packages
             .remove(namespace)
-            .ok_or("Package not installed".to_string())?;
+            .ok_or(Error::PackageNotInstalled(namespace.to_owned()))?;
 
         self.write_lineage(&lineage).await?;
 
@@ -430,7 +391,7 @@ impl LocalDomain {
         Ok(())
     }
 
-    pub async fn list_installed_packages(&self) -> Result<Vec<InstalledPackage>, String> {
+    pub async fn list_installed_packages(&self) -> Result<Vec<InstalledPackage>, Error> {
         let lineage = self.read_lineage().await?;
         let mut namespaces: Vec<String> = lineage.packages.into_keys().collect();
         namespaces.sort();
@@ -447,7 +408,7 @@ impl LocalDomain {
     pub async fn get_installed_package(
         &self,
         namespace: &str,
-    ) -> Result<Option<InstalledPackage>, String> {
+    ) -> Result<Option<InstalledPackage>, Error> {
         let lineage = self.read_lineage().await?;
         if lineage.packages.contains_key(namespace) {
             Ok(Some(InstalledPackage {
@@ -544,18 +505,17 @@ pub struct InstalledPackage {
 }
 
 impl InstalledPackage {
-    pub async fn lineage(&self) -> Result<PackageLineage, String> {
-        self.domain
-            .read_lineage()
-            .await?
-            .packages
-            .get(&self.namespace)
-            .ok_or("not found".to_string())
-            // TODO: just move the value without cloning
-            .cloned()
+    pub async fn lineage(&self) -> Result<PackageLineage, Error> {
+        let domain_lineage = self.domain.read_lineage().await?;
+        let namespace = domain_lineage.packages.get(&self.namespace);
+
+        match namespace {
+            Some(ns) => Ok(ns.clone()),
+            None => Err(Error::PackageNotInstalled(self.namespace.clone())),
+        }
     }
 
-    pub async fn write_lineage(&self, lineage: PackageLineage) -> Result<(), String> {
+    pub async fn write_lineage(&self, lineage: PackageLineage) -> Result<(), Error> {
         let mut domain_lineage = self.domain.read_lineage().await?;
         domain_lineage
             .packages
@@ -563,7 +523,7 @@ impl InstalledPackage {
         self.domain.write_lineage(&domain_lineage).await
     }
 
-    pub async fn paths(&self) -> Result<Vec<String>, String> {
+    pub async fn paths(&self) -> Result<Vec<String>, Error> {
         self.lineage().await.map(|l| l.paths.into_keys().collect())
     }
 
@@ -574,7 +534,7 @@ impl InstalledPackage {
         }
     }
 
-    pub async fn manifest(&self) -> Result<InstalledManifest, String> {
+    pub async fn manifest(&self) -> Result<InstalledManifest, Error> {
         // read recorded hash
         // get installed manifest
         self.lineage()
@@ -586,11 +546,11 @@ impl InstalledPackage {
         self.domain.working_folder(&self.namespace)
     }
 
-    pub async fn uninstall(&self) -> Result<(), String> {
+    pub async fn uninstall(&self) -> Result<(), Error> {
         self.domain.uninstall_package(&self.namespace).await
     }
 
-    pub async fn status(&self) -> Result<InstalledPackageStatus, String> {
+    pub async fn status(&self) -> Result<InstalledPackageStatus, Error> {
         // compute the status based on the following sources:
         //   - the cached manifest
         //   - paths
@@ -612,7 +572,10 @@ impl InstalledPackage {
 
         let mut orig_paths = HashMap::new();
         for path in lineage.paths.keys() {
-            let row = table.get_row(path).ok_or("no such path")?;
+            let row = table.get_row(path).ok_or(Error::ManifestPath(format!(
+                "path {} not found in installed manifest",
+                path
+            )))?;
             orig_paths.insert(PathBuf::from(path), (row.hash.clone(), row.size));
         }
 
@@ -630,21 +593,15 @@ impl InstalledPackage {
                 }
             };
 
-            while let Some(dir_entry) = dir_entries
-                .next_entry()
-                .await
-                .map_err(|err| err.to_string())?
-            {
+            while let Some(dir_entry) = dir_entries.next_entry().await? {
                 let file_path = dir_entry.path();
-                let file_type = dir_entry.file_type().await.map_err(|err| err.to_string())?;
+                let file_type = dir_entry.file_type().await?;
 
                 if file_type.is_dir() {
                     queue.push_back(file_path);
                 } else if file_type.is_file() {
-                    let file = File::open(&file_path)
-                        .await
-                        .map_err(|err| err.to_string())?;
-                    let file_metadata = file.metadata().await.map_err(|err| err.to_string())?;
+                    let file = File::open(&file_path).await?;
+                    let file_metadata = file.metadata().await?;
 
                     let relative_path = file_path.strip_prefix(&work_dir).unwrap();
                     if let Some((orig_hash, orig_size)) = orig_paths.remove(relative_path) {
@@ -652,14 +609,11 @@ impl InstalledPackage {
                             MULTIHASH_SHA256_CHUNKED => {
                                 let hash =
                                     calculate_sha256_chunked_checksum(file, file_metadata.len())
-                                        .await
-                                        .map_err(|err| err.to_string())?;
+                                        .await?;
                                 Multihash::wrap(MULTIHASH_SHA256_CHUNKED, hash.as_ref()).unwrap()
                             }
                             _ => {
-                                let hash = calculate_sha256_checksum(file)
-                                    .await
-                                    .map_err(|err| err.to_string())?;
+                                let hash = calculate_sha256_checksum(file).await?;
                                 Multihash::wrap(MULTIHASH_SHA256, hash.as_ref()).unwrap()
                             }
                         };
@@ -680,9 +634,7 @@ impl InstalledPackage {
                             );
                         }
                     } else {
-                        let sha256_hash = calculate_sha256_checksum(file)
-                            .await
-                            .map_err(|err| err.to_string())?;
+                        let sha256_hash = calculate_sha256_checksum(file).await?;
                         let file_hash =
                             Multihash::wrap(MULTIHASH_SHA256, sha256_hash.as_ref()).unwrap();
                         changes.insert(
@@ -721,7 +673,7 @@ impl InstalledPackage {
         ))
     }
 
-    pub async fn install_paths(&self, paths: &Vec<String>) -> Result<(), String> {
+    pub async fn install_paths(&self, paths: &Vec<String>) -> Result<(), Error> {
         if paths.len() == 0 {
             return Ok(());
         }
@@ -732,7 +684,9 @@ impl InstalledPackage {
         if !HashSet::<String, RandomState>::from_iter(lineage.paths.keys().cloned())
             .is_disjoint(&HashSet::from_iter(paths.to_owned()))
         {
-            return Err(format!("duplicate paths"));
+            return Err(Error::InstallPath(
+                "some paths are already installed".to_string(),
+            ));
         }
 
         let objects_dir = self.domain.root_dir.join(OBJECTS_DIR);
@@ -754,25 +708,29 @@ impl InstalledPackage {
 
         for path in paths {
             // TODO: Consider using a hashmap or treemap for manifest.rows
-            let row = table.records.get_mut(path).ok_or("no such path")?;
+            let row = table
+                .records
+                .get_mut(path)
+                .ok_or(Error::Table(format!("path {} not found", path)))?;
 
-            let parsed_url = Url::parse(&row.place).map_err(|err| err.to_string())?;
+            let parsed_url = Url::parse(&row.place)?;
             if parsed_url.scheme() != "s3" {
-                return Err("invalid scheme".into());
+                return Err(Error::InvalidScheme("expected s3 scheme".to_string()));
             }
-            let bucket = parsed_url.host_str().ok_or("missing bucket")?;
-            let key = percent_encoding::percent_decode_str(&parsed_url.path()[1..])
-                .decode_utf8()
-                .map_err(|err| err.to_string())?;
+            let bucket = parsed_url
+                .host_str()
+                .ok_or(Error::PackageURI("missing bucket in s3 URL".to_string()))?;
+            let key =
+                percent_encoding::percent_decode_str(&parsed_url.path()[1..]).decode_utf8()?;
             let query: HashMap<_, _> = parsed_url.query_pairs().into_owned().collect();
-            let version_id = query.get("versionId").ok_or("missing versionId")?; // TODO
+            let version_id = query
+                .get("versionId")
+                .ok_or(Error::PackageURI("missing versionId in s3 URL".to_string()))?;
 
             let object_dest = objects_dir.join(hex::encode(row.hash.digest()));
 
             if !fs::exists(&object_dest).await {
-                let mut file = File::create(&object_dest)
-                    .await
-                    .map_err(|err| err.to_string())?;
+                let mut file = File::create(&object_dest).await?;
 
                 let client = s3_utils::get_client_for_bucket(bucket.into()).await?;
 
@@ -783,25 +741,17 @@ impl InstalledPackage {
                     .version_id(version_id)
                     .send()
                     .await
-                    .map_err(|err| {
-                        err.into_service_error()
-                            .meta()
-                            .message()
-                            .unwrap_or("failed to download")
-                            .to_string()
-                    })?;
+                    .map_err(|err| Error::S3(format!("failed to get S3 object: {}", err)))?;
 
                 while let Some(bytes) = object
                     .body
                     .try_next()
                     .await
-                    .map_err(|err| err.to_string())?
+                    .map_err(|err| Error::S3(format!("failed to read S3 object: {}", err)))?
                 {
-                    file.write_all(&bytes)
-                        .await
-                        .map_err(|err| err.to_string())?;
+                    file.write_all(&bytes).await?;
                 }
-                file.flush().await.map_err(|err| err.to_string())?;
+                file.flush().await?;
             }
 
             row.place = Url::from_file_path(&object_dest).unwrap().to_string();
@@ -809,13 +759,9 @@ impl InstalledPackage {
             let working_dest = working_dir.join(&row.name);
             let parent_dir = working_dest.parent();
             if let Some(_) = parent_dir {
-                tokio::fs::create_dir_all(parent_dir.unwrap())
-                    .await
-                    .map_err(|err| err.to_string())?;
+                tokio::fs::create_dir_all(parent_dir.unwrap()).await?;
             }
-            tokio::fs::copy(&object_dest, &working_dest)
-                .await
-                .map_err(|err| err.to_string())?;
+            tokio::fs::copy(&object_dest, &working_dest).await?;
             let timestamp = fs::get_file_modified_ts(&working_dest).await?;
             lineage.paths.insert(
                 row.name.to_owned(),
@@ -834,29 +780,31 @@ impl InstalledPackage {
 
         table
             .write_to_upath(&UPath::Local(installed_manifest_path))
-            .await
-            .map_err(|err| err.to_string())?;
+            .await?;
 
         self.write_lineage(lineage).await?;
 
         Ok(())
     }
 
-    pub async fn uninstall_paths(&self, paths: &Vec<String>) -> Result<(), String> {
+    pub async fn uninstall_paths(&self, paths: &Vec<String>) -> Result<(), Error> {
         println!("uninstall_paths: {paths:?}");
 
         let mut lineage = self.lineage().await?;
 
         let working_dir = self.working_folder();
         for path in paths {
-            lineage.paths.remove(path).ok_or("path is not installed")?;
+            lineage.paths.remove(path).ok_or(Error::Uninstall(format!(
+                "path {} not found. Cannot uninstall.",
+                path
+            )))?;
 
             let working_path = working_dir.join(path);
             match tokio::fs::remove_file(working_path).await {
                 Ok(()) => (),
                 Err(err) => {
                     if err.kind() != std::io::ErrorKind::NotFound {
-                        return Err(err.to_string());
+                        return Err(Error::Io(err));
                     }
                 }
             };
@@ -869,16 +817,16 @@ impl InstalledPackage {
         Ok(())
     }
 
-    pub async fn revert_paths(&self, paths: &Vec<String>) -> Result<(), String> {
+    pub async fn revert_paths(&self, paths: &Vec<String>) -> Result<(), Error> {
         println!("revert_paths: {paths:?}");
-        Err("not implemented".into())
+        unimplemented!()
     }
 
     pub async fn commit(
         &self,
         message: String,
         user_meta: Option<manifest::JsonObject>,
-    ) -> Result<(), String> {
+    ) -> Result<(), Error> {
         println!("commit: {message:?}, {user_meta:?}");
         // create a new manifest based on the stored version
 
@@ -887,7 +835,7 @@ impl InstalledPackage {
         //   - store in the identity cache at $LOCAL/.quilt/objects/<hash>
         //   - update the modified entries in the manifest with the new physical keys
         //     pointing to the new objects in the identity cache
-        //   - ? set entry.meta.pulled_hashes to prevous object hash?
+        //   - ? set entry.meta.pulled_hashes to previous object hash?
         //   - ? set entry.meta.remote_key to the remote's physical key?
 
         // compute the new top hash
@@ -907,7 +855,7 @@ impl InstalledPackage {
         //       - paths:
         //         - [modified file's path]:
         //           - multihash
-        //           # XXX: do we actually need this? can be inferred from namepsace + logical key
+        //           # XXX: do we actually need this? can be inferred from namespace + logical key
         //           - remote_key: "s3://..." # no version id
         //           - local_key: $LOCAL/.quilt/objects/<hash>
         //           - pulled_hashes: [old_hash] ?
@@ -918,16 +866,14 @@ impl InstalledPackage {
         let package_lineage = lineage
             .packages
             .get_mut(&self.namespace)
-            .ok_or("not found")?;
+            .ok_or(Error::Commit("package not installed".to_string()))?;
 
         // TODO: Maybe have the user pass this as an argument?
         let status = self.status().await?;
 
         let objects_dir = self.domain.root_dir.join(OBJECTS_DIR);
         // TODO: This should really be done when the domain is created.
-        create_dir_all(&objects_dir)
-            .await
-            .map_err(|err| err.to_string())?;
+        create_dir_all(&objects_dir).await?;
 
         let work_dir = self.working_folder();
 
@@ -938,12 +884,12 @@ impl InstalledPackage {
                 let removed = table
                     .records
                     .remove(&logical_key)
-                    .ok_or(format!("cannot remove {}", logical_key))?;
+                    .ok_or(Error::Commit(format!("cannot remove {}", logical_key)))?;
                 if removed.size != previous.size || removed.hash != previous.hash {
-                    return Err(format!(
+                    return Err(Error::Commit(format!(
                         "unexpected size or hash for removed {}",
                         logical_key
-                    ));
+                    )));
                 }
                 package_lineage.paths.remove(&logical_key);
             }
@@ -967,14 +913,12 @@ impl InstalledPackage {
                     )
                     .is_some()
                 {
-                    return Err(format!("cannot overwrite {}", logical_key));
+                    return Err(Error::Commit(format!("cannot overwrite {}", logical_key)));
                 }
 
                 let work_dest = work_dir.join(&logical_key);
                 if !fs::exists(&object_dest).await {
-                    tokio::fs::copy(&work_dest, object_dest)
-                        .await
-                        .map_err(|err| err.to_string())?;
+                    tokio::fs::copy(&work_dest, object_dest).await?;
                 }
                 package_lineage.paths.insert(
                     logical_key,
@@ -1002,8 +946,7 @@ impl InstalledPackage {
 
         table
             .write_to_upath(&UPath::Local(new_manifest_path))
-            .await
-            .map_err(|err| err.to_string())?;
+            .await?;
 
         let mut prev_hashes = Vec::new();
         if let Some(commit) = &package_lineage.commit {
@@ -1022,7 +965,7 @@ impl InstalledPackage {
         Ok(())
     }
 
-    pub async fn push(&self) -> Result<(), String> {
+    pub async fn push(&self) -> Result<(), Error> {
         let mut lineage = self.lineage().await?;
 
         let commit = match lineage.commit {
@@ -1059,11 +1002,7 @@ impl InstalledPackage {
 
             // TODO: upload in parallel. use a stream?
             let (version_id, checksum) = if row.size < MULTIPART_THRESHOLD {
-                let body = ByteStream::read_from()
-                    .path(&file_path)
-                    .build()
-                    .await
-                    .map_err(|err| err.to_string())?;
+                let body = ByteStream::read_from().path(&file_path).build().await?;
 
                 let response = client
                     .put_object()
@@ -1073,13 +1012,13 @@ impl InstalledPackage {
                     .checksum_algorithm(ChecksumAlgorithm::Sha256)
                     .send()
                     .await
-                    .map_err(|err| err.to_string())?;
+                    .map_err(|err| Error::S3(err.to_string()))?;
 
-                let s3_checksum_b64 = response.checksum_sha256.ok_or("missing checksum")?;
+                let s3_checksum_b64 = response
+                    .checksum_sha256
+                    .ok_or(Error::Checksum("missing checksum".to_string()))?;
 
-                let s3_checksum = BASE64_STANDARD
-                    .decode(s3_checksum_b64)
-                    .map_err(|err| err.to_string())?;
+                let s3_checksum = BASE64_STANDARD.decode(s3_checksum_b64)?;
 
                 let checksum = if row.size == 0 {
                     // Edge case: a 0-byte upload is treated as an empty list of chunks, rather than
@@ -1102,9 +1041,9 @@ impl InstalledPackage {
                     .checksum_algorithm(ChecksumAlgorithm::Sha256)
                     .send()
                     .await
-                    .map_err(|err| err.to_string())?
+                    .map_err(|err| Error::S3(err.to_string()))?
                     .upload_id
-                    .ok_or("failed to get an UploadId")?;
+                    .ok_or(Error::UploadId("failed to get an UploadId".to_string()))?;
 
                 let mut parts: Vec<CompletedPart> = Vec::new();
                 for chunk_idx in 0..num_chunks {
@@ -1116,8 +1055,7 @@ impl InstalledPackage {
                         .offset(offset)
                         .length(Length::Exact(length)) // https://github.com/awslabs/aws-sdk-rust/issues/821
                         .build()
-                        .await
-                        .map_err(|err| err.to_string())?;
+                        .await?;
                     let part_response = client
                         .upload_part()
                         .bucket(&remote.bucket)
@@ -1128,7 +1066,9 @@ impl InstalledPackage {
                         .body(chunk_body)
                         .send()
                         .await
-                        .map_err(|err| err.to_string())?;
+                        .map_err(|err| {
+                            Error::S3(format!("failed to upload part {}: {}", part_number, err))
+                        })?;
                     parts.push(
                         CompletedPart::builder()
                             .part_number(part_number)
@@ -1150,13 +1090,17 @@ impl InstalledPackage {
                     )
                     .send()
                     .await
-                    .map_err(|err| err.to_string())?;
+                    .map_err(|err| {
+                        Error::S3(format!("failed to complete multipart upload: {}", err))
+                    })?;
 
-                let s3_checksum = response.checksum_sha256.ok_or("missing checksum")?;
-                let (checksum_b64, _) = s3_checksum.split_once("-").ok_or("unexpected checksum")?;
-                let checksum = BASE64_STANDARD
-                    .decode(checksum_b64)
-                    .map_err(|err| err.to_string())?;
+                let s3_checksum = response
+                    .checksum_sha256
+                    .ok_or(Error::Checksum("missing checksum".to_string()))?;
+                let (checksum_b64, _) = s3_checksum
+                    .split_once("-")
+                    .ok_or(Error::Checksum("unexpected checksum".to_string()))?;
+                let checksum = BASE64_STANDARD.decode(checksum_b64)?;
 
                 (response.version_id, checksum)
             };
@@ -1193,8 +1137,7 @@ impl InstalledPackage {
 
         local_manifest
             .write_to_upath(&UPath::Local(cache_path.clone()))
-            .await
-            .map_err(|err| err.to_string())?;
+            .await?;
 
         // Push the (cached) relaxed manifest to the remote, don't tag it yet
         let manifest_key = format!(
@@ -1204,9 +1147,7 @@ impl InstalledPackage {
         println!("writing remote manifest to {manifest_key}");
 
         // TODO: FAIL if the manifest with this hash already exists
-        let body = ByteStream::from_path(&cache_path)
-            .await
-            .map_err(|err| err.to_string())?;
+        let body = ByteStream::from_path(&cache_path).await?;
         client
             .put_object()
             .bucket(&new_remote.bucket)
@@ -1214,7 +1155,7 @@ impl InstalledPackage {
             .body(body)
             .send()
             .await
-            .map_err(|err| err.to_string())?;
+            .map_err(|err| Error::S3(err.to_string()))?;
 
         // Upload a quilt3 manifest for backward compatibility.
         let quilt3_manifest = Manifest {
@@ -1257,7 +1198,7 @@ impl InstalledPackage {
             .body(quilt3_manifest.to_jsonlines().as_bytes().to_vec().into())
             .send()
             .await
-            .map_err(|err| err.to_string())?;
+            .map_err(|err| Error::S3(err.to_string()))?;
 
         println!("uploaded remote manifest: {new_remote:?}");
 
@@ -1279,7 +1220,7 @@ impl InstalledPackage {
             .body(new_remote.hash.as_bytes().to_vec().into())
             .send()
             .await
-            .map_err(|err| err.to_string())?;
+            .map_err(|err| Error::S3(err.to_string()))?;
 
         // Check the hash of remote's latest manifest
         lineage.latest_hash = new_remote.resolve_latest().await?;
@@ -1301,23 +1242,23 @@ impl InstalledPackage {
         Ok(())
     }
 
-    pub async fn pull(&self) -> Result<(), String> {
+    pub async fn pull(&self) -> Result<(), Error> {
         let status = self.status().await?;
         if !status.changes.is_empty() {
-            return Err("package has pending changes".into());
+            return Err(Error::Package("package has pending changes".to_string()));
         }
 
         let lineage = self.lineage().await?;
         if lineage.commit.is_some() {
-            return Err("package has pending commits".into());
+            return Err(Error::Package("package has pending commits".to_string()));
         }
         if lineage.remote.hash != lineage.base_hash {
-            return Err("package is has diverged".into());
+            return Err(Error::Package("package has diverged".to_string()));
         }
-        // TODO: do we need to explicity update latest_hash?
+        // TODO: do we need to explicitly update latest_hash?
         // status() tries to update, but may fail.
         if lineage.base_hash == lineage.latest_hash {
-            return Err("package is already up to date".into());
+            return Err(Error::Package("package is already up-to-date".to_string()));
         }
 
         // TODO: What should we do about installed paths?
@@ -1338,8 +1279,7 @@ impl InstalledPackage {
             self.domain
                 .installed_manifest_path(&self.namespace, &lineage.remote.hash),
         )
-        .await
-        .map_err(|err| err.to_string())?;
+        .await?;
 
         self.write_lineage(lineage).await?;
 
@@ -1353,7 +1293,7 @@ impl InstalledPackage {
         Ok(())
     }
 
-    pub async fn certify_latest(&self) -> Result<(), String> {
+    pub async fn certify_latest(&self) -> Result<(), Error> {
         let mut lineage = self.lineage().await?;
         let new_latest = lineage.remote.hash.clone();
         lineage.remote.update_latest(new_latest.clone()).await?;
@@ -1362,7 +1302,7 @@ impl InstalledPackage {
         self.write_lineage(lineage).await
     }
 
-    pub async fn reset_to_latest(&self) -> Result<(), String> {
+    pub async fn reset_to_latest(&self) -> Result<(), Error> {
         let lineage = self.lineage().await?;
 
         let new_latest = lineage.remote.resolve_latest().await?;
@@ -1386,8 +1326,7 @@ impl InstalledPackage {
             self.domain
                 .installed_manifest_path(&self.namespace, &lineage.remote.hash),
         )
-        .await
-        .map_err(|err| err.to_string())?;
+        .await?;
 
         self.write_lineage(lineage).await?;
 

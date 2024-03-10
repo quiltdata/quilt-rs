@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use url::{Url, form_urlencoded};
+use url::{form_urlencoded, Url};
+
+use crate::Error;
 const LATEST_TAG: &str = "latest";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -17,7 +19,6 @@ impl Default for RevisionPointer {
     }
 }
 
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UriQuilt {
     pub domain: String,
@@ -32,7 +33,7 @@ pub struct UriParser {
     pub path: String,
     pub query: HashMap<String, String>,
     pub fragments: HashMap<String, String>,
-    pub quilt: Option<UriQuilt>
+    pub quilt: Option<UriQuilt>,
 }
 // TODO: replace with URL Crate
 
@@ -45,13 +46,21 @@ fn make_domain(uri_parser: &UriParser) -> String {
 }
 
 impl TryFrom<&UriParser> for UriQuilt {
-    type Error = String;
+    type Error = Error;
 
     fn try_from(uri_parser: &UriParser) -> Result<Self, Self::Error> {
         let domain = make_domain(uri_parser);
-        let path = uri_parser.fragments.get("path").unwrap_or(&"".to_string()).clone();
-        let pkg_spec = uri_parser.fragments.get("package").unwrap_or(&"".to_string()).clone();
-        let (namespace, revision) = match pkg_spec.split_once(['@',':']) {
+        let path = uri_parser
+            .fragments
+            .get("path")
+            .unwrap_or(&"".to_string())
+            .clone();
+        let pkg_spec = uri_parser
+            .fragments
+            .get("package")
+            .unwrap_or(&"".to_string())
+            .clone();
+        let (namespace, revision) = match pkg_spec.split_once(['@', ':']) {
             Some((namespace, top_hash)) => (
                 namespace.to_string(),
                 RevisionPointer::Hash(top_hash.into()),
@@ -66,7 +75,6 @@ impl TryFrom<&UriParser> for UriQuilt {
         })
     }
 }
-
 
 fn mapify(input: &str) -> HashMap<String, String> {
     form_urlencoded::parse(input.as_bytes())
@@ -94,12 +102,11 @@ fn normalize_input(input: &str) -> String {
 }
 
 impl TryFrom<&str> for UriParser {
-    type Error = String;
+    type Error = Error;
 
     fn try_from(input: &str) -> Result<Self, Self::Error> {
-
         let uri_string = normalize_input(input);
-        let parsed_url = Url::parse(&uri_string).map_err(|err| err.to_string())?;
+        let parsed_url = Url::parse(&uri_string)?;
         let scheme = parsed_url.scheme().to_string();
         let is_quilt = scheme.starts_with("quilt+");
         let host = parsed_url.host_str().unwrap_or("").to_string();
@@ -133,7 +140,8 @@ mod tests {
     #[test]
     fn test_try_from_uri() {
         // Test valid input
-        let input = "quilt+s3://example.com?param1=value1&param2=value2#package=my/package&path=my_path";
+        let input =
+            "quilt+s3://example.com?param1=value1&param2=value2#package=my/package&path=my_path";
         let result = UriParser::try_from(input);
         assert!(result.is_ok());
         let uri_parser = result.unwrap();
@@ -164,5 +172,4 @@ mod tests {
         assert_eq!(uri_parser.fragments.len(), 0);
         assert_eq!(uri_parser.quilt, None);
     }
-
 }

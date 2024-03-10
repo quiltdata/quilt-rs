@@ -7,28 +7,28 @@ use aws_config::BehaviorVersion;
 use aws_types::region::Region;
 use lazy_static::lazy_static;
 
-pub async fn find_bucket_region(client: &reqwest::Client, bucket: &str) -> Result<String, String> {
+use crate::Error;
+
+pub async fn find_bucket_region(client: &reqwest::Client, bucket: &str) -> Result<String, Error> {
     let response = client
         .head(format!("https://s3.amazonaws.com/{bucket}"))
         .send()
-        .await;
+        .await?;
 
-    match response {
-        Ok(content) => match content.headers().get("x-amz-bucket-region") {
-            Some(location) => Ok(location.to_str().map_err(|err| err.to_string())?.into()),
-            None => Err("failed to find location header".into()),
-        },
-        Err(err) => Err(err.to_string()),
+    match response.headers().get("x-amz-bucket-region") {
+        Some(location) => Ok(location.to_str()?.into()),
+        None => Err(Error::MissingHTTPHeader("x-amz-bucket-region".to_string())),
     }
 }
 
 lazy_static! {
     static ref HTTP_CLIENT: reqwest::Client = reqwest::Client::new();
     static ref BUCKET_REGIONS: RwLock<HashMap<String, Region>> = RwLock::new(HashMap::new());
-    static ref REGION_CLIENTS: RwLock<HashMap<Region, aws_sdk_s3::Client>> = RwLock::new(HashMap::new());
+    static ref REGION_CLIENTS: RwLock<HashMap<Region, aws_sdk_s3::Client>> =
+        RwLock::new(HashMap::new());
 }
 
-pub async fn get_region_for_bucket(bucket: &str) -> Result<Region, String> {
+pub async fn get_region_for_bucket(bucket: &str) -> Result<Region, Error> {
     {
         let map = BUCKET_REGIONS.read().unwrap();
         if let Some(region) = map.get(bucket) {
@@ -53,7 +53,10 @@ pub async fn get_client_for_region(region: aws_types::region::Region) -> aws_sdk
         }
     }
 
-    let config = aws_config::defaults(BehaviorVersion {}).region(region.clone()).load().await;
+    let config = aws_config::defaults(BehaviorVersion {})
+        .region(region.clone())
+        .load()
+        .await;
     let client = aws_sdk_s3::Client::new(&config);
 
     let mut map = REGION_CLIENTS.write().unwrap();
@@ -64,7 +67,7 @@ pub async fn get_client_for_region(region: aws_types::region::Region) -> aws_sdk
     }
 }
 
-pub async fn get_client_for_bucket(bucket: &str) -> Result<aws_sdk_s3::Client, String> {
+pub async fn get_client_for_bucket(bucket: &str) -> Result<aws_sdk_s3::Client, Error> {
     let region = get_region_for_bucket(bucket).await?.clone();
     Ok(get_client_for_region(region).await)
 }

@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use url::Url;
 
+use crate::Error;
+
 use super::uri::UriParser;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -24,7 +26,7 @@ pub enum UPath {
 }
 
 impl UPath {
-    pub fn parse(uri_string: &str) -> Result<Self, String> {
+    pub fn parse(uri_string: &str) -> Result<Self, Error> {
         let uri = UriParser::try_from(uri_string)?;
         match uri.scheme.as_str() {
             "file" => Ok(Self::Local(PathBuf::from(uri.path))),
@@ -32,7 +34,7 @@ impl UPath {
                 bucket: uri.host,
                 path: Path::from(uri.path),
             }),
-            _ => Err("unsupported scheme".into()),
+            _ => Err(Error::InvalidScheme(uri.scheme)),
         }
     }
 
