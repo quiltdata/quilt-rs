@@ -25,7 +25,8 @@ pub async fn find_bucket_region(client: &reqwest::Client, bucket: &str) -> Resul
 lazy_static! {
     static ref HTTP_CLIENT: reqwest::Client = reqwest::Client::new();
     static ref BUCKET_REGIONS: RwLock<HashMap<String, Region>> = RwLock::new(HashMap::new());
-    static ref REGION_CLIENTS: RwLock<HashMap<Region, aws_sdk_s3::Client>> = RwLock::new(HashMap::new());
+    static ref REGION_CLIENTS: RwLock<HashMap<Region, aws_sdk_s3::Client>> =
+        RwLock::new(HashMap::new());
 }
 
 pub async fn get_region_for_bucket(bucket: &str) -> Result<Region, String> {
@@ -53,7 +54,10 @@ pub async fn get_client_for_region(region: aws_types::region::Region) -> aws_sdk
         }
     }
 
-    let config = aws_config::defaults(BehaviorVersion {}).region(region.clone()).load().await;
+    let config = aws_config::defaults(BehaviorVersion {})
+        .region(region.clone())
+        .load()
+        .await;
     let client = aws_sdk_s3::Client::new(&config);
 
     let mut map = REGION_CLIENTS.write().unwrap();
