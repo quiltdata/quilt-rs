@@ -39,6 +39,6 @@ impl Manifest4 {
 
 impl fmt::Display for Manifest4 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Manifest4({})", self.table.to_string())
+        write!(f, "Manifest4({})", self.table)
     }
 }
