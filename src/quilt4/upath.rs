@@ -95,4 +95,11 @@ mod tests {
     fn test_new_invalid() {
         UPath::parse("blah://123").expect_err("did not get an error");
     }
+
+    #[test]
+    fn test_formatting() -> Result<(), String> {
+        let upath = UPath::parse("file://missing/parent/child")?;
+        assert_eq!(upath.to_string(), "UPath(file:///parent/child)".to_string());
+        Ok(())
+    }
 }
