@@ -69,7 +69,7 @@ impl TryFrom<&str> for DomainLineage {
 
     fn try_from(input: &str) -> Result<Self, Self::Error> {
         let parsed: Self = serde_json::from_str(input)
-            .map_err(|err| format!("Failed to parse the lineage file: {}", err.to_string()))?;
+            .map_err(|err| format!("Failed to parse the lineage file: {}", err))?;
         Ok(parsed)
     }
 }

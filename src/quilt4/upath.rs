@@ -42,7 +42,7 @@ impl UPath {
             Self::S3 { bucket, path } => {
                 let mut uri = Url::parse("s3://").unwrap();
                 uri.set_host(Some(bucket)).unwrap();
-                uri.set_path(&path.to_string());
+                uri.set_path(path.as_ref());
                 uri
             }
         }
@@ -55,7 +55,7 @@ impl UPath {
     pub fn join(&self, sub_path: &str) -> Self {
         let mut uri = self.to_uri();
         uri.set_path(&format!("{}/{}", uri.path(), sub_path));
-        Self::parse(&uri.to_string()).unwrap()
+        Self::parse(uri.as_ref()).unwrap()
     }
 }
 

@@ -31,9 +31,9 @@ pub struct Row3 {
 impl Row3 {
     pub fn to_string(&self) -> String {
         format!("Row3({})", self.logical_key) +
-        &format!("@{}", self.physical_keys[0].to_string()) +
-        &format!("^{}", self.size.to_string()) + 
+        &format!("@{}", self.physical_keys[0]) +
+        &format!("^{}", self.size) + 
         &format!("#{}", self.hash.to_string()) +
-        &format!("${}", self.meta.len().to_string())
+        &format!("${}", self.meta.len())
     }
 }

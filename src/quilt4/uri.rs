@@ -79,7 +79,7 @@ fn normalize_input(input: &str) -> String {
     if split.is_some() {
         return input.to_string();
     }
-    let body = if input.starts_with("/") {
+    let body = if input.starts_with('/') {
         input.to_string()
     } else {
         let cwd = std::env::current_dir().unwrap();

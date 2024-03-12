@@ -36,7 +36,7 @@ pub async fn get_region_for_bucket(bucket: &str) -> Result<Region, String> {
         }
     }
 
-    let region = find_bucket_region(&HTTP_CLIENT, &bucket).await?;
+    let region = find_bucket_region(&HTTP_CLIENT, bucket).await?;
 
     let mut map = BUCKET_REGIONS.write().unwrap();
     match map.entry(bucket.to_owned()) {

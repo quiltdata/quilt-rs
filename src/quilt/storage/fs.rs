@@ -35,7 +35,7 @@ pub async fn write(path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), String> {
         .await
         .map_err(|err| err.to_string())?;
 
-    file.write_all(&bytes)
+    file.write_all(bytes)
         .await
         .map_err(|err| err.to_string())?;
 
