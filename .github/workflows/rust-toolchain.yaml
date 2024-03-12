@@ -14,6 +14,8 @@ jobs:
             toolchain: nightly
             override: true
             components: rustfmt, clippy
+      - name: Lint
+        run: cargo clippy -- -D warnings
       - name: Run cargo test
         uses: actions-rs/cargo@v1
         with:
