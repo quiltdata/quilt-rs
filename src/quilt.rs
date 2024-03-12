@@ -194,7 +194,10 @@ impl LocalDomain {
             if err.kind() == std::io::ErrorKind::NotFound {
                 Ok("{}".into())
             } else {
-                Err(format!("Failed to read the lineage file: {}", err.to_string()))
+                Err(format!(
+                    "Failed to read the lineage file: {}",
+                    err.to_string()
+                ))
             }
         })?;
 
