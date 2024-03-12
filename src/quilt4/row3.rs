@@ -33,7 +33,7 @@ impl fmt::Display for Row3 {
         let result = format!("Row3({})", self.logical_key)
             + &format!("@{}", self.physical_keys[0])
             + &format!("^{}", self.size)
-            + &format!("#{}", self.hash.to_string())
+            + &format!("#{}", self.hash)
             + &format!("${}", self.meta.len());
         write!(f, "{}", result)
     }
