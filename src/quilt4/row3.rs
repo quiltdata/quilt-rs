@@ -31,10 +31,42 @@ pub struct Row3 {
 impl fmt::Display for Row3 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let result = format!("Row3({})", self.logical_key)
-            + &format!("@{}", self.physical_keys[0])
+            + &format!("@{}", self.physical_keys[0]) // TODO: what if vec is empty?
             + &format!("^{}", self.size)
             + &format!("#{}", self.hash)
-            + &format!("${}", self.meta.len());
+            + &format!("${}", self.meta.len()); // TODO: print more useful info
         write!(f, "{}", result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_row3_hash_formatting() {
+        let hash = Row3Hash {
+            value: "Foo".to_string(),
+            _type: "Bar".to_string(),
+        };
+        assert_eq!("Row3Hash(Foo)".to_string(), hash.to_string())
+    }
+
+    #[test]
+    fn test_row3_formatting() {
+        let row = Row3 {
+            logical_key: "foo/bar".to_string(),
+            physical_keys: vec!["one-is-mandatory".to_string()],
+            size: 123,
+            hash: Row3Hash {
+                value: "foo".to_string(),
+                _type: "bar".to_string(),
+            },
+            meta: HashMap::new(),
+        };
+        assert_eq!(
+            row.to_string(),
+            "Row3(foo/bar)@one-is-mandatory^123#Row3Hash(foo)$0"
+        )
     }
 }
