@@ -8,6 +8,7 @@
 
 use object_store::path::Path;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::path::PathBuf;
 use url::Url;
 
@@ -48,14 +49,16 @@ impl UPath {
         }
     }
 
-    pub fn to_string(&self) -> String {
-        format!("UPath({})", self.to_uri())
-    }
-
     pub fn join(&self, sub_path: &str) -> Self {
         let mut uri = self.to_uri();
         uri.set_path(&format!("{}/{}", uri.path(), sub_path));
         Self::parse(uri.as_ref()).unwrap()
+    }
+}
+
+impl fmt::Display for UPath {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "UPath({})", self.to_uri())
     }
 }
 
