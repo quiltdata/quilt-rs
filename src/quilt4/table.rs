@@ -6,6 +6,7 @@
 
 use std::{
     collections::BTreeMap,
+    fmt,
     io::{Error, ErrorKind},
     sync::Arc,
 };
@@ -44,10 +45,6 @@ pub struct Table {
 }
 
 impl Table {
-    pub fn to_string(&self) -> String {
-        format!("Table({:?})", self.records)
-    }
-
     async fn read_rows_impl<T>(reader: T) -> Result<Self, ArrowError>
     where
         T: AsyncFileReader + Unpin + Send + 'static,
@@ -291,6 +288,12 @@ impl Table {
         }
 
         hex::encode(hasher.finalize())
+    }
+}
+
+impl fmt::Display for Table {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Table({:?})", self.records)
     }
 }
 

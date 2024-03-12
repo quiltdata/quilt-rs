@@ -8,8 +8,7 @@
 
 use object_store::path::Path;
 use serde::{Deserialize, Serialize};
-use std::fmt;
-use std::path::PathBuf;
+use std::{fmt, path::PathBuf};
 use url::Url;
 
 use super::uri::UriParser;
