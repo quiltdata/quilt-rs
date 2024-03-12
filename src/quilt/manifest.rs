@@ -264,3 +264,48 @@ impl Manifest {
         changes
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_equality_of_strictly_equal() {
+        let left = ManifestRow {
+            logical_key: "A".to_string(),
+            physical_key: "B".to_string(),
+            hash: ContentHash::SHA256("C".to_string()),
+            size: 1,
+            meta: None,
+        };
+        let right = ManifestRow {
+            logical_key: "A".to_string(),
+            physical_key: "B".to_string(),
+            hash: ContentHash::SHA256("C".to_string()),
+            size: 1,
+            meta: None,
+        };
+        assert!(left == right)
+    }
+
+    #[test]
+    fn test_equality_of_partialy_equal() {
+        let mut meta = serde_json::Map::new();
+        meta.insert("foo".to_string(), serde_json::json!("bar"));
+        let left = ManifestRow {
+            logical_key: "A".to_string(),
+            physical_key: "FOO".to_string(),
+            hash: ContentHash::SHA256("C".to_string()),
+            size: 1,
+            meta: Some(meta),
+        };
+        let right = ManifestRow {
+            logical_key: "A".to_string(),
+            physical_key: "BAR".to_string(),
+            hash: ContentHash::SHA256("C".to_string()),
+            size: 1,
+            meta: None,
+        };
+        assert!(left == right)
+    }
+}
