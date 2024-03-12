@@ -39,7 +39,7 @@ impl fmt::Display for Row4 {
         let result = format!("Row4({})", self.name)
             + &format!("@{}", self.place)
             + &format!("^{:?}", self.size)
-            + &format!("#{:?}", self.hash)
+            + &format!("#{:?}", self.hash.digest())
             + &format!("$${:?}", self.info)
             + &format!("${:?}", self.meta);
         if self.path.is_some() {
@@ -47,5 +47,25 @@ impl fmt::Display for Row4 {
         } else {
             write!(f, "{}", result)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_formatting_without_path() -> Result<(), multihash::Error> {
+        let row = Row4 {
+            name: "Foo".to_string(),
+            path: None,
+            place: "Bar".to_string(),
+            size: 123,
+            hash: Multihash::wrap(345, b"hello world")?,
+            info: serde_json::Value::Bool(false),
+            meta: serde_json::json!({"foo":"bar"}),
+        };
+        assert_eq!(row.to_string(), r##"Row4(Foo)@Bar^123#[104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100]$$Bool(false)$Object {"foo": String("bar")}"##.to_string());
+        Ok(())
     }
 }
