@@ -116,12 +116,6 @@ impl std::cmp::PartialEq for ManifestRow {
     }
 }
 
-impl ManifestRow {
-    pub fn eq(&self, other: &Self) -> bool {
-        self.logical_key == other.logical_key && self.hash == other.hash && self.size == other.size
-    }
-}
-
 impl TryFrom<Quilt3ManifestRow> for ManifestRow {
     type Error = Error;
 
