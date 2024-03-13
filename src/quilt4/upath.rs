@@ -8,7 +8,7 @@
 
 use object_store::path::Path;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{fmt, path::PathBuf};
 use url::Url;
 
 use crate::Error;
@@ -44,20 +44,22 @@ impl UPath {
             Self::S3 { bucket, path } => {
                 let mut uri = Url::parse("s3://").unwrap();
                 uri.set_host(Some(bucket)).unwrap();
-                uri.set_path(&path.to_string());
+                uri.set_path(path.as_ref());
                 uri
             }
         }
     }
 
-    pub fn to_string(&self) -> String {
-        format!("UPath({})", self.to_uri())
-    }
-
     pub fn join(&self, sub_path: &str) -> Self {
         let mut uri = self.to_uri();
         uri.set_path(&format!("{}/{}", uri.path(), sub_path));
-        Self::parse(&uri.to_string()).unwrap()
+        Self::parse(uri.as_ref()).unwrap()
+    }
+}
+
+impl fmt::Display for UPath {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "UPath({})", self.to_uri())
     }
 }
 
@@ -94,5 +96,12 @@ mod tests {
     #[test]
     fn test_new_invalid() {
         UPath::parse("blah://123").expect_err("did not get an error");
+    }
+
+    #[test]
+    fn test_formatting() -> Result<(), String> {
+        let upath = UPath::parse("file://missing/parent/child")?;
+        assert_eq!(upath.to_string(), "UPath(file:///parent/child)".to_string());
+        Ok(())
     }
 }
