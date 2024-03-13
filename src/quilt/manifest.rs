@@ -99,7 +99,7 @@ impl From<ManifestRow> for Quilt3ManifestRow {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ManifestRow {
     pub logical_key: String,
     // XXX: use Url to have validated string?
@@ -107,6 +107,14 @@ pub struct ManifestRow {
     pub hash: ContentHash,
     pub size: u64,
     pub meta: Option<JsonObject>,
+}
+
+
+impl std::cmp::PartialEq for ManifestRow {
+    // TODO: add note why we don't compare meta and physical_key
+    fn eq(&self, other: &Self) -> bool {
+        self.logical_key == other.logical_key && self.hash == other.hash && self.size == other.size
+    }
 }
 
 impl ManifestRow {
@@ -274,5 +282,50 @@ impl Manifest {
         }
 
         changes
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_equality_of_strictly_equal() {
+        let left = ManifestRow {
+            logical_key: "A".to_string(),
+            physical_key: "B".to_string(),
+            hash: ContentHash::SHA256("C".to_string()),
+            size: 1,
+            meta: None,
+        };
+        let right = ManifestRow {
+            logical_key: "A".to_string(),
+            physical_key: "B".to_string(),
+            hash: ContentHash::SHA256("C".to_string()),
+            size: 1,
+            meta: None,
+        };
+        assert!(left == right)
+    }
+
+    #[test]
+    fn test_equality_of_partialy_equal() {
+        let mut meta = serde_json::Map::new();
+        meta.insert("foo".to_string(), serde_json::json!("bar"));
+        let left = ManifestRow {
+            logical_key: "A".to_string(),
+            physical_key: "FOO".to_string(),
+            hash: ContentHash::SHA256("C".to_string()),
+            size: 1,
+            meta: Some(meta),
+        };
+        let right = ManifestRow {
+            logical_key: "A".to_string(),
+            physical_key: "BAR".to_string(),
+            hash: ContentHash::SHA256("C".to_string()),
+            size: 1,
+            meta: None,
+        };
+        assert!(left == right)
     }
 }
