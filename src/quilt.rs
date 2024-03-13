@@ -194,10 +194,7 @@ impl LocalDomain {
             if err.kind() == std::io::ErrorKind::NotFound {
                 Ok("{}".into())
             } else {
-                Err(format!(
-                    "Failed to read the lineage file: {}",
-                    err.to_string()
-                ))
+                Err(format!("Failed to read the lineage file: {}", err))
             }
         })?;
 
@@ -613,7 +610,7 @@ impl InstalledPackage {
         let mut orig_paths = HashMap::new();
         for path in lineage.paths.keys() {
             let row = table.get_row(path).ok_or("no such path")?;
-            orig_paths.insert(PathBuf::from(path), (row.hash.clone(), row.size));
+            orig_paths.insert(PathBuf::from(path), (row.hash, row.size));
         }
 
         let mut queue = VecDeque::new();
@@ -722,7 +719,7 @@ impl InstalledPackage {
     }
 
     pub async fn install_paths(&self, paths: &Vec<String>) -> Result<(), String> {
-        if paths.len() == 0 {
+        if paths.is_empty() {
             return Ok(());
         }
 
@@ -732,7 +729,7 @@ impl InstalledPackage {
         if !HashSet::<String, RandomState>::from_iter(lineage.paths.keys().cloned())
             .is_disjoint(&HashSet::from_iter(paths.to_owned()))
         {
-            return Err(format!("duplicate paths"));
+            return Err("duplicate paths".to_string());
         }
 
         let objects_dir = self.domain.root_dir.join(OBJECTS_DIR);
@@ -774,7 +771,7 @@ impl InstalledPackage {
                     .await
                     .map_err(|err| err.to_string())?;
 
-                let client = s3_utils::get_client_for_bucket(bucket.into()).await?;
+                let client = s3_utils::get_client_for_bucket(bucket).await?;
 
                 let mut object = client
                     .get_object()
@@ -808,7 +805,7 @@ impl InstalledPackage {
 
             let working_dest = working_dir.join(&row.name);
             let parent_dir = working_dest.parent();
-            if let Some(_) = parent_dir {
+            if parent_dir.is_some() {
                 tokio::fs::create_dir_all(parent_dir.unwrap())
                     .await
                     .map_err(|err| err.to_string())?;
@@ -960,7 +957,7 @@ impl InstalledPackage {
                             place: new_physical_key,
                             path: None,
                             size: current.size,
-                            hash: current.hash.clone(),
+                            hash: current.hash,
                             info: serde_json::Value::default(),
                             meta: serde_json::Value::default(),
                         },
@@ -1153,7 +1150,7 @@ impl InstalledPackage {
                     .map_err(|err| err.to_string())?;
 
                 let s3_checksum = response.checksum_sha256.ok_or("missing checksum")?;
-                let (checksum_b64, _) = s3_checksum.split_once("-").ok_or("unexpected checksum")?;
+                let (checksum_b64, _) = s3_checksum.split_once('-').ok_or("unexpected checksum")?;
                 let checksum = BASE64_STANDARD
                     .decode(checksum_b64)
                     .map_err(|err| err.to_string())?;
@@ -1224,8 +1221,7 @@ impl InstalledPackage {
                     .header
                     .info
                     .get("message")
-                    .map(|v| v.as_str())
-                    .flatten()
+                    .and_then(|v| v.as_str())
                     .map(|s| s.to_string()),
                 user_meta: local_manifest.header.meta.as_object().cloned(),
             },

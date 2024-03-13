@@ -6,6 +6,7 @@
 
 use std::{
     collections::BTreeMap,
+    fmt,
     io::{Error, ErrorKind},
     sync::Arc,
 };
@@ -44,10 +45,6 @@ pub struct Table {
 }
 
 impl Table {
-    pub fn to_string(&self) -> String {
-        format!("Table({:?})", self.records)
-    }
-
     async fn read_rows_impl<T>(reader: T) -> Result<Self, ArrowError>
     where
         T: AsyncFileReader + Unpin + Send + 'static,
@@ -294,6 +291,16 @@ impl Table {
     }
 }
 
+impl fmt::Display for Table {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut records = BTreeMap::new();
+        for (name, record) in &self.records {
+            records.insert(name, record.to_string());
+        }
+        write!(f, "Table({:?})", records)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::utils::local_uri_parquet;
@@ -331,5 +338,66 @@ mod tests {
 
         assert_eq!(table2.records.len(), 2);
         assert_eq!(table2.records, table1.records);
+    }
+
+    #[test]
+    fn test_formatting_no_records() -> Result<(), multihash::Error> {
+        let table = Table {
+            header: Row4 {
+                name: "Foo".to_string(),
+                path: None,
+                place: "Bar".to_string(),
+                size: 123,
+                hash: Multihash::wrap(345, b"hello world")?,
+                info: serde_json::Value::Null,
+                meta: serde_json::Value::Null,
+            },
+            records: BTreeMap::new(),
+        };
+        assert_eq!(table.to_string(), "Table({})".to_string());
+        Ok(())
+    }
+
+    #[test]
+    fn test_formatting_records() -> Result<(), multihash::Error> {
+        let table = Table {
+            header: Row4 {
+                name: "Foo".to_string(),
+                path: None,
+                place: "Bar".to_string(),
+                size: 123,
+                hash: Multihash::wrap(345, b"hello world")?,
+                info: serde_json::Value::Null,
+                meta: serde_json::Value::Null,
+            },
+            records: BTreeMap::from([
+                (
+                    "one".to_string(),
+                    Row4 {
+                        name: "AA".to_string(),
+                        path: None,
+                        place: "AB".to_string(),
+                        size: 100,
+                        hash: Multihash::wrap(100, b"A")?,
+                        info: serde_json::Value::Null,
+                        meta: serde_json::Value::Null,
+                    },
+                ),
+                (
+                    "two".to_string(),
+                    Row4 {
+                        name: "BA".to_string(),
+                        path: None,
+                        place: "BB".to_string(),
+                        size: 200,
+                        hash: Multihash::wrap(200, b"B")?,
+                        info: serde_json::Value::Null,
+                        meta: serde_json::Value::Null,
+                    },
+                ),
+            ]),
+        };
+        assert_eq!(table.to_string(), r##"Table({"one": "Row4(AA)@AB^100#[65]$$Null$Null", "two": "Row4(BA)@BB^200#[66]$$Null$Null"})"##.to_string());
+        Ok(())
     }
 }

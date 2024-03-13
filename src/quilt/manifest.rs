@@ -13,7 +13,7 @@ pub type JsonObject = serde_json::Map<String, serde_json::Value>;
 pub struct ManifestHeader {
     pub version: String,
     pub message: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]  // Attempt to be quilt3-compatible.
+    #[serde(skip_serializing_if = "Option::is_none")] // Attempt to be quilt3-compatible.
     pub user_meta: Option<JsonObject>,
 }
 
@@ -37,7 +37,7 @@ impl TryFrom<Multihash<256>> for ContentHash {
             MULTIHASH_SHA256_CHUNKED => Ok(ContentHash::SHA256Chunked(
                 BASE64_STANDARD.encode(value.digest()),
             )),
-            code => Err(format!("Unexpected code: {code:#06x}"))
+            code => Err(format!("Unexpected code: {code:#06x}")),
         }
     }
 }
@@ -92,7 +92,7 @@ impl From<ManifestRow> for Quilt3ManifestRow {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ManifestRow {
     pub logical_key: String,
     // XXX: use Url to have validated string?
@@ -102,8 +102,9 @@ pub struct ManifestRow {
     pub meta: Option<JsonObject>,
 }
 
-impl ManifestRow {
-    pub fn eq(&self, other: &Self) -> bool {
+impl std::cmp::PartialEq for ManifestRow {
+    // TODO: add note why we don't compare meta and physical_key
+    fn eq(&self, other: &Self) -> bool {
         self.logical_key == other.logical_key && self.hash == other.hash && self.size == other.size
     }
 }
@@ -245,7 +246,7 @@ impl Manifest {
             let other_row = other_map.get(k);
 
             if match (self_row, other_row) {
-                (Some(self_row), Some(other_row)) => self_row.eq(other_row),
+                (Some(self_row), Some(other_row)) => self_row == other_row,
                 (None, None) => true,
                 _ => false,
             } {
@@ -261,5 +262,50 @@ impl Manifest {
         }
 
         changes
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_equality_of_strictly_equal() {
+        let left = ManifestRow {
+            logical_key: "A".to_string(),
+            physical_key: "B".to_string(),
+            hash: ContentHash::SHA256("C".to_string()),
+            size: 1,
+            meta: None,
+        };
+        let right = ManifestRow {
+            logical_key: "A".to_string(),
+            physical_key: "B".to_string(),
+            hash: ContentHash::SHA256("C".to_string()),
+            size: 1,
+            meta: None,
+        };
+        assert!(left == right)
+    }
+
+    #[test]
+    fn test_equality_of_partialy_equal() {
+        let mut meta = serde_json::Map::new();
+        meta.insert("foo".to_string(), serde_json::json!("bar"));
+        let left = ManifestRow {
+            logical_key: "A".to_string(),
+            physical_key: "FOO".to_string(),
+            hash: ContentHash::SHA256("C".to_string()),
+            size: 1,
+            meta: Some(meta),
+        };
+        let right = ManifestRow {
+            logical_key: "A".to_string(),
+            physical_key: "BAR".to_string(),
+            hash: ContentHash::SHA256("C".to_string()),
+            size: 1,
+            meta: None,
+        };
+        assert!(left == right)
     }
 }

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use url::{Url, form_urlencoded};
+use url::{form_urlencoded, Url};
 
 const LATEST_TAG: &str = "latest";
 
