@@ -99,7 +99,7 @@ mod tests {
     }
 
     #[test]
-    fn test_formatting() -> Result<(), String> {
+    fn test_formatting() -> Result<(), Error> {
         let upath = UPath::parse("file://missing/parent/child")?;
         assert_eq!(upath.to_string(), "UPath(file:///parent/child)".to_string());
         Ok(())
