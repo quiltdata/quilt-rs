@@ -34,7 +34,7 @@ pub async fn write(path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), Error> {
     // TODO: Write to a temporary location, then move.
     let mut file = fs::File::create(&path).await?;
 
-    file.write_all(&bytes).await?;
+    file.write_all(bytes).await?;
 
     Ok(())
 }

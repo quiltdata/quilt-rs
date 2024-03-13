@@ -51,7 +51,7 @@ pub async fn get_object_bytes(uri: &S3Uri) -> Result<Vec<u8>, Error> {
 
 pub async fn get_object_contents(uri: &S3Uri) -> Result<String, Error> {
     let bytes = get_object_bytes(uri).await?;
-    Ok(String::from_utf8(bytes).map_err(|err| Error::Utf8(err.utf8_error()))?)
+    String::from_utf8(bytes).map_err(|err| Error::Utf8(err.utf8_error()))
 }
 
 pub async fn put_object_contents(

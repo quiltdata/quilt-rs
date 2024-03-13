@@ -576,7 +576,7 @@ impl InstalledPackage {
                 "path {} not found in installed manifest",
                 path
             )))?;
-            orig_paths.insert(PathBuf::from(path), (row.hash.clone(), row.size));
+            orig_paths.insert(PathBuf::from(path), (row.hash, row.size));
         }
 
         let mut queue = VecDeque::new();
@@ -674,7 +674,7 @@ impl InstalledPackage {
     }
 
     pub async fn install_paths(&self, paths: &Vec<String>) -> Result<(), Error> {
-        if paths.len() == 0 {
+        if paths.is_empty() {
             return Ok(());
         }
 
@@ -732,7 +732,7 @@ impl InstalledPackage {
             if !fs::exists(&object_dest).await {
                 let mut file = File::create(&object_dest).await?;
 
-                let client = s3_utils::get_client_for_bucket(bucket.into()).await?;
+                let client = s3_utils::get_client_for_bucket(bucket).await?;
 
                 let mut object = client
                     .get_object()
@@ -758,7 +758,7 @@ impl InstalledPackage {
 
             let working_dest = working_dir.join(&row.name);
             let parent_dir = working_dest.parent();
-            if let Some(_) = parent_dir {
+            if parent_dir.is_some() {
                 tokio::fs::create_dir_all(parent_dir.unwrap()).await?;
             }
             tokio::fs::copy(&object_dest, &working_dest).await?;
@@ -906,7 +906,7 @@ impl InstalledPackage {
                             place: new_physical_key,
                             path: None,
                             size: current.size,
-                            hash: current.hash.clone(),
+                            hash: current.hash,
                             info: serde_json::Value::default(),
                             meta: serde_json::Value::default(),
                         },
@@ -1098,7 +1098,7 @@ impl InstalledPackage {
                     .checksum_sha256
                     .ok_or(Error::Checksum("missing checksum".to_string()))?;
                 let (checksum_b64, _) = s3_checksum
-                    .split_once("-")
+                    .split_once('-')
                     .ok_or(Error::Checksum("unexpected checksum".to_string()))?;
                 let checksum = BASE64_STANDARD.decode(checksum_b64)?;
 
@@ -1165,8 +1165,7 @@ impl InstalledPackage {
                     .header
                     .info
                     .get("message")
-                    .map(|v| v.as_str())
-                    .flatten()
+                    .and_then(|v| v.as_str())
                     .map(|s| s.to_string()),
                 user_meta: local_manifest.header.meta.as_object().cloned(),
             },
