@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use super::*;
+use std::collections::HashMap;
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub enum TestFile {
@@ -9,7 +9,10 @@ pub enum TestFile {
 }
 
 pub fn remote_quilt_uri() -> String {
-    format!("quilt+s3://{}#package={}&path={}", TEST_BUCKET, TEST_PACKAGE, TEST_FILE)
+    format!(
+        "quilt+s3://{}#package={}&path={}",
+        TEST_BUCKET, TEST_PACKAGE, TEST_FILE
+    )
 }
 
 pub fn remote_s3_uri() -> String {
@@ -17,7 +20,7 @@ pub fn remote_s3_uri() -> String {
 }
 
 pub fn local_uri(key: TestFile) -> String {
-    let files: HashMap<TestFile,&str> = HashMap::from ([
+    let files: HashMap<TestFile, &str> = HashMap::from([
         (TestFile::Parquet, TEST_LOCAL_PARQUET),
         (TestFile::Json, TEST_LOCAL_JSONL),
         (TestFile::Domain, ""),
@@ -43,7 +46,10 @@ pub fn local_uri_json() -> String {
 }
 
 pub fn current_domain() -> String {
-    format!("file://{}/tests/test_domain/.quilt", std::env::current_dir().unwrap().to_string_lossy())
+    format!(
+        "file://{}/tests/test_domain/.quilt",
+        std::env::current_dir().unwrap().to_string_lossy()
+    )
 }
 #[cfg(test)]
 mod tests {
