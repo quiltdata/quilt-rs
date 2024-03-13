@@ -109,7 +109,6 @@ pub struct ManifestRow {
     pub meta: Option<JsonObject>,
 }
 
-
 impl std::cmp::PartialEq for ManifestRow {
     // TODO: add note why we don't compare meta and physical_key
     fn eq(&self, other: &Self) -> bool {
@@ -156,7 +155,7 @@ impl Manifest {
         let header = lines.next_line().await.map_err(|err| {
             Error::ManifestHeader(format!(
                 "Failed to read the manifest header: {}",
-                err.to_string()
+                err
             ))
         })?;
 
