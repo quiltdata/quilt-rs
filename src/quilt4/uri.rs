@@ -91,7 +91,7 @@ fn normalize_input(input: &str) -> String {
         input.to_string()
     } else {
         let cwd = std::env::current_dir().unwrap();
-         if let Some(stripped) = input.strip_prefix("./") {
+        if let Some(stripped) = input.strip_prefix("./") {
             let body = stripped.to_string();
             format!("{}/{}", cwd.to_string_lossy(), body)
         } else {
