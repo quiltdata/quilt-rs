@@ -1,5 +1,6 @@
 use aws_sdk_s3::primitives::ByteStream;
 use tokio::io::AsyncReadExt;
+use url::Url;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct S3Uri {
@@ -15,6 +16,25 @@ impl S3Uri {
 
     pub async fn put_contents(&self, contents: impl Into<ByteStream>) -> Result<(), String> {
         put_object_contents(self, contents).await
+    }
+}
+
+impl TryFrom<&str> for S3Uri {
+    type Error = String;
+
+    fn try_from(input: &str) -> Result<Self, Self::Error> {
+        let parsed_url = Url::parse(input).map_err(|err| err.to_string())?;
+        if parsed_url.scheme() != "s3" {
+            return Err("invalid scheme".into());
+        }
+        let bucket = parsed_url.host_str().ok_or("missing bucket")?.to_string();
+        let key: String = parsed_url.path().chars().skip(1).collect();
+        let version = None; // FIXME
+        Ok(Self {
+            bucket,
+            key,
+            version,
+        })
     }
 }
 

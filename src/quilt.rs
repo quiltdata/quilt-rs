@@ -455,6 +455,15 @@ impl LocalDomain {
             Ok(None)
         }
     }
+
+    pub async fn package_s3_prefix(
+        &self,
+        uri: &s3::S3Uri,
+        target_uri: S3PackageURI,
+    ) -> Result<(Table, Vec<String>), String> {
+        println!("Source URI: {:?}, target URI: {:?}", uri, target_uri);
+        unimplemented!()
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
