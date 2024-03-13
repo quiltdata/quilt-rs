@@ -17,7 +17,7 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
       - name: Lint
-        run: cargo clippy -- -D warnings
+        run: cargo clippy -- --deny warnings
       - name: Run cargo test
         uses: actions-rs/cargo@v1
         with:
