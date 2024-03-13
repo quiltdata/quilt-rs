@@ -1,8 +1,9 @@
 pub mod helpers;
 // pub mod parquet_object_store;
 
-pub static TEST_REGION: &str = "us-east=1";
+pub static TEST_REGION: &str = "us-east-1";
 pub static TEST_BUCKET: &str = "quilt-example";
+pub static WRITE_BUCKET: &str = "data-yaml-spec-tests";
 pub static TEST_PACKAGE: &str = "akarve/test_dest";
 pub static TEST_FILE: &str = "README.md";
 pub static TEST_HASH: &str = "6c3758a4d2bf8fe730be5d12f5e095950dc123c373f55f66ca4b3ced74772b22";

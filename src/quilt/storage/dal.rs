@@ -19,13 +19,12 @@ mod tests {
 
 
     async fn test_s3_access() -> Result<()> {
-        const TEST_BUCKET: &str = "test";
+        use crate::utils::{WRITE_BUCKET, TEST_REGION};
         let mut builder = S3::default();
-        let region = "us-west-2";
         // S3::detect_region(AWS_ENDPOINT, TEST_BUCKET).await?;
         // const AWS_ENDPOINT: &str = "https://s3.amazonaws.com";
-        builder.bucket(TEST_BUCKET);
-        builder.region(&region);
+        builder.bucket(WRITE_BUCKET);
+        builder.region(&TEST_REGION);
 
         let op = Operator::new(builder)?
             .layer(LoggingLayer::default())
@@ -37,8 +36,7 @@ mod tests {
         let mode = meta.mode();
         let length = meta.content_length();
 
-        assert_eq!(bs.as_slice(), b"Hello, World!");
-
+        assert_eq!(bs.as_slice(), b"Hello, World!");car
         assert_eq!(mode, EntryMode::FILE);
         assert_eq!(length, 13);
 
