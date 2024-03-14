@@ -54,11 +54,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_s3_read() -> Result<()> {
+    async fn test_s3_read_version() -> Result<()> {
         let op = bucket_operator(WRITE_BUCKET).await?;
         let test_path = format!("{}{}", TEST_DIR, TEST_FILE);
         let bs = op.read_with(test_path.as_str()).version(TEST_VERSION).await?;
         assert_eq!(bs.as_slice(), b"Hello, World!");
+
+        let bad_path = format!("{}{}", TEST_DIR, "bad.txt");
+        let result = op.read_with(bad_path.as_str()).version(TEST_VERSION).await;
+        assert!(result.is_err(), "Expected error for bad path");
+
+        let bad_version = format!("{}{}", TEST_VERSION, "-invalid");
+        let result = op.read_with(test_path.as_str()).version(bad_version.as_str()).await;
+        assert!(result.is_err(), "Expected error for bad version");
         Ok(())
     }
 }
