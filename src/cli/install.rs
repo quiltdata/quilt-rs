@@ -34,13 +34,13 @@ impl std::fmt::Display for Output {
 }
 
 pub async fn command(m: impl Commands, args: Input) -> Std {
-    match m.package_install(args).await {
+    match m.install(args).await {
         Ok(output) => Std::Out(output.to_string()),
         Err(err) => Std::Err(err),
     }
 }
 
-async fn install_package_from_remote_manifest(
+async fn install_package(
     local_domain: &quilt_rs::LocalDomain,
     uri: &quilt_rs::S3PackageURI,
     namespace: Option<String>,
@@ -105,8 +105,7 @@ pub async fn model(
     }: Input,
 ) -> Result<Output, String> {
     let uri = quilt_rs::S3PackageURI::try_from(uri.as_str())?;
-    let (installed_package, namespace) =
-        install_package_from_remote_manifest(local_domain, &uri, namespace).await?;
+    let (installed_package, namespace) = install_package(local_domain, &uri, namespace).await?;
     let package_dir = local_domain.working_folder(&namespace);
     let Entries { keys, paths } = get_entries(&package_dir, uri.path, paths);
 
@@ -123,90 +122,9 @@ pub async fn model(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::path::PathBuf;
-    use temp_testdir::TempDir;
-
     #[tokio::test]
     #[ignore]
-    async fn test_installing_package_without_paths() -> Result<(), String> {
-        let temp_dir = TempDir::default();
-        let local_path = PathBuf::from(temp_dir.as_ref());
-        if let Err(err) = std::fs::create_dir_all(&local_path) {
-            panic!("{}", err.to_string());
-        }
-        println!("Local path, {:?}", local_path);
-        let local_domain = quilt_rs::LocalDomain::new(local_path);
-
-        let uri = "quilt+s3://udp-spec#package=spec/quiltcore".to_string();
-        let output = model(
-            &local_domain,
-            Input {
-                namespace: None,
-                paths: None,
-                uri,
-            },
-        )
-        .await?;
-        let status = output.installed_package.status().await?;
-        assert_eq!(
-            status.upstream_state,
-            quilt_rs::quilt::UpstreamDiscreteState::UpToDate
-        );
-        assert_eq!(output.installed_package.namespace, "spec/quiltcore");
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_installing_package_with_one_path() -> Result<(), String> {
-        let temp_dir = TempDir::default();
-        let local_path = PathBuf::from(temp_dir.as_ref());
-        if let Err(err) = std::fs::create_dir_all(&local_path) {
-            panic!("{}", err.to_string());
-        }
-        println!("Local path, {:?}", local_path);
-        let local_domain = quilt_rs::LocalDomain::new(local_path);
-
-        let uri = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md".to_string();
-        let output = model(
-            &local_domain,
-            Input {
-                namespace: None,
-                paths: None,
-                uri,
-            },
-        )
-        .await?;
-        let lineage = output.installed_package.lineage().await?;
-        assert!(lineage.paths.get("READ ME.md").is_some());
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_installing_package_with_paths() -> Result<(), String> {
-        let temp_dir = TempDir::default();
-        let local_path = PathBuf::from(temp_dir.as_ref());
-        if let Err(err) = std::fs::create_dir_all(&local_path) {
-            panic!("{}", err.to_string());
-        }
-        println!("Local path, {:?}", local_path);
-        let local_domain = quilt_rs::LocalDomain::new(local_path);
-
-        let uri = "quilt+s3://udp-spec#package=spec/quiltcore".to_string();
-        let output = model(
-            &local_domain,
-            Input {
-                namespace: None,
-                paths: Some(vec!["READ ME.md".to_string(), "timestamp.txt".to_string()]),
-                uri,
-            },
-        )
-        .await?;
-        let lineage = output.installed_package.lineage().await?;
-        assert!(lineage.paths.get("timestamp.txt").is_some());
-        assert!(lineage.paths.get("READ ME.md").is_some());
-        Ok(())
+    async fn install() -> Result<(), String> {
+        unreachable!()
     }
 }

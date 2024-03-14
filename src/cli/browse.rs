@@ -49,7 +49,7 @@ impl std::fmt::Display for Output {
 }
 
 pub async fn command(m: impl Commands, args: Input) -> Std {
-    match m.browse_remote_manifest(args).await {
+    match m.browse(args).await {
         Ok(output) => Std::Out(output.to_string()),
         Err(err) => Std::Err(err),
     }

@@ -25,27 +25,23 @@ enum Commands {
     Browse { uri: String },
     /// Install package locally
     Install {
+        /// Source URI for the package.
+        /// Ex. quilt+s3://bucket#package=foo/bar
+        uri: String,
         /// Path to local domain. Should be absolute path when installing paths
         #[arg(short, long)]
         domain: String,
+        /// Namespace for the package, ex. foo/bar.
+        #[arg(short, long)]
+        namespace: Option<String>,
         /// Logical key relative to the root of the package to be installed locally.
         /// You can provide multiple paths.
         #[arg(short, long)]
         path: Option<Vec<String>>,
-        /// Namespace for the package, ex. foo/bar.
-        #[arg(short, long)]
-        namespace: Option<String>,
-        /// Source URI for the package.
-        /// Ex. quilt+s3://bucket#package=foo/bar
-        uri: String,
-        // #[arg(short, long)]
-        // commit_msg: Option<String>,
-        // #[arg(short, long)]
-        // commit_meta: Option<String>,
     },
     /// List installed packages
     List {
-        /// Path to local domain. Should be absolute path when installing paths
+        /// Path to local domain
         #[arg(short, long)]
         domain: String,
     },
@@ -54,16 +50,16 @@ enum Commands {
         /// Source URI for the package.
         /// Ex. s3://bucket/s3/prefix
         uri: String,
-        /// If provided, package will be pushed with new commit to that quilt+s3 URI
+        /// quilt+s3 URI for new package
         #[arg(short, long)]
         target: String,
     },
     Uninstall {
-        /// Path to local domain. Should be absolute path when installing paths
-        #[arg(short, long)]
-        domain: String,
         /// Namespace of the package to uninstall
         namespace: String,
+        /// Path to local domain
+        #[arg(short, long)]
+        domain: String,
     },
 }
 
@@ -72,7 +68,7 @@ pub async fn init() -> Result<(), std::io::Error> {
 
     match args.command {
         Commands::Browse { uri } => {
-            let (m, temp_dir) = Model::from_temp_dir();
+            let (m, temp_dir) = Model::from_temp_dir()?;
             let args = browse::Input { uri };
             tracing::info!("Browsing {:?} using {:?}", args, temp_dir);
             print(browse::command(m, args).await);
@@ -104,7 +100,7 @@ pub async fn init() -> Result<(), std::io::Error> {
             Ok(())
         }
         Commands::Package { uri, target } => {
-            let (m, temp_dir) = Model::from_temp_dir();
+            let (m, temp_dir) = Model::from_temp_dir()?;
             let args = package::Input { target, uri };
             tracing::info!("Packaging {:?} using {:?}", args, temp_dir);
             print(package::command(m, args).await);

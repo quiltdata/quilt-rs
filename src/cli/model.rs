@@ -15,12 +15,12 @@ pub struct Model {
 pub trait Commands {
     fn get_local_domain(&self) -> &sync::Mutex<quilt_rs::LocalDomain>;
 
-    async fn browse_remote_manifest(&self, args: browse::Input) -> Result<browse::Output, String> {
+    async fn browse(&self, args: browse::Input) -> Result<browse::Output, String> {
         let local_domain = &self.get_local_domain().lock().await;
         browse::model(local_domain, args).await
     }
 
-    async fn package_install(&self, args: install::Input) -> Result<install::Output, String> {
+    async fn install(&self, args: install::Input) -> Result<install::Output, String> {
         let local_domain = &self.get_local_domain().lock().await;
         install::model(local_domain, args).await
     }
@@ -53,11 +53,9 @@ impl Model {
             local_domain: sync::Mutex::new(local_domain),
         }
     }
-    pub fn from_temp_dir() -> (Self, TempDir) {
-        match TempDir::with_prefix("quilt-rs") {
-            Ok(temp_dir) => (Model::from(temp_dir.path().to_path_buf()), temp_dir),
-            Err(err) => panic!("{}", err),
-        }
+    pub fn from_temp_dir() -> Result<(Self, TempDir), std::io::Error> {
+        let temp_dir = TempDir::with_prefix("quilt-rs")?;
+        Ok((Model::from(temp_dir.path().to_path_buf()), temp_dir))
     }
 }
 
