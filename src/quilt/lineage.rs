@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 
 use multihash::Multihash;
-use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{de::Error as DeserializeError, Deserialize, Deserializer, Serialize, Serializer};
+
+use crate::Error;
 
 use super::RemoteManifest;
 
@@ -35,11 +37,11 @@ fn str_to_multihash<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Multihash<256>, D::Error> {
     let s = String::deserialize(deserializer)?;
-    let bytes = hex::decode(s).map_err(Error::custom)?;
-    Multihash::from_bytes(&bytes).map_err(Error::custom)
+    let bytes = hex::decode(s).map_err(DeserializeError::custom)?;
+    Multihash::from_bytes(&bytes).map_err(DeserializeError::custom)
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct PackageLineage {
     pub commit: Option<CommitState>,
     pub remote: RemoteManifest,
@@ -66,18 +68,59 @@ impl PackageLineage {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct DomainLineage {
     #[serde(default = "BTreeMap::new")]
     pub packages: BTreeMap<String, PackageLineage>,
 }
 
 impl TryFrom<&str> for DomainLineage {
-    type Error = String;
+    type Error = Error;
 
     fn try_from(input: &str) -> Result<Self, Self::Error> {
-        let parsed: Self = serde_json::from_str(input)
-            .map_err(|err| format!("Failed to parse the lineage file: {}", err))?;
-        Ok(parsed)
+        serde_json::from_str(input).map_err(Error::LineageParse)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_syntax_error() {
+        assert_eq!(
+            DomainLineage::try_from("err").unwrap_err().to_string(),
+            "Failed to parse lineage file: expected value at line 1 column 1".to_string()
+        );
+    }
+
+    #[test]
+    fn test_wrong_key() {
+        // NOTE: @fiskus I don't think this is developer friendly
+        //       I'd like to remove serde(default), so this test fails
+        assert_eq!(
+            DomainLineage::try_from(r#"{"notkey": 123}"#).unwrap(),
+            DomainLineage {
+                packages: BTreeMap::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_wrong_value() {
+        assert!(DomainLineage::try_from(r#"{"packages": 123}"#)
+            .unwrap_err()
+            .to_string()
+            .starts_with("Failed to parse lineage file: invalid type:"));
+    }
+
+    #[test]
+    fn test_parsing_json_ok() {
+        assert_eq!(
+            DomainLineage::try_from(r###"{"packages":{}}"###).unwrap(),
+            DomainLineage {
+                packages: BTreeMap::new(),
+            }
+        )
     }
 }

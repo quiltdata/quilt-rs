@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use url::{form_urlencoded, Url};
+
+use crate::Error;
 const LATEST_TAG: &str = "latest";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,7 +46,7 @@ fn make_domain(uri_parser: &UriParser) -> String {
 }
 
 impl TryFrom<&UriParser> for UriQuilt {
-    type Error = String;
+    type Error = Error;
 
     fn try_from(uri_parser: &UriParser) -> Result<Self, Self::Error> {
         let domain = make_domain(uri_parser);
@@ -89,8 +91,9 @@ fn normalize_input(input: &str) -> String {
         input.to_string()
     } else {
         let cwd = std::env::current_dir().unwrap();
-        if let Some(relative_input) = input.strip_prefix("./") {
-            format!("{}/{}", cwd.to_string_lossy(), relative_input)
+        if let Some(stripped) = input.strip_prefix("./") {
+            let body = stripped.to_string();
+            format!("{}/{}", cwd.to_string_lossy(), body)
         } else {
             format!("{}/{}", cwd.to_string_lossy(), input)
         }
@@ -99,11 +102,11 @@ fn normalize_input(input: &str) -> String {
 }
 
 impl TryFrom<&str> for UriParser {
-    type Error = String;
+    type Error = Error;
 
     fn try_from(input: &str) -> Result<Self, Self::Error> {
         let uri_string = normalize_input(input);
-        let parsed_url = Url::parse(&uri_string).map_err(|err| err.to_string())?;
+        let parsed_url = Url::parse(&uri_string)?;
         let scheme = parsed_url.scheme().to_string();
         let is_quilt = scheme.starts_with("quilt+");
         let host = parsed_url.host_str().unwrap_or("").to_string();

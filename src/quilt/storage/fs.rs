@@ -5,15 +5,16 @@ use tokio::{
     io::{AsyncRead, AsyncWriteExt},
 };
 
+use crate::Error;
+
 pub type File = Box<dyn AsyncRead + Unpin + Send>;
 
-pub async fn open(path: impl AsRef<Path>) -> Result<File, String> {
+pub async fn open(path: impl AsRef<Path>) -> Result<File, Error> {
     // real impl
-    fs::File::open(path)
+    Ok(fs::File::open(path)
         .await
         // .map(|file| Box::new(file) as Box<dyn io::AsyncRead + Unpin>)
-        .map_err(|err| err.to_string())
-        .map(|file| Box::new(file) as File)
+        .map(|file| Box::new(file) as File)?)
 
     // TODO: fake impl
 }
@@ -24,23 +25,21 @@ pub async fn exists(path: impl AsRef<Path>) -> bool {
     // TODO: fake impl
 }
 
-pub async fn write(path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), String> {
-    let parent = path.as_ref().parent().ok_or("no parent".to_string())?;
-    fs::create_dir_all(&parent)
-        .await
-        .map_err(|err| err.to_string())?;
+pub async fn write(path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), Error> {
+    let Some(parent) = path.as_ref().parent() else {
+        return Err(Error::MissingParentPath(path.as_ref().to_owned()));
+    };
+    fs::create_dir_all(&parent).await?;
 
     // TODO: Write to a temporary location, then move.
-    let mut file = fs::File::create(&path)
-        .await
-        .map_err(|err| err.to_string())?;
+    let mut file = fs::File::create(&path).await?;
 
-    file.write_all(bytes).await.map_err(|err| err.to_string())?;
+    file.write_all(bytes).await?;
 
     Ok(())
 }
 
-pub async fn read_to_string(path: impl AsRef<Path>) -> std::io::Result<String> {
+pub async fn read_to_string(path: impl AsRef<Path>) -> Result<String, std::io::Error> {
     fs::read_to_string(path).await
 }
 
@@ -83,7 +82,7 @@ pub async fn read_to_string(path: impl AsRef<Path>) -> std::io::Result<String> {
 //     self.root_fs.get(&key).cloned()
 // }
 
-// async fn open(&self, path: &str) -> Result<LocalFile, String> {
+// async fn open(&self, path: &str) -> Result<LocalFile, Error> {
 //     match self.get(path) {
 //         Some(contents) => Ok(Box::new(MemoryFile { contents: contents.clone() })),
 //         None => Err(format!("file not found: {}", path)),
@@ -94,11 +93,7 @@ pub async fn read_to_string(path: impl AsRef<Path>) -> std::io::Result<String> {
 //     self.get(path).is_some()
 // }
 
-pub async fn get_file_modified_ts(path: &Path) -> Result<chrono::DateTime<chrono::Utc>, String> {
-    let modified = tokio::fs::metadata(path)
-        .await
-        .map(|m| m.modified())
-        .map_err(|err| err.to_string())?
-        .map_err(|err| err.to_string())?;
+pub async fn get_file_modified_ts(path: &Path) -> Result<chrono::DateTime<chrono::Utc>, Error> {
+    let modified = tokio::fs::metadata(path).await.map(|m| m.modified())??;
     Ok(chrono::DateTime::<chrono::Utc>::from(modified))
 }
