@@ -6,7 +6,7 @@ pub enum Std {
 
 pub fn print(output: Std) {
     match output {
-        Std::Out(str) => tracing::info!("{}", str),
+        Std::Out(str) => println!("{}", str),
         Std::Err(str) => tracing::error!(str),
     }
 }
