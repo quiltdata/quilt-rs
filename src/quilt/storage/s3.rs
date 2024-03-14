@@ -114,7 +114,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_icorrect_scheme() -> Result<(), Error> {
+    fn test_incorrect_scheme() -> Result<(), Error> {
         let uri = S3Uri::try_from("https://bucket/foo/bar");
         assert_eq!(
             uri.unwrap_err().to_string(),
