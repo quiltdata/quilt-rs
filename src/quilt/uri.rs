@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use url::{form_urlencoded, Url};
 
+use crate::Error;
+
 const LATEST_TAG: &str = "latest";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,22 +29,28 @@ pub struct S3PackageURI {
 }
 
 impl TryFrom<&str> for S3PackageURI {
-    type Error = String;
+    type Error = Error;
 
     fn try_from(input: &str) -> Result<Self, Self::Error> {
-        let parsed_url = Url::parse(input).map_err(|err| err.to_string())?;
+        let parsed_url = Url::parse(input)?;
         if parsed_url.scheme() != "quilt+s3" {
-            return Err("invalid scheme".into());
+            return Err(Error::PackageURI(format!(
+                "expected quilt+s3, got {}",
+                parsed_url.scheme()
+            )));
         }
 
-        let fragment = parsed_url.fragment().ok_or("missing fragment")?;
+        let fragment = parsed_url.fragment().ok_or(Error::PackageURI(format!(
+            "S3 package URI must contain a fragment: {}",
+            input
+        )))?;
         let mut params: HashMap<_, _> = form_urlencoded::parse(fragment.as_bytes())
             .into_owned()
             .collect();
 
         let pkg_spec = params
             .remove("package")
-            .ok_or("fragment must contain package")?;
+            .ok_or(Error::PackageURI("missing package in fragment".to_string()))?;
 
         let (namespace, revision) = match pkg_spec.split_once('@') {
             Some((namespace, top_hash)) => (
@@ -55,13 +63,19 @@ impl TryFrom<&str> for S3PackageURI {
         let path = params.remove("path");
 
         if !params.is_empty() {
-            return Err(format!("unexpected fragment params: {:?}", params));
+            return Err(Error::PackageURI(format!(
+                "unexpected parameters in fragment: {:?}",
+                params
+            )));
         }
 
-        let bucket = parsed_url.host_str().ok_or("missing bucket")?.to_string();
+        let bucket = parsed_url.host_str().ok_or(Error::PackageURI(format!(
+            "expected host in S3 package URI, got {}",
+            parsed_url.host_str().unwrap_or_default()
+        )))?;
 
         Ok(Self {
-            bucket,
+            bucket: bucket.to_string(),
             namespace,
             path,
             revision,
