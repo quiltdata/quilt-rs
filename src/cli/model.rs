@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+use temp_dir::TempDir;
 use tokio::sync;
 
 use crate::cli::browse;
@@ -46,9 +48,22 @@ impl Commands for Model {
 }
 
 impl Model {
-    pub fn new(local_domain: quilt_rs::LocalDomain) -> Self {
+    fn new(local_domain: quilt_rs::LocalDomain) -> Self {
         Model {
             local_domain: sync::Mutex::new(local_domain),
         }
+    }
+    pub fn from_temp_dir() -> (Self, TempDir) {
+        match TempDir::with_prefix("quilt-rs") {
+            Ok(temp_dir) => (Model::from(temp_dir.path().to_path_buf()), temp_dir),
+            Err(err) => panic!("{}", err),
+        }
+    }
+}
+
+impl From<PathBuf> for Model {
+    fn from(root: PathBuf) -> Self {
+        let local_domain = quilt_rs::LocalDomain::new(root);
+        Model::new(local_domain)
     }
 }
