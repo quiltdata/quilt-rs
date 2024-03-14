@@ -22,24 +22,25 @@ impl S3Uri {
 }
 
 impl TryFrom<&str> for S3Uri {
-    type Error = String;
+    type Error = Error;
 
     fn try_from(input: &str) -> Result<Self, Self::Error> {
-        let parsed_url = Url::parse(input).map_err(|err| err.to_string())?;
+        let parsed_url = Url::parse(input)?;
         if parsed_url.scheme() != "s3" {
-            return Err("invalid scheme".into());
+            return Err(Error::InvalidScheme("Expected s3:// scheme".to_string()));
         }
-        let bucket = parsed_url.host_str().ok_or("missing bucket")?.to_string();
+        let bucket = parsed_url
+            .host_str()
+            .ok_or(Error::S3Uri("missing bucket".to_string()))?;
         let key: String = parsed_url.path().chars().skip(1).collect();
         let version = None; // FIXME
         Ok(Self {
-            bucket,
+            bucket: bucket.to_string(),
             key,
             version,
         })
     }
 }
-
 
 pub async fn get_object_bytes(uri: &S3Uri) -> Result<Vec<u8>, Error> {
     // real impl

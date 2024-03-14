@@ -1,5 +1,6 @@
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
+use crate::cli::Error;
 
 #[derive(Debug)]
 pub struct Input {
@@ -44,7 +45,7 @@ async fn install_package(
     local_domain: &quilt_rs::LocalDomain,
     uri: &quilt_rs::S3PackageURI,
     namespace: Option<String>,
-) -> Result<(quilt_rs::InstalledPackage, String), String> {
+) -> Result<(quilt_rs::InstalledPackage, String), Error> {
     let namespace = namespace.unwrap_or(uri.namespace.clone());
     let installed_package = local_domain.get_installed_package(&namespace).await?;
     if let Some(installed_package) = installed_package {
@@ -61,7 +62,7 @@ async fn install_package(
 async fn install_paths(
     installed_package: &quilt_rs::InstalledPackage,
     paths: Vec<String>,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, Error> {
     installed_package.install_paths(&paths).await?;
     Ok(paths)
 }
@@ -103,7 +104,7 @@ pub async fn model(
         paths,
         uri,
     }: Input,
-) -> Result<Output, String> {
+) -> Result<Output, Error> {
     let uri = quilt_rs::S3PackageURI::try_from(uri.as_str())?;
     let (installed_package, namespace) = install_package(local_domain, &uri, namespace).await?;
     let package_dir = local_domain.working_folder(&namespace);

@@ -117,3 +117,15 @@ pub async fn init() -> Result<(), std::io::Error> {
         }
     }
 }
+
+#[derive(thiserror::Error, Debug)]
+enum Error {
+    #[error("quilt_rs error: {0}")]
+    Quilt(quilt_rs::Error),
+}
+
+impl From<quilt_rs::Error> for Error {
+    fn from(err: quilt_rs::Error) -> Error {
+        Error::Quilt(err)
+    }
+}

@@ -1,5 +1,6 @@
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
+use crate::cli::Error;
 
 pub struct Output {
     installed_packages_list: Vec<quilt_rs::InstalledPackage>,
@@ -25,7 +26,7 @@ pub async fn command(m: impl Commands) -> Std {
     }
 }
 
-pub async fn model(local_domain: &quilt_rs::LocalDomain) -> Result<Output, String> {
+pub async fn model(local_domain: &quilt_rs::LocalDomain) -> Result<Output, Error> {
     Ok(Output {
         installed_packages_list: local_domain.list_installed_packages().await?,
     })
@@ -38,7 +39,7 @@ mod tests {
     use temp_testdir::TempDir;
 
     #[tokio::test]
-    async fn list() -> Result<(), String> {
+    async fn list() -> Result<(), Error> {
         let temp_dir = TempDir::default();
         let local_path = PathBuf::from(temp_dir.as_ref());
         let local_domain = quilt_rs::LocalDomain::new(local_path);

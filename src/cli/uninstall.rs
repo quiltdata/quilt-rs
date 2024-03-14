@@ -1,5 +1,6 @@
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
+use crate::cli::Error;
 
 #[derive(Debug)]
 pub struct Input {
@@ -27,7 +28,7 @@ pub async fn model(
     local_domain: &quilt_rs::LocalDomain,
 
     Input { namespace }: Input,
-) -> Result<Output, String> {
+) -> Result<Output, Error> {
     local_domain.uninstall_package(&namespace).await?;
     Ok(Output { namespace })
 }

@@ -424,9 +424,9 @@ impl LocalDomain {
         &self,
         uri: &s3::S3Uri,
         target_uri: S3PackageURI,
-    ) -> Result<(Table, Vec<String>), String> {
+    ) -> Result<(Table, Vec<String>), Error> {
         println!("Source URI: {:?}, target URI: {:?}", uri, target_uri);
-        unimplemented!()
+        Err(Error::Unimplemented)
     }
 }
 

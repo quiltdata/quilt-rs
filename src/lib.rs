@@ -39,6 +39,9 @@ pub enum Error {
     #[error("S3 error: {0}")]
     S3(String),
 
+    #[error("Invalid S3 URI: {0}")]
+    S3Uri(String),
+
     #[error("Arrow error: {0}")]
     Arrow(#[from] arrow::error::ArrowError),
 
@@ -104,6 +107,9 @@ pub enum Error {
 
     #[error("ByteStreamError: {0}")]
     ByteStreamError(#[from] byte_stream::error::Error),
+
+    #[error("Unimplemented")]
+    Unimplemented,
 }
 
 pub async fn install_temporarily(

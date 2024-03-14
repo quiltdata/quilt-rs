@@ -1,5 +1,6 @@
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
+use crate::cli::Error;
 
 pub struct Output {
     manifest: quilt_rs::Table,
@@ -58,7 +59,7 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 pub async fn model(
     local_domain: &quilt_rs::LocalDomain,
     Input { uri }: Input,
-) -> Result<Output, String> {
+) -> Result<Output, Error> {
     let uri = quilt_rs::S3PackageURI::try_from(uri.as_str())?;
     let remote_manifest = quilt_rs::RemoteManifest::resolve(&uri).await?;
     Ok(Output {
@@ -75,7 +76,7 @@ mod tests {
     use temp_testdir::TempDir;
 
     #[tokio::test]
-    async fn test_model() -> Result<(), String> {
+    async fn test_model() -> Result<(), Error> {
         let temp_dir = TempDir::default();
         let local_path = PathBuf::from(temp_dir.as_ref());
         let local_domain = quilt_rs::LocalDomain::new(local_path);
