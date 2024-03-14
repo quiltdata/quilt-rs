@@ -256,7 +256,7 @@ impl Manifest {
             let other_row = other_map.get(k);
 
             if match (self_row, other_row) {
-                (Some(self_row), Some(other_row)) => self_row.eq(other_row),
+                (Some(self_row), Some(other_row)) => self_row == other_row,
                 (None, None) => true,
                 _ => false,
             } {
