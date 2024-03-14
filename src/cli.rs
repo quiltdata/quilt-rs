@@ -66,7 +66,7 @@ pub async fn init() {
     let args = Args::parse();
 
     let local_domain = quilt_rs::LocalDomain::new(Path::new(&args.domain).to_path_buf());
-    let m = Model::new(local_domain.clone());
+    let m = Model::new(local_domain);
 
     match args.command {
         Commands::Browse { uri } => {
