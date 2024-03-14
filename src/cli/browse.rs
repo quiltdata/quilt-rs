@@ -34,14 +34,15 @@ impl std::fmt::Display for Output {
         header_table.with(tabled::settings::Panel::header("Remote manifest header"));
         output.push(header_table.to_string());
 
-        let mut entries = Vec::new();
-        for entry in self.manifest.records.values() {
-            entries.push(RemoteManifestEntry {
-                name: entry.name.to_string(),
-                place: entry.place.to_string(),
-                size: entry.size,
+        let entries = self
+            .manifest
+            .records
+            .into_values()
+            .map(|e| RemoteManifestEntry {
+                name: e.name.to_string(),
+                place: e.place.to_string(),
+                size: e.size,
             });
-        }
         let mut entries_table = tabled::Table::new(&entries);
         entries_table.with(tabled::settings::Panel::header("Remote manifest entries"));
         output.push(entries_table.to_string());
