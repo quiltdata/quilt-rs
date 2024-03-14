@@ -15,10 +15,6 @@ use output::print;
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 struct Args {
-    /// Path to local domain. Should be absolute path when installing paths
-    #[arg(short, long)]
-    domain: Option<String>,
-
     #[command(subcommand)]
     command: Commands,
 }
@@ -29,6 +25,9 @@ enum Commands {
     Browse { uri: String },
     /// Install package locally
     Install {
+        /// Path to local domain. Should be absolute path when installing paths
+        #[arg(short, long)]
+        domain: String,
         /// Logical key relative to the root of the package to be installed locally.
         /// You can provide multiple paths.
         #[arg(short, long)]
@@ -45,7 +44,11 @@ enum Commands {
         // commit_meta: Option<String>,
     },
     /// List installed packages
-    List,
+    List {
+        /// Path to local domain. Should be absolute path when installing paths
+        #[arg(short, long)]
+        domain: String,
+    },
     /// Create and install manifest to S3
     Package {
         /// Source URI for the package.
@@ -56,6 +59,9 @@ enum Commands {
         target: String,
     },
     Uninstall {
+        /// Path to local domain. Should be absolute path when installing paths
+        #[arg(short, long)]
+        domain: String,
         /// Namespace of the package to uninstall
         namespace: String,
     },
@@ -74,10 +80,11 @@ pub async fn init() -> Result<(), std::io::Error> {
         }
         Commands::Install {
             path,
+            domain,
             namespace,
             uri,
         } => {
-            let root = Path::new(&args.domain.unwrap()).to_path_buf();
+            let root = Path::new(&domain).to_path_buf();
             let m = Model::from(root);
             let args = install::Input {
                 namespace,
@@ -88,8 +95,9 @@ pub async fn init() -> Result<(), std::io::Error> {
             print(install::command(m, args).await);
             Ok(())
         }
-        Commands::List => {
-            let root = Path::new(&args.domain.unwrap()).to_path_buf();
+        Commands::List { domain } => {
+            // TODO: validate domain exists
+            let root = Path::new(&domain).to_path_buf();
             let m = Model::from(root);
             tracing::info!("Listing installed packages");
             print(list::command(m).await);
@@ -102,8 +110,9 @@ pub async fn init() -> Result<(), std::io::Error> {
             print(package::command(m, args).await);
             Ok(())
         }
-        Commands::Uninstall { namespace } => {
-            let root = Path::new(&args.domain.unwrap()).to_path_buf();
+        Commands::Uninstall { domain, namespace } => {
+            // TODO: validate domain exists
+            let root = Path::new(&domain).to_path_buf();
             let m = Model::from(root);
             let args = uninstall::Input { namespace };
             tracing::info!("Uninstalling {:?}", args);
