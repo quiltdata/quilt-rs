@@ -37,8 +37,7 @@ impl std::fmt::Display for Output {
         let entries = self
             .manifest
             .records
-            .clone()
-            .into_values()
+            .values()
             .map(|e| RemoteManifestEntry {
                 name: e.name.to_string(),
                 place: e.place.to_string(),
