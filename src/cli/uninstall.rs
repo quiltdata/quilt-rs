@@ -37,7 +37,6 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn uninstall() -> Result<(), String> {
-        assert!(false);
-        Ok(())
+        unreachable!()
     }
 }
