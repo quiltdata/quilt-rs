@@ -25,41 +25,40 @@ pub async fn bucket_operator(bucket: &str) -> Result<Operator> {
 mod tests {
     use super::*;
     use crate::utils::WRITE_BUCKET;
-    use opendal::{EntryMode, Metakey};
+    use opendal::EntryMode;
+
+    const TEST_DIR: &str = "test_dal/";
+    const TEST_FILE: &str = "hello.txt";
+    const TEST_BYTES: &[u8] = b"Hello, World!";
+    const TEST_VERSION: &str = "jM7lU7jFitCoGPbUdoW.L5vmxbtIDhsU";
 
     #[tokio::test]
     async fn test_s3_write() -> Result<()> {
-        const TEST_DIR: &str = "test_dal/";
-        const TEST_FILE: &str = "hello.txt";
-        let test_path = format!("{}{}", TEST_DIR, TEST_FILE);
-        const TEST_BYTES: &[u8] = b"Hello, World!";
-
         let op = bucket_operator(WRITE_BUCKET).await?;
+        let test_path = format!("{}{}", TEST_DIR, TEST_FILE);
         op.write(test_path.as_str(), TEST_BYTES).await?;
 
-        let entries = op.list_with(TEST_DIR).metakey(Metakey::Version).await?;
-        for entry in entries {
-            println!("entry: {:?}", entry.path());
-            let meta = entry.metadata().metakey();
-            println!("meta: {:?}", meta);
-        }
+        let bs = op.read(test_path.as_str()).await?;
+        assert_eq!(bs.as_slice(), b"Hello, World!");
 
-        let bs = op.read("hello.txt").await?;
-
-        let meta = op.stat_with(path)
+        let meta = op.stat(test_path.as_str()).await?;
         println!("{:?}", meta);
         let mode = meta.mode();
-        let version = meta.version();
         let length = meta.content_length();
-
-        assert_eq!(bs.as_slice(), b"Hello, World!");
         assert_eq!(mode, EntryMode::FILE);
         assert_eq!(length, 13);
-        assert!(version.is_some());
-        assert_eq!(version.unwrap().len(), 32);
+        
+        //op.delete("hello.txt").await?;
 
-        // op.delete("hello.txt").await?;
+        Ok(())
+    }
 
+    #[tokio::test]
+    async fn test_s3_read() -> Result<()> {
+        let op = bucket_operator(WRITE_BUCKET).await?;
+        let test_path = format!("{}{}", TEST_DIR, TEST_FILE);
+        let bs = op.read_with(test_path.as_str()).version(TEST_VERSION).await?;
+        assert_eq!(bs.as_slice(), b"Hello, World!");
         Ok(())
     }
 }
