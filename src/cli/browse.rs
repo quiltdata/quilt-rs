@@ -43,7 +43,7 @@ impl std::fmt::Display for Output {
                 place: e.place.to_string(),
                 size: e.size,
             });
-        let mut entries_table = tabled::Table::new(&entries);
+        let mut entries_table = tabled::Table::new(entries);
         entries_table.with(tabled::settings::Panel::header("Remote manifest entries"));
         output.push(entries_table.to_string());
         write!(f, "{}", output.join("\n"))
