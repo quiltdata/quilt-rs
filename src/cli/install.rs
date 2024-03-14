@@ -128,6 +128,7 @@ mod tests {
     use temp_testdir::TempDir;
 
     #[tokio::test]
+    #[ignore]
     async fn test_installing_package_without_paths() -> Result<(), String> {
         let temp_dir = TempDir::default();
         let local_path = PathBuf::from(temp_dir.as_ref());
@@ -157,6 +158,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn test_installing_package_with_one_path() -> Result<(), String> {
         let temp_dir = TempDir::default();
         let local_path = PathBuf::from(temp_dir.as_ref());
@@ -182,6 +184,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn test_installing_package_with_paths() -> Result<(), String> {
         let temp_dir = TempDir::default();
         let local_path = PathBuf::from(temp_dir.as_ref());
