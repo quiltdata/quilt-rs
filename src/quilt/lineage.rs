@@ -83,13 +83,11 @@ impl TryFrom<&str> for DomainLineage {
 }
 
 impl TryFrom<Vec<u8>> for DomainLineage {
-    type Error = String;
+    type Error = Error;
 
     fn try_from(input: Vec<u8>) -> Result<Self, Self::Error> {
-        let input_str = String::from_utf8_lossy(&input);
-        let parsed: Self = serde_json::from_str(&input_str)
-            .map_err(|err| format!("Failed to parse the lineage file: {}", err))?;
-        Ok(parsed)
+        let input_str = std::str::from_utf8(&input)?;
+        Ok(serde_json::from_str(input_str)?)
     }
 }
 
