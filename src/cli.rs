@@ -8,6 +8,7 @@ mod list;
 mod model;
 mod output;
 mod package;
+mod uninstall;
 
 use model::Model;
 use output::print;
@@ -44,6 +45,8 @@ enum Commands {
         // #[arg(short, long)]
         // commit_meta: Option<String>,
     },
+    /// List installed packages
+    List,
     /// Create and install manifest to S3
     Package {
         /// Source URI for the package.
@@ -53,8 +56,10 @@ enum Commands {
         #[arg(short, long)]
         target: String,
     },
-    /// List installed packages
-    List,
+    Uninstall {
+        /// Namespace of the package to uninstall
+        namespace: String,
+    },
 }
 
 pub async fn init() {
@@ -88,8 +93,13 @@ pub async fn init() {
         }
         Commands::Package { uri, target } => {
             let args = package::Input { target, uri };
-            tracing::debug!("Installing {:?}", args);
+            tracing::debug!("Packaging {:?}", args);
             print(package::command(m, args).await);
+        }
+        Commands::Uninstall { namespace } => {
+            let args = uninstall::Input { namespace };
+            tracing::debug!("Uninstalling {:?}", args);
+            print(uninstall::command(m, args).await);
         }
     }
 }

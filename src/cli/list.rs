@@ -7,6 +7,9 @@ pub struct Output {
 
 impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.installed_packages_list.is_empty() {
+            return write!(f, "No installed packages");
+        }
         let mut output: Vec<String> = Vec::new();
         for installed_package in &self.installed_packages_list {
             output.push(format!("InstalledPackage<{}>", installed_package.namespace));

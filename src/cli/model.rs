@@ -4,6 +4,7 @@ use crate::cli::browse;
 use crate::cli::install;
 use crate::cli::list;
 use crate::cli::package;
+use crate::cli::uninstall;
 
 pub struct Model {
     local_domain: sync::Mutex<quilt_rs::LocalDomain>,
@@ -30,6 +31,11 @@ pub trait Commands {
     async fn package(&self, args: package::Input) -> Result<package::Output, String> {
         let local_domain = &self.get_local_domain().lock().await;
         package::model(local_domain, args).await
+    }
+
+    async fn uninstall(&self, args: uninstall::Input) -> Result<uninstall::Output, String> {
+        let local_domain = &self.get_local_domain().lock().await;
+        uninstall::model(local_domain, args).await
     }
 }
 
