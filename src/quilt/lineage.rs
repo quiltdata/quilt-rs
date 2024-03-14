@@ -82,15 +82,6 @@ impl TryFrom<&str> for DomainLineage {
     }
 }
 
-impl TryFrom<Vec<u8>> for DomainLineage {
-    type Error = Error;
-
-    fn try_from(input: Vec<u8>) -> Result<Self, Self::Error> {
-        let input_str = std::str::from_utf8(&input)?;
-        Ok(serde_json::from_str(input_str)?)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
