@@ -1,6 +1,6 @@
 use aws_sdk_s3::primitives::ByteStream;
 use tokio::io::AsyncReadExt;
-use url::{form_urlencoded, Url};
+use url::Url;
 
 use crate::Error;
 
@@ -32,18 +32,16 @@ impl TryFrom<&str> for S3Uri {
         let bucket = parsed_url
             .host_str()
             .ok_or(Error::S3Uri("missing bucket".to_string()))?;
-        let key: String = parsed_url.path().chars().skip(1).collect();
-        let version = match parsed_url.query() {
-            Some(query) => form_urlencoded::parse(query.as_bytes())
-                .into_owned()
-                .collect::<std::collections::HashMap<_, _>>()
-                .get("version")
-                .cloned(),
-            None => None,
-        };
+        let key = percent_encoding::percent_decode_str(&parsed_url.path()[1..]).decode_utf8()?;
+        let version = parsed_url
+            .query_pairs()
+            .into_owned()
+            .collect::<std::collections::HashMap<_, _>>()
+            .get("version")
+            .cloned();
         Ok(Self {
             bucket: bucket.to_string(),
-            key,
+            key: key.to_string(),
             version,
         })
     }
@@ -171,6 +169,20 @@ mod tests {
             S3Uri {
                 bucket: "bucket".to_string(),
                 key: "foo/bar".to_string(),
+                version: None,
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_spaces_in_path() -> Result<(), Error> {
+        let uri = S3Uri::try_from("s3://bucket/foo  bar?another=query")?;
+        assert_eq!(
+            uri,
+            S3Uri {
+                bucket: "bucket".to_string(),
+                key: "foo  bar".to_string(),
                 version: None,
             }
         );

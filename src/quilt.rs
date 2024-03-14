@@ -722,32 +722,27 @@ impl InstalledPackage {
                 .get_mut(path)
                 .ok_or(Error::Table(format!("path {} not found", path)))?;
 
-            let parsed_url = Url::parse(&row.place)?;
-            if parsed_url.scheme() != "s3" {
-                return Err(Error::InvalidScheme("expected s3 scheme".to_string()));
+            let s3::S3Uri {
+                bucket,
+                key,
+                version,
+            } = s3::S3Uri::try_from(row.place.as_str())?;
+            if version.is_none() {
+                return Err(Error::S3Uri("missing versionId in s3 URL".to_string()));
             }
-            let bucket = parsed_url
-                .host_str()
-                .ok_or(Error::PackageURI("missing bucket in s3 URL".to_string()))?;
-            let key =
-                percent_encoding::percent_decode_str(&parsed_url.path()[1..]).decode_utf8()?;
-            let query: HashMap<_, _> = parsed_url.query_pairs().into_owned().collect();
-            let version_id = query
-                .get("versionId")
-                .ok_or(Error::PackageURI("missing versionId in s3 URL".to_string()))?;
 
             let object_dest = objects_dir.join(hex::encode(row.hash.digest()));
 
             if !fs::exists(&object_dest).await {
                 let mut file = File::create(&object_dest).await?;
 
-                let client = s3_utils::get_client_for_bucket(bucket).await?;
+                let client = s3_utils::get_client_for_bucket(&bucket).await?;
 
                 let mut object = client
                     .get_object()
                     .bucket(bucket)
                     .key(key)
-                    .version_id(version_id)
+                    .version_id(version.unwrap())
                     .send()
                     .await
                     .map_err(|err| Error::S3(format!("failed to get S3 object: {}", err)))?;
