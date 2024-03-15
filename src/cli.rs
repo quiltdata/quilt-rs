@@ -37,7 +37,7 @@ enum Commands {
         /// Logical key relative to the root of the package to be installed locally.
         /// You can provide multiple paths.
         #[arg(short, long)]
-        path: Option<Vec<String>>,
+        path: Option<Vec<PathBuf>>,
     },
     /// List installed packages
     List {
