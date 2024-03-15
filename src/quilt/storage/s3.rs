@@ -33,12 +33,26 @@ impl TryFrom<&str> for S3Uri {
             .host_str()
             .ok_or(Error::S3Uri("missing bucket".to_string()))?;
         let key = percent_encoding::percent_decode_str(&parsed_url.path()[1..]).decode_utf8()?;
-        let version = parsed_url
-            .query_pairs()
-            .into_owned()
-            .collect::<std::collections::HashMap<_, _>>()
-            .get("versionId")
-            .cloned();
+        let queries = parsed_url.query_pairs().into_owned().collect::<Vec<_>>();
+        if queries.len() > 1 {
+            return Err(Error::S3Uri(
+                "Too many query parameters. Only single versionId is allowed".to_string(),
+            ));
+        }
+
+        let version = match queries.first() {
+            None => None,
+            Some((key, value)) => {
+                if key == "versionId" {
+                    Some(value.to_string())
+                } else {
+                    return Err(Error::S3Uri(
+                        "Unknown query parameter. Only single versionId is allowed".to_string(),
+                    ));
+                }
+            }
+        };
+
         Ok(Self {
             bucket: bucket.to_string(),
             key: key.to_string(),
@@ -163,28 +177,35 @@ mod tests {
 
     #[test]
     fn test_incorrect_query() -> Result<(), Error> {
-        let uri = S3Uri::try_from("s3://bucket/foo/bar?another=query")?;
+        let uri = S3Uri::try_from("s3://bucket/foo/bar?another=query");
         assert_eq!(
-            uri,
-            S3Uri {
-                bucket: "bucket".to_string(),
-                key: "foo/bar".to_string(),
-                version: None,
-            }
+            uri.unwrap_err().to_string(),
+            "Invalid S3 URI: Unknown query parameter. Only single versionId is allowed".to_string(),
         );
         Ok(())
     }
 
     #[test]
     fn test_spaces_in_path() -> Result<(), Error> {
-        let uri = S3Uri::try_from("s3://bucket/foo  bar?another=query")?;
+        let uri = S3Uri::try_from("s3://bucket/foo  bar?versionId=abc")?;
         assert_eq!(
             uri,
             S3Uri {
                 bucket: "bucket".to_string(),
                 key: "foo  bar".to_string(),
-                version: None,
+                version: Some("abc".to_string()),
             }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_multiple_version_id() -> Result<(), Error> {
+        let uri = S3Uri::try_from("s3://bucket/foo  bar?versionId=query&versionId=another");
+        assert_eq!(
+            uri.unwrap_err().to_string(),
+            "Invalid S3 URI: Too many query parameters. Only single versionId is allowed"
+                .to_string(),
         );
         Ok(())
     }
