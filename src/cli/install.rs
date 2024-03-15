@@ -81,21 +81,19 @@ fn get_entries(
 ) -> Entries {
     let mut keys = Vec::new();
     let mut paths = Vec::new();
-    if uri_path.is_some() {
-        let logical_key = uri_path.unwrap();
+    if let Some(logical_key) = uri_path {
         paths.push(root.to_path_buf().join(&logical_key));
         keys.push(logical_key);
     }
-    if arg_paths.is_some() {
-        let logical_keys = arg_paths.unwrap();
+    if let Some(logical_keys) = arg_paths {
         for logical_key in logical_keys {
             keys.push(logical_key.display().to_string());
             paths.push(root.to_path_buf().join(logical_key));
         }
     }
     Entries {
-        paths: if paths.is_empty() { None } else { Some(paths) },
-        keys: if keys.is_empty() { None } else { Some(keys) },
+        paths: (!paths.is_empty()).then_some(paths),
+        keys: (!keys.is_empty()).then_some(keys),
     }
 }
 
