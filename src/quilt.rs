@@ -55,8 +55,8 @@ pub fn tag_key(namespace: &str, tag: &str) -> String {
     format!("{TAGS_DIR}/{namespace}/{tag}")
 }
 
-pub fn tag_uri(bucket: &str, namespace: &str, tag: &str) -> s3::S3Uri {
-    s3::S3Uri {
+pub fn tag_uri(bucket: &str, namespace: &str, tag: &str) -> s3::S3URI {
+    s3::S3URI {
         bucket: bucket.to_owned(),
         key: tag_key(namespace, tag),
         version: None,
@@ -422,7 +422,7 @@ impl LocalDomain {
 
     pub async fn package_s3_prefix(
         &self,
-        uri: &s3::S3Uri,
+        uri: &s3::S3URI,
         target_uri: S3PackageURI,
     ) -> Result<(Table, Vec<String>), Error> {
         println!("Source URI: {:?}, target URI: {:?}", uri, target_uri);
@@ -722,12 +722,12 @@ impl InstalledPackage {
                 .get_mut(path)
                 .ok_or(Error::Table(format!("path {} not found", path)))?;
 
-            let s3::S3Uri {
+            let s3::S3URI {
                 bucket,
                 key,
                 version,
             } = row.place.parse()?;
-            let version = version.ok_or(Error::S3Uri("missing versionId in s3 URL".to_string()))?;
+            let version = version.ok_or(Error::S3URI("missing versionId in s3 URL".to_string()))?;
 
             let object_dest = objects_dir.join(hex::encode(row.hash.digest()));
 

@@ -40,7 +40,7 @@ pub enum Error {
     S3(String),
 
     #[error("Invalid S3 URI: {0}")]
-    S3Uri(String),
+    S3URI(String),
 
     #[error("Arrow error: {0}")]
     Arrow(#[from] arrow::error::ArrowError),
