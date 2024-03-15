@@ -61,6 +61,14 @@ impl TryFrom<&str> for S3Uri {
     }
 }
 
+impl std::str::FromStr for S3Uri {
+    type Err = Error;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        S3Uri::try_from(input)
+    }
+}
+
 pub async fn get_object_bytes(uri: &S3Uri) -> Result<Vec<u8>, Error> {
     // real impl
     let client = crate::s3_utils::get_client_for_bucket(&uri.bucket).await?;
@@ -206,6 +214,20 @@ mod tests {
             uri.unwrap_err().to_string(),
             "Invalid S3 URI: Too many query parameters. Only single versionId is allowed"
                 .to_string(),
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_implicit_parsing() -> Result<(), Error> {
+        let uri: S3Uri = "s3://bucket/foo/bar?versionId=abc".parse()?;
+        assert_eq!(
+            uri,
+            S3Uri {
+                bucket: "bucket".to_string(),
+                key: "foo/bar".to_string(),
+                version: Some("abc".to_string()),
+            }
         );
         Ok(())
     }
