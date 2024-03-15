@@ -727,9 +727,7 @@ impl InstalledPackage {
                 key,
                 version,
             } = s3::S3Uri::try_from(row.place.as_str())?;
-            if version.is_none() {
-                return Err(Error::S3Uri("missing versionId in s3 URL".to_string()));
-            }
+            let version = version.ok_or(Error::S3Uri("missing versionId in s3 URL".to_string()))?;
 
             let object_dest = objects_dir.join(hex::encode(row.hash.digest()));
 
@@ -742,7 +740,7 @@ impl InstalledPackage {
                     .get_object()
                     .bucket(bucket)
                     .key(key)
-                    .version_id(version.unwrap())
+                    .version_id(version)
                     .send()
                     .await
                     .map_err(|err| Error::S3(format!("failed to get S3 object: {}", err)))?;
