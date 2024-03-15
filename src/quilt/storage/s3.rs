@@ -47,6 +47,29 @@ impl TryFrom<&str> for S3Uri {
     }
 }
 
+impl clap::builder::ValueParserFactory for S3Uri {
+    type Parser = CustomValueParser;
+    fn value_parser() -> Self::Parser {
+        CustomValueParser
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct CustomValueParser;
+impl clap::builder::TypedValueParser for CustomValueParser {
+    type Value = S3Uri;
+    fn parse_ref(
+        &self,
+        _cmd: &clap::Command,
+        _arg: Option<&clap::Arg>,
+        value: &std::ffi::OsStr,
+    ) -> Result<Self::Value, clap::Error> {
+        Ok(S3Uri::try_from(value.to_str().ok_or(
+            clap::error::Error::raw(clap::error::ErrorKind::InvalidValue, "Expected S3 URI"),
+        )?)?)
+    }
+}
+
 pub async fn get_object_bytes(uri: &S3Uri) -> Result<Vec<u8>, Error> {
     // real impl
     let client = crate::s3_utils::get_client_for_bucket(&uri.bucket).await?;

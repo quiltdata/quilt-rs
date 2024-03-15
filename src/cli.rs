@@ -49,7 +49,7 @@ enum Commands {
     Package {
         /// Source URI for the package.
         /// Ex. s3://bucket/s3/prefix
-        uri: String,
+        uri: quilt_rs::quilt::storage::s3::S3Uri,
         /// quilt+s3 URI for new package
         #[arg(short, long)]
         target: quilt_rs::S3PackageURI,

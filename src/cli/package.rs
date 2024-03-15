@@ -4,7 +4,7 @@ use crate::cli::Error;
 
 #[derive(Debug)]
 pub struct Input {
-    pub uri: String,
+    pub uri: quilt_rs::quilt::storage::s3::S3Uri,
     pub target: quilt_rs::S3PackageURI,
 }
 
@@ -33,12 +33,8 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 
 pub async fn model(
     local_domain: &quilt_rs::LocalDomain,
-    Input {
-        target,
-        uri: uri_string,
-    }: Input,
+    Input { target, uri }: Input,
 ) -> Result<Output, Error> {
-    let uri = quilt_rs::quilt::storage::s3::S3Uri::try_from(uri_string.as_str())?;
     let (manifest, paths) = local_domain.package_s3_prefix(&uri, target).await?;
     Ok(Output { manifest, paths })
 }

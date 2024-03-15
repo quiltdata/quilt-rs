@@ -112,6 +112,12 @@ pub enum Error {
     Unimplemented,
 }
 
+impl From<Error> for clap::Error {
+    fn from(err: Error) -> clap::Error {
+        clap::error::Error::raw(clap::error::ErrorKind::InvalidValue, err.to_string())
+    }
+}
+
 pub async fn install_temporarily(
     bucket: &str,
     namespace: &str,
