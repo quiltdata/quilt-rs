@@ -37,7 +37,7 @@ impl TryFrom<&str> for S3Uri {
             .query_pairs()
             .into_owned()
             .collect::<std::collections::HashMap<_, _>>()
-            .get("version")
+            .get("versionId")
             .cloned();
         Ok(Self {
             bucket: bucket.to_string(),
@@ -149,7 +149,7 @@ mod tests {
 
     #[test]
     fn test_versioned() -> Result<(), Error> {
-        let uri = S3Uri::try_from("s3://bucket/foo/bar?version=abc")?;
+        let uri = S3Uri::try_from("s3://bucket/foo/bar?versionId=abc")?;
         assert_eq!(
             uri,
             S3Uri {
