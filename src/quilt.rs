@@ -1368,7 +1368,7 @@ mod tests {
         // ## Setup
         let test_uri_string = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
 
-        let test_uri = S3PackageURI::try_from(test_uri_string).expect("Failed to parse URI");
+        let test_uri: S3PackageURI = test_uri_string.parse().expect("Failed to parse URI");
         assert_eq!(
             test_uri,
             S3PackageURI {
