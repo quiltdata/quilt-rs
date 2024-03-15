@@ -550,7 +550,7 @@ impl LocalDomain {
                     name.into(),
                     Row4 {
                         name: name.into(),
-                        place: s3::make_s3_url(&uri.bucket, &key, attrs.version_id.as_deref())
+                        place: s3::make_s3_url(&uri.bucket, key, attrs.version_id.as_deref())
                             .into(),
                         path: None, // WTF is this?
                         // This shouldn't be empty because we requested it
@@ -582,7 +582,7 @@ impl LocalDomain {
             .await?;
         new_remote.update_latest(&top_hash).await?;
 
-        return Ok(new_remote);
+        Ok(new_remote)
     }
 }
 
