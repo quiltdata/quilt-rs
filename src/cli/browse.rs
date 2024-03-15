@@ -8,7 +8,7 @@ pub struct Output {
 
 #[derive(Debug)]
 pub struct Input {
-    pub uri: String,
+    pub uri: quilt_rs::S3PackageURI,
 }
 
 #[derive(tabled::Tabled)]
@@ -57,7 +57,6 @@ pub async fn model(
     local_domain: &quilt_rs::LocalDomain,
     Input { uri }: Input,
 ) -> Result<Output, Error> {
-    let uri = quilt_rs::S3PackageURI::try_from(uri.as_str())?;
     let remote_manifest = quilt_rs::RemoteManifest::resolve(&uri).await?;
     Ok(Output {
         manifest: local_domain
@@ -77,7 +76,9 @@ mod tests {
         let temp_dir = TempDir::default();
         let local_path = PathBuf::from(temp_dir.as_ref());
         let local_domain = quilt_rs::LocalDomain::new(local_path);
-        let uri = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md".to_string();
+        let uri = quilt_rs::S3PackageURI::try_from(
+            "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md",
+        )?;
         let output = model(&local_domain, Input { uri }).await?;
         assert_eq!(
             output.manifest.header.info,

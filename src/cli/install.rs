@@ -6,7 +6,7 @@ use crate::cli::Error;
 pub struct Input {
     pub namespace: Option<String>,
     pub paths: Option<Vec<String>>,
-    pub uri: String,
+    pub uri: quilt_rs::S3PackageURI,
 }
 
 #[derive(Debug)]
@@ -105,7 +105,6 @@ pub async fn model(
         uri,
     }: Input,
 ) -> Result<Output, Error> {
-    let uri = quilt_rs::S3PackageURI::try_from(uri.as_str())?;
     let (installed_package, namespace) = install_package(local_domain, &uri, namespace).await?;
     let package_dir = local_domain.working_folder(&namespace);
     let Entries { keys, paths } = get_entries(&package_dir, uri.path, paths);

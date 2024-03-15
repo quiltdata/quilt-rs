@@ -22,12 +22,12 @@ struct Args {
 #[derive(Subcommand)]
 enum Commands {
     /// Browse remote manifest
-    Browse { uri: String },
+    Browse { uri: quilt_rs::S3PackageURI },
     /// Install package locally
     Install {
         /// Source URI for the package.
         /// Ex. quilt+s3://bucket#package=foo/bar
-        uri: String,
+        uri: quilt_rs::S3PackageURI,
         /// Path to local domain. Should be absolute path when installing paths
         #[arg(short, long)]
         domain: String,
@@ -52,7 +52,7 @@ enum Commands {
         uri: String,
         /// quilt+s3 URI for new package
         #[arg(short, long)]
-        target: String,
+        target: quilt_rs::S3PackageURI,
     },
     Uninstall {
         /// Namespace of the package to uninstall

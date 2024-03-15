@@ -28,6 +28,35 @@ pub struct S3PackageURI {
     pub path: Option<String>,
 }
 
+impl clap::builder::ValueParserFactory for S3PackageURI {
+    type Parser = CustomValueParser;
+    fn value_parser() -> Self::Parser {
+        CustomValueParser
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct CustomValueParser;
+impl clap::builder::TypedValueParser for CustomValueParser {
+    type Value = S3PackageURI;
+    fn parse_ref(
+        &self,
+        _cmd: &clap::Command,
+        _arg: Option<&clap::Arg>,
+        value: &std::ffi::OsStr,
+    ) -> Result<Self::Value, clap::Error> {
+        Ok(S3PackageURI::try_from(value.to_str().ok_or(
+            clap::error::Error::raw(clap::error::ErrorKind::InvalidValue, "Expected S3 URI"),
+        )?)?)
+    }
+}
+
+impl From<Error> for clap::Error {
+    fn from(err: Error) -> clap::Error {
+        clap::error::Error::raw(clap::error::ErrorKind::InvalidValue, err.to_string())
+    }
+}
+
 impl TryFrom<&str> for S3PackageURI {
     type Error = Error;
 
