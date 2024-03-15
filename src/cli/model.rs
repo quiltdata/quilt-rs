@@ -54,8 +54,9 @@ impl Model {
             local_domain: sync::Mutex::new(local_domain),
         }
     }
-    pub fn from_temp_dir() -> Result<(Self, TempDir), std::io::Error> {
-        let temp_dir = TempDir::with_prefix("quilt-rs")?;
+    pub fn from_temp_dir() -> Result<(Self, TempDir), Error> {
+        let temp_dir =
+            TempDir::with_prefix("quilt-rs").map_err(|err| Error::TempDir(err.to_string()))?;
         Ok((Model::from(temp_dir.path().to_path_buf()), temp_dir))
     }
 }

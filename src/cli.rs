@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use std::path::Path;
+use std::path::PathBuf;
 
 mod browse;
 mod install;
@@ -30,7 +30,7 @@ enum Commands {
         uri: quilt_rs::S3PackageURI,
         /// Path to local domain. Should be absolute path when installing paths
         #[arg(short, long)]
-        domain: String,
+        domain: PathBuf,
         /// Namespace for the package, ex. foo/bar.
         #[arg(short, long)]
         namespace: Option<String>,
@@ -43,7 +43,7 @@ enum Commands {
     List {
         /// Path to local domain
         #[arg(short, long)]
-        domain: String,
+        domain: PathBuf,
     },
     /// Create and install manifest to S3
     Package {
@@ -59,11 +59,11 @@ enum Commands {
         namespace: String,
         /// Path to local domain
         #[arg(short, long)]
-        domain: String,
+        domain: PathBuf,
     },
 }
 
-pub async fn init() -> Result<(), std::io::Error> {
+pub async fn init() -> Result<(), Error> {
     let args = Args::parse();
 
     match args.command {
@@ -80,8 +80,7 @@ pub async fn init() -> Result<(), std::io::Error> {
             namespace,
             uri,
         } => {
-            let root = Path::new(&domain).to_path_buf();
-            let m = Model::from(root);
+            let m = Model::from(domain);
             let args = install::Input {
                 namespace,
                 paths: path,
@@ -92,9 +91,10 @@ pub async fn init() -> Result<(), std::io::Error> {
             Ok(())
         }
         Commands::List { domain } => {
-            // TODO: validate domain exists
-            let root = Path::new(&domain).to_path_buf();
-            let m = Model::from(root);
+            if !domain.exists() {
+                return Err(Error::Domain(domain));
+            }
+            let m = Model::from(domain);
             tracing::info!("Listing installed packages");
             print(list::command(m).await);
             Ok(())
@@ -107,9 +107,10 @@ pub async fn init() -> Result<(), std::io::Error> {
             Ok(())
         }
         Commands::Uninstall { domain, namespace } => {
-            // TODO: validate domain exists
-            let root = Path::new(&domain).to_path_buf();
-            let m = Model::from(root);
+            if !domain.exists() {
+                return Err(Error::Domain(domain));
+            }
+            let m = Model::from(domain);
             let args = uninstall::Input { namespace };
             tracing::info!("Uninstalling {:?}", args);
             print(uninstall::command(m, args).await);
@@ -119,7 +120,13 @@ pub async fn init() -> Result<(), std::io::Error> {
 }
 
 #[derive(thiserror::Error, Debug)]
-enum Error {
+pub enum Error {
+    #[error("Domain path doesn't exists: {0}")]
+    Domain(std::path::PathBuf),
+
+    #[error("Failed to create temp dir: {0}")]
+    TempDir(String),
+
     #[error("quilt_rs error: {0}")]
     Quilt(quilt_rs::Error),
 }
