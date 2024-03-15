@@ -22,11 +22,15 @@ struct Args {
 #[derive(Subcommand)]
 enum Commands {
     /// Browse remote manifest
-    Browse { uri: String },
+    Browse {
+        #[arg(value_name = "PKG_URI")]
+        uri: String,
+    },
     /// Install package locally
     Install {
         /// Source URI for the package.
         /// Ex. quilt+s3://bucket#package=foo/bar
+        #[arg(value_name = "PKG_URI")]
         uri: String,
         /// Path to local domain. Should be absolute path when installing paths
         #[arg(short, long)]
@@ -49,13 +53,17 @@ enum Commands {
     Package {
         /// Source URI for the package.
         /// Ex. s3://bucket/s3/prefix
+        #[arg(value_name = "S3_URI")]
         uri: String,
         /// quilt+s3 URI for new package
-        #[arg(short, long)]
+        #[arg(short, long, value_name = "PKG_URI")]
         target: String,
     },
+    /// Uninstall package from local domain
     Uninstall {
-        /// Namespace of the package to uninstall
+        /// Namespace of the package to uninstall.
+        /// Ex. foo/bar
+        #[arg(short, long)]
         namespace: String,
         /// Path to local domain
         #[arg(short, long)]
