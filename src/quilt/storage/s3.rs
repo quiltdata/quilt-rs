@@ -120,17 +120,6 @@ pub async fn put_object_contents(
     Ok(())
 }
 
-// pub type MemoryBuckets = HashMap<String, MemoryFS>;
-//
-// pub struct FakeS3Storage<'a> {
-//     buckets: &'a MemoryBuckets,
-// }
-//
-// async fn get_object_contents(uri: &S3Uri) -> Result<String, Error> {
-//     // TODO: support versioning?
-//     self.buckets.get(&uri.bucket).ok_or("bucket not found")?.get(&uri.key).ok_or(String::from("key not found")).cloned()
-// }
-
 #[cfg(test)]
 mod tests {
     use super::*;
