@@ -5,13 +5,13 @@ use url::Url;
 use crate::Error;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct S3URI {
+pub struct S3Uri {
     pub bucket: String,
     pub key: String,
     pub version: Option<String>,
 }
 
-impl S3URI {
+impl S3Uri {
     pub async fn get_contents(&self) -> Result<String, Error> {
         get_object_contents(self).await
     }
@@ -21,7 +21,7 @@ impl S3URI {
     }
 }
 
-impl TryFrom<&str> for S3URI {
+impl TryFrom<&str> for S3Uri {
     type Error = Error;
 
     fn try_from(input: &str) -> Result<Self, Self::Error> {
@@ -31,11 +31,11 @@ impl TryFrom<&str> for S3URI {
         }
         let bucket = parsed_url
             .host_str()
-            .ok_or(Error::S3URI("missing bucket".to_string()))?;
+            .ok_or(Error::S3Uri("missing bucket".to_string()))?;
         let key = percent_encoding::percent_decode_str(&parsed_url.path()[1..]).decode_utf8()?;
         let queries = parsed_url.query_pairs().into_owned().collect::<Vec<_>>();
         if queries.len() > 1 {
-            return Err(Error::S3URI(
+            return Err(Error::S3Uri(
                 "Too many query parameters. Only single versionId is allowed".to_string(),
             ));
         }
@@ -46,7 +46,7 @@ impl TryFrom<&str> for S3URI {
                 if key == "versionId" {
                     Some(value.to_string())
                 } else {
-                    return Err(Error::S3URI(
+                    return Err(Error::S3Uri(
                         "Unknown query parameter. Only single versionId is allowed".to_string(),
                     ));
                 }
@@ -61,15 +61,15 @@ impl TryFrom<&str> for S3URI {
     }
 }
 
-impl std::str::FromStr for S3URI {
+impl std::str::FromStr for S3Uri {
     type Err = Error;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
-        S3URI::try_from(input)
+        S3Uri::try_from(input)
     }
 }
 
-pub async fn get_object_bytes(uri: &S3URI) -> Result<Vec<u8>, Error> {
+pub async fn get_object_bytes(uri: &S3Uri) -> Result<Vec<u8>, Error> {
     // real impl
     let client = crate::s3_utils::get_client_for_bucket(&uri.bucket).await?;
 
@@ -98,13 +98,13 @@ pub async fn get_object_bytes(uri: &S3URI) -> Result<Vec<u8>, Error> {
     // TODO: fake impl
 }
 
-pub async fn get_object_contents(uri: &S3URI) -> Result<String, Error> {
+pub async fn get_object_contents(uri: &S3Uri) -> Result<String, Error> {
     let bytes = get_object_bytes(uri).await?;
     String::from_utf8(bytes).map_err(|err| Error::Utf8(err.utf8_error()))
 }
 
 pub async fn put_object_contents(
-    uri: &S3URI,
+    uri: &S3Uri,
     contents: impl Into<ByteStream>,
 ) -> Result<(), Error> {
     let client = crate::s3_utils::get_client_for_bucket(&uri.bucket).await?;
@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn test_incorrect_scheme() -> Result<(), Error> {
-        let uri = S3URI::try_from("https://bucket/foo/bar");
+        let uri = S3Uri::try_from("https://bucket/foo/bar");
         assert_eq!(
             uri.unwrap_err().to_string(),
             "Invalid URI scheme: Expected s3:// scheme".to_string(),
@@ -136,7 +136,7 @@ mod tests {
 
     #[test]
     fn test_no_bucket() -> Result<(), Error> {
-        let uri = S3URI::try_from("s3://");
+        let uri = S3Uri::try_from("s3://");
         assert_eq!(
             uri.unwrap_err().to_string(),
             "Invalid S3 URI: missing bucket".to_string(),
@@ -146,10 +146,10 @@ mod tests {
 
     #[test]
     fn test_unversioned_uri() -> Result<(), Error> {
-        let uri = S3URI::try_from("s3://bucket/foo/bar")?;
+        let uri = S3Uri::try_from("s3://bucket/foo/bar")?;
         assert_eq!(
             uri,
-            S3URI {
+            S3Uri {
                 bucket: "bucket".to_string(),
                 key: "foo/bar".to_string(),
                 version: None,
@@ -160,10 +160,10 @@ mod tests {
 
     #[test]
     fn test_versioned() -> Result<(), Error> {
-        let uri = S3URI::try_from("s3://bucket/foo/bar?versionId=abc")?;
+        let uri = S3Uri::try_from("s3://bucket/foo/bar?versionId=abc")?;
         assert_eq!(
             uri,
-            S3URI {
+            S3Uri {
                 bucket: "bucket".to_string(),
                 key: "foo/bar".to_string(),
                 version: Some("abc".to_string()),
@@ -174,7 +174,7 @@ mod tests {
 
     #[test]
     fn test_incorrect_query() -> Result<(), Error> {
-        let uri = S3URI::try_from("s3://bucket/foo/bar?another=query");
+        let uri = S3Uri::try_from("s3://bucket/foo/bar?another=query");
         assert_eq!(
             uri.unwrap_err().to_string(),
             "Invalid S3 URI: Unknown query parameter. Only single versionId is allowed".to_string(),
@@ -184,10 +184,10 @@ mod tests {
 
     #[test]
     fn test_spaces_in_path() -> Result<(), Error> {
-        let uri = S3URI::try_from("s3://bucket/foo  bar?versionId=abc")?;
+        let uri = S3Uri::try_from("s3://bucket/foo  bar?versionId=abc")?;
         assert_eq!(
             uri,
-            S3URI {
+            S3Uri {
                 bucket: "bucket".to_string(),
                 key: "foo  bar".to_string(),
                 version: Some("abc".to_string()),
@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn test_multiple_version_id() -> Result<(), Error> {
-        let uri = S3URI::try_from("s3://bucket/foo  bar?versionId=query&versionId=another");
+        let uri = S3Uri::try_from("s3://bucket/foo  bar?versionId=query&versionId=another");
         assert_eq!(
             uri.unwrap_err().to_string(),
             "Invalid S3 URI: Too many query parameters. Only single versionId is allowed"
@@ -209,10 +209,10 @@ mod tests {
 
     #[test]
     fn test_implicit_parsing() -> Result<(), Error> {
-        let uri: S3URI = "s3://bucket/foo/bar?versionId=abc".parse()?;
+        let uri: S3Uri = "s3://bucket/foo/bar?versionId=abc".parse()?;
         assert_eq!(
             uri,
-            S3URI {
+            S3Uri {
                 bucket: "bucket".to_string(),
                 key: "foo/bar".to_string(),
                 version: Some("abc".to_string()),
