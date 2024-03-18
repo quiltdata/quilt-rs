@@ -43,7 +43,7 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 
 async fn install_package(
     local_domain: &quilt_rs::LocalDomain,
-    uri: &quilt_rs::S3PackageURI,
+    uri: &quilt_rs::S3PackageUri,
     namespace: Option<String>,
 ) -> Result<(quilt_rs::InstalledPackage, String), Error> {
     let namespace = namespace.unwrap_or(uri.namespace.clone());
@@ -105,7 +105,7 @@ pub async fn model(
         uri,
     }: Input,
 ) -> Result<Output, Error> {
-    let uri = quilt_rs::S3PackageURI::try_from(uri.as_str())?;
+    let uri: quilt_rs::S3PackageUri = uri.parse()?;
     let (installed_package, namespace) = install_package(local_domain, &uri, namespace).await?;
     let package_dir = local_domain.working_folder(&namespace);
     let Entries { keys, paths } = get_entries(&package_dir, uri.path, paths);

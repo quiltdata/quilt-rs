@@ -35,12 +35,26 @@ impl TryFrom<&str> for S3Uri {
             .host_str()
             .ok_or(Error::S3Uri("missing bucket".to_string()))?;
         let key = percent_encoding::percent_decode_str(&parsed_url.path()[1..]).decode_utf8()?;
-        let version = parsed_url
-            .query_pairs()
-            .into_owned()
-            .collect::<std::collections::HashMap<_, _>>()
-            .get("version")
-            .cloned();
+        let queries = parsed_url.query_pairs().into_owned().collect::<Vec<_>>();
+        if queries.len() > 1 {
+            return Err(Error::S3Uri(
+                "Too many query parameters. Only single versionId is allowed".to_string(),
+            ));
+        }
+
+        let version = match queries.first() {
+            None => None,
+            Some((key, value)) => {
+                if key == "versionId" {
+                    Some(value.to_string())
+                } else {
+                    return Err(Error::S3Uri(
+                        "Unknown query parameter. Only single versionId is allowed".to_string(),
+                    ));
+                }
+            }
+        };
+
         Ok(Self {
             bucket: bucket.to_string(),
             key: key.to_string(),
@@ -56,6 +70,14 @@ impl fmt::Display for S3Uri {
             "{}",
             make_s3_url(&self.bucket, &self.key, self.version.as_deref())
         )
+    }
+}
+
+impl std::str::FromStr for S3Uri {
+    type Err = Error;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        S3Uri::try_from(input)
     }
 }
 
@@ -124,17 +146,6 @@ pub fn make_s3_url(bucket: &str, s3_key: &str, version_id: Option<&str>) -> Url 
     remote_url
 }
 
-// pub type MemoryBuckets = HashMap<String, MemoryFS>;
-//
-// pub struct FakeS3Storage<'a> {
-//     buckets: &'a MemoryBuckets,
-// }
-//
-// async fn get_object_contents(uri: &S3Uri) -> Result<String, Error> {
-//     // TODO: support versioning?
-//     self.buckets.get(&uri.bucket).ok_or("bucket not found")?.get(&uri.key).ok_or(String::from("key not found")).cloned()
-// }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,7 +186,7 @@ mod tests {
 
     #[test]
     fn test_versioned() -> Result<(), Error> {
-        let uri = S3Uri::try_from("s3://bucket/foo/bar?version=abc")?;
+        let uri = S3Uri::try_from("s3://bucket/foo/bar?versionId=abc")?;
         assert_eq!(
             uri,
             S3Uri {
@@ -189,27 +200,48 @@ mod tests {
 
     #[test]
     fn test_incorrect_query() -> Result<(), Error> {
-        let uri = S3Uri::try_from("s3://bucket/foo/bar?another=query")?;
+        let uri = S3Uri::try_from("s3://bucket/foo/bar?another=query");
         assert_eq!(
-            uri,
-            S3Uri {
-                bucket: "bucket".to_string(),
-                key: "foo/bar".to_string(),
-                version: None,
-            }
+            uri.unwrap_err().to_string(),
+            "Invalid S3 URI: Unknown query parameter. Only single versionId is allowed".to_string(),
         );
         Ok(())
     }
 
     #[test]
     fn test_spaces_in_path() -> Result<(), Error> {
-        let uri = S3Uri::try_from("s3://bucket/foo  bar?another=query")?;
+        let uri = S3Uri::try_from("s3://bucket/foo  bar?versionId=abc")?;
         assert_eq!(
             uri,
             S3Uri {
                 bucket: "bucket".to_string(),
                 key: "foo  bar".to_string(),
-                version: None,
+                version: Some("abc".to_string()),
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_multiple_version_id() -> Result<(), Error> {
+        let uri = S3Uri::try_from("s3://bucket/foo  bar?versionId=query&versionId=another");
+        assert_eq!(
+            uri.unwrap_err().to_string(),
+            "Invalid S3 URI: Too many query parameters. Only single versionId is allowed"
+                .to_string(),
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_implicit_parsing() -> Result<(), Error> {
+        let uri: S3Uri = "s3://bucket/foo/bar?versionId=abc".parse()?;
+        assert_eq!(
+            uri,
+            S3Uri {
+                bucket: "bucket".to_string(),
+                key: "foo/bar".to_string(),
+                version: Some("abc".to_string()),
             }
         );
         Ok(())
