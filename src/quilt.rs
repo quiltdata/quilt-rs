@@ -140,10 +140,10 @@ impl RemoteManifest {
             version: None,
         };
 
-        s3uri.put_contents(Manifest::from(table).to_jsonlines().as_bytes().to_vec()).await
+        s3uri
+            .put_contents(Manifest::from(table).to_jsonlines().as_bytes().to_vec())
+            .await
     }
-
-
 }
 
 impl From<&RemoteManifest> for s3::S3Uri {
