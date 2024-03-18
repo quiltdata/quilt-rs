@@ -40,7 +40,7 @@ pub use self::{
     lineage::{CommitState, DomainLineage, PackageLineage, PathState},
     manifest::{ContentHash, Manifest, ManifestHeader, ManifestRow},
     storage::{fs, s3},
-    uri::{RevisionPointer, S3PackageURI},
+    uri::{RevisionPointer, S3PackageUri},
 };
 
 const MANIFEST_DIR: &str = ".quilt/packages";
@@ -75,7 +75,7 @@ pub struct RemoteManifest {
 }
 
 impl RemoteManifest {
-    pub async fn resolve(uri: &S3PackageURI) -> Result<Self, Error> {
+    pub async fn resolve(uri: &S3PackageUri) -> Result<Self, Error> {
         // resolve the actual hash
         let top_hash = match &uri.revision {
             RevisionPointer::Hash(top_hash) => top_hash.clone(),
@@ -146,8 +146,8 @@ struct S3Domain {
     bucket: String,
 }
 
-impl From<&S3PackageURI> for S3Domain {
-    fn from(uri: &S3PackageURI) -> Self {
+impl From<&S3PackageUri> for S3Domain {
+    fn from(uri: &S3PackageUri) -> Self {
         Self {
             bucket: uri.bucket.clone(),
         }
@@ -305,7 +305,7 @@ impl LocalDomain {
         self.cache_remote_manifest(remote).await?.read().await
     }
 
-    pub async fn browse_uri(&self, uri: &S3PackageURI) -> Result<Table, Error> {
+    pub async fn browse_uri(&self, uri: &S3PackageUri) -> Result<Table, Error> {
         // resolve uri to the manifest location and hash
         let remote_manifest = RemoteManifest::resolve(uri).await?;
         self.browse_remote_manifest(&remote_manifest).await
@@ -423,7 +423,7 @@ impl LocalDomain {
     pub async fn package_s3_prefix(
         &self,
         uri: &s3::S3Uri,
-        target_uri: S3PackageURI,
+        target_uri: S3PackageUri,
     ) -> Result<(Table, Vec<String>), Error> {
         println!("Source URI: {:?}, target URI: {:?}", uri, target_uri);
         Err(Error::Unimplemented)
@@ -1368,10 +1368,10 @@ mod tests {
         // ## Setup
         let test_uri_string = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
 
-        let test_uri: S3PackageURI = test_uri_string.parse().expect("Failed to parse URI");
+        let test_uri: S3PackageUri = test_uri_string.parse().expect("Failed to parse URI");
         assert_eq!(
             test_uri,
-            S3PackageURI {
+            S3PackageUri {
                 bucket: "udp-spec".into(),
                 namespace: "spec/quiltcore".into(),
                 path: Some("READ ME.md".into()),

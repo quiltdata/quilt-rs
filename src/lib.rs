@@ -11,7 +11,7 @@ pub use quilt4::{
     manifest::Manifest4, row4::Row4, table::Table, upath::UPath, uri::UriParser, uri::UriQuilt,
 };
 
-pub use quilt::{InstalledPackage, LocalDomain, Manifest, RemoteManifest, S3PackageURI};
+pub use quilt::{InstalledPackage, LocalDomain, Manifest, RemoteManifest, S3PackageUri};
 
 use reqwest::header::ToStrError;
 use temp_dir::TempDir;

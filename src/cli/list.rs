@@ -43,7 +43,7 @@ mod tests {
         let temp_dir = TempDir::default();
         let local_path = PathBuf::from(temp_dir.as_ref());
         let local_domain = quilt_rs::LocalDomain::new(local_path);
-        let uri: quilt_rs::S3PackageURI =
+        let uri: quilt_rs::S3PackageUri =
             "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md".parse()?;
         let remote_manifest = quilt_rs::RemoteManifest::resolve(&uri).await?;
         let _ = local_domain.install_package(&remote_manifest).await?;
