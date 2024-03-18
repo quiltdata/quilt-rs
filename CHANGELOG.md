@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## [Unreleased]
+
+* Added command-line interface: `browse`, `install`, `list` and `uninstall` commands
+
 ## [0.5.6] * 2024-03-01
 * Implement multipart uploads and server-side checksums
 * Use sha2-256-chunked hashes for newly added files
