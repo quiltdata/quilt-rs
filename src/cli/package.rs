@@ -1,4 +1,4 @@
-use quilt_rs::{quilt::storage::s3::S3Uri, RemoteManifest, S3PackageUri};
+use quilt_rs::RemoteManifest;
 
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
@@ -36,8 +36,8 @@ pub async fn model(
     local_domain: &quilt_rs::LocalDomain,
     Input { target, uri }: Input,
 ) -> Result<Output, Error> {
-    let uri: S3Uri = uri.parse()?;
-    let target_uri: S3PackageUri = target.parse()?;
+    let uri = uri.parse()?;
+    let target_uri = target.parse()?;
     let remote_manifest = local_domain.package_s3_prefix(&uri, target_uri).await?;
     Ok(Output { remote_manifest })
 }
