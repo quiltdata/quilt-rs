@@ -493,9 +493,7 @@ impl LocalDomain {
         // TODO: TODOs in .expect()
         // TODO: make get_object_attributes() calls concurrently across list_objects() pages
         // XXX: validate prefix
-        let client = crate::s3_utils::get_client_for_bucket(&uri.bucket)
-            .await
-            .expect("TODO");
+        let client = crate::s3_utils::get_client_for_bucket(&uri.bucket).await?;
 
         // FIXME: we need real API to build manifests
         let header = Row4 {
@@ -520,17 +518,20 @@ impl LocalDomain {
             .into_paginator()
             .send();
         while let Some(page) = p.next().await {
-            let page = page.expect("TODO");
-            let page_contents = page.contents.as_ref().expect("TODO");
+            let page = page.map_err(|err| Error::S3(err.to_string()))?;
+            let page_contents_iter = page.contents.iter().flatten();
 
             async fn _get_obj_attrs<'a>(
                 client: aws_sdk_s3::Client,
                 bucket: &str,
                 key: &'a str,
-            ) -> (
-                &'a str,
-                aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput,
-            ) {
+            ) -> Result<
+                (
+                    &'a str,
+                    aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput,
+                ),
+                Error,
+            > {
                 let attrs = client
                     .get_object_attributes()
                     .bucket(bucket)
@@ -541,16 +542,21 @@ impl LocalDomain {
                     .max_parts(10_000) // TODO: use const
                     .send()
                     .await
-                    .expect("TODO");
-                (key, attrs)
+                    .map_err(|err| Error::S3(err.to_string()))?;
+                Ok((key, attrs))
             }
 
-            for (key, attrs) in futures::future::join_all(page_contents.iter().map(|obj| {
-                _get_obj_attrs(client.clone(), &uri.bucket, obj.key.as_ref().expect("TODO"))
+            for (key, attrs) in futures::future::try_join_all(page_contents_iter.map(|obj| {
+                _get_obj_attrs(
+                    client.clone(),
+                    &uri.bucket,
+                    obj.key.as_ref().expect("object key expected to be present"),
+                )
             }))
-            .await
+            .await?
             {
-                if attrs.delete_marker.is_some() && attrs.delete_marker.expect("TODO") {
+                if attrs.delete_marker.is_some() {
+                    assert!(attrs.delete_marker.unwrap());
                     // XXX: do something different?
                     continue;
                 }
@@ -566,9 +572,11 @@ impl LocalDomain {
                         place: s3::make_s3_url(&uri.bucket, key, attrs.version_id.as_deref())
                             .into(),
                         path: None, // WTF is this?
-                        // This shouldn't be empty because we requested it
                         // XXX: can we use `as u64` safely here?
-                        size: attrs.object_size.expect("TODO") as u64,
+                        size: attrs
+                            .object_size
+                            .expect("object_size is expected because it was requested")
+                            as u64,
                         hash,
                         info: serde_json::Value::Null, // XXX: is this right?
                         meta: serde_json::Value::Null, // XXX: is this right?
