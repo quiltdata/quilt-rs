@@ -132,6 +132,18 @@ impl RemoteManifest {
 
         s3uri.put_contents(body).await
     }
+
+    async fn upload_legacy(&self, table: &Table) -> Result<(), Error> {
+        let s3uri = s3::S3Uri {
+            bucket: self.bucket.clone(),
+            key: format!("{MANIFEST_DIR}/{}", self.hash),
+            version: None,
+        };
+
+        s3uri.put_contents(Manifest::from(table).to_jsonlines().as_bytes().to_vec()).await
+    }
+
+
 }
 
 impl From<&RemoteManifest> for s3::S3Uri {
@@ -576,8 +588,8 @@ impl LocalDomain {
         let cache_path = self
             .cache_manifest(&table, &new_remote.bucket, &new_remote.hash)
             .await?;
-        // FIXME: write legacy template as push does?
         new_remote.upload_from(&cache_path).await?;
+        new_remote.upload_legacy(&table).await?;
         let top_hash = table.top_hash();
         new_remote
             .put_timestamp_tag(chrono::Utc::now(), &top_hash)
@@ -1291,46 +1303,7 @@ impl InstalledPackage {
         new_remote.upload_from(&cache_path).await?;
 
         // Upload a quilt3 manifest for backward compatibility.
-        let quilt3_manifest = Manifest {
-            header: ManifestHeader {
-                version: "v0".into(),
-                message: local_manifest
-                    .header
-                    .info
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string()),
-                user_meta: local_manifest.header.meta.as_object().cloned(),
-            },
-            rows: local_manifest
-                .records
-                .values()
-                .map(|row| {
-                    let mut meta = match row.info.as_object() {
-                        Some(meta) => meta.clone(),
-                        None => serde_json::Map::default(),
-                    };
-                    if row.meta.is_object() {
-                        meta.insert("user_meta".into(), row.meta.clone());
-                    }
-                    ManifestRow {
-                        logical_key: row.name.clone(),
-                        physical_key: row.place.clone(),
-                        hash: row.hash.try_into().unwrap(), // TODO: Why doesn't "?" work here???
-                        size: row.size,
-                        meta: Some(meta),
-                    }
-                })
-                .collect(),
-        };
-        client
-            .put_object()
-            .bucket(&new_remote.bucket)
-            .key(format!("{MANIFEST_DIR}/{}", &new_remote.hash))
-            .body(quilt3_manifest.to_jsonlines().as_bytes().to_vec().into())
-            .send()
-            .await
-            .map_err(|err| Error::S3(err.to_string()))?;
+        new_remote.upload_legacy(&local_manifest).await?;
 
         println!("uploaded remote manifest: {new_remote:?}");
 
