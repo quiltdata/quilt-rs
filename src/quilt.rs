@@ -53,6 +53,7 @@ const LINEAGE_FILE: &str = ".quilt/data.json";
 const INSTALLED_DIR: &str = ".quilt/installed";
 
 const MULTIPART_THRESHOLD: u64 = checksum::MULTIPART_THRESHOLD;
+const MPU_MAX_PARTS: i32 = 10_000;
 
 pub fn tag_key(namespace: &str, tag: &str) -> String {
     format!("{TAGS_DIR}/{namespace}/{tag}")
@@ -490,9 +491,8 @@ impl LocalDomain {
         target_uri: S3PackageUri,
     ) -> Result<RemoteManifest, Error> {
         println!("Source URI: {:?}, target URI: {:?}", uri, target_uri);
-        // TODO: TODOs in .expect()
         // TODO: make get_object_attributes() calls concurrently across list_objects() pages
-        // XXX: validate prefix
+        // TODO: validate prefix
         let client = crate::s3_utils::get_client_for_bucket(&uri.bucket).await?;
 
         // FIXME: we need real API to build manifests
@@ -503,8 +503,8 @@ impl LocalDomain {
             size: 0,
             hash: Multihash::default(),
             info: serde_json::json!({
-                "message": "TODO: ???",
-                "version": "TODO: ???",
+                "message": serde_json::Value::Null, // TODO: commit message?
+                "version": "v0", // XXX: is this correct?
             }),
             meta: serde_json::Value::Null, // TODO: accept user meta?
         };
@@ -539,7 +539,7 @@ impl LocalDomain {
                     .object_attributes(aws_sdk_s3::types::ObjectAttributes::Checksum)
                     .object_attributes(aws_sdk_s3::types::ObjectAttributes::ObjectParts)
                     .object_attributes(aws_sdk_s3::types::ObjectAttributes::ObjectSize)
-                    .max_parts(10_000) // TODO: use const
+                    .max_parts(MPU_MAX_PARTS)
                     .send()
                     .await
                     .map_err(|err| Error::S3(err.to_string()))?;
@@ -555,9 +555,9 @@ impl LocalDomain {
             }))
             .await?
             {
+                // Can happen if object is removed after it was listed but before attributes retrieved.
                 if attrs.delete_marker.is_some() {
                     assert!(attrs.delete_marker.unwrap());
-                    // XXX: do something different?
                     continue;
                 }
                 let name = &key[prefix_len..];
@@ -591,7 +591,6 @@ impl LocalDomain {
             namespace: target_uri.namespace,
             hash: table.top_hash(),
         };
-        // FIXME: we need real API to push manifest to S3 without copying files
         let cache_path = self
             .cache_manifest(&table, &new_remote.bucket, &new_remote.hash)
             .await?;
