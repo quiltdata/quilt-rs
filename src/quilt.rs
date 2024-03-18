@@ -236,8 +236,7 @@ impl LocalDomain {
         bucket: &str,
         hash: &str,
     ) -> Result<PathBuf, ArrowError> {
-        let cache_path = self.root_dir.join(MANIFEST_DIR).join(bucket).join(hash);
-        // TODO: who is responsible for this?
+        let cache_path = self.manifest_cache_path(bucket, hash);
         create_dir_all(&cache_path.parent().unwrap()).await?;
         manifest
             .write_to_upath(&UPath::Local(cache_path.clone()))
