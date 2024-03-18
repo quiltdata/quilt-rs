@@ -127,16 +127,18 @@ impl RemoteManifest {
     async fn upload_from(&self, manifest_path: &PathBuf) -> Result<(), Error> {
         // TODO: FAIL if the manifest with this hash already exists?
         let body = ByteStream::from_path(manifest_path).await?;
-        let s3uri = self.as_s3_uri();
+        let s3uri = s3::S3Uri::from(self);
         println!("writing remote manifest to {}", s3uri.key);
 
         s3uri.put_contents(body).await
     }
+}
 
-    pub fn as_s3_uri(&self) -> s3::S3Uri {
+impl From<&RemoteManifest> for s3::S3Uri {
+    fn from(remote: &RemoteManifest) -> s3::S3Uri {
         s3::S3Uri {
-            bucket: self.bucket.clone(),
-            key: get_manifest_key(&self.hash),
+            bucket: remote.bucket.clone(),
+            key: get_manifest_key(&remote.hash),
             version: None,
         }
     }
