@@ -11,7 +11,7 @@ pub use quilt4::{
     manifest::Manifest4, row4::Row4, table::Table, upath::UPath, uri::UriParser, uri::UriQuilt,
 };
 
-pub use quilt::{InstalledPackage, LocalDomain, Manifest, RemoteManifest, S3PackageURI};
+pub use quilt::{InstalledPackage, LocalDomain, Manifest, RemoteManifest, S3PackageUri};
 
 use reqwest::header::ToStrError;
 use temp_dir::TempDir;
@@ -38,6 +38,9 @@ pub enum Error {
     /// uses generic error types that are difficult to work with for downstream users.
     #[error("S3 error: {0}")]
     S3(String),
+
+    #[error("Invalid S3 URI: {0}")]
+    S3Uri(String),
 
     #[error("Arrow error: {0}")]
     Arrow(#[from] arrow::error::ArrowError),
@@ -104,6 +107,9 @@ pub enum Error {
 
     #[error("ByteStreamError: {0}")]
     ByteStreamError(#[from] byte_stream::error::Error),
+
+    #[error("Unimplemented")]
+    Unimplemented,
 }
 
 pub async fn install_temporarily(

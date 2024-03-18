@@ -40,7 +40,7 @@ pub use self::{
     lineage::{CommitState, DomainLineage, PackageLineage, PathState},
     manifest::{ContentHash, Manifest, ManifestHeader, ManifestRow},
     storage::{fs, s3},
-    uri::{RevisionPointer, S3PackageURI},
+    uri::{RevisionPointer, S3PackageUri},
 };
 
 const MANIFEST_DIR: &str = ".quilt/packages";
@@ -75,7 +75,7 @@ pub struct RemoteManifest {
 }
 
 impl RemoteManifest {
-    pub async fn resolve(uri: &S3PackageURI) -> Result<Self, Error> {
+    pub async fn resolve(uri: &S3PackageUri) -> Result<Self, Error> {
         // resolve the actual hash
         let top_hash = match &uri.revision {
             RevisionPointer::Hash(top_hash) => top_hash.clone(),
@@ -146,8 +146,8 @@ struct S3Domain {
     bucket: String,
 }
 
-impl From<&S3PackageURI> for S3Domain {
-    fn from(uri: &S3PackageURI) -> Self {
+impl From<&S3PackageUri> for S3Domain {
+    fn from(uri: &S3PackageUri) -> Self {
         Self {
             bucket: uri.bucket.clone(),
         }
@@ -305,7 +305,7 @@ impl LocalDomain {
         self.cache_remote_manifest(remote).await?.read().await
     }
 
-    pub async fn browse_uri(&self, uri: &S3PackageURI) -> Result<Table, Error> {
+    pub async fn browse_uri(&self, uri: &S3PackageUri) -> Result<Table, Error> {
         // resolve uri to the manifest location and hash
         let remote_manifest = RemoteManifest::resolve(uri).await?;
         self.browse_remote_manifest(&remote_manifest).await
@@ -418,6 +418,15 @@ impl LocalDomain {
         } else {
             Ok(None)
         }
+    }
+
+    pub async fn package_s3_prefix(
+        &self,
+        uri: &s3::S3Uri,
+        target_uri: S3PackageUri,
+    ) -> Result<(Table, Vec<String>), Error> {
+        println!("Source URI: {:?}, target URI: {:?}", uri, target_uri);
+        Err(Error::Unimplemented)
     }
 }
 
@@ -713,32 +722,25 @@ impl InstalledPackage {
                 .get_mut(path)
                 .ok_or(Error::Table(format!("path {} not found", path)))?;
 
-            let parsed_url = Url::parse(&row.place)?;
-            if parsed_url.scheme() != "s3" {
-                return Err(Error::InvalidScheme("expected s3 scheme".to_string()));
-            }
-            let bucket = parsed_url
-                .host_str()
-                .ok_or(Error::PackageURI("missing bucket in s3 URL".to_string()))?;
-            let key =
-                percent_encoding::percent_decode_str(&parsed_url.path()[1..]).decode_utf8()?;
-            let query: HashMap<_, _> = parsed_url.query_pairs().into_owned().collect();
-            let version_id = query
-                .get("versionId")
-                .ok_or(Error::PackageURI("missing versionId in s3 URL".to_string()))?;
+            let s3::S3Uri {
+                bucket,
+                key,
+                version,
+            } = row.place.parse()?;
+            let version = version.ok_or(Error::S3Uri("missing versionId in s3 URL".to_string()))?;
 
             let object_dest = objects_dir.join(hex::encode(row.hash.digest()));
 
             if !fs::exists(&object_dest).await {
                 let mut file = File::create(&object_dest).await?;
 
-                let client = s3_utils::get_client_for_bucket(bucket).await?;
+                let client = s3_utils::get_client_for_bucket(&bucket).await?;
 
                 let mut object = client
                     .get_object()
                     .bucket(bucket)
                     .key(key)
-                    .version_id(version_id)
+                    .version_id(version)
                     .send()
                     .await
                     .map_err(|err| Error::S3(format!("failed to get S3 object: {}", err)))?;
@@ -1366,10 +1368,10 @@ mod tests {
         // ## Setup
         let test_uri_string = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
 
-        let test_uri = S3PackageURI::try_from(test_uri_string).expect("Failed to parse URI");
+        let test_uri: S3PackageUri = test_uri_string.parse().expect("Failed to parse URI");
         assert_eq!(
             test_uri,
-            S3PackageURI {
+            S3PackageUri {
                 bucket: "udp-spec".into(),
                 namespace: "spec/quiltcore".into(),
                 path: Some("READ ME.md".into()),
