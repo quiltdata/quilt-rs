@@ -1,8 +1,12 @@
+use mockall::predicate::*;
+use mockall::*;
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use multihash::Multihash;
 use serde::{de::Error as DeserializeError, Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::quilt::storage::fs;
 use crate::Error;
 
 use super::RemoteManifest;
@@ -79,6 +83,94 @@ impl TryFrom<&str> for DomainLineage {
 
     fn try_from(input: &str) -> Result<Self, Self::Error> {
         serde_json::from_str(input).map_err(Error::LineageParse)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DomainLineageIo {
+    path: PathBuf,
+}
+
+#[automock]
+pub trait ReadableLineage {
+    fn get_path(&self) -> &PathBuf;
+
+    fn read(&self) -> impl std::future::Future<Output = Result<DomainLineage, Error>> + Send;
+
+    fn write(
+        &self,
+        new_lineage: &DomainLineage,
+    ) -> impl std::future::Future<Output = Result<(), Error>> + Send;
+}
+
+impl ReadableLineage for DomainLineageIo {
+    fn get_path(&self) -> &PathBuf {
+        &self.path
+    }
+
+    async fn read(&self) -> Result<DomainLineage, Error> {
+        let lineage_path = self.get_path();
+        let contents = fs::read_to_string(&lineage_path).await.or_else(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                Ok("{}".into())
+            } else {
+                Err(err)
+            }
+        })?;
+
+        DomainLineage::try_from(&contents[..])
+    }
+
+    async fn write(&self, new_lineage: &DomainLineage) -> Result<(), Error> {
+        let lineage_path = self.get_path();
+        let contents = serde_json::to_string_pretty(new_lineage)?;
+        fs::write(lineage_path, contents.as_bytes()).await
+    }
+}
+
+impl DomainLineageIo {
+    pub fn new(path: PathBuf) -> Self {
+        DomainLineageIo { path }
+    }
+}
+
+#[cfg(test)]
+pub mod mocks {
+    use super::*;
+
+    async fn from_packages(
+        packages: BTreeMap<String, PackageLineage>,
+    ) -> Result<DomainLineage, Error> {
+        Ok(DomainLineage { packages })
+    }
+
+    fn create_packages(num: u32) -> BTreeMap<String, PackageLineage> {
+        let mut packages = BTreeMap::new();
+        for n in 0..num {
+            packages.insert(
+                format!("foo/bar_{}", n),
+                PackageLineage {
+                    commit: None,
+                    remote: RemoteManifest {
+                        bucket: "foo".to_string(),
+                        namespace: "bar".to_string(),
+                        hash: "abcdef".to_string(),
+                    },
+                    base_hash: "base".to_string(),
+                    latest_hash: "base".to_string(),
+                    paths: BTreeMap::new(),
+                },
+            );
+        }
+        packages
+    }
+
+    pub fn create(number_of_packages: u32) -> MockReadableLineage {
+        let mut lineage_io = MockReadableLineage::new();
+        lineage_io
+            .expect_read()
+            .returning(move || Box::pin(from_packages(create_packages(number_of_packages))));
+        lineage_io
     }
 }
 

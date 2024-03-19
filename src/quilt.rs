@@ -1,5 +1,6 @@
 use std::{
     collections::{hash_map::RandomState, BTreeMap, HashMap, HashSet, VecDeque},
+    fmt,
     path::PathBuf,
 };
 
@@ -37,7 +38,9 @@ use crate::{
 use self::manifest::{MULTIHASH_SHA256, MULTIHASH_SHA256_CHUNKED};
 pub use self::{
     // context::Context,
-    lineage::{CommitState, DomainLineage, PackageLineage, PathState},
+    lineage::{
+        CommitState, DomainLineage, DomainLineageIo, PackageLineage, PathState, ReadableLineage,
+    },
     manifest::{ContentHash, Manifest, ManifestHeader, ManifestRow},
     storage::{fs, s3},
     uri::{RevisionPointer, S3PackageUri},
@@ -161,11 +164,15 @@ impl From<&S3PackageUri> for S3Domain {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalDomain {
     root_dir: PathBuf,
+    pub lineage_io: DomainLineageIo,
 }
 
 impl LocalDomain {
     pub fn new(root_dir: PathBuf) -> Self {
-        Self { root_dir }
+        Self {
+            lineage_io: DomainLineageIo::new(root_dir.join(LINEAGE_FILE)),
+            root_dir,
+        }
     }
 
     pub fn make_cached_manifest(
@@ -189,22 +196,11 @@ impl LocalDomain {
     }
 
     pub async fn read_lineage(&self) -> Result<DomainLineage, Error> {
-        let lineage_path = self.root_dir.join(LINEAGE_FILE);
-        let contents = fs::read_to_string(&lineage_path).await.or_else(|err| {
-            if err.kind() == std::io::ErrorKind::NotFound {
-                Ok("{}".into())
-            } else {
-                Err(err)
-            }
-        })?;
-
-        DomainLineage::try_from(&contents[..])
+        self.lineage_io.read().await
     }
 
     pub async fn write_lineage(&self, lineage: &DomainLineage) -> Result<(), Error> {
-        let lineage_path = self.root_dir.join(LINEAGE_FILE);
-        let contents = serde_json::to_string_pretty(lineage)?;
-        fs::write(lineage_path, contents.as_bytes()).await
+        self.lineage_io.write(lineage).await
     }
 
     pub async fn cache_remote_manifest(
@@ -325,10 +321,11 @@ impl LocalDomain {
 
     pub async fn install_package(
         &self,
+        lineage_io: &impl ReadableLineage,
         remote: &RemoteManifest,
     ) -> Result<InstalledPackage, Error> {
         // Read the lineage
-        let lineage: DomainLineage = self.read_lineage().await?;
+        let lineage: DomainLineage = lineage_io.read().await?;
 
         // bail if already installed
         // TODO: if compatible (same remote), just return the installed package
@@ -363,7 +360,7 @@ impl LocalDomain {
             remote.namespace.clone(),
             PackageLineage::from_remote(remote.to_owned(), latest_hash),
         );
-        self.write_lineage(&lineage).await?;
+        self.lineage_io.write(&lineage).await?;
 
         // Create the package.
         Ok(InstalledPackage {
@@ -395,8 +392,11 @@ impl LocalDomain {
         Ok(())
     }
 
-    pub async fn list_installed_packages(&self) -> Result<Vec<InstalledPackage>, Error> {
-        let lineage = self.read_lineage().await?;
+    pub async fn list_installed_packages(
+        &self,
+        lineage_io: &impl ReadableLineage,
+    ) -> Result<Vec<InstalledPackage>, Error> {
+        let lineage = lineage_io.read().await?;
         let mut namespaces: Vec<String> = lineage.packages.into_keys().collect();
         namespaces.sort();
         let packages = namespaces
@@ -1344,6 +1344,12 @@ impl InstalledPackage {
     }
 }
 
+impl fmt::Display for InstalledPackage {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "InstalledPackage<{}>", self.namespace)
+    }
+}
+
 // a conflict is identified by the identifiers of the two conflicting manifests
 #[derive(Debug, PartialEq)]
 pub struct Conflict {
@@ -1366,8 +1372,17 @@ mod tests {
             .to_string()
     }
 
-    #[test]
-    fn test_cached_manifest() {}
+    #[tokio::test]
+    async fn test_list_installed_packages() -> Result<(), Error> {
+        let lineage_io = lineage::mocks::create(1);
+        let local_domain = LocalDomain::new(PathBuf::new());
+        let list = local_domain.list_installed_packages(&lineage_io).await?;
+        assert_eq!(
+            format!("{}", list.first().unwrap()),
+            "InstalledPackage<foo/bar_0>".to_string()
+        );
+        Ok(())
+    }
 
     #[test]
     #[ignore]
@@ -1421,8 +1436,9 @@ mod tests {
         // creates install folder and Lineages it to remote_package_uri
 
         let paths = vec![test_uri.path.unwrap()];
-        let installed_package = block_on(local_domain.install_package(&remote_manifest))
-            .expect("Failed to install package");
+        let installed_package =
+            block_on(local_domain.install_package(&local_domain.lineage_io, &remote_manifest))
+                .expect("Failed to install package");
         block_on(installed_package.install_paths(&paths)).expect("Failed to install paths");
 
         // Can only install it once.

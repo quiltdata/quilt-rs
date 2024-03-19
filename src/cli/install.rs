@@ -54,7 +54,9 @@ async fn install_package(
     }
     let remote_manifest = quilt_rs::RemoteManifest::resolve(uri).await?;
     Ok((
-        local_domain.install_package(&remote_manifest).await?,
+        local_domain
+            .install_package(&local_domain.lineage_io, &remote_manifest)
+            .await?,
         namespace,
     ))
 }

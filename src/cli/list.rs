@@ -1,3 +1,5 @@
+use std::fmt;
+
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
 use crate::cli::Error;
@@ -6,14 +8,14 @@ pub struct Output {
     installed_packages_list: Vec<quilt_rs::InstalledPackage>,
 }
 
-impl std::fmt::Display for Output {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for Output {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.installed_packages_list.is_empty() {
             return write!(f, "No installed packages");
         }
         let mut output: Vec<String> = Vec::new();
         for installed_package in &self.installed_packages_list {
-            output.push(format!("InstalledPackage<{}>", installed_package.namespace));
+            output.push(installed_package.to_string());
         }
         write!(f, "{}", output.join("\n"))
     }
@@ -28,7 +30,9 @@ pub async fn command(m: impl Commands) -> Std {
 
 pub async fn model(local_domain: &quilt_rs::LocalDomain) -> Result<Output, Error> {
     Ok(Output {
-        installed_packages_list: local_domain.list_installed_packages().await?,
+        installed_packages_list: local_domain
+            .list_installed_packages(&local_domain.lineage_io)
+            .await?,
     })
 }
 
@@ -46,7 +50,9 @@ mod tests {
         let uri: quilt_rs::S3PackageUri =
             "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md".parse()?;
         let remote_manifest = quilt_rs::RemoteManifest::resolve(&uri).await?;
-        let _ = local_domain.install_package(&remote_manifest).await?;
+        let _ = local_domain
+            .install_package(&local_domain.lineage_io, &remote_manifest)
+            .await?;
         let output = model(&local_domain).await?;
         assert_eq!(
             output.installed_packages_list[0].namespace,

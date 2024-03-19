@@ -126,7 +126,7 @@ pub async fn install_temporarily(
     };
     tracing::info!("remote_manifest: {:?}", remote_manifest);
 
-    let result = loc.install_package(&remote_manifest).await;
+    let result = loc.install_package(&loc.lineage_io, &remote_manifest).await;
     tracing::info!("result: {:?}", result);
     result
 }
@@ -139,7 +139,7 @@ pub async fn installed_packages(dir: Option<String>) -> Result<Vec<InstalledPack
     let local_domain = LocalDomain::new(path_buf);
     println!("local_domain: {:?}", local_domain);
     let installed_packages = local_domain
-        .list_installed_packages()
+        .list_installed_packages(&local_domain.lineage_io)
         .await
         .expect("Failed to list installed packages");
     Ok(installed_packages)
