@@ -28,7 +28,7 @@ pub trait Commands {
 
     async fn list(&self) -> Result<list::Output, Error> {
         let local_domain = &self.get_local_domain().lock().await;
-        list::model(local_domain).await
+        list::model(local_domain, &local_domain.lineage_io).await
     }
 
     async fn package(&self, args: package::Input) -> Result<package::Output, Error> {

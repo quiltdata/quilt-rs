@@ -134,7 +134,6 @@ impl DomainLineageIo {
     }
 }
 
-#[cfg(test)]
 pub mod mocks {
     use super::*;
 

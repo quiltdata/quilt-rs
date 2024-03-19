@@ -1,5 +1,7 @@
 use std::fmt;
 
+use quilt_rs::quilt::lineage;
+
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
 use crate::cli::Error;
@@ -28,11 +30,12 @@ pub async fn command(m: impl Commands) -> Std {
     }
 }
 
-pub async fn model(local_domain: &quilt_rs::LocalDomain) -> Result<Output, Error> {
+pub async fn model(
+    local_domain: &quilt_rs::LocalDomain,
+    lineage_io: &impl lineage::ReadableLineage,
+) -> Result<Output, Error> {
     Ok(Output {
-        installed_packages_list: local_domain
-            .list_installed_packages(&local_domain.lineage_io)
-            .await?,
+        installed_packages_list: local_domain.list_installed_packages(lineage_io).await?,
     })
 }
 
@@ -40,24 +43,13 @@ pub async fn model(local_domain: &quilt_rs::LocalDomain) -> Result<Output, Error
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    use temp_testdir::TempDir;
 
     #[tokio::test]
     async fn list() -> Result<(), Error> {
-        let temp_dir = TempDir::default();
-        let local_path = PathBuf::from(temp_dir.as_ref());
-        let local_domain = quilt_rs::LocalDomain::new(local_path);
-        let uri: quilt_rs::S3PackageUri =
-            "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md".parse()?;
-        let remote_manifest = quilt_rs::RemoteManifest::resolve(&uri).await?;
-        let _ = local_domain
-            .install_package(&local_domain.lineage_io, &remote_manifest)
-            .await?;
-        let output = model(&local_domain).await?;
-        assert_eq!(
-            output.installed_packages_list[0].namespace,
-            "spec/quiltcore"
-        );
+        let lineage_io = lineage::mocks::create(1);
+        let local_domain = quilt_rs::LocalDomain::new(PathBuf::new());
+        let output = model(&local_domain, &lineage_io).await?;
+        assert_eq!(output.installed_packages_list[0].namespace, "foo/bar_0");
         Ok(())
     }
 }
