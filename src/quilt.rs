@@ -109,19 +109,15 @@ impl RemoteManifest {
     }
 }
 
-pub trait ReadableManifest {
-    fn read(&self) -> impl std::future::Future<Output = Result<Table, Error>> + Send;
-}
-
 #[derive(Debug, PartialEq, Eq)]
 pub struct CachedManifest {
-    domain: LocalDomain,
-    bucket: String,
-    hash: String,
+    pub domain: LocalDomain,
+    pub bucket: String,
+    pub hash: String,
 }
 
-impl ReadableManifest for CachedManifest {
-    async fn read(&self) -> Result<Table, Error> {
+impl CachedManifest {
+    pub async fn read(&self) -> Result<Table, Error> {
         let pathbuf = self.domain.manifest_cache_path(&self.bucket, &self.hash);
         let path = UPath::Local(pathbuf);
         let table = Table::read_from_upath(&path).await?;
@@ -131,12 +127,12 @@ impl ReadableManifest for CachedManifest {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct InstalledManifest {
-    package: InstalledPackage,
-    hash: String,
+    pub package: InstalledPackage,
+    pub hash: String,
 }
 
-impl ReadableManifest for InstalledManifest {
-    async fn read(&self) -> Result<Table, Error> {
+impl InstalledManifest {
+    pub async fn read(&self) -> Result<Table, Error> {
         let pathbuf = self
             .package
             .domain
@@ -179,7 +175,7 @@ impl LocalDomain {
         &self,
         bucket: impl AsRef<str>,
         hash: impl AsRef<str>,
-    ) -> impl ReadableManifest {
+    ) -> CachedManifest {
         CachedManifest {
             domain: self.clone(),
             bucket: String::from(bucket.as_ref()),
@@ -206,7 +202,7 @@ impl LocalDomain {
     pub async fn cache_remote_manifest(
         &self,
         manifest: &RemoteManifest,
-    ) -> Result<impl ReadableManifest, Error> {
+    ) -> Result<CachedManifest, Error> {
         // check if the manifest is already cached
         // if not, download and cache it
         // return cached manifest
@@ -540,14 +536,14 @@ impl InstalledPackage {
         self.lineage().await.map(|l| l.paths.into_keys().collect())
     }
 
-    pub fn make_installed_manifest(&self, hash: &str) -> impl ReadableManifest {
+    pub fn make_installed_manifest(&self, hash: impl AsRef<str>) -> InstalledManifest {
         InstalledManifest {
             package: self.to_owned(),
-            hash: String::from(hash),
+            hash: String::from(hash.as_ref()),
         }
     }
 
-    pub async fn manifest(&self) -> Result<impl ReadableManifest, Error> {
+    pub async fn manifest(&self) -> Result<InstalledManifest, Error> {
         // read recorded hash
         // get installed manifest
         self.lineage()
