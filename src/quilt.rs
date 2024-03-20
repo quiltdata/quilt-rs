@@ -238,16 +238,16 @@ impl ReadableManifest for CachedManifest {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct InstalledManifest {
-    package: InstalledPackage,
+    dirs: DomainDirs,
     hash: String,
+    namespace: String,
 }
 
 impl ReadableManifest for InstalledManifest {
     async fn read(&self) -> Result<Table, Error> {
         let pathbuf = self
-            .package
             .dirs
-            .installed_manifest_path(&self.package.namespace, &self.hash);
+            .installed_manifest_path(&self.namespace, &self.hash);
         let path = UPath::Local(pathbuf);
         let table = Table::read_from_upath(&path).await?;
         Ok(table)
@@ -758,8 +758,9 @@ impl InstalledPackage {
 
     pub fn make_installed_manifest(&self, hash: &str) -> impl ReadableManifest {
         InstalledManifest {
-            package: self.to_owned(),
+            dirs: self.dirs.clone(),
             hash: String::from(hash),
+            namespace: self.namespace.clone(),
         }
     }
 
