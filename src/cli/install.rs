@@ -107,7 +107,7 @@ pub async fn model(
 ) -> Result<Output, Error> {
     let uri: quilt_rs::S3PackageUri = uri.parse()?;
     let (installed_package, namespace) = install_package(local_domain, &uri, namespace).await?;
-    let package_dir = local_domain.working_folder(&namespace);
+    let package_dir = local_domain.dirs.working_folder(&namespace);
     let Entries { keys, paths } = get_entries(&package_dir, uri.path, paths);
 
     if let Some(keys) = keys {

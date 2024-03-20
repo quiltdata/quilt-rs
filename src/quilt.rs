@@ -51,6 +51,41 @@ const OBJECTS_DIR: &str = ".quilt/objects";
 const LINEAGE_FILE: &str = ".quilt/data.json";
 const INSTALLED_DIR: &str = ".quilt/installed";
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DomainDirs {
+    root_dir: PathBuf,
+}
+
+impl DomainDirs {
+    pub fn new(root_dir: PathBuf) -> Self {
+        DomainDirs { root_dir }
+    }
+
+    pub fn installed_manifest_path(&self, namespace: &str, hash: &str) -> PathBuf {
+        self.installed_manifests_path(namespace).join(hash)
+    }
+
+    pub fn installed_manifests_path(&self, namespace: &str) -> PathBuf {
+        self.root_dir.join(INSTALLED_DIR).join(namespace)
+    }
+
+    pub fn lineage_path(&self) -> PathBuf {
+        self.root_dir.join(LINEAGE_FILE)
+    }
+
+    pub fn manifest_cache_path(&self, bucket: &str, hash: &str) -> PathBuf {
+        self.root_dir.join(MANIFEST_DIR).join(bucket).join(hash)
+    }
+
+    pub fn objects_dir_path(&self) -> PathBuf {
+        self.root_dir.join(OBJECTS_DIR)
+    }
+
+    pub fn working_folder(&self, namespace: &str) -> PathBuf {
+        self.root_dir.join(namespace)
+    }
+}
+
 pub fn tag_key(namespace: &str, tag: &str) -> String {
     format!("{TAGS_DIR}/{namespace}/{tag}")
 }
@@ -166,7 +201,7 @@ pub struct CachedManifest {
 
 impl ReadableManifest for CachedManifest {
     async fn read(&self) -> Result<Table, Error> {
-        let pathbuf = self.domain.manifest_cache_path(&self.bucket, &self.hash);
+        let pathbuf = self.domain.dirs.manifest_cache_path(&self.bucket, &self.hash);
         let path = UPath::Local(pathbuf);
         let table = Table::read_from_upath(&path).await?;
         Ok(table)
@@ -184,6 +219,7 @@ impl ReadableManifest for InstalledManifest {
         let pathbuf = self
             .package
             .domain
+            .dirs
             .installed_manifest_path(&self.package.namespace, &self.hash);
         let path = UPath::Local(pathbuf);
         let table = Table::read_from_upath(&path).await?;
@@ -207,12 +243,14 @@ impl From<&S3PackageUri> for S3Domain {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalDomain {
-    root_dir: PathBuf,
+    pub dirs: DomainDirs,
 }
 
 impl LocalDomain {
     pub fn new(root_dir: PathBuf) -> Self {
-        Self { root_dir }
+        Self {
+            dirs: DomainDirs::new(root_dir.clone()),
+        }
     }
 
     async fn copy_cached_to_installed(
@@ -222,8 +260,8 @@ impl LocalDomain {
         hash: &str,
     ) -> Result<(), Error> {
         tokio::fs::copy(
-            self.manifest_cache_path(cached_manifest_bucket, hash),
-            self.installed_manifest_path(installed_manifest_namespace, hash),
+            self.dirs.manifest_cache_path(cached_manifest_bucket, hash),
+            self.dirs.installed_manifest_path(installed_manifest_namespace, hash),
         )
         .await?;
         Ok(())
@@ -241,17 +279,13 @@ impl LocalDomain {
         }
     }
 
-    pub fn manifest_cache_path(&self, bucket: &str, hash: &str) -> PathBuf {
-        self.root_dir.join(MANIFEST_DIR).join(bucket).join(hash)
-    }
-
     pub async fn cache_manifest(
         &self,
         manifest: &Table,
         bucket: &str,
         hash: &str,
     ) -> Result<PathBuf, ArrowError> {
-        let cache_path = self.manifest_cache_path(bucket, hash);
+        let cache_path = self.dirs.manifest_cache_path(bucket, hash);
         create_dir_all(&cache_path.parent().unwrap()).await?;
         manifest
             .write_to_upath(&UPath::Local(cache_path.clone()))
@@ -259,12 +293,8 @@ impl LocalDomain {
             .map(|_| cache_path)
     }
 
-    pub fn working_folder(&self, namespace: &str) -> PathBuf {
-        self.root_dir.join(namespace)
-    }
-
     pub async fn read_lineage(&self) -> Result<DomainLineage, Error> {
-        let lineage_path = self.root_dir.join(LINEAGE_FILE);
+        let lineage_path = self.dirs.lineage_path();
         let contents = fs::read_to_string(&lineage_path).await.or_else(|err| {
             if err.kind() == std::io::ErrorKind::NotFound {
                 Ok("{}".into())
@@ -277,7 +307,7 @@ impl LocalDomain {
     }
 
     pub async fn write_lineage(&self, lineage: &DomainLineage) -> Result<(), Error> {
-        let lineage_path = self.root_dir.join(LINEAGE_FILE);
+        let lineage_path = self.dirs.lineage_path();
         let contents = serde_json::to_string_pretty(lineage)?;
         fs::write(lineage_path, contents.as_bytes()).await
     }
@@ -290,7 +320,9 @@ impl LocalDomain {
         // if not, download and cache it
         // return cached manifest
 
-        let cache_path = self.manifest_cache_path(&manifest.bucket, &manifest.hash);
+        let cache_path = self
+            .dirs
+            .manifest_cache_path(&manifest.bucket, &manifest.hash);
 
         // TODO: who is responsible for this?
         create_dir_all(&cache_path.parent().unwrap()).await?;
@@ -390,14 +422,6 @@ impl LocalDomain {
         self.browse_remote_manifest(&remote_manifest).await
     }
 
-    pub fn installed_manifests_path(&self, namespace: &str) -> PathBuf {
-        self.root_dir.join(INSTALLED_DIR).join(namespace)
-    }
-
-    pub fn installed_manifest_path(&self, namespace: &str, hash: &str) -> PathBuf {
-        self.installed_manifests_path(namespace).join(hash)
-    }
-
     pub async fn install_package(
         &self,
         remote: &RemoteManifest,
@@ -414,17 +438,19 @@ impl LocalDomain {
         self.cache_remote_manifest(remote).await?;
 
         // Make an "installed" copy of the remote manifest.
-        let installed_manifest_path = self.installed_manifest_path(&remote.namespace, &remote.hash);
+        let installed_manifest_path = self
+            .dirs
+            .installed_manifest_path(&remote.namespace, &remote.hash);
         create_dir_all(&installed_manifest_path.parent().unwrap()).await?;
         self.copy_cached_to_installed(&remote.bucket, &remote.namespace, &remote.hash)
             .await?;
 
         // Create the identity cache dir.
-        let objects_dir = self.root_dir.join(OBJECTS_DIR);
+        let objects_dir = self.dirs.objects_dir_path();
         create_dir_all(&objects_dir).await?;
 
         // Create the working dir.
-        let working_dir = self.working_folder(&remote.namespace);
+        let working_dir = self.dirs.working_folder(&remote.namespace);
         create_dir_all(&working_dir).await?;
 
         // Resolve and record latest manifest hash
@@ -455,10 +481,10 @@ impl LocalDomain {
 
         self.write_lineage(&lineage).await?;
 
-        if let Err(err) = remove_dir_all(self.installed_manifests_path(namespace)).await {
+        if let Err(err) = remove_dir_all(self.dirs.installed_manifests_path(namespace)).await {
             println!("Failed to remove installed manifests: {err}");
         }
-        if let Err(err) = remove_dir_all(self.working_folder(namespace)).await {
+        if let Err(err) = remove_dir_all(self.dirs.working_folder(namespace)).await {
             println!("Failed to remove working directory: {err}");
         }
 
@@ -743,7 +769,7 @@ impl InstalledPackage {
     }
 
     pub fn working_folder(&self) -> PathBuf {
-        self.domain.working_folder(&self.namespace)
+        self.domain.dirs.working_folder(&self.namespace)
     }
 
     pub async fn uninstall(&self) -> Result<(), Error> {
@@ -889,7 +915,7 @@ impl InstalledPackage {
             ));
         }
 
-        let objects_dir = self.domain.root_dir.join(OBJECTS_DIR);
+        let objects_dir = self.domain.dirs.objects_dir_path();
         let working_dir = self.working_folder();
 
         // for each path in paths:
@@ -969,6 +995,7 @@ impl InstalledPackage {
         // TODO: Write to a temporary file first.
         let installed_manifest_path = self
             .domain
+            .dirs
             .installed_manifest_path(&self.namespace, lineage.current_hash());
 
         table
@@ -1064,7 +1091,7 @@ impl InstalledPackage {
         // TODO: Maybe have the user pass this as an argument?
         let status = self.status().await?;
 
-        let objects_dir = self.domain.root_dir.join(OBJECTS_DIR);
+        let objects_dir = self.domain.dirs.objects_dir_path();
         // TODO: This should really be done when the domain is created.
         create_dir_all(&objects_dir).await?;
 
@@ -1135,6 +1162,7 @@ impl InstalledPackage {
 
         let new_manifest_path = self
             .domain
+            .dirs
             .installed_manifest_path(&self.namespace, &new_top_hash);
 
         table
