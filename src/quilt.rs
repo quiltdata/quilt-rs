@@ -125,7 +125,7 @@ impl RemoteManifest {
         // TODO: FAIL if the manifest with this hash already exists?
         let body = ByteStream::from_path(manifest_path).await?;
         let s3uri = s3::S3Uri::from(self);
-        println!("writing remote manifest to {}", s3uri.key);
+        tracing::info!("writing remote manifest to {}", s3uri.key);
 
         s3uri.put_contents(body).await
     }
