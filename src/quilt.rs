@@ -194,14 +194,14 @@ pub trait ReadableManifest {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct CachedManifest {
-    domain: LocalDomain,
     bucket: String,
+    dirs: DomainDirs,
     hash: String,
 }
 
 impl ReadableManifest for CachedManifest {
     async fn read(&self) -> Result<Table, Error> {
-        let pathbuf = self.domain.dirs.manifest_cache_path(&self.bucket, &self.hash);
+        let pathbuf = self.dirs.manifest_cache_path(&self.bucket, &self.hash);
         let path = UPath::Local(pathbuf);
         let table = Table::read_from_upath(&path).await?;
         Ok(table)
@@ -273,7 +273,7 @@ impl LocalDomain {
         hash: impl AsRef<str>,
     ) -> impl ReadableManifest {
         CachedManifest {
-            domain: self.clone(),
+            dirs: self.dirs.clone(),
             bucket: String::from(bucket.as_ref()),
             hash: String::from(hash.as_ref()),
         }
@@ -406,7 +406,7 @@ impl LocalDomain {
         }
 
         Ok(CachedManifest {
-            domain: self.to_owned(),
+            dirs: self.dirs.clone(),
             bucket: manifest.bucket.clone(),
             hash: manifest.hash.clone(),
         })
