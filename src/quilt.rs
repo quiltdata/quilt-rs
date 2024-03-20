@@ -488,10 +488,10 @@ impl LocalDomain {
     ) -> Result<RemoteManifest, Error> {
         println!("Source URI: {:?}, target URI: {:?}", uri, target_uri);
         // TODO: make get_object_attributes() calls concurrently across list_objects() pages
-        // TODO: validate prefix
+        // TODO: s3 uri key ends with / and has no version
         let client = crate::s3_utils::get_client_for_bucket(&uri.bucket).await?;
 
-        // FIXME: we need real API to build manifests
+        // XXX: we need real API to build manifests
         let header = Row4 {
             name: HEADER_ROW.into(),
             place: HEADER_ROW.into(),
