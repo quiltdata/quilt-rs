@@ -488,6 +488,8 @@ impl LocalDomain {
     ) -> Result<RemoteManifest, Error> {
         println!("Source URI: {:?}, target URI: {:?}", uri, target_uri);
         // TODO: make get_object_attributes() calls concurrently across list_objects() pages
+        // TODO: increase concurrency, to do that we need to figure out how to deal
+        //       with fd limits on Mac by default it's 256
         // TODO: s3 uri key ends with / and has no version
         let client = crate::s3_utils::get_client_for_bucket(&uri.bucket).await?;
 
@@ -512,6 +514,7 @@ impl LocalDomain {
             .bucket(&uri.bucket)
             .prefix(&uri.key)
             .into_paginator()
+            .page_size(100) // XXX: this is to limit concurrency
             .send();
         while let Some(page) = p.next().await {
             let page = page.map_err(|err| Error::S3(err.to_string()))?;
