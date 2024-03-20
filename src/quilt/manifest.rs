@@ -302,7 +302,7 @@ impl From<&Table> for Manifest {
                     ManifestRow {
                         logical_key: row.name.clone(),
                         physical_key: row.place.clone(),
-                        hash: row.hash.try_into().unwrap(), // TODO: Why doesn't "?" work here???
+                        hash: row.hash.try_into().unwrap(),
                         size: row.size,
                         meta: Some(meta),
                     }
