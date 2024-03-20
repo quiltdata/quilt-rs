@@ -14,7 +14,6 @@ use multihash::Multihash;
 use parquet::data_type::AsBytes;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use tokio::{
     fs::{create_dir_all, read_dir, remove_dir_all, File},
     io::{AsyncReadExt, AsyncWriteExt},
@@ -29,7 +28,7 @@ pub mod uri;
 use crate::{
     quilt4::{
         checksum::{
-            self, calculate_sha256_checksum, calculate_sha256_chunked_checksum,
+            calculate_sha256_checksum, calculate_sha256_chunked_checksum,
             get_checksum_chunksize_and_parts,
         },
         table::HEADER_ROW,
@@ -51,9 +50,6 @@ const TAGS_DIR: &str = ".quilt/named_packages";
 const OBJECTS_DIR: &str = ".quilt/objects";
 const LINEAGE_FILE: &str = ".quilt/data.json";
 const INSTALLED_DIR: &str = ".quilt/installed";
-
-const MULTIPART_THRESHOLD: u64 = checksum::MULTIPART_THRESHOLD;
-const MPU_MAX_PARTS: i32 = 10_000;
 
 pub fn tag_key(namespace: &str, tag: &str) -> String {
     format!("{TAGS_DIR}/{namespace}/{tag}")
@@ -539,7 +535,7 @@ impl LocalDomain {
                     .object_attributes(aws_sdk_s3::types::ObjectAttributes::Checksum)
                     .object_attributes(aws_sdk_s3::types::ObjectAttributes::ObjectParts)
                     .object_attributes(aws_sdk_s3::types::ObjectAttributes::ObjectSize)
-                    .max_parts(MPU_MAX_PARTS)
+                    .max_parts(storage::s3::MPU_MAX_PARTS as i32)
                     .send()
                     .await
                     .map_err(|err| Error::S3(err.to_string()))?;
@@ -562,7 +558,7 @@ impl LocalDomain {
                 }
                 let name = &key[prefix_len..];
                 // FIXME: we assume that objects have hash and it's compatible with sha-256-chunked
-                let s3_checksum = get_compatible_chunked_checksum(&attrs).unwrap();
+                let s3_checksum = s3_utils::get_compliant_chunked_checksum(&attrs).unwrap();
                 let hash =
                     Multihash::wrap(MULTIHASH_SHA256_CHUNKED, s3_checksum.as_bytes()).unwrap();
                 records.insert(
@@ -1179,7 +1175,7 @@ impl InstalledPackage {
             println!("uploading to s3({}): {}", remote.bucket, s3_key);
 
             // TODO: upload in parallel. use a stream?
-            let (version_id, checksum) = if row.size < MULTIPART_THRESHOLD {
+            let (version_id, checksum) = if row.size < storage::s3::MULTIPART_THRESHOLD {
                 let body = ByteStream::read_from().path(&file_path).build().await?;
 
                 let response = client
@@ -1438,32 +1434,6 @@ impl InstalledPackage {
             .collect();
         self.install_paths(&paths_to_install).await
     }
-}
-
-fn get_compatible_chunked_checksum(
-    attrs: &aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput,
-) -> Option<Vec<u8>> {
-    // TODO: get checksums from multipart objects
-    let checksum = attrs.checksum.as_ref()?;
-    let checksum_sha256 = checksum.checksum_sha256.as_ref()?;
-    // XXX: defer decoding until we know it's compatible?
-    let checksum_sha256_decoded = BASE64_STANDARD
-        .decode(checksum_sha256.as_bytes())
-        .expect("AWS checksum must be valid base64");
-    let object_size = attrs.object_size.expect("ObjectSize must be requested");
-    if (object_size as u64) < MULTIPART_THRESHOLD {
-        if let Some(object_parts) = &attrs.object_parts {
-            if object_parts
-                .total_parts_count
-                .expect("ObjectParts is expected to have TotalParts")
-                == 1
-            {
-                return Some(checksum_sha256_decoded);
-            }
-        }
-        return Some(Sha256::digest(checksum_sha256_decoded).as_slice().into());
-    }
-    None
 }
 
 // a conflict is identified by the identifiers of the two conflicting manifests

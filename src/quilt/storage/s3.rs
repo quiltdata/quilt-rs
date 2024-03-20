@@ -6,6 +6,9 @@ use url::Url;
 
 use crate::Error;
 
+pub const MPU_MAX_PARTS: u64 = 10_000;
+pub const MULTIPART_THRESHOLD: u64 = 8 * 1024 * 1024;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct S3Uri {
     pub bucket: String,
