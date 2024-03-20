@@ -491,6 +491,7 @@ impl LocalDomain {
         // TODO: increase concurrency, to do that we need to figure out how to deal
         //       with fd limits on Mac by default it's 256
         // TODO: s3 uri key ends with / and has no version
+        // FIXME: filter or fail on keys with `.` or `..` in path segments as quilt3 do
         let client = crate::s3_utils::get_client_for_bucket(&uri.bucket).await?;
 
         // XXX: we need real API to build manifests
