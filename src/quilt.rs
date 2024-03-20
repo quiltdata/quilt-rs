@@ -56,6 +56,7 @@ pub struct DomainDirs {
     root_dir: PathBuf,
 }
 
+// TODO: just use functions
 impl DomainDirs {
     pub fn new(root_dir: PathBuf) -> Self {
         DomainDirs { root_dir }
@@ -216,8 +217,15 @@ impl From<&RemoteManifest> for s3::S3Uri {
     }
 }
 
-pub trait ReadableManifest {
-    fn read(&self) -> impl std::future::Future<Output = Result<Table, Error>> + Send;
+trait ReadableManifest {
+    fn get_path_buf(&self) -> PathBuf;
+
+    async fn read(&self) -> Result<Table, Error> {
+        let pathbuf = self.get_path_buf();
+        let path = UPath::Local(pathbuf);
+        let table = Table::read_from_upath(&path).await?;
+        Ok(table)
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -228,11 +236,8 @@ pub struct CachedManifest {
 }
 
 impl ReadableManifest for CachedManifest {
-    async fn read(&self) -> Result<Table, Error> {
-        let pathbuf = self.dirs.manifest_cache_path(&self.bucket, &self.hash);
-        let path = UPath::Local(pathbuf);
-        let table = Table::read_from_upath(&path).await?;
-        Ok(table)
+    fn get_path_buf(&self) -> PathBuf {
+        self.dirs.manifest_cache_path(&self.bucket, &self.hash)
     }
 }
 
@@ -244,13 +249,9 @@ pub struct InstalledManifest {
 }
 
 impl ReadableManifest for InstalledManifest {
-    async fn read(&self) -> Result<Table, Error> {
-        let pathbuf = self
-            .dirs
-            .installed_manifest_path(&self.namespace, &self.hash);
-        let path = UPath::Local(pathbuf);
-        let table = Table::read_from_upath(&path).await?;
-        Ok(table)
+    fn get_path_buf(&self) -> PathBuf {
+        self.dirs
+            .installed_manifest_path(&self.namespace, &self.hash)
     }
 }
 
@@ -756,7 +757,7 @@ impl InstalledPackage {
             .map(|l| l.paths.into_keys().collect())
     }
 
-    pub fn make_installed_manifest(&self, hash: &str) -> impl ReadableManifest {
+    fn make_installed_manifest(&self, hash: &str) -> impl ReadableManifest {
         InstalledManifest {
             dirs: self.dirs.clone(),
             hash: String::from(hash),
@@ -764,7 +765,7 @@ impl InstalledPackage {
         }
     }
 
-    pub async fn manifest(&self) -> Result<impl ReadableManifest, Error> {
+    async fn manifest(&self) -> Result<impl ReadableManifest, Error> {
         // read recorded hash
         // get installed manifest
         self.read_lineage()
