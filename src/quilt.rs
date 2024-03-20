@@ -86,6 +86,34 @@ impl DomainDirs {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DomainLineageIo {
+    path: PathBuf,
+}
+
+impl DomainLineageIo {
+    pub fn new(path: PathBuf) -> Self {
+        DomainLineageIo { path }
+    }
+
+    pub async fn read(&self) -> Result<DomainLineage, Error> {
+        let contents = fs::read_to_string(&self.path).await.or_else(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                Ok("{}".into())
+            } else {
+                Err(err)
+            }
+        })?;
+
+        DomainLineage::try_from(&contents[..])
+    }
+
+    pub async fn write(&self, lineage: &DomainLineage) -> Result<(), Error> {
+        let contents = serde_json::to_string_pretty(lineage)?;
+        fs::write(&self.path, contents.as_bytes()).await
+    }
+}
+
 pub fn tag_key(namespace: &str, tag: &str) -> String {
     format!("{TAGS_DIR}/{namespace}/{tag}")
 }
@@ -218,7 +246,6 @@ impl ReadableManifest for InstalledManifest {
     async fn read(&self) -> Result<Table, Error> {
         let pathbuf = self
             .package
-            .domain
             .dirs
             .installed_manifest_path(&self.package.namespace, &self.hash);
         let path = UPath::Local(pathbuf);
@@ -241,185 +268,156 @@ impl From<&S3PackageUri> for S3Domain {
     }
 }
 
+async fn cache_manifest(
+    dirs: &DomainDirs,
+    manifest: &Table,
+    bucket: &str,
+    hash: &str,
+) -> Result<PathBuf, ArrowError> {
+    let cache_path = dirs.manifest_cache_path(bucket, hash);
+    create_dir_all(&cache_path.parent().unwrap()).await?;
+    manifest
+        .write_to_upath(&UPath::Local(cache_path.clone()))
+        .await
+        .map(|_| cache_path)
+}
+
+// FIMXE: CachedManifest::browse(&RemoteManifest)
+//        or RemoteManifest::browse -> CachedManifest
+//        or CachedManifest::try_from(RemoteManifest)
+async fn cache_remote_manifest(
+    dirs: &DomainDirs,
+    manifest: &RemoteManifest,
+) -> Result<impl ReadableManifest, Error> {
+    // check if the manifest is already cached
+    // if not, download and cache it
+    // return cached manifest
+
+    let cache_path = dirs.manifest_cache_path(&manifest.bucket, &manifest.hash);
+
+    // TODO: who is responsible for this?
+    create_dir_all(&cache_path.parent().unwrap()).await?;
+
+    if !fs::exists(&cache_path).await {
+        // Does not exist yet
+        let client = crate::s3_utils::get_client_for_bucket(&manifest.bucket).await?;
+
+        let result = client
+            .get_object()
+            .bucket(&manifest.bucket)
+            .key(format!(
+                "{}/{}",
+                MANIFEST_DIR,
+                parquet_manifest_filename(&manifest.hash)
+            ))
+            .send()
+            .await;
+
+        match result {
+            Ok(output) => {
+                let mut contents = Vec::new();
+                output
+                    .body
+                    .into_async_read()
+                    .read_to_end(&mut contents)
+                    .await?;
+                fs::write(&cache_path, &contents).await?;
+            }
+            Err(SdkError::ServiceError(err)) if err.err().is_no_such_key() => {
+                // Fallback: Download the JSONL manifest.
+                let result = client
+                    .get_object()
+                    .bucket(&manifest.bucket)
+                    .key(format!("{}/{}", MANIFEST_DIR, &manifest.hash))
+                    .send()
+                    .await
+                    .map_err(|err| Error::S3(err.to_string()))?;
+
+                let quilt3_manifest = Manifest::from_file(result.body.into_async_read()).await?;
+                let header = Row4 {
+                    name: HEADER_ROW.into(),
+                    place: HEADER_ROW.into(),
+                    path: None,
+                    size: 0,
+                    hash: Multihash::default(),
+                    info: serde_json::json!({
+                        "message": quilt3_manifest.header.message,
+                        "version": quilt3_manifest.header.version,
+                    }),
+                    meta: match quilt3_manifest.header.user_meta {
+                        Some(meta) => meta.into(),
+                        None => serde_json::Value::Null,
+                    },
+                };
+                let mut records = BTreeMap::new();
+                for row in quilt3_manifest.rows {
+                    let mut info = row.meta.unwrap_or_default();
+                    let meta = info.remove("user_meta").unwrap_or_default();
+                    records.insert(
+                        row.logical_key.clone(),
+                        Row4 {
+                            name: row.logical_key,
+                            place: row.physical_key,
+                            path: None,
+                            size: row.size,
+                            hash: row.hash.try_into()?,
+                            info: info.into(),
+                            meta,
+                        },
+                    );
+                }
+                let table = Table { header, records };
+                table.write_to_upath(&UPath::Local(cache_path)).await?
+            }
+            Err(err) => {
+                return Err(Error::S3(err.to_string()));
+            }
+        }
+    }
+
+    Ok(CachedManifest {
+        dirs: dirs.clone(),
+        bucket: manifest.bucket.clone(),
+        hash: manifest.hash.clone(),
+    })
+}
+
+async fn browse_remote_manifest(
+    dirs: &DomainDirs,
+    remote: &RemoteManifest,
+) -> Result<Table, Error> {
+    cache_remote_manifest(dirs, remote).await?.read().await
+}
+
+async fn copy_cached_to_installed(
+    dirs: &DomainDirs,
+    cached_manifest_bucket: &str,
+    installed_manifest_namespace: &str,
+    hash: &str,
+) -> Result<(), Error> {
+    tokio::fs::copy(
+        dirs.manifest_cache_path(cached_manifest_bucket, hash),
+        dirs.installed_manifest_path(installed_manifest_namespace, hash),
+    )
+    .await?;
+    Ok(())
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalDomain {
     pub dirs: DomainDirs,
+    lineage: DomainLineageIo,
 }
 
 impl LocalDomain {
     pub fn new(root_dir: PathBuf) -> Self {
-        Self {
-            dirs: DomainDirs::new(root_dir.clone()),
-        }
-    }
-
-    async fn copy_cached_to_installed(
-        &self,
-        cached_manifest_bucket: &str,
-        installed_manifest_namespace: &str,
-        hash: &str,
-    ) -> Result<(), Error> {
-        tokio::fs::copy(
-            self.dirs.manifest_cache_path(cached_manifest_bucket, hash),
-            self.dirs.installed_manifest_path(installed_manifest_namespace, hash),
-        )
-        .await?;
-        Ok(())
-    }
-
-    pub fn make_cached_manifest(
-        &self,
-        bucket: impl AsRef<str>,
-        hash: impl AsRef<str>,
-    ) -> impl ReadableManifest {
-        CachedManifest {
-            dirs: self.dirs.clone(),
-            bucket: String::from(bucket.as_ref()),
-            hash: String::from(hash.as_ref()),
-        }
-    }
-
-    pub async fn cache_manifest(
-        &self,
-        manifest: &Table,
-        bucket: &str,
-        hash: &str,
-    ) -> Result<PathBuf, ArrowError> {
-        let cache_path = self.dirs.manifest_cache_path(bucket, hash);
-        create_dir_all(&cache_path.parent().unwrap()).await?;
-        manifest
-            .write_to_upath(&UPath::Local(cache_path.clone()))
-            .await
-            .map(|_| cache_path)
-    }
-
-    pub async fn read_lineage(&self) -> Result<DomainLineage, Error> {
-        let lineage_path = self.dirs.lineage_path();
-        let contents = fs::read_to_string(&lineage_path).await.or_else(|err| {
-            if err.kind() == std::io::ErrorKind::NotFound {
-                Ok("{}".into())
-            } else {
-                Err(err)
-            }
-        })?;
-
-        DomainLineage::try_from(&contents[..])
-    }
-
-    pub async fn write_lineage(&self, lineage: &DomainLineage) -> Result<(), Error> {
-        let lineage_path = self.dirs.lineage_path();
-        let contents = serde_json::to_string_pretty(lineage)?;
-        fs::write(lineage_path, contents.as_bytes()).await
-    }
-
-    pub async fn cache_remote_manifest(
-        &self,
-        manifest: &RemoteManifest,
-    ) -> Result<impl ReadableManifest, Error> {
-        // check if the manifest is already cached
-        // if not, download and cache it
-        // return cached manifest
-
-        let cache_path = self
-            .dirs
-            .manifest_cache_path(&manifest.bucket, &manifest.hash);
-
-        // TODO: who is responsible for this?
-        create_dir_all(&cache_path.parent().unwrap()).await?;
-
-        if !fs::exists(&cache_path).await {
-            // Does not exist yet
-            let client = crate::s3_utils::get_client_for_bucket(&manifest.bucket).await?;
-
-            let result = client
-                .get_object()
-                .bucket(&manifest.bucket)
-                .key(format!(
-                    "{}/{}",
-                    MANIFEST_DIR,
-                    parquet_manifest_filename(&manifest.hash)
-                ))
-                .send()
-                .await;
-
-            match result {
-                Ok(output) => {
-                    let mut contents = Vec::new();
-                    output
-                        .body
-                        .into_async_read()
-                        .read_to_end(&mut contents)
-                        .await?;
-                    fs::write(&cache_path, &contents).await?;
-                }
-                Err(SdkError::ServiceError(err)) if err.err().is_no_such_key() => {
-                    // Fallback: Download the JSONL manifest.
-                    let result = client
-                        .get_object()
-                        .bucket(&manifest.bucket)
-                        .key(format!("{}/{}", MANIFEST_DIR, &manifest.hash))
-                        .send()
-                        .await
-                        .map_err(|err| Error::S3(err.to_string()))?;
-
-                    let quilt3_manifest =
-                        Manifest::from_file(result.body.into_async_read()).await?;
-                    let header = Row4 {
-                        name: HEADER_ROW.into(),
-                        place: HEADER_ROW.into(),
-                        path: None,
-                        size: 0,
-                        hash: Multihash::default(),
-                        info: serde_json::json!({
-                            "message": quilt3_manifest.header.message,
-                            "version": quilt3_manifest.header.version,
-                        }),
-                        meta: match quilt3_manifest.header.user_meta {
-                            Some(meta) => meta.into(),
-                            None => serde_json::Value::Null,
-                        },
-                    };
-                    let mut records = BTreeMap::new();
-                    for row in quilt3_manifest.rows {
-                        let mut info = row.meta.unwrap_or_default();
-                        let meta = info.remove("user_meta").unwrap_or_default();
-                        records.insert(
-                            row.logical_key.clone(),
-                            Row4 {
-                                name: row.logical_key,
-                                place: row.physical_key,
-                                path: None,
-                                size: row.size,
-                                hash: row.hash.try_into()?,
-                                info: info.into(),
-                                meta,
-                            },
-                        );
-                    }
-                    let table = Table { header, records };
-                    table.write_to_upath(&UPath::Local(cache_path)).await?
-                }
-                Err(err) => {
-                    return Err(Error::S3(err.to_string()));
-                }
-            }
-        }
-
-        Ok(CachedManifest {
-            dirs: self.dirs.clone(),
-            bucket: manifest.bucket.clone(),
-            hash: manifest.hash.clone(),
-        })
+        let dirs = DomainDirs::new(root_dir.clone());
+        let lineage = DomainLineageIo::new(dirs.lineage_path());
+        Self { dirs, lineage }
     }
 
     pub async fn browse_remote_manifest(&self, remote: &RemoteManifest) -> Result<Table, Error> {
-        self.cache_remote_manifest(remote).await?.read().await
-    }
-
-    pub async fn browse_uri(&self, uri: &S3PackageUri) -> Result<Table, Error> {
-        // resolve uri to the manifest location and hash
-        let remote_manifest = RemoteManifest::resolve(uri).await?;
-        self.browse_remote_manifest(&remote_manifest).await
+        browse_remote_manifest(&self.dirs, remote).await
     }
 
     pub async fn install_package(
@@ -427,7 +425,7 @@ impl LocalDomain {
         remote: &RemoteManifest,
     ) -> Result<InstalledPackage, Error> {
         // Read the lineage
-        let lineage: DomainLineage = self.read_lineage().await?;
+        let lineage: DomainLineage = self.lineage.read().await?;
 
         // bail if already installed
         // TODO: if compatible (same remote), just return the installed package
@@ -435,14 +433,14 @@ impl LocalDomain {
             return Err(Error::PackageAlreadyInstalled(remote.namespace.clone()));
         }
 
-        self.cache_remote_manifest(remote).await?;
+        cache_remote_manifest(&self.dirs, remote).await?;
 
         // Make an "installed" copy of the remote manifest.
         let installed_manifest_path = self
             .dirs
             .installed_manifest_path(&remote.namespace, &remote.hash);
         create_dir_all(&installed_manifest_path.parent().unwrap()).await?;
-        self.copy_cached_to_installed(&remote.bucket, &remote.namespace, &remote.hash)
+        copy_cached_to_installed(&self.dirs, &remote.bucket, &remote.namespace, &remote.hash)
             .await?;
 
         // Create the identity cache dir.
@@ -461,25 +459,26 @@ impl LocalDomain {
             remote.namespace.clone(),
             PackageLineage::from_remote(remote.to_owned(), latest_hash),
         );
-        self.write_lineage(&lineage).await?;
+        self.lineage.write(&lineage).await?;
 
         // Create the package.
         Ok(InstalledPackage {
-            domain: self.to_owned(),
+            dirs: self.dirs.clone(),
+            lineage: self.lineage.clone(),
             namespace: remote.namespace.clone(),
         })
     }
 
     pub async fn uninstall_package(&self, namespace: impl AsRef<str>) -> Result<(), Error> {
         let namespace = namespace.as_ref();
-        let mut lineage = self.read_lineage().await?;
+        let mut lineage = self.lineage.read().await?;
 
         lineage
             .packages
             .remove(namespace)
             .ok_or(Error::PackageNotInstalled(namespace.to_owned()))?;
 
-        self.write_lineage(&lineage).await?;
+        self.lineage.write(&lineage).await?;
 
         if let Err(err) = remove_dir_all(self.dirs.installed_manifests_path(namespace)).await {
             println!("Failed to remove installed manifests: {err}");
@@ -494,13 +493,14 @@ impl LocalDomain {
     }
 
     pub async fn list_installed_packages(&self) -> Result<Vec<InstalledPackage>, Error> {
-        let lineage = self.read_lineage().await?;
+        let lineage = self.lineage.read().await?;
         let mut namespaces: Vec<String> = lineage.packages.into_keys().collect();
         namespaces.sort();
         let packages = namespaces
             .into_iter()
             .map(|namespace| InstalledPackage {
-                domain: self.to_owned(),
+                lineage: self.lineage.clone(),
+                dirs: self.dirs.clone(),
                 namespace,
             })
             .collect();
@@ -511,10 +511,11 @@ impl LocalDomain {
         &self,
         namespace: &str,
     ) -> Result<Option<InstalledPackage>, Error> {
-        let lineage = self.read_lineage().await?;
+        let lineage = self.lineage.read().await?;
         if lineage.packages.contains_key(namespace) {
             Ok(Some(InstalledPackage {
-                domain: self.to_owned(),
+                dirs: self.dirs.clone(),
+                lineage: self.lineage.clone(),
                 namespace: namespace.to_owned(),
             }))
         } else {
@@ -632,9 +633,8 @@ impl LocalDomain {
             namespace: target_uri.namespace,
             hash: table.top_hash(),
         };
-        let cache_path = self
-            .cache_manifest(&table, &new_remote.bucket, &new_remote.hash)
-            .await?;
+        let cache_path =
+            cache_manifest(&self.dirs, &table, &new_remote.bucket, &new_remote.hash).await?;
         new_remote.upload_from(&cache_path).await?;
         new_remote.upload_legacy(&table).await?;
         let top_hash = table.top_hash();
@@ -726,13 +726,14 @@ impl InstalledPackageStatus {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct InstalledPackage {
-    pub domain: LocalDomain,
+    dirs: DomainDirs,
+    lineage: DomainLineageIo,
     pub namespace: String,
 }
 
 impl InstalledPackage {
-    pub async fn lineage(&self) -> Result<PackageLineage, Error> {
-        let domain_lineage = self.domain.read_lineage().await?;
+    pub async fn read_lineage(&self) -> Result<PackageLineage, Error> {
+        let domain_lineage = self.lineage.read().await?;
         let namespace = domain_lineage.packages.get(&self.namespace);
 
         match namespace {
@@ -742,15 +743,17 @@ impl InstalledPackage {
     }
 
     pub async fn write_lineage(&self, lineage: PackageLineage) -> Result<(), Error> {
-        let mut domain_lineage = self.domain.read_lineage().await?;
+        let mut domain_lineage = self.lineage.read().await?;
         domain_lineage
             .packages
             .insert(self.namespace.clone(), lineage);
-        self.domain.write_lineage(&domain_lineage).await
+        self.lineage.write(&domain_lineage).await
     }
 
     pub async fn paths(&self) -> Result<Vec<String>, Error> {
-        self.lineage().await.map(|l| l.paths.into_keys().collect())
+        self.read_lineage()
+            .await
+            .map(|l| l.paths.into_keys().collect())
     }
 
     pub fn make_installed_manifest(&self, hash: &str) -> impl ReadableManifest {
@@ -763,18 +766,18 @@ impl InstalledPackage {
     pub async fn manifest(&self) -> Result<impl ReadableManifest, Error> {
         // read recorded hash
         // get installed manifest
-        self.lineage()
+        self.read_lineage()
             .await
             .map(|l| self.make_installed_manifest(l.current_hash()))
     }
 
     pub fn working_folder(&self) -> PathBuf {
-        self.domain.dirs.working_folder(&self.namespace)
+        self.dirs.working_folder(&self.namespace)
     }
 
-    pub async fn uninstall(&self) -> Result<(), Error> {
-        self.domain.uninstall_package(&self.namespace).await
-    }
+    // pub async fn uninstall(&self) -> Result<(), Error> {
+    //     self.domain.uninstall_package(&self.namespace).await
+    // }
 
     pub async fn status(&self) -> Result<InstalledPackageStatus, Error> {
         // compute the status based on the following sources:
@@ -784,7 +787,7 @@ impl InstalledPackage {
         // installed entries marked as "installed" (initially as "downloading")
         // modified entries marked as "modified", etc
 
-        let mut lineage = self.lineage().await?;
+        let mut lineage = self.read_lineage().await?;
 
         // try updating the latest hash
         if let Ok(latest_hash) = lineage.remote.resolve_latest().await {
@@ -904,7 +907,7 @@ impl InstalledPackage {
             return Ok(());
         }
 
-        let mut lineage = self.lineage().await?;
+        let mut lineage = self.read_lineage().await?;
 
         // TODO: what happens if paths are already installed? Ignore, or error?
         if !HashSet::<String, RandomState>::from_iter(lineage.paths.keys().cloned())
@@ -915,7 +918,7 @@ impl InstalledPackage {
             ));
         }
 
-        let objects_dir = self.domain.dirs.objects_dir_path();
+        let objects_dir = self.dirs.objects_dir_path();
         let working_dir = self.working_folder();
 
         // for each path in paths:
@@ -994,7 +997,6 @@ impl InstalledPackage {
         // save the manifest
         // TODO: Write to a temporary file first.
         let installed_manifest_path = self
-            .domain
             .dirs
             .installed_manifest_path(&self.namespace, lineage.current_hash());
 
@@ -1010,7 +1012,7 @@ impl InstalledPackage {
     pub async fn uninstall_paths(&self, paths: &Vec<String>) -> Result<(), Error> {
         println!("uninstall_paths: {paths:?}");
 
-        let mut lineage = self.lineage().await?;
+        let mut lineage = self.read_lineage().await?;
 
         let working_dir = self.working_folder();
         for path in paths {
@@ -1082,16 +1084,12 @@ impl InstalledPackage {
         // NOTE: each commit MUST include all paths from prior commits
         //       (since the last pull, until reset by a sync)
 
-        let mut lineage = self.domain.read_lineage().await?;
-        let package_lineage = lineage
-            .packages
-            .get_mut(&self.namespace)
-            .ok_or(Error::Commit("package not installed".to_string()))?;
+        let mut package_lineage = self.read_lineage().await?;
 
         // TODO: Maybe have the user pass this as an argument?
         let status = self.status().await?;
 
-        let objects_dir = self.domain.dirs.objects_dir_path();
+        let objects_dir = self.dirs.objects_dir_path();
         // TODO: This should really be done when the domain is created.
         create_dir_all(&objects_dir).await?;
 
@@ -1161,7 +1159,6 @@ impl InstalledPackage {
         let new_top_hash = table.top_hash();
 
         let new_manifest_path = self
-            .domain
             .dirs
             .installed_manifest_path(&self.namespace, &new_top_hash);
 
@@ -1181,13 +1178,13 @@ impl InstalledPackage {
         };
         package_lineage.commit = Some(commit);
 
-        self.domain.write_lineage(&lineage).await?;
+        self.write_lineage(package_lineage).await?;
 
         Ok(())
     }
 
     pub async fn push(&self) -> Result<(), Error> {
-        let mut lineage = self.lineage().await?;
+        let mut lineage = self.read_lineage().await?;
 
         let commit = match lineage.commit {
             None => return Ok(()), // nothing to commit
@@ -1197,7 +1194,7 @@ impl InstalledPackage {
         let remote = &lineage.remote;
 
         let mut local_manifest = self.manifest().await?.read().await?;
-        let remote_manifest = self.domain.browse_remote_manifest(remote).await?;
+        let remote_manifest = browse_remote_manifest(&self.dirs, remote).await?;
 
         // ## copy data
         // Copy each of the _modified_ paths from their local_key to remote_key,
@@ -1343,10 +1340,13 @@ impl InstalledPackage {
         };
 
         // Cache the relaxed manifest
-        let cache_path = self
-            .domain
-            .cache_manifest(&local_manifest, &new_remote.bucket, &new_remote.hash)
-            .await?;
+        let cache_path = cache_manifest(
+            &self.dirs,
+            &local_manifest,
+            &new_remote.bucket,
+            &new_remote.hash,
+        )
+        .await?;
 
         // Push the (cached) relaxed manifest to the remote, don't tag it yet
         new_remote.upload_from(&cache_path).await?;
@@ -1392,7 +1392,7 @@ impl InstalledPackage {
             return Err(Error::Package("package has pending changes".to_string()));
         }
 
-        let lineage = self.lineage().await?;
+        let lineage = self.read_lineage().await?;
         if lineage.commit.is_some() {
             return Err(Error::Package("package has pending commits".to_string()));
         }
@@ -1412,18 +1412,18 @@ impl InstalledPackage {
 
         // TODO: uninstall_paths() just modified the lineage, so re-reading it here.
         // There needs to be a better way.
-        let mut lineage = self.lineage().await?;
+        let mut lineage = self.read_lineage().await?;
         lineage.remote.hash = lineage.latest_hash.clone();
         lineage.base_hash = lineage.latest_hash.clone();
 
-        self.domain.cache_remote_manifest(&lineage.remote).await?;
-        self.domain
-            .copy_cached_to_installed(
-                &lineage.remote.bucket,
-                &self.namespace,
-                &lineage.remote.hash,
-            )
-            .await?;
+        cache_remote_manifest(&self.dirs, &lineage.remote).await?;
+        copy_cached_to_installed(
+            &self.dirs,
+            &lineage.remote.bucket,
+            &self.namespace,
+            &lineage.remote.hash,
+        )
+        .await?;
 
         self.write_lineage(lineage).await?;
 
@@ -1438,7 +1438,7 @@ impl InstalledPackage {
     }
 
     pub async fn certify_latest(&self) -> Result<(), Error> {
-        let mut lineage = self.lineage().await?;
+        let mut lineage = self.read_lineage().await?;
         let new_latest = lineage.remote.hash.clone();
         lineage.remote.update_latest(&new_latest).await?;
         lineage.latest_hash = new_latest.clone();
@@ -1447,7 +1447,7 @@ impl InstalledPackage {
     }
 
     pub async fn reset_to_latest(&self) -> Result<(), Error> {
-        let lineage = self.lineage().await?;
+        let lineage = self.read_lineage().await?;
 
         let new_latest = lineage.remote.resolve_latest().await?;
         if new_latest == lineage.remote.hash {
@@ -1457,20 +1457,20 @@ impl InstalledPackage {
 
         let paths: Vec<String> = lineage.paths.into_keys().collect();
         self.uninstall_paths(&paths).await?;
-        let mut lineage = self.lineage().await?;
+        let mut lineage = self.read_lineage().await?;
 
         lineage.latest_hash = new_latest.clone();
         lineage.remote.hash = new_latest.clone();
         lineage.base_hash = new_latest;
 
-        self.domain.cache_remote_manifest(&lineage.remote).await?;
-        self.domain
-            .copy_cached_to_installed(
-                &lineage.remote.bucket,
-                &self.namespace,
-                &lineage.remote.hash,
-            )
-            .await?;
+        cache_remote_manifest(&self.dirs, &lineage.remote).await?;
+        copy_cached_to_installed(
+            &self.dirs,
+            &lineage.remote.bucket,
+            &self.namespace,
+            &lineage.remote.hash,
+        )
+        .await?;
 
         self.write_lineage(lineage).await?;
 
@@ -1542,7 +1542,7 @@ mod tests {
         let remote_manifest =
             block_on(RemoteManifest::resolve(&test_uri)).expect("Failed to resolve manifest");
 
-        let cached_manifest = block_on(local_domain.cache_remote_manifest(&remote_manifest))
+        let cached_manifest = block_on(cache_remote_manifest(&local_domain.dirs, &remote_manifest))
             .expect("Failed to cache the manifest");
 
         let manifest = block_on(cached_manifest.read()).expect("Failed to parse the manifest");
