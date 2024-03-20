@@ -5,7 +5,7 @@ use multihash::Multihash;
 use serde::{Deserialize, Deserializer, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 
-use crate::Error;
+use crate::{Error, Table};
 
 use super::{Change, ChangeSet};
 
@@ -272,6 +272,43 @@ impl Manifest {
         }
 
         changes
+    }
+}
+
+impl From<&Table> for Manifest {
+    fn from(table: &Table) -> Self {
+        Manifest {
+            header: ManifestHeader {
+                version: "v0".into(),
+                message: table
+                    .header
+                    .info
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                user_meta: table.header.meta.as_object().cloned(),
+            },
+            rows: table
+                .records
+                .values()
+                .map(|row| {
+                    let mut meta = match row.info.as_object() {
+                        Some(meta) => meta.clone(),
+                        None => serde_json::Map::default(),
+                    };
+                    if row.meta.is_object() {
+                        meta.insert("user_meta".into(), row.meta.clone());
+                    }
+                    ManifestRow {
+                        logical_key: row.name.clone(),
+                        physical_key: row.place.clone(),
+                        hash: row.hash.try_into().unwrap(),
+                        size: row.size,
+                        meta: Some(meta),
+                    }
+                })
+                .collect(),
+        }
     }
 }
 

@@ -1,8 +1,13 @@
+use std::fmt;
+
 use aws_sdk_s3::primitives::ByteStream;
 use tokio::io::AsyncReadExt;
 use url::Url;
 
 use crate::Error;
+
+pub const MPU_MAX_PARTS: u64 = 10_000;
+pub const MULTIPART_THRESHOLD: u64 = 8 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct S3Uri {
@@ -58,6 +63,16 @@ impl TryFrom<&str> for S3Uri {
             key: key.to_string(),
             version,
         })
+    }
+}
+
+impl fmt::Display for S3Uri {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            make_s3_url(&self.bucket, &self.key, self.version.as_deref())
+        )
     }
 }
 
@@ -118,6 +133,20 @@ pub async fn put_object_contents(
         .map_err(|err| Error::S3(err.to_string()))?;
 
     Ok(())
+}
+
+pub fn make_s3_url(bucket: &str, s3_key: &str, version_id: Option<&str>) -> Url {
+    let mut remote_url = Url::parse("s3://").unwrap();
+    remote_url
+        .set_host(Some(bucket))
+        .expect("failed to set bucket");
+    remote_url.set_path(s3_key);
+    if let Some(version_id) = version_id {
+        remote_url
+            .query_pairs_mut()
+            .append_pair("versionId", version_id);
+    }
+    remote_url
 }
 
 #[cfg(test)]
