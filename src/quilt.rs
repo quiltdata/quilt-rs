@@ -46,34 +46,6 @@ pub use self::{
     uri::{RevisionPointer, S3PackageUri},
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct DomainLineageIo {
-    path: PathBuf,
-}
-
-impl DomainLineageIo {
-    pub fn new(path: PathBuf) -> Self {
-        DomainLineageIo { path }
-    }
-
-    pub async fn read(&self) -> Result<DomainLineage, Error> {
-        let contents = fs::read_to_string(&self.path).await.or_else(|err| {
-            if err.kind() == std::io::ErrorKind::NotFound {
-                Ok("{}".into())
-            } else {
-                Err(err)
-            }
-        })?;
-
-        DomainLineage::try_from(&contents[..])
-    }
-
-    pub async fn write(&self, lineage: &DomainLineage) -> Result<(), Error> {
-        let contents = serde_json::to_string_pretty(lineage)?;
-        fs::write(&self.path, contents.as_bytes()).await
-    }
-}
-
 pub fn tag_uri(bucket: &str, namespace: &str, tag: &str) -> s3::S3Uri {
     s3::S3Uri {
         bucket: bucket.to_owned(),
@@ -349,13 +321,13 @@ async fn copy_cached_to_installed(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalDomain {
     pub paths: paths::DomainPaths,
-    lineage: DomainLineageIo,
+    lineage: lineage::DomainLineageIo,
 }
 
 impl LocalDomain {
     pub fn new(root_dir: PathBuf) -> Self {
         let paths = paths::DomainPaths::new(root_dir.clone());
-        let lineage = DomainLineageIo::new(paths.lineage());
+        let lineage = lineage::DomainLineageIo::new(paths.lineage());
         Self { paths, lineage }
     }
 
@@ -407,7 +379,9 @@ impl LocalDomain {
         // Create the package.
         Ok(InstalledPackage {
             paths: self.paths.clone(),
-            lineage: self.lineage.clone(),
+            lineage: self
+                .lineage
+                .create_package_lineage(remote.namespace.clone()),
             namespace: remote.namespace.clone(),
         })
     }
@@ -442,7 +416,7 @@ impl LocalDomain {
         let packages = namespaces
             .into_iter()
             .map(|namespace| InstalledPackage {
-                lineage: self.lineage.clone(),
+                lineage: self.lineage.create_package_lineage(namespace.clone()),
                 paths: self.paths.clone(),
                 namespace,
             })
@@ -458,8 +432,8 @@ impl LocalDomain {
         if lineage.packages.contains_key(namespace) {
             Ok(Some(InstalledPackage {
                 paths: self.paths.clone(),
-                lineage: self.lineage.clone(),
-                namespace: namespace.to_owned(),
+                lineage: self.lineage.create_package_lineage(namespace.to_string()),
+                namespace: namespace.to_string(),
             }))
         } else {
             Ok(None)
@@ -670,31 +644,14 @@ impl InstalledPackageStatus {
 #[derive(Clone, Debug, PartialEq)]
 pub struct InstalledPackage {
     paths: paths::DomainPaths,
-    lineage: DomainLineageIo,
+    lineage: lineage::PackageLineageIo,
     pub namespace: String,
 }
 
 impl InstalledPackage {
-    pub async fn read_lineage(&self) -> Result<PackageLineage, Error> {
-        let domain_lineage = self.lineage.read().await?;
-        let namespace = domain_lineage.packages.get(&self.namespace);
-
-        match namespace {
-            Some(ns) => Ok(ns.clone()),
-            None => Err(Error::PackageNotInstalled(self.namespace.clone())),
-        }
-    }
-
-    pub async fn write_lineage(&self, lineage: PackageLineage) -> Result<(), Error> {
-        let mut domain_lineage = self.lineage.read().await?;
-        domain_lineage
-            .packages
-            .insert(self.namespace.clone(), lineage);
-        self.lineage.write(&domain_lineage).await
-    }
-
     pub async fn entries_paths(&self) -> Result<Vec<String>, Error> {
-        self.read_lineage()
+        self.lineage
+            .read()
             .await
             .map(|l| l.paths.into_keys().collect())
     }
@@ -710,7 +667,8 @@ impl InstalledPackage {
     async fn manifest(&self) -> Result<impl ReadableManifest, Error> {
         // read recorded hash
         // get installed manifest
-        self.read_lineage()
+        self.lineage
+            .read()
             .await
             .map(|l| self.make_installed_manifest(l.current_hash()))
     }
@@ -731,12 +689,12 @@ impl InstalledPackage {
         // installed entries marked as "installed" (initially as "downloading")
         // modified entries marked as "modified", etc
 
-        let mut lineage = self.read_lineage().await?;
+        let mut lineage = self.lineage.read().await?;
 
         // try updating the latest hash
         if let Ok(latest_hash) = lineage.remote.resolve_latest().await {
             lineage.latest_hash = latest_hash;
-            self.write_lineage(lineage.clone()).await?;
+            self.lineage.write(lineage.clone()).await?;
         }
 
         let table = self.manifest().await?.read().await?;
@@ -851,7 +809,7 @@ impl InstalledPackage {
             return Ok(());
         }
 
-        let mut lineage = self.read_lineage().await?;
+        let mut lineage = self.lineage.read().await?;
 
         // TODO: what happens if paths are already installed? Ignore, or error?
         if !HashSet::<String, RandomState>::from_iter(lineage.paths.keys().cloned())
@@ -948,7 +906,7 @@ impl InstalledPackage {
             .write_to_upath(&UPath::Local(installed_manifest_path))
             .await?;
 
-        self.write_lineage(lineage).await?;
+        self.lineage.write(lineage).await?;
 
         Ok(())
     }
@@ -956,7 +914,7 @@ impl InstalledPackage {
     pub async fn uninstall_paths(&self, paths: &Vec<String>) -> Result<(), Error> {
         println!("uninstall_paths: {paths:?}");
 
-        let mut lineage = self.read_lineage().await?;
+        let mut lineage = self.lineage.read().await?;
 
         let working_dir = self.working_folder();
         for path in paths {
@@ -976,7 +934,7 @@ impl InstalledPackage {
             };
         }
 
-        self.write_lineage(lineage).await?;
+        self.lineage.write(lineage).await?;
 
         // TODO: Remove unused files in OBJECTS_DIR?
 
@@ -1028,7 +986,7 @@ impl InstalledPackage {
         // NOTE: each commit MUST include all paths from prior commits
         //       (since the last pull, until reset by a sync)
 
-        let mut package_lineage = self.read_lineage().await?;
+        let mut package_lineage = self.lineage.read().await?;
 
         // TODO: Maybe have the user pass this as an argument?
         let status = self.status().await?;
@@ -1122,13 +1080,13 @@ impl InstalledPackage {
         };
         package_lineage.commit = Some(commit);
 
-        self.write_lineage(package_lineage).await?;
+        self.lineage.write(package_lineage).await?;
 
         Ok(())
     }
 
     pub async fn push(&self) -> Result<(), Error> {
-        let mut lineage = self.read_lineage().await?;
+        let mut lineage = self.lineage.read().await?;
 
         let commit = match lineage.commit {
             None => return Ok(()), // nothing to commit
@@ -1325,7 +1283,7 @@ impl InstalledPackage {
             lineage.base_hash = top_hash.clone();
         }
 
-        self.write_lineage(lineage).await?;
+        self.lineage.write(lineage).await?;
 
         Ok(())
     }
@@ -1336,7 +1294,7 @@ impl InstalledPackage {
             return Err(Error::Package("package has pending changes".to_string()));
         }
 
-        let lineage = self.read_lineage().await?;
+        let lineage = self.lineage.read().await?;
         if lineage.commit.is_some() {
             return Err(Error::Package("package has pending commits".to_string()));
         }
@@ -1356,7 +1314,7 @@ impl InstalledPackage {
 
         // TODO: uninstall_paths() just modified the lineage, so re-reading it here.
         // There needs to be a better way.
-        let mut lineage = self.read_lineage().await?;
+        let mut lineage = self.lineage.read().await?;
         lineage.remote.hash = lineage.latest_hash.clone();
         lineage.base_hash = lineage.latest_hash.clone();
 
@@ -1369,7 +1327,7 @@ impl InstalledPackage {
         )
         .await?;
 
-        self.write_lineage(lineage).await?;
+        self.lineage.write(lineage).await?;
 
         let manifest = self.manifest().await?.read().await?;
         let paths_to_install = paths
@@ -1382,16 +1340,16 @@ impl InstalledPackage {
     }
 
     pub async fn certify_latest(&self) -> Result<(), Error> {
-        let mut lineage = self.read_lineage().await?;
+        let mut lineage = self.lineage.read().await?;
         let new_latest = lineage.remote.hash.clone();
         lineage.remote.update_latest(&new_latest).await?;
         lineage.latest_hash = new_latest.clone();
         lineage.base_hash = new_latest;
-        self.write_lineage(lineage).await
+        self.lineage.write(lineage).await
     }
 
     pub async fn reset_to_latest(&self) -> Result<(), Error> {
-        let lineage = self.read_lineage().await?;
+        let lineage = self.lineage.read().await?;
 
         let new_latest = lineage.remote.resolve_latest().await?;
         if new_latest == lineage.remote.hash {
@@ -1401,7 +1359,7 @@ impl InstalledPackage {
 
         let paths: Vec<String> = lineage.paths.into_keys().collect();
         self.uninstall_paths(&paths).await?;
-        let mut lineage = self.read_lineage().await?;
+        let mut lineage = self.lineage.read().await?;
 
         lineage.latest_hash = new_latest.clone();
         lineage.remote.hash = new_latest.clone();
@@ -1416,7 +1374,7 @@ impl InstalledPackage {
         )
         .await?;
 
-        self.write_lineage(lineage).await?;
+        self.lineage.write(lineage).await?;
 
         let manifest = self.manifest().await?.read().await?;
         let paths_to_install = paths
