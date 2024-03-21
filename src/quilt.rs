@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::RandomState, BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{hash_map::RandomState, BTreeMap, HashSet},
     path::PathBuf,
 };
 
@@ -12,166 +12,42 @@ use aws_smithy_types::byte_stream::{ByteStream, Length};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use multihash::Multihash;
 use parquet::data_type::AsBytes;
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::{
-    fs::{create_dir_all, read_dir, remove_dir_all, File},
+    fs::{create_dir_all, remove_dir_all, File},
     io::{AsyncReadExt, AsyncWriteExt},
 };
 use url::Url;
 
 pub mod lineage;
 pub mod manifest;
+pub mod manifest_handle;
+pub mod status;
 pub mod storage;
 pub mod uri;
 
 use crate::{
     paths,
     quilt4::{
-        checksum::{
-            calculate_sha256_checksum, calculate_sha256_chunked_checksum,
-            get_checksum_chunksize_and_parts,
-        },
+        checksum::{calculate_sha256_checksum, get_checksum_chunksize_and_parts},
         table::HEADER_ROW,
     },
     s3_utils, Error, Row4, Table, UPath,
 };
 
-use self::manifest::{MULTIHASH_SHA256, MULTIHASH_SHA256_CHUNKED};
+use self::manifest::MULTIHASH_SHA256_CHUNKED;
 pub use self::{
     // context::Context,
     lineage::{CommitState, DomainLineage, PackageLineage, PathState},
     manifest::{ContentHash, Manifest, ManifestHeader, ManifestRow},
+    manifest_handle::{CachedManifest, InstalledManifest, ReadableManifest, RemoteManifest},
+    status::{
+        Change, ChangeSet, InstalledPackageStatus, PackageFileFingerprint, UpstreamDiscreteState,
+        UpstreamState,
+    },
     storage::{fs, s3},
     uri::{RevisionPointer, S3PackageUri},
 };
-
-pub fn tag_uri(bucket: &str, namespace: &str, tag: &str) -> s3::S3Uri {
-    s3::S3Uri {
-        bucket: bucket.to_owned(),
-        key: paths::tag_key(namespace, tag),
-        version: None,
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RemoteManifest {
-    pub bucket: String,
-    pub namespace: String,
-    pub hash: String,
-}
-
-impl RemoteManifest {
-    pub async fn resolve(uri: &S3PackageUri) -> Result<Self, Error> {
-        // resolve the actual hash
-        let top_hash = match &uri.revision {
-            RevisionPointer::Hash(top_hash) => top_hash.clone(),
-            RevisionPointer::Tag(tag) => {
-                tag_uri(&uri.bucket, &uri.namespace, tag)
-                    .get_contents()
-                    .await?
-            }
-        };
-
-        Ok(Self {
-            bucket: uri.bucket.clone(),
-            namespace: uri.namespace.clone(),
-            hash: top_hash,
-        })
-    }
-
-    pub async fn resolve_latest(&self) -> Result<String, Error> {
-        tag_uri(&self.bucket, &self.namespace, "latest")
-            .get_contents()
-            .await
-    }
-
-    async fn put_tag(&self, tag: &str, hash: &str) -> Result<(), Error> {
-        tag_uri(&self.bucket, &self.namespace, tag)
-            .put_contents(hash.as_bytes().to_vec())
-            .await
-    }
-
-    async fn put_timestamp_tag(
-        &self,
-        timestamp: chrono::DateTime<chrono::Utc>,
-        hash: &str,
-    ) -> Result<(), Error> {
-        self.put_tag(&timestamp.timestamp().to_string(), hash).await
-    }
-
-    pub async fn update_latest(&self, hash: &str) -> Result<(), Error> {
-        self.put_tag("latest", hash).await
-    }
-
-    async fn upload_from(&self, manifest_path: &PathBuf) -> Result<(), Error> {
-        // TODO: FAIL if the manifest with this hash already exists?
-        let body = ByteStream::from_path(manifest_path).await?;
-        let s3uri = s3::S3Uri::from(self);
-        tracing::info!("writing remote manifest to {}", s3uri.key);
-
-        s3uri.put_contents(body).await
-    }
-
-    async fn upload_legacy(&self, table: &Table) -> Result<(), Error> {
-        let s3uri = s3::S3Uri {
-            bucket: self.bucket.clone(),
-            key: paths::get_manifest_key(&self.hash),
-            version: None,
-        };
-
-        s3uri
-            .put_contents(Manifest::from(table).to_jsonlines().as_bytes().to_vec())
-            .await
-    }
-}
-
-impl From<&RemoteManifest> for s3::S3Uri {
-    fn from(remote: &RemoteManifest) -> s3::S3Uri {
-        s3::S3Uri {
-            bucket: remote.bucket.clone(),
-            key: paths::get_manifest_key(&remote.hash),
-            version: None,
-        }
-    }
-}
-
-trait ReadableManifest {
-    fn get_path_buf(&self) -> PathBuf;
-
-    async fn read(&self) -> Result<Table, Error> {
-        let pathbuf = self.get_path_buf();
-        let path = UPath::Local(pathbuf);
-        let table = Table::read_from_upath(&path).await?;
-        Ok(table)
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct CachedManifest {
-    bucket: String,
-    hash: String,
-    paths: paths::DomainPaths,
-}
-
-impl ReadableManifest for CachedManifest {
-    fn get_path_buf(&self) -> PathBuf {
-        self.paths.manifest_cache(&self.bucket, &self.hash)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct InstalledManifest {
-    hash: String,
-    namespace: String,
-    paths: paths::DomainPaths,
-}
-
-impl ReadableManifest for InstalledManifest {
-    fn get_path_buf(&self) -> PathBuf {
-        self.paths.installed_manifest(&self.namespace, &self.hash)
-    }
-}
 
 // XXX: is this necessary?
 #[derive(Debug, PartialEq, Eq)]
@@ -564,83 +440,6 @@ impl LocalDomain {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize)]
-pub struct Change<T> {
-    pub current: Option<T>,
-    pub previous: Option<T>,
-}
-
-pub type ChangeSet<K, T> = BTreeMap<K, Change<T>>;
-
-#[derive(Debug, PartialEq, Eq, Default, Serialize)]
-pub struct UpstreamState {
-    commit_pending: bool, // whether there's a commit to be pushed
-    behind: bool,         // whether **base** and **latest** revisions differ
-    ahead: bool,          // whether **base** and **current** revisions differ
-}
-
-impl UpstreamState {
-    pub fn from_lineage(lineage: &PackageLineage) -> Self {
-        Self {
-            commit_pending: lineage.commit.is_some(),
-            behind: lineage.base_hash != lineage.latest_hash,
-            ahead: lineage.base_hash != lineage.current_hash(),
-        }
-    }
-}
-
-// XXX: do we  actually need this? two-flag (ahead-behind) logic seems simple enough
-#[derive(Debug, PartialEq, Eq, Default, Serialize)]
-pub enum UpstreamDiscreteState {
-    #[default]
-    UpToDate,
-    Behind,
-    Ahead,
-    Diverged,
-}
-
-impl From<&UpstreamState> for UpstreamDiscreteState {
-    fn from(upstream: &UpstreamState) -> Self {
-        match (upstream.ahead, upstream.behind) {
-            (false, false) => Self::UpToDate,
-            (false, true) => Self::Behind,
-            (true, false) => Self::Ahead,
-            (true, true) => Self::Diverged,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct PackageFileFingerprint {
-    pub size: u64,
-    pub hash: Multihash<256>,
-}
-
-#[derive(Debug, PartialEq, Default)]
-pub struct InstalledPackageStatus {
-    // current commit vs upstream state
-    pub upstream: UpstreamState,
-    pub upstream_state: UpstreamDiscreteState,
-    pub dirty: bool, // whether there are uncommitted changes
-    // file changes vs current commit
-    pub changes: ChangeSet<String, PackageFileFingerprint>,
-    // XXX: meta?
-}
-
-impl InstalledPackageStatus {
-    pub fn new(
-        upstream: UpstreamState,
-        changes: ChangeSet<String, PackageFileFingerprint>,
-    ) -> Self {
-        Self {
-            upstream_state: UpstreamDiscreteState::from(&upstream),
-            upstream,
-            dirty: !changes.is_empty(),
-            changes,
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct InstalledPackage {
     paths: paths::DomainPaths,
@@ -681,7 +480,7 @@ impl InstalledPackage {
     //     self.domain.uninstall_package(&self.namespace).await
     // }
 
-    pub async fn status(&self) -> Result<InstalledPackageStatus, Error> {
+    pub async fn status(&self) -> Result<status::InstalledPackageStatus, Error> {
         // compute the status based on the following sources:
         //   - the cached manifest
         //   - paths
@@ -689,119 +488,15 @@ impl InstalledPackage {
         // installed entries marked as "installed" (initially as "downloading")
         // modified entries marked as "modified", etc
 
-        let mut lineage = self.lineage.read().await?;
-
+        let lineage = self.lineage.read().await?;
         // try updating the latest hash
         if let Ok(latest_hash) = lineage.remote.resolve_latest().await {
+            let mut lineage = lineage.clone();
             lineage.latest_hash = latest_hash;
             self.lineage.write(lineage.clone()).await?;
         }
-
-        let table = self.manifest().await?.read().await?;
-
-        let work_dir = self.working_folder();
-
-        let mut orig_paths = HashMap::new();
-        for path in lineage.paths.keys() {
-            let row = table.get_row(path).ok_or(Error::ManifestPath(format!(
-                "path {} not found in installed manifest",
-                path
-            )))?;
-            orig_paths.insert(PathBuf::from(path), (row.hash, row.size));
-        }
-
-        let mut queue = VecDeque::new();
-        queue.push_back(work_dir.clone());
-
-        let mut changes = ChangeSet::new();
-
-        while let Some(dir) = queue.pop_front() {
-            let mut dir_entries = match read_dir(&dir).await {
-                Ok(dir_entries) => dir_entries,
-                Err(err) => {
-                    println!("Failed to read directory {:?}: {}", dir, err);
-                    continue;
-                }
-            };
-
-            while let Some(dir_entry) = dir_entries.next_entry().await? {
-                let file_path = dir_entry.path();
-                let file_type = dir_entry.file_type().await?;
-
-                if file_type.is_dir() {
-                    queue.push_back(file_path);
-                } else if file_type.is_file() {
-                    let file = File::open(&file_path).await?;
-                    let file_metadata = file.metadata().await?;
-
-                    let relative_path = file_path.strip_prefix(&work_dir).unwrap();
-                    if let Some((orig_hash, orig_size)) = orig_paths.remove(relative_path) {
-                        let file_hash = match orig_hash.code() {
-                            MULTIHASH_SHA256_CHUNKED => {
-                                let hash =
-                                    calculate_sha256_chunked_checksum(file, file_metadata.len())
-                                        .await?;
-                                Multihash::wrap(MULTIHASH_SHA256_CHUNKED, hash.as_ref()).unwrap()
-                            }
-                            _ => {
-                                let hash = calculate_sha256_checksum(file).await?;
-                                Multihash::wrap(MULTIHASH_SHA256, hash.as_ref()).unwrap()
-                            }
-                        };
-
-                        if file_hash != orig_hash {
-                            changes.insert(
-                                relative_path.display().to_string(),
-                                Change {
-                                    current: Some(PackageFileFingerprint {
-                                        size: file_metadata.len(),
-                                        hash: file_hash,
-                                    }),
-                                    previous: Some(PackageFileFingerprint {
-                                        size: orig_size,
-                                        hash: orig_hash,
-                                    }),
-                                },
-                            );
-                        }
-                    } else {
-                        let sha256_hash = calculate_sha256_checksum(file).await?;
-                        let file_hash =
-                            Multihash::wrap(MULTIHASH_SHA256, sha256_hash.as_ref()).unwrap();
-                        changes.insert(
-                            relative_path.display().to_string(),
-                            Change {
-                                current: Some(PackageFileFingerprint {
-                                    size: file_metadata.len(),
-                                    hash: file_hash,
-                                }),
-                                previous: None,
-                            },
-                        );
-                    }
-                } else {
-                    println!("Unexpected file type: {}", file_path.display());
-                }
-            }
-        }
-
-        for (orig_path, (orig_hash, orig_size)) in orig_paths {
-            changes.insert(
-                orig_path.display().to_string(),
-                Change {
-                    current: None,
-                    previous: Some(PackageFileFingerprint {
-                        size: orig_size,
-                        hash: orig_hash,
-                    }),
-                },
-            );
-        }
-
-        Ok(InstalledPackageStatus::new(
-            UpstreamState::from_lineage(&lineage),
-            changes,
-        ))
+        InstalledPackageStatus::create(&lineage, &self.manifest().await?, self.working_folder())
+            .await
     }
 
     pub async fn install_paths(&self, paths: &Vec<String>) -> Result<(), Error> {
@@ -1398,6 +1093,8 @@ mod tests {
     use super::*;
     use temp_testdir::TempDir;
     use tokio_test::{assert_err, block_on};
+
+    use crate::quilt::manifest::MULTIHASH_SHA256;
 
     fn get_timestamp() -> String {
         std::time::SystemTime::now()
