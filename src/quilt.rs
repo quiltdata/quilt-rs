@@ -1340,7 +1340,7 @@ impl InstalledPackage {
 
         // Check the hash of remote's latest manifest
         lineage.latest_hash = new_remote.resolve_latest().await?;
-        lineage.remote = new_remote;
+        lineage.remote = new_remote.clone();
 
         // Reset the commit state.
         lineage.commit = None;
@@ -1352,6 +1352,11 @@ impl InstalledPackage {
             lineage.latest_hash = top_hash.clone();
             lineage.base_hash = top_hash.clone();
         }
+
+        let installed_manifest_path = self
+            .domain
+            .installed_manifest_path(&self.namespace, &new_remote.hash);
+        tokio::fs::copy(&cache_path, &installed_manifest_path).await?;
 
         self.write_lineage(lineage).await?;
 
