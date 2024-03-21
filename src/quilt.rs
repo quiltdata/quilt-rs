@@ -19,10 +19,10 @@ use tokio::{
 };
 use url::Url;
 
+pub mod flow;
 pub mod lineage;
 pub mod manifest;
 pub mod manifest_handle;
-pub mod status;
 pub mod storage;
 pub mod uri;
 
@@ -37,14 +37,14 @@ use crate::{
 
 use self::manifest::MULTIHASH_SHA256_CHUNKED;
 pub use self::{
+    flow::status::{
+        create_status, Change, ChangeSet, InstalledPackageStatus, PackageFileFingerprint,
+        UpstreamDiscreteState, UpstreamState,
+    },
     // context::Context,
     lineage::{CommitState, DomainLineage, PackageLineage, PathState},
     manifest::{ContentHash, Manifest, ManifestHeader, ManifestRow},
     manifest_handle::{CachedManifest, InstalledManifest, ReadableManifest, RemoteManifest},
-    status::{
-        Change, ChangeSet, InstalledPackageStatus, PackageFileFingerprint, UpstreamDiscreteState,
-        UpstreamState,
-    },
     storage::{fs, s3},
     uri::{RevisionPointer, S3PackageUri},
 };
@@ -475,23 +475,13 @@ impl InstalledPackage {
     //     self.domain.uninstall_package(&self.namespace).await
     // }
 
-    pub async fn status(&self) -> Result<status::InstalledPackageStatus, Error> {
-        // compute the status based on the following sources:
-        //   - the cached manifest
-        //   - paths
-        //   - working directory state
-        // installed entries marked as "installed" (initially as "downloading")
-        // modified entries marked as "modified", etc
-
-        let lineage = self.lineage.read().await?;
-        // try updating the latest hash
-        if let Ok(latest_hash) = lineage.remote.resolve_latest().await {
-            let mut lineage = lineage.clone();
-            lineage.latest_hash = latest_hash;
-            self.lineage.write(lineage.clone()).await?;
-        }
-        InstalledPackageStatus::create(&lineage, &self.manifest().await?, self.working_folder())
-            .await
+    pub async fn status(&self) -> Result<InstalledPackageStatus, Error> {
+        create_status(
+            &self.lineage,
+            &self.manifest().await?,
+            self.working_folder(),
+        )
+        .await
     }
 
     pub async fn install_paths(&self, paths: &Vec<String>) -> Result<(), Error> {
