@@ -455,21 +455,16 @@ impl InstalledPackage {
             .map(|l| l.paths.into_keys().collect())
     }
 
-    fn make_installed_manifest(&self, hash: &str) -> impl ReadableManifest {
-        InstalledManifest {
-            paths: self.paths.clone(),
-            hash: String::from(hash),
-            namespace: self.namespace.clone(),
-        }
-    }
-
     async fn manifest(&self) -> Result<impl ReadableManifest, Error> {
         // read recorded hash
         // get installed manifest
-        self.lineage
-            .read()
-            .await
-            .map(|l| self.make_installed_manifest(l.current_hash()))
+        self.lineage.read().await.map(|l| {
+            InstalledManifest::new(
+                self.namespace.to_string(),
+                l.current_hash().to_string(),
+                self.paths.clone(),
+            )
+        })
     }
 
     pub fn working_folder(&self) -> PathBuf {

@@ -141,3 +141,13 @@ impl ReadableManifest for InstalledManifest {
         self.paths.installed_manifest(&self.namespace, &self.hash)
     }
 }
+
+impl InstalledManifest {
+    pub fn new(namespace: String, hash: String, paths: paths::DomainPaths) -> Self {
+        InstalledManifest {
+            hash,
+            namespace,
+            paths,
+        }
+    }
+}
