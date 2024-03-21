@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.5.7] - 2024-03-21
+
 * Added command-line interface: `browse`, `install`, `list`, `package` and `uninstall` commands
 
 ## [0.5.6] - 2024-03-01
