@@ -836,8 +836,7 @@ impl InstalledPackage {
                     } else {
                         let sha256_hash = calculate_sha256_checksum(file).await?;
                         let file_hash =
-                            Multihash::wrap(MULTIHASH_SHA256_CHUNKED, sha256_hash.as_ref())
-                                .unwrap();
+                            Multihash::wrap(MULTIHASH_SHA256, sha256_hash.as_ref()).unwrap();
                         changes.insert(
                             relative_path.display().to_string(),
                             Change {
