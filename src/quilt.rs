@@ -1353,10 +1353,9 @@ impl InstalledPackage {
             lineage.base_hash = top_hash.clone();
         }
 
-        let installed_manifest_path = self
-            .domain
-            .installed_manifest_path(&self.namespace, &new_remote.hash);
-        tokio::fs::copy(&cache_path, &installed_manifest_path).await?;
+        self.domain
+            .copy_cached_to_installed(&new_remote.bucket, &self.namespace, &new_remote.hash)
+            .await?;
 
         self.write_lineage(lineage).await?;
 
