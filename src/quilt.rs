@@ -217,13 +217,13 @@ impl LocalDomain {
 
     async fn copy_cached_to_installed(
         &self,
-        cached_bucket: &str,
-        installed_namespace: &str,
+        cached_manifest_bucket: &str,
+        installed_manifest_namespace: &str,
         hash: &str,
     ) -> Result<(), Error> {
         tokio::fs::copy(
-            self.manifest_cache_path(cached_bucket, hash),
-            self.installed_manifest_path(installed_namespace, hash),
+            self.manifest_cache_path(cached_manifest_bucket, hash),
+            self.installed_manifest_path(installed_manifest_namespace, hash),
         )
         .await?;
         Ok(())
