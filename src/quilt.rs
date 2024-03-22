@@ -1329,7 +1329,7 @@ impl InstalledPackage {
 
         // Check the hash of remote's latest manifest
         lineage.latest_hash = new_remote.resolve_latest().await?;
-        lineage.remote = new_remote.clone();
+        lineage.remote = new_remote;
 
         // Reset the commit state.
         lineage.commit = None;
