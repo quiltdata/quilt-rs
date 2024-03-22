@@ -215,6 +215,20 @@ impl LocalDomain {
         Self { root_dir }
     }
 
+    async fn copy_cached_to_installed(
+        &self,
+        cached_manifest_bucket: &str,
+        installed_manifest_namespace: &str,
+        hash: &str,
+    ) -> Result<(), Error> {
+        tokio::fs::copy(
+            self.manifest_cache_path(cached_manifest_bucket, hash),
+            self.installed_manifest_path(installed_manifest_namespace, hash),
+        )
+        .await?;
+        Ok(())
+    }
+
     pub fn make_cached_manifest(
         &self,
         bucket: impl AsRef<str>,
@@ -402,11 +416,8 @@ impl LocalDomain {
         // Make an "installed" copy of the remote manifest.
         let installed_manifest_path = self.installed_manifest_path(&remote.namespace, &remote.hash);
         create_dir_all(&installed_manifest_path.parent().unwrap()).await?;
-        tokio::fs::copy(
-            self.manifest_cache_path(&remote.bucket, &remote.hash),
-            installed_manifest_path,
-        )
-        .await?;
+        self.copy_cached_to_installed(&remote.bucket, &remote.namespace, &remote.hash)
+            .await?;
 
         // Create the identity cache dir.
         let objects_dir = self.root_dir.join(OBJECTS_DIR);
@@ -1378,13 +1389,13 @@ impl InstalledPackage {
         lineage.base_hash = lineage.latest_hash.clone();
 
         self.domain.cache_remote_manifest(&lineage.remote).await?;
-        tokio::fs::copy(
-            self.domain
-                .manifest_cache_path(&lineage.remote.bucket, &lineage.remote.hash),
-            self.domain
-                .installed_manifest_path(&self.namespace, &lineage.remote.hash),
-        )
-        .await?;
+        self.domain
+            .copy_cached_to_installed(
+                &lineage.remote.bucket,
+                &self.namespace,
+                &lineage.remote.hash,
+            )
+            .await?;
 
         self.write_lineage(lineage).await?;
 
@@ -1425,13 +1436,13 @@ impl InstalledPackage {
         lineage.base_hash = new_latest;
 
         self.domain.cache_remote_manifest(&lineage.remote).await?;
-        tokio::fs::copy(
-            self.domain
-                .manifest_cache_path(&lineage.remote.bucket, &lineage.remote.hash),
-            self.domain
-                .installed_manifest_path(&self.namespace, &lineage.remote.hash),
-        )
-        .await?;
+        self.domain
+            .copy_cached_to_installed(
+                &lineage.remote.bucket,
+                &self.namespace,
+                &lineage.remote.hash,
+            )
+            .await?;
 
         self.write_lineage(lineage).await?;
 
