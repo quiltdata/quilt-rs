@@ -215,6 +215,20 @@ impl LocalDomain {
         Self { root_dir }
     }
 
+    async fn copy_cached_to_installed(
+        &self,
+        cached_bucket: &str,
+        installed_namespace: &str,
+        hash: &str,
+    ) -> Result<(), Error> {
+        tokio::fs::copy(
+            self.manifest_cache_path(cached_bucket, hash),
+            self.installed_manifest_path(installed_namespace, hash),
+        )
+        .await?;
+        Ok(())
+    }
+
     pub fn make_cached_manifest(
         &self,
         bucket: impl AsRef<str>,
@@ -402,11 +416,8 @@ impl LocalDomain {
         // Make an "installed" copy of the remote manifest.
         let installed_manifest_path = self.installed_manifest_path(&remote.namespace, &remote.hash);
         create_dir_all(&installed_manifest_path.parent().unwrap()).await?;
-        tokio::fs::copy(
-            self.manifest_cache_path(&remote.bucket, &remote.hash),
-            installed_manifest_path,
-        )
-        .await?;
+        self.copy_cached_to_installed(&remote.bucket, &remote.namespace, &remote.hash)
+            .await?;
 
         // Create the identity cache dir.
         let objects_dir = self.root_dir.join(OBJECTS_DIR);
@@ -825,7 +836,8 @@ impl InstalledPackage {
                     } else {
                         let sha256_hash = calculate_sha256_checksum(file).await?;
                         let file_hash =
-                            Multihash::wrap(MULTIHASH_SHA256, sha256_hash.as_ref()).unwrap();
+                            Multihash::wrap(MULTIHASH_SHA256_CHUNKED, sha256_hash.as_ref())
+                                .unwrap();
                         changes.insert(
                             relative_path.display().to_string(),
                             Change {
@@ -1201,19 +1213,7 @@ impl InstalledPackage {
                     .ok_or(Error::Checksum("missing checksum".to_string()))?;
 
                 let s3_checksum = BASE64_STANDARD.decode(s3_checksum_b64)?;
-
-                let checksum = if row.size == 0 {
-                    // Edge case: a 0-byte upload is treated as an empty list of chunks, rather than
-                    // a list of a 0-byte chunk. Its checksum is sha256(''), NOT sha256(sha256('')).
-                    s3_checksum
-                } else {
-                    calculate_sha256_checksum(s3_checksum.as_ref())
-                        .await
-                        .unwrap()
-                        .to_vec()
-                };
-
-                (response.version_id, checksum)
+                (response.version_id, s3_checksum)
             } else {
                 let (chunksize, num_chunks) = get_checksum_chunksize_and_parts(row.size);
                 let upload_id = client
@@ -1378,13 +1378,13 @@ impl InstalledPackage {
         lineage.base_hash = lineage.latest_hash.clone();
 
         self.domain.cache_remote_manifest(&lineage.remote).await?;
-        tokio::fs::copy(
-            self.domain
-                .manifest_cache_path(&lineage.remote.bucket, &lineage.remote.hash),
-            self.domain
-                .installed_manifest_path(&self.namespace, &lineage.remote.hash),
-        )
-        .await?;
+        self.domain
+            .copy_cached_to_installed(
+                &lineage.remote.bucket,
+                &self.namespace,
+                &lineage.remote.hash,
+            )
+            .await?;
 
         self.write_lineage(lineage).await?;
 
@@ -1425,13 +1425,13 @@ impl InstalledPackage {
         lineage.base_hash = new_latest;
 
         self.domain.cache_remote_manifest(&lineage.remote).await?;
-        tokio::fs::copy(
-            self.domain
-                .manifest_cache_path(&lineage.remote.bucket, &lineage.remote.hash),
-            self.domain
-                .installed_manifest_path(&self.namespace, &lineage.remote.hash),
-        )
-        .await?;
+        self.domain
+            .copy_cached_to_installed(
+                &lineage.remote.bucket,
+                &self.namespace,
+                &lineage.remote.hash,
+            )
+            .await?;
 
         self.write_lineage(lineage).await?;
 
