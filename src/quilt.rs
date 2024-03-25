@@ -578,8 +578,7 @@ impl LocalDomain {
                 let name = &key[prefix_len..];
                 // FIXME: we assume that objects have hash and it's compatible with sha-256-chunked
                 let s3_checksum = s3_utils::get_compliant_chunked_checksum(&attrs).unwrap();
-                let hash =
-                    Multihash::wrap(MULTIHASH_SHA256_CHUNKED, s3_checksum.as_bytes()).unwrap();
+                let hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, s3_checksum.as_bytes())?;
                 records.insert(
                     name.into(),
                     Row4 {
@@ -810,11 +809,11 @@ impl InstalledPackage {
                                 let hash =
                                     calculate_sha256_chunked_checksum(file, file_metadata.len())
                                         .await?;
-                                Multihash::wrap(MULTIHASH_SHA256_CHUNKED, hash.as_ref()).unwrap()
+                                Multihash::wrap(MULTIHASH_SHA256_CHUNKED, hash.as_ref())?
                             }
                             _ => {
                                 let hash = calculate_sha256_checksum(file).await?;
-                                Multihash::wrap(MULTIHASH_SHA256, hash.as_ref()).unwrap()
+                                Multihash::wrap(MULTIHASH_SHA256, hash.as_ref())?
                             }
                         };
 
@@ -835,8 +834,7 @@ impl InstalledPackage {
                         }
                     } else {
                         let sha256_hash = calculate_sha256_checksum(file).await?;
-                        let file_hash =
-                            Multihash::wrap(MULTIHASH_SHA256, sha256_hash.as_ref()).unwrap();
+                        let file_hash = Multihash::wrap(MULTIHASH_SHA256, sha256_hash.as_ref())?;
                         changes.insert(
                             relative_path.display().to_string(),
                             Change {
@@ -1299,7 +1297,7 @@ impl InstalledPackage {
             };
 
             // Update the manifest with the sha2-256-chunked checksum.
-            row.hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, checksum.as_ref()).unwrap();
+            row.hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, checksum.as_ref())?;
 
             let remote_url = s3::make_s3_url(&remote.bucket, &s3_key, version_id.as_deref());
             println!("got remote url: {}", remote_url);
@@ -1479,7 +1477,7 @@ mod tests {
 
     #[test]
     #[ignore]
-    fn flow() {
+    fn flow() -> Result<(), Error> {
         // ## Setup
         let test_uri_string = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
 
@@ -1570,9 +1568,7 @@ mod tests {
                         size: timestamp.len() as u64,
                         hash: Multihash::wrap(
                             MULTIHASH_SHA256,
-                            block_on(calculate_sha256_checksum(timestamp.as_bytes()))
-                                .unwrap()
-                                .as_ref(),
+                            block_on(calculate_sha256_checksum(timestamp.as_bytes()))?.as_ref(),
                         )
                         .unwrap(),
                     }),
@@ -1580,9 +1576,7 @@ mod tests {
                         size: old_readme.len() as u64,
                         hash: Multihash::wrap(
                             MULTIHASH_SHA256,
-                            block_on(calculate_sha256_checksum(old_readme.as_bytes()))
-                                .unwrap()
-                                .as_ref(),
+                            block_on(calculate_sha256_checksum(old_readme.as_bytes()))?.as_ref(),
                         )
                         .unwrap(),
                     }),
@@ -1638,5 +1632,6 @@ mod tests {
         // let remote_latest = block_on(installed_package.push()).expect("Failed to push");
         //
         // assert_eq!(remote_latest, None, "Expected to certify remote latest");
+        Ok(())
     }
 }

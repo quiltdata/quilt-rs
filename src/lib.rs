@@ -78,6 +78,9 @@ pub enum Error {
     #[error("Invalid multihash: {0}")]
     InvalidMultihash(String),
 
+    #[error("Multihash error: {0}")]
+    Multihash(#[from] multihash::Error),
+
     #[error("Invalid URI scheme: {0}")]
     InvalidScheme(String),
 
