@@ -69,7 +69,7 @@ pub enum Error {
     #[error("The given package is not installed: {0}")]
     PackageNotInstalled(String),
 
-    #[error("Duplicate paths: {0}")]
+    #[error("Failed to install path: {0}")]
     InstallPath(String),
 
     #[error("Uninstall error: {0}")]
@@ -77,6 +77,9 @@ pub enum Error {
 
     #[error("Invalid multihash: {0}")]
     InvalidMultihash(String),
+
+    #[error("Multihash error: {0}")]
+    Multihash(#[from] multihash::Error),
 
     #[error("Invalid URI scheme: {0}")]
     InvalidScheme(String),
