@@ -834,7 +834,8 @@ impl InstalledPackage {
                             );
                         }
                     } else {
-                        let sha256_hash = calculate_sha256_checksum(file).await?;
+                        let sha256_hash =
+                            calculate_sha256_chunked_checksum(file, file_metadata.len()).await?;
                         let file_hash =
                             Multihash::wrap(MULTIHASH_SHA256_CHUNKED, sha256_hash.as_ref())
                                 .unwrap();
@@ -1213,7 +1214,18 @@ impl InstalledPackage {
                     .ok_or(Error::Checksum("missing checksum".to_string()))?;
 
                 let s3_checksum = BASE64_STANDARD.decode(s3_checksum_b64)?;
-                (response.version_id, s3_checksum)
+
+                let checksum = if row.size == 0 {
+                    // Edge case: a 0-byte upload is treated as an empty list of chunks, rather than
+                    // a list of a 0-byte chunk. Its checksum is sha256(''), NOT sha256(sha256('')).
+                    s3_checksum
+                } else {
+                    calculate_sha256_checksum(s3_checksum.as_ref())
+                        .await
+                        .unwrap()
+                        .to_vec()
+                };
+                (response.version_id, checksum)
             } else {
                 let (chunksize, num_chunks) = get_checksum_chunksize_and_parts(row.size);
                 let upload_id = client
