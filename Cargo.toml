@@ -41,7 +41,7 @@ tabled = "0.15.0"
 temp-dir = "0.1.13"
 thiserror = "1.0.57"
 tokio = { version = "1.36.0", features = ["full"] }
-tokio-stream = "0.1.14"
+tokio-stream = "0.1.15"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
 url = "2.5.0"
