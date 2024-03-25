@@ -69,7 +69,7 @@ pub enum Error {
     #[error("The given package is not installed: {0}")]
     PackageNotInstalled(String),
 
-    #[error("Duplicate paths: {0}")]
+    #[error("Failed to install path: {0}")]
     InstallPath(String),
 
     #[error("Uninstall error: {0}")]

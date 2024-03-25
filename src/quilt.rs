@@ -945,7 +945,11 @@ impl InstalledPackage {
                 file.flush().await?;
             }
 
-            row.place = Url::from_file_path(&object_dest).unwrap().to_string();
+            row.place = Url::from_file_path(&object_dest)
+                .map_err(|_| {
+                    Error::InstallPath(format!("Failed to create URL from {:?}", &object_dest))
+                })?
+                .to_string();
 
             let working_dest = working_dir.join(&row.name);
             let parent_dir = working_dest.parent();
@@ -1086,7 +1090,11 @@ impl InstalledPackage {
             }
             if let Some(current) = current {
                 let object_dest = objects_dir.join(hex::encode(current.hash.digest()));
-                let new_physical_key = Url::from_file_path(&object_dest).unwrap().into();
+                let new_physical_key = Url::from_file_path(&object_dest)
+                    .map_err(|_| {
+                        Error::Commit(format!("Failed to create URL from {:?}", &object_dest))
+                    })?
+                    .into();
 
                 if table
                     .records
@@ -1185,7 +1193,7 @@ impl InstalledPackage {
                 }
             }
 
-            let local_url = Url::parse(&row.place).unwrap();
+            let local_url = Url::parse(&row.place)?;
             let file_path: PathBuf = local_url.to_file_path().unwrap();
 
             let s3_key = format!("{}/{}", self.namespace, row.name);
@@ -1217,8 +1225,7 @@ impl InstalledPackage {
                     s3_checksum
                 } else {
                     calculate_sha256_checksum(s3_checksum.as_ref())
-                        .await
-                        .unwrap()
+                        .await?
                         .to_vec()
                 };
 
@@ -1569,16 +1576,14 @@ mod tests {
                         hash: Multihash::wrap(
                             MULTIHASH_SHA256,
                             block_on(calculate_sha256_checksum(timestamp.as_bytes()))?.as_ref(),
-                        )
-                        .unwrap(),
+                        )?,
                     }),
                     previous: Some(PackageFileFingerprint {
                         size: old_readme.len() as u64,
                         hash: Multihash::wrap(
                             MULTIHASH_SHA256,
                             block_on(calculate_sha256_checksum(old_readme.as_bytes()))?.as_ref(),
-                        )
-                        .unwrap(),
+                        )?,
                     }),
                 },
             )]),
