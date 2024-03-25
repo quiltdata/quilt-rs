@@ -31,7 +31,7 @@ hex = "0.4.3"
 lazy_static = "1.4.0"
 multihash = "0.19.1"
 object_store = { version = "0.8.0", features = ["aws", "base64", "reqwest", "serde", "serde_json"] }
-parquet = { version = "49.0.0", features = ["async", "object_store"] }
+parquet = { version = "51.0.0", features = ["async", "object_store"] }
 percent-encoding = "2.3.1"
 reqwest = "0.12.2"
 serde = { version = "1.0", features = ["derive"] }
