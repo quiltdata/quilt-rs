@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.5.8] - 2024-03-25
+
+* Fixed calculating checksums for new files
+
 ## [0.5.7] - 2024-03-21
 
 * Added command-line interface: `browse`, `install`, `list`, `package` and `uninstall` commands
