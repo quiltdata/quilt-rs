@@ -53,7 +53,6 @@ mod tests {
     fn test_formatting_without_path() -> Result<(), multihash::Error> {
         let row = Row4 {
             name: "Foo".to_string(),
-            path: None,
             place: "Bar".to_string(),
             size: 123,
             hash: Multihash::wrap(345, b"hello world")?,
@@ -61,21 +60,6 @@ mod tests {
             meta: serde_json::json!({"foo":"bar"}),
         };
         assert_eq!(row.to_string(), r##"Row4(Foo)@Bar^123#[104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100]$$Bool(false)$Object {"foo": String("bar")}"##.to_string());
-        Ok(())
-    }
-
-    #[test]
-    fn test_formatting_with_path() -> Result<(), multihash::Error> {
-        let row = Row4 {
-            name: "Foo".to_string(),
-            path: Some(UPath::parse("file://parent/child").unwrap()),
-            place: "Bar".to_string(),
-            size: 123,
-            hash: Multihash::wrap(345, b"hello world")?,
-            info: serde_json::Value::Bool(false),
-            meta: serde_json::json!({"foo":"bar"}),
-        };
-        assert_eq!(row.to_string(), r##"Row4(Foo)@Bar^123#[104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100]$$Bool(false)$Object {"foo": String("bar")}$Some(Local("/child"))"##.to_string());
         Ok(())
     }
 }
