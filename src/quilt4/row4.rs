@@ -15,7 +15,6 @@ pub struct Row4 {
     pub name: String,
     // scheme: Enum<file,s3,https>
     pub place: String,
-    pub path: Option<UPath>,
     pub size: u64,
     pub hash: Multihash<256>,
     pub info: serde_json::Value, // system metadata
@@ -42,11 +41,7 @@ impl fmt::Display for Row4 {
             + &format!("#{:?}", self.hash.digest())
             + &format!("$${:?}", self.info)
             + &format!("${:?}", self.meta);
-        if self.path.is_some() {
-            write!(f, "{}", result + &format!("${:?}", self.path))
-        } else {
-            write!(f, "{}", result)
-        }
+        write!(f, "{}", result)
     }
 }
 

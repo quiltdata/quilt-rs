@@ -105,7 +105,6 @@ impl Table {
                 let row = Row4 {
                     name: name.into(),
                     place: place_column.value(idx).into(),
-                    path: None,
                     size: size_column.value(idx),
                     hash,
                     info: serde_json::from_str(info_column.value(idx))
