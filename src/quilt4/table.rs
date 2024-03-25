@@ -218,8 +218,7 @@ impl Table {
             UPath::Local(path) => {
                 let file = tokio::fs::File::create(path).await?;
                 let mut writer =
-                    AsyncArrowWriter::try_new(file, schema.clone(), 10 * 1024, Some(props))
-                        .unwrap();
+                    AsyncArrowWriter::try_new(file, schema.clone(), Some(props)).unwrap();
 
                 Table::write_row_impl(&mut writer, schema.clone(), &self.header).await?;
                 for row in self.records.values() {

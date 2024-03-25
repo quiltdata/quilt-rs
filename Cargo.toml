@@ -13,8 +13,8 @@ repository = "https://github.com/quiltdata/quilt-rs"
 path = "src/lib.rs"
 
 [dependencies]
-arrow = "49.0.0"
-arrow-array = "50.0.0"
+arrow = "51.0.0"
+arrow-array = "51.0.0"
 async-trait = "0.1.79"
 aws-config = "1.1.8"
 aws-credential-types = "1.1.8"
@@ -30,8 +30,8 @@ futures-util = "0.3.30"
 hex = "0.4.3"
 lazy_static = "1.4.0"
 multihash = "0.19.1"
-object_store = { version = "0.8.0", features = ["aws", "base64", "reqwest", "serde", "serde_json"] }
-parquet = { version = "49.0.0", features = ["async", "object_store"] }
+object_store = { version = "0.9.1", features = ["aws", "base64", "reqwest", "serde", "serde_json"] }
+parquet = { version = "51.0.0", features = ["async", "object_store"] }
 percent-encoding = "2.3.1"
 reqwest = "0.12.2"
 serde = { version = "1.0", features = ["derive"] }
