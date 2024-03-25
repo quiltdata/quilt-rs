@@ -8,7 +8,7 @@
 use multihash::Multihash;
 use std::fmt;
 
-use super::{row3::Row3, upath::UPath};
+use super::row3::Row3;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row4 {
