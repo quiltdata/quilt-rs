@@ -1225,6 +1225,7 @@ impl InstalledPackage {
                         .unwrap()
                         .to_vec()
                 };
+
                 (response.version_id, checksum)
             } else {
                 let (chunksize, num_chunks) = get_checksum_chunksize_and_parts(row.size);
