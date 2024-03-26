@@ -335,7 +335,6 @@ impl LocalDomain {
                     let header = Row4 {
                         name: HEADER_ROW.into(),
                         place: HEADER_ROW.into(),
-                        path: None,
                         size: 0,
                         hash: Multihash::default(),
                         info: serde_json::json!({
@@ -356,7 +355,6 @@ impl LocalDomain {
                             Row4 {
                                 name: row.logical_key,
                                 place: row.physical_key,
-                                path: None,
                                 size: row.size,
                                 hash: row.hash.try_into()?,
                                 info: info.into(),
@@ -513,7 +511,6 @@ impl LocalDomain {
         let header = Row4 {
             name: HEADER_ROW.into(),
             place: HEADER_ROW.into(),
-            path: None,
             size: 0,
             hash: Multihash::default(),
             info: serde_json::json!({
@@ -585,7 +582,6 @@ impl LocalDomain {
                         name: name.into(),
                         place: s3::make_s3_url(&uri.bucket, key, attrs.version_id.as_deref())
                             .into(),
-                        path: None, // WTF is this?
                         // XXX: can we use `as u64` safely here?
                         size: attrs
                             .object_size
@@ -1105,7 +1101,6 @@ impl InstalledPackage {
                         Row4 {
                             name: logical_key.to_owned(),
                             place: new_physical_key,
-                            path: None,
                             size: current.size,
                             hash: current.hash,
                             info: serde_json::Value::default(),
