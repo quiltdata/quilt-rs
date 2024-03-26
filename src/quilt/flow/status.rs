@@ -150,11 +150,11 @@ pub async fn create_status(
                         MULTIHASH_SHA256_CHUNKED => {
                             let hash = calculate_sha256_chunked_checksum(file, file_metadata.len())
                                 .await?;
-                            Multihash::wrap(MULTIHASH_SHA256_CHUNKED, hash.as_ref()).unwrap()
+                            Multihash::wrap(MULTIHASH_SHA256_CHUNKED, hash.as_ref())?
                         }
                         _ => {
                             let hash = calculate_sha256_checksum(file).await?;
-                            Multihash::wrap(MULTIHASH_SHA256, hash.as_ref()).unwrap()
+                            Multihash::wrap(MULTIHASH_SHA256, hash.as_ref())?
                         }
                     };
 
@@ -174,9 +174,10 @@ pub async fn create_status(
                         );
                     }
                 } else {
-                    let sha256_hash = calculate_sha256_checksum(file).await?;
+                    let sha256_hash =
+                        calculate_sha256_chunked_checksum(file, file_metadata.len()).await?;
                     let file_hash =
-                        Multihash::wrap(MULTIHASH_SHA256, sha256_hash.as_ref()).unwrap();
+                        Multihash::wrap(MULTIHASH_SHA256_CHUNKED, sha256_hash.as_ref())?;
                     changes.insert(
                         relative_path.display().to_string(),
                         Change {

@@ -1,6 +1,6 @@
 [package]
 name = "quilt-rs"
-version = "0.5.7"
+version = "0.5.8"
 edition = "2021"
 description = "Rust library for accessing Quilt data packages."
 documentation = "https://docs.quiltdata.com"
@@ -13,39 +13,39 @@ repository = "https://github.com/quiltdata/quilt-rs"
 path = "src/lib.rs"
 
 [dependencies]
-arrow = "49.0.0"
-arrow-array = "50.0.0"
-async-trait = "0.1.77"
-aws-config = "1.1.4"
-aws-credential-types = "1.1.4"
-aws-sdk-s3 = "1.14.0"
-aws-smithy-types = "1.1.7"
-aws-types = "1.1.4"
-base64 = "0.21.7"
-chrono = { version = "0.4.33", features = ["serde"] }
-clap = { version = "4.5.1", features = ["derive"] }
-figment = { version = "0.10.12", features = ["env", "yaml"] }
+arrow = "51.0.0"
+arrow-array = "51.0.0"
+async-trait = "0.1.79"
+aws-config = "1.1.8"
+aws-credential-types = "1.1.8"
+aws-sdk-s3 = "1.20.0"
+aws-smithy-types = "1.1.8"
+aws-types = "1.1.8"
+base64 = "0.22.0"
+chrono = { version = "0.4.35", features = ["serde"] }
+clap = { version = "4.5.4", features = ["derive"] }
+figment = { version = "0.10.15", features = ["env", "yaml"] }
 futures = "0.3.30"
 futures-util = "0.3.30"
 hex = "0.4.3"
 lazy_static = "1.4.0"
 multihash = "0.19.1"
-object_store = { version = "0.8.0", features = ["aws", "base64", "reqwest", "serde", "serde_json"] }
-parquet = { version = "49.0.0", features = ["async", "object_store"] }
+object_store = { version = "0.9.1", features = ["aws", "base64", "reqwest", "serde", "serde_json"] }
+parquet = { version = "51.0.0", features = ["async", "object_store"] }
 percent-encoding = "2.3.1"
-reqwest = "0.11.23"
+reqwest = "0.12.2"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0.108"
+serde_json = "1.0.115"
 sha2 = "0.10.8"
 tabled = "0.15.0"
-temp-dir = "0.1.12"
-thiserror = "1.0.57"
-tokio = { version = "1.35.1", features = ["full"] }
-tokio-stream = "0.1.14"
+temp-dir = "0.1.13"
+thiserror = "1.0.58"
+tokio = { version = "1.36.0", features = ["full"] }
+tokio-stream = "0.1.15"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
 url = "2.5.0"
 
 [dev-dependencies]
 temp_testdir = "0.2.3"
-tokio-test = "0.4.3"
+tokio-test = "0.4.4"

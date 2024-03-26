@@ -398,8 +398,7 @@ impl LocalDomain {
                 let name = &key[prefix_len..];
                 // FIXME: we assume that objects have hash and it's compatible with sha-256-chunked
                 let s3_checksum = s3_utils::get_compliant_chunked_checksum(&attrs).unwrap();
-                let hash =
-                    Multihash::wrap(MULTIHASH_SHA256_CHUNKED, s3_checksum.as_bytes()).unwrap();
+                let hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, s3_checksum.as_bytes())?;
                 records.insert(
                     name.into(),
                     Row4 {
@@ -558,7 +557,11 @@ impl InstalledPackage {
                 file.flush().await?;
             }
 
-            row.place = Url::from_file_path(&object_dest).unwrap().to_string();
+            row.place = Url::from_file_path(&object_dest)
+                .map_err(|_| {
+                    Error::InstallPath(format!("Failed to create URL from {:?}", &object_dest))
+                })?
+                .to_string();
 
             let working_dest = working_dir.join(&row.name);
             let parent_dir = working_dest.parent();
@@ -695,7 +698,11 @@ impl InstalledPackage {
             }
             if let Some(current) = current {
                 let object_dest = objects_dir.join(hex::encode(current.hash.digest()));
-                let new_physical_key = Url::from_file_path(&object_dest).unwrap().into();
+                let new_physical_key = Url::from_file_path(&object_dest)
+                    .map_err(|_| {
+                        Error::Commit(format!("Failed to create URL from {:?}", &object_dest))
+                    })?
+                    .into();
 
                 if table
                     .records
@@ -794,7 +801,7 @@ impl InstalledPackage {
                 }
             }
 
-            let local_url = Url::parse(&row.place).unwrap();
+            let local_url = Url::parse(&row.place)?;
             let file_path: PathBuf = local_url.to_file_path().unwrap();
 
             let s3_key = format!("{}/{}", self.namespace, row.name);
@@ -826,8 +833,7 @@ impl InstalledPackage {
                     s3_checksum
                 } else {
                     calculate_sha256_checksum(s3_checksum.as_ref())
-                        .await
-                        .unwrap()
+                        .await?
                         .to_vec()
                 };
 
@@ -906,7 +912,7 @@ impl InstalledPackage {
             };
 
             // Update the manifest with the sha2-256-chunked checksum.
-            row.hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, checksum.as_ref()).unwrap();
+            row.hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, checksum.as_ref())?;
 
             let remote_url = s3::make_s3_url(&remote.bucket, &s3_key, version_id.as_deref());
             println!("got remote url: {}", remote_url);
@@ -1091,7 +1097,7 @@ mod tests {
 
     #[test]
     #[ignore]
-    fn flow() {
+    fn flow() -> Result<(), Error> {
         // ## Setup
         let test_uri_string = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
 
@@ -1183,21 +1189,15 @@ mod tests {
                         size: timestamp.len() as u64,
                         hash: Multihash::wrap(
                             MULTIHASH_SHA256,
-                            block_on(calculate_sha256_checksum(timestamp.as_bytes()))
-                                .unwrap()
-                                .as_ref(),
-                        )
-                        .unwrap(),
+                            block_on(calculate_sha256_checksum(timestamp.as_bytes()))?.as_ref(),
+                        )?,
                     }),
                     previous: Some(PackageFileFingerprint {
                         size: old_readme.len() as u64,
                         hash: Multihash::wrap(
                             MULTIHASH_SHA256,
-                            block_on(calculate_sha256_checksum(old_readme.as_bytes()))
-                                .unwrap()
-                                .as_ref(),
-                        )
-                        .unwrap(),
+                            block_on(calculate_sha256_checksum(old_readme.as_bytes()))?.as_ref(),
+                        )?,
                     }),
                 },
             )]),
@@ -1251,5 +1251,6 @@ mod tests {
         // let remote_latest = block_on(installed_package.push()).expect("Failed to push");
         //
         // assert_eq!(remote_latest, None, "Expected to certify remote latest");
+        Ok(())
     }
 }
