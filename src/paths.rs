@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crate::Error;
+
 const MANIFEST_DIR: &str = ".quilt/packages";
 const TAGS_DIR: &str = ".quilt/named_packages";
 const OBJECTS_DIR: &str = ".quilt/objects";
@@ -57,4 +59,18 @@ impl DomainPaths {
     pub fn working_dir(&self, namespace: &str) -> PathBuf {
         self.root_dir.join(namespace)
     }
+}
+
+pub async fn copy_cached_to_installed(
+    paths: &DomainPaths,
+    cached_manifest_bucket: &str,
+    installed_manifest_namespace: &str,
+    hash: &str,
+) -> Result<(), Error> {
+    tokio::fs::copy(
+        paths.manifest_cache(cached_manifest_bucket, hash),
+        paths.installed_manifest(installed_manifest_namespace, hash),
+    )
+    .await?;
+    Ok(())
 }

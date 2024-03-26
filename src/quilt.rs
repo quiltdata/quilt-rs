@@ -1,23 +1,8 @@
-use std::{
-    collections::{hash_map::RandomState, BTreeMap, HashSet},
-    path::PathBuf,
-};
+use std::{collections::BTreeMap, path::PathBuf};
 
-use arrow::error::ArrowError;
-use aws_sdk_s3::{
-    error::SdkError,
-    types::{ChecksumAlgorithm, CompletedMultipartUpload, CompletedPart},
-};
-use aws_smithy_types::byte_stream::{ByteStream, Length};
-use base64::{prelude::BASE64_STANDARD, Engine};
 use multihash::Multihash;
 use parquet::data_type::AsBytes;
-use serde_json::json;
-use tokio::{
-    fs::{create_dir_all, remove_dir_all, File},
-    io::{AsyncReadExt, AsyncWriteExt},
-};
-use url::Url;
+use tokio::fs::{create_dir_all, remove_dir_all};
 
 pub mod flow;
 pub mod lineage;
@@ -26,17 +11,11 @@ pub mod manifest_handle;
 pub mod storage;
 pub mod uri;
 
-use crate::{
-    paths,
-    quilt4::{
-        checksum::{calculate_sha256_checksum, get_checksum_chunksize_and_parts},
-        table::HEADER_ROW,
-    },
-    s3_utils, Error, Row4, Table, UPath,
-};
+use crate::{paths, quilt4::table::HEADER_ROW, s3_utils, Error, Row4, Table, UPath};
 
 use self::manifest::MULTIHASH_SHA256_CHUNKED;
 pub use self::{
+    flow::browse::{browse_remote_manifest, cache_manifest, cache_remote_manifest},
     flow::status::{
         create_status, Change, ChangeSet, InstalledPackageStatus, PackageFileFingerprint,
         UpstreamDiscreteState, UpstreamState,
@@ -48,6 +27,12 @@ pub use self::{
     storage::{fs, s3},
     uri::{RevisionPointer, S3PackageUri},
 };
+use flow::commit::commit_package;
+use flow::install_paths::install_paths;
+use flow::pull::pull_package;
+use flow::push::push_package;
+use flow::reset_to_latest::reset_to_latest;
+use flow::uninstall_paths::uninstall_paths;
 
 // XXX: is this necessary?
 #[derive(Debug, PartialEq, Eq)]
@@ -61,137 +46,6 @@ impl From<&S3PackageUri> for S3Domain {
             bucket: uri.bucket.clone(),
         }
     }
-}
-
-async fn cache_manifest(
-    paths: &paths::DomainPaths,
-    manifest: &Table,
-    bucket: &str,
-    hash: &str,
-) -> Result<PathBuf, ArrowError> {
-    let cache_path = paths.manifest_cache(bucket, hash);
-    create_dir_all(&cache_path.parent().unwrap()).await?;
-    manifest
-        .write_to_upath(&UPath::Local(cache_path.clone()))
-        .await
-        .map(|_| cache_path)
-}
-
-// FIMXE: CachedManifest::browse(&RemoteManifest)
-//        or RemoteManifest::browse -> CachedManifest
-//        or CachedManifest::try_from(RemoteManifest)
-async fn cache_remote_manifest(
-    paths: &paths::DomainPaths,
-    manifest: &RemoteManifest,
-) -> Result<impl ReadableManifest, Error> {
-    // check if the manifest is already cached
-    // if not, download and cache it
-    // return cached manifest
-
-    let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
-
-    // TODO: who is responsible for this?
-    create_dir_all(&cache_path.parent().unwrap()).await?;
-
-    if !fs::exists(&cache_path).await {
-        // Does not exist yet
-        let client = crate::s3_utils::get_client_for_bucket(&manifest.bucket).await?;
-
-        let result = client
-            .get_object()
-            .bucket(&manifest.bucket)
-            .key(paths::get_manifest_key(&manifest.hash))
-            .send()
-            .await;
-
-        match result {
-            Ok(output) => {
-                let mut contents = Vec::new();
-                output
-                    .body
-                    .into_async_read()
-                    .read_to_end(&mut contents)
-                    .await?;
-                fs::write(&cache_path, &contents).await?;
-            }
-            Err(SdkError::ServiceError(err)) if err.err().is_no_such_key() => {
-                // Fallback: Download the JSONL manifest.
-                let result = client
-                    .get_object()
-                    .bucket(&manifest.bucket)
-                    .key(paths::get_manifest_key(&manifest.hash))
-                    .send()
-                    .await
-                    .map_err(|err| Error::S3(err.to_string()))?;
-
-                let quilt3_manifest = Manifest::from_file(result.body.into_async_read()).await?;
-                let header = Row4 {
-                    name: HEADER_ROW.into(),
-                    place: HEADER_ROW.into(),
-                    path: None,
-                    size: 0,
-                    hash: Multihash::default(),
-                    info: serde_json::json!({
-                        "message": quilt3_manifest.header.message,
-                        "version": quilt3_manifest.header.version,
-                    }),
-                    meta: match quilt3_manifest.header.user_meta {
-                        Some(meta) => meta.into(),
-                        None => serde_json::Value::Null,
-                    },
-                };
-                let mut records = BTreeMap::new();
-                for row in quilt3_manifest.rows {
-                    let mut info = row.meta.unwrap_or_default();
-                    let meta = info.remove("user_meta").unwrap_or_default();
-                    records.insert(
-                        row.logical_key.clone(),
-                        Row4 {
-                            name: row.logical_key,
-                            place: row.physical_key,
-                            path: None,
-                            size: row.size,
-                            hash: row.hash.try_into()?,
-                            info: info.into(),
-                            meta,
-                        },
-                    );
-                }
-                let table = Table { header, records };
-                table.write_to_upath(&UPath::Local(cache_path)).await?
-            }
-            Err(err) => {
-                return Err(Error::S3(err.to_string()));
-            }
-        }
-    }
-
-    Ok(CachedManifest {
-        paths: paths.clone(),
-        bucket: manifest.bucket.clone(),
-        hash: manifest.hash.clone(),
-    })
-}
-
-async fn browse_remote_manifest(
-    paths: &paths::DomainPaths,
-    remote: &RemoteManifest,
-) -> Result<Table, Error> {
-    cache_remote_manifest(paths, remote).await?.read().await
-}
-
-async fn copy_cached_to_installed(
-    paths: &paths::DomainPaths,
-    cached_manifest_bucket: &str,
-    installed_manifest_namespace: &str,
-    hash: &str,
-) -> Result<(), Error> {
-    tokio::fs::copy(
-        paths.manifest_cache(cached_manifest_bucket, hash),
-        paths.installed_manifest(installed_manifest_namespace, hash),
-    )
-    .await?;
-    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -231,8 +85,13 @@ impl LocalDomain {
             .paths
             .installed_manifest(&remote.namespace, &remote.hash);
         create_dir_all(&installed_manifest_path.parent().unwrap()).await?;
-        copy_cached_to_installed(&self.paths, &remote.bucket, &remote.namespace, &remote.hash)
-            .await?;
+        paths::copy_cached_to_installed(
+            &self.paths,
+            &remote.bucket,
+            &remote.namespace,
+            &remote.hash,
+        )
+        .await?;
 
         // Create the identity cache dir.
         let objects_dir = self.paths.objects_dir();
@@ -484,144 +343,19 @@ impl InstalledPackage {
     }
 
     pub async fn install_paths(&self, paths: &Vec<String>) -> Result<(), Error> {
-        if paths.is_empty() {
-            return Ok(());
-        }
-
-        let mut lineage = self.lineage.read().await?;
-
-        // TODO: what happens if paths are already installed? Ignore, or error?
-        if !HashSet::<String, RandomState>::from_iter(lineage.paths.keys().cloned())
-            .is_disjoint(&HashSet::from_iter(paths.to_owned()))
-        {
-            return Err(Error::InstallPath(
-                "some paths are already installed".to_string(),
-            ));
-        }
-
-        let objects_dir = self.paths.objects_dir();
-        let working_dir = self.working_folder();
-
-        // for each path in paths:
-        //   get entry from installed manifest
-        //   cache the entry into identity cache (if not there)
-        //   replace entry's physical key in the manifest with the cached physical key
-        //
-        // write the adjusted manifest into the installed manifest path
-        // copy the selected paths into the working folder
-        //
-        // record installation into the lineage:
-        //   add installed package entry:
-        //     remote: RemoteManifest
-
-        let mut table = self.manifest().await?.read().await?;
-
-        for path in paths {
-            // TODO: Consider using a hashmap or treemap for manifest.rows
-            let row = table
-                .records
-                .get_mut(path)
-                .ok_or(Error::Table(format!("path {} not found", path)))?;
-
-            let s3::S3Uri {
-                bucket,
-                key,
-                version,
-            } = row.place.parse()?;
-            let version = version.ok_or(Error::S3Uri("missing versionId in s3 URL".to_string()))?;
-
-            let object_dest = objects_dir.join(hex::encode(row.hash.digest()));
-
-            if !fs::exists(&object_dest).await {
-                let mut file = File::create(&object_dest).await?;
-
-                let client = s3_utils::get_client_for_bucket(&bucket).await?;
-
-                let mut object = client
-                    .get_object()
-                    .bucket(bucket)
-                    .key(key)
-                    .version_id(version)
-                    .send()
-                    .await
-                    .map_err(|err| Error::S3(format!("failed to get S3 object: {}", err)))?;
-
-                while let Some(bytes) = object
-                    .body
-                    .try_next()
-                    .await
-                    .map_err(|err| Error::S3(format!("failed to read S3 object: {}", err)))?
-                {
-                    file.write_all(&bytes).await?;
-                }
-                file.flush().await?;
-            }
-
-            row.place = Url::from_file_path(&object_dest)
-                .map_err(|_| {
-                    Error::InstallPath(format!("Failed to create URL from {:?}", &object_dest))
-                })?
-                .to_string();
-
-            let working_dest = working_dir.join(&row.name);
-            let parent_dir = working_dest.parent();
-            if parent_dir.is_some() {
-                tokio::fs::create_dir_all(parent_dir.unwrap()).await?;
-            }
-            tokio::fs::copy(&object_dest, &working_dest).await?;
-            let timestamp = fs::get_file_modified_ts(&working_dest).await?;
-            lineage.paths.insert(
-                row.name.to_owned(),
-                PathState {
-                    timestamp,
-                    hash: row.hash.to_owned(),
-                },
-            );
-        }
-
-        // save the manifest
-        // TODO: Write to a temporary file first.
-        let installed_manifest_path = self
-            .paths
-            .installed_manifest(&self.namespace, lineage.current_hash());
-
-        table
-            .write_to_upath(&UPath::Local(installed_manifest_path))
-            .await?;
-
-        self.lineage.write(lineage).await?;
-
-        Ok(())
+        install_paths(
+            &self.lineage,
+            &self.manifest().await?,
+            &self.paths,
+            self.working_folder(),
+            self.namespace.to_string(),
+            paths,
+        )
+        .await
     }
 
     pub async fn uninstall_paths(&self, paths: &Vec<String>) -> Result<(), Error> {
-        println!("uninstall_paths: {paths:?}");
-
-        let mut lineage = self.lineage.read().await?;
-
-        let working_dir = self.working_folder();
-        for path in paths {
-            lineage.paths.remove(path).ok_or(Error::Uninstall(format!(
-                "path {} not found. Cannot uninstall.",
-                path
-            )))?;
-
-            let working_path = working_dir.join(path);
-            match tokio::fs::remove_file(working_path).await {
-                Ok(()) => (),
-                Err(err) => {
-                    if err.kind() != std::io::ErrorKind::NotFound {
-                        return Err(Error::Io(err));
-                    }
-                }
-            };
-        }
-
-        self.lineage.write(lineage).await?;
-
-        // TODO: Remove unused files in OBJECTS_DIR?
-
-        Ok(())
+        uninstall_paths(&self.lineage, self.working_folder(), paths).await
     }
 
     pub async fn revert_paths(&self, paths: &Vec<String>) -> Result<(), Error> {
@@ -634,395 +368,37 @@ impl InstalledPackage {
         message: String,
         user_meta: Option<manifest::JsonObject>,
     ) -> Result<(), Error> {
-        println!("commit: {message:?}, {user_meta:?}");
-        // create a new manifest based on the stored version
-
-        // for each modified file:
-        //   - compute the new hash
-        //   - store in the identity cache at $LOCAL/.quilt/objects/<hash>
-        //   - update the modified entries in the manifest with the new physical keys
-        //     pointing to the new objects in the identity cache
-        //   - ? set entry.meta.pulled_hashes to previous object hash?
-        //   - ? set entry.meta.remote_key to the remote's physical key?
-
-        // compute the new top hash
-        // store the new manifest under the new top hash at $LOCAL/.quilt/packages/<hash>
-        // XXX: prefix with the namespace?
-        // XXX: what to do on collisions?
-        //      e.g. when a file was changed, committed, and then reverted
-
-        // store revision pointers to the newly created manifest
-        //   - in the local registry??
-        //   - in the lineage
-        //     - commit:
-        //       - timestamp
-        //       - user ?
-        //       - multihash: new_top_hash
-        //       - pulled_hashes: [old_top_hash] ?
-        //       - paths:
-        //         - [modified file's path]:
-        //           - multihash
-        //           # XXX: do we actually need this? can be inferred from namespace + logical key
-        //           - remote_key: "s3://..." # no version id
-        //           - local_key: $LOCAL/.quilt/objects/<hash>
-        //           - pulled_hashes: [old_hash] ?
-        // NOTE: each commit MUST include all paths from prior commits
-        //       (since the last pull, until reset by a sync)
-
-        let mut package_lineage = self.lineage.read().await?;
-
-        // TODO: Maybe have the user pass this as an argument?
-        let status = self.status().await?;
-
-        let objects_dir = self.paths.objects_dir();
-        // TODO: This should really be done when the domain is created.
-        create_dir_all(&objects_dir).await?;
-
-        let work_dir = self.working_folder();
-
-        let mut table = self.manifest().await?.read().await?;
-
-        for (logical_key, Change { current, previous }) in status.changes {
-            if let Some(previous) = previous {
-                let removed = table
-                    .records
-                    .remove(&logical_key)
-                    .ok_or(Error::Commit(format!("cannot remove {}", logical_key)))?;
-                if removed.size != previous.size || removed.hash != previous.hash {
-                    return Err(Error::Commit(format!(
-                        "unexpected size or hash for removed {}",
-                        logical_key
-                    )));
-                }
-                package_lineage.paths.remove(&logical_key);
-            }
-            if let Some(current) = current {
-                let object_dest = objects_dir.join(hex::encode(current.hash.digest()));
-                let new_physical_key = Url::from_file_path(&object_dest)
-                    .map_err(|_| {
-                        Error::Commit(format!("Failed to create URL from {:?}", &object_dest))
-                    })?
-                    .into();
-
-                if table
-                    .records
-                    .insert(
-                        logical_key.to_owned(),
-                        Row4 {
-                            name: logical_key.to_owned(),
-                            place: new_physical_key,
-                            path: None,
-                            size: current.size,
-                            hash: current.hash,
-                            info: serde_json::Value::default(),
-                            meta: serde_json::Value::default(),
-                        },
-                    )
-                    .is_some()
-                {
-                    return Err(Error::Commit(format!("cannot overwrite {}", logical_key)));
-                }
-
-                let work_dest = work_dir.join(&logical_key);
-                if !fs::exists(&object_dest).await {
-                    tokio::fs::copy(&work_dest, object_dest).await?;
-                }
-                package_lineage.paths.insert(
-                    logical_key,
-                    PathState {
-                        timestamp: fs::get_file_modified_ts(&work_dest).await?,
-                        hash: current.hash,
-                    },
-                );
-            }
-        }
-
-        table.header.info = json!({
-            "message": message,
-            "version": "v0",
-        });
-        if let Some(user_meta) = user_meta {
-            table.header.meta = user_meta.into();
-        }
-
-        let new_top_hash = table.top_hash();
-
-        let new_manifest_path = self
-            .paths
-            .installed_manifest(&self.namespace, &new_top_hash);
-
-        table
-            .write_to_upath(&UPath::Local(new_manifest_path))
-            .await?;
-
-        let mut prev_hashes = Vec::new();
-        if let Some(commit) = &package_lineage.commit {
-            prev_hashes.push(commit.hash.to_owned());
-            prev_hashes.extend(commit.prev_hashes.to_owned());
-        }
-        let commit = CommitState {
-            hash: new_top_hash,
-            timestamp: chrono::Utc::now(),
-            prev_hashes,
-        };
-        package_lineage.commit = Some(commit);
-
-        self.lineage.write(package_lineage).await?;
-
-        Ok(())
+        commit_package(
+            &self.lineage,
+            &self.manifest().await?,
+            &self.paths,
+            self.working_folder(),
+            self.namespace.to_string(),
+            message,
+            user_meta,
+        )
+        .await
     }
 
     pub async fn push(&self) -> Result<(), Error> {
-        let mut lineage = self.lineage.read().await?;
-
-        let commit = match lineage.commit {
-            None => return Ok(()), // nothing to commit
-            Some(commit) => commit,
-        };
-
-        let remote = &lineage.remote;
-
-        let mut local_manifest = self.manifest().await?.read().await?;
-        let remote_manifest = browse_remote_manifest(&self.paths, remote).await?;
-
-        // ## copy data
-        // Copy each of the _modified_ paths from their local_key to remote_key,
-        // keeping track of the resulting versionIds
-        //
-        // TODO: FAIL if the remote bucket does NOT support versioning (as it would be destructive)
-        let client = crate::s3_utils::get_client_for_bucket(&remote.bucket).await?;
-
-        // ignore removed items, upload changed and new items
-        for row in local_manifest.records.values_mut() {
-            if let Some(remote_row) = remote_manifest.records.get(&row.name) {
-                if remote_row.eq(row) {
-                    row.place = remote_row.place.to_owned();
-                    continue;
-                }
-            }
-
-            let local_url = Url::parse(&row.place)?;
-            let file_path: PathBuf = local_url.to_file_path().unwrap();
-
-            let s3_key = format!("{}/{}", self.namespace, row.name);
-            println!("uploading to s3({}): {}", remote.bucket, s3_key);
-
-            // TODO: upload in parallel. use a stream?
-            let (version_id, checksum) = if row.size < storage::s3::MULTIPART_THRESHOLD {
-                let body = ByteStream::read_from().path(&file_path).build().await?;
-
-                let response = client
-                    .put_object()
-                    .bucket(&remote.bucket)
-                    .key(&s3_key)
-                    .body(body)
-                    .checksum_algorithm(ChecksumAlgorithm::Sha256)
-                    .send()
-                    .await
-                    .map_err(|err| Error::S3(err.to_string()))?;
-
-                let s3_checksum_b64 = response
-                    .checksum_sha256
-                    .ok_or(Error::Checksum("missing checksum".to_string()))?;
-
-                let s3_checksum = BASE64_STANDARD.decode(s3_checksum_b64)?;
-
-                let checksum = if row.size == 0 {
-                    // Edge case: a 0-byte upload is treated as an empty list of chunks, rather than
-                    // a list of a 0-byte chunk. Its checksum is sha256(''), NOT sha256(sha256('')).
-                    s3_checksum
-                } else {
-                    calculate_sha256_checksum(s3_checksum.as_ref())
-                        .await?
-                        .to_vec()
-                };
-
-                (response.version_id, checksum)
-            } else {
-                let (chunksize, num_chunks) = get_checksum_chunksize_and_parts(row.size);
-                let upload_id = client
-                    .create_multipart_upload()
-                    .bucket(&remote.bucket)
-                    .key(&s3_key)
-                    .checksum_algorithm(ChecksumAlgorithm::Sha256)
-                    .send()
-                    .await
-                    .map_err(|err| Error::S3(err.to_string()))?
-                    .upload_id
-                    .ok_or(Error::UploadId("failed to get an UploadId".to_string()))?;
-
-                let mut parts: Vec<CompletedPart> = Vec::new();
-                for chunk_idx in 0..num_chunks {
-                    let part_number = chunk_idx as i32 + 1;
-                    let offset = chunk_idx * chunksize;
-                    let length = chunksize.min(row.size - offset);
-                    let chunk_body = ByteStream::read_from()
-                        .path(&file_path)
-                        .offset(offset)
-                        .length(Length::Exact(length)) // https://github.com/awslabs/aws-sdk-rust/issues/821
-                        .build()
-                        .await?;
-                    let part_response = client
-                        .upload_part()
-                        .bucket(&remote.bucket)
-                        .key(&s3_key)
-                        .upload_id(&upload_id)
-                        .part_number(part_number)
-                        .checksum_algorithm(ChecksumAlgorithm::Sha256)
-                        .body(chunk_body)
-                        .send()
-                        .await
-                        .map_err(|err| {
-                            Error::S3(format!("failed to upload part {}: {}", part_number, err))
-                        })?;
-                    parts.push(
-                        CompletedPart::builder()
-                            .part_number(part_number)
-                            .e_tag(part_response.e_tag.unwrap_or_default())
-                            .checksum_sha256(part_response.checksum_sha256.unwrap_or_default())
-                            .build(),
-                    );
-                }
-
-                let response = client
-                    .complete_multipart_upload()
-                    .bucket(&remote.bucket)
-                    .key(&s3_key)
-                    .upload_id(&upload_id)
-                    .multipart_upload(
-                        CompletedMultipartUpload::builder()
-                            .set_parts(Some(parts))
-                            .build(),
-                    )
-                    .send()
-                    .await
-                    .map_err(|err| {
-                        Error::S3(format!("failed to complete multipart upload: {}", err))
-                    })?;
-
-                let s3_checksum = response
-                    .checksum_sha256
-                    .ok_or(Error::Checksum("missing checksum".to_string()))?;
-                let (checksum_b64, _) = s3_checksum
-                    .split_once('-')
-                    .ok_or(Error::Checksum("unexpected checksum".to_string()))?;
-                let checksum = BASE64_STANDARD.decode(checksum_b64)?;
-
-                (response.version_id, checksum)
-            };
-
-            // Update the manifest with the sha2-256-chunked checksum.
-            row.hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, checksum.as_ref())?;
-
-            let remote_url = s3::make_s3_url(&remote.bucket, &s3_key, version_id.as_deref());
-            println!("got remote url: {}", remote_url);
-
-            // "Relax" the manifest by using those new remote keys
-            row.place = remote_url.to_string();
-        }
-
-        let top_hash = local_manifest.top_hash();
-        let new_remote = RemoteManifest {
-            hash: top_hash.clone(),
-            ..remote.clone()
-        };
-
-        // Cache the relaxed manifest
-        let cache_path = cache_manifest(
+        push_package(
+            &self.lineage,
+            &self.manifest().await?,
             &self.paths,
-            &local_manifest,
-            &new_remote.bucket,
-            &new_remote.hash,
+            self.namespace.to_string(),
         )
-        .await?;
-
-        // Push the (cached) relaxed manifest to the remote, don't tag it yet
-        new_remote.upload_from(&cache_path).await?;
-
-        // Upload a quilt3 manifest for backward compatibility.
-        new_remote.upload_legacy(&local_manifest).await?;
-
-        println!("uploaded remote manifest: {new_remote:?}");
-
-        // Tag the new commit.
-        // If {self.commit.tag} does not already exist at
-        // {self.remote}/.quilt/named_packages/{self.namespace},
-        // create it with the value of {self.commit.hash}
-        // TODO: Otherwise try again with the current timestamp as the tag
-        // (e.g., try five times with exponential backoff, then Error)
-        new_remote
-            .put_timestamp_tag(commit.timestamp, &new_remote.hash)
-            .await?;
-
-        // Check the hash of remote's latest manifest
-        lineage.latest_hash = new_remote.resolve_latest().await?;
-        lineage.remote = new_remote;
-
-        // Reset the commit state.
-        lineage.commit = None;
-
-        // Try certifying latest if tracking
-        if lineage.base_hash == lineage.latest_hash {
-            // remote latest has not been updated, certifying the new latest
-            lineage.remote.update_latest(&top_hash).await?;
-            lineage.latest_hash = top_hash.clone();
-            lineage.base_hash = top_hash.clone();
-        }
-
-        self.lineage.write(lineage).await?;
-
-        Ok(())
+        .await
     }
 
     pub async fn pull(&self) -> Result<(), Error> {
-        let status = self.status().await?;
-        if !status.changes.is_empty() {
-            return Err(Error::Package("package has pending changes".to_string()));
-        }
-
-        let lineage = self.lineage.read().await?;
-        if lineage.commit.is_some() {
-            return Err(Error::Package("package has pending commits".to_string()));
-        }
-        if lineage.remote.hash != lineage.base_hash {
-            return Err(Error::Package("package has diverged".to_string()));
-        }
-        // TODO: do we need to explicitly update latest_hash?
-        // status() tries to update, but may fail.
-        if lineage.base_hash == lineage.latest_hash {
-            return Err(Error::Package("package is already up-to-date".to_string()));
-        }
-
-        // TODO: What should we do about installed paths?
-        // They may or may not exist in the updated package.
-        let paths: Vec<String> = lineage.paths.keys().cloned().collect();
-        self.uninstall_paths(&paths).await?;
-
-        // TODO: uninstall_paths() just modified the lineage, so re-reading it here.
-        // There needs to be a better way.
-        let mut lineage = self.lineage.read().await?;
-        lineage.remote.hash = lineage.latest_hash.clone();
-        lineage.base_hash = lineage.latest_hash.clone();
-
-        cache_remote_manifest(&self.paths, &lineage.remote).await?;
-        copy_cached_to_installed(
+        pull_package(
+            &self.lineage,
+            &self.manifest().await?,
             &self.paths,
-            &lineage.remote.bucket,
-            &self.namespace,
-            &lineage.remote.hash,
+            self.working_folder(),
+            self.namespace.to_string(),
         )
-        .await?;
-
-        self.lineage.write(lineage).await?;
-
-        let manifest = self.manifest().await?.read().await?;
-        let paths_to_install = paths
-            .into_iter()
-            .filter(|x| manifest.records.contains_key(x))
-            .collect();
-        self.install_paths(&paths_to_install).await?;
-
-        Ok(())
+        .await
     }
 
     pub async fn certify_latest(&self) -> Result<(), Error> {
@@ -1035,39 +411,14 @@ impl InstalledPackage {
     }
 
     pub async fn reset_to_latest(&self) -> Result<(), Error> {
-        let lineage = self.lineage.read().await?;
-
-        let new_latest = lineage.remote.resolve_latest().await?;
-        if new_latest == lineage.remote.hash {
-            // already at latest
-            return Ok(());
-        }
-
-        let paths: Vec<String> = lineage.paths.into_keys().collect();
-        self.uninstall_paths(&paths).await?;
-        let mut lineage = self.lineage.read().await?;
-
-        lineage.latest_hash = new_latest.clone();
-        lineage.remote.hash = new_latest.clone();
-        lineage.base_hash = new_latest;
-
-        cache_remote_manifest(&self.paths, &lineage.remote).await?;
-        copy_cached_to_installed(
+        reset_to_latest(
+            &self.lineage,
+            &self.manifest().await?,
             &self.paths,
-            &lineage.remote.bucket,
-            &self.namespace,
-            &lineage.remote.hash,
+            self.working_folder(),
+            self.namespace.to_string(),
         )
-        .await?;
-
-        self.lineage.write(lineage).await?;
-
-        let manifest = self.manifest().await?.read().await?;
-        let paths_to_install = paths
-            .into_iter()
-            .filter(|x| manifest.records.contains_key(x))
-            .collect();
-        self.install_paths(&paths_to_install).await
+        .await
     }
 }
 
@@ -1086,6 +437,7 @@ mod tests {
     use tokio_test::{assert_err, block_on};
 
     use crate::quilt::manifest::MULTIHASH_SHA256;
+    use crate::quilt4::checksum::calculate_sha256_checksum;
 
     fn get_timestamp() -> String {
         std::time::SystemTime::now()
