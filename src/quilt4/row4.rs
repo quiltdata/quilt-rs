@@ -10,7 +10,7 @@ use std::fmt;
 
 use super::{row3::Row3, upath::UPath};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct Row4 {
     pub name: String,
     // scheme: Enum<file,s3,https>

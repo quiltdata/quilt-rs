@@ -152,3 +152,41 @@ pub async fn commit_package(
 
     Ok(lineage)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::quilt::Table;
+
+    struct TestManifest {}
+
+    impl ReadableManifest for TestManifest {
+        fn get_path_buf(&self) -> PathBuf {
+            PathBuf::new()
+        }
+        async fn read(&self) -> Result<Table, Error> {
+            Ok(Table::default())
+        }
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_commit() -> Result<(), Error> {
+        let lineage = PackageLineage::default();
+        assert!(lineage.commit.is_none());
+        let manifest = TestManifest {};
+        let lineage = commit_package(
+            lineage,
+            &manifest,
+            &paths::DomainPaths::default(),
+            PathBuf::default(),
+            String::default(),
+            String::default(),
+            None,
+        )
+        .await?;
+        assert!(lineage.commit.is_some());
+        Ok(())
+    }
+}

@@ -38,7 +38,7 @@ use super::{row4::Row4, upath::UPath};
 
 pub const HEADER_ROW: &str = ".";
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Table {
     pub header: Row4,
     pub records: BTreeMap<String, Row4>,

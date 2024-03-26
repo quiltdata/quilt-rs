@@ -24,7 +24,7 @@ pub fn get_manifest_key_legacy(hash: &str) -> String {
     format!("{}/{}", MANIFEST_DIR, hash)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DomainPaths {
     root_dir: PathBuf,
 }
