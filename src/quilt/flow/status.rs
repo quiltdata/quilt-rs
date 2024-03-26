@@ -6,7 +6,7 @@ use serde::Serialize;
 use tokio::fs::{read_dir, File};
 
 use crate::quilt::{
-    lineage::{PackageLineage, PackageLineageIo},
+    lineage::PackageLineage,
     manifest::{MULTIHASH_SHA256, MULTIHASH_SHA256_CHUNKED},
     manifest_handle::ReadableManifest,
 };
@@ -90,24 +90,26 @@ impl InstalledPackageStatus {
     }
 }
 
+pub async fn refresh_latest_hash(mut lineage: PackageLineage) -> Result<PackageLineage, Error> {
+    let latest_hash = lineage.remote.resolve_latest().await?;
+    if lineage.latest_hash == latest_hash {
+        return Ok(lineage);
+    }
+    lineage.latest_hash = latest_hash;
+    Ok(lineage)
+}
+
 pub async fn create_status(
-    lineage_io: &PackageLineageIo,
+    lineage: PackageLineage,
     manifest: &(impl ReadableManifest + Sync),
     working_dir: PathBuf,
-) -> Result<InstalledPackageStatus, Error> {
+) -> Result<(PackageLineage, InstalledPackageStatus), Error> {
     // compute the status based on the following sources:
     //   - the cached manifest
     //   - paths
     //   - working directory state
     // installed entries marked as "installed" (initially as "downloading")
     // modified entries marked as "modified", etc
-    let lineage = lineage_io.read().await?;
-    // try updating the latest hash
-    if let Ok(latest_hash) = lineage.remote.resolve_latest().await {
-        let mut lineage = lineage.clone();
-        lineage.latest_hash = latest_hash;
-        lineage_io.write(lineage.clone()).await?;
-    }
 
     let table = manifest.read().await?;
 
@@ -208,8 +210,6 @@ pub async fn create_status(
         );
     }
 
-    Ok(InstalledPackageStatus::new(
-        UpstreamState::from_lineage(&lineage),
-        changes,
-    ))
+    let status = InstalledPackageStatus::new(UpstreamState::from_lineage(&lineage), changes);
+    Ok((lineage, status))
 }

@@ -1,18 +1,19 @@
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use arrow::error::ArrowError;
 use aws_sdk_s3::error::SdkError;
 use multihash::Multihash;
-use std::path::PathBuf;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
 
-use crate::paths;
-use crate::quilt::manifest;
-use crate::quilt::manifest_handle::{CachedManifest, ReadableManifest, RemoteManifest};
-use crate::quilt::storage;
-use crate::quilt::Error;
-use crate::{quilt4::table::HEADER_ROW, Row4, Table, UPath};
+use crate::quilt::{
+    manifest,
+    manifest_handle::{CachedManifest, ReadableManifest, RemoteManifest},
+    storage, Error,
+};
+use crate::quilt4::table::HEADER_ROW;
+use crate::{paths, Row4, Table, UPath};
 
 pub async fn cache_manifest(
     paths: &paths::DomainPaths,
@@ -70,7 +71,7 @@ pub async fn cache_remote_manifest(
                 let result = client
                     .get_object()
                     .bucket(&manifest.bucket)
-                    .key(paths::get_manifest_key(&manifest.hash))
+                    .key(paths::get_manifest_key_legacy(&manifest.hash))
                     .send()
                     .await
                     .map_err(|err| Error::S3(err.to_string()))?;

@@ -17,7 +17,7 @@ pub struct CommitState {
     pub prev_hashes: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct PathState {
     pub timestamp: chrono::DateTime<chrono::Utc>,
     #[serde(
@@ -43,7 +43,7 @@ fn str_to_multihash<'de, D: Deserializer<'de>>(
     Multihash::from_bytes(&bytes).map_err(DeserializeError::custom)
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct PackageLineage {
     pub commit: Option<CommitState>,
     pub remote: RemoteManifest,

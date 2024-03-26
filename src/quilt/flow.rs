@@ -1,7 +1,3 @@
-// TODO: instead of passing
-//        &lineage::PackageLineageIo
-//        pass lineage struct and return modified lineage
-
 pub mod browse;
 pub mod commit;
 pub mod install_paths;

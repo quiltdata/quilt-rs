@@ -5,23 +5,22 @@ use crate::quilt::flow::browse::cache_remote_manifest;
 use crate::quilt::flow::install_paths::install_paths;
 use crate::quilt::flow::status::create_status;
 use crate::quilt::flow::uninstall_paths::uninstall_paths;
-use crate::quilt::lineage;
+use crate::quilt::lineage::PackageLineage;
 use crate::quilt::manifest_handle;
 use crate::quilt::Error;
 
 pub async fn pull_package(
-    lineage_io: &lineage::PackageLineageIo,
+    lineage: PackageLineage,
     manifest: &(impl manifest_handle::ReadableManifest + Sync),
     paths: &DomainPaths,
     working_dir: PathBuf,
     namespace: String,
-) -> Result<(), Error> {
-    let status = create_status(lineage_io, manifest, working_dir.clone()).await?;
+) -> Result<PackageLineage, Error> {
+    let (lineage, status) = create_status(lineage, manifest, working_dir.clone()).await?;
     if !status.changes.is_empty() {
         return Err(Error::Package("package has pending changes".to_string()));
     }
 
-    let lineage = lineage_io.read().await?;
     if lineage.commit.is_some() {
         return Err(Error::Package("package has pending commits".to_string()));
     }
@@ -37,24 +36,21 @@ pub async fn pull_package(
     // TODO: What should we do about installed paths?
     // They may or may not exist in the updated package.
     let installed_paths: Vec<String> = lineage.paths.keys().cloned().collect();
-    uninstall_paths(lineage_io, working_dir.clone(), &installed_paths).await?;
+    let mut lineage = uninstall_paths(lineage, working_dir.clone(), &installed_paths).await?;
 
     // TODO: uninstall_paths() just modified the lineage, so re-reading it here.
     // There needs to be a better way.
-    let mut lineage = lineage_io.read().await?;
     lineage.remote.hash = lineage.latest_hash.clone();
     lineage.base_hash = lineage.latest_hash.clone();
 
-    cache_remote_manifest(&paths, &lineage.remote).await?;
+    cache_remote_manifest(paths, &lineage.remote).await?;
     copy_cached_to_installed(
-        &paths,
+        paths,
         &lineage.remote.bucket,
         &namespace,
         &lineage.remote.hash,
     )
     .await?;
-
-    lineage_io.write(lineage).await?;
 
     let materialized_manifest = manifest.read().await?;
     let paths_to_install = installed_paths
@@ -62,14 +58,12 @@ pub async fn pull_package(
         .filter(|x| materialized_manifest.records.contains_key(x))
         .collect();
     install_paths(
-        lineage_io,
+        lineage,
         manifest,
         paths,
         working_dir,
         namespace,
         &paths_to_install,
     )
-    .await?;
-
-    Ok(())
+    .await
 }

@@ -7,27 +7,27 @@ use tokio::{fs::File, io::AsyncWriteExt};
 use url::Url;
 
 use crate::quilt::{
-    lineage::{PackageLineageIo, PathState},
+    lineage::{PackageLineage, PathState},
     manifest_handle::ReadableManifest,
     storage::{fs, s3},
 };
 use crate::{paths, s3_utils, Error, UPath};
 
 pub async fn install_paths(
-    lineage_io: &PackageLineageIo,
+    mut lineage: PackageLineage,
     manifest: &(impl ReadableManifest + Sync),
     paths: &paths::DomainPaths,
     working_dir: PathBuf,
     namespace: String,
+
     entries_paths: &Vec<String>,
-) -> Result<(), Error> {
+) -> Result<PackageLineage, Error> {
     if entries_paths.is_empty() {
-        return Ok(());
+        return Ok(lineage);
     }
 
-    let mut lineage = lineage_io.read().await?;
-
     // TODO: what happens if paths are already installed? Ignore, or error?
+    // Fail early if path is already installed
     if !HashSet::<String, RandomState>::from_iter(lineage.paths.keys().cloned())
         .is_disjoint(&HashSet::from_iter(entries_paths.to_owned()))
     {
@@ -123,7 +123,5 @@ pub async fn install_paths(
         .write_to_upath(&UPath::Local(installed_manifest_path))
         .await?;
 
-    lineage_io.write(lineage).await?;
-
-    Ok(())
+    Ok(lineage)
 }

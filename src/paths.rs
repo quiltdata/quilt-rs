@@ -20,6 +20,10 @@ pub fn get_manifest_key(hash: &str) -> String {
     format!("{}/{}", MANIFEST_DIR, parquet_manifest_filename(hash))
 }
 
+pub fn get_manifest_key_legacy(hash: &str) -> String {
+    format!("{}/{}", MANIFEST_DIR, hash)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DomainPaths {
     root_dir: PathBuf,

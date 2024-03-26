@@ -15,18 +15,17 @@ use crate::{paths, quilt4::table::HEADER_ROW, s3_utils, Error, Row4, Table, UPat
 
 use self::manifest::MULTIHASH_SHA256_CHUNKED;
 pub use self::{
-    flow::browse::{browse_remote_manifest, cache_manifest, cache_remote_manifest},
     flow::status::{
-        create_status, Change, ChangeSet, InstalledPackageStatus, PackageFileFingerprint,
-        UpstreamDiscreteState, UpstreamState,
+        create_status, refresh_latest_hash, Change, ChangeSet, InstalledPackageStatus,
+        PackageFileFingerprint, UpstreamDiscreteState, UpstreamState,
     },
-    // context::Context,
     lineage::{CommitState, DomainLineage, PackageLineage, PathState},
     manifest::{ContentHash, Manifest, ManifestHeader, ManifestRow},
     manifest_handle::{CachedManifest, InstalledManifest, ReadableManifest, RemoteManifest},
     storage::{fs, s3},
     uri::{RevisionPointer, S3PackageUri},
 };
+use flow::browse::{browse_remote_manifest, cache_manifest, cache_remote_manifest};
 use flow::commit::commit_package;
 use flow::install_paths::install_paths;
 use flow::pull::pull_package;
@@ -334,28 +333,35 @@ impl InstalledPackage {
     // }
 
     pub async fn status(&self) -> Result<InstalledPackageStatus, Error> {
-        create_status(
-            &self.lineage,
-            &self.manifest().await?,
-            self.working_folder(),
-        )
-        .await
+        let lineage = self.lineage.read().await?;
+        let lineage = refresh_latest_hash(lineage).await?;
+        let (lineage, status) =
+            create_status(lineage, &self.manifest().await?, self.working_folder()).await?;
+        self.lineage.write(lineage).await?;
+        Ok(status)
     }
 
     pub async fn install_paths(&self, paths: &Vec<String>) -> Result<(), Error> {
-        install_paths(
-            &self.lineage,
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let lineage = self.lineage.read().await?;
+        let lineage = install_paths(
+            lineage,
             &self.manifest().await?,
             &self.paths,
             self.working_folder(),
             self.namespace.to_string(),
             paths,
         )
-        .await
+        .await?;
+        self.lineage.write(lineage).await
     }
 
     pub async fn uninstall_paths(&self, paths: &Vec<String>) -> Result<(), Error> {
-        uninstall_paths(&self.lineage, self.working_folder(), paths).await
+        let lineage = self.lineage.read().await?;
+        let lineage = uninstall_paths(lineage, self.working_folder(), paths).await?;
+        self.lineage.write(lineage).await
     }
 
     pub async fn revert_paths(&self, paths: &Vec<String>) -> Result<(), Error> {
@@ -368,8 +374,9 @@ impl InstalledPackage {
         message: String,
         user_meta: Option<manifest::JsonObject>,
     ) -> Result<(), Error> {
-        commit_package(
-            &self.lineage,
+        let lineage = self.lineage.read().await?;
+        let lineage = commit_package(
+            lineage,
             &self.manifest().await?,
             &self.paths,
             self.working_folder(),
@@ -377,28 +384,33 @@ impl InstalledPackage {
             message,
             user_meta,
         )
-        .await
+        .await?;
+        self.lineage.write(lineage).await
     }
 
     pub async fn push(&self) -> Result<(), Error> {
-        push_package(
-            &self.lineage,
+        let lineage = self.lineage.read().await?;
+        let lineage = push_package(
+            lineage,
             &self.manifest().await?,
             &self.paths,
             self.namespace.to_string(),
         )
-        .await
+        .await?;
+        self.lineage.write(lineage).await
     }
 
     pub async fn pull(&self) -> Result<(), Error> {
-        pull_package(
-            &self.lineage,
+        let lineage = self.lineage.read().await?;
+        let lineage = pull_package(
+            lineage,
             &self.manifest().await?,
             &self.paths,
             self.working_folder(),
             self.namespace.to_string(),
         )
-        .await
+        .await?;
+        self.lineage.write(lineage).await
     }
 
     pub async fn certify_latest(&self) -> Result<(), Error> {
@@ -411,14 +423,16 @@ impl InstalledPackage {
     }
 
     pub async fn reset_to_latest(&self) -> Result<(), Error> {
-        reset_to_latest(
-            &self.lineage,
+        let lineage = self.lineage.read().await?;
+        let lineage = reset_to_latest(
+            lineage,
             &self.manifest().await?,
             &self.paths,
             self.working_folder(),
             self.namespace.to_string(),
         )
-        .await
+        .await?;
+        self.lineage.write(lineage).await
     }
 }
 

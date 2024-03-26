@@ -8,7 +8,7 @@ use url::Url;
 
 use crate::paths;
 use crate::quilt::flow::browse::{browse_remote_manifest, cache_manifest};
-use crate::quilt::lineage;
+use crate::quilt::lineage::PackageLineage;
 use crate::quilt::manifest;
 use crate::quilt::manifest_handle;
 use crate::quilt::storage;
@@ -16,22 +16,20 @@ use crate::quilt::Error;
 use crate::quilt4::checksum;
 
 pub async fn push_package(
-    lineage_io: &lineage::PackageLineageIo,
+    mut lineage: PackageLineage,
     manifest: &(impl manifest_handle::ReadableManifest + Sync),
     paths: &paths::DomainPaths,
     namespace: String,
-) -> Result<(), Error> {
-    let mut lineage = lineage_io.read().await?;
-
+) -> Result<PackageLineage, Error> {
     let commit = match lineage.commit {
-        None => return Ok(()), // nothing to commit
+        None => return Ok(lineage), // nothing to commit
         Some(commit) => commit,
     };
 
     let remote = &lineage.remote;
 
     let mut local_manifest = manifest.read().await?;
-    let remote_manifest = browse_remote_manifest(&paths, remote).await?;
+    let remote_manifest = browse_remote_manifest(paths, remote).await?;
 
     // ## copy data
     // Copy each of the _modified_ paths from their local_key to remote_key,
@@ -176,13 +174,8 @@ pub async fn push_package(
     };
 
     // Cache the relaxed manifest
-    let cache_path = cache_manifest(
-        &paths,
-        &local_manifest,
-        &new_remote.bucket,
-        &new_remote.hash,
-    )
-    .await?;
+    let cache_path =
+        cache_manifest(paths, &local_manifest, &new_remote.bucket, &new_remote.hash).await?;
 
     // Push the (cached) relaxed manifest to the remote, don't tag it yet
     new_remote.upload_from(&cache_path).await?;
@@ -209,6 +202,7 @@ pub async fn push_package(
     // Reset the commit state.
     lineage.commit = None;
 
+    // FIXME: use flow::certify_latest
     // Try certifying latest if tracking
     if lineage.base_hash == lineage.latest_hash {
         // remote latest has not been updated, certifying the new latest
@@ -217,7 +211,5 @@ pub async fn push_package(
         lineage.base_hash = top_hash.clone();
     }
 
-    lineage_io.write(lineage).await?;
-
-    Ok(())
+    Ok(lineage)
 }

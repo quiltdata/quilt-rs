@@ -8,21 +8,21 @@ use crate::{paths, Error, Row4, UPath};
 
 use crate::quilt::{
     flow::status::{create_status, Change},
-    lineage::{CommitState, PackageLineageIo, PathState},
+    lineage::{CommitState, PackageLineage, PathState},
     manifest::JsonObject,
     manifest_handle::ReadableManifest,
     storage::fs,
 };
 
 pub async fn commit_package(
-    lineage_io: &PackageLineageIo,
+    lineage: PackageLineage,
     manifest: &(impl ReadableManifest + Sync),
     paths: &paths::DomainPaths,
     working_dir: PathBuf,
     namespace: String,
     message: String,
     user_meta: Option<JsonObject>,
-) -> Result<(), Error> {
+) -> Result<PackageLineage, Error> {
     println!("commit: {message:?}, {user_meta:?}");
     // create a new manifest based on the stored version
 
@@ -58,10 +58,8 @@ pub async fn commit_package(
     // NOTE: each commit MUST include all paths from prior commits
     //       (since the last pull, until reset by a sync)
 
-    let mut package_lineage = lineage_io.read().await?;
-
     // TODO: Maybe have the user pass this as an argument?
-    let status = create_status(lineage_io, manifest, working_dir.clone()).await?;
+    let (mut lineage, status) = create_status(lineage, manifest, working_dir.clone()).await?;
 
     let objects_dir = paths.objects_dir();
     // TODO: This should really be done when the domain is created.
@@ -81,7 +79,7 @@ pub async fn commit_package(
                     logical_key
                 )));
             }
-            package_lineage.paths.remove(&logical_key);
+            lineage.paths.remove(&logical_key);
         }
         if let Some(current) = current {
             let object_dest = objects_dir.join(hex::encode(current.hash.digest()));
@@ -114,7 +112,7 @@ pub async fn commit_package(
             if !fs::exists(&object_dest).await {
                 tokio::fs::copy(&work_dest, object_dest).await?;
             }
-            package_lineage.paths.insert(
+            lineage.paths.insert(
                 logical_key,
                 PathState {
                     timestamp: fs::get_file_modified_ts(&work_dest).await?,
@@ -141,7 +139,7 @@ pub async fn commit_package(
         .await?;
 
     let mut prev_hashes = Vec::new();
-    if let Some(commit) = &package_lineage.commit {
+    if let Some(commit) = lineage.commit {
         prev_hashes.push(commit.hash.to_owned());
         prev_hashes.extend(commit.prev_hashes.to_owned());
     }
@@ -150,9 +148,7 @@ pub async fn commit_package(
         timestamp: chrono::Utc::now(),
         prev_hashes,
     };
-    package_lineage.commit = Some(commit);
+    lineage.commit = Some(commit);
 
-    lineage_io.write(package_lineage).await?;
-
-    Ok(())
+    Ok(lineage)
 }

@@ -18,7 +18,7 @@ pub fn tag_uri(bucket: &str, namespace: &str, tag: &str) -> s3::S3Uri {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteManifest {
     pub bucket: String,
     pub namespace: String,
