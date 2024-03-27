@@ -213,3 +213,111 @@ pub async fn create_status(
     let status = InstalledPackageStatus::new(UpstreamState::from_lineage(&lineage), changes);
     Ok((lineage, status))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::collections::BTreeMap;
+
+    use crate::quilt::lineage::{CommitState, PathState};
+    use crate::{Row4, Table};
+
+    struct InMemoryManifest {}
+    impl ReadableManifest for InMemoryManifest {
+        async fn read(&self) -> Result<Table, Error> {
+            Ok(Table::default())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_default_status() -> Result<(), Error> {
+        let (_lineage, status) = create_status(
+            PackageLineage::default(),
+            &(InMemoryManifest {}),
+            PathBuf::default(),
+        )
+        .await?;
+        assert_eq!(status, InstalledPackageStatus::default());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_behind() -> Result<(), Error> {
+        let same_hash = "AAA".to_string();
+        let other_hash = "BBB".to_string();
+        let lineage = PackageLineage {
+            commit: Some(CommitState {
+                hash: same_hash.clone(),
+                ..CommitState::default()
+            }),
+            base_hash: same_hash.clone(),
+            latest_hash: other_hash,
+            ..PackageLineage::default()
+        };
+
+        let (_lineage, status) =
+            create_status(lineage, &(InMemoryManifest {}), PathBuf::default()).await?;
+        assert_eq!(status.upstream_state, UpstreamDiscreteState::Behind);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_ahead() -> Result<(), Error> {
+        let same_hash = "AAA".to_string();
+        let other_hash = "BBB".to_string();
+        let lineage = PackageLineage {
+            commit: Some(CommitState {
+                hash: other_hash,
+                ..CommitState::default()
+            }),
+            base_hash: same_hash.clone(),
+            latest_hash: same_hash.clone(),
+            ..PackageLineage::default()
+        };
+
+        let (_, status) =
+            create_status(lineage, &(InMemoryManifest {}), PathBuf::default()).await?;
+        assert_eq!(status.upstream_state, UpstreamDiscreteState::Ahead);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_diverged() -> Result<(), Error> {
+        let lineage = PackageLineage {
+            commit: Some(CommitState {
+                hash: "aaa".to_string(),
+                ..CommitState::default()
+            }),
+            base_hash: "bbb".to_string(),
+            latest_hash: "ccc".to_string(),
+            ..PackageLineage::default()
+        };
+
+        let (_, status) =
+            create_status(lineage, &(InMemoryManifest {}), PathBuf::default()).await?;
+        assert_eq!(status.upstream_state, UpstreamDiscreteState::Diverged);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_removed_files() -> Result<(), Error> {
+        let lineage = PackageLineage {
+            paths: BTreeMap::from([("a/a".to_string(), PathState::default())]),
+            ..PackageLineage::default()
+        };
+        struct RemovedFilesManifest {}
+        impl ReadableManifest for RemovedFilesManifest {
+            async fn read(&self) -> Result<Table, Error> {
+                Ok(Table {
+                    records: BTreeMap::from([("a/a".to_string(), Row4::default())]),
+                    ..Table::default()
+                })
+            }
+        }
+        let (_, status) =
+            create_status(lineage, &(RemovedFilesManifest {}), PathBuf::default()).await?;
+        assert!(status.changes.contains_key("a/a"));
+        Ok(())
+    }
+}

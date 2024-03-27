@@ -141,10 +141,6 @@ mod tests {
 
     struct InMemoryManifest {}
     impl ReadableManifest for InMemoryManifest {
-        fn get_path_buf(&self) -> PathBuf {
-            PathBuf::default()
-        }
-
         async fn read(&self) -> Result<Table, Error> {
             Ok(Table {
                 records: BTreeMap::from([(

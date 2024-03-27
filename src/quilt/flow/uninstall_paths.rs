@@ -12,7 +12,7 @@ fn not_found_error(path: &str) -> Error {
 pub async fn uninstall_paths(
     mut lineage: PackageLineage,
     working_dir: PathBuf,
-    fs_impl: impl RemoveFile,
+    file_ops: impl RemoveFile,
     paths: &Vec<String>,
 ) -> Result<PackageLineage, Error> {
     tracing::debug!("Uninstalling paths {:?}", paths);
@@ -21,7 +21,7 @@ pub async fn uninstall_paths(
         lineage.paths.remove(path).ok_or(not_found_error(path))?;
 
         let working_path = working_dir.join(path);
-        if let Err(err) = fs_impl.remove_file(working_path).await {
+        if let Err(err) = file_ops.remove_file(working_path).await {
             if err.kind() != ErrorKind::NotFound {
                 return Err(Error::Io(err));
             }

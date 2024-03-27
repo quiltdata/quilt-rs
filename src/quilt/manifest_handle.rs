@@ -101,7 +101,9 @@ impl From<&RemoteManifest> for s3::S3Uri {
 }
 
 pub trait ReadableManifest {
-    fn get_path_buf(&self) -> PathBuf;
+    fn get_path_buf(&self) -> PathBuf {
+        PathBuf::default()
+    }
 
     fn read(&self) -> impl std::future::Future<Output = Result<Table, Error>> + Send
     where
