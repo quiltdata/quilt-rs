@@ -317,7 +317,12 @@ mod tests {
         }
         let (_, status) =
             create_status(lineage, &(RemovedFilesManifest {}), PathBuf::default()).await?;
-        assert!(status.changes.contains_key("a/a"));
+
+        // It's "removed", because it's present in lineage and manifest,
+        // but absent from file system
+        let removed_file = status.changes.get("a/a").unwrap();
+        assert!(removed_file.current.is_none());
+        assert!(removed_file.previous.is_some());
         Ok(())
     }
 }

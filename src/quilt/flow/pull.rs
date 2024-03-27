@@ -76,3 +76,71 @@ pub async fn pull_package(
     )
     .await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::collections::BTreeMap;
+
+    use crate::quilt::lineage::{CommitState, PathState};
+    use crate::quilt::manifest_handle::ReadableManifest;
+    use crate::{Row4, Table};
+
+    struct InMemoryManifest {}
+    impl ReadableManifest for InMemoryManifest {
+        async fn read(&self) -> Result<Table, Error> {
+            Ok(Table::default())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_no_pull_if_changes() {
+        let lineage = PackageLineage {
+            paths: BTreeMap::from([("a/a".to_string(), PathState::default())]),
+            ..PackageLineage::default()
+        };
+        struct RemovedFilesManifest {}
+        impl ReadableManifest for RemovedFilesManifest {
+            async fn read(&self) -> Result<Table, Error> {
+                Ok(Table {
+                    records: BTreeMap::from([("a/a".to_string(), Row4::default())]),
+                    ..Table::default()
+                })
+            }
+        }
+
+        let error = pull_package(
+            lineage,
+            &(RemovedFilesManifest {}),
+            &DomainPaths::default(),
+            PathBuf::default(),
+            String::default(),
+        )
+        .await;
+        assert_eq!(
+            error.unwrap_err().to_string(),
+            "General error regarding package: package has pending changes".to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_no_pull_if_commit() {
+        let lineage = PackageLineage {
+            commit: Some(CommitState::default()),
+            ..PackageLineage::default()
+        };
+        let error = pull_package(
+            lineage,
+            &(InMemoryManifest {}),
+            &DomainPaths::default(),
+            PathBuf::default(),
+            String::default(),
+        )
+        .await;
+        assert_eq!(
+            error.unwrap_err().to_string(),
+            "General error regarding package: package has pending commits".to_string()
+        );
+    }
+}
