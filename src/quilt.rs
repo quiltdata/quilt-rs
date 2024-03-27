@@ -345,6 +345,7 @@ impl InstalledPackage {
         if paths.is_empty() {
             return Ok(());
         }
+        let file_ops = fs::RelativeFileOps::new(self.working_folder());
         let lineage = self.lineage.read().await?;
         let lineage = install_paths(
             lineage,
@@ -352,6 +353,7 @@ impl InstalledPackage {
             &self.paths,
             self.working_folder(),
             self.namespace.to_string(),
+            file_ops,
             paths,
         )
         .await?;
@@ -359,8 +361,9 @@ impl InstalledPackage {
     }
 
     pub async fn uninstall_paths(&self, paths: &Vec<String>) -> Result<(), Error> {
+        let file_ops = fs::RelativeFileOps::new(self.working_folder());
         let lineage = self.lineage.read().await?;
-        let lineage = uninstall_paths(lineage, self.working_folder(), paths).await?;
+        let lineage = uninstall_paths(lineage, self.working_folder(), file_ops, paths).await?;
         self.lineage.write(lineage).await
     }
 

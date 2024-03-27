@@ -9,7 +9,7 @@ use crate::Error;
 
 use super::RemoteManifest;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct CommitState {
     pub timestamp: chrono::DateTime<chrono::Utc>,
     pub hash: String,

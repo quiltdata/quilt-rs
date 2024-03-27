@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tokio::{
     fs,
@@ -93,7 +93,78 @@ pub async fn read_to_string(path: impl AsRef<Path>) -> Result<String, std::io::E
 //     self.get(path).is_some()
 // }
 
-pub async fn get_file_modified_ts(path: &Path) -> Result<chrono::DateTime<chrono::Utc>, Error> {
+pub async fn get_file_modified_ts(
+    path: impl AsRef<Path>,
+) -> Result<chrono::DateTime<chrono::Utc>, Error> {
     let modified = tokio::fs::metadata(path).await.map(|m| m.modified())??;
     Ok(chrono::DateTime::<chrono::Utc>::from(modified))
+}
+
+pub trait RemoveFile {
+    fn remove_file(
+        &self,
+        path: PathBuf,
+    ) -> impl std::future::Future<Output = Result<(), std::io::Error>> + Send {
+        async { fs::remove_file(path).await }
+    }
+}
+
+pub trait FsExists {
+    fn exists(&self, path: impl AsRef<Path>) -> impl std::future::Future<Output = bool> {
+        async { exists(path).await }
+    }
+}
+
+pub trait FsCopy {
+    fn copy(
+        &self,
+        from: impl AsRef<Path>,
+        to: impl AsRef<Path>,
+    ) -> impl std::future::Future<Output = Result<u64, std::io::Error>> {
+        async { fs::copy(from, to).await }
+    }
+}
+
+pub trait FsCreateDir {
+    fn create_dir_all(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> impl std::future::Future<Output = Result<(), std::io::Error>> {
+        async { fs::create_dir_all(path).await }
+    }
+}
+
+pub trait FsModifiedDate {
+    fn modified_date(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> impl std::future::Future<Output = Result<chrono::DateTime<chrono::Utc>, Error>> {
+        async move { get_file_modified_ts(path).await }
+    }
+}
+
+#[derive(Clone)]
+pub struct RelativeFileOps {
+    working_dir: PathBuf,
+}
+
+impl RemoveFile for RelativeFileOps {
+    async fn remove_file(&self, relative_path: PathBuf) -> Result<(), std::io::Error> {
+        let path = &self.working_dir.join(relative_path);
+        fs::remove_file(path).await
+    }
+}
+
+impl FsExists for RelativeFileOps {}
+
+impl FsCopy for RelativeFileOps {}
+
+impl FsCreateDir for RelativeFileOps {}
+
+impl FsModifiedDate for RelativeFileOps {}
+
+impl RelativeFileOps {
+    pub fn new(working_dir: PathBuf) -> Self {
+        RelativeFileOps { working_dir }
+    }
 }
