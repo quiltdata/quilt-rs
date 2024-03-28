@@ -85,6 +85,7 @@ mod tests {
 
     use crate::quilt::lineage::{CommitState, PathState};
     use crate::quilt::manifest_handle::ReadableManifest;
+    use crate::quilt::RemoteManifest;
     use crate::{Row4, Table};
 
     struct InMemoryManifest {}
@@ -141,6 +142,55 @@ mod tests {
         assert_eq!(
             error.unwrap_err().to_string(),
             "General error regarding package: package has pending commits".to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_no_pull_if_diverged() {
+        let lineage = PackageLineage {
+            remote: RemoteManifest {
+                hash: "a".to_string(),
+                ..RemoteManifest::default()
+            },
+            base_hash: "b".to_string(),
+            ..PackageLineage::default()
+        };
+        let error = pull_package(
+            lineage,
+            &(InMemoryManifest {}),
+            &DomainPaths::default(),
+            PathBuf::default(),
+            String::default(),
+        )
+        .await;
+        assert_eq!(
+            error.unwrap_err().to_string(),
+            "General error regarding package: package has diverged".to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_no_pull_if_up_to_date() {
+        let lineage = PackageLineage {
+            remote: RemoteManifest {
+                hash: "a".to_string(),
+                ..RemoteManifest::default()
+            },
+            base_hash: "a".to_string(),
+            latest_hash: "a".to_string(),
+            ..PackageLineage::default()
+        };
+        let error = pull_package(
+            lineage,
+            &(InMemoryManifest {}),
+            &DomainPaths::default(),
+            PathBuf::default(),
+            String::default(),
+        )
+        .await;
+        assert_eq!(
+            error.unwrap_err().to_string(),
+            "General error regarding package: package is already up-to-date".to_string()
         );
     }
 }
