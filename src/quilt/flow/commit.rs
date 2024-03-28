@@ -157,6 +157,8 @@ pub async fn commit_package(
 mod tests {
     use super::*;
 
+    use temp_dir::TempDir;
+
     use crate::quilt::Table;
 
     struct TestManifest {}
@@ -171,22 +173,38 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn test_commit() -> Result<(), Error> {
+        let working_dir = TempDir::new()?;
+        let namespace = "foo/bar".to_string();
+
+        let domain_paths = &paths::DomainPaths::new(working_dir.path().to_path_buf());
+        create_dir_all(&domain_paths.installed_manifests(&namespace)).await?;
+        create_dir_all(&domain_paths.objects_dir()).await?;
+
+        let commit_message = "Lorem ipsum".to_string();
+        let mut user_meta = serde_json::Map::new();
+        user_meta.insert(
+            "lorem".to_string(),
+            serde_json::Value::String("ipsum".to_string()),
+        );
+
         let lineage = PackageLineage::default();
         assert!(lineage.commit.is_none());
         let manifest = TestManifest {};
         let lineage = commit_package(
             lineage,
             &manifest,
-            &paths::DomainPaths::default(),
-            PathBuf::default(),
-            String::default(),
-            String::default(),
-            None,
+            &domain_paths,
+            working_dir.path().to_path_buf(),
+            namespace,
+            commit_message.clone(),
+            Some(user_meta),
         )
         .await?;
-        assert!(lineage.commit.is_some());
+        assert_eq!(
+            lineage.commit.unwrap().hash,
+            "56c329d2390c9c6efedb698f47b75f096112c89a7751d55a426507ec6c432897".to_string()
+        );
         Ok(())
     }
 }
