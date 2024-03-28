@@ -213,3 +213,31 @@ pub async fn push_package(
 
     Ok(lineage)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::quilt::manifest_handle::ReadableManifest;
+    use crate::Table;
+
+    struct InMemoryManifest {}
+    impl ReadableManifest for InMemoryManifest {
+        async fn read(&self) -> Result<Table, Error> {
+            Ok(Table::default())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_no_push_if_no_commit() -> Result<(), Error> {
+        let lineage = push_package(
+            PackageLineage::default(),
+            &(InMemoryManifest {}),
+            &paths::DomainPaths::default(),
+            String::default(),
+        )
+        .await?;
+        assert_eq!(lineage, PackageLineage::default());
+        Ok(())
+    }
+}
