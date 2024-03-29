@@ -5,7 +5,7 @@ use std::{
 
 use arrow::error::ArrowError;
 use aws_sdk_s3::{
-    error::SdkError,
+    error::{DisplayErrorContext, SdkError},
     types::{ChecksumAlgorithm, CompletedMultipartUpload, CompletedPart},
 };
 use aws_smithy_types::byte_stream::{ByteStream, Length};
@@ -328,7 +328,7 @@ impl LocalDomain {
                         .key(format!("{}/{}", MANIFEST_DIR, &manifest.hash))
                         .send()
                         .await
-                        .map_err(|err| Error::S3(err.to_string()))?;
+                        .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
 
                     let quilt3_manifest =
                         Manifest::from_file(result.body.into_async_read()).await?;
@@ -366,7 +366,7 @@ impl LocalDomain {
                     table.write_to_upath(&UPath::Local(cache_path)).await?
                 }
                 Err(err) => {
-                    return Err(Error::S3(err.to_string()));
+                    return Err(Error::S3(DisplayErrorContext(err).to_string()));
                 }
             }
         }
@@ -530,7 +530,7 @@ impl LocalDomain {
             .page_size(100) // XXX: this is to limit concurrency
             .send();
         while let Some(page) = p.next().await {
-            let page = page.map_err(|err| Error::S3(err.to_string()))?;
+            let page = page.map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
             let page_contents_iter = page.contents.iter().flatten();
 
             async fn _get_obj_attrs<'a>(
@@ -554,7 +554,7 @@ impl LocalDomain {
                     .max_parts(storage::s3::MPU_MAX_PARTS as i32)
                     .send()
                     .await
-                    .map_err(|err| Error::S3(err.to_string()))?;
+                    .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
                 Ok((key, attrs))
             }
 
@@ -1208,7 +1208,7 @@ impl InstalledPackage {
                     .checksum_algorithm(ChecksumAlgorithm::Sha256)
                     .send()
                     .await
-                    .map_err(|err| Error::S3(err.to_string()))?;
+                    .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
 
                 let s3_checksum_b64 = response
                     .checksum_sha256
@@ -1236,7 +1236,7 @@ impl InstalledPackage {
                     .checksum_algorithm(ChecksumAlgorithm::Sha256)
                     .send()
                     .await
-                    .map_err(|err| Error::S3(err.to_string()))?
+                    .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?
                     .upload_id
                     .ok_or(Error::UploadId("failed to get an UploadId".to_string()))?;
 

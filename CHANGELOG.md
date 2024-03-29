@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+* Add DisplayErrorContext to S3 errors
+
 ## [0.5.8] - 2024-03-25
 
 * Fixed calculating checksums for new files
