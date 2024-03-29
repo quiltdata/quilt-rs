@@ -1,10 +1,13 @@
 use std::{
     collections::{hash_map::Entry, HashMap},
-    sync::RwLock, u8,
+    sync::RwLock,
+    u8,
 };
 
 use aws_config::BehaviorVersion;
-use aws_sdk_s3::{error::DisplayErrorContext, operation::get_object_attributes::GetObjectAttributesOutput};
+use aws_sdk_s3::{
+    error::DisplayErrorContext, operation::get_object_attributes::GetObjectAttributesOutput,
+};
 use aws_types::region::Region;
 use base64::{prelude::BASE64_STANDARD, Engine};
 use lazy_static::lazy_static;
@@ -12,7 +15,11 @@ use multihash::Multihash;
 use parquet::data_type::AsBytes;
 use sha2::{Digest, Sha256};
 
-use crate::{quilt::{manifest::MULTIHASH_SHA256_CHUNKED, s3}, quilt4::checksum::get_checksum_chunksize_and_parts, Error};
+use crate::{
+    quilt::{manifest::MULTIHASH_SHA256_CHUNKED, s3},
+    quilt4::checksum::get_checksum_chunksize_and_parts,
+    Error,
+};
 
 pub async fn find_bucket_region(client: &reqwest::Client, bucket: &str) -> Result<String, Error> {
     let response = client
@@ -127,10 +134,7 @@ pub async fn get_attrs_for_key<'a>(
     client: aws_sdk_s3::Client,
     bucket: &str,
     key: &'a str,
-) -> Result<
-    S3Attributes,
-    Error,
-> {
+) -> Result<S3Attributes, Error> {
     let attrs = client
         .get_object_attributes()
         .bucket(bucket)
@@ -142,7 +146,7 @@ pub async fn get_attrs_for_key<'a>(
         .send()
         .await
         .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
-   
+
     match attrs.delete_marker {
         // Can happen if object is removed after it was listed but before attributes retrieved.
         Some(true) => return Err(Error::S3("Object is a delete marker".to_string())),
@@ -158,7 +162,6 @@ pub async fn get_attrs_for_key<'a>(
             })
         }
     }
-
 }
 
 #[cfg(test)]
