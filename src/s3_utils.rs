@@ -150,12 +150,8 @@ pub async fn get_attrs_for_key<'a>(
     let attrs = match attr_result {
         Ok(attrs) => attrs,
         Err(e) => {
-            log::error!("Error getting attributes: {}", e);
-            return Err(Error::S3(format!(
-                "Error getting attributes for {}: {}",
-                key,
-                DisplayErrorContext(&e)
-            )));
+            log::warn!("Error getting attributes: {}", DisplayErrorContext(e));
+            return calculate_attrs_for_key(client, bucket, key).await;
         }
     };
 
@@ -175,6 +171,20 @@ pub async fn get_attrs_for_key<'a>(
             })
         }
     }
+}
+
+pub async fn calculate_attrs_for_key<'a>(
+    client: aws_sdk_s3::Client,
+    bucket: &str,
+    key: &'a str,
+) -> Result<S3Attributes, Error> {
+    log::debug!("Trying again with client {:?}", client);
+    return Err(Error::S3(format!(
+        "Error getting attributes for s3://{}/{}",
+        bucket,
+        key,
+    )));
+
 }
 
 #[cfg(test)]
