@@ -179,12 +179,10 @@ pub async fn calculate_attrs_for_key<'a>(
     key: &'a str,
 ) -> Result<S3Attributes, Error> {
     log::debug!("Trying again with client {:?}", client);
-    return Err(Error::S3(format!(
+    Err(Error::S3(format!(
         "Error getting attributes for s3://{}/{}",
-        bucket,
-        key,
-    )));
-
+        bucket, key,
+    )))
 }
 
 #[cfg(test)]
