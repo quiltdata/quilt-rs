@@ -2,6 +2,7 @@ use std::{
     collections::{hash_map::RandomState, BTreeMap, HashMap, HashSet, VecDeque},
     path::PathBuf,
 };
+use tracing::log;
 
 use arrow::error::ArrowError;
 use aws_sdk_s3::{
@@ -453,10 +454,10 @@ impl LocalDomain {
         self.write_lineage(&lineage).await?;
 
         if let Err(err) = remove_dir_all(self.installed_manifests_path(namespace)).await {
-            println!("Failed to remove installed manifests: {err}");
+            log::error!("Failed to remove installed manifests: {err}");
         }
         if let Err(err) = remove_dir_all(self.working_folder(namespace)).await {
-            println!("Failed to remove working directory: {err}");
+            log::error!("Failed to remove working directory: {err}");
         }
 
         // TODO: Remove object files? But need to make sure no other manifest uses them.
@@ -498,7 +499,7 @@ impl LocalDomain {
         uri: &s3::S3Uri,
         target_uri: S3PackageUri,
     ) -> Result<RemoteManifest, Error> {
-        println!("Source URI: {:?}, target URI: {:?}", uri, target_uri);
+        log::debug!("Source URI: {:?}, target URI: {:?}", uri, target_uri);
         // TODO: make get_object_attributes() calls concurrently across list_objects() pages
         // TODO: increase concurrency, to do that we need to figure out how to deal
         //       with fd limits on Mac by default it's 256
@@ -533,6 +534,7 @@ impl LocalDomain {
             let page_contents_iter = page.contents.iter().flatten();
 
             for attrs in futures::future::try_join_all(page_contents_iter.map(|obj| {
+                log::debug!("Getting attrs for key: {:?}", obj.key);
                 s3_utils::get_attrs_for_key(
                     client.clone(),
                     &uri.bucket,
@@ -746,7 +748,7 @@ impl InstalledPackage {
             let mut dir_entries = match read_dir(&dir).await {
                 Ok(dir_entries) => dir_entries,
                 Err(err) => {
-                    println!("Failed to read directory {:?}: {}", dir, err);
+                    log::error!("Failed to read directory {:?}: {}", dir, err);
                     continue;
                 }
             };
@@ -808,7 +810,7 @@ impl InstalledPackage {
                         );
                     }
                 } else {
-                    println!("Unexpected file type: {}", file_path.display());
+                    log::warn!("Unexpected file type: {}", file_path.display());
                 }
             }
         }
@@ -944,7 +946,7 @@ impl InstalledPackage {
     }
 
     pub async fn uninstall_paths(&self, paths: &Vec<String>) -> Result<(), Error> {
-        println!("uninstall_paths: {paths:?}");
+        log::debug!("uninstall_paths: {paths:?}");
 
         let mut lineage = self.lineage().await?;
 
@@ -974,7 +976,7 @@ impl InstalledPackage {
     }
 
     pub async fn revert_paths(&self, paths: &Vec<String>) -> Result<(), Error> {
-        println!("revert_paths: {paths:?}");
+        log::error!("revert_paths: {paths:?}");
         unimplemented!()
     }
 
@@ -983,7 +985,7 @@ impl InstalledPackage {
         message: String,
         user_meta: Option<manifest::JsonObject>,
     ) -> Result<(), Error> {
-        println!("commit: {message:?}, {user_meta:?}");
+        log::debug!("commit: {message:?}, {user_meta:?}");
         // create a new manifest based on the stored version
 
         // for each modified file:
@@ -1157,7 +1159,7 @@ impl InstalledPackage {
             let file_path: PathBuf = local_url.to_file_path().unwrap();
 
             let s3_key = format!("{}/{}", self.namespace, row.name);
-            println!("uploading to s3({}): {}", remote.bucket, s3_key);
+            log::debug!("uploading to s3({}): {}", remote.bucket, s3_key);
 
             // TODO: upload in parallel. use a stream?
             let (version_id, checksum) = if row.size < storage::s3::MULTIPART_THRESHOLD {
@@ -1267,7 +1269,7 @@ impl InstalledPackage {
             row.hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, checksum.as_ref())?;
 
             let remote_url = s3::make_s3_url(&remote.bucket, &s3_key, version_id.as_deref());
-            println!("got remote url: {}", remote_url);
+            log::debug!("got remote url: {}", remote_url);
 
             // "Relax" the manifest by using those new remote keys
             row.place = remote_url.to_string();
@@ -1291,7 +1293,7 @@ impl InstalledPackage {
         // Upload a quilt3 manifest for backward compatibility.
         new_remote.upload_legacy(&local_manifest).await?;
 
-        println!("uploaded remote manifest: {new_remote:?}");
+        log::debug!("uploaded remote manifest: {new_remote:?}");
 
         // Tag the new commit.
         // If {self.commit.tag} does not already exist at
@@ -1484,7 +1486,7 @@ mod tests {
 
         let manifest = block_on(cached_manifest.read()).expect("Failed to parse the manifest");
 
-        println!("manifest: {manifest:?}");
+        log::debug!("manifest: {manifest:?}");
         // TODO: assert manifest has the expected contents
 
         // ## Install the files
@@ -1516,13 +1518,13 @@ mod tests {
         // ## Modify installed files
 
         let readme_path = installed_package.working_folder().join("READ ME.md");
-        println!("readme_path: {readme_path:?}");
+        log::debug!("readme_path: {readme_path:?}");
 
         let old_readme =
             block_on(fs::read_to_string(&readme_path)).expect("Failed to read 'READ ME.md'");
 
         let timestamp = get_timestamp();
-        println!("timestamp: {timestamp:?}");
+        log::debug!("timestamp: {timestamp:?}");
         block_on(fs::write(readme_path, timestamp.as_bytes()))
             .expect("Failed to overwrite 'READ ME.md'");
         let status = block_on(installed_package.status()).expect("Failed to get status");

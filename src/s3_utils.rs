@@ -3,6 +3,7 @@ use std::{
     sync::RwLock,
     u8,
 };
+use tracing::log;
 
 use aws_config::BehaviorVersion;
 use aws_sdk_s3::{
@@ -135,7 +136,8 @@ pub async fn get_attrs_for_key<'a>(
     bucket: &str,
     key: &'a str,
 ) -> Result<S3Attributes, Error> {
-    let attrs = client
+    log::debug!("Getting attributes for bucket {} key {}", bucket, key);
+    let attr_result = client
         .get_object_attributes()
         .bucket(bucket)
         .key(key)
@@ -144,9 +146,20 @@ pub async fn get_attrs_for_key<'a>(
         .object_attributes(aws_sdk_s3::types::ObjectAttributes::ObjectSize)
         .max_parts(s3::MPU_MAX_PARTS as i32)
         .send()
-        .await
-        .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
+        .await;
+    let attrs = match attr_result {
+        Ok(attrs) => attrs,
+        Err(e) => {
+            log::error!("Error getting attributes: {}", e);
+            return Err(Error::S3(format!(
+                "Error getting attributes for {}: {}",
+                key,
+                DisplayErrorContext(&e)
+            )));
+        }
+    };
 
+    log::debug!("Got attributes: {:?}", attrs);
     match attrs.delete_marker {
         // Can happen if object is removed after it was listed but before attributes retrieved.
         Some(true) => Err(Error::S3("Object is a delete marker".to_string())),

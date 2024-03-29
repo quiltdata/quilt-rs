@@ -4,6 +4,7 @@
 
 * Add DisplayErrorContext to S3 errors
 * Move quilt::_get_obj_attrs to s3_utils::get_attrs_for_key
+* use tracing::log as for logging
 
 ## [0.5.8] - 2024-03-25
 
