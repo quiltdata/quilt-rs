@@ -11,7 +11,6 @@ use aws_sdk_s3::{
 use aws_smithy_types::byte_stream::{ByteStream, Length};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use multihash::Multihash;
-use parquet::data_type::AsBytes;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::{
@@ -533,33 +532,8 @@ impl LocalDomain {
             let page = page.map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
             let page_contents_iter = page.contents.iter().flatten();
 
-            async fn _get_obj_attrs<'a>(
-                client: aws_sdk_s3::Client,
-                bucket: &str,
-                key: &'a str,
-            ) -> Result<
-                (
-                    &'a str,
-                    aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput,
-                ),
-                Error,
-            > {
-                let attrs = client
-                    .get_object_attributes()
-                    .bucket(bucket)
-                    .key(key)
-                    .object_attributes(aws_sdk_s3::types::ObjectAttributes::Checksum)
-                    .object_attributes(aws_sdk_s3::types::ObjectAttributes::ObjectParts)
-                    .object_attributes(aws_sdk_s3::types::ObjectAttributes::ObjectSize)
-                    .max_parts(storage::s3::MPU_MAX_PARTS as i32)
-                    .send()
-                    .await
-                    .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
-                Ok((key, attrs))
-            }
-
-            for (key, attrs) in futures::future::try_join_all(page_contents_iter.map(|obj| {
-                _get_obj_attrs(
+            for attrs in futures::future::try_join_all(page_contents_iter.map(|obj| {
+                s3_utils::get_attrs_for_key(
                     client.clone(),
                     &uri.bucket,
                     obj.key.as_ref().expect("object key expected to be present"),
@@ -567,27 +541,16 @@ impl LocalDomain {
             }))
             .await?
             {
-                // Can happen if object is removed after it was listed but before attributes retrieved.
-                if attrs.delete_marker.is_some() {
-                    assert!(attrs.delete_marker.unwrap());
-                    continue;
-                }
-                let name = &key[prefix_len..];
-                // FIXME: we assume that objects have hash and it's compatible with sha-256-chunked
-                let s3_checksum = s3_utils::get_compliant_chunked_checksum(&attrs).unwrap();
-                let hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, s3_checksum.as_bytes())?;
+                let name = attrs.key[prefix_len..].to_owned();
                 records.insert(
-                    name.into(),
+                    name.clone(),
                     Row4 {
                         name: name.into(),
-                        place: s3::make_s3_url(&uri.bucket, key, attrs.version_id.as_deref())
+                        place: s3::make_s3_url(&uri.bucket, &uri.key, attrs.version_id.as_deref())
                             .into(),
                         // XXX: can we use `as u64` safely here?
-                        size: attrs
-                            .object_size
-                            .expect("object_size is expected because it was requested")
-                            as u64,
-                        hash,
+                        size: attrs.size,
+                        hash: attrs.hash,
                         info: serde_json::Value::Null, // XXX: is this right?
                         meta: serde_json::Value::Null, // XXX: is this right?
                     },
