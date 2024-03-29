@@ -545,7 +545,7 @@ impl LocalDomain {
                 records.insert(
                     name.clone(),
                     Row4 {
-                        name: name.into(),
+                        name,
                         place: s3::make_s3_url(&uri.bucket, &uri.key, attrs.version_id.as_deref())
                             .into(),
                         // XXX: can we use `as u64` safely here?

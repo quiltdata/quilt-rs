@@ -149,7 +149,7 @@ pub async fn get_attrs_for_key<'a>(
 
     match attrs.delete_marker {
         // Can happen if object is removed after it was listed but before attributes retrieved.
-        Some(true) => return Err(Error::S3("Object is a delete marker".to_string())),
+        Some(true) => Err(Error::S3("Object is a delete marker".to_string())),
         _ => {
             let checksum = get_compliant_chunked_checksum(&attrs).unwrap();
             let hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, checksum.as_bytes())?;
