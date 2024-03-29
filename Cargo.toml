@@ -40,7 +40,7 @@ sha2 = "0.10.8"
 tabled = "0.15.0"
 temp-dir = "0.1.13"
 thiserror = "1.0.58"
-tokio = { version = "1.36.0", features = ["full"] }
+tokio = { version = "1.37.0", features = ["full"] }
 tokio-stream = "0.1.15"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
