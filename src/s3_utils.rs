@@ -131,10 +131,10 @@ pub struct S3Attributes {
     pub version_id: Option<String>,
 }
 
-pub async fn get_attrs_for_key<'a>(
+pub async fn get_attrs_for_key(
     client: aws_sdk_s3::Client,
     bucket: &str,
-    key: &'a str,
+    key: &str,
 ) -> Result<S3Attributes, Error> {
     log::debug!("Getting attributes for bucket {} key {}", bucket, key);
     let attr_result = client
@@ -173,10 +173,10 @@ pub async fn get_attrs_for_key<'a>(
     }
 }
 
-pub async fn calculate_attrs_for_key<'a>(
+pub async fn calculate_attrs_for_key(
     client: aws_sdk_s3::Client,
     bucket: &str,
-    key: &'a str,
+    key: &str,
 ) -> Result<S3Attributes, Error> {
     log::debug!("Trying again with client {:?}", client);
     Err(Error::S3(format!(
