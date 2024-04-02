@@ -102,7 +102,6 @@ impl Table {
                 let row = Row4 {
                     name: name.into(),
                     place: place_column.value(idx).into(),
-                    path: None,
                     size: size_column.value(idx),
                     hash,
                     info: serde_json::from_str(info_column.value(idx))
@@ -310,7 +309,6 @@ impl TryFrom<Manifest> for Table {
                 Row4 {
                     name: row.logical_key,
                     place: row.physical_key,
-                    path: None,
                     size: row.size,
                     hash: row.hash.try_into()?,
                     info: info.into(),
@@ -367,7 +365,6 @@ mod tests {
         let table = Table {
             header: Row4 {
                 name: "Foo".to_string(),
-                path: None,
                 place: "Bar".to_string(),
                 size: 123,
                 hash: Multihash::wrap(345, b"hello world")?,
@@ -385,7 +382,6 @@ mod tests {
         let table = Table {
             header: Row4 {
                 name: "Foo".to_string(),
-                path: None,
                 place: "Bar".to_string(),
                 size: 123,
                 hash: Multihash::wrap(345, b"hello world")?,
@@ -397,7 +393,6 @@ mod tests {
                     "one".to_string(),
                     Row4 {
                         name: "AA".to_string(),
-                        path: None,
                         place: "AB".to_string(),
                         size: 100,
                         hash: Multihash::wrap(100, b"A")?,
@@ -409,7 +404,6 @@ mod tests {
                     "two".to_string(),
                     Row4 {
                         name: "BA".to_string(),
-                        path: None,
                         place: "BB".to_string(),
                         size: 200,
                         hash: Multihash::wrap(200, b"B")?,

@@ -191,7 +191,6 @@ impl LocalDomain {
         let header = Row4 {
             name: HEADER_ROW.into(),
             place: HEADER_ROW.into(),
-            path: None,
             size: 0,
             hash: Multihash::default(),
             info: serde_json::json!({
@@ -263,7 +262,6 @@ impl LocalDomain {
                         name: name.into(),
                         place: s3::make_s3_url(&uri.bucket, key, attrs.version_id.as_deref())
                             .into(),
-                        path: None, // WTF is this?
                         // XXX: can we use `as u64` safely here?
                         size: attrs
                             .object_size

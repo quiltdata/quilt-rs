@@ -96,7 +96,6 @@ pub async fn commit_package(
                     Row4 {
                         name: logical_key.to_owned(),
                         place: new_physical_key,
-                        path: None,
                         size: current.size,
                         hash: current.hash,
                         info: serde_json::Value::default(),
