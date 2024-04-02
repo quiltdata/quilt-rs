@@ -1,4 +1,5 @@
 pub mod browse;
+pub mod certify_latest;
 pub mod commit;
 pub mod install_package;
 pub mod install_paths;

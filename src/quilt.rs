@@ -25,6 +25,7 @@ pub use self::{
     uri::{RevisionPointer, S3PackageUri},
 };
 use flow::browse::{browse_remote_manifest, cache_manifest};
+use flow::certify_latest::certify_latest;
 use flow::commit::commit_package;
 use flow::install_package::install_package;
 use flow::install_paths::install_paths;
@@ -65,6 +66,14 @@ impl LocalDomain {
         browse_remote_manifest(&self.paths, remote).await
     }
 
+    fn create_installed_package(&self, namespace: String) -> InstalledPackage {
+        InstalledPackage {
+            lineage: self.lineage.create_package_lineage(namespace.clone()),
+            namespace: namespace.clone(),
+            paths: self.paths.clone(),
+        }
+    }
+
     pub async fn install_package(
         &self,
         remote: &RemoteManifest,
@@ -74,14 +83,7 @@ impl LocalDomain {
         let lineage = install_package(lineage, &self.paths, remote).await?;
         self.lineage.write(&lineage).await?;
 
-        // Create the package.
-        Ok(InstalledPackage {
-            paths: self.paths.clone(),
-            lineage: self
-                .lineage
-                .create_package_lineage(remote.namespace.clone()),
-            namespace: remote.namespace.clone(),
-        })
+        Ok(self.create_installed_package(remote.namespace.clone()))
     }
 
     pub async fn uninstall_package(&self, namespace: impl AsRef<str>) -> Result<(), Error> {
@@ -358,11 +360,8 @@ impl InstalledPackage {
     }
 
     pub async fn certify_latest(&self) -> Result<(), Error> {
-        let mut lineage = self.lineage.read().await?;
-        let new_latest = lineage.remote.hash.clone();
-        lineage.remote.update_latest(&new_latest).await?;
-        lineage.latest_hash = new_latest.clone();
-        lineage.base_hash = new_latest;
+        let lineage = self.lineage.read().await?;
+        let lineage = certify_latest(lineage).await?;
         self.lineage.write(lineage).await
     }
 
