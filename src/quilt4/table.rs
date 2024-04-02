@@ -4,12 +4,7 @@
 //! and provides methods to read/write (decode/encode) quilt3's JSONL format
 //!
 
-use std::{
-    collections::BTreeMap,
-    fmt,
-    io::{Error, ErrorKind},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, fmt, io, sync::Arc};
 
 use arrow::{
     array::{GenericByteArray, UInt64Array},
@@ -32,9 +27,11 @@ use sha2::{Digest, Sha256};
 use tokio::io::AsyncWrite;
 use tokio_stream::StreamExt;
 
+use crate::quilt::manifest::Manifest;
 use crate::{quilt::ContentHash, s3_utils::get_region_for_bucket};
 
 use super::{row4::Row4, upath::UPath};
+use crate::Error;
 
 pub const HEADER_ROW: &str = ".";
 
@@ -138,7 +135,7 @@ impl Table {
             UPath::S3 { bucket, path } => {
                 let region = get_region_for_bucket(bucket)
                     .await
-                    .map_err(|err| Error::new(ErrorKind::Other, err))?;
+                    .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
 
                 // TODO: Cache the credentials in s3_util or use s3_util's clients
                 // TODO: Return custom errors instead of abusing io::Error.
@@ -146,11 +143,11 @@ impl Table {
                     aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
                 let cp = sdk_config
                     .credentials_provider()
-                    .ok_or(Error::new(ErrorKind::Other, "missing credentials"))?;
+                    .ok_or(io::Error::new(io::ErrorKind::Other, "missing credentials"))?;
                 let creds = cp
                     .provide_credentials()
                     .await
-                    .map_err(|err| Error::new(ErrorKind::Other, err))?;
+                    .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
 
                 let s3 = AmazonS3Builder::new()
                     .with_bucket_name(bucket)
@@ -159,12 +156,12 @@ impl Table {
                     .with_secret_access_key(creds.secret_access_key())
                     .with_token(creds.session_token().unwrap_or_default())
                     .build()
-                    .map_err(|err| Error::new(ErrorKind::Other, err))?;
+                    .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
 
                 let obj_meta = s3
                     .head(path)
                     .await
-                    .map_err(|err| Error::new(ErrorKind::Other, err))?;
+                    .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
                 let reader = ParquetObjectReader::new(Arc::new(s3), obj_meta);
                 Table::read_rows_impl(reader).await
             }
@@ -297,6 +294,32 @@ impl fmt::Display for Table {
             records.insert(name, record.to_string());
         }
         write!(f, "Table({:?})", records)
+    }
+}
+
+impl TryFrom<Manifest> for Table {
+    type Error = Error;
+
+    fn try_from(quilt3_manifest: Manifest) -> Result<Self, self::Error> {
+        let mut records = BTreeMap::new();
+        for row in quilt3_manifest.rows.clone() {
+            let mut info = row.meta.unwrap_or_default();
+            let meta = info.remove("user_meta").unwrap_or_default();
+            records.insert(
+                row.logical_key.clone(),
+                Row4 {
+                    name: row.logical_key,
+                    place: row.physical_key,
+                    path: None,
+                    size: row.size,
+                    hash: row.hash.try_into()?,
+                    info: info.into(),
+                    meta,
+                },
+            );
+        }
+        let header = Row4::from(quilt3_manifest);
+        Ok(Table { header, records })
     }
 }
 

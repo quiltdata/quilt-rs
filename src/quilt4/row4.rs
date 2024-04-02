@@ -9,8 +9,10 @@ use multihash::Multihash;
 use std::fmt;
 
 use super::{row3::Row3, upath::UPath};
+use crate::quilt::manifest::Manifest;
+use crate::quilt4::table::HEADER_ROW;
 
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Row4 {
     pub name: String,
     // scheme: Enum<file,s3,https>
@@ -46,6 +48,39 @@ impl fmt::Display for Row4 {
             write!(f, "{}", result + &format!("${:?}", self.path))
         } else {
             write!(f, "{}", result)
+        }
+    }
+}
+
+impl From<Manifest> for Row4 {
+    fn from(quilt3_manifest: Manifest) -> Self {
+        Row4 {
+            info: serde_json::json!({
+                "message": quilt3_manifest.header.message,
+                "version": quilt3_manifest.header.version,
+            }),
+            meta: match quilt3_manifest.header.user_meta.clone() {
+                Some(meta) => meta.into(),
+                None => serde_json::Value::Null,
+            },
+            ..Row4::default()
+        }
+    }
+}
+
+impl Default for Row4 {
+    fn default() -> Self {
+        Row4 {
+            name: HEADER_ROW.into(),
+            place: HEADER_ROW.into(),
+            path: None,
+            size: 0,
+            hash: Multihash::default(),
+            info: serde_json::json!({
+                "message": String::default(),
+                "version": "v0",
+            }),
+            meta: serde_json::Value::Null,
         }
     }
 }
