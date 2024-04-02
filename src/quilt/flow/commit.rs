@@ -193,7 +193,7 @@ mod tests {
         let lineage = commit_package(
             lineage,
             &manifest,
-            &domain_paths,
+            domain_paths,
             working_dir.path().to_path_buf(),
             namespace,
             commit_message.clone(),

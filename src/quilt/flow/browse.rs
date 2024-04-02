@@ -93,11 +93,11 @@ pub async fn cache_remote_manifest(
     if !storage::fs::exists(&cache_path).await {
         // Does not exist yet
         let client = crate::s3_utils::get_client_for_bucket(&manifest.bucket).await?;
-        if is_parquet(&client, &manifest).await? {
-            let output = fetch_parquet(&client, &manifest).await?;
+        if is_parquet(&client, manifest).await? {
+            let output = fetch_parquet(&client, manifest).await?;
             storage::fs::write(&cache_path, &output).await?;
         } else {
-            let table = fetch_jsonl(&client, &manifest).await?;
+            let table = fetch_jsonl(&client, manifest).await?;
             table.write_to_upath(&UPath::Local(cache_path)).await?;
         };
     }
