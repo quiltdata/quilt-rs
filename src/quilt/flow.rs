@@ -1,5 +1,6 @@
 pub mod browse;
 pub mod commit;
+pub mod install_package;
 pub mod install_paths;
 pub mod pull;
 pub mod push;

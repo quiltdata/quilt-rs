@@ -35,7 +35,7 @@ use crate::Error;
 
 pub const HEADER_ROW: &str = ".";
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Table {
     pub header: Row4,
     pub records: BTreeMap<String, Row4>,

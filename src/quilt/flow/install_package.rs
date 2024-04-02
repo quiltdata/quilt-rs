@@ -1,0 +1,42 @@
+use crate::quilt::flow::browse::cache_remote_manifest;
+use crate::quilt::lineage::{DomainLineage, PackageLineage};
+use crate::quilt::manifest_handle::RemoteManifest;
+use crate::{paths, Error};
+use tokio::fs::create_dir_all;
+
+pub async fn install_package(
+    lineage: DomainLineage,
+    paths: &paths::DomainPaths,
+    remote: &RemoteManifest,
+) -> Result<DomainLineage, Error> {
+    // bail if already installed
+    // TODO: if compatible (same remote), just return the installed package
+    if lineage.packages.contains_key(&remote.namespace) {
+        return Err(Error::PackageAlreadyInstalled(remote.namespace.clone()));
+    }
+
+    cache_remote_manifest(paths, remote).await?;
+
+    // Make an "installed" copy of the remote manifest.
+    let installed_manifest_path = paths.installed_manifest(&remote.namespace, &remote.hash);
+    create_dir_all(&installed_manifest_path.parent().unwrap()).await?;
+    paths::copy_cached_to_installed(paths, &remote.bucket, &remote.namespace, &remote.hash).await?;
+
+    // Create the identity cache dir.
+    let objects_dir = paths.objects_dir();
+    create_dir_all(&objects_dir).await?;
+
+    // Create the working dir.
+    let working_dir = paths.working_dir(&remote.namespace);
+    create_dir_all(&working_dir).await?;
+
+    // Resolve and record latest manifest hash
+    let latest_hash = remote.resolve_latest().await?;
+    // Update the lineage (with empty paths).
+    let mut lineage = lineage;
+    lineage.packages.insert(
+        remote.namespace.clone(),
+        PackageLineage::from_remote(remote.to_owned(), latest_hash),
+    );
+    Ok(lineage)
+}

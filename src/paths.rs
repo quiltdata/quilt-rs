@@ -1,3 +1,4 @@
+use multihash::Multihash;
 use std::path::PathBuf;
 
 use crate::Error;
@@ -57,6 +58,11 @@ impl DomainPaths {
     /// Directory for storing pristine hashed files
     pub fn objects_dir(&self) -> PathBuf {
         self.root_dir.join(OBJECTS_DIR)
+    }
+
+    /// Path to the pristine hashed file
+    pub fn object(&self, hash: &Multihash<256>) -> PathBuf {
+        self.objects_dir().join(hex::encode(hash.digest()))
     }
 
     /// Directory for storing installed files that can be modified

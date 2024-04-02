@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, path::PathBuf};
 
 use multihash::Multihash;
 use parquet::data_type::AsBytes;
-use tokio::fs::{create_dir_all, remove_dir_all};
+use tokio::fs::remove_dir_all;
 
 pub mod flow;
 pub mod lineage;
@@ -25,8 +25,9 @@ pub use self::{
     storage::{fs, s3},
     uri::{RevisionPointer, S3PackageUri},
 };
-use flow::browse::{browse_remote_manifest, cache_manifest, cache_remote_manifest};
+use flow::browse::{browse_remote_manifest, cache_manifest};
 use flow::commit::commit_package;
+use flow::install_package::install_package;
 use flow::install_paths::install_paths;
 use flow::pull::pull_package;
 use flow::push::push_package;
@@ -70,44 +71,7 @@ impl LocalDomain {
     ) -> Result<InstalledPackage, Error> {
         // Read the lineage
         let lineage: DomainLineage = self.lineage.read().await?;
-
-        // bail if already installed
-        // TODO: if compatible (same remote), just return the installed package
-        if lineage.packages.contains_key(&remote.namespace) {
-            return Err(Error::PackageAlreadyInstalled(remote.namespace.clone()));
-        }
-
-        cache_remote_manifest(&self.paths, remote).await?;
-
-        // Make an "installed" copy of the remote manifest.
-        let installed_manifest_path = self
-            .paths
-            .installed_manifest(&remote.namespace, &remote.hash);
-        create_dir_all(&installed_manifest_path.parent().unwrap()).await?;
-        paths::copy_cached_to_installed(
-            &self.paths,
-            &remote.bucket,
-            &remote.namespace,
-            &remote.hash,
-        )
-        .await?;
-
-        // Create the identity cache dir.
-        let objects_dir = self.paths.objects_dir();
-        create_dir_all(&objects_dir).await?;
-
-        // Create the working dir.
-        let working_dir = self.paths.working_dir(&remote.namespace);
-        create_dir_all(&working_dir).await?;
-
-        // Resolve and record latest manifest hash
-        let latest_hash = remote.resolve_latest().await?;
-        // Update the lineage (with empty paths).
-        let mut lineage = lineage;
-        lineage.packages.insert(
-            remote.namespace.clone(),
-            PackageLineage::from_remote(remote.to_owned(), latest_hash),
-        );
+        let lineage = install_package(lineage, &self.paths, remote).await?;
         self.lineage.write(&lineage).await?;
 
         // Create the package.
@@ -128,8 +92,6 @@ impl LocalDomain {
             .packages
             .remove(namespace)
             .ok_or(Error::PackageNotInstalled(namespace.to_owned()))?;
-
-        self.lineage.write(&lineage).await?;
 
         if let Err(err) = remove_dir_all(self.paths.installed_manifests(namespace)).await {
             println!("Failed to remove installed manifests: {err}");
@@ -451,6 +413,7 @@ mod tests {
     use temp_testdir::TempDir;
     use tokio_test::{assert_err, block_on};
 
+    use crate::quilt::flow::browse::cache_remote_manifest;
     use crate::quilt::manifest::MULTIHASH_SHA256;
     use crate::quilt4::checksum::calculate_sha256_checksum;
 

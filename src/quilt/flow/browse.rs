@@ -80,15 +80,12 @@ pub async fn cache_manifest(
 pub async fn cache_remote_manifest(
     paths: &paths::DomainPaths,
     manifest: &RemoteManifest,
-) -> Result<impl ReadableManifest, Error> {
+) -> Result<CachedManifest, Error> {
     // check if the manifest is already cached
     // if not, download and cache it
     // return cached manifest
 
     let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
-
-    // TODO: who is responsible for this?
-    fs::create_dir_all(&cache_path.parent().unwrap()).await?;
 
     if !storage::fs::exists(&cache_path).await {
         // Does not exist yet
@@ -98,15 +95,12 @@ pub async fn cache_remote_manifest(
             storage::fs::write(&cache_path, &output).await?;
         } else {
             let table = fetch_jsonl(&client, manifest).await?;
+            fs::create_dir_all(&cache_path.parent().unwrap()).await?;
             table.write_to_upath(&UPath::Local(cache_path)).await?;
         };
     }
 
-    Ok(CachedManifest {
-        paths: paths.clone(),
-        bucket: manifest.bucket.clone(),
-        hash: manifest.hash.clone(),
-    })
+    Ok(CachedManifest::from_remote_manifest(manifest, paths))
 }
 
 pub async fn browse_remote_manifest(
@@ -114,4 +108,52 @@ pub async fn browse_remote_manifest(
     remote: &RemoteManifest,
 ) -> Result<Table, Error> {
     cache_remote_manifest(paths, remote).await?.read().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use temp_testdir::TempDir;
+
+    #[tokio::test]
+    async fn test_if_cached() -> Result<(), Error> {
+        let root_dir = TempDir::default();
+        let paths = paths::DomainPaths::new(root_dir.to_path_buf());
+        let manifest = RemoteManifest {
+            bucket: "a".to_string(),
+            namespace: "b".to_string(),
+            hash: "c".to_string(),
+        };
+        let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
+        storage::fs::write(cache_path, &(Vec::new())).await?;
+        let cached_manifest = cache_remote_manifest(&paths, &manifest).await?;
+        assert_eq!(
+            cached_manifest,
+            CachedManifest {
+                paths,
+                bucket: "a".to_string(),
+                hash: "c".to_string(),
+            }
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_if_cached_random_file() -> Result<(), Error> {
+        let root_dir = TempDir::default();
+        let paths = paths::DomainPaths::new(root_dir.to_path_buf());
+        let manifest = RemoteManifest {
+            bucket: "a".to_string(),
+            namespace: "b".to_string(),
+            hash: "c".to_string(),
+        };
+        let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
+        storage::fs::write(cache_path, &(Vec::new())).await?;
+        let cached_manifest = cache_remote_manifest(&paths, &manifest).await?;
+        assert_eq!(
+            cached_manifest.read().await.unwrap_err().to_string(),
+            "Arrow error: Parquet argument error: External: Invalid argument (os error 22)"
+        );
+        Ok(())
+    }
 }

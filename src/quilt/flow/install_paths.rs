@@ -14,6 +14,50 @@ use crate::quilt::{
 };
 use crate::{paths, s3_utils, Error, UPath};
 
+async fn cache_immutable_object(object_dest: &PathBuf, uri: &s3::S3Uri) -> Result<(), Error> {
+    let version = uri
+        .version
+        .clone()
+        .ok_or(Error::S3Uri("missing versionId in s3 URL".to_string()))?;
+
+    let mut file = File::create(&object_dest).await?;
+
+    let client = s3_utils::get_client_for_bucket(&uri.bucket).await?;
+
+    let mut object = client
+        .get_object()
+        .bucket(uri.bucket.clone())
+        .key(uri.key.clone())
+        .version_id(version)
+        .send()
+        .await
+        .map_err(|err| Error::S3(format!("failed to get S3 object: {}", err)))?;
+
+    while let Some(bytes) = object
+        .body
+        .try_next()
+        .await
+        .map_err(|err| Error::S3(format!("failed to read S3 object: {}", err)))?
+    {
+        file.write_all(&bytes).await?;
+    }
+    file.flush().await?;
+    Ok(())
+}
+
+async fn create_mutable_copy(
+    file_ops: &(impl FsExists + FsCopy + FsCreateDir + FsModifiedDate),
+    immutable_source: &PathBuf,
+    mutable_target: &PathBuf,
+) -> Result<chrono::DateTime<chrono::Utc>, Error> {
+    let parent_dir = mutable_target.parent();
+    if parent_dir.is_some() {
+        file_ops.create_dir_all(parent_dir.unwrap()).await?;
+    }
+    file_ops.copy(&immutable_source, &mutable_target).await?;
+    file_ops.modified_date(&mutable_target).await
+}
+
 pub async fn install_paths(
     mut lineage: PackageLineage,
     manifest: &(impl ReadableManifest + Sync),
@@ -37,8 +81,6 @@ pub async fn install_paths(
         ));
     }
 
-    let objects_dir = paths.objects_dir();
-
     // for each path in entries_paths:
     //   get entry from installed manifest
     //   cache the entry into identity cache (if not there)
@@ -60,38 +102,10 @@ pub async fn install_paths(
             .get_mut(path)
             .ok_or(Error::Table(format!("path {} not found", path)))?;
 
-        let s3::S3Uri {
-            bucket,
-            key,
-            version,
-        } = row.place.parse()?;
-        let version = version.ok_or(Error::S3Uri("missing versionId in s3 URL".to_string()))?;
-
-        let object_dest = objects_dir.join(hex::encode(row.hash.digest()));
+        let object_dest = paths.object(&row.hash);
 
         if !file_ops.exists(&object_dest).await {
-            let mut file = File::create(&object_dest).await?;
-
-            let client = s3_utils::get_client_for_bucket(&bucket).await?;
-
-            let mut object = client
-                .get_object()
-                .bucket(bucket)
-                .key(key)
-                .version_id(version)
-                .send()
-                .await
-                .map_err(|err| Error::S3(format!("failed to get S3 object: {}", err)))?;
-
-            while let Some(bytes) = object
-                .body
-                .try_next()
-                .await
-                .map_err(|err| Error::S3(format!("failed to read S3 object: {}", err)))?
-            {
-                file.write_all(&bytes).await?;
-            }
-            file.flush().await?;
+            cache_immutable_object(&object_dest, &row.place.parse()?).await?;
         }
 
         row.place = Url::from_file_path(&object_dest)
@@ -101,17 +115,13 @@ pub async fn install_paths(
             .to_string();
 
         let working_dest = working_dir.join(&row.name);
-        let parent_dir = working_dest.parent();
-        if parent_dir.is_some() {
-            file_ops.create_dir_all(parent_dir.unwrap()).await?;
-        }
-        file_ops.copy(&object_dest, &working_dest).await?;
-        let timestamp = file_ops.modified_date(&working_dest).await?;
+        let last_modified = create_mutable_copy(&file_ops, &object_dest, &working_dest).await?;
+
         lineage.paths.insert(
-            row.name.to_owned(),
+            row.name.clone(),
             PathState {
-                timestamp,
-                hash: row.hash.to_owned(),
+                timestamp: last_modified,
+                hash: row.hash,
             },
         );
     }

@@ -131,6 +131,19 @@ impl ReadableManifest for CachedManifest {
     }
 }
 
+impl CachedManifest {
+    pub fn from_remote_manifest(
+        remote_manifest: &RemoteManifest,
+        paths: &paths::DomainPaths,
+    ) -> CachedManifest {
+        CachedManifest {
+            paths: paths.clone(),
+            bucket: remote_manifest.bucket.clone(),
+            hash: remote_manifest.hash.clone(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct InstalledManifest {
     pub hash: String,
