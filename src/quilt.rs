@@ -2,7 +2,6 @@ use std::{collections::BTreeMap, path::PathBuf};
 
 use multihash::Multihash;
 use parquet::data_type::AsBytes;
-use tokio::fs::remove_dir_all;
 
 pub mod flow;
 pub mod lineage;
@@ -32,6 +31,7 @@ use flow::install_paths::install_paths;
 use flow::pull::pull_package;
 use flow::push::push_package;
 use flow::reset_to_latest::reset_to_latest;
+use flow::uninstall_package::uninstall_package;
 use flow::uninstall_paths::uninstall_paths;
 
 // XXX: is this necessary?
@@ -85,24 +85,9 @@ impl LocalDomain {
     }
 
     pub async fn uninstall_package(&self, namespace: impl AsRef<str>) -> Result<(), Error> {
-        let namespace = namespace.as_ref();
-        let mut lineage = self.lineage.read().await?;
-
-        lineage
-            .packages
-            .remove(namespace)
-            .ok_or(Error::PackageNotInstalled(namespace.to_owned()))?;
-
-        if let Err(err) = remove_dir_all(self.paths.installed_manifests(namespace)).await {
-            println!("Failed to remove installed manifests: {err}");
-        }
-        if let Err(err) = remove_dir_all(self.paths.working_dir(namespace)).await {
-            println!("Failed to remove working directory: {err}");
-        }
-
-        // TODO: Remove object files? But need to make sure no other manifest uses them.
-
-        Ok(())
+        let lineage = self.lineage.read().await?;
+        // FIXME: write lineage in the end?
+        uninstall_package(lineage, &self.paths, namespace).await
     }
 
     pub async fn list_installed_packages(&self) -> Result<Vec<InstalledPackage>, Error> {
@@ -287,10 +272,6 @@ impl InstalledPackage {
     pub fn working_folder(&self) -> PathBuf {
         self.paths.working_dir(&self.namespace)
     }
-
-    // pub async fn uninstall(&self) -> Result<(), Error> {
-    //     self.domain.uninstall_package(&self.namespace).await
-    // }
 
     pub async fn status(&self) -> Result<InstalledPackageStatus, Error> {
         let lineage = self.lineage.read().await?;

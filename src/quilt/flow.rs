@@ -6,4 +6,5 @@ pub mod pull;
 pub mod push;
 pub mod reset_to_latest;
 pub mod status;
+pub mod uninstall_package;
 pub mod uninstall_paths;
