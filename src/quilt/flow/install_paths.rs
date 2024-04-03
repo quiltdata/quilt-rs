@@ -3,6 +3,7 @@ use std::{
     path::PathBuf,
 };
 
+use aws_sdk_s3::error::DisplayErrorContext;
 use tokio::{fs::File, io::AsyncWriteExt};
 use url::Url;
 
@@ -31,13 +32,13 @@ async fn cache_immutable_object(object_dest: &PathBuf, uri: &s3::S3Uri) -> Resul
         .version_id(version)
         .send()
         .await
-        .map_err(|err| Error::S3(format!("failed to get S3 object: {}", err)))?;
+        .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
 
     while let Some(bytes) = object
         .body
         .try_next()
         .await
-        .map_err(|err| Error::S3(format!("failed to read S3 object: {}", err)))?
+        .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?
     {
         file.write_all(&bytes).await?;
     }
