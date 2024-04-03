@@ -24,15 +24,10 @@ pub async fn reset_to_latest(
         return Ok(lineage);
     }
 
-    let file_ops = fs::RelativeFileOps::new(working_dir.clone());
+    let mut storage = fs::LocalStorage::new(working_dir.clone());
     let entries_paths: Vec<String> = lineage.paths.clone().into_keys().collect();
-    let mut lineage = uninstall_paths(
-        lineage,
-        working_dir.clone(),
-        file_ops.clone(),
-        &entries_paths,
-    )
-    .await?;
+    let mut lineage =
+        uninstall_paths(lineage, working_dir.clone(), &mut storage, &entries_paths).await?;
 
     lineage.latest_hash = new_latest.clone();
     lineage.remote.hash = new_latest.clone();
@@ -58,7 +53,7 @@ pub async fn reset_to_latest(
         paths,
         working_dir,
         namespace,
-        file_ops,
+        storage,
         &paths_to_install,
     )
     .await

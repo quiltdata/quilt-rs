@@ -2,7 +2,7 @@ use std::io::ErrorKind;
 use std::path::PathBuf;
 
 use crate::quilt::lineage::PackageLineage;
-use crate::quilt::storage::fs::RemoveFile;
+use crate::quilt::storage::Storage;
 use crate::Error;
 
 fn not_found_error(path: &str) -> Error {
@@ -12,7 +12,7 @@ fn not_found_error(path: &str) -> Error {
 pub async fn uninstall_paths(
     mut lineage: PackageLineage,
     working_dir: PathBuf,
-    file_ops: impl RemoveFile,
+    storage: &mut impl Storage,
     paths: &Vec<String>,
 ) -> Result<PackageLineage, Error> {
     tracing::debug!("Uninstalling paths {:?}", paths);
@@ -21,7 +21,7 @@ pub async fn uninstall_paths(
         lineage.paths.remove(path).ok_or(not_found_error(path))?;
 
         let working_path = working_dir.join(path);
-        if let Err(err) = file_ops.remove_file(working_path).await {
+        if let Err(err) = storage.remove_file(working_path).await {
             if err.kind() != ErrorKind::NotFound {
                 return Err(Error::Io(err));
             }
@@ -37,23 +37,16 @@ pub async fn uninstall_paths(
 mod tests {
     use super::*;
 
-    use crate::quilt::lineage::PathState;
-    use std::collections::BTreeMap;
-
-    struct MockFs {}
-    impl RemoveFile for MockFs {
-        async fn remove_file(&self, _path: PathBuf) -> Result<(), std::io::Error> {
-            // TODO: detect it was removed
-            Ok(())
-        }
-    }
+    use crate::quilt::{lineage::PathState, storage::mock_storage::MockStorage};
+    use std::collections::{BTreeMap, HashSet};
 
     #[tokio::test]
     async fn uninstall_not_installed_path() -> Result<(), Error> {
-        let file_ops = MockFs {};
+        let mut storage = MockStorage::default();
         let lineage = PackageLineage::default();
         let paths = vec!["test folde/r".to_string()];
-        let modified_lineage = uninstall_paths(lineage, PathBuf::new(), file_ops, &paths).await;
+
+        let modified_lineage = uninstall_paths(lineage, PathBuf::new(), &mut storage, &paths).await;
         assert_eq!(
             modified_lineage.unwrap_err().to_string(),
             "Uninstall error: path test folde/r not found. Cannot uninstall."
@@ -63,17 +56,37 @@ mod tests {
 
     #[tokio::test]
     async fn uninstall_single_path() -> Result<(), Error> {
+        let installed_paths = BTreeMap::from([
+            ("a/a".to_string(), PathState::default()),
+            ("test folde/r".to_string(), PathState::default()),
+            ("b/b".to_string(), PathState::default()),
+        ]);
         let lineage = PackageLineage {
-            paths: BTreeMap::from([
-                ("a/a".to_string(), PathState::default()),
-                ("test folde/r".to_string(), PathState::default()),
-                ("b/b".to_string(), PathState::default()),
-            ]),
+            paths: installed_paths.clone(),
             ..PackageLineage::default()
         };
-        let s = MockFs {};
-        let paths = vec!["test folde/r".to_string()];
-        let modified_lineage = uninstall_paths(lineage, PathBuf::new(), s, &paths).await?;
+        let mut storage = MockStorage::default();
+        storage.install_paths(
+            installed_paths
+                .keys()
+                .map(|s| PathBuf::from(s))
+                .collect::<HashSet<_>>(),
+        );
+
+        let paths_to_uninstall = vec!["test folde/r".to_string()];
+
+        let key = PathBuf::from("test folde/r");
+        assert_eq!(
+            storage.paths.get(&key),
+            Some(&PathBuf::from("test folde/r"))
+        );
+
+        let modified_lineage =
+            uninstall_paths(lineage, PathBuf::new(), &mut storage, &paths_to_uninstall).await?;
+
+        // Check that the key was removed
+        assert!(storage.paths.get(&key).is_none());
+
         assert_eq!(
             modified_lineage.paths,
             BTreeMap::from([
@@ -94,8 +107,9 @@ mod tests {
             ..PackageLineage::default()
         };
         let paths = vec!["b/b".to_string(), "a/a".to_string()];
-        let s = MockFs {};
-        let modified_lineage = uninstall_paths(lineage, PathBuf::new(), s, &paths).await?;
+        let mut storage = MockStorage::default();
+        let modified_lineage =
+            uninstall_paths(lineage, PathBuf::new(), &mut storage, &paths).await?;
         assert!(modified_lineage.paths.is_empty());
         Ok(())
     }

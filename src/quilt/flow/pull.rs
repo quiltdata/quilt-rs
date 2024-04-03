@@ -7,7 +7,7 @@ use crate::quilt::flow::status::create_status;
 use crate::quilt::flow::uninstall_paths::uninstall_paths;
 use crate::quilt::lineage::PackageLineage;
 use crate::quilt::manifest_handle;
-use crate::quilt::storage::fs::RelativeFileOps;
+use crate::quilt::storage::fs::LocalStorage;
 use crate::quilt::Error;
 
 pub async fn pull_package(
@@ -34,17 +34,12 @@ pub async fn pull_package(
         return Err(Error::Package("package is already up-to-date".to_string()));
     }
 
-    let file_ops = RelativeFileOps::new(working_dir.clone());
+    let mut storage = LocalStorage::new(working_dir.clone());
     // TODO: What should we do about installed paths?
     // They may or may not exist in the updated package.
     let installed_paths: Vec<String> = lineage.paths.keys().cloned().collect();
-    let mut lineage = uninstall_paths(
-        lineage,
-        working_dir.clone(),
-        file_ops.clone(),
-        &installed_paths,
-    )
-    .await?;
+    let mut lineage =
+        uninstall_paths(lineage, working_dir.clone(), &mut storage, &installed_paths).await?;
 
     // TODO: uninstall_paths() just modified the lineage, so re-reading it here.
     // There needs to be a better way.
@@ -71,7 +66,7 @@ pub async fn pull_package(
         paths,
         working_dir,
         namespace,
-        file_ops,
+        storage,
         &paths_to_install,
     )
     .await

@@ -7,6 +7,8 @@ use tokio::{
 
 use crate::Error;
 
+use super::Storage;
+
 pub type File = Box<dyn AsyncRead + Unpin + Send>;
 
 pub async fn open(path: impl AsRef<Path>) -> Result<File, Error> {
@@ -16,12 +18,6 @@ pub async fn open(path: impl AsRef<Path>) -> Result<File, Error> {
         // .map(|file| Box::new(file) as Box<dyn io::AsyncRead + Unpin>)
         .map(|file| Box::new(file) as File)?)
 
-    // TODO: fake impl
-}
-
-pub async fn exists(path: impl AsRef<Path>) -> bool {
-    // real impl
-    fs::metadata(path).await.is_ok()
     // TODO: fake impl
 }
 
@@ -100,71 +96,44 @@ pub async fn get_file_modified_ts(
     Ok(chrono::DateTime::<chrono::Utc>::from(modified))
 }
 
-pub trait RemoveFile {
-    fn remove_file(
-        &self,
-        path: PathBuf,
-    ) -> impl std::future::Future<Output = Result<(), std::io::Error>> + Send {
-        async { fs::remove_file(path).await }
-    }
-}
-
-pub trait FsExists {
-    fn exists(&self, path: impl AsRef<Path>) -> impl std::future::Future<Output = bool> {
-        async { exists(path).await }
-    }
-}
-
-pub trait FsCopy {
-    fn copy(
-        &self,
-        from: impl AsRef<Path>,
-        to: impl AsRef<Path>,
-    ) -> impl std::future::Future<Output = Result<u64, std::io::Error>> {
-        async { fs::copy(from, to).await }
-    }
-}
-
-pub trait FsCreateDir {
-    fn create_dir_all(
-        &self,
-        path: impl AsRef<Path>,
-    ) -> impl std::future::Future<Output = Result<(), std::io::Error>> {
-        async { fs::create_dir_all(path).await }
-    }
-}
-
-pub trait FsModifiedDate {
-    fn modified_date(
-        &self,
-        path: impl AsRef<Path>,
-    ) -> impl std::future::Future<Output = Result<chrono::DateTime<chrono::Utc>, Error>> {
-        async move { get_file_modified_ts(path).await }
-    }
-}
-
 #[derive(Clone)]
-pub struct RelativeFileOps {
+pub struct LocalStorage {
     working_dir: PathBuf,
 }
 
-impl RemoveFile for RelativeFileOps {
-    async fn remove_file(&self, relative_path: PathBuf) -> Result<(), std::io::Error> {
+impl Storage for LocalStorage {
+    async fn copy(
+        &self,
+        from: impl AsRef<Path>,
+        to: impl AsRef<Path>,
+    ) -> Result<u64, std::io::Error> {
+        tokio::fs::copy(from, to).await
+    }
+
+    async fn create_dir_all(&self, path: impl AsRef<Path>) -> Result<(), std::io::Error> {
+        tokio::fs::create_dir_all(path).await
+    }
+
+    async fn remove_file(&mut self, relative_path: PathBuf) -> Result<(), std::io::Error> {
         let path = &self.working_dir.join(relative_path);
         fs::remove_file(path).await
     }
+
+    /// Check if a path exists in the filesystem.
+    async fn exists(&self, path: impl AsRef<Path>) -> bool {
+        tokio::fs::metadata(path).await.is_ok()
+    }
+
+    async fn modified_timestamp(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<chrono::DateTime<chrono::Utc>, Error> {
+        get_file_modified_ts(path).await
+    }
 }
 
-impl FsExists for RelativeFileOps {}
-
-impl FsCopy for RelativeFileOps {}
-
-impl FsCreateDir for RelativeFileOps {}
-
-impl FsModifiedDate for RelativeFileOps {}
-
-impl RelativeFileOps {
+impl LocalStorage {
     pub fn new(working_dir: PathBuf) -> Self {
-        RelativeFileOps { working_dir }
+        LocalStorage { working_dir }
     }
 }
