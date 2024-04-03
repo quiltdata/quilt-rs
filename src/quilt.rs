@@ -1,6 +1,7 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
 use multihash::Multihash;
+use tracing::log;
 
 pub mod flow;
 pub mod lineage;
@@ -129,7 +130,7 @@ impl LocalDomain {
         uri: &s3::S3Uri,
         target_uri: S3PackageUri,
     ) -> Result<RemoteManifest, Error> {
-        println!("Source URI: {:?}, target URI: {:?}", uri, target_uri);
+        log::debug!("Source URI: {:?}, target URI: {:?}", uri, target_uri);
         // TODO: make get_object_attributes() calls concurrently across list_objects() pages
         // TODO: increase concurrency, to do that we need to figure out how to deal
         //       with fd limits on Mac by default it's 256
@@ -280,7 +281,7 @@ impl InstalledPackage {
     }
 
     pub async fn revert_paths(&self, paths: &Vec<String>) -> Result<(), Error> {
-        println!("revert_paths: {paths:?}");
+        log::debug!("revert_paths: {paths:?}");
         unimplemented!()
     }
 
@@ -417,7 +418,7 @@ mod tests {
 
         let manifest = block_on(cached_manifest.read()).expect("Failed to parse the manifest");
 
-        println!("manifest: {manifest:?}");
+        log::debug!("manifest: {manifest:?}");
         // TODO: assert manifest has the expected contents
 
         // ## Install the files
@@ -449,13 +450,13 @@ mod tests {
         // ## Modify installed files
 
         let readme_path = installed_package.working_folder().join("READ ME.md");
-        println!("readme_path: {readme_path:?}");
+        log::debug!("readme_path: {readme_path:?}");
 
         let old_readme =
             block_on(fs::read_to_string(&readme_path)).expect("Failed to read 'READ ME.md'");
 
         let timestamp = get_timestamp();
-        println!("timestamp: {timestamp:?}");
+        log::debug!("timestamp: {timestamp:?}");
         block_on(fs::write(readme_path, timestamp.as_bytes()))
             .expect("Failed to overwrite 'READ ME.md'");
         let status = block_on(installed_package.status()).expect("Failed to get status");

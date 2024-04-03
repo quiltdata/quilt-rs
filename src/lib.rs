@@ -142,7 +142,7 @@ pub async fn installed_packages(dir: Option<String>) -> Result<Vec<InstalledPack
         None => std::env::current_dir().unwrap(),
     };
     let local_domain = LocalDomain::new(path_buf);
-    println!("local_domain: {:?}", local_domain);
+    log::debug!("local_domain: {:?}", local_domain);
     let installed_packages = local_domain
         .list_installed_packages()
         .await
@@ -169,7 +169,7 @@ mod tests {
         let result = installed_packages(Some(dir.to_string())).await;
         assert!(result.is_ok());
         let packages = result.unwrap();
-        println!("packages[{}]: {:?}", crate::utils::TEST_DOMAIN, packages);
+        log::debug!("packages[{}]: {:?}", crate::utils::TEST_DOMAIN, packages);
         let count = packages.len();
         assert!(count == 0); // TODO: add data.json to fix this
     }

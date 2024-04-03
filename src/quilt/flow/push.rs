@@ -4,6 +4,7 @@ use aws_sdk_s3::types::{ChecksumAlgorithm, CompletedMultipartUpload, CompletedPa
 use aws_smithy_types::byte_stream::{ByteStream, Length};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use multihash::Multihash;
+use tracing::log;
 use url::Url;
 
 use crate::paths;
@@ -51,7 +52,7 @@ pub async fn push_package(
         let file_path: PathBuf = local_url.to_file_path().unwrap();
 
         let s3_key = format!("{}/{}", namespace, row.name);
-        println!("uploading to s3({}): {}", remote.bucket, s3_key);
+        log::debug!("uploading to s3({}): {}", remote.bucket, s3_key);
 
         // TODO: upload in parallel. use a stream?
         let (version_id, checksum) = if row.size < storage::s3::MULTIPART_THRESHOLD {
@@ -161,7 +162,7 @@ pub async fn push_package(
         row.hash = Multihash::wrap(manifest::MULTIHASH_SHA256_CHUNKED, checksum.as_ref())?;
 
         let remote_url = storage::s3::make_s3_url(&remote.bucket, &s3_key, version_id.as_deref());
-        println!("got remote url: {}", remote_url);
+        log::debug!("got remote url: {}", remote_url);
 
         // "Relax" the manifest by using those new remote keys
         row.place = remote_url.to_string();
@@ -183,7 +184,7 @@ pub async fn push_package(
     // Upload a quilt3 manifest for backward compatibility.
     new_remote.upload_legacy(&local_manifest).await?;
 
-    println!("uploaded remote manifest: {new_remote:?}");
+    log::debug!("uploaded remote manifest: {new_remote:?}");
 
     // Tag the new commit.
     // If {self.commit.tag} does not already exist at

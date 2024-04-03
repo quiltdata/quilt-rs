@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use serde_json::json;
 use tokio::fs::create_dir_all;
+use tracing::log;
 use url::Url;
 
 use crate::quilt::fs::LocalStorage;
@@ -25,7 +26,7 @@ pub async fn commit_package(
     message: String,
     user_meta: Option<JsonObject>,
 ) -> Result<PackageLineage, Error> {
-    println!("commit: {message:?}, {user_meta:?}");
+    log::debug!("commit: {message:?}, {user_meta:?}");
     // create a new manifest based on the stored version
 
     // for each modified file:
