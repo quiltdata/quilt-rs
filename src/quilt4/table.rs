@@ -24,7 +24,7 @@ use parquet::{
     file::properties::WriterProperties,
 };
 use sha2::{Digest, Sha256};
-use tokio::io::AsyncWrite;
+use tokio::{fs, io::AsyncWrite};
 use tokio_stream::StreamExt;
 
 use crate::quilt::manifest::Manifest;
@@ -212,6 +212,9 @@ impl Table {
 
         match upath {
             UPath::Local(path) => {
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent).await?;
+                }
                 let file = tokio::fs::File::create(path).await?;
                 let mut writer =
                     AsyncArrowWriter::try_new(file, schema.clone(), Some(props)).unwrap();

@@ -142,7 +142,7 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    pub async fn from_file<F: AsyncRead + Unpin + Send>(file: F) -> Result<Self, Error> {
+    pub async fn from_reader<F: AsyncRead + Unpin + Send>(file: F) -> Result<Self, Error> {
         let reader = BufReader::new(file);
         let mut lines = reader.lines();
 

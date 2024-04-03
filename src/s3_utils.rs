@@ -9,6 +9,7 @@ use aws_types::region::Region;
 use base64::{prelude::BASE64_STANDARD, Engine};
 use lazy_static::lazy_static;
 use sha2::{Digest, Sha256};
+use tokio::io::AsyncRead;
 
 use crate::{quilt::s3, quilt4::checksum::get_checksum_chunksize_and_parts, Error};
 
@@ -22,6 +23,22 @@ pub async fn find_bucket_region(client: &reqwest::Client, bucket: &str) -> Resul
         Some(location) => Ok(location.to_str()?.into()),
         None => Err(Error::MissingHTTPHeader("x-amz-bucket-region".to_string())),
     }
+}
+
+pub async fn get_object(
+    client: &aws_sdk_s3::Client,
+    bucket: &str,
+    key: &str,
+) -> Result<impl AsyncRead, Error> {
+    let result = client
+        .get_object()
+        .bucket(bucket)
+        .key(key)
+        .send()
+        .await
+        .map_err(|err| Error::S3(aws_sdk_s3::error::DisplayErrorContext(err).to_string()))?;
+    let contents = result.body.into_async_read();
+    Ok(contents)
 }
 
 lazy_static! {

@@ -4,12 +4,15 @@ use arrow::error::ArrowError;
 use aws_sdk_s3::error::SdkError;
 use tokio::{fs, io::AsyncReadExt};
 
-use crate::quilt::{
-    manifest::Manifest,
-    manifest_handle::{CachedManifest, ReadableManifest, RemoteManifest},
-    storage, Error,
-};
 use crate::{paths, Table, UPath};
+use crate::{
+    quilt::{
+        manifest::Manifest,
+        manifest_handle::{CachedManifest, ReadableManifest, RemoteManifest},
+        storage, Error,
+    },
+    s3_utils,
+};
 
 async fn is_parquet(client: &aws_sdk_s3::Client, manifest: &RemoteManifest) -> Result<bool, Error> {
     match client
@@ -29,34 +32,20 @@ async fn fetch_parquet(
     client: &aws_sdk_s3::Client,
     manifest: &RemoteManifest,
 ) -> Result<Vec<u8>, Error> {
-    let result = client
-        .get_object()
-        .bucket(&manifest.bucket)
-        .key(paths::get_manifest_key(&manifest.hash))
-        .send()
-        .await
-        .map_err(|err| Error::S3(aws_sdk_s3::error::DisplayErrorContext(err).to_string()))?;
-    let mut contents = Vec::new();
-    result
-        .body
-        .into_async_read()
-        .read_to_end(&mut contents)
-        .await?;
-    Ok(contents)
+    let key = paths::get_manifest_key(&manifest.hash);
+    let mut contents = s3_utils::get_object(client, &manifest.bucket, &key).await?;
+    let mut output = Vec::new();
+    contents.read_to_end(&mut output).await?;
+    Ok(output)
 }
 
 async fn fetch_jsonl(
     client: &aws_sdk_s3::Client,
     manifest: &RemoteManifest,
 ) -> Result<Table, Error> {
-    let result = client
-        .get_object()
-        .bucket(&manifest.bucket)
-        .key(paths::get_manifest_key_legacy(&manifest.hash))
-        .send()
-        .await
-        .map_err(|err| Error::S3(aws_sdk_s3::error::DisplayErrorContext(err).to_string()))?;
-    let quilt3_manifest = Manifest::from_file(result.body.into_async_read()).await?;
+    let key = paths::get_manifest_key_legacy(&manifest.hash);
+    let contents = s3_utils::get_object(client, &manifest.bucket, &key).await?;
+    let quilt3_manifest = Manifest::from_reader(contents).await?;
     Table::try_from(quilt3_manifest)
 }
 
@@ -79,28 +68,27 @@ pub async fn cache_manifest(
 //        or CachedManifest::try_from(RemoteManifest)
 pub async fn cache_remote_manifest(
     paths: &paths::DomainPaths,
-    manifest: &RemoteManifest,
+    remote_manifest: &RemoteManifest,
 ) -> Result<CachedManifest, Error> {
     // check if the manifest is already cached
     // if not, download and cache it
     // return cached manifest
 
-    let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
+    let cache_path = paths.manifest_cache(&remote_manifest.bucket, &remote_manifest.hash);
 
     if !storage::fs::exists(&cache_path).await {
         // Does not exist yet
-        let client = crate::s3_utils::get_client_for_bucket(&manifest.bucket).await?;
-        if is_parquet(&client, manifest).await? {
-            let output = fetch_parquet(&client, manifest).await?;
-            storage::fs::write(&cache_path, &output).await?;
+        let client = crate::s3_utils::get_client_for_bucket(&remote_manifest.bucket).await?;
+        if is_parquet(&client, remote_manifest).await? {
+            let manifest = fetch_parquet(&client, remote_manifest).await?;
+            storage::fs::write(&cache_path, &manifest).await?;
         } else {
-            let table = fetch_jsonl(&client, manifest).await?;
-            fs::create_dir_all(&cache_path.parent().unwrap()).await?;
-            table.write_to_upath(&UPath::Local(cache_path)).await?;
+            let manifest = fetch_jsonl(&client, remote_manifest).await?;
+            manifest.write_to_upath(&UPath::Local(cache_path)).await?;
         };
     }
 
-    Ok(CachedManifest::from_remote_manifest(manifest, paths))
+    Ok(CachedManifest::from_remote_manifest(remote_manifest, paths))
 }
 
 pub async fn browse_remote_manifest(
