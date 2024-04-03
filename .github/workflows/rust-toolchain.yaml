@@ -11,11 +11,11 @@ jobs:
       - name: Install latest stable
         uses: actions-rs/toolchain@v1
         with:
-            toolchain: stable
+            toolchain: nightly
             override: true
             components: rustfmt, clippy
       - name: Check formatting
-        run: cargo fmt --check
+        run: cargo +nightly fmt --check
       - name: Lint
         run: cargo clippy -- --deny warnings
       - name: Run cargo test
