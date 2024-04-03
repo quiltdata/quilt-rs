@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use arrow::error::ArrowError;
-use aws_sdk_s3::error::SdkError;
+use aws_sdk_s3::error::{DisplayErrorContext, SdkError};
 use storage::fs::LocalStorage;
 use storage::Storage;
 use tokio::{fs, io::AsyncReadExt};
@@ -26,7 +26,7 @@ async fn is_parquet(client: &aws_sdk_s3::Client, manifest: &RemoteManifest) -> R
     {
         Ok(_) => Ok(true),
         Err(SdkError::ServiceError(err)) if err.err().is_not_found() => Ok(false),
-        Err(err) => Err(Error::S3(err.to_string())),
+        Err(err) => Err(Error::S3(DisplayErrorContext(err).to_string())),
     }
 }
 

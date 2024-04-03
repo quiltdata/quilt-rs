@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 
-use aws_sdk_s3::types::{ChecksumAlgorithm, CompletedMultipartUpload, CompletedPart};
+use aws_sdk_s3::{
+    error::DisplayErrorContext,
+    types::{ChecksumAlgorithm, CompletedMultipartUpload, CompletedPart},
+};
 use aws_smithy_types::byte_stream::{ByteStream, Length};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use multihash::Multihash;
@@ -66,7 +69,7 @@ pub async fn push_package(
                 .checksum_algorithm(ChecksumAlgorithm::Sha256)
                 .send()
                 .await
-                .map_err(|err| Error::S3(err.to_string()))?;
+                .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
 
             let s3_checksum_b64 = response
                 .checksum_sha256
@@ -94,7 +97,7 @@ pub async fn push_package(
                 .checksum_algorithm(ChecksumAlgorithm::Sha256)
                 .send()
                 .await
-                .map_err(|err| Error::S3(err.to_string()))?
+                .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?
                 .upload_id
                 .ok_or(Error::UploadId("failed to get an UploadId".to_string()))?;
 
@@ -119,9 +122,7 @@ pub async fn push_package(
                     .body(chunk_body)
                     .send()
                     .await
-                    .map_err(|err| {
-                        Error::S3(format!("failed to upload part {}: {}", part_number, err))
-                    })?;
+                    .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
                 parts.push(
                     CompletedPart::builder()
                         .part_number(part_number)
@@ -143,9 +144,7 @@ pub async fn push_package(
                 )
                 .send()
                 .await
-                .map_err(|err| {
-                    Error::S3(format!("failed to complete multipart upload: {}", err))
-                })?;
+                .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
 
             let s3_checksum = response
                 .checksum_sha256

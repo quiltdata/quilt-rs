@@ -1,5 +1,6 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
+use aws_sdk_s3::error::DisplayErrorContext;
 use multihash::Multihash;
 use tracing::log;
 
@@ -161,7 +162,7 @@ impl LocalDomain {
             .page_size(100) // XXX: this is to limit concurrency
             .send();
         while let Some(page) = p.next().await {
-            let page = page.map_err(|err| Error::S3(err.to_string()))?;
+            let page = page.map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
             let page_contents_iter = page.contents.iter().flatten();
 
             for attrs in futures::future::try_join_all(page_contents_iter.map(|obj| {
