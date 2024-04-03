@@ -4,33 +4,33 @@
 //! and provides methods to read/write (decode/encode) quilt3's JSONL format
 //!
 
-use std::{collections::BTreeMap, fmt, io, sync::Arc};
+use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::{fmt, io};
 
-use arrow::{
-    array::{GenericByteArray, UInt64Array},
-    datatypes::{BinaryType, DataType, Field, Schema, Utf8Type},
-    error::ArrowError,
-    record_batch::RecordBatch,
-};
+use arrow::array::{GenericByteArray, UInt64Array};
+use arrow::datatypes::{BinaryType, DataType, Field, Schema, Utf8Type};
+use arrow::error::ArrowError;
+use arrow::record_batch::RecordBatch;
 use aws_sdk_s3::config::ProvideCredentials;
 use multihash::Multihash;
-use object_store::{aws::AmazonS3Builder, ObjectStore};
-use parquet::{
-    arrow::{
-        async_reader::{AsyncFileReader, ParquetObjectReader},
-        AsyncArrowWriter, ParquetRecordBatchStreamBuilder,
-    },
-    basic::Compression,
-    file::properties::WriterProperties,
-};
+use object_store::aws::AmazonS3Builder;
+use object_store::ObjectStore;
+use parquet::arrow::async_reader::{AsyncFileReader, ParquetObjectReader};
+use parquet::arrow::{AsyncArrowWriter, ParquetRecordBatchStreamBuilder};
+use parquet::basic::Compression;
+use parquet::file::properties::WriterProperties;
 use sha2::{Digest, Sha256};
-use tokio::{fs, io::AsyncWrite};
+use tokio::fs;
+use tokio::io::AsyncWrite;
 use tokio_stream::StreamExt;
 
 use crate::quilt::manifest::Manifest;
-use crate::{quilt::ContentHash, s3_utils::get_region_for_bucket};
+use crate::quilt::ContentHash;
+use crate::s3_utils::get_region_for_bucket;
 
-use super::{row4::Row4, upath::UPath};
+use super::row4::Row4;
+use super::upath::UPath;
 use crate::Error;
 
 pub const HEADER_ROW: &str = ".";

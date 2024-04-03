@@ -1,5 +1,8 @@
-use sha2::{digest::Output, Digest, Sha256};
-use tokio::io::{self, AsyncReadExt, BufReader};
+use sha2::digest::Output;
+use sha2::{Digest, Sha256};
+use tokio::io::{
+    AsyncReadExt, BufReader, {self},
+};
 
 use crate::quilt::s3;
 
@@ -52,7 +55,8 @@ pub async fn calculate_sha256_chunked_checksum<F: io::AsyncRead + Unpin>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::{prelude::BASE64_STANDARD, Engine};
+    use base64::prelude::BASE64_STANDARD;
+    use base64::Engine;
 
     #[tokio::test]
     async fn test_sha256() {

@@ -8,9 +8,12 @@ pub mod utils;
 use std::str::Utf8Error;
 
 use aws_smithy_types::byte_stream;
-pub use quilt4::{
-    manifest::Manifest4, row4::Row4, table::Table, upath::UPath, uri::UriParser, uri::UriQuilt,
-};
+
+pub use quilt4::manifest::Manifest4;
+pub use quilt4::row4::Row4;
+pub use quilt4::table::Table;
+pub use quilt4::upath::UPath;
+pub use quilt4::uri::{UriParser, UriQuilt};
 use tracing::log;
 
 pub use quilt::{InstalledPackage, LocalDomain, Manifest, RemoteManifest, S3PackageUri};

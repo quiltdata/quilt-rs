@@ -6,9 +6,8 @@ use crate::quilt::flow::install_paths::install_paths;
 use crate::quilt::flow::status::create_status;
 use crate::quilt::flow::uninstall_paths::uninstall_paths;
 use crate::quilt::lineage::PackageLineage;
-use crate::quilt::manifest_handle;
 use crate::quilt::storage::fs::LocalStorage;
-use crate::quilt::Error;
+use crate::quilt::{manifest_handle, Error};
 
 pub async fn pull_package(
     lineage: PackageLineage,

@@ -1,15 +1,14 @@
 use std::path::PathBuf;
 
-use crate::{
-    paths::{copy_cached_to_installed, DomainPaths},
-    Error,
-};
+use crate::paths::{copy_cached_to_installed, DomainPaths};
+use crate::Error;
 
-use crate::quilt::{
-    flow::browse::cache_remote_manifest, flow::install_paths::install_paths,
-    flow::uninstall_paths::uninstall_paths, lineage::PackageLineage,
-    manifest_handle::ReadableManifest, storage::fs,
-};
+use crate::quilt::flow::browse::cache_remote_manifest;
+use crate::quilt::flow::install_paths::install_paths;
+use crate::quilt::flow::uninstall_paths::uninstall_paths;
+use crate::quilt::lineage::PackageLineage;
+use crate::quilt::manifest_handle::ReadableManifest;
+use crate::quilt::storage::fs;
 
 pub async fn reset_to_latest(
     lineage: PackageLineage,

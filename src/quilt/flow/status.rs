@@ -6,11 +6,9 @@ use serde::Serialize;
 use tokio::fs::{read_dir, File};
 use tracing::log;
 
-use crate::quilt::{
-    lineage::PackageLineage,
-    manifest::{MULTIHASH_SHA256, MULTIHASH_SHA256_CHUNKED},
-    manifest_handle::ReadableManifest,
-};
+use crate::quilt::lineage::PackageLineage;
+use crate::quilt::manifest::{MULTIHASH_SHA256, MULTIHASH_SHA256_CHUNKED};
+use crate::quilt::manifest_handle::ReadableManifest;
 use crate::quilt4::checksum::{calculate_sha256_checksum, calculate_sha256_chunked_checksum};
 use crate::Error;
 

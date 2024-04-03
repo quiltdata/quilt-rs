@@ -1,4 +1,5 @@
-use std::{collections::BTreeMap, path::PathBuf};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use aws_sdk_s3::error::DisplayErrorContext;
 use multihash::Multihash;
@@ -11,22 +12,17 @@ pub mod manifest_handle;
 pub mod storage;
 pub mod uri;
 
-// Re-export `Storage` trait for easy access.
+use crate::quilt4::table::HEADER_ROW;
+use crate::{paths, s3_utils, Error, Row4, Table, UPath};
+
+pub use self::storage::{fs, s3};
+pub use self::uri::{RevisionPointer, S3PackageUri};
+pub use flow::status::{UpstreamDiscreteState, UpstreamState};
+pub use lineage::{CommitState, DomainLineage, PackageLineage, PathState};
+pub use manifest::{ContentHash, Manifest, ManifestHeader, ManifestRow};
+pub use manifest_handle::{CachedManifest, InstalledManifest, ReadableManifest, RemoteManifest};
 pub use storage::Storage;
 
-use crate::{paths, quilt4::table::HEADER_ROW, s3_utils, Error, Row4, Table, UPath};
-
-pub use self::{
-    flow::status::{
-        create_status, refresh_latest_hash, Change, ChangeSet, InstalledPackageStatus,
-        PackageFileFingerprint, UpstreamDiscreteState, UpstreamState,
-    },
-    lineage::{CommitState, DomainLineage, PackageLineage, PathState},
-    manifest::{ContentHash, Manifest, ManifestHeader, ManifestRow},
-    manifest_handle::{CachedManifest, InstalledManifest, ReadableManifest, RemoteManifest},
-    storage::{fs, s3},
-    uri::{RevisionPointer, S3PackageUri},
-};
 use flow::browse::{browse_remote_manifest, cache_manifest};
 use flow::certify_latest::certify_latest;
 use flow::commit::commit_package;
@@ -35,6 +31,10 @@ use flow::install_paths::install_paths;
 use flow::pull::pull_package;
 use flow::push::push_package;
 use flow::reset_to_latest::reset_to_latest;
+use flow::status::{
+    create_status, refresh_latest_hash, Change, ChangeSet, InstalledPackageStatus,
+    PackageFileFingerprint,
+};
 use flow::uninstall_package::uninstall_package;
 use flow::uninstall_paths::uninstall_paths;
 

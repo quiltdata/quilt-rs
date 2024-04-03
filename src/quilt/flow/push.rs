@@ -1,11 +1,10 @@
 use std::path::PathBuf;
 
-use aws_sdk_s3::{
-    error::DisplayErrorContext,
-    types::{ChecksumAlgorithm, CompletedMultipartUpload, CompletedPart},
-};
+use aws_sdk_s3::error::DisplayErrorContext;
+use aws_sdk_s3::types::{ChecksumAlgorithm, CompletedMultipartUpload, CompletedPart};
 use aws_smithy_types::byte_stream::{ByteStream, Length};
-use base64::{prelude::BASE64_STANDARD, Engine};
+use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
 use multihash::Multihash;
 use tracing::log;
 use url::Url;
@@ -13,10 +12,7 @@ use url::Url;
 use crate::paths;
 use crate::quilt::flow::browse::{browse_remote_manifest, cache_manifest};
 use crate::quilt::lineage::PackageLineage;
-use crate::quilt::manifest;
-use crate::quilt::manifest_handle;
-use crate::quilt::storage;
-use crate::quilt::Error;
+use crate::quilt::{manifest, manifest_handle, storage, Error};
 use crate::quilt4::checksum;
 
 pub async fn push_package(

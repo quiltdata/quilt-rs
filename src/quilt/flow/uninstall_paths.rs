@@ -39,7 +39,8 @@ pub async fn uninstall_paths(
 mod tests {
     use super::*;
 
-    use crate::quilt::{lineage::PathState, storage::mock_storage::MockStorage};
+    use crate::quilt::lineage::PathState;
+    use crate::quilt::storage::mock_storage::MockStorage;
     use std::collections::{BTreeMap, HashSet};
 
     #[tokio::test]

@@ -4,13 +4,10 @@ use aws_smithy_types::byte_stream::ByteStream;
 use serde::{Deserialize, Serialize};
 use tracing::log;
 
-use crate::quilt::{
-    manifest::Manifest,
-    paths,
-    storage::s3,
-    uri::{RevisionPointer, S3PackageUri},
-    Error, Table, UPath,
-};
+use crate::quilt::manifest::Manifest;
+use crate::quilt::storage::s3;
+use crate::quilt::uri::{RevisionPointer, S3PackageUri};
+use crate::quilt::{paths, Error, Table, UPath};
 
 pub fn tag_uri(bucket: &str, namespace: &str, tag: &str) -> s3::S3Uri {
     s3::S3Uri {

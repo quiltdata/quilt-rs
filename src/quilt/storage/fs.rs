@@ -1,9 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use tokio::{
-    fs,
-    io::{AsyncRead, AsyncWriteExt},
-};
+use tokio::fs;
+use tokio::io::{AsyncRead, AsyncWriteExt};
 
 use crate::Error;
 

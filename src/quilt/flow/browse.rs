@@ -4,17 +4,13 @@ use arrow::error::ArrowError;
 use aws_sdk_s3::error::{DisplayErrorContext, SdkError};
 use storage::fs::LocalStorage;
 use storage::Storage;
-use tokio::{fs, io::AsyncReadExt};
+use tokio::fs;
+use tokio::io::AsyncReadExt;
 
-use crate::{paths, Table, UPath};
-use crate::{
-    quilt::{
-        manifest::Manifest,
-        manifest_handle::{CachedManifest, ReadableManifest, RemoteManifest},
-        storage, Error,
-    },
-    s3_utils,
-};
+use crate::quilt::manifest::Manifest;
+use crate::quilt::manifest_handle::{CachedManifest, ReadableManifest, RemoteManifest};
+use crate::quilt::{storage, Error};
+use crate::{paths, s3_utils, Table, UPath};
 
 async fn is_parquet(client: &aws_sdk_s3::Client, manifest: &RemoteManifest) -> Result<bool, Error> {
     match client

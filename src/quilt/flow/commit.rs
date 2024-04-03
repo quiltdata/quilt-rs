@@ -9,13 +9,11 @@ use crate::quilt::fs::LocalStorage;
 use crate::quilt::Storage;
 use crate::{paths, Error, Row4, UPath};
 
-use crate::quilt::{
-    flow::status::{create_status, Change},
-    lineage::{CommitState, PackageLineage, PathState},
-    manifest::JsonObject,
-    manifest_handle::ReadableManifest,
-    storage::fs,
-};
+use crate::quilt::flow::status::{create_status, Change};
+use crate::quilt::lineage::{CommitState, PackageLineage, PathState};
+use crate::quilt::manifest::JsonObject;
+use crate::quilt::manifest_handle::ReadableManifest;
+use crate::quilt::storage::fs;
 
 pub async fn commit_package(
     lineage: PackageLineage,

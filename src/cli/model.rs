@@ -2,12 +2,7 @@ use std::path::PathBuf;
 use temp_dir::TempDir;
 use tokio::sync;
 
-use crate::cli::browse;
-use crate::cli::install;
-use crate::cli::list;
-use crate::cli::package;
-use crate::cli::uninstall;
-use crate::cli::Error;
+use crate::cli::{browse, install, list, package, uninstall, Error};
 
 pub struct Model {
     local_domain: sync::Mutex<quilt_rs::LocalDomain>,

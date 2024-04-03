@@ -1,14 +1,13 @@
-use std::{
-    collections::{hash_map::Entry, HashMap},
-    sync::RwLock,
-};
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
+use std::sync::RwLock;
 
 use aws_config::BehaviorVersion;
-use aws_sdk_s3::{
-    error::DisplayErrorContext, operation::get_object_attributes::GetObjectAttributesOutput,
-};
+use aws_sdk_s3::error::DisplayErrorContext;
+use aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput;
 use aws_types::region::Region;
-use base64::{prelude::BASE64_STANDARD, Engine};
+use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
 use lazy_static::lazy_static;
 use multihash::Multihash;
 use parquet::data_type::AsBytes;
@@ -16,11 +15,10 @@ use sha2::{Digest, Sha256};
 use tokio::io::AsyncRead;
 use tracing::log;
 
-use crate::{
-    quilt::{manifest::MULTIHASH_SHA256_CHUNKED, s3},
-    quilt4::checksum::get_checksum_chunksize_and_parts,
-    Error,
-};
+use crate::quilt::manifest::MULTIHASH_SHA256_CHUNKED;
+use crate::quilt::s3;
+use crate::quilt4::checksum::get_checksum_chunksize_and_parts;
+use crate::Error;
 
 pub async fn find_bucket_region(client: &reqwest::Client, bucket: &str) -> Result<String, Error> {
     let response = client

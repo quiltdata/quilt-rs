@@ -5,7 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
-use std::{collections::HashMap, fmt};
+use std::collections::HashMap;
+use std::fmt;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Row3Hash {

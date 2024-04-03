@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashSet};
 
-use base64::{prelude::BASE64_STANDARD, Engine};
+use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
 use multihash::Multihash;
 use serde::{Deserialize, Deserializer, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
