@@ -43,6 +43,11 @@ fn str_to_multihash<'de, D: Deserializer<'de>>(
     Multihash::from_bytes(&bytes).map_err(DeserializeError::custom)
 }
 
+/// A map of paths to their state
+///
+/// The key is the name of the path, and the value is the state of the path
+pub type LineagePaths = BTreeMap<String, PathState>;
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct PackageLineage {
     pub commit: Option<CommitState>,
@@ -51,7 +56,7 @@ pub struct PackageLineage {
     pub latest_hash: String,
     // installed paths
     #[serde(default = "BTreeMap::new")]
-    pub paths: BTreeMap<String, PathState>,
+    pub paths: LineagePaths,
 }
 
 impl PackageLineage {

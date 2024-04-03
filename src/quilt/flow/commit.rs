@@ -4,6 +4,8 @@ use serde_json::json;
 use tokio::fs::create_dir_all;
 use url::Url;
 
+use crate::quilt::fs::LocalStorage;
+use crate::quilt::Storage;
 use crate::{paths, Error, Row4, UPath};
 
 use crate::quilt::{
@@ -108,7 +110,10 @@ pub async fn commit_package(
             }
 
             let work_dest = working_dir.join(&logical_key);
-            if !fs::exists(&object_dest).await {
+
+            let storage = LocalStorage::new(paths.working_dir(&namespace));
+
+            if !storage.exists(&object_dest).await {
                 tokio::fs::copy(&work_dest, object_dest).await?;
             }
             lineage.paths.insert(

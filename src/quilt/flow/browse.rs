@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use arrow::error::ArrowError;
 use aws_sdk_s3::error::SdkError;
+use storage::fs::LocalStorage;
+use storage::Storage;
 use tokio::{fs, io::AsyncReadExt};
 
 use crate::{paths, Table, UPath};
@@ -75,8 +77,9 @@ pub async fn cache_remote_manifest(
     // return cached manifest
 
     let cache_path = paths.manifest_cache(&remote_manifest.bucket, &remote_manifest.hash);
+    let storage = LocalStorage::new(paths.working_dir(&remote_manifest.namespace));
 
-    if !storage::fs::exists(&cache_path).await {
+    if !storage.exists(&cache_path).await {
         // Does not exist yet
         let client = crate::s3_utils::get_client_for_bucket(&remote_manifest.bucket).await?;
         if is_parquet(&client, remote_manifest).await? {

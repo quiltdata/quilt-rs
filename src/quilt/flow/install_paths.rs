@@ -6,7 +6,7 @@ use std::{
 use tokio::{fs::File, io::AsyncWriteExt};
 use url::Url;
 
-use crate::quilt::storage::fs::{FsCopy, FsCreateDir, FsExists, FsModifiedDate};
+use crate::quilt::Storage;
 use crate::quilt::{
     lineage::{PackageLineage, PathState},
     manifest_handle::ReadableManifest,
@@ -46,16 +46,16 @@ async fn cache_immutable_object(object_dest: &PathBuf, uri: &s3::S3Uri) -> Resul
 }
 
 async fn create_mutable_copy(
-    file_ops: &(impl FsExists + FsCopy + FsCreateDir + FsModifiedDate),
+    storage: &impl Storage,
     immutable_source: &PathBuf,
     mutable_target: &PathBuf,
 ) -> Result<chrono::DateTime<chrono::Utc>, Error> {
     let parent_dir = mutable_target.parent();
-    if parent_dir.is_some() {
-        file_ops.create_dir_all(parent_dir.unwrap()).await?;
+    if let Some(parent) = parent_dir {
+        storage.create_dir_all(parent).await?;
     }
-    file_ops.copy(&immutable_source, &mutable_target).await?;
-    file_ops.modified_date(&mutable_target).await
+    storage.copy(&immutable_source, &mutable_target).await?;
+    storage.modified_timestamp(&mutable_target).await
 }
 
 pub async fn install_paths(
@@ -64,7 +64,7 @@ pub async fn install_paths(
     paths: &paths::DomainPaths,
     working_dir: PathBuf,
     namespace: String,
-    file_ops: impl FsExists + FsCopy + FsCreateDir + FsModifiedDate,
+    storage: impl Storage,
     entries_paths: &Vec<String>,
 ) -> Result<PackageLineage, Error> {
     if entries_paths.is_empty() {
@@ -104,7 +104,7 @@ pub async fn install_paths(
 
         let object_dest = paths.object(&row.hash);
 
-        if !file_ops.exists(&object_dest).await {
+        if !storage.exists(&object_dest).await {
             cache_immutable_object(&object_dest, &row.place.parse()?).await?;
         }
 
@@ -115,7 +115,7 @@ pub async fn install_paths(
             .to_string();
 
         let working_dest = working_dir.join(&row.name);
-        let last_modified = create_mutable_copy(&file_ops, &object_dest, &working_dest).await?;
+        let last_modified = create_mutable_copy(&storage, &object_dest, &working_dest).await?;
 
         lineage.paths.insert(
             row.name.clone(),
@@ -174,11 +174,11 @@ mod tests {
         let namespace = "foo/bar".to_string();
 
         let domain_paths = &paths::DomainPaths::new(working_dir.path().to_path_buf());
-        let file_ops = fs::RelativeFileOps::new(working_dir.path().to_path_buf());
-        file_ops
+        let storage = fs::LocalStorage::new(working_dir.path().to_path_buf());
+        storage
             .create_dir_all(domain_paths.installed_manifests(&namespace))
             .await?;
-        file_ops.create_dir_all(domain_paths.objects_dir()).await?;
+        storage.create_dir_all(domain_paths.objects_dir()).await?;
 
         let lineage = PackageLineage {
             commit: Some(CommitState {
@@ -197,7 +197,7 @@ mod tests {
             domain_paths,
             working_dir.path().to_path_buf(),
             namespace,
-            file_ops,
+            storage,
             &entries_paths,
         )
         .await?;
@@ -217,7 +217,7 @@ mod tests {
             }),
             ..PackageLineage::default()
         };
-        let file_ops = fs::RelativeFileOps::new(working_dir.path().to_path_buf());
+        let storage = fs::LocalStorage::new(working_dir.path().to_path_buf());
         let entries_paths = vec!["z/z".to_string()];
         let manifest = InMemoryManifest {};
 
@@ -228,7 +228,7 @@ mod tests {
             &paths::DomainPaths::default(),
             PathBuf::new(),
             String::default(),
-            file_ops,
+            storage,
             &entries_paths,
         )
         .await;
