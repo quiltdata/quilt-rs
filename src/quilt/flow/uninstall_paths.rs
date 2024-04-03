@@ -69,7 +69,7 @@ mod tests {
         storage.install_paths(
             installed_paths
                 .keys()
-                .map(|s| PathBuf::from(s))
+                .map(PathBuf::from)
                 .collect::<HashSet<_>>(),
         );
 
