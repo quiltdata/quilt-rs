@@ -11,6 +11,7 @@ use aws_smithy_types::byte_stream;
 pub use quilt4::{
     manifest::Manifest4, row4::Row4, table::Table, upath::UPath, uri::UriParser, uri::UriQuilt,
 };
+use tracing::log;
 
 pub use quilt::{InstalledPackage, LocalDomain, Manifest, RemoteManifest, S3PackageUri};
 
@@ -128,10 +129,10 @@ pub async fn install_temporarily(
         namespace: namespace.to_string(),
         hash: hash.to_string(),
     };
-    tracing::info!("remote_manifest: {:?}", remote_manifest);
+    log::info!("remote_manifest: {:?}", remote_manifest);
 
     let result = loc.install_package(&remote_manifest).await;
-    tracing::info!("result: {:?}", result);
+    log::info!("result: {:?}", result);
     result
 }
 

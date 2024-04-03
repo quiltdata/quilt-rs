@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use std::path::Path;
+use tracing::log;
 
 mod browse;
 mod install;
@@ -78,7 +79,7 @@ pub async fn init() -> Result<(), std::io::Error> {
         Commands::Browse { uri } => {
             let (m, temp_dir) = Model::from_temp_dir()?;
             let args = browse::Input { uri };
-            tracing::info!("Browsing {:?} using {:?}", args, temp_dir);
+            log::info!("Browsing {:?} using {:?}", args, temp_dir);
             print(browse::command(m, args).await);
             Ok(())
         }
@@ -95,7 +96,7 @@ pub async fn init() -> Result<(), std::io::Error> {
                 paths: path,
                 uri,
             };
-            tracing::info!("Installing {:?}", args);
+            log::info!("Installing {:?}", args);
             print(install::command(m, args).await);
             Ok(())
         }
@@ -103,14 +104,14 @@ pub async fn init() -> Result<(), std::io::Error> {
             // TODO: validate domain exists
             let root = Path::new(&domain).to_path_buf();
             let m = Model::from(root);
-            tracing::info!("Listing installed packages");
+            log::info!("Listing installed packages");
             print(list::command(m).await);
             Ok(())
         }
         Commands::Package { uri, target } => {
             let (m, temp_dir) = Model::from_temp_dir()?;
             let args = package::Input { target, uri };
-            tracing::info!("Packaging {:?} using {:?}", args, temp_dir);
+            log::info!("Packaging {:?} using {:?}", args, temp_dir);
             print(package::command(m, args).await);
             Ok(())
         }
@@ -119,7 +120,7 @@ pub async fn init() -> Result<(), std::io::Error> {
             let root = Path::new(&domain).to_path_buf();
             let m = Model::from(root);
             let args = uninstall::Input { namespace };
-            tracing::info!("Uninstalling {:?}", args);
+            log::info!("Uninstalling {:?}", args);
             print(uninstall::command(m, args).await);
             Ok(())
         }
