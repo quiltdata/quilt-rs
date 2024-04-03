@@ -4,14 +4,22 @@ use std::{
 };
 
 use aws_config::BehaviorVersion;
-use aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput;
+use aws_sdk_s3::{
+    error::DisplayErrorContext, operation::get_object_attributes::GetObjectAttributesOutput,
+};
 use aws_types::region::Region;
 use base64::{prelude::BASE64_STANDARD, Engine};
 use lazy_static::lazy_static;
+use multihash::Multihash;
+use parquet::data_type::AsBytes;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncRead;
 
-use crate::{quilt::s3, quilt4::checksum::get_checksum_chunksize_and_parts, Error};
+use crate::{
+    quilt::{manifest::MULTIHASH_SHA256_CHUNKED, s3},
+    quilt4::checksum::get_checksum_chunksize_and_parts,
+    Error,
+};
 
 pub async fn find_bucket_region(client: &reqwest::Client, bucket: &str) -> Result<String, Error> {
     let response = client
@@ -129,6 +137,67 @@ pub fn get_compliant_chunked_checksum(attrs: &GetObjectAttributesOutput) -> Opti
         }
     }
     None
+}
+
+pub struct S3Attributes {
+    pub key: String,
+    pub hash: Multihash<256>,
+    pub size: u64,
+    pub version_id: Option<String>,
+}
+
+pub async fn get_attrs_for_key(
+    client: aws_sdk_s3::Client,
+    bucket: &str,
+    key: &str,
+) -> Result<S3Attributes, Error> {
+    tracing::debug!("Getting attributes for bucket {} key {}", bucket, key);
+    let attr_result = client
+        .get_object_attributes()
+        .bucket(bucket)
+        .key(key)
+        .object_attributes(aws_sdk_s3::types::ObjectAttributes::Checksum)
+        .object_attributes(aws_sdk_s3::types::ObjectAttributes::ObjectParts)
+        .object_attributes(aws_sdk_s3::types::ObjectAttributes::ObjectSize)
+        .max_parts(s3::MPU_MAX_PARTS as i32)
+        .send()
+        .await;
+    let attrs = match attr_result {
+        Ok(attrs) => attrs,
+        Err(e) => {
+            tracing::warn!("Error getting attributes: {}", DisplayErrorContext(e));
+            return calculate_attrs_for_key(client, bucket, key).await;
+        }
+    };
+
+    tracing::debug!("Got attributes: {:?}", attrs);
+    match attrs.delete_marker {
+        // Can happen if object is removed after it was listed but before attributes retrieved.
+        Some(true) => Err(Error::S3("Object is a delete marker".to_string())),
+        _ => {
+            let checksum = get_compliant_chunked_checksum(&attrs).unwrap();
+            let hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, checksum.as_bytes())?;
+            let size = attrs.object_size.expect("ObjectSize must be requested") as u64;
+            Ok(S3Attributes {
+                key: key.to_string(),
+                hash,
+                size,
+                version_id: Some(attrs.version_id.expect("VersionId must be requested")),
+            })
+        }
+    }
+}
+
+pub async fn calculate_attrs_for_key(
+    client: aws_sdk_s3::Client,
+    bucket: &str,
+    key: &str,
+) -> Result<S3Attributes, Error> {
+    tracing::debug!("Trying again with client {:?}", client);
+    Err(Error::S3(format!(
+        "Error getting attributes for s3://{}/{}",
+        bucket, key,
+    )))
 }
 
 #[cfg(test)]
