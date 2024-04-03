@@ -1,4 +1,6 @@
 use std::collections::BTreeMap;
+use std::path::PathBuf;
+use tokio::fs;
 
 use multihash::Multihash;
 use serde::{de::Error as DeserializeError, Deserialize, Deserializer, Serialize, Serializer};
@@ -7,7 +9,7 @@ use crate::Error;
 
 use super::RemoteManifest;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct CommitState {
     pub timestamp: chrono::DateTime<chrono::Utc>,
     pub hash: String,
@@ -15,7 +17,7 @@ pub struct CommitState {
     pub prev_hashes: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct PathState {
     pub timestamp: chrono::DateTime<chrono::Utc>,
     #[serde(
@@ -41,7 +43,7 @@ fn str_to_multihash<'de, D: Deserializer<'de>>(
     Multihash::from_bytes(&bytes).map_err(DeserializeError::custom)
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct PackageLineage {
     pub commit: Option<CommitState>,
     pub remote: RemoteManifest,
@@ -79,6 +81,72 @@ impl TryFrom<&str> for DomainLineage {
 
     fn try_from(input: &str) -> Result<Self, Self::Error> {
         serde_json::from_str(input).map_err(Error::LineageParse)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DomainLineageIo {
+    path: PathBuf,
+}
+
+impl DomainLineageIo {
+    pub fn new(path: PathBuf) -> Self {
+        DomainLineageIo { path }
+    }
+
+    pub async fn read(&self) -> Result<DomainLineage, Error> {
+        let contents = fs::read_to_string(&self.path).await.or_else(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                Ok("{}".into())
+            } else {
+                Err(err)
+            }
+        })?;
+
+        DomainLineage::try_from(&contents[..])
+    }
+
+    pub async fn write(&self, lineage: &DomainLineage) -> Result<(), Error> {
+        let contents = serde_json::to_string_pretty(lineage)?;
+        fs::write(&self.path, contents.as_bytes()).await?;
+        Ok(())
+    }
+
+    pub fn create_package_lineage(&self, namespace: String) -> PackageLineageIo {
+        PackageLineageIo::new(self.clone(), namespace)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackageLineageIo {
+    domain_lineage: DomainLineageIo,
+    namespace: String,
+}
+
+impl PackageLineageIo {
+    pub fn new(domain_lineage: DomainLineageIo, namespace: String) -> Self {
+        PackageLineageIo {
+            domain_lineage,
+            namespace,
+        }
+    }
+
+    pub async fn read(&self) -> Result<PackageLineage, Error> {
+        let domain_lineage = self.domain_lineage.read().await?;
+        let namespace = domain_lineage.packages.get(&self.namespace);
+
+        match namespace {
+            Some(ns) => Ok(ns.clone()),
+            None => Err(Error::PackageNotInstalled(self.namespace.clone())),
+        }
+    }
+
+    pub async fn write(&self, lineage: PackageLineage) -> Result<(), Error> {
+        let mut domain_lineage = self.domain_lineage.read().await?;
+        domain_lineage
+            .packages
+            .insert(self.namespace.clone(), lineage);
+        self.domain_lineage.write(&domain_lineage).await
     }
 }
 
