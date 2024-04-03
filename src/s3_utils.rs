@@ -73,7 +73,7 @@ pub async fn get_client_for_region(region: aws_types::region::Region) -> aws_sdk
         }
     }
 
-    let config = aws_config::defaults(BehaviorVersion {})
+    let config = aws_config::defaults(BehaviorVersion::latest())
         .region(region.clone())
         .load()
         .await;
