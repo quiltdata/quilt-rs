@@ -1,6 +1,8 @@
 use std::io::ErrorKind;
 use std::path::PathBuf;
 
+use tracing::log;
+
 use crate::quilt::lineage::PackageLineage;
 use crate::quilt::storage::Storage;
 use crate::Error;
@@ -15,7 +17,7 @@ pub async fn uninstall_paths(
     storage: &mut impl Storage,
     paths: &Vec<String>,
 ) -> Result<PackageLineage, Error> {
-    tracing::debug!("Uninstalling paths {:?}", paths);
+    log::debug!("Uninstalling paths {:?}", paths);
 
     for path in paths {
         lineage.paths.remove(path).ok_or(not_found_error(path))?;

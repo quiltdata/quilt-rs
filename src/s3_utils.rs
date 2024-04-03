@@ -14,6 +14,7 @@ use multihash::Multihash;
 use parquet::data_type::AsBytes;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncRead;
+use tracing::log;
 
 use crate::{
     quilt::{manifest::MULTIHASH_SHA256_CHUNKED, s3},
@@ -151,7 +152,7 @@ pub async fn get_attrs_for_key(
     bucket: &str,
     key: &str,
 ) -> Result<S3Attributes, Error> {
-    tracing::debug!("Getting attributes for bucket {} key {}", bucket, key);
+    log::debug!("Getting attributes for bucket {} key {}", bucket, key);
     let attr_result = client
         .get_object_attributes()
         .bucket(bucket)
@@ -165,12 +166,12 @@ pub async fn get_attrs_for_key(
     let attrs = match attr_result {
         Ok(attrs) => attrs,
         Err(e) => {
-            tracing::warn!("Error getting attributes: {}", DisplayErrorContext(e));
+            log::warn!("Error getting attributes: {}", DisplayErrorContext(e));
             return calculate_attrs_for_key(client, bucket, key).await;
         }
     };
 
-    tracing::debug!("Got attributes: {:?}", attrs);
+    log::debug!("Got attributes: {:?}", attrs);
     match attrs.delete_marker {
         // Can happen if object is removed after it was listed but before attributes retrieved.
         Some(true) => Err(Error::S3("Object is a delete marker".to_string())),
@@ -193,7 +194,7 @@ pub async fn calculate_attrs_for_key(
     bucket: &str,
     key: &str,
 ) -> Result<S3Attributes, Error> {
-    tracing::debug!("Trying again with client {:?}", client);
+    log::debug!("Trying again with client {:?}", client);
     Err(Error::S3(format!(
         "Error getting attributes for s3://{}/{}",
         bucket, key,

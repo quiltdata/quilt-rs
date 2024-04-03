@@ -66,13 +66,13 @@ impl fmt::Display for UPath {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tracing::info;
+    use tracing::log;
 
     #[test]
     fn test_new_local() {
         let local_uri = crate::utils::local_uri_parquet();
         let upath = UPath::parse(&local_uri).unwrap();
-        info!("upath: {:?}", upath);
+        log::info!("upath: {:?}", upath);
         assert_eq!(upath.to_uri().to_string(), local_uri);
         let upath_string = upath.to_string();
         assert_eq!(upath_string, format!("UPath({})", local_uri));

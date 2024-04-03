@@ -1,6 +1,7 @@
 use crate::quilt::lineage::DomainLineage;
 use crate::{paths, Error};
 use tokio::fs::remove_dir_all;
+use tracing::log;
 
 pub async fn uninstall_package(
     mut lineage: DomainLineage,
@@ -15,10 +16,10 @@ pub async fn uninstall_package(
         .ok_or(Error::PackageNotInstalled(namespace.to_owned()))?;
 
     if let Err(err) = remove_dir_all(paths.installed_manifests(namespace)).await {
-        println!("Failed to remove installed manifests: {err}");
+        log::error!("Failed to remove installed manifests: {err}");
     }
     if let Err(err) = remove_dir_all(paths.working_dir(namespace)).await {
-        println!("Failed to remove working directory: {err}");
+        log::error!("Failed to remove working directory: {err}");
     }
 
     // TODO: Remove object files? But need to make sure no other manifest uses them.

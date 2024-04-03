@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use multihash::Multihash;
 use serde::Serialize;
 use tokio::fs::{read_dir, File};
+use tracing::log;
 
 use crate::quilt::{
     lineage::PackageLineage,
@@ -131,7 +132,7 @@ pub async fn create_status(
         let mut dir_entries = match read_dir(&dir).await {
             Ok(dir_entries) => dir_entries,
             Err(err) => {
-                println!("Failed to read directory {:?}: {}", dir, err);
+                log::error!("Failed to read directory {:?}: {}", dir, err);
                 continue;
             }
         };
@@ -192,7 +193,7 @@ pub async fn create_status(
                     );
                 }
             } else {
-                println!("Unexpected file type: {}", file_path.display());
+                log::warn!("Unexpected file type: {}", file_path.display());
             }
         }
     }
