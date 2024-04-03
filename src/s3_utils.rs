@@ -44,7 +44,7 @@ pub async fn get_object(
         .key(key)
         .send()
         .await
-        .map_err(|err| Error::S3(aws_sdk_s3::error::DisplayErrorContext(err).to_string()))?;
+        .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
     let contents = result.body.into_async_read();
     Ok(contents)
 }

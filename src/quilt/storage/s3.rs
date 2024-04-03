@@ -1,6 +1,6 @@
 use std::fmt;
 
-use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::{error::DisplayErrorContext, primitives::ByteStream};
 use tokio::io::AsyncReadExt;
 use url::Url;
 
@@ -98,7 +98,7 @@ pub async fn get_object_bytes(uri: &S3Uri) -> Result<Vec<u8>, Error> {
     let result = result
         .send()
         .await
-        .map_err(|err| Error::S3(err.to_string()))?;
+        .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
 
     let mut contents = Vec::new();
 
@@ -130,7 +130,7 @@ pub async fn put_object_contents(
         .body(contents.into())
         .send()
         .await
-        .map_err(|err| Error::S3(err.to_string()))?;
+        .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
 
     Ok(())
 }
