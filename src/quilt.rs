@@ -1,4 +1,5 @@
-use std::{collections::BTreeMap, path::PathBuf};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use aws_sdk_s3::error::DisplayErrorContext;
 use multihash::Multihash;
@@ -11,23 +12,36 @@ pub mod manifest_handle;
 pub mod storage;
 pub mod uri;
 
-// Re-export `Storage` trait for easy access.
+use crate::paths;
+use crate::quilt4::table::HEADER_ROW;
+use crate::s3_utils;
+use crate::Error;
+use crate::Row4;
+use crate::Table;
+use crate::UPath;
+
+pub use flow::status::UpstreamDiscreteState;
+pub use flow::status::UpstreamState;
+pub use lineage::CommitState;
+pub use lineage::DomainLineage;
+pub use lineage::PackageLineage;
+pub use lineage::PathState;
+pub use manifest::ContentHash;
+pub use manifest::Manifest;
+pub use manifest::ManifestHeader;
+pub use manifest::ManifestRow;
+pub use manifest_handle::CachedManifest;
+pub use manifest_handle::InstalledManifest;
+pub use manifest_handle::ReadableManifest;
+pub use manifest_handle::RemoteManifest;
+pub use storage::fs;
+pub use storage::s3;
 pub use storage::Storage;
+pub use uri::RevisionPointer;
+pub use uri::S3PackageUri;
 
-use crate::{paths, quilt4::table::HEADER_ROW, s3_utils, Error, Row4, Table, UPath};
-
-pub use self::{
-    flow::status::{
-        create_status, refresh_latest_hash, Change, ChangeSet, InstalledPackageStatus,
-        PackageFileFingerprint, UpstreamDiscreteState, UpstreamState,
-    },
-    lineage::{CommitState, DomainLineage, PackageLineage, PathState},
-    manifest::{ContentHash, Manifest, ManifestHeader, ManifestRow},
-    manifest_handle::{CachedManifest, InstalledManifest, ReadableManifest, RemoteManifest},
-    storage::{fs, s3},
-    uri::{RevisionPointer, S3PackageUri},
-};
-use flow::browse::{browse_remote_manifest, cache_manifest};
+use flow::browse::browse_remote_manifest;
+use flow::browse::cache_manifest;
 use flow::certify_latest::certify_latest;
 use flow::commit::commit_package;
 use flow::install_package::install_package;
@@ -35,6 +49,12 @@ use flow::install_paths::install_paths;
 use flow::pull::pull_package;
 use flow::push::push_package;
 use flow::reset_to_latest::reset_to_latest;
+use flow::status::create_status;
+use flow::status::refresh_latest_hash;
+use flow::status::Change;
+use flow::status::ChangeSet;
+use flow::status::InstalledPackageStatus;
+use flow::status::PackageFileFingerprint;
 use flow::uninstall_package::uninstall_package;
 use flow::uninstall_paths::uninstall_paths;
 
@@ -362,7 +382,8 @@ pub struct Conflict {
 mod tests {
     use super::*;
     use temp_testdir::TempDir;
-    use tokio_test::{assert_err, block_on};
+    use tokio_test::assert_err;
+    use tokio_test::block_on;
 
     use crate::quilt::flow::browse::cache_remote_manifest;
     use crate::quilt::manifest::MULTIHASH_SHA256;

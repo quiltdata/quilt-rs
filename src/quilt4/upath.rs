@@ -7,8 +7,10 @@
 //!
 
 use object_store::path::Path;
-use serde::{Deserialize, Serialize};
-use std::{fmt, path::PathBuf};
+use serde::Deserialize;
+use serde::Serialize;
+use std::fmt;
+use std::path::PathBuf;
 use url::Url;
 
 use crate::Error;

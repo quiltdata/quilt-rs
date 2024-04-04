@@ -9,7 +9,8 @@ use multihash::Multihash;
 use std::fmt;
 
 use crate::quilt::manifest::Manifest;
-use crate::quilt4::{row3::Row3, table::HEADER_ROW};
+use crate::quilt4::row3::Row3;
+use crate::quilt4::table::HEADER_ROW;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row4 {

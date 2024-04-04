@@ -1,7 +1,9 @@
 use tracing::log;
 
 use quilt_rs::install_temporarily;
-use quilt_rs::utils::{TEST_BUCKET, TEST_HASH, TEST_PACKAGE};
+use quilt_rs::utils::TEST_BUCKET;
+use quilt_rs::utils::TEST_HASH;
+use quilt_rs::utils::TEST_PACKAGE;
 
 #[tokio::test]
 async fn test_local_manifest() {

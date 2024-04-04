@@ -1,6 +1,7 @@
 use std::fmt;
 
-use aws_sdk_s3::{error::DisplayErrorContext, primitives::ByteStream};
+use aws_sdk_s3::error::DisplayErrorContext;
+use aws_sdk_s3::primitives::ByteStream;
 use tokio::io::AsyncReadExt;
 use url::Url;
 

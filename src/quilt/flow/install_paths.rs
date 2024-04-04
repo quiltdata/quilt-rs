@@ -1,19 +1,21 @@
-use std::{
-    collections::{hash_map::RandomState, HashSet},
-    path::PathBuf,
-};
+use std::collections::hash_map::RandomState;
+use std::collections::HashSet;
+use std::path::PathBuf;
 
 use aws_sdk_s3::error::DisplayErrorContext;
-use tokio::{fs::File, io::AsyncWriteExt};
+use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
 use url::Url;
 
+use crate::paths;
+use crate::quilt::lineage::PackageLineage;
+use crate::quilt::lineage::PathState;
+use crate::quilt::manifest_handle::ReadableManifest;
+use crate::quilt::storage::s3;
 use crate::quilt::Storage;
-use crate::quilt::{
-    lineage::{PackageLineage, PathState},
-    manifest_handle::ReadableManifest,
-    storage::s3,
-};
-use crate::{paths, s3_utils, Error, UPath};
+use crate::s3_utils;
+use crate::Error;
+use crate::UPath;
 
 async fn cache_immutable_object(object_dest: &PathBuf, uri: &s3::S3Uri) -> Result<(), Error> {
     let version = uri
@@ -148,7 +150,8 @@ mod tests {
 
     use crate::quilt::lineage::CommitState;
     use crate::quilt::storage::fs;
-    use crate::{Row4, Table};
+    use crate::Row4;
+    use crate::Table;
 
     struct InMemoryManifest {}
     impl ReadableManifest for InMemoryManifest {

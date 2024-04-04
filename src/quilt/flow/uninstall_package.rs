@@ -1,5 +1,6 @@
+use crate::paths;
 use crate::quilt::lineage::DomainLineage;
-use crate::{paths, Error};
+use crate::Error;
 use tokio::fs::remove_dir_all;
 use tracing::log;
 

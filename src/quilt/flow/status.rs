@@ -1,17 +1,20 @@
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::BTreeMap;
+use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::path::PathBuf;
 
 use multihash::Multihash;
 use serde::Serialize;
-use tokio::fs::{read_dir, File};
+use tokio::fs::read_dir;
+use tokio::fs::File;
 use tracing::log;
 
-use crate::quilt::{
-    lineage::PackageLineage,
-    manifest::{MULTIHASH_SHA256, MULTIHASH_SHA256_CHUNKED},
-    manifest_handle::ReadableManifest,
-};
-use crate::quilt4::checksum::{calculate_sha256_checksum, calculate_sha256_chunked_checksum};
+use crate::quilt::lineage::PackageLineage;
+use crate::quilt::manifest::MULTIHASH_SHA256;
+use crate::quilt::manifest::MULTIHASH_SHA256_CHUNKED;
+use crate::quilt::manifest_handle::ReadableManifest;
+use crate::quilt4::checksum::calculate_sha256_checksum;
+use crate::quilt4::checksum::calculate_sha256_chunked_checksum;
 use crate::Error;
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -221,8 +224,10 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::quilt::lineage::{CommitState, PathState};
-    use crate::{Row4, Table};
+    use crate::quilt::lineage::CommitState;
+    use crate::quilt::lineage::PathState;
+    use crate::Row4;
+    use crate::Table;
 
     struct InMemoryManifest {}
     impl ReadableManifest for InMemoryManifest {

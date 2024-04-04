@@ -3,7 +3,11 @@ use std::path::PathBuf;
 use tokio::fs;
 
 use multihash::Multihash;
-use serde::{de::Error as DeserializeError, Deserialize, Deserializer, Serialize, Serializer};
+use serde::de::Error as DeserializeError;
+use serde::Deserialize;
+use serde::Deserializer;
+use serde::Serialize;
+use serde::Serializer;
 
 use crate::Error;
 
