@@ -35,7 +35,7 @@ pub async fn pull_package(
         return Err(Error::Package("package is already up-to-date".to_string()));
     }
 
-    let mut storage = LocalStorage::new(working_dir.clone());
+    let mut storage = LocalStorage::new();
     // TODO: What should we do about installed paths?
     // They may or may not exist in the updated package.
     let installed_paths: Vec<String> = lineage.paths.keys().cloned().collect();

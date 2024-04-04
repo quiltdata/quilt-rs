@@ -24,7 +24,7 @@ pub async fn reset_to_latest(
         return Ok(lineage);
     }
 
-    let mut storage = fs::LocalStorage::new(working_dir.clone());
+    let mut storage = fs::LocalStorage::new();
     let entries_paths: Vec<String> = lineage.paths.clone().into_keys().collect();
     let mut lineage =
         uninstall_paths(lineage, working_dir.clone(), &mut storage, &entries_paths).await?;

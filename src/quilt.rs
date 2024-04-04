@@ -103,7 +103,8 @@ impl LocalDomain {
     ) -> Result<InstalledPackage, Error> {
         // Read the lineage
         let lineage: DomainLineage = self.lineage.read().await?;
-        let lineage = install_package(lineage, &self.paths, remote).await?;
+        let storage = fs::LocalStorage::new();
+        let lineage = install_package(lineage, &self.paths, &storage, remote).await?;
         self.lineage.write(&lineage).await?;
 
         Ok(self.create_installed_package(remote.namespace.clone()))
@@ -279,7 +280,7 @@ impl InstalledPackage {
         if paths.is_empty() {
             return Ok(());
         }
-        let storage = fs::LocalStorage::new(self.working_folder());
+        let storage = fs::LocalStorage::new();
         let lineage = self.lineage.read().await?;
         let lineage = install_paths(
             lineage,
@@ -295,7 +296,7 @@ impl InstalledPackage {
     }
 
     pub async fn uninstall_paths(&self, paths: &Vec<String>) -> Result<(), Error> {
-        let mut storage = fs::LocalStorage::new(self.working_folder());
+        let mut storage = fs::LocalStorage::new();
         let lineage = self.lineage.read().await?;
         let lineage = uninstall_paths(lineage, self.working_folder(), &mut storage, paths).await?;
         self.lineage.write(lineage).await

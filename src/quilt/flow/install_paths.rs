@@ -178,7 +178,7 @@ mod tests {
         let namespace = "foo/bar".to_string();
 
         let domain_paths = &paths::DomainPaths::new(working_dir.path().to_path_buf());
-        let storage = fs::LocalStorage::new(working_dir.path().to_path_buf());
+        let storage = fs::LocalStorage::new();
         storage
             .create_dir_all(domain_paths.installed_manifests(&namespace))
             .await?;
@@ -221,7 +221,7 @@ mod tests {
             }),
             ..PackageLineage::default()
         };
-        let storage = fs::LocalStorage::new(working_dir.path().to_path_buf());
+        let storage = fs::LocalStorage::new();
         let entries_paths = vec!["z/z".to_string()];
         let manifest = InMemoryManifest {};
 

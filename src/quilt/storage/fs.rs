@@ -97,9 +97,7 @@ pub async fn get_file_modified_ts(
 }
 
 #[derive(Clone)]
-pub struct LocalStorage {
-    working_dir: PathBuf,
-}
+pub struct LocalStorage {}
 
 impl Storage for LocalStorage {
     async fn copy(
@@ -114,8 +112,7 @@ impl Storage for LocalStorage {
         tokio::fs::create_dir_all(path).await
     }
 
-    async fn remove_file(&mut self, relative_path: PathBuf) -> Result<(), std::io::Error> {
-        let path = &self.working_dir.join(relative_path);
+    async fn remove_file(&mut self, path: PathBuf) -> Result<(), std::io::Error> {
         fs::remove_file(path).await
     }
 
@@ -133,7 +130,7 @@ impl Storage for LocalStorage {
 }
 
 impl LocalStorage {
-    pub fn new(working_dir: PathBuf) -> Self {
-        LocalStorage { working_dir }
+    pub fn new() -> Self {
+        LocalStorage {}
     }
 }

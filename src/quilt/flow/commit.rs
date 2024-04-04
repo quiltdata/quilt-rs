@@ -116,7 +116,7 @@ pub async fn commit_package(
 
             let work_dest = working_dir.join(&logical_key);
 
-            let storage = LocalStorage::new(paths.working_dir(&namespace));
+            let storage = LocalStorage::new();
 
             if !storage.exists(&object_dest).await {
                 tokio::fs::copy(&work_dest, object_dest).await?;

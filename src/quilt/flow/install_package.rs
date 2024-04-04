@@ -3,12 +3,14 @@ use crate::quilt::flow::browse::cache_remote_manifest;
 use crate::quilt::lineage::DomainLineage;
 use crate::quilt::lineage::PackageLineage;
 use crate::quilt::manifest_handle::RemoteManifest;
+use crate::quilt::Storage;
 use crate::Error;
 use tokio::fs::create_dir_all;
 
 pub async fn install_package(
     lineage: DomainLineage,
     paths: &paths::DomainPaths,
+    storage: &impl Storage,
     remote: &RemoteManifest,
 ) -> Result<DomainLineage, Error> {
     // bail if already installed
@@ -21,12 +23,14 @@ pub async fn install_package(
 
     // Make an "installed" copy of the remote manifest.
     let installed_manifest_path = paths.installed_manifest(&remote.namespace, &remote.hash);
-    create_dir_all(&installed_manifest_path.parent().unwrap()).await?;
+    storage
+        .create_dir_all(&installed_manifest_path.parent().unwrap())
+        .await?;
     paths::copy_cached_to_installed(paths, &remote.bucket, &remote.namespace, &remote.hash).await?;
 
     // Create the identity cache dir.
     let objects_dir = paths.objects_dir();
-    create_dir_all(&objects_dir).await?;
+    storage.create_dir_all(&objects_dir).await?;
 
     // Create the working dir.
     let working_dir = paths.working_dir(&remote.namespace);

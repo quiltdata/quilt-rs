@@ -80,7 +80,7 @@ pub async fn cache_remote_manifest(
     // return cached manifest
 
     let cache_path = paths.manifest_cache(&remote_manifest.bucket, &remote_manifest.hash);
-    let storage = LocalStorage::new(paths.working_dir(&remote_manifest.namespace));
+    let storage = LocalStorage::new();
 
     if !storage.exists(&cache_path).await {
         // Does not exist yet
