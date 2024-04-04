@@ -212,8 +212,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_installing_path_that_doesnt_exists_in_manifest() -> Result<(), Error> {
-        let working_dir = TempDir::new()?;
-
         let lineage = PackageLineage {
             commit: Some(CommitState {
                 hash: "fghijk".to_string(),

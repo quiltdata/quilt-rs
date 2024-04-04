@@ -129,6 +129,12 @@ impl Storage for LocalStorage {
     }
 }
 
+impl Default for LocalStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LocalStorage {
     pub fn new() -> Self {
         LocalStorage {}
