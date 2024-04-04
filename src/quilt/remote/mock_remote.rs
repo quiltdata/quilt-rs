@@ -13,7 +13,11 @@ pub(crate) struct MockRemote {
 }
 
 impl Remote for MockRemote {
-    async fn get_object(&self, bucket: &str, key: &str) -> Result<impl AsyncRead + Send + Unpin, Error> {
+    async fn get_object(
+        &self,
+        bucket: &str,
+        key: &str,
+    ) -> Result<impl AsyncRead + Send + Unpin, Error> {
         match self.registry.get(&format!("s3://{}/{}", bucket, key)) {
             Some(vec) => Ok(vec.as_slice()),
             None => Err(Error::S3("Key doesn't exists".to_string())),

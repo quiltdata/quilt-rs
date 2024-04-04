@@ -212,9 +212,13 @@ impl RemoteS3 {
 }
 
 impl Remote for RemoteS3 {
-    async fn get_object(&self, bucket: &str, key: &str) -> Result<impl AsyncRead + Send + Unpin, Error> {
+    async fn get_object(
+        &self,
+        bucket: &str,
+        key: &str,
+    ) -> Result<impl AsyncRead + Send + Unpin, Error> {
         let client = get_client_for_bucket(bucket).await?;
-        get_object(&client, &bucket, &key).await
+        get_object(&client, bucket, key).await
     }
 
     async fn exists(&self, bucket: &str, key: &str) -> Result<bool, Error> {
