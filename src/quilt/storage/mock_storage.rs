@@ -33,6 +33,10 @@ impl Storage for MockStorage {
         Ok(()) // No-op
     }
 
+    async fn remove_dir_all(&self, _path: impl AsRef<Path>) -> Result<(), std::io::Error> {
+        Ok(()) // No-op
+    }
+
     /// Overwrite the `remove_file` method to do nothing.
     async fn remove_file(&mut self, _path: PathBuf) -> Result<(), std::io::Error> {
         self.paths.remove(&_path);

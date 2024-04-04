@@ -112,6 +112,10 @@ impl Storage for LocalStorage {
         tokio::fs::create_dir_all(path).await
     }
 
+    async fn remove_dir_all(&self, path: impl AsRef<Path>) -> Result<(), std::io::Error> {
+        tokio::fs::remove_dir_all(path).await
+    }
+
     async fn remove_file(&mut self, path: PathBuf) -> Result<(), std::io::Error> {
         fs::remove_file(path).await
     }

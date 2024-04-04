@@ -1,12 +1,14 @@
+use tracing::log;
+
 use crate::paths;
 use crate::quilt::lineage::DomainLineage;
+use crate::quilt::Storage;
 use crate::Error;
-use tokio::fs::remove_dir_all;
-use tracing::log;
 
 pub async fn uninstall_package(
     mut lineage: DomainLineage,
     paths: &paths::DomainPaths,
+    storage: &impl Storage,
     namespace: impl AsRef<str>,
 ) -> Result<(), Error> {
     let namespace = namespace.as_ref();
@@ -16,10 +18,13 @@ pub async fn uninstall_package(
         .remove(namespace)
         .ok_or(Error::PackageNotInstalled(namespace.to_owned()))?;
 
-    if let Err(err) = remove_dir_all(paths.installed_manifests(namespace)).await {
+    if let Err(err) = storage
+        .remove_dir_all(paths.installed_manifests(namespace))
+        .await
+    {
         log::error!("Failed to remove installed manifests: {err}");
     }
-    if let Err(err) = remove_dir_all(paths.working_dir(namespace)).await {
+    if let Err(err) = storage.remove_dir_all(paths.working_dir(namespace)).await {
         log::error!("Failed to remove working directory: {err}");
     }
 
