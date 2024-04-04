@@ -67,7 +67,7 @@ pub async fn pull_package(
         paths,
         working_dir,
         namespace,
-        storage,
+        &mut storage,
         &paths_to_install,
     )
     .await

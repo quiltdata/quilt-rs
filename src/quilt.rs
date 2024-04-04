@@ -289,7 +289,7 @@ impl InstalledPackage {
         if paths.is_empty() {
             return Ok(());
         }
-        let storage = fs::LocalStorage::new();
+        let mut storage = fs::LocalStorage::new();
         let lineage = self.lineage.read().await?;
         let lineage = install_paths(
             lineage,
@@ -297,7 +297,7 @@ impl InstalledPackage {
             &self.paths,
             self.working_folder(),
             self.namespace.to_string(),
-            storage,
+            &mut storage,
             paths,
         )
         .await?;
@@ -369,11 +369,13 @@ impl InstalledPackage {
     }
 
     pub async fn reset_to_latest(&self) -> Result<(), Error> {
+        let mut storage = fs::LocalStorage::new();
         let lineage = self.lineage.read().await?;
         let lineage = reset_to_latest(
             lineage,
             &self.manifest().await?,
             &self.paths,
+            &mut storage,
             self.working_folder(),
             self.namespace.to_string(),
         )
