@@ -2,14 +2,14 @@ use std::path::PathBuf;
 
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
-use crate::Error;
-
 use crate::quilt::flow::browse::cache_remote_manifest;
 use crate::quilt::flow::install_paths::install_paths;
 use crate::quilt::flow::uninstall_paths::uninstall_paths;
 use crate::quilt::lineage::PackageLineage;
 use crate::quilt::manifest_handle::ReadableManifest;
 use crate::quilt::storage::Storage;
+use crate::s3_utils;
+use crate::Error;
 
 pub async fn reset_to_latest(
     lineage: PackageLineage,
@@ -33,7 +33,8 @@ pub async fn reset_to_latest(
     lineage.remote.hash = new_latest.clone();
     lineage.base_hash = new_latest;
 
-    cache_remote_manifest(paths, storage, &lineage.remote).await?;
+    let remote = s3_utils::RemoteS3::new();
+    cache_remote_manifest(paths, storage, &remote, &lineage.remote).await?;
     copy_cached_to_installed(
         paths,
         &lineage.remote.bucket,

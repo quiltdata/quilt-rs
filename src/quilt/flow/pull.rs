@@ -10,6 +10,7 @@ use crate::quilt::lineage::PackageLineage;
 use crate::quilt::manifest_handle;
 use crate::quilt::storage::Storage;
 use crate::quilt::Error;
+use crate::s3_utils;
 
 pub async fn pull_package(
     lineage: PackageLineage,
@@ -47,7 +48,8 @@ pub async fn pull_package(
     lineage.remote.hash = lineage.latest_hash.clone();
     lineage.base_hash = lineage.latest_hash.clone();
 
-    cache_remote_manifest(paths, storage, &lineage.remote).await?;
+    let remote = s3_utils::RemoteS3::new();
+    cache_remote_manifest(paths, storage, &remote, &lineage.remote).await?;
     copy_cached_to_installed(
         paths,
         &lineage.remote.bucket,

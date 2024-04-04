@@ -20,6 +20,7 @@ pub(crate) struct MockStorage {
 impl MockStorage {
     /// Install a list of paths into the mock storage.
     pub(crate) fn install_paths(&mut self, new_paths: HashSet<PathBuf>) {
+        // TODO: install to the registry
         self.paths.extend(new_paths);
     }
 }
@@ -43,12 +44,14 @@ impl Storage for MockStorage {
 
     /// Overwrite the `remove_file` method to do nothing.
     async fn remove_file(&mut self, path: PathBuf) -> Result<(), std::io::Error> {
+        // TODO: remove from the registry
         self.paths.remove(&path);
         Ok(())
     }
 
     /// Overwrite the `exists` method to check if the path is in the set of paths.
     async fn exists(&self, path: impl AsRef<std::path::Path>) -> bool {
+        // TODO: contains_key in the registry
         self.paths.contains(path.as_ref()) || self.registry.contains_key(path.as_ref())
     }
 

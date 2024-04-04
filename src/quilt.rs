@@ -9,6 +9,7 @@ pub mod flow;
 pub mod lineage;
 pub mod manifest;
 pub mod manifest_handle;
+pub mod remote;
 pub mod storage;
 pub mod uri;
 
@@ -85,9 +86,13 @@ impl LocalDomain {
         Self { paths, lineage }
     }
 
-    pub async fn browse_remote_manifest(&self, remote: &RemoteManifest) -> Result<Table, Error> {
+    pub async fn browse_remote_manifest(
+        &self,
+        remote_manifest: &RemoteManifest,
+    ) -> Result<Table, Error> {
         let mut storage = fs::LocalStorage::new();
-        browse_remote_manifest(&self.paths, &mut storage, remote).await
+        let remote = s3_utils::RemoteS3::new();
+        browse_remote_manifest(&self.paths, &mut storage, &remote, remote_manifest).await
     }
 
     fn create_installed_package(&self, namespace: String) -> InstalledPackage {
@@ -460,9 +465,11 @@ mod tests {
         let remote_manifest =
             block_on(RemoteManifest::resolve(&test_uri)).expect("Failed to resolve manifest");
 
+        let remote = s3_utils::RemoteS3::new();
         let cached_manifest = block_on(cache_remote_manifest(
             &local_domain.paths,
             &mut storage,
+            &remote,
             &remote_manifest,
         ))
         .expect("Failed to cache the manifest");

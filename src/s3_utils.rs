@@ -4,6 +4,7 @@ use std::sync::RwLock;
 
 use aws_config::BehaviorVersion;
 use aws_sdk_s3::error::DisplayErrorContext;
+use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput;
 use aws_types::region::Region;
 use base64::prelude::BASE64_STANDARD;
@@ -17,6 +18,7 @@ use tokio::io::AsyncRead;
 use tracing::log;
 
 use crate::quilt::manifest::MULTIHASH_SHA256_CHUNKED;
+use crate::quilt::remote::Remote;
 use crate::quilt::s3;
 use crate::quilt4::checksum::get_checksum_chunksize_and_parts;
 use crate::Error;
@@ -198,6 +200,31 @@ pub async fn calculate_attrs_for_key(
         "Error getting attributes for s3://{}/{}",
         bucket, key,
     )))
+}
+
+#[derive(Clone)]
+pub struct RemoteS3 {}
+
+impl RemoteS3 {
+    pub fn new() -> Self {
+        RemoteS3 {}
+    }
+}
+
+impl Remote for RemoteS3 {
+    async fn get_object(&self, bucket: &str, key: &str) -> Result<impl AsyncRead + Send + Unpin, Error> {
+        let client = get_client_for_bucket(bucket).await?;
+        get_object(&client, &bucket, &key).await
+    }
+
+    async fn exists(&self, bucket: &str, key: &str) -> Result<bool, Error> {
+        let client = get_client_for_bucket(bucket).await?;
+        match client.head_object().bucket(bucket).key(key).send().await {
+            Ok(_) => Ok(true),
+            Err(SdkError::ServiceError(err)) if err.err().is_not_found() => Ok(false),
+            Err(err) => Err(Error::S3(DisplayErrorContext(err).to_string())),
+        }
+    }
 }
 
 #[cfg(test)]

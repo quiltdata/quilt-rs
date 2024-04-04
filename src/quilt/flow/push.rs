@@ -22,6 +22,7 @@ use crate::quilt::storage;
 use crate::quilt::storage::Storage;
 use crate::quilt::Error;
 use crate::quilt4::checksum;
+use crate::s3_utils;
 
 pub async fn push_package(
     mut lineage: PackageLineage,
@@ -35,17 +36,19 @@ pub async fn push_package(
         Some(commit) => commit,
     };
 
-    let remote = &lineage.remote;
+    let remote_manifest_address = &lineage.remote;
 
+    let remote = s3_utils::RemoteS3::new();
     let mut local_manifest = manifest.read().await?;
-    let remote_manifest = browse_remote_manifest(paths, storage, remote).await?;
+    let remote_manifest =
+        browse_remote_manifest(paths, storage, &remote, remote_manifest_address).await?;
 
     // ## copy data
     // Copy each of the _modified_ paths from their local_key to remote_key,
     // keeping track of the resulting versionIds
     //
     // TODO: FAIL if the remote bucket does NOT support versioning (as it would be destructive)
-    let client = crate::s3_utils::get_client_for_bucket(&remote.bucket).await?;
+    let client = crate::s3_utils::get_client_for_bucket(&remote_manifest_address.bucket).await?;
 
     // ignore removed items, upload changed and new items
     for row in local_manifest.records.values_mut() {
@@ -60,7 +63,11 @@ pub async fn push_package(
         let file_path: PathBuf = local_url.to_file_path().unwrap();
 
         let s3_key = format!("{}/{}", namespace, row.name);
-        log::debug!("uploading to s3({}): {}", remote.bucket, s3_key);
+        log::debug!(
+            "uploading to s3({}): {}",
+            remote_manifest_address.bucket,
+            s3_key
+        );
 
         // TODO: upload in parallel. use a stream?
         let (version_id, checksum) = if row.size < storage::s3::MULTIPART_THRESHOLD {
@@ -68,7 +75,7 @@ pub async fn push_package(
 
             let response = client
                 .put_object()
-                .bucket(&remote.bucket)
+                .bucket(&remote_manifest_address.bucket)
                 .key(&s3_key)
                 .body(body)
                 .checksum_algorithm(ChecksumAlgorithm::Sha256)
@@ -97,7 +104,7 @@ pub async fn push_package(
             let (chunksize, num_chunks) = checksum::get_checksum_chunksize_and_parts(row.size);
             let upload_id = client
                 .create_multipart_upload()
-                .bucket(&remote.bucket)
+                .bucket(&remote_manifest_address.bucket)
                 .key(&s3_key)
                 .checksum_algorithm(ChecksumAlgorithm::Sha256)
                 .send()
@@ -119,7 +126,7 @@ pub async fn push_package(
                     .await?;
                 let part_response = client
                     .upload_part()
-                    .bucket(&remote.bucket)
+                    .bucket(&remote_manifest_address.bucket)
                     .key(&s3_key)
                     .upload_id(&upload_id)
                     .part_number(part_number)
@@ -139,7 +146,7 @@ pub async fn push_package(
 
             let response = client
                 .complete_multipart_upload()
-                .bucket(&remote.bucket)
+                .bucket(&remote_manifest_address.bucket)
                 .key(&s3_key)
                 .upload_id(&upload_id)
                 .multipart_upload(
@@ -165,7 +172,11 @@ pub async fn push_package(
         // Update the manifest with the sha2-256-chunked checksum.
         row.hash = Multihash::wrap(manifest::MULTIHASH_SHA256_CHUNKED, checksum.as_ref())?;
 
-        let remote_url = storage::s3::make_s3_url(&remote.bucket, &s3_key, version_id.as_deref());
+        let remote_url = storage::s3::make_s3_url(
+            &remote_manifest_address.bucket,
+            &s3_key,
+            version_id.as_deref(),
+        );
         log::debug!("got remote url: {}", remote_url);
 
         // "Relax" the manifest by using those new remote keys
@@ -175,7 +186,7 @@ pub async fn push_package(
     let top_hash = local_manifest.top_hash();
     let new_remote = manifest_handle::RemoteManifest {
         hash: top_hash.clone(),
-        ..remote.clone()
+        ..remote_manifest_address.clone()
     };
 
     // Cache the relaxed manifest

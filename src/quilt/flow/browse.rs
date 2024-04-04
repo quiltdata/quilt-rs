@@ -1,9 +1,6 @@
 use std::path::PathBuf;
 
 use arrow::error::ArrowError;
-use aws_sdk_s3::error::DisplayErrorContext;
-use aws_sdk_s3::error::SdkError;
-use storage::Storage;
 use tokio::io::AsyncReadExt;
 
 use crate::paths;
@@ -11,43 +8,29 @@ use crate::quilt::manifest::Manifest;
 use crate::quilt::manifest_handle::CachedManifest;
 use crate::quilt::manifest_handle::ReadableManifest;
 use crate::quilt::manifest_handle::RemoteManifest;
-use crate::quilt::storage;
+use crate::quilt::remote::Remote;
+use crate::quilt::storage::Storage;
 use crate::quilt::Error;
-use crate::s3_utils;
 use crate::Table;
 use crate::UPath;
 
-async fn is_parquet(client: &aws_sdk_s3::Client, manifest: &RemoteManifest) -> Result<bool, Error> {
-    match client
-        .head_object()
-        .bucket(&manifest.bucket)
-        .key(paths::get_manifest_key(&manifest.hash))
-        .send()
+async fn is_parquet(remote: &impl Remote, manifest: &RemoteManifest) -> Result<bool, Error> {
+    remote
+        .exists(&manifest.bucket, &paths::get_manifest_key(&manifest.hash))
         .await
-    {
-        Ok(_) => Ok(true),
-        Err(SdkError::ServiceError(err)) if err.err().is_not_found() => Ok(false),
-        Err(err) => Err(Error::S3(DisplayErrorContext(err).to_string())),
-    }
 }
 
-async fn fetch_parquet(
-    client: &aws_sdk_s3::Client,
-    manifest: &RemoteManifest,
-) -> Result<Vec<u8>, Error> {
+async fn fetch_parquet(remote: &impl Remote, manifest: &RemoteManifest) -> Result<Vec<u8>, Error> {
     let key = paths::get_manifest_key(&manifest.hash);
-    let mut contents = s3_utils::get_object(client, &manifest.bucket, &key).await?;
+    let mut contents = remote.get_object(&manifest.bucket, &key).await?;
     let mut output = Vec::new();
     contents.read_to_end(&mut output).await?;
     Ok(output)
 }
 
-async fn fetch_jsonl(
-    client: &aws_sdk_s3::Client,
-    manifest: &RemoteManifest,
-) -> Result<Table, Error> {
+async fn fetch_jsonl(remote: &impl Remote, manifest: &RemoteManifest) -> Result<Table, Error> {
     let key = paths::get_manifest_key_legacy(&manifest.hash);
-    let contents = s3_utils::get_object(client, &manifest.bucket, &key).await?;
+    let contents = remote.get_object(&manifest.bucket, &key).await?;
     let quilt3_manifest = Manifest::from_reader(contents).await?;
     Table::try_from(quilt3_manifest)
 }
@@ -75,6 +58,7 @@ pub async fn cache_manifest(
 pub async fn cache_remote_manifest(
     paths: &paths::DomainPaths,
     storage: &mut impl Storage,
+    remote: &impl Remote,
     remote_manifest: &RemoteManifest,
 ) -> Result<CachedManifest, Error> {
     // check if the manifest is already cached
@@ -85,12 +69,11 @@ pub async fn cache_remote_manifest(
 
     if !storage.exists(&cache_path).await {
         // Does not exist yet
-        let client = crate::s3_utils::get_client_for_bucket(&remote_manifest.bucket).await?;
-        if is_parquet(&client, remote_manifest).await? {
-            let manifest = fetch_parquet(&client, remote_manifest).await?;
+        if is_parquet(remote, remote_manifest).await? {
+            let manifest = fetch_parquet(remote, remote_manifest).await?;
             storage.write(cache_path.clone(), &manifest).await?;
         } else {
-            let manifest = fetch_jsonl(&client, remote_manifest).await?;
+            let manifest = fetch_jsonl(remote, remote_manifest).await?;
             manifest.write_to_upath(&UPath::Local(cache_path)).await?;
         };
     }
@@ -101,9 +84,10 @@ pub async fn cache_remote_manifest(
 pub async fn browse_remote_manifest(
     paths: &paths::DomainPaths,
     storage: &mut impl Storage,
-    remote: &RemoteManifest,
+    remote: &impl Remote,
+    remote_manifest: &RemoteManifest,
 ) -> Result<Table, Error> {
-    cache_remote_manifest(paths, storage, remote)
+    cache_remote_manifest(paths, storage, remote, remote_manifest)
         .await?
         .read()
         .await
@@ -117,6 +101,7 @@ mod tests {
 
     use crate::quilt::storage::fs::LocalStorage;
     use crate::quilt::storage::mock_storage::MockStorage;
+    use crate::s3_utils;
 
     #[tokio::test]
     async fn test_if_cached() -> Result<(), Error> {
@@ -130,7 +115,9 @@ mod tests {
         };
         let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
         storage.write(cache_path, &(Vec::new())).await?;
-        let cached_manifest = cache_remote_manifest(&paths, &mut storage, &manifest).await?;
+        let remote = s3_utils::RemoteS3::new();
+        let cached_manifest =
+            cache_remote_manifest(&paths, &mut storage, &remote, &manifest).await?;
         assert_eq!(
             cached_manifest,
             CachedManifest {
@@ -155,7 +142,9 @@ mod tests {
         };
         let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
         storage.write(cache_path, &(Vec::new())).await?;
-        let cached_manifest = cache_remote_manifest(&paths, &mut storage, &manifest).await?;
+        let remote = s3_utils::RemoteS3::new();
+        let cached_manifest =
+            cache_remote_manifest(&paths, &mut storage, &remote, &manifest).await?;
         assert_eq!(
             cached_manifest.read().await.unwrap_err().to_string(),
             "Arrow error: Parquet argument error: External: Invalid argument (os error 22)"
