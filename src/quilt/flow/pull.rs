@@ -19,7 +19,7 @@ pub async fn pull_package(
     working_dir: PathBuf,
     namespace: String,
 ) -> Result<PackageLineage, Error> {
-    let (lineage, status) = create_status(lineage, manifest, working_dir.clone()).await?;
+    let (lineage, status) = create_status(lineage, storage, manifest, working_dir.clone()).await?;
     if !status.changes.is_empty() {
         return Err(Error::Package("package has pending changes".to_string()));
     }

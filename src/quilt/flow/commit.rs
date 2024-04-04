@@ -66,7 +66,8 @@ pub async fn commit_package(
     //       (since the last pull, until reset by a sync)
 
     // TODO: Maybe have the user pass this as an argument?
-    let (mut lineage, status) = create_status(lineage, manifest, working_dir.clone()).await?;
+    let (mut lineage, status) =
+        create_status(lineage, storage, manifest, working_dir.clone()).await?;
 
     let objects_dir = paths.objects_dir();
     // TODO: This should really be done when the domain is created.

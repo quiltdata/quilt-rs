@@ -277,10 +277,16 @@ impl InstalledPackage {
     }
 
     pub async fn status(&self) -> Result<InstalledPackageStatus, Error> {
+        let mut storage = fs::LocalStorage::new();
         let lineage = self.lineage.read().await?;
         let lineage = refresh_latest_hash(lineage).await?;
-        let (lineage, status) =
-            create_status(lineage, &self.manifest().await?, self.working_folder()).await?;
+        let (lineage, status) = create_status(
+            lineage,
+            &mut storage,
+            &self.manifest().await?,
+            self.working_folder(),
+        )
+        .await?;
         self.lineage.write(lineage).await?;
         Ok(status)
     }
