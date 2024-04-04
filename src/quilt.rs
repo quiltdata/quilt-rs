@@ -312,11 +312,13 @@ impl InstalledPackage {
         message: String,
         user_meta: Option<manifest::JsonObject>,
     ) -> Result<(), Error> {
+        let storage = fs::LocalStorage::new();
         let lineage = self.lineage.read().await?;
         let lineage = commit_package(
             lineage,
             &self.manifest().await?,
             &self.paths,
+            &storage,
             self.working_folder(),
             self.namespace.to_string(),
             message,

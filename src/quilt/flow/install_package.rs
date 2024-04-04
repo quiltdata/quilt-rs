@@ -5,7 +5,6 @@ use crate::quilt::lineage::PackageLineage;
 use crate::quilt::manifest_handle::RemoteManifest;
 use crate::quilt::Storage;
 use crate::Error;
-use tokio::fs::create_dir_all;
 
 pub async fn install_package(
     lineage: DomainLineage,
@@ -34,7 +33,7 @@ pub async fn install_package(
 
     // Create the working dir.
     let working_dir = paths.working_dir(&remote.namespace);
-    create_dir_all(&working_dir).await?;
+    storage.create_dir_all(&working_dir).await?;
 
     // Resolve and record latest manifest hash
     let latest_hash = remote.resolve_latest().await?;

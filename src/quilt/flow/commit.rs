@@ -1,12 +1,10 @@
 use std::path::PathBuf;
 
 use serde_json::json;
-use tokio::fs::create_dir_all;
 use tracing::log;
 use url::Url;
 
 use crate::paths;
-use crate::quilt::fs::LocalStorage;
 use crate::quilt::Storage;
 use crate::Error;
 use crate::Row4;
@@ -25,6 +23,7 @@ pub async fn commit_package(
     lineage: PackageLineage,
     manifest: &(impl ReadableManifest + Sync),
     paths: &paths::DomainPaths,
+    storage: &impl Storage,
     working_dir: PathBuf,
     namespace: String,
     message: String,
@@ -70,7 +69,7 @@ pub async fn commit_package(
 
     let objects_dir = paths.objects_dir();
     // TODO: This should really be done when the domain is created.
-    create_dir_all(&objects_dir).await?;
+    storage.create_dir_all(&objects_dir).await?;
 
     let mut table = manifest.read().await?;
 
@@ -115,8 +114,6 @@ pub async fn commit_package(
             }
 
             let work_dest = working_dir.join(&logical_key);
-
-            let storage = LocalStorage::new();
 
             if !storage.exists(&object_dest).await {
                 tokio::fs::copy(&work_dest, object_dest).await?;
@@ -168,6 +165,7 @@ mod tests {
 
     use temp_dir::TempDir;
 
+    use crate::quilt::storage::mock_storage::MockStorage;
     use crate::quilt::Table;
 
     struct TestManifest {}
@@ -185,10 +183,13 @@ mod tests {
     async fn test_commit() -> Result<(), Error> {
         let working_dir = TempDir::new()?;
         let namespace = "foo/bar".to_string();
+        let storage = MockStorage::default();
 
         let domain_paths = &paths::DomainPaths::new(working_dir.path().to_path_buf());
-        create_dir_all(&domain_paths.installed_manifests(&namespace)).await?;
-        create_dir_all(&domain_paths.objects_dir()).await?;
+        storage
+            .create_dir_all(&domain_paths.installed_manifests(&namespace))
+            .await?;
+        storage.create_dir_all(&domain_paths.objects_dir()).await?;
 
         let commit_message = "Lorem ipsum".to_string();
         let mut user_meta = serde_json::Map::new();
@@ -204,6 +205,7 @@ mod tests {
             lineage,
             &manifest,
             domain_paths,
+            &storage,
             working_dir.path().to_path_buf(),
             namespace,
             commit_message.clone(),
