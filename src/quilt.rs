@@ -105,15 +105,17 @@ impl LocalDomain {
 
     pub async fn install_package(
         &self,
-        remote: &RemoteManifest,
+        remote_manifest: &RemoteManifest,
     ) -> Result<InstalledPackage, Error> {
         // Read the lineage
         let lineage: DomainLineage = self.lineage.read().await?;
         let mut storage = fs::LocalStorage::new();
-        let lineage = install_package(lineage, &self.paths, &mut storage, remote).await?;
+        let remote = s3_utils::RemoteS3::new();
+        let lineage =
+            install_package(lineage, &self.paths, &mut storage, &remote, remote_manifest).await?;
         self.lineage.write(&lineage).await?;
 
-        Ok(self.create_installed_package(remote.namespace.clone()))
+        Ok(self.create_installed_package(remote_manifest.namespace.clone()))
     }
 
     pub async fn uninstall_package(&self, namespace: impl AsRef<str>) -> Result<(), Error> {

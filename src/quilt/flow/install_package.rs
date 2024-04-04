@@ -3,17 +3,17 @@ use crate::quilt::flow::browse::cache_remote_manifest;
 use crate::quilt::lineage::DomainLineage;
 use crate::quilt::lineage::PackageLineage;
 use crate::quilt::manifest_handle::RemoteManifest;
+use crate::quilt::remote::Remote;
 use crate::quilt::Storage;
-use crate::s3_utils;
 use crate::Error;
 
 pub async fn install_package(
     lineage: DomainLineage,
     paths: &paths::DomainPaths,
     storage: &mut impl Storage,
+    remote: &impl Remote,
     remote_manifest: &RemoteManifest,
 ) -> Result<DomainLineage, Error> {
-    let remote = s3_utils::RemoteS3::new();
     // bail if already installed
     // TODO: if compatible (same remote), just return the installed package
     if lineage.packages.contains_key(&remote_manifest.namespace) {
@@ -22,7 +22,7 @@ pub async fn install_package(
         ));
     }
 
-    cache_remote_manifest(paths, storage, &remote, remote_manifest).await?;
+    cache_remote_manifest(paths, storage, remote, remote_manifest).await?;
 
     // Make an "installed" copy of the remote manifest.
     let installed_manifest_path =
@@ -55,4 +55,37 @@ pub async fn install_package(
         PackageLineage::from_remote(remote_manifest.to_owned(), latest_hash),
     );
     Ok(lineage)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::collections::BTreeMap;
+
+    use crate::quilt::remote::mock_remote::MockRemote;
+    use crate::quilt::storage::mock_storage::MockStorage;
+
+    #[tokio::test]
+    async fn test_if_already_installed() -> Result<(), Error> {
+        let lineage = DomainLineage {
+            packages: BTreeMap::from([("foo".to_string(), PackageLineage::default())]),
+        };
+        let result = install_package(
+            lineage,
+            &paths::DomainPaths::default(),
+            &mut MockStorage::default(),
+            &MockRemote::default(),
+            &RemoteManifest {
+                namespace: "foo".to_string(),
+                ..RemoteManifest::default()
+            },
+        )
+        .await;
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "The package foo is already installed"
+        );
+        Ok(())
+    }
 }
