@@ -2,6 +2,7 @@ use tokio::io::AsyncRead;
 
 use crate::Error;
 
+#[cfg(test)]
 pub mod mock_remote;
 
 /// This trait encapsulates the S3 operations that Quilt needs to perform.

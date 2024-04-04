@@ -12,6 +12,12 @@ pub(crate) struct MockRemote {
     pub(crate) registry: HashMap<String, Vec<u8>>,
 }
 
+impl MockRemote {
+    pub(crate) fn new(registry: HashMap<String, Vec<u8>>) -> Self {
+        MockRemote { registry }
+    }
+}
+
 impl Remote for MockRemote {
     async fn get_object(
         &self,

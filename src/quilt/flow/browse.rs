@@ -97,11 +97,13 @@ pub async fn browse_remote_manifest(
 mod tests {
     use super::*;
 
+    use std::collections::HashMap;
+
     use temp_testdir::TempDir;
 
+    use crate::quilt::remote::mock_remote::MockRemote;
     use crate::quilt::storage::fs::LocalStorage;
     use crate::quilt::storage::mock_storage::MockStorage;
-    use crate::s3_utils;
 
     #[tokio::test]
     async fn test_if_cached() -> Result<(), Error> {
@@ -115,7 +117,7 @@ mod tests {
         };
         let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
         storage.write(cache_path, &(Vec::new())).await?;
-        let remote = s3_utils::RemoteS3::new();
+        let remote = MockRemote::default();
         let cached_manifest =
             cache_remote_manifest(&paths, &mut storage, &remote, &manifest).await?;
         assert_eq!(
@@ -142,13 +144,51 @@ mod tests {
         };
         let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
         storage.write(cache_path, &(Vec::new())).await?;
-        let remote = s3_utils::RemoteS3::new();
+        let remote = MockRemote::default();
         let cached_manifest =
             cache_remote_manifest(&paths, &mut storage, &remote, &manifest).await?;
+        assert_eq!(
+            cached_manifest,
+            CachedManifest::from_remote_manifest(&manifest, &paths)
+        );
         assert_eq!(
             cached_manifest.read().await.unwrap_err().to_string(),
             "Arrow error: Parquet argument error: External: Invalid argument (os error 22)"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_caching_parquet() -> Result<(), Error> {
+        let mut storage = MockStorage::default();
+        let paths = paths::DomainPaths::default();
+        let manifest = RemoteManifest {
+            bucket: "a".to_string(),
+            namespace: "b".to_string(),
+            hash: "c".to_string(),
+        };
+        let remote = MockRemote::new(HashMap::from([(
+            "s3://a/.quilt/packages/1220c.parquet".to_string(),
+            Vec::new(),
+        )]));
+        let _cached_manifest =
+            cache_remote_manifest(&paths, &mut storage, &remote, &manifest).await?;
+        assert!(storage
+            .registry
+            .get(&PathBuf::from(".quilt/packages/a/c"))
+            .unwrap()
+            .is_empty(),);
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_caching_jsonl() -> Result<(), Error> {
+        // TODO: pass storage to the `manifest.write_to_upath`
+        // let remote = MockRemote::new(HashMap::from([(
+        //     "s3://a/.quilt/packages/c".to_string(),
+        //     Vec::new(),
+        // )]));
         Ok(())
     }
 }
