@@ -4,7 +4,10 @@ use tokio::fs;
 
 use multihash::Multihash;
 use serde::de::Error as DeserializeError;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::Deserialize;
+use serde::Deserializer;
+use serde::Serialize;
+use serde::Serializer;
 
 use crate::Error;
 

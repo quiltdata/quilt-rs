@@ -1,13 +1,15 @@
 use std::path::PathBuf;
 
-use crate::paths::{copy_cached_to_installed, DomainPaths};
+use crate::paths::copy_cached_to_installed;
+use crate::paths::DomainPaths;
 use crate::quilt::flow::browse::cache_remote_manifest;
 use crate::quilt::flow::install_paths::install_paths;
 use crate::quilt::flow::status::create_status;
 use crate::quilt::flow::uninstall_paths::uninstall_paths;
 use crate::quilt::lineage::PackageLineage;
+use crate::quilt::manifest_handle;
 use crate::quilt::storage::fs::LocalStorage;
-use crate::quilt::{manifest_handle, Error};
+use crate::quilt::Error;
 
 pub async fn pull_package(
     lineage: PackageLineage,
@@ -77,10 +79,12 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::quilt::lineage::{CommitState, PathState};
+    use crate::quilt::lineage::CommitState;
+    use crate::quilt::lineage::PathState;
     use crate::quilt::manifest_handle::ReadableManifest;
     use crate::quilt::RemoteManifest;
-    use crate::{Row4, Table};
+    use crate::Row4;
+    use crate::Table;
 
     struct InMemoryManifest {}
     impl ReadableManifest for InMemoryManifest {

@@ -1,13 +1,18 @@
 use std::path::PathBuf;
 
 use aws_smithy_types::byte_stream::ByteStream;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use tracing::log;
 
 use crate::quilt::manifest::Manifest;
+use crate::quilt::paths;
 use crate::quilt::storage::s3;
-use crate::quilt::uri::{RevisionPointer, S3PackageUri};
-use crate::quilt::{paths, Error, Table, UPath};
+use crate::quilt::uri::RevisionPointer;
+use crate::quilt::uri::S3PackageUri;
+use crate::quilt::Error;
+use crate::quilt::Table;
+use crate::quilt::UPath;
 
 pub fn tag_uri(bucket: &str, namespace: &str, tag: &str) -> s3::S3Uri {
     s3::S3Uri {

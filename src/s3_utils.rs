@@ -11,7 +11,8 @@ use base64::Engine;
 use lazy_static::lazy_static;
 use multihash::Multihash;
 use parquet::data_type::AsBytes;
-use sha2::{Digest, Sha256};
+use sha2::Digest;
+use sha2::Sha256;
 use tokio::io::AsyncRead;
 use tracing::log;
 
@@ -202,7 +203,9 @@ pub async fn calculate_attrs_for_key(
 #[cfg(test)]
 mod tests {
 
-    use aws_sdk_s3::types::{Checksum, GetObjectAttributesParts, ObjectPart};
+    use aws_sdk_s3::types::Checksum;
+    use aws_sdk_s3::types::GetObjectAttributesParts;
+    use aws_sdk_s3::types::ObjectPart;
 
     use super::*;
 

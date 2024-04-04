@@ -7,7 +7,8 @@
 //!
 
 use object_store::path::Path;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use std::fmt;
 use std::path::PathBuf;
 use url::Url;

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
-use crate::paths::{copy_cached_to_installed, DomainPaths};
+use crate::paths::copy_cached_to_installed;
+use crate::paths::DomainPaths;
 use crate::Error;
 
 use crate::quilt::flow::browse::cache_remote_manifest;

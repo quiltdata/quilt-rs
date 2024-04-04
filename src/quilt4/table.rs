@@ -5,22 +5,31 @@
 //!
 
 use std::collections::BTreeMap;
+use std::fmt;
+use std::io;
 use std::sync::Arc;
-use std::{fmt, io};
 
-use arrow::array::{GenericByteArray, UInt64Array};
-use arrow::datatypes::{BinaryType, DataType, Field, Schema, Utf8Type};
+use arrow::array::GenericByteArray;
+use arrow::array::UInt64Array;
+use arrow::datatypes::BinaryType;
+use arrow::datatypes::DataType;
+use arrow::datatypes::Field;
+use arrow::datatypes::Schema;
+use arrow::datatypes::Utf8Type;
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use aws_sdk_s3::config::ProvideCredentials;
 use multihash::Multihash;
 use object_store::aws::AmazonS3Builder;
 use object_store::ObjectStore;
-use parquet::arrow::async_reader::{AsyncFileReader, ParquetObjectReader};
-use parquet::arrow::{AsyncArrowWriter, ParquetRecordBatchStreamBuilder};
+use parquet::arrow::async_reader::AsyncFileReader;
+use parquet::arrow::async_reader::ParquetObjectReader;
+use parquet::arrow::AsyncArrowWriter;
+use parquet::arrow::ParquetRecordBatchStreamBuilder;
 use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
-use sha2::{Digest, Sha256};
+use sha2::Digest;
+use sha2::Sha256;
 use tokio::fs;
 use tokio::io::AsyncWrite;
 use tokio_stream::StreamExt;

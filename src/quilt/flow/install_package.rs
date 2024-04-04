@@ -1,7 +1,9 @@
+use crate::paths;
 use crate::quilt::flow::browse::cache_remote_manifest;
-use crate::quilt::lineage::{DomainLineage, PackageLineage};
+use crate::quilt::lineage::DomainLineage;
+use crate::quilt::lineage::PackageLineage;
 use crate::quilt::manifest_handle::RemoteManifest;
-use crate::{paths, Error};
+use crate::Error;
 use tokio::fs::create_dir_all;
 
 pub async fn install_package(

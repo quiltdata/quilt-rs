@@ -1,8 +1,9 @@
 use sha2::digest::Output;
-use sha2::{Digest, Sha256};
-use tokio::io::{
-    AsyncReadExt, BufReader, {self},
-};
+use sha2::Digest;
+use sha2::Sha256;
+use tokio::io::AsyncReadExt;
+use tokio::io::BufReader;
+use tokio::io::{self};
 
 use crate::quilt::s3;
 

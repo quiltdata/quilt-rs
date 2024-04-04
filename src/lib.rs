@@ -13,10 +13,15 @@ pub use quilt4::manifest::Manifest4;
 pub use quilt4::row4::Row4;
 pub use quilt4::table::Table;
 pub use quilt4::upath::UPath;
-pub use quilt4::uri::{UriParser, UriQuilt};
+pub use quilt4::uri::UriParser;
+pub use quilt4::uri::UriQuilt;
 use tracing::log;
 
-pub use quilt::{InstalledPackage, LocalDomain, Manifest, RemoteManifest, S3PackageUri};
+pub use quilt::InstalledPackage;
+pub use quilt::LocalDomain;
+pub use quilt::Manifest;
+pub use quilt::RemoteManifest;
+pub use quilt::S3PackageUri;
 
 use reqwest::header::ToStrError;
 use temp_dir::TempDir;
