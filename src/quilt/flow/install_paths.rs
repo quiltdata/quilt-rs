@@ -49,7 +49,7 @@ async fn cache_immutable_object(object_dest: &PathBuf, uri: &s3::S3Uri) -> Resul
 }
 
 async fn create_mutable_copy(
-    storage: &impl Storage,
+    storage: &mut impl Storage,
     immutable_source: &PathBuf,
     mutable_target: &PathBuf,
 ) -> Result<chrono::DateTime<chrono::Utc>, Error> {
@@ -67,7 +67,7 @@ pub async fn install_paths(
     paths: &paths::DomainPaths,
     working_dir: PathBuf,
     namespace: String,
-    storage: impl Storage,
+    storage: &mut impl Storage,
     entries_paths: &Vec<String>,
 ) -> Result<PackageLineage, Error> {
     if entries_paths.is_empty() {
@@ -118,7 +118,7 @@ pub async fn install_paths(
             .to_string();
 
         let working_dest = working_dir.join(&row.name);
-        let last_modified = create_mutable_copy(&storage, &object_dest, &working_dest).await?;
+        let last_modified = create_mutable_copy(storage, &object_dest, &working_dest).await?;
 
         lineage.paths.insert(
             row.name.clone(),
@@ -149,7 +149,8 @@ mod tests {
     use temp_dir::TempDir;
 
     use crate::quilt::lineage::CommitState;
-    use crate::quilt::storage::fs;
+    use crate::quilt::storage::fs::LocalStorage;
+    use crate::quilt::storage::mock_storage::MockStorage;
     use crate::Row4;
     use crate::Table;
 
@@ -178,7 +179,8 @@ mod tests {
         let namespace = "foo/bar".to_string();
 
         let domain_paths = &paths::DomainPaths::new(working_dir.path().to_path_buf());
-        let storage = fs::LocalStorage::new(working_dir.path().to_path_buf());
+        // TODO: Can't use MockStorage because of Table::write_to_upath
+        let mut storage = LocalStorage::new();
         storage
             .create_dir_all(domain_paths.installed_manifests(&namespace))
             .await?;
@@ -201,7 +203,7 @@ mod tests {
             domain_paths,
             working_dir.path().to_path_buf(),
             namespace,
-            storage,
+            &mut storage,
             &entries_paths,
         )
         .await?;
@@ -212,8 +214,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_installing_path_that_doesnt_exists_in_manifest() -> Result<(), Error> {
-        let working_dir = TempDir::new()?;
-
         let lineage = PackageLineage {
             commit: Some(CommitState {
                 hash: "fghijk".to_string(),
@@ -221,7 +221,7 @@ mod tests {
             }),
             ..PackageLineage::default()
         };
-        let storage = fs::LocalStorage::new(working_dir.path().to_path_buf());
+        let mut storage = MockStorage::default();
         let entries_paths = vec!["z/z".to_string()];
         let manifest = InMemoryManifest {};
 
@@ -232,7 +232,7 @@ mod tests {
             &paths::DomainPaths::default(),
             PathBuf::new(),
             String::default(),
-            storage,
+            &mut storage,
             &entries_paths,
         )
         .await;

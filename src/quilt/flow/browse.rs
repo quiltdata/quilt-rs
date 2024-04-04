@@ -3,9 +3,7 @@ use std::path::PathBuf;
 use arrow::error::ArrowError;
 use aws_sdk_s3::error::DisplayErrorContext;
 use aws_sdk_s3::error::SdkError;
-use storage::fs::LocalStorage;
 use storage::Storage;
-use tokio::fs;
 use tokio::io::AsyncReadExt;
 
 use crate::paths;
@@ -56,12 +54,15 @@ async fn fetch_jsonl(
 
 pub async fn cache_manifest(
     paths: &paths::DomainPaths,
+    storage: &mut impl Storage,
     manifest: &Table,
     bucket: &str,
     hash: &str,
 ) -> Result<PathBuf, ArrowError> {
     let cache_path = paths.manifest_cache(bucket, hash);
-    fs::create_dir_all(&cache_path.parent().unwrap()).await?;
+    storage
+        .create_dir_all(&cache_path.parent().unwrap())
+        .await?;
     manifest
         .write_to_upath(&UPath::Local(cache_path.clone()))
         .await
@@ -73,6 +74,7 @@ pub async fn cache_manifest(
 //        or CachedManifest::try_from(RemoteManifest)
 pub async fn cache_remote_manifest(
     paths: &paths::DomainPaths,
+    storage: &mut impl Storage,
     remote_manifest: &RemoteManifest,
 ) -> Result<CachedManifest, Error> {
     // check if the manifest is already cached
@@ -80,14 +82,13 @@ pub async fn cache_remote_manifest(
     // return cached manifest
 
     let cache_path = paths.manifest_cache(&remote_manifest.bucket, &remote_manifest.hash);
-    let storage = LocalStorage::new(paths.working_dir(&remote_manifest.namespace));
 
     if !storage.exists(&cache_path).await {
         // Does not exist yet
         let client = crate::s3_utils::get_client_for_bucket(&remote_manifest.bucket).await?;
         if is_parquet(&client, remote_manifest).await? {
             let manifest = fetch_parquet(&client, remote_manifest).await?;
-            storage::fs::write(&cache_path, &manifest).await?;
+            storage.write(cache_path.clone(), &manifest).await?;
         } else {
             let manifest = fetch_jsonl(&client, remote_manifest).await?;
             manifest.write_to_upath(&UPath::Local(cache_path)).await?;
@@ -99,19 +100,28 @@ pub async fn cache_remote_manifest(
 
 pub async fn browse_remote_manifest(
     paths: &paths::DomainPaths,
+    storage: &mut impl Storage,
     remote: &RemoteManifest,
 ) -> Result<Table, Error> {
-    cache_remote_manifest(paths, remote).await?.read().await
+    cache_remote_manifest(paths, storage, remote)
+        .await?
+        .read()
+        .await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use temp_testdir::TempDir;
+
+    use crate::quilt::storage::fs::LocalStorage;
+    use crate::quilt::storage::mock_storage::MockStorage;
 
     #[tokio::test]
     async fn test_if_cached() -> Result<(), Error> {
         let root_dir = TempDir::default();
+        let mut storage = MockStorage::default();
         let paths = paths::DomainPaths::new(root_dir.to_path_buf());
         let manifest = RemoteManifest {
             bucket: "a".to_string(),
@@ -119,8 +129,8 @@ mod tests {
             hash: "c".to_string(),
         };
         let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
-        storage::fs::write(cache_path, &(Vec::new())).await?;
-        let cached_manifest = cache_remote_manifest(&paths, &manifest).await?;
+        storage.write(cache_path, &(Vec::new())).await?;
+        let cached_manifest = cache_remote_manifest(&paths, &mut storage, &manifest).await?;
         assert_eq!(
             cached_manifest,
             CachedManifest {
@@ -135,6 +145,8 @@ mod tests {
     #[tokio::test]
     async fn test_if_cached_random_file() -> Result<(), Error> {
         let root_dir = TempDir::default();
+        // TODO: Can't use MockStorage because of parquet file reader
+        let mut storage = LocalStorage::default();
         let paths = paths::DomainPaths::new(root_dir.to_path_buf());
         let manifest = RemoteManifest {
             bucket: "a".to_string(),
@@ -142,8 +154,8 @@ mod tests {
             hash: "c".to_string(),
         };
         let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
-        storage::fs::write(cache_path, &(Vec::new())).await?;
-        let cached_manifest = cache_remote_manifest(&paths, &manifest).await?;
+        storage.write(cache_path, &(Vec::new())).await?;
+        let cached_manifest = cache_remote_manifest(&paths, &mut storage, &manifest).await?;
         assert_eq!(
             cached_manifest.read().await.unwrap_err().to_string(),
             "Arrow error: Parquet argument error: External: Invalid argument (os error 22)"

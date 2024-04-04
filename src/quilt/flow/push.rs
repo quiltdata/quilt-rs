@@ -19,6 +19,7 @@ use crate::quilt::lineage::PackageLineage;
 use crate::quilt::manifest;
 use crate::quilt::manifest_handle;
 use crate::quilt::storage;
+use crate::quilt::storage::Storage;
 use crate::quilt::Error;
 use crate::quilt4::checksum;
 
@@ -26,6 +27,7 @@ pub async fn push_package(
     mut lineage: PackageLineage,
     manifest: &(impl manifest_handle::ReadableManifest + Sync),
     paths: &paths::DomainPaths,
+    storage: &mut impl Storage,
     namespace: String,
 ) -> Result<PackageLineage, Error> {
     let commit = match lineage.commit {
@@ -36,7 +38,7 @@ pub async fn push_package(
     let remote = &lineage.remote;
 
     let mut local_manifest = manifest.read().await?;
-    let remote_manifest = browse_remote_manifest(paths, remote).await?;
+    let remote_manifest = browse_remote_manifest(paths, storage, remote).await?;
 
     // ## copy data
     // Copy each of the _modified_ paths from their local_key to remote_key,
@@ -177,8 +179,14 @@ pub async fn push_package(
     };
 
     // Cache the relaxed manifest
-    let cache_path =
-        cache_manifest(paths, &local_manifest, &new_remote.bucket, &new_remote.hash).await?;
+    let cache_path = cache_manifest(
+        paths,
+        storage,
+        &local_manifest,
+        &new_remote.bucket,
+        &new_remote.hash,
+    )
+    .await?;
 
     // Push the (cached) relaxed manifest to the remote, don't tag it yet
     new_remote.upload_from(&cache_path).await?;
@@ -222,6 +230,7 @@ mod tests {
     use super::*;
 
     use crate::quilt::manifest_handle::ReadableManifest;
+    use crate::quilt::storage::mock_storage::MockStorage;
     use crate::Table;
 
     struct InMemoryManifest {}
@@ -233,10 +242,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_push_if_no_commit() -> Result<(), Error> {
+        let mut storage = MockStorage::default();
         let lineage = push_package(
             PackageLineage::default(),
             &(InMemoryManifest {}),
             &paths::DomainPaths::default(),
+            &mut storage,
             String::default(),
         )
         .await?;

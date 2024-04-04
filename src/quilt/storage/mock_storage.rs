@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
@@ -11,6 +12,9 @@ use super::Storage;
 pub(crate) struct MockStorage {
     /// A set of paths that are currently stored.
     pub(crate) paths: HashSet<PathBuf>,
+
+    /// A map of paths that are currently stored and their corresponding content
+    pub(crate) registry: HashMap<PathBuf, Vec<u8>>,
 }
 
 impl MockStorage {
@@ -33,15 +37,19 @@ impl Storage for MockStorage {
         Ok(()) // No-op
     }
 
+    async fn remove_dir_all(&self, _path: impl AsRef<Path>) -> Result<(), std::io::Error> {
+        Ok(()) // No-op
+    }
+
     /// Overwrite the `remove_file` method to do nothing.
-    async fn remove_file(&mut self, _path: PathBuf) -> Result<(), std::io::Error> {
-        self.paths.remove(&_path);
+    async fn remove_file(&mut self, path: PathBuf) -> Result<(), std::io::Error> {
+        self.paths.remove(&path);
         Ok(())
     }
 
     /// Overwrite the `exists` method to check if the path is in the set of paths.
     async fn exists(&self, path: impl AsRef<std::path::Path>) -> bool {
-        self.paths.contains(path.as_ref())
+        self.paths.contains(path.as_ref()) || self.registry.contains_key(path.as_ref())
     }
 
     /// Return the current time as the modified timestamp.
@@ -50,5 +58,11 @@ impl Storage for MockStorage {
         _path: impl AsRef<Path>,
     ) -> Result<chrono::DateTime<chrono::Utc>, Error> {
         Ok(chrono::Utc::now())
+    }
+
+    /// Overwrite the `write` method to do nothing.
+    async fn write(&mut self, path: PathBuf, bytes: &[u8]) -> Result<(), Error> {
+        self.registry.insert(path, bytes.to_vec());
+        Ok(())
     }
 }

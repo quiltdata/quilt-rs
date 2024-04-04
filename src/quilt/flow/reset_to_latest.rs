@@ -9,12 +9,13 @@ use crate::quilt::flow::install_paths::install_paths;
 use crate::quilt::flow::uninstall_paths::uninstall_paths;
 use crate::quilt::lineage::PackageLineage;
 use crate::quilt::manifest_handle::ReadableManifest;
-use crate::quilt::storage::fs;
+use crate::quilt::storage::Storage;
 
 pub async fn reset_to_latest(
     lineage: PackageLineage,
     manifest: &(impl ReadableManifest + Sync),
     paths: &DomainPaths,
+    storage: &mut impl Storage,
     working_dir: PathBuf,
     namespace: String,
 ) -> Result<PackageLineage, Error> {
@@ -24,16 +25,15 @@ pub async fn reset_to_latest(
         return Ok(lineage);
     }
 
-    let mut storage = fs::LocalStorage::new(working_dir.clone());
     let entries_paths: Vec<String> = lineage.paths.clone().into_keys().collect();
     let mut lineage =
-        uninstall_paths(lineage, working_dir.clone(), &mut storage, &entries_paths).await?;
+        uninstall_paths(lineage, working_dir.clone(), storage, &entries_paths).await?;
 
     lineage.latest_hash = new_latest.clone();
     lineage.remote.hash = new_latest.clone();
     lineage.base_hash = new_latest;
 
-    cache_remote_manifest(paths, &lineage.remote).await?;
+    cache_remote_manifest(paths, storage, &lineage.remote).await?;
     copy_cached_to_installed(
         paths,
         &lineage.remote.bucket,

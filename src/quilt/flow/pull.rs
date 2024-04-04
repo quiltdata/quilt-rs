@@ -8,17 +8,18 @@ use crate::quilt::flow::status::create_status;
 use crate::quilt::flow::uninstall_paths::uninstall_paths;
 use crate::quilt::lineage::PackageLineage;
 use crate::quilt::manifest_handle;
-use crate::quilt::storage::fs::LocalStorage;
+use crate::quilt::storage::Storage;
 use crate::quilt::Error;
 
 pub async fn pull_package(
     lineage: PackageLineage,
     manifest: &(impl manifest_handle::ReadableManifest + Sync),
     paths: &DomainPaths,
+    storage: &mut impl Storage,
     working_dir: PathBuf,
     namespace: String,
 ) -> Result<PackageLineage, Error> {
-    let (lineage, status) = create_status(lineage, manifest, working_dir.clone()).await?;
+    let (lineage, status) = create_status(lineage, storage, manifest, working_dir.clone()).await?;
     if !status.changes.is_empty() {
         return Err(Error::Package("package has pending changes".to_string()));
     }
@@ -35,19 +36,18 @@ pub async fn pull_package(
         return Err(Error::Package("package is already up-to-date".to_string()));
     }
 
-    let mut storage = LocalStorage::new(working_dir.clone());
     // TODO: What should we do about installed paths?
     // They may or may not exist in the updated package.
     let installed_paths: Vec<String> = lineage.paths.keys().cloned().collect();
     let mut lineage =
-        uninstall_paths(lineage, working_dir.clone(), &mut storage, &installed_paths).await?;
+        uninstall_paths(lineage, working_dir.clone(), storage, &installed_paths).await?;
 
     // TODO: uninstall_paths() just modified the lineage, so re-reading it here.
     // There needs to be a better way.
     lineage.remote.hash = lineage.latest_hash.clone();
     lineage.base_hash = lineage.latest_hash.clone();
 
-    cache_remote_manifest(paths, &lineage.remote).await?;
+    cache_remote_manifest(paths, storage, &lineage.remote).await?;
     copy_cached_to_installed(
         paths,
         &lineage.remote.bucket,
@@ -82,6 +82,7 @@ mod tests {
     use crate::quilt::lineage::CommitState;
     use crate::quilt::lineage::PathState;
     use crate::quilt::manifest_handle::ReadableManifest;
+    use crate::quilt::storage::mock_storage::MockStorage;
     use crate::quilt::RemoteManifest;
     use crate::Row4;
     use crate::Table;
@@ -95,6 +96,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_pull_if_changes() {
+        let mut storage = MockStorage::default();
         let lineage = PackageLineage {
             paths: BTreeMap::from([("a/a".to_string(), PathState::default())]),
             ..PackageLineage::default()
@@ -113,6 +115,7 @@ mod tests {
             lineage,
             &(RemovedFilesManifest {}),
             &DomainPaths::default(),
+            &mut storage,
             PathBuf::default(),
             String::default(),
         )
@@ -125,6 +128,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_pull_if_commit() {
+        let mut storage = MockStorage::default();
         let lineage = PackageLineage {
             commit: Some(CommitState::default()),
             ..PackageLineage::default()
@@ -133,6 +137,7 @@ mod tests {
             lineage,
             &(InMemoryManifest {}),
             &DomainPaths::default(),
+            &mut storage,
             PathBuf::default(),
             String::default(),
         )
@@ -145,6 +150,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_pull_if_diverged() {
+        let mut storage = MockStorage::default();
         let lineage = PackageLineage {
             remote: RemoteManifest {
                 hash: "a".to_string(),
@@ -157,6 +163,7 @@ mod tests {
             lineage,
             &(InMemoryManifest {}),
             &DomainPaths::default(),
+            &mut storage,
             PathBuf::default(),
             String::default(),
         )
@@ -169,6 +176,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_pull_if_up_to_date() {
+        let mut storage = MockStorage::default();
         let lineage = PackageLineage {
             remote: RemoteManifest {
                 hash: "a".to_string(),
@@ -182,6 +190,7 @@ mod tests {
             lineage,
             &(InMemoryManifest {}),
             &DomainPaths::default(),
+            &mut storage,
             PathBuf::default(),
             String::default(),
         )

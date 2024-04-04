@@ -29,6 +29,9 @@ pub trait Storage {
     /// are missing.
     async fn create_dir_all(&self, path: impl AsRef<Path>) -> Result<(), std::io::Error>;
 
+    /// Removes a directory at this path, after removing all its contents.
+    async fn remove_dir_all(&self, path: impl AsRef<Path>) -> Result<(), std::io::Error>;
+
     /// Get the timestamp of the last modification of a file.
     async fn modified_timestamp(
         &self,
@@ -39,4 +42,7 @@ pub trait Storage {
     async fn remove_file(&mut self, path: PathBuf) -> Result<(), std::io::Error> {
         tokio::fs::remove_file(path).await
     }
+
+    /// Writes bytes to a file
+    async fn write(&mut self, path: PathBuf, bytes: &[u8]) -> Result<(), Error>;
 }
