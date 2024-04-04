@@ -149,7 +149,8 @@ mod tests {
     use temp_dir::TempDir;
 
     use crate::quilt::lineage::CommitState;
-    use crate::quilt::storage::fs;
+    use crate::quilt::storage::fs::LocalStorage;
+    use crate::quilt::storage::mock_storage::MockStorage;
     use crate::Row4;
     use crate::Table;
 
@@ -178,7 +179,8 @@ mod tests {
         let namespace = "foo/bar".to_string();
 
         let domain_paths = &paths::DomainPaths::new(working_dir.path().to_path_buf());
-        let mut storage = fs::LocalStorage::new();
+        // TODO: Can't use MockStorage because of Table::write_to_upath
+        let mut storage = LocalStorage::new();
         storage
             .create_dir_all(domain_paths.installed_manifests(&namespace))
             .await?;
@@ -219,7 +221,7 @@ mod tests {
             }),
             ..PackageLineage::default()
         };
-        let mut storage = fs::LocalStorage::new();
+        let mut storage = MockStorage::default();
         let entries_paths = vec!["z/z".to_string()];
         let manifest = InMemoryManifest {};
 

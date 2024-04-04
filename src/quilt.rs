@@ -338,11 +338,13 @@ impl InstalledPackage {
     }
 
     pub async fn push(&self) -> Result<(), Error> {
+        let mut storage = fs::LocalStorage::new();
         let lineage = self.lineage.read().await?;
         let lineage = push_package(
             lineage,
             &self.manifest().await?,
             &self.paths,
+            &mut storage,
             self.namespace.to_string(),
         )
         .await?;
@@ -350,11 +352,13 @@ impl InstalledPackage {
     }
 
     pub async fn pull(&self) -> Result<(), Error> {
+        let mut storage = fs::LocalStorage::new();
         let lineage = self.lineage.read().await?;
         let lineage = pull_package(
             lineage,
             &self.manifest().await?,
             &self.paths,
+            &mut storage,
             self.working_folder(),
             self.namespace.to_string(),
         )
