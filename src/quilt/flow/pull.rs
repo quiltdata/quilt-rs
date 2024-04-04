@@ -47,7 +47,7 @@ pub async fn pull_package(
     lineage.remote.hash = lineage.latest_hash.clone();
     lineage.base_hash = lineage.latest_hash.clone();
 
-    cache_remote_manifest(paths, &lineage.remote).await?;
+    cache_remote_manifest(paths, &mut storage, &lineage.remote).await?;
     copy_cached_to_installed(
         paths,
         &lineage.remote.bucket,

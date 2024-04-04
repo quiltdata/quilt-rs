@@ -86,7 +86,8 @@ impl LocalDomain {
     }
 
     pub async fn browse_remote_manifest(&self, remote: &RemoteManifest) -> Result<Table, Error> {
-        browse_remote_manifest(&self.paths, remote).await
+        let mut storage = fs::LocalStorage::new();
+        browse_remote_manifest(&self.paths, &mut storage, remote).await
     }
 
     fn create_installed_package(&self, namespace: String) -> InstalledPackage {
@@ -103,8 +104,8 @@ impl LocalDomain {
     ) -> Result<InstalledPackage, Error> {
         // Read the lineage
         let lineage: DomainLineage = self.lineage.read().await?;
-        let storage = fs::LocalStorage::new();
-        let lineage = install_package(lineage, &self.paths, &storage, remote).await?;
+        let mut storage = fs::LocalStorage::new();
+        let lineage = install_package(lineage, &self.paths, &mut storage, remote).await?;
         self.lineage.write(&lineage).await?;
 
         Ok(self.create_installed_package(remote.namespace.clone()))
@@ -153,6 +154,7 @@ impl LocalDomain {
         uri: &s3::S3Uri,
         target_uri: S3PackageUri,
     ) -> Result<RemoteManifest, Error> {
+        let mut storage = fs::LocalStorage::new();
         log::debug!("Source URI: {:?}, target URI: {:?}", uri, target_uri);
         // TODO: make get_object_attributes() calls concurrently across list_objects() pages
         // TODO: increase concurrency, to do that we need to figure out how to deal
@@ -223,8 +225,14 @@ impl LocalDomain {
             namespace: target_uri.namespace,
             hash: table.top_hash(),
         };
-        let cache_path =
-            cache_manifest(&self.paths, &table, &new_remote.bucket, &new_remote.hash).await?;
+        let cache_path = cache_manifest(
+            &self.paths,
+            &mut storage,
+            &table,
+            &new_remote.bucket,
+            &new_remote.hash,
+        )
+        .await?;
         new_remote.upload_from(&cache_path).await?;
         new_remote.upload_legacy(&table).await?;
         let top_hash = table.top_hash();
@@ -313,13 +321,13 @@ impl InstalledPackage {
         message: String,
         user_meta: Option<manifest::JsonObject>,
     ) -> Result<(), Error> {
-        let storage = fs::LocalStorage::new();
+        let mut storage = fs::LocalStorage::new();
         let lineage = self.lineage.read().await?;
         let lineage = commit_package(
             lineage,
             &self.manifest().await?,
             &self.paths,
-            &storage,
+            &mut storage,
             self.working_folder(),
             self.namespace.to_string(),
             message,
@@ -391,6 +399,7 @@ mod tests {
 
     use crate::quilt::flow::browse::cache_remote_manifest;
     use crate::quilt::manifest::MULTIHASH_SHA256;
+    use crate::quilt::storage::mock_storage::MockStorage;
     use crate::quilt4::checksum::calculate_sha256_checksum;
 
     fn get_timestamp() -> String {
@@ -432,15 +441,19 @@ mod tests {
         let temp_dir = TempDir::default();
         let local_path = PathBuf::from(temp_dir.as_ref());
         let local_domain = LocalDomain::new(local_path);
+        let mut storage = MockStorage::default();
 
         // ## Pull the manifest
 
         let remote_manifest =
             block_on(RemoteManifest::resolve(&test_uri)).expect("Failed to resolve manifest");
 
-        let cached_manifest =
-            block_on(cache_remote_manifest(&local_domain.paths, &remote_manifest))
-                .expect("Failed to cache the manifest");
+        let cached_manifest = block_on(cache_remote_manifest(
+            &local_domain.paths,
+            &mut storage,
+            &remote_manifest,
+        ))
+        .expect("Failed to cache the manifest");
 
         let manifest = block_on(cached_manifest.read()).expect("Failed to parse the manifest");
 

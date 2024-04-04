@@ -42,4 +42,7 @@ pub trait Storage {
     async fn remove_file(&mut self, path: PathBuf) -> Result<(), std::io::Error> {
         tokio::fs::remove_file(path).await
     }
+
+    /// Writes bytes to a file
+    async fn write(&mut self, path: PathBuf, bytes: &[u8]) -> Result<(), Error>;
 }

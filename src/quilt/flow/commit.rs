@@ -17,13 +17,14 @@ use crate::quilt::lineage::PackageLineage;
 use crate::quilt::lineage::PathState;
 use crate::quilt::manifest::JsonObject;
 use crate::quilt::manifest_handle::ReadableManifest;
-use crate::quilt::storage::fs;
 
+// TODO: move `working_dir` to `paths`, and `paths` to `storage`
+#[allow(clippy::too_many_arguments)]
 pub async fn commit_package(
     lineage: PackageLineage,
     manifest: &(impl ReadableManifest + Sync),
     paths: &paths::DomainPaths,
-    storage: &impl Storage,
+    storage: &mut impl Storage,
     working_dir: PathBuf,
     namespace: String,
     message: String,
@@ -116,12 +117,12 @@ pub async fn commit_package(
             let work_dest = working_dir.join(&logical_key);
 
             if !storage.exists(&object_dest).await {
-                tokio::fs::copy(&work_dest, object_dest).await?;
+                storage.copy(&work_dest, object_dest).await?;
             }
             lineage.paths.insert(
                 logical_key,
                 PathState {
-                    timestamp: fs::get_file_modified_ts(&work_dest).await?,
+                    timestamp: storage.modified_timestamp(&work_dest).await?,
                     hash: current.hash,
                 },
             );
@@ -183,7 +184,7 @@ mod tests {
     async fn test_commit() -> Result<(), Error> {
         let working_dir = TempDir::new()?;
         let namespace = "foo/bar".to_string();
-        let storage = MockStorage::default();
+        let mut storage = MockStorage::default();
 
         let domain_paths = &paths::DomainPaths::new(working_dir.path().to_path_buf());
         storage
@@ -205,7 +206,7 @@ mod tests {
             lineage,
             &manifest,
             domain_paths,
-            &storage,
+            &mut storage,
             working_dir.path().to_path_buf(),
             namespace,
             commit_message.clone(),

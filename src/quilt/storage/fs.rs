@@ -131,6 +131,10 @@ impl Storage for LocalStorage {
     ) -> Result<chrono::DateTime<chrono::Utc>, Error> {
         get_file_modified_ts(path).await
     }
+
+    async fn write(&mut self, path: PathBuf, bytes: &[u8]) -> Result<(), Error> {
+        write(path, bytes).await
+    }
 }
 
 impl Default for LocalStorage {

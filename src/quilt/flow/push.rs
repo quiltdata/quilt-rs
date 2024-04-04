@@ -19,6 +19,7 @@ use crate::quilt::lineage::PackageLineage;
 use crate::quilt::manifest;
 use crate::quilt::manifest_handle;
 use crate::quilt::storage;
+use crate::quilt::storage::fs::LocalStorage;
 use crate::quilt::Error;
 use crate::quilt4::checksum;
 
@@ -35,8 +36,9 @@ pub async fn push_package(
 
     let remote = &lineage.remote;
 
+    let mut storage = LocalStorage::new();
     let mut local_manifest = manifest.read().await?;
-    let remote_manifest = browse_remote_manifest(paths, remote).await?;
+    let remote_manifest = browse_remote_manifest(paths, &mut storage, remote).await?;
 
     // ## copy data
     // Copy each of the _modified_ paths from their local_key to remote_key,
@@ -177,8 +179,14 @@ pub async fn push_package(
     };
 
     // Cache the relaxed manifest
-    let cache_path =
-        cache_manifest(paths, &local_manifest, &new_remote.bucket, &new_remote.hash).await?;
+    let cache_path = cache_manifest(
+        paths,
+        &mut storage,
+        &local_manifest,
+        &new_remote.bucket,
+        &new_remote.hash,
+    )
+    .await?;
 
     // Push the (cached) relaxed manifest to the remote, don't tag it yet
     new_remote.upload_from(&cache_path).await?;

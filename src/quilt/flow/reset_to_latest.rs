@@ -33,7 +33,7 @@ pub async fn reset_to_latest(
     lineage.remote.hash = new_latest.clone();
     lineage.base_hash = new_latest;
 
-    cache_remote_manifest(paths, &lineage.remote).await?;
+    cache_remote_manifest(paths, &mut storage, &lineage.remote).await?;
     copy_cached_to_installed(
         paths,
         &lineage.remote.bucket,

@@ -9,7 +9,7 @@ use crate::Error;
 pub async fn install_package(
     lineage: DomainLineage,
     paths: &paths::DomainPaths,
-    storage: &impl Storage,
+    storage: &mut impl Storage,
     remote: &RemoteManifest,
 ) -> Result<DomainLineage, Error> {
     // bail if already installed
@@ -18,7 +18,7 @@ pub async fn install_package(
         return Err(Error::PackageAlreadyInstalled(remote.namespace.clone()));
     }
 
-    cache_remote_manifest(paths, remote).await?;
+    cache_remote_manifest(paths, storage, remote).await?;
 
     // Make an "installed" copy of the remote manifest.
     let installed_manifest_path = paths.installed_manifest(&remote.namespace, &remote.hash);
