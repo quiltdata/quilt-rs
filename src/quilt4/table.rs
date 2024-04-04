@@ -311,7 +311,7 @@ impl fmt::Display for Table {
 impl TryFrom<Manifest> for Table {
     type Error = Error;
 
-    fn try_from(quilt3_manifest: Manifest) -> Result<Self, self::Error> {
+    fn try_from(quilt3_manifest: Manifest) -> Result<Self, Self::Error> {
         let mut records = BTreeMap::new();
         for row in quilt3_manifest.rows.clone() {
             let mut info = row.meta.unwrap_or_default();

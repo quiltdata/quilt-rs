@@ -20,10 +20,6 @@ use crate::Row4;
 use crate::Table;
 use crate::UPath;
 
-pub use self::storage::fs;
-pub use self::storage::s3;
-pub use self::uri::RevisionPointer;
-pub use self::uri::S3PackageUri;
 pub use flow::status::UpstreamDiscreteState;
 pub use flow::status::UpstreamState;
 pub use lineage::CommitState;
@@ -38,7 +34,11 @@ pub use manifest_handle::CachedManifest;
 pub use manifest_handle::InstalledManifest;
 pub use manifest_handle::ReadableManifest;
 pub use manifest_handle::RemoteManifest;
+pub use storage::fs;
+pub use storage::s3;
 pub use storage::Storage;
+pub use uri::RevisionPointer;
+pub use uri::S3PackageUri;
 
 use flow::browse::browse_remote_manifest;
 use flow::browse::cache_manifest;
