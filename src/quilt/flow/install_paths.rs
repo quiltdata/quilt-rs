@@ -15,7 +15,6 @@ use crate::quilt::storage::s3;
 use crate::quilt::Storage;
 use crate::s3_utils;
 use crate::Error;
-use crate::UPath;
 
 async fn cache_immutable_object(object_dest: &PathBuf, uri: &s3::S3Uri) -> Result<(), Error> {
     let version = uri
@@ -133,9 +132,7 @@ pub async fn install_paths(
     // TODO: Write to a temporary file first.
     let installed_manifest_path = paths.installed_manifest(&namespace, lineage.current_hash());
 
-    table
-        .write_to_upath(&UPath::Local(installed_manifest_path))
-        .await?;
+    table.write_to_path(&installed_manifest_path).await?;
 
     Ok(lineage)
 }

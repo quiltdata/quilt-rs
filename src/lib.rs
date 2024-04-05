@@ -15,7 +15,6 @@ pub mod utils;
 pub use quilt4::manifest::Manifest4;
 pub use quilt4::row4::Row4;
 pub use quilt4::table::Table;
-pub use quilt4::upath::UPath;
 pub use quilt4::uri::UriParser;
 pub use quilt4::uri::UriQuilt;
 

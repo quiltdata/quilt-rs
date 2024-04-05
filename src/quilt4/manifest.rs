@@ -11,11 +11,7 @@
 //! Before 1.0, they will be renamed to Manifest/Entry
 //! and the existing types will be obsoleted.
 //!
-use super::{
-    table::Table,
-    // entry::Entry4,
-    upath::UPath,
-};
+use super::table::Table;
 use std::fmt;
 
 #[derive(Clone, Debug)]
@@ -32,7 +28,7 @@ impl Manifest4 {
         unimplemented!()
     }
 
-    pub async fn write4(&self, _path: UPath) {
+    pub async fn write4(&self) {
         unimplemented!()
     }
 }

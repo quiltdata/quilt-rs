@@ -13,7 +13,6 @@ use crate::quilt::uri::RevisionPointer;
 use crate::quilt::uri::S3PackageUri;
 use crate::quilt::Error;
 use crate::quilt::Table;
-use crate::quilt::UPath;
 
 pub fn tag_uri(bucket: &str, namespace: &str, tag: &str) -> s3::S3Uri {
     s3::S3Uri {
@@ -116,8 +115,7 @@ pub trait ReadableManifest {
     {
         async {
             let pathbuf = self.get_path_buf();
-            let path = UPath::Local(pathbuf);
-            let table = Table::read_from_upath(&path).await?;
+            let table = Table::read_from_path(&pathbuf).await?;
             Ok(table)
         }
     }

@@ -19,7 +19,6 @@ use crate::s3_utils;
 use crate::Error;
 use crate::Row4;
 use crate::Table;
-use crate::UPath;
 
 pub use flow::status::UpstreamDiscreteState;
 pub use flow::status::UpstreamState;

@@ -8,7 +8,6 @@ use crate::paths;
 use crate::quilt::Storage;
 use crate::Error;
 use crate::Row4;
-use crate::UPath;
 
 use crate::quilt::flow::status::create_status;
 use crate::quilt::flow::status::Change;
@@ -142,9 +141,7 @@ pub async fn commit_package(
 
     let new_manifest_path = paths.installed_manifest(&namespace, &new_top_hash);
 
-    table
-        .write_to_upath(&UPath::Local(new_manifest_path))
-        .await?;
+    table.write_to_path(&new_manifest_path).await?;
 
     let mut prev_hashes = Vec::new();
     if let Some(commit) = lineage.commit {

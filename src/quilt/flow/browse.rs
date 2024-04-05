@@ -13,7 +13,6 @@ use crate::quilt::s3::S3Uri;
 use crate::quilt::storage::Storage;
 use crate::quilt::Error;
 use crate::Table;
-use crate::UPath;
 
 async fn is_parquet(remote: &impl Remote, manifest: &RemoteManifest) -> Result<bool, Error> {
     remote.exists(&S3Uri::from(manifest)).await
@@ -50,7 +49,7 @@ pub async fn cache_manifest(
         .create_dir_all(&cache_path.parent().unwrap())
         .await?;
     manifest
-        .write_to_upath(&UPath::Local(cache_path.clone()))
+        .write_to_path(&cache_path)
         .await
         .map(|_| cache_path)
 }
@@ -77,7 +76,7 @@ pub async fn cache_remote_manifest(
             storage.write(cache_path.clone(), &manifest).await?;
         } else {
             let manifest = fetch_jsonl(remote, remote_manifest).await?;
-            manifest.write_to_upath(&UPath::Local(cache_path)).await?;
+            manifest.write_to_path(&cache_path).await?;
         };
     }
 
