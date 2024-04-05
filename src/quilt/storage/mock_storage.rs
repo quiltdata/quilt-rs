@@ -27,11 +27,13 @@ impl MockStorage {
 
 impl Storage for MockStorage {
     async fn copy(
-        &self,
-        _from: impl AsRef<Path>,
-        _to: impl AsRef<Path>,
+        &mut self,
+        from: impl AsRef<Path>,
+        to: impl AsRef<Path>,
     ) -> Result<u64, std::io::Error> {
-        unimplemented!("Right now, the mock storage does not support copying files.")
+        let file = self.registry.get(from.as_ref()).unwrap();
+        self.registry.insert(to.as_ref().to_path_buf(), file.clone());
+        Ok(0)
     }
 
     async fn create_dir_all(&self, _path: impl AsRef<Path>) -> Result<(), std::io::Error> {

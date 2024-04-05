@@ -1,6 +1,8 @@
 use multihash::Multihash;
 use std::path::PathBuf;
 
+use crate::quilt::storage::Storage;
+
 use crate::Error;
 
 const MANIFEST_DIR: &str = ".quilt/packages";
@@ -73,11 +75,12 @@ impl DomainPaths {
 
 pub async fn copy_cached_to_installed(
     paths: &DomainPaths,
+    storage: &mut impl Storage,
     cached_manifest_bucket: &str,
     installed_manifest_namespace: &str,
     hash: &str,
 ) -> Result<(), Error> {
-    tokio::fs::copy(
+    storage.copy(
         paths.manifest_cache(cached_manifest_bucket, hash),
         paths.installed_manifest(installed_manifest_namespace, hash),
     )

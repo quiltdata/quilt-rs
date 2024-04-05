@@ -79,7 +79,7 @@ impl PackageLineage {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct DomainLineage {
     #[serde(default = "BTreeMap::new")]
     pub packages: BTreeMap<String, PackageLineage>,

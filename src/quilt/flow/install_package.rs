@@ -32,6 +32,7 @@ pub async fn install_package(
         .await?;
     paths::copy_cached_to_installed(
         paths,
+        storage,
         &remote_manifest.bucket,
         &remote_manifest.namespace,
         &remote_manifest.hash,
@@ -62,6 +63,7 @@ mod tests {
     use super::*;
 
     use std::collections::BTreeMap;
+    use std::collections::HashMap;
 
     use crate::quilt::remote::mock_remote::MockRemote;
     use crate::quilt::storage::mock_storage::MockStorage;
@@ -80,6 +82,32 @@ mod tests {
                 namespace: "foo".to_string(),
                 ..RemoteManifest::default()
             },
+        )
+        .await;
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "The package foo is already installed"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_installing() -> Result<(), Error> {
+        let remote_manifest = RemoteManifest {
+            bucket: "a".to_string(),
+            hash: "b".to_string(),
+            ..RemoteManifest::default()
+        };
+        let remote = MockRemote::new(HashMap::from([(
+            "s3://a/.quilt/packages/1220b.parquet".to_string(),
+            Vec::new(),
+        )]));
+        let result = install_package(
+            DomainLineage::default(),
+            &paths::DomainPaths::default(),
+            &mut MockStorage::default(),
+            &remote,
+            &remote_manifest,
         )
         .await;
         assert_eq!(

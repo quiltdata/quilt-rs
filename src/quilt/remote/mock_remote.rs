@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use tracing::log;
 use tokio::io::AsyncRead;
 
 use crate::Error;
@@ -24,15 +25,19 @@ impl Remote for MockRemote {
         bucket: &str,
         key: &str,
     ) -> Result<impl AsyncRead + Send + Unpin, Error> {
-        match self.registry.get(&format!("s3://{}/{}", bucket, key)) {
+        let key = format!("s3://{}/{}", bucket, key);
+        log::debug!("Mocking {} get request", key);
+        match self.registry.get(&key) {
             Some(vec) => Ok(vec.as_slice()),
             None => Err(Error::S3("Key doesn't exists".to_string())),
         }
     }
 
     async fn exists(&self, bucket: &str, key: &str) -> Result<bool, Error> {
+        let key = format!("s3://{}/{}", bucket, key);
+        log::debug!("Mocking {} exists request", key);
         Ok(self
             .registry
-            .contains_key(&format!("s3://{}/{}", bucket, key)))
+            .contains_key(&key))
     }
 }

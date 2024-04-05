@@ -101,7 +101,7 @@ pub struct LocalStorage {}
 
 impl Storage for LocalStorage {
     async fn copy(
-        &self,
+        &mut self,
         from: impl AsRef<Path>,
         to: impl AsRef<Path>,
     ) -> Result<u64, std::io::Error> {

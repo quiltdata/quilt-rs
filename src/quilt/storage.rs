@@ -20,7 +20,7 @@ pub trait Storage {
 
     /// Copy a file from one location to another.
     async fn copy(
-        &self,
+        &mut self,
         from: impl AsRef<Path>,
         to: impl AsRef<Path>,
     ) -> Result<u64, std::io::Error>;

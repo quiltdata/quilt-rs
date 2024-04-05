@@ -52,6 +52,7 @@ pub async fn pull_package(
     cache_remote_manifest(paths, storage, &remote, &lineage.remote).await?;
     copy_cached_to_installed(
         paths,
+        storage,
         &lineage.remote.bucket,
         &namespace,
         &lineage.remote.hash,
