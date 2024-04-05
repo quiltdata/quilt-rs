@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
-use tracing::log;
 use tokio::io::AsyncRead;
+use tracing::log;
 
+use crate::quilt::s3::S3Uri;
 use crate::Error;
 
 use super::Remote;
@@ -20,12 +21,8 @@ impl MockRemote {
 }
 
 impl Remote for MockRemote {
-    async fn get_object(
-        &self,
-        bucket: &str,
-        key: &str,
-    ) -> Result<impl AsyncRead + Send + Unpin, Error> {
-        let key = format!("s3://{}/{}", bucket, key);
+    async fn get_object(&self, s3_uri: &S3Uri) -> Result<impl AsyncRead + Send + Unpin, Error> {
+        let key = s3_uri.to_string();
         log::debug!("Mocking {} get request", key);
         match self.registry.get(&key) {
             Some(vec) => Ok(vec.as_slice()),
@@ -33,11 +30,9 @@ impl Remote for MockRemote {
         }
     }
 
-    async fn exists(&self, bucket: &str, key: &str) -> Result<bool, Error> {
-        let key = format!("s3://{}/{}", bucket, key);
+    async fn exists(&self, s3_uri: &S3Uri) -> Result<bool, Error> {
+        let key = s3_uri.to_string();
         log::debug!("Mocking {} exists request", key);
-        Ok(self
-            .registry
-            .contains_key(&key))
+        Ok(self.registry.contains_key(&key))
     }
 }

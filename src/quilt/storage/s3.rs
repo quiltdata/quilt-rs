@@ -5,6 +5,7 @@ use aws_sdk_s3::primitives::ByteStream;
 use tokio::io::AsyncReadExt;
 use url::Url;
 
+use crate::quilt::remote::Remote;
 use crate::Error;
 
 pub const MPU_MAX_PARTS: u64 = 10_000;
@@ -18,8 +19,8 @@ pub struct S3Uri {
 }
 
 impl S3Uri {
-    pub async fn get_contents(&self) -> Result<String, Error> {
-        get_object_contents(self).await
+    pub async fn get_contents(&self, remote: &impl Remote) -> Result<String, Error> {
+        get_object_contents(remote, self).await
     }
 
     pub async fn put_contents(&self, contents: impl Into<ByteStream>) -> Result<(), Error> {
@@ -85,37 +86,18 @@ impl std::str::FromStr for S3Uri {
     }
 }
 
-pub async fn get_object_bytes(uri: &S3Uri) -> Result<Vec<u8>, Error> {
-    // real impl
-    let client = crate::s3_utils::get_client_for_bucket(&uri.bucket).await?;
-
-    let result = client.get_object().bucket(&uri.bucket).key(&uri.key);
-
-    let result = match &uri.version {
-        Some(version) => result.version_id(version),
-        None => result,
-    };
-
-    let result = result
-        .send()
-        .await
-        .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
+pub async fn get_object_bytes(remote: &impl Remote, uri: &S3Uri) -> Result<Vec<u8>, Error> {
+    let mut reader = remote.get_object(uri).await?;
 
     let mut contents = Vec::new();
 
-    result
-        .body
-        .into_async_read()
-        .read_to_end(&mut contents)
-        .await?;
+    reader.read_to_end(&mut contents).await?;
 
     Ok(contents)
-
-    // TODO: fake impl
 }
 
-pub async fn get_object_contents(uri: &S3Uri) -> Result<String, Error> {
-    let bytes = get_object_bytes(uri).await?;
+pub async fn get_object_contents(remote: &impl Remote, uri: &S3Uri) -> Result<String, Error> {
+    let bytes = get_object_bytes(remote, uri).await?;
     String::from_utf8(bytes).map_err(|err| Error::Utf8(err.utf8_error()))
 }
 

@@ -9,28 +9,31 @@ use crate::quilt::manifest_handle::CachedManifest;
 use crate::quilt::manifest_handle::ReadableManifest;
 use crate::quilt::manifest_handle::RemoteManifest;
 use crate::quilt::remote::Remote;
+use crate::quilt::s3::S3Uri;
 use crate::quilt::storage::Storage;
 use crate::quilt::Error;
 use crate::Table;
 use crate::UPath;
 
 async fn is_parquet(remote: &impl Remote, manifest: &RemoteManifest) -> Result<bool, Error> {
-    remote
-        .exists(&manifest.bucket, &paths::get_manifest_key(&manifest.hash))
-        .await
+    remote.exists(&S3Uri::from(manifest)).await
 }
 
 async fn fetch_parquet(remote: &impl Remote, manifest: &RemoteManifest) -> Result<Vec<u8>, Error> {
-    let key = paths::get_manifest_key(&manifest.hash);
-    let mut contents = remote.get_object(&manifest.bucket, &key).await?;
+    let s3_uri = S3Uri::from(manifest);
+    let mut contents = remote.get_object(&s3_uri).await?;
     let mut output = Vec::new();
     contents.read_to_end(&mut output).await?;
     Ok(output)
 }
 
 async fn fetch_jsonl(remote: &impl Remote, manifest: &RemoteManifest) -> Result<Table, Error> {
-    let key = paths::get_manifest_key_legacy(&manifest.hash);
-    let contents = remote.get_object(&manifest.bucket, &key).await?;
+    let s3_uri = S3Uri {
+        bucket: manifest.bucket.clone(),
+        key: paths::get_manifest_key_legacy(&manifest.hash),
+        version: None,
+    };
+    let contents = remote.get_object(&s3_uri).await?;
     let quilt3_manifest = Manifest::from_reader(contents).await?;
     Table::try_from(quilt3_manifest)
 }

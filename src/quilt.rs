@@ -284,9 +284,10 @@ impl InstalledPackage {
     }
 
     pub async fn status(&self) -> Result<InstalledPackageStatus, Error> {
+        let remote = s3_utils::RemoteS3::new();
         let mut storage = fs::LocalStorage::new();
         let lineage = self.lineage.read().await?;
-        let lineage = refresh_latest_hash(lineage).await?;
+        let lineage = refresh_latest_hash(lineage, &remote).await?;
         let (lineage, status) = create_status(
             lineage,
             &mut storage,
@@ -464,10 +465,10 @@ mod tests {
 
         // ## Pull the manifest
 
-        let remote_manifest =
-            block_on(RemoteManifest::resolve(&test_uri)).expect("Failed to resolve manifest");
-
         let remote = s3_utils::RemoteS3::new();
+        let remote_manifest = block_on(RemoteManifest::resolve(&remote, &test_uri))
+            .expect("Failed to resolve manifest");
+
         let cached_manifest = block_on(cache_remote_manifest(
             &local_domain.paths,
             &mut storage,

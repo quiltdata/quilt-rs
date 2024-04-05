@@ -48,7 +48,7 @@ pub async fn install_package(
     storage.create_dir_all(&working_dir).await?;
 
     // Resolve and record latest manifest hash
-    let latest_hash = remote_manifest.resolve_latest().await?;
+    let latest_hash = remote_manifest.resolve_latest(remote).await?;
     // Update the lineage (with empty paths).
     let mut lineage = lineage;
     lineage.packages.insert(
@@ -64,6 +64,7 @@ mod tests {
 
     use std::collections::BTreeMap;
     use std::collections::HashMap;
+    use std::path::PathBuf;
 
     use crate::quilt::remote::mock_remote::MockRemote;
     use crate::quilt::storage::mock_storage::MockStorage;
@@ -95,25 +96,35 @@ mod tests {
     async fn test_installing() -> Result<(), Error> {
         let remote_manifest = RemoteManifest {
             bucket: "a".to_string(),
-            hash: "b".to_string(),
-            ..RemoteManifest::default()
+            hash: "c".to_string(),
+            namespace: "b".to_string(),
         };
-        let remote = MockRemote::new(HashMap::from([(
-            "s3://a/.quilt/packages/1220b.parquet".to_string(),
-            Vec::new(),
-        )]));
+        let remote = MockRemote::new(HashMap::from([
+            (
+                "s3://a/.quilt/packages/1220c.parquet".to_string(),
+                Vec::new(),
+            ),
+            (
+                "s3://a/.quilt/named_packages/b/latest".to_string(),
+                Vec::new(),
+            ),
+        ]));
+        let mut storage = MockStorage::default();
         let result = install_package(
             DomainLineage::default(),
             &paths::DomainPaths::default(),
-            &mut MockStorage::default(),
+            &mut storage,
             &remote,
             &remote_manifest,
         )
-        .await;
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "The package foo is already installed"
-        );
+        .await?;
+        assert_eq!(result.packages.get("b").unwrap().remote, remote_manifest);
+        assert!(storage
+            .registry
+            .contains_key(&PathBuf::from(".quilt/installed/b/c")),);
+        assert!(storage
+            .registry
+            .contains_key(&PathBuf::from(".quilt/packages/a/c")));
         Ok(())
     }
 }

@@ -32,7 +32,8 @@ impl Storage for MockStorage {
         to: impl AsRef<Path>,
     ) -> Result<u64, std::io::Error> {
         let file = self.registry.get(from.as_ref()).unwrap();
-        self.registry.insert(to.as_ref().to_path_buf(), file.clone());
+        self.registry
+            .insert(to.as_ref().to_path_buf(), file.clone());
         Ok(0)
     }
 

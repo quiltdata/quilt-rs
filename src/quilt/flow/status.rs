@@ -13,6 +13,7 @@ use crate::quilt::lineage::PackageLineage;
 use crate::quilt::manifest::MULTIHASH_SHA256;
 use crate::quilt::manifest::MULTIHASH_SHA256_CHUNKED;
 use crate::quilt::manifest_handle::ReadableManifest;
+use crate::quilt::remote::Remote;
 use crate::quilt::storage::Storage;
 use crate::quilt4::checksum::calculate_sha256_checksum;
 use crate::quilt4::checksum::calculate_sha256_chunked_checksum;
@@ -95,8 +96,11 @@ impl InstalledPackageStatus {
     }
 }
 
-pub async fn refresh_latest_hash(mut lineage: PackageLineage) -> Result<PackageLineage, Error> {
-    let latest_hash = lineage.remote.resolve_latest().await?;
+pub async fn refresh_latest_hash(
+    mut lineage: PackageLineage,
+    remote: &impl Remote,
+) -> Result<PackageLineage, Error> {
+    let latest_hash = lineage.remote.resolve_latest(remote).await?;
     if lineage.latest_hash == latest_hash {
         return Ok(lineage);
     }

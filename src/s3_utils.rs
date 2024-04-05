@@ -37,13 +37,15 @@ pub async fn find_bucket_region(client: &reqwest::Client, bucket: &str) -> Resul
 
 pub async fn get_object(
     client: &aws_sdk_s3::Client,
-    bucket: &str,
-    key: &str,
+    s3_uri: &s3::S3Uri,
 ) -> Result<impl AsyncRead, Error> {
-    let result = client
-        .get_object()
-        .bucket(bucket)
-        .key(key)
+    let result = client.get_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
+    let result = match &s3_uri.version {
+        Some(version) => result.version_id(version),
+        None => result,
+    };
+
+    let result = result
         .send()
         .await
         .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
@@ -205,6 +207,12 @@ pub async fn calculate_attrs_for_key(
 #[derive(Clone)]
 pub struct RemoteS3 {}
 
+impl Default for RemoteS3 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RemoteS3 {
     pub fn new() -> Self {
         RemoteS3 {}
@@ -212,18 +220,19 @@ impl RemoteS3 {
 }
 
 impl Remote for RemoteS3 {
-    async fn get_object(
-        &self,
-        bucket: &str,
-        key: &str,
-    ) -> Result<impl AsyncRead + Send + Unpin, Error> {
-        let client = get_client_for_bucket(bucket).await?;
-        get_object(&client, bucket, key).await
+    async fn get_object(&self, s3_uri: &s3::S3Uri) -> Result<impl AsyncRead + Send + Unpin, Error> {
+        let client = get_client_for_bucket(&s3_uri.bucket).await?;
+        get_object(&client, s3_uri).await
     }
 
-    async fn exists(&self, bucket: &str, key: &str) -> Result<bool, Error> {
-        let client = get_client_for_bucket(bucket).await?;
-        match client.head_object().bucket(bucket).key(key).send().await {
+    async fn exists(&self, s3_uri: &s3::S3Uri) -> Result<bool, Error> {
+        let client = get_client_for_bucket(&s3_uri.bucket).await?;
+        let result = client.head_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
+        let result = match &s3_uri.version {
+            Some(version) => result.version_id(version),
+            None => result,
+        };
+        match result.send().await {
             Ok(_) => Ok(true),
             Err(SdkError::ServiceError(err)) if err.err().is_not_found() => Ok(false),
             Err(err) => Err(Error::S3(DisplayErrorContext(err).to_string())),

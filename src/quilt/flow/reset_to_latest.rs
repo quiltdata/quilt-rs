@@ -19,7 +19,8 @@ pub async fn reset_to_latest(
     working_dir: PathBuf,
     namespace: String,
 ) -> Result<PackageLineage, Error> {
-    let new_latest = lineage.remote.resolve_latest().await?;
+    let remote = s3_utils::RemoteS3::new();
+    let new_latest = lineage.remote.resolve_latest(&remote).await?;
     if new_latest == lineage.remote.hash {
         // already at latest
         return Ok(lineage);
@@ -33,7 +34,6 @@ pub async fn reset_to_latest(
     lineage.remote.hash = new_latest.clone();
     lineage.base_hash = new_latest;
 
-    let remote = s3_utils::RemoteS3::new();
     cache_remote_manifest(paths, storage, &remote, &lineage.remote).await?;
     copy_cached_to_installed(
         paths,

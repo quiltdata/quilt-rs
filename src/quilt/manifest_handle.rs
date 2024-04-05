@@ -7,6 +7,7 @@ use tracing::log;
 
 use crate::quilt::manifest::Manifest;
 use crate::quilt::paths;
+use crate::quilt::remote::Remote;
 use crate::quilt::storage::s3;
 use crate::quilt::uri::RevisionPointer;
 use crate::quilt::uri::S3PackageUri;
@@ -30,13 +31,13 @@ pub struct RemoteManifest {
 }
 
 impl RemoteManifest {
-    pub async fn resolve(uri: &S3PackageUri) -> Result<Self, Error> {
+    pub async fn resolve(remote: &impl Remote, uri: &S3PackageUri) -> Result<Self, Error> {
         // resolve the actual hash
         let top_hash = match &uri.revision {
             RevisionPointer::Hash(top_hash) => top_hash.clone(),
             RevisionPointer::Tag(tag) => {
                 tag_uri(&uri.bucket, &uri.namespace, tag)
-                    .get_contents()
+                    .get_contents(remote)
                     .await?
             }
         };
@@ -48,9 +49,9 @@ impl RemoteManifest {
         })
     }
 
-    pub async fn resolve_latest(&self) -> Result<String, Error> {
+    pub async fn resolve_latest(&self, remote: &impl Remote) -> Result<String, Error> {
         tag_uri(&self.bucket, &self.namespace, "latest")
-            .get_contents()
+            .get_contents(remote)
             .await
     }
 

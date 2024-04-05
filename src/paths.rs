@@ -80,10 +80,11 @@ pub async fn copy_cached_to_installed(
     installed_manifest_namespace: &str,
     hash: &str,
 ) -> Result<(), Error> {
-    storage.copy(
-        paths.manifest_cache(cached_manifest_bucket, hash),
-        paths.installed_manifest(installed_manifest_namespace, hash),
-    )
-    .await?;
+    storage
+        .copy(
+            paths.manifest_cache(cached_manifest_bucket, hash),
+            paths.installed_manifest(installed_manifest_namespace, hash),
+        )
+        .await?;
     Ok(())
 }

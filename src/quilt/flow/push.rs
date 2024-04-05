@@ -218,7 +218,7 @@ pub async fn push_package(
         .await?;
 
     // Check the hash of remote's latest manifest
-    lineage.latest_hash = new_remote.resolve_latest().await?;
+    lineage.latest_hash = new_remote.resolve_latest(&remote).await?;
     lineage.remote = new_remote;
 
     // Reset the commit state.
