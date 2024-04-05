@@ -3,7 +3,7 @@ use crate::cli::output::Std;
 use crate::cli::Error;
 
 pub struct Output {
-    manifest: quilt_rs::Table,
+    manifest: crate::Table,
 }
 
 #[derive(Debug)]
@@ -54,11 +54,11 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 }
 
 pub async fn model(
-    local_domain: &quilt_rs::LocalDomain,
+    local_domain: &crate::LocalDomain,
     Input { uri }: Input,
 ) -> Result<Output, Error> {
-    let uri: quilt_rs::S3PackageUri = uri.parse()?;
-    let remote_manifest = quilt_rs::RemoteManifest::resolve(&uri).await?;
+    let uri: crate::S3PackageUri = uri.parse()?;
+    let remote_manifest = crate::RemoteManifest::resolve(&uri).await?;
     Ok(Output {
         manifest: local_domain
             .browse_remote_manifest(&remote_manifest)
@@ -76,7 +76,7 @@ mod tests {
     async fn test_model() -> Result<(), Error> {
         let temp_dir = TempDir::default();
         let local_path = PathBuf::from(temp_dir.as_ref());
-        let local_domain = quilt_rs::LocalDomain::new(local_path);
+        let local_domain = crate::LocalDomain::new(local_path);
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md".to_string();
         let output = model(&local_domain, Input { uri }).await?;
         assert_eq!(

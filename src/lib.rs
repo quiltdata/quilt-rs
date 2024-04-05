@@ -4,6 +4,7 @@ mod s3_utils;
 
 pub mod quilt;
 pub mod utils;
+pub mod cli;
 
 use std::str::Utf8Error;
 

@@ -10,32 +10,37 @@ use crate::cli::uninstall;
 use crate::cli::Error;
 
 pub struct Model {
-    local_domain: sync::Mutex<quilt_rs::LocalDomain>,
+    local_domain: sync::Mutex<crate::LocalDomain>,
 }
 
 pub trait Commands {
-    fn get_local_domain(&self) -> &sync::Mutex<quilt_rs::LocalDomain>;
+    fn get_local_domain(&self) -> &sync::Mutex<crate::LocalDomain>;
 
+    #[allow(async_fn_in_trait)]
     async fn browse(&self, args: browse::Input) -> Result<browse::Output, Error> {
         let local_domain = &self.get_local_domain().lock().await;
         browse::model(local_domain, args).await
     }
 
+    #[allow(async_fn_in_trait)]
     async fn install(&self, args: install::Input) -> Result<install::Output, Error> {
         let local_domain = &self.get_local_domain().lock().await;
         install::model(local_domain, args).await
     }
 
+    #[allow(async_fn_in_trait)]
     async fn list(&self) -> Result<list::Output, Error> {
         let local_domain = &self.get_local_domain().lock().await;
         list::model(local_domain).await
     }
 
+    #[allow(async_fn_in_trait)]
     async fn package(&self, args: package::Input) -> Result<package::Output, Error> {
         let local_domain = &self.get_local_domain().lock().await;
         package::model(local_domain, args).await
     }
 
+    #[allow(async_fn_in_trait)]
     async fn uninstall(&self, args: uninstall::Input) -> Result<uninstall::Output, Error> {
         let local_domain = &self.get_local_domain().lock().await;
         uninstall::model(local_domain, args).await
@@ -43,13 +48,13 @@ pub trait Commands {
 }
 
 impl Commands for Model {
-    fn get_local_domain(&self) -> &sync::Mutex<quilt_rs::LocalDomain> {
+    fn get_local_domain(&self) -> &sync::Mutex<crate::LocalDomain> {
         &self.local_domain
     }
 }
 
 impl Model {
-    fn new(local_domain: quilt_rs::LocalDomain) -> Self {
+    fn new(local_domain: crate::LocalDomain) -> Self {
         Model {
             local_domain: sync::Mutex::new(local_domain),
         }
@@ -63,7 +68,7 @@ impl Model {
 
 impl From<PathBuf> for Model {
     fn from(root: PathBuf) -> Self {
-        let local_domain = quilt_rs::LocalDomain::new(root);
+        let local_domain = crate::LocalDomain::new(root);
         Model::new(local_domain)
     }
 }

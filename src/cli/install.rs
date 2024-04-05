@@ -13,7 +13,7 @@ pub struct Input {
 
 #[derive(Debug)]
 pub struct Output {
-    installed_package: quilt_rs::InstalledPackage,
+    installed_package: crate::InstalledPackage,
     package_dir: std::path::PathBuf,
     paths: Option<Vec<std::path::PathBuf>>,
 }
@@ -44,17 +44,17 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 }
 
 async fn install_package(
-    local_domain: &quilt_rs::LocalDomain,
-    uri: &quilt_rs::S3PackageUri,
+    local_domain: &crate::LocalDomain,
+    uri: &crate::S3PackageUri,
     namespace: Option<String>,
-) -> Result<(quilt_rs::InstalledPackage, String), Error> {
+) -> Result<(crate::InstalledPackage, String), Error> {
     let namespace = namespace.unwrap_or(uri.namespace.clone());
     let installed_package = local_domain.get_installed_package(&namespace).await?;
     if let Some(installed_package) = installed_package {
         // FIXME: check the actual remote_manifest
         return Ok((installed_package, namespace));
     }
-    let remote_manifest = quilt_rs::RemoteManifest::resolve(uri).await?;
+    let remote_manifest = crate::RemoteManifest::resolve(uri).await?;
     Ok((
         local_domain.install_package(&remote_manifest).await?,
         namespace,
@@ -62,7 +62,7 @@ async fn install_package(
 }
 
 async fn install_paths(
-    installed_package: &quilt_rs::InstalledPackage,
+    installed_package: &crate::InstalledPackage,
     paths: Vec<String>,
 ) -> Result<Vec<String>, Error> {
     installed_package.install_paths(&paths).await?;
@@ -100,14 +100,14 @@ fn get_entries(
 }
 
 pub async fn model(
-    local_domain: &quilt_rs::LocalDomain,
+    local_domain: &crate::LocalDomain,
     Input {
         namespace,
         paths,
         uri,
     }: Input,
 ) -> Result<Output, Error> {
-    let uri: quilt_rs::S3PackageUri = uri.parse()?;
+    let uri: crate::S3PackageUri = uri.parse()?;
     let (installed_package, namespace) = install_package(local_domain, &uri, namespace).await?;
     let package_dir = local_domain.paths.working_dir(&namespace);
     let Entries { keys, paths } = get_entries(&package_dir, uri.path, paths);

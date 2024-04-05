@@ -25,7 +25,7 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 }
 
 pub async fn model(
-    local_domain: &quilt_rs::LocalDomain,
+    local_domain: &crate::LocalDomain,
 
     Input { namespace }: Input,
 ) -> Result<Output, Error> {

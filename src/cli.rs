@@ -7,9 +7,9 @@ use tracing::log;
 mod browse;
 mod install;
 mod list;
-mod model;
-mod output;
-mod package;
+pub mod model;
+pub mod output;
+pub mod package;
 mod uninstall;
 
 use model::Model;
@@ -134,14 +134,14 @@ pub enum Error {
     Domain(PathBuf),
 
     #[error("quilt_rs error: {0}")]
-    Quilt(quilt_rs::Error),
+    Quilt(super::Error),
 
     #[error("Failed to create temp dir: {0}")]
     TempDir(String),
 }
 
-impl From<quilt_rs::Error> for Error {
-    fn from(err: quilt_rs::Error) -> Error {
+impl From<super::Error> for Error {
+    fn from(err: super::Error) -> Error {
         Error::Quilt(err)
     }
 }

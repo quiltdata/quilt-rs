@@ -1,6 +1,6 @@
 use tracing::log;
 
-mod cli;
+use quilt_rs::cli;
 
 #[tokio::main]
 async fn main() {
