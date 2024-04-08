@@ -45,4 +45,8 @@ pub trait Storage {
 
     /// Writes bytes to a file
     async fn write(&mut self, path: PathBuf, bytes: &[u8]) -> Result<(), Error>;
+
+    async fn open(&mut self, path: impl AsRef<Path>) -> Result<tokio::fs::File, Error>;
+
+    async fn create(&mut self, path: impl AsRef<Path>) -> Result<tokio::fs::File, Error>;
 }

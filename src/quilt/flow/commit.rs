@@ -141,7 +141,7 @@ pub async fn commit_package(
 
     let new_manifest_path = paths.installed_manifest(&namespace, &new_top_hash);
 
-    table.write_to_path(&new_manifest_path).await?;
+    table.write_to_path(storage, &new_manifest_path).await?;
 
     let mut prev_hashes = Vec::new();
     if let Some(commit) = lineage.commit {
@@ -185,10 +185,12 @@ mod tests {
         let mut storage = MockStorage::default();
 
         let domain_paths = &paths::DomainPaths::new(working_dir.path().to_path_buf());
-        storage
-            .create_dir_all(&domain_paths.installed_manifests(&namespace))
-            .await?;
-        storage.create_dir_all(&domain_paths.objects_dir()).await?;
+        // storage
+        //     .create_dir_all(&domain_paths.installed_manifests(&namespace))
+        //     .await?;
+        // storage.create_dir_all(&domain_paths.objects_dir()).await?;
+        tokio::fs::create_dir_all(&domain_paths.installed_manifests(&namespace)).await?;
+        tokio::fs::create_dir_all(&domain_paths.objects_dir()).await?;
 
         let commit_message = "Lorem ipsum".to_string();
         let mut user_meta = serde_json::Map::new();

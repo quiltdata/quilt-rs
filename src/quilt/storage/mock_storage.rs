@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
+
+use tempfile;
 
 use crate::Error;
 
@@ -70,5 +73,17 @@ impl Storage for MockStorage {
     async fn write(&mut self, path: PathBuf, bytes: &[u8]) -> Result<(), Error> {
         self.registry.insert(path, bytes.to_vec());
         Ok(())
+    }
+
+    async fn open(&mut self, path: impl AsRef<Path>) -> Result<tokio::fs::File, Error> {
+        let mut temp_file = tempfile::tempfile()?;
+        let stored_file = self.registry.get(path.as_ref()).unwrap();
+        temp_file.write_all(stored_file)?;
+        Ok(tokio::fs::File::from_std(temp_file))
+    }
+
+    async fn create(&mut self, _path: impl AsRef<Path>) -> Result<tokio::fs::File, Error> {
+        let temp_file = tempfile::tempfile()?;
+        Ok(tokio::fs::File::from_std(temp_file))
     }
 }

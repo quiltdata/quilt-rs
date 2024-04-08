@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use arrow::error::ArrowError;
 use tokio::io::AsyncReadExt;
 
 use crate::paths;
@@ -43,13 +42,13 @@ pub async fn cache_manifest(
     manifest: &Table,
     bucket: &str,
     hash: &str,
-) -> Result<PathBuf, ArrowError> {
+) -> Result<PathBuf, Error> {
     let cache_path = paths.manifest_cache(bucket, hash);
     storage
         .create_dir_all(&cache_path.parent().unwrap())
         .await?;
     manifest
-        .write_to_path(&cache_path)
+        .write_to_path(storage, &cache_path)
         .await
         .map(|_| cache_path)
 }
@@ -76,7 +75,7 @@ pub async fn cache_remote_manifest(
             storage.write(cache_path.clone(), &manifest).await?;
         } else {
             let manifest = fetch_jsonl(remote, remote_manifest).await?;
-            manifest.write_to_path(&cache_path).await?;
+            manifest.write_to_path(storage, &cache_path).await?;
         };
     }
 
@@ -155,7 +154,7 @@ mod tests {
         );
         assert_eq!(
             cached_manifest.read().await.unwrap_err().to_string(),
-            "Arrow error: Parquet argument error: External: Invalid argument (os error 22)"
+            "Parquet error: External: Invalid argument (os error 22)"
         );
         Ok(())
     }

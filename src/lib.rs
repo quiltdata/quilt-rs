@@ -53,6 +53,9 @@ pub enum Error {
     #[error("Arrow error: {0}")]
     Arrow(#[from] arrow::error::ArrowError),
 
+    #[error("Parquet error: {0}")]
+    Parquet(#[from] parquet::errors::ParquetError),
+
     #[error("Manifest header: {0}")]
     ManifestHeader(String),
 

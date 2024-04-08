@@ -8,6 +8,7 @@ use tracing::log;
 use crate::quilt::manifest::Manifest;
 use crate::quilt::paths;
 use crate::quilt::remote::Remote;
+use crate::quilt::storage::fs;
 use crate::quilt::storage::s3;
 use crate::quilt::uri::RevisionPointer;
 use crate::quilt::uri::S3PackageUri;
@@ -114,8 +115,9 @@ pub trait ReadableManifest {
         Self: Sync,
     {
         async {
+            let mut storage = fs::LocalStorage::new();
             let pathbuf = self.get_path_buf();
-            let table = Table::read_from_path(&pathbuf).await?;
+            let table = Table::read_from_path(&mut storage, &pathbuf).await?;
             Ok(table)
         }
     }

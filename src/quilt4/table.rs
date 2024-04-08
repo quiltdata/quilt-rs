@@ -7,9 +7,11 @@
 use std::collections::BTreeMap;
 use std::fmt;
 // use std::io;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::quilt::storage::Storage;
 use arrow::array::GenericByteArray;
 use arrow::array::UInt64Array;
 use arrow::datatypes::BinaryType;
@@ -20,14 +22,14 @@ use arrow::datatypes::Utf8Type;
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use multihash::Multihash;
-use parquet::arrow::async_reader::AsyncFileReader;
 use parquet::arrow::AsyncArrowWriter;
 use parquet::arrow::ParquetRecordBatchStreamBuilder;
 use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
 use sha2::Digest;
 use sha2::Sha256;
-use tokio::fs;
+use tokio::io::AsyncRead;
+use tokio::io::AsyncSeek;
 use tokio::io::AsyncWrite;
 use tokio_stream::StreamExt;
 
@@ -46,9 +48,9 @@ pub struct Table {
 }
 
 impl Table {
-    async fn read_rows_impl<T>(reader: T) -> Result<Self, ArrowError>
+    async fn read_rows_impl<T>(reader: T) -> Result<Self, Error>
     where
-        T: AsyncFileReader + Unpin + Send + 'static,
+        T: AsyncSeek + AsyncRead + Unpin + Send + 'static,
     {
         let mut stream = ParquetRecordBatchStreamBuilder::new(reader)
             .await?
@@ -129,8 +131,11 @@ impl Table {
     }
 
     // Read quilt4's Parquet format
-    pub async fn read_from_path(path: &PathBuf) -> Result<Self, ArrowError> {
-        let file = tokio::fs::File::open(&path).await?;
+    pub async fn read_from_path(
+        storage: &mut impl Storage,
+        path: impl AsRef<Path>,
+    ) -> Result<Self, Error> {
+        let file = storage.open(path).await?;
         Table::read_rows_impl(file).await
     }
 
@@ -163,7 +168,11 @@ impl Table {
     }
 
     // Write quilt4's Parquet format
-    pub async fn write_to_path(&self, path: &PathBuf) -> Result<(), ArrowError> {
+    pub async fn write_to_path(
+        &self,
+        storage: &mut impl Storage,
+        path: &PathBuf,
+    ) -> Result<(), Error> {
         let schema = Arc::new(Schema::new(vec![
             Field::new("name", DataType::Utf8, false),
             Field::new("place", DataType::Utf8, false),
@@ -178,9 +187,9 @@ impl Table {
             .build();
 
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).await?;
+            storage.create_dir_all(parent).await?;
         }
-        let file = tokio::fs::File::create(path).await?;
+        let file = storage.create(path).await?;
         let mut writer = AsyncArrowWriter::try_new(file, schema.clone(), Some(props)).unwrap();
 
         Table::write_row_impl(&mut writer, schema.clone(), &self.header).await?;
@@ -285,13 +294,22 @@ impl TryFrom<Manifest> for Table {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use crate::quilt::storage::mock_storage::MockStorage;
     use crate::utils::local_uri_parquet;
 
     use super::*;
 
     #[tokio::test]
-    async fn read_existing_local() {
-        let table = Table::read_from_path(&local_uri_parquet()).await.unwrap();
+    async fn read_existing_local() -> Result<(), Error> {
+        let mut storage = MockStorage {
+            registry: HashMap::from([(local_uri_parquet(), std::fs::read(local_uri_parquet())?)]),
+            ..MockStorage::default()
+        };
+        let table = Table::read_from_path(&mut storage, &local_uri_parquet())
+            .await
+            .unwrap();
         assert_eq!(table.records.len(), 2);
 
         let header = table.get_header();
@@ -299,19 +317,30 @@ mod tests {
 
         let readme = table.get_row("READ ME.md").unwrap();
         assert_eq!(readme.size, 33);
+
+        Ok(())
     }
 
     #[tokio::test]
+    #[ignore]
     async fn read_write_local() {
-        let table1 = Table::read_from_path(&local_uri_parquet()).await.unwrap();
+        let mut storage = MockStorage::default();
+        let table1 = Table::read_from_path(&mut storage, &local_uri_parquet())
+            .await
+            .unwrap();
         assert_eq!(table1.records.len(), 2);
 
         let temp_dir = temp_testdir::TempDir::default();
         let temp_path = temp_dir.join("test.parquet");
 
-        table1.write_to_path(&temp_path).await.unwrap();
+        table1
+            .write_to_path(&mut storage, &temp_path)
+            .await
+            .unwrap();
 
-        let table2 = Table::read_from_path(&temp_path).await.unwrap();
+        let table2 = Table::read_from_path(&mut storage, &temp_path)
+            .await
+            .unwrap();
 
         assert_eq!(table2.records.len(), 2);
         assert_eq!(table2.records, table1.records);

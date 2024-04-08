@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use tokio::fs;
 use tokio::io::AsyncRead;
+
 use tokio::io::AsyncWriteExt;
 
 use crate::Error;
@@ -11,14 +12,8 @@ use super::Storage;
 
 pub type File = Box<dyn AsyncRead + Unpin + Send>;
 
-pub async fn open(path: impl AsRef<Path>) -> Result<File, Error> {
-    // real impl
-    Ok(fs::File::open(path)
-        .await
-        // .map(|file| Box::new(file) as Box<dyn io::AsyncRead + Unpin>)
-        .map(|file| Box::new(file) as File)?)
-
-    // TODO: fake impl
+pub async fn open(path: impl AsRef<Path>) -> Result<fs::File, Error> {
+    Ok(fs::File::open(path).await?)
 }
 
 pub async fn write(path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), Error> {
@@ -134,6 +129,14 @@ impl Storage for LocalStorage {
 
     async fn write(&mut self, path: PathBuf, bytes: &[u8]) -> Result<(), Error> {
         write(path, bytes).await
+    }
+
+    async fn open(&mut self, path: impl AsRef<Path>) -> Result<fs::File, Error> {
+        open(&path).await
+    }
+
+    async fn create(&mut self, path: impl AsRef<Path>) -> Result<tokio::fs::File, Error> {
+        Ok(tokio::fs::File::create(path.as_ref()).await?)
     }
 }
 

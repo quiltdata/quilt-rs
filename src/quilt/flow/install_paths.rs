@@ -132,7 +132,9 @@ pub async fn install_paths(
     // TODO: Write to a temporary file first.
     let installed_manifest_path = paths.installed_manifest(&namespace, lineage.current_hash());
 
-    table.write_to_path(&installed_manifest_path).await?;
+    table
+        .write_to_path(storage, &installed_manifest_path)
+        .await?;
 
     Ok(lineage)
 }
@@ -142,11 +144,11 @@ mod tests {
     use super::*;
 
     use std::collections::BTreeMap;
+    use std::collections::HashMap;
     use std::path::PathBuf;
     use temp_dir::TempDir;
 
     use crate::quilt::lineage::CommitState;
-    use crate::quilt::storage::fs::LocalStorage;
     use crate::quilt::storage::mock_storage::MockStorage;
     use crate::Row4;
     use crate::Table;
@@ -176,12 +178,15 @@ mod tests {
         let namespace = "foo/bar".to_string();
 
         let domain_paths = &paths::DomainPaths::new(working_dir.path().to_path_buf());
-        // TODO: Can't use MockStorage because of Table::write_to_upath
-        let mut storage = LocalStorage::new();
-        storage
-            .create_dir_all(domain_paths.installed_manifests(&namespace))
-            .await?;
-        storage.create_dir_all(domain_paths.objects_dir()).await?;
+        let mut storage = MockStorage {
+            registry: HashMap::from([(
+                working_dir
+                    .path()
+                    .join(PathBuf::from(".quilt/objects/48656c6c6f20776f726c64")),
+                Vec::new(),
+            )]),
+            ..MockStorage::default()
+        };
 
         let lineage = PackageLineage {
             commit: Some(CommitState {
@@ -205,6 +210,9 @@ mod tests {
         )
         .await?;
         assert!(lineage.paths.contains_key("a/a"));
+        assert!(storage
+            .registry
+            .contains_key(&working_dir.path().join(PathBuf::from("a/a"))));
 
         Ok(())
     }
