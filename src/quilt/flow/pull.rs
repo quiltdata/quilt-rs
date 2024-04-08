@@ -59,7 +59,7 @@ pub async fn pull_package(
     )
     .await?;
 
-    let materialized_manifest = manifest.read().await?;
+    let materialized_manifest = manifest.read(storage).await?;
     let paths_to_install = installed_paths
         .into_iter()
         .filter(|x| materialized_manifest.records.contains_key(x))

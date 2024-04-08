@@ -95,7 +95,7 @@ pub async fn install_paths(
     //   add installed package entry:
     //     remote: RemoteManifest
 
-    let mut table = manifest.read().await?;
+    let mut table = manifest.read(storage).await?;
 
     for path in entries_paths {
         // TODO: Consider using a hashmap or treemap for manifest.rows

@@ -90,7 +90,7 @@ pub async fn browse_remote_manifest(
 ) -> Result<Table, Error> {
     cache_remote_manifest(paths, storage, remote, remote_manifest)
         .await?
-        .read()
+        .read(storage)
         .await
 }
 
@@ -103,21 +103,18 @@ mod tests {
     use temp_testdir::TempDir;
 
     use crate::quilt::remote::mock_remote::MockRemote;
-    use crate::quilt::storage::fs::LocalStorage;
     use crate::quilt::storage::mock_storage::MockStorage;
 
     #[tokio::test]
     async fn test_if_cached() -> Result<(), Error> {
-        let root_dir = TempDir::default();
-        let mut storage = MockStorage::default();
-        let paths = paths::DomainPaths::new(root_dir.to_path_buf());
+        let paths = paths::DomainPaths::default();
         let manifest = RemoteManifest {
             bucket: "a".to_string(),
             namespace: "b".to_string(),
             hash: "c".to_string(),
         };
         let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
-        storage.write(cache_path, &(Vec::new())).await?;
+        let mut storage = MockStorage::with_paths(vec![cache_path]);
         let remote = MockRemote::default();
         let cached_manifest =
             cache_remote_manifest(&paths, &mut storage, &remote, &manifest).await?;
@@ -135,8 +132,6 @@ mod tests {
     #[tokio::test]
     async fn test_if_cached_random_file() -> Result<(), Error> {
         let root_dir = TempDir::default();
-        // TODO: Can't use MockStorage because of parquet file reader
-        let mut storage = LocalStorage::default();
         let paths = paths::DomainPaths::new(root_dir.to_path_buf());
         let manifest = RemoteManifest {
             bucket: "a".to_string(),
@@ -144,16 +139,16 @@ mod tests {
             hash: "c".to_string(),
         };
         let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
-        storage.write(cache_path, &(Vec::new())).await?;
+        let mut storage = MockStorage::with_paths(vec![cache_path]);
         let remote = MockRemote::default();
         let cached_manifest =
             cache_remote_manifest(&paths, &mut storage, &remote, &manifest).await?;
         assert_eq!(
-            cached_manifest,
-            CachedManifest::from_remote_manifest(&manifest, &paths)
-        );
-        assert_eq!(
-            cached_manifest.read().await.unwrap_err().to_string(),
+            cached_manifest
+                .read(&mut storage)
+                .await
+                .unwrap_err()
+                .to_string(),
             "Parquet error: External: Invalid argument (os error 22)"
         );
         Ok(())

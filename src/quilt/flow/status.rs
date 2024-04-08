@@ -110,7 +110,7 @@ pub async fn refresh_latest_hash(
 
 pub async fn create_status(
     lineage: PackageLineage,
-    _storage: &mut impl Storage,
+    storage: &mut impl Storage,
     manifest: &(impl ReadableManifest + Sync),
     working_dir: PathBuf,
 ) -> Result<(PackageLineage, InstalledPackageStatus), Error> {
@@ -121,7 +121,7 @@ pub async fn create_status(
     // installed entries marked as "installed" (initially as "downloading")
     // modified entries marked as "modified", etc
 
-    let table = manifest.read().await?;
+    let table = manifest.read(storage).await?;
 
     let mut orig_paths = HashMap::new();
     for path in lineage.paths.keys() {

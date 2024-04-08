@@ -8,8 +8,8 @@ use tracing::log;
 use crate::quilt::manifest::Manifest;
 use crate::quilt::paths;
 use crate::quilt::remote::Remote;
-use crate::quilt::storage::fs;
 use crate::quilt::storage::s3;
+use crate::quilt::storage::Storage;
 use crate::quilt::uri::RevisionPointer;
 use crate::quilt::uri::S3PackageUri;
 use crate::quilt::Error;
@@ -110,14 +110,16 @@ pub trait ReadableManifest {
         PathBuf::default()
     }
 
-    fn read(&self) -> impl std::future::Future<Output = Result<Table, Error>> + Send
+    fn read(
+        &self,
+        storage: &mut impl Storage,
+    ) -> impl std::future::Future<Output = Result<Table, Error>>
     where
         Self: Sync,
     {
         async {
-            let mut storage = fs::LocalStorage::new();
             let pathbuf = self.get_path_buf();
-            let table = Table::read_from_path(&mut storage, &pathbuf).await?;
+            let table = Table::read_from_path(storage, &pathbuf).await?;
             Ok(table)
         }
     }

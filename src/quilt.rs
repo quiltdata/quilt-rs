@@ -480,7 +480,8 @@ mod tests {
         ))
         .expect("Failed to cache the manifest");
 
-        let manifest = block_on(cached_manifest.read()).expect("Failed to parse the manifest");
+        let manifest =
+            block_on(cached_manifest.read(&mut storage)).expect("Failed to parse the manifest");
 
         log::debug!("manifest: {manifest:?}");
         // TODO: assert manifest has the expected contents

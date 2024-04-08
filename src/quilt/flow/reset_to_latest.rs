@@ -44,7 +44,7 @@ pub async fn reset_to_latest(
     )
     .await?;
 
-    let materialized_manifest = manifest.read().await?;
+    let materialized_manifest = manifest.read(storage).await?;
     let paths_to_install = entries_paths
         .into_iter()
         .filter(|x| materialized_manifest.records.contains_key(x))

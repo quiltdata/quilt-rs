@@ -4,6 +4,7 @@ pub mod manifest {
     use std::collections::BTreeMap;
 
     use crate::quilt::manifest_handle::ReadableManifest;
+    use crate::quilt::storage::Storage;
     use crate::Error;
     use crate::Row4;
     use crate::Table;
@@ -11,7 +12,7 @@ pub mod manifest {
     pub fn default() -> impl ReadableManifest {
         struct InMemoryManifest {}
         impl ReadableManifest for InMemoryManifest {
-            async fn read(&self) -> Result<Table, Error> {
+            async fn read(&self, _storage: &mut impl Storage) -> Result<Table, Error> {
                 Ok(Table::default())
             }
         }
@@ -23,7 +24,7 @@ pub mod manifest {
             keys: Vec<String>,
         }
         impl ReadableManifest for InMemoryManifest {
-            async fn read(&self) -> Result<Table, Error> {
+            async fn read(&self, _storage: &mut impl Storage) -> Result<Table, Error> {
                 let mut records = BTreeMap::new();
                 for key in &self.keys {
                     records.insert(

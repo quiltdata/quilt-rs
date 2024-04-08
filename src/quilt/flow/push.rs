@@ -39,7 +39,7 @@ pub async fn push_package(
     let remote_manifest_address = &lineage.remote;
 
     let remote = s3_utils::RemoteS3::new();
-    let mut local_manifest = manifest.read().await?;
+    let mut local_manifest = manifest.read(storage).await?;
     let remote_manifest =
         browse_remote_manifest(paths, storage, &remote, remote_manifest_address).await?;
 

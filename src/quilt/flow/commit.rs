@@ -72,7 +72,7 @@ pub async fn commit_package(
     // TODO: This should really be done when the domain is created.
     storage.create_dir_all(&objects_dir).await?;
 
-    let mut table = manifest.read().await?;
+    let mut table = manifest.read(storage).await?;
 
     for (logical_key, Change { current, previous }) in status.changes {
         if let Some(previous) = previous {
