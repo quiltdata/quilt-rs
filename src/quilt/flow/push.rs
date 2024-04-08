@@ -240,23 +240,15 @@ pub async fn push_package(
 mod tests {
     use super::*;
 
-    use crate::quilt::manifest_handle::ReadableManifest;
+    use crate::quilt::mocks;
     use crate::quilt::storage::mock_storage::MockStorage;
-    use crate::Table;
-
-    struct InMemoryManifest {}
-    impl ReadableManifest for InMemoryManifest {
-        async fn read(&self) -> Result<Table, Error> {
-            Ok(Table::default())
-        }
-    }
 
     #[tokio::test]
     async fn test_no_push_if_no_commit() -> Result<(), Error> {
         let mut storage = MockStorage::default();
         let lineage = push_package(
             PackageLineage::default(),
-            &(InMemoryManifest {}),
+            &mocks::manifest::default(),
             &paths::DomainPaths::default(),
             &mut storage,
             String::default(),

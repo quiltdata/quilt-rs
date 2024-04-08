@@ -164,19 +164,8 @@ mod tests {
 
     use temp_dir::TempDir;
 
+    use crate::quilt::mocks;
     use crate::quilt::storage::mock_storage::MockStorage;
-    use crate::quilt::Table;
-
-    struct TestManifest {}
-
-    impl ReadableManifest for TestManifest {
-        fn get_path_buf(&self) -> PathBuf {
-            PathBuf::new()
-        }
-        async fn read(&self) -> Result<Table, Error> {
-            Ok(Table::default())
-        }
-    }
 
     #[tokio::test]
     async fn test_commit() -> Result<(), Error> {
@@ -201,7 +190,7 @@ mod tests {
 
         let lineage = PackageLineage::default();
         assert!(lineage.commit.is_none());
-        let manifest = TestManifest {};
+        let manifest = mocks::manifest::default();
         let lineage = commit_package(
             lineage,
             &manifest,

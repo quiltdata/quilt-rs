@@ -143,32 +143,11 @@ pub async fn install_paths(
 mod tests {
     use super::*;
 
-    use std::collections::BTreeMap;
     use std::path::PathBuf;
     use tempfile;
 
-    use crate::quilt::lineage::mocks;
+    use crate::quilt::mocks;
     use crate::quilt::storage::mock_storage::MockStorage;
-    use crate::Row4;
-    use crate::Table;
-
-    struct InMemoryManifest {}
-    impl ReadableManifest for InMemoryManifest {
-        async fn read(&self) -> Result<Table, Error> {
-            Ok(Table {
-                records: BTreeMap::from([(
-                    "a/a".to_string(),
-                    Row4 {
-                        name: "a/a".to_string(),
-                        place: "s3://data-yaml-spec-tests/scale/10u/e0-0.txt?versionId=jHb6DGN43Ex7EhbxZc2G9JnAkWSeTfEY".to_string(),
-                        hash: multihash::Multihash::wrap(345, b"Hello world")?,
-                        ..Row4::default()
-                    },
-                )]),
-                ..Table::default()
-            })
-        }
-    }
 
     #[tokio::test]
     async fn test_installing_one_path() -> Result<(), Error> {
@@ -182,9 +161,9 @@ mod tests {
             .path()
             .join(PathBuf::from(".quilt/objects/48656c6c6f20776f726c64"))]);
 
-        let lineage = mocks::lineage_with_commit_hash("fghijk");
+        let lineage = mocks::lineage::with_commit_hash("fghijk");
         let entries_paths = vec!["a/a".to_string()];
-        let manifest = InMemoryManifest {};
+        let manifest = mocks::manifest::with_record_keys(entries_paths.clone())?;
 
         assert!(lineage.paths.is_empty());
         let lineage = install_paths(
@@ -207,10 +186,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_installing_path_that_doesnt_exists_in_manifest() -> Result<(), Error> {
-        let lineage = mocks::lineage_with_commit_hash("fghijk");
+        let lineage = mocks::lineage::with_commit_hash("fghijk");
         let mut storage = MockStorage::default();
         let entries_paths = vec!["z/z".to_string()];
-        let manifest = InMemoryManifest {};
+        let manifest = mocks::manifest::with_record_keys(vec!["a/a".to_string()])?;
 
         assert!(lineage.paths.is_empty());
         let lineage = install_paths(

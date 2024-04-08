@@ -41,8 +41,8 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::quilt::lineage::mocks;
     use crate::quilt::lineage::PathState;
+    use crate::quilt::mocks;
     use crate::quilt::storage::mock_storage::MockStorage;
 
     #[tokio::test]
@@ -62,7 +62,7 @@ mod tests {
     #[tokio::test]
     async fn uninstall_single_path() -> Result<(), Error> {
         let installed_paths = vec!["a/a", "test folde/r", "b/b"];
-        let lineage = mocks::lineage_with_paths(&installed_paths);
+        let lineage = mocks::lineage::with_paths(&installed_paths);
 
         let mut storage = MockStorage::with_keys(&installed_paths);
 
@@ -89,7 +89,7 @@ mod tests {
 
     #[tokio::test]
     async fn uninstall_multiple_paths() -> Result<(), Error> {
-        let lineage = mocks::lineage_with_paths(&vec!["a/a", "b/b"]);
+        let lineage = mocks::lineage::with_paths(&vec!["a/a", "b/b"]);
         let paths = vec!["b/b".to_string(), "a/a".to_string()];
         let mut storage = MockStorage::default();
         let modified_lineage =

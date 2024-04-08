@@ -13,6 +13,9 @@ pub mod remote;
 pub mod storage;
 pub mod uri;
 
+#[cfg(test)]
+pub mod mocks;
+
 use crate::paths;
 use crate::quilt4::table::HEADER_ROW;
 use crate::s3_utils;

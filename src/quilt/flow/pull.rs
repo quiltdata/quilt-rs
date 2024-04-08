@@ -80,43 +80,18 @@ pub async fn pull_package(
 mod tests {
     use super::*;
 
-    use std::collections::BTreeMap;
-
-    use crate::quilt::lineage::CommitState;
-    use crate::quilt::lineage::PathState;
-    use crate::quilt::manifest_handle::ReadableManifest;
+    use crate::quilt::mocks;
     use crate::quilt::storage::mock_storage::MockStorage;
     use crate::quilt::RemoteManifest;
-    use crate::Row4;
-    use crate::Table;
-
-    struct InMemoryManifest {}
-    impl ReadableManifest for InMemoryManifest {
-        async fn read(&self) -> Result<Table, Error> {
-            Ok(Table::default())
-        }
-    }
 
     #[tokio::test]
-    async fn test_no_pull_if_changes() {
+    async fn test_no_pull_if_changes() -> Result<(), Error> {
         let mut storage = MockStorage::default();
-        let lineage = PackageLineage {
-            paths: BTreeMap::from([("a/a".to_string(), PathState::default())]),
-            ..PackageLineage::default()
-        };
-        struct RemovedFilesManifest {}
-        impl ReadableManifest for RemovedFilesManifest {
-            async fn read(&self) -> Result<Table, Error> {
-                Ok(Table {
-                    records: BTreeMap::from([("a/a".to_string(), Row4::default())]),
-                    ..Table::default()
-                })
-            }
-        }
+        let lineage = mocks::lineage::with_paths(&vec!["a/a"]);
 
         let error = pull_package(
             lineage,
-            &(RemovedFilesManifest {}),
+            &mocks::manifest::with_record_keys(vec!["a/a".to_string()])?,
             &DomainPaths::default(),
             &mut storage,
             PathBuf::default(),
@@ -127,18 +102,16 @@ mod tests {
             error.unwrap_err().to_string(),
             "General error regarding package: package has pending changes".to_string()
         );
+        Ok(())
     }
 
     #[tokio::test]
     async fn test_no_pull_if_commit() {
         let mut storage = MockStorage::default();
-        let lineage = PackageLineage {
-            commit: Some(CommitState::default()),
-            ..PackageLineage::default()
-        };
+        let lineage = mocks::lineage::with_commit();
         let error = pull_package(
             lineage,
-            &(InMemoryManifest {}),
+            &mocks::manifest::default(),
             &DomainPaths::default(),
             &mut storage,
             PathBuf::default(),
@@ -164,7 +137,7 @@ mod tests {
         };
         let error = pull_package(
             lineage,
-            &(InMemoryManifest {}),
+            &mocks::manifest::default(),
             &DomainPaths::default(),
             &mut storage,
             PathBuf::default(),
@@ -191,7 +164,7 @@ mod tests {
         };
         let error = pull_package(
             lineage,
-            &(InMemoryManifest {}),
+            &mocks::manifest::default(),
             &DomainPaths::default(),
             &mut storage,
             PathBuf::default(),
