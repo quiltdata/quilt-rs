@@ -305,7 +305,6 @@ mod tests {
     async fn read_existing_local() -> Result<(), Error> {
         let mut storage = MockStorage {
             registry: HashMap::from([(local_uri_parquet(), std::fs::read(local_uri_parquet())?)]),
-            ..MockStorage::default()
         };
         let table = Table::read_from_path(&mut storage, &local_uri_parquet())
             .await

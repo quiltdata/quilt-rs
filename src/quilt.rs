@@ -121,7 +121,8 @@ impl LocalDomain {
         let storage = fs::LocalStorage::new();
         let lineage = self.lineage.read().await?;
         // FIXME: write lineage in the end?
-        uninstall_package(lineage, &self.paths, &storage, namespace).await
+        uninstall_package(lineage, &self.paths, &storage, namespace).await?;
+        Ok(())
     }
 
     pub async fn list_installed_packages(&self) -> Result<Vec<InstalledPackage>, Error> {

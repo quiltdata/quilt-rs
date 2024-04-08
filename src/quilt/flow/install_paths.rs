@@ -144,11 +144,10 @@ mod tests {
     use super::*;
 
     use std::collections::BTreeMap;
-    use std::collections::HashMap;
     use std::path::PathBuf;
-    use temp_dir::TempDir;
+    use tempfile;
 
-    use crate::quilt::lineage::CommitState;
+    use crate::quilt::lineage::mocks;
     use crate::quilt::storage::mock_storage::MockStorage;
     use crate::Row4;
     use crate::Table;
@@ -173,28 +172,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_installing_one_path() -> Result<(), Error> {
-        let working_dir = TempDir::new()?;
+        let working_dir = tempfile::tempdir()?;
 
         let namespace = "foo/bar".to_string();
 
         let domain_paths = &paths::DomainPaths::new(working_dir.path().to_path_buf());
-        let mut storage = MockStorage {
-            registry: HashMap::from([(
-                working_dir
-                    .path()
-                    .join(PathBuf::from(".quilt/objects/48656c6c6f20776f726c64")),
-                Vec::new(),
-            )]),
-            ..MockStorage::default()
-        };
 
-        let lineage = PackageLineage {
-            commit: Some(CommitState {
-                hash: "fghijk".to_string(),
-                ..CommitState::default()
-            }),
-            ..PackageLineage::default()
-        };
+        let mut storage = MockStorage::with_paths(vec![working_dir
+            .path()
+            .join(PathBuf::from(".quilt/objects/48656c6c6f20776f726c64"))]);
+
+        let lineage = mocks::lineage_with_commit_hash("fghijk");
         let entries_paths = vec!["a/a".to_string()];
         let manifest = InMemoryManifest {};
 
@@ -219,13 +207,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_installing_path_that_doesnt_exists_in_manifest() -> Result<(), Error> {
-        let lineage = PackageLineage {
-            commit: Some(CommitState {
-                hash: "fghijk".to_string(),
-                ..CommitState::default()
-            }),
-            ..PackageLineage::default()
-        };
+        let lineage = mocks::lineage_with_commit_hash("fghijk");
         let mut storage = MockStorage::default();
         let entries_paths = vec!["z/z".to_string()];
         let manifest = InMemoryManifest {};

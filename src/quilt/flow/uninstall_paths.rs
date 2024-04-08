@@ -40,8 +40,8 @@ mod tests {
     use super::*;
 
     use std::collections::BTreeMap;
-    use std::collections::HashSet;
 
+    use crate::quilt::lineage::mocks;
     use crate::quilt::lineage::PathState;
     use crate::quilt::storage::mock_storage::MockStorage;
 
@@ -61,36 +61,21 @@ mod tests {
 
     #[tokio::test]
     async fn uninstall_single_path() -> Result<(), Error> {
-        let installed_paths = BTreeMap::from([
-            ("a/a".to_string(), PathState::default()),
-            ("test folde/r".to_string(), PathState::default()),
-            ("b/b".to_string(), PathState::default()),
-        ]);
-        let lineage = PackageLineage {
-            paths: installed_paths.clone(),
-            ..PackageLineage::default()
-        };
-        let mut storage = MockStorage::default();
-        storage.install_paths(
-            installed_paths
-                .keys()
-                .map(PathBuf::from)
-                .collect::<HashSet<_>>(),
-        );
+        let installed_paths = vec!["a/a", "test folde/r", "b/b"];
+        let lineage = mocks::lineage_with_paths(&installed_paths);
+
+        let mut storage = MockStorage::with_keys(&installed_paths);
 
         let paths_to_uninstall = vec!["test folde/r".to_string()];
 
         let key = PathBuf::from("test folde/r");
-        assert_eq!(
-            storage.paths.get(&key),
-            Some(&PathBuf::from("test folde/r"))
-        );
+        assert!(storage.registry.get(&key).is_some(),);
 
         let modified_lineage =
             uninstall_paths(lineage, PathBuf::new(), &mut storage, &paths_to_uninstall).await?;
 
         // Check that the key was removed
-        assert!(storage.paths.get(&key).is_none());
+        assert!(storage.registry.get(&key).is_none());
 
         assert_eq!(
             modified_lineage.paths,
@@ -104,13 +89,7 @@ mod tests {
 
     #[tokio::test]
     async fn uninstall_multiple_paths() -> Result<(), Error> {
-        let lineage = PackageLineage {
-            paths: BTreeMap::from([
-                ("a/a".to_string(), PathState::default()),
-                ("b/b".to_string(), PathState::default()),
-            ]),
-            ..PackageLineage::default()
-        };
+        let lineage = mocks::lineage_with_paths(&vec!["a/a", "b/b"]);
         let paths = vec!["b/b".to_string(), "a/a".to_string()];
         let mut storage = MockStorage::default();
         let modified_lineage =

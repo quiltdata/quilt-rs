@@ -9,6 +9,9 @@ use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
 
+#[cfg(test)]
+pub mod mocks;
+
 use crate::Error;
 
 use super::RemoteManifest;
