@@ -69,7 +69,7 @@ mod tests {
     #[test]
     fn test_local_uri_json() {
         let expected = current_domain()
-            .join("./packages/5f1b1e4928dbb5d700cfd37ed5f5180134d1ad93a0a700f17e43275654c262f4");
+            .join("./packages/0428ab8c8b0fe83d9e57fb6b26ff190173caad00ed7aeb683ce26cc4b56ea4bb");
         assert_eq!(local_uri_json(), expected);
     }
 }

@@ -104,6 +104,7 @@ mod tests {
 
     use crate::quilt::remote::mock_remote::MockRemote;
     use crate::quilt::storage::mock_storage::MockStorage;
+    use crate::utils::local_uri_json;
 
     #[tokio::test]
     async fn test_if_cached() -> Result<(), Error> {
@@ -167,24 +168,51 @@ mod tests {
             "s3://a/.quilt/packages/1220c.parquet".to_string(),
             Vec::new(),
         )]));
-        let _cached_manifest =
+        let cached_manifest =
             cache_remote_manifest(&paths, &mut storage, &remote, &manifest).await?;
         assert!(storage
             .registry
             .get(&PathBuf::from(".quilt/packages/a/c"))
             .unwrap()
-            .is_empty(),);
+            .is_empty());
+        assert_eq!(
+            cached_manifest,
+            CachedManifest {
+                paths,
+                bucket: "a".to_string(),
+                hash: "c".to_string(),
+            }
+        );
         Ok(())
     }
 
     #[tokio::test]
-    #[ignore]
     async fn test_caching_jsonl() -> Result<(), Error> {
-        // TODO: pass storage to the `manifest.write_to_upath`
-        // let remote = MockRemote::new(HashMap::from([(
-        //     "s3://a/.quilt/packages/c".to_string(),
-        //     Vec::new(),
-        // )]));
+        let mut storage = MockStorage::default();
+        let paths = paths::DomainPaths::default();
+        let manifest = RemoteManifest {
+            bucket: "a".to_string(),
+            namespace: "b".to_string(),
+            hash: "c".to_string(),
+        };
+        let jsonl = std::fs::read(local_uri_json())?;
+        let remote = MockRemote::new(HashMap::from([(
+            "s3://a/.quilt/packages/c".to_string(),
+            jsonl,
+        )]));
+        let cached_manifest =
+            cache_remote_manifest(&paths, &mut storage, &remote, &manifest).await?;
+        assert!(storage
+            .registry
+            .contains_key(&PathBuf::from(".quilt/packages/a/c")));
+        assert_eq!(
+            cached_manifest,
+            CachedManifest {
+                paths,
+                bucket: "a".to_string(),
+                hash: "c".to_string(),
+            }
+        );
         Ok(())
     }
 }

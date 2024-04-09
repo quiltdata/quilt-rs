@@ -88,8 +88,10 @@ impl Storage for MockStorage {
         Ok(tokio::fs::File::from_std(temp_file))
     }
 
-    async fn create(&mut self, _path: impl AsRef<Path>) -> Result<tokio::fs::File, Error> {
+    async fn create(&mut self, path: impl AsRef<Path>) -> Result<tokio::fs::File, Error> {
         let temp_file = tempfile::tempfile()?;
+        self.registry
+            .insert(path.as_ref().to_path_buf(), Vec::new());
         Ok(tokio::fs::File::from_std(temp_file))
     }
 }
