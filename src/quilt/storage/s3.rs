@@ -1,6 +1,5 @@
 use std::fmt;
 
-use aws_sdk_s3::error::DisplayErrorContext;
 use aws_sdk_s3::primitives::ByteStream;
 use tokio::io::AsyncReadExt;
 use url::Url;
@@ -23,8 +22,12 @@ impl S3Uri {
         get_object_contents(remote, self).await
     }
 
-    pub async fn put_contents(&self, contents: impl Into<ByteStream>) -> Result<(), Error> {
-        put_object_contents(self, contents).await
+    pub async fn put_contents(
+        &self,
+        remote: &mut impl Remote,
+        contents: impl Into<ByteStream>,
+    ) -> Result<(), Error> {
+        put_object_contents(remote, self, contents).await
     }
 }
 
@@ -102,20 +105,22 @@ pub async fn get_object_contents(remote: &impl Remote, uri: &S3Uri) -> Result<St
 }
 
 pub async fn put_object_contents(
+    remote: &mut impl Remote,
     uri: &S3Uri,
     contents: impl Into<ByteStream>,
 ) -> Result<(), Error> {
-    let client = crate::s3_utils::get_client_for_bucket(&uri.bucket).await?;
-    client
-        .put_object()
-        .bucket(&uri.bucket)
-        .key(&uri.key)
-        .body(contents.into())
-        .send()
-        .await
-        .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
+    // let client = crate::s3_utils::get_client_for_bucket(&uri.bucket).await?;
+    remote.put_object(uri, contents).await
+    //client
+    //    .put_object()
+    //    .bucket(&uri.bucket)
+    //    .key(&uri.key)
+    //    .body(contents.into())
+    //    .send()
+    //    .await
+    //    .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
 
-    Ok(())
+    // Ok(())
 }
 
 pub fn make_s3_url(bucket: &str, s3_key: &str, version_id: Option<&str>) -> Url {

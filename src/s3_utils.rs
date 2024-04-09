@@ -6,6 +6,7 @@ use aws_config::BehaviorVersion;
 use aws_sdk_s3::error::DisplayErrorContext;
 use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput;
+use aws_sdk_s3::primitives::ByteStream;
 use aws_types::region::Region;
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
@@ -237,6 +238,24 @@ impl Remote for RemoteS3 {
             Err(SdkError::ServiceError(err)) if err.err().is_not_found() => Ok(false),
             Err(err) => Err(Error::S3(DisplayErrorContext(err).to_string())),
         }
+    }
+
+    async fn put_object(
+        &mut self,
+        s3_uri: &s3::S3Uri,
+        contents: impl Into<ByteStream>,
+    ) -> Result<(), Error> {
+        let client = get_client_for_bucket(&s3_uri.bucket).await?;
+        client
+            .put_object()
+            .bucket(&s3_uri.bucket)
+            .key(&s3_uri.key)
+            .body(contents.into())
+            .send()
+            .await
+            .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
+
+        Ok(())
     }
 }
 

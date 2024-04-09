@@ -55,34 +55,44 @@ impl RemoteManifest {
             .await
     }
 
-    async fn put_tag(&self, tag: &str, hash: &str) -> Result<(), Error> {
+    async fn put_tag(&self, remote: &mut impl Remote, tag: &str, hash: &str) -> Result<(), Error> {
         tag_uri(&self.bucket, &self.namespace, tag)
-            .put_contents(hash.as_bytes().to_vec())
+            .put_contents(remote, hash.as_bytes().to_vec())
             .await
     }
 
     pub async fn put_timestamp_tag(
         &self,
+        remote: &mut impl Remote,
         timestamp: chrono::DateTime<chrono::Utc>,
         hash: &str,
     ) -> Result<(), Error> {
-        self.put_tag(&timestamp.timestamp().to_string(), hash).await
+        self.put_tag(remote, &timestamp.timestamp().to_string(), hash)
+            .await
     }
 
-    pub async fn update_latest(&self, hash: &str) -> Result<(), Error> {
-        self.put_tag("latest", hash).await
+    pub async fn update_latest(&self, remote: &mut impl Remote, hash: &str) -> Result<(), Error> {
+        self.put_tag(remote, "latest", hash).await
     }
 
-    pub async fn upload_from(&self, manifest_path: &PathBuf) -> Result<(), Error> {
+    pub async fn upload_from(
+        &self,
+        remote: &mut impl Remote,
+        manifest_path: &PathBuf,
+    ) -> Result<(), Error> {
         // TODO: FAIL if the manifest with this hash already exists?
         let body = ByteStream::from_path(manifest_path).await?;
         let s3uri = s3::S3Uri::from(self);
         log::info!("writing remote manifest to {}", s3uri.key);
 
-        s3uri.put_contents(body).await
+        s3uri.put_contents(remote, body).await
     }
 
-    pub async fn upload_legacy(&self, table: &Table) -> Result<(), Error> {
+    pub async fn upload_legacy(
+        &self,
+        remote: &mut impl Remote,
+        table: &Table,
+    ) -> Result<(), Error> {
         let s3uri = s3::S3Uri {
             bucket: self.bucket.clone(),
             key: paths::get_manifest_key(&self.hash),
@@ -90,7 +100,10 @@ impl RemoteManifest {
         };
 
         s3uri
-            .put_contents(Manifest::from(table).to_jsonlines().as_bytes().to_vec())
+            .put_contents(
+                remote,
+                Manifest::from(table).to_jsonlines().as_bytes().to_vec(),
+            )
             .await
     }
 }

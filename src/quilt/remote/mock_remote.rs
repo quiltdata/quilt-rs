@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use aws_sdk_s3::primitives::ByteStream;
 use tokio::io::AsyncRead;
 use tracing::log;
 
@@ -34,5 +35,17 @@ impl Remote for MockRemote {
         let key = s3_uri.to_string();
         log::debug!("Mocking {} exists request", key);
         Ok(self.registry.contains_key(&key))
+    }
+
+    async fn put_object(
+        &mut self,
+        s3_uri: &S3Uri,
+        contents: impl Into<ByteStream>,
+    ) -> Result<(), Error> {
+        let key = s3_uri.to_string();
+        log::debug!("Mocking {} put request", key);
+        self.registry
+            .insert(key, contents.into().collect().await?.to_vec());
+        Ok(())
     }
 }

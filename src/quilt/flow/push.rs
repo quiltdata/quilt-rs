@@ -18,17 +18,18 @@ use crate::quilt::flow::browse::cache_manifest;
 use crate::quilt::lineage::PackageLineage;
 use crate::quilt::manifest;
 use crate::quilt::manifest_handle;
+use crate::quilt::remote::Remote;
 use crate::quilt::storage;
 use crate::quilt::storage::Storage;
 use crate::quilt::Error;
 use crate::quilt4::checksum;
-use crate::s3_utils;
 
 pub async fn push_package(
     mut lineage: PackageLineage,
     manifest: &(impl manifest_handle::ReadableManifest + Sync),
     paths: &paths::DomainPaths,
     storage: &mut impl Storage,
+    remote: &mut impl Remote,
     namespace: String,
 ) -> Result<PackageLineage, Error> {
     let commit = match lineage.commit {
@@ -38,10 +39,9 @@ pub async fn push_package(
 
     let remote_manifest_address = &lineage.remote;
 
-    let remote = s3_utils::RemoteS3::new();
     let mut local_manifest = manifest.read(storage).await?;
     let remote_manifest =
-        browse_remote_manifest(paths, storage, &remote, remote_manifest_address).await?;
+        browse_remote_manifest(paths, storage, remote, remote_manifest_address).await?;
 
     // ## copy data
     // Copy each of the _modified_ paths from their local_key to remote_key,
@@ -200,10 +200,10 @@ pub async fn push_package(
     .await?;
 
     // Push the (cached) relaxed manifest to the remote, don't tag it yet
-    new_remote.upload_from(&cache_path).await?;
+    new_remote.upload_from(remote, &cache_path).await?;
 
     // Upload a quilt3 manifest for backward compatibility.
-    new_remote.upload_legacy(&local_manifest).await?;
+    new_remote.upload_legacy(remote, &local_manifest).await?;
 
     log::debug!("uploaded remote manifest: {new_remote:?}");
 
@@ -214,11 +214,11 @@ pub async fn push_package(
     // TODO: Otherwise try again with the current timestamp as the tag
     // (e.g., try five times with exponential backoff, then Error)
     new_remote
-        .put_timestamp_tag(commit.timestamp, &new_remote.hash)
+        .put_timestamp_tag(remote, commit.timestamp, &new_remote.hash)
         .await?;
 
     // Check the hash of remote's latest manifest
-    lineage.latest_hash = new_remote.resolve_latest(&remote).await?;
+    lineage.latest_hash = new_remote.resolve_latest(remote).await?;
     lineage.remote = new_remote;
 
     // Reset the commit state.
@@ -228,7 +228,7 @@ pub async fn push_package(
     // Try certifying latest if tracking
     if lineage.base_hash == lineage.latest_hash {
         // remote latest has not been updated, certifying the new latest
-        lineage.remote.update_latest(&top_hash).await?;
+        lineage.remote.update_latest(remote, &top_hash).await?;
         lineage.latest_hash = top_hash.clone();
         lineage.base_hash = top_hash.clone();
     }
@@ -241,16 +241,19 @@ mod tests {
     use super::*;
 
     use crate::quilt::mocks;
+    use crate::quilt::remote::mock_remote::MockRemote;
     use crate::quilt::storage::mock_storage::MockStorage;
 
     #[tokio::test]
     async fn test_no_push_if_no_commit() -> Result<(), Error> {
         let mut storage = MockStorage::default();
+        let mut remote = MockRemote::default();
         let lineage = push_package(
             PackageLineage::default(),
             &mocks::manifest::default(),
             &paths::DomainPaths::default(),
             &mut storage,
+            &mut remote,
             String::default(),
         )
         .await?;

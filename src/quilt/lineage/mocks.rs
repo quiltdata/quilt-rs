@@ -2,6 +2,9 @@ use std::collections::BTreeMap;
 
 use super::{CommitState, LineagePaths, PackageLineage};
 use crate::quilt::lineage::PathState;
+use crate::quilt::manifest_handle::RemoteManifest;
+use crate::quilt::uri::S3PackageUri;
+use crate::quilt::Error;
 
 fn commit_state_with_hash(hash: &str) -> Option<CommitState> {
     Some(CommitState {
@@ -30,6 +33,15 @@ pub fn with_commit() -> PackageLineage {
         commit: Some(CommitState::default()),
         ..PackageLineage::default()
     }
+}
+
+pub fn with_remote(uri_str: &str) -> Result<PackageLineage, Error> {
+    let uri = S3PackageUri::try_from(uri_str)?;
+    let remote_manifest: RemoteManifest = uri.into();
+    Ok(PackageLineage {
+        remote: remote_manifest,
+        ..PackageLineage::default()
+    })
 }
 
 pub fn with_commit_hash(hash: &str) -> PackageLineage {

@@ -5,6 +5,7 @@ use serde::Serialize;
 use url::form_urlencoded;
 use url::Url;
 
+use crate::quilt::manifest_handle::RemoteManifest;
 use crate::Error;
 
 const LATEST_TAG: &str = "latest";
@@ -90,6 +91,19 @@ impl std::str::FromStr for S3PackageUri {
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
         S3PackageUri::try_from(input)
+    }
+}
+
+impl From<S3PackageUri> for RemoteManifest {
+    fn from(uri: S3PackageUri) -> RemoteManifest {
+        RemoteManifest {
+            bucket: uri.bucket,
+            namespace: uri.namespace,
+            hash: match uri.revision {
+                RevisionPointer::Hash(h) => h,
+                RevisionPointer::Tag(h) => h,
+            },
+        }
     }
 }
 

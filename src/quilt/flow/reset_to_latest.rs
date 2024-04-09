@@ -7,8 +7,8 @@ use crate::quilt::flow::install_paths::install_paths;
 use crate::quilt::flow::uninstall_paths::uninstall_paths;
 use crate::quilt::lineage::PackageLineage;
 use crate::quilt::manifest_handle::ReadableManifest;
+use crate::quilt::remote::Remote;
 use crate::quilt::storage::Storage;
-use crate::s3_utils;
 use crate::Error;
 
 pub async fn reset_to_latest(
@@ -16,11 +16,11 @@ pub async fn reset_to_latest(
     manifest: &(impl ReadableManifest + Sync),
     paths: &DomainPaths,
     storage: &mut impl Storage,
+    remote: &impl Remote,
     working_dir: PathBuf,
     namespace: String,
 ) -> Result<PackageLineage, Error> {
-    let remote = s3_utils::RemoteS3::new();
-    let new_latest = lineage.remote.resolve_latest(&remote).await?;
+    let new_latest = lineage.remote.resolve_latest(remote).await?;
     if new_latest == lineage.remote.hash {
         // already at latest
         return Ok(lineage);
@@ -34,7 +34,7 @@ pub async fn reset_to_latest(
     lineage.remote.hash = new_latest.clone();
     lineage.base_hash = new_latest;
 
-    cache_remote_manifest(paths, storage, &remote, &lineage.remote).await?;
+    cache_remote_manifest(paths, storage, remote, &lineage.remote).await?;
     copy_cached_to_installed(
         paths,
         storage,
@@ -59,4 +59,83 @@ pub async fn reset_to_latest(
         &paths_to_install,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::collections::HashMap;
+
+    use crate::quilt::lineage::PackageLineage;
+    use crate::quilt::mocks;
+    use crate::quilt::remote::mock_remote::MockRemote;
+    use crate::quilt::storage::mock_storage::MockStorage;
+    use crate::quilt::RemoteManifest;
+    use crate::utils::local_uri_json;
+
+    #[tokio::test]
+    async fn test_if_already_latest() -> Result<(), Error> {
+        let source_lineage = mocks::lineage::with_remote("quilt+s3://b#package=a@foo")?;
+
+        let remote = MockRemote {
+            registry: HashMap::from([(
+                "s3://b/.quilt/named_packages/a/latest".to_string(),
+                b"foo".into(),
+            )]),
+        };
+
+        let resolved_lineage = reset_to_latest(
+            source_lineage.clone(),
+            &mocks::manifest::default(),
+            &DomainPaths::default(),
+            &mut MockStorage::default(),
+            &remote,
+            PathBuf::default(),
+            String::default(),
+        )
+        .await?;
+        assert_eq!(resolved_lineage, source_lineage);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_reseting_to_latest() -> Result<(), Error> {
+        let source_lineage = mocks::lineage::with_remote("quilt+s3://b#package=a@OUTDATED_HASH")?;
+
+        let jsonl = std::fs::read(local_uri_json())?;
+        let remote = MockRemote {
+            registry: HashMap::from([
+                (
+                    "s3://b/.quilt/named_packages/a/latest".to_string(),
+                    b"LATEST_HASH".into(),
+                ),
+                ("s3://b/.quilt/packages/LATEST_HASH".to_string(), jsonl),
+            ]),
+        };
+
+        let resolved_lineage = reset_to_latest(
+            source_lineage.clone(),
+            &mocks::manifest::default(),
+            &DomainPaths::default(),
+            &mut MockStorage::default(),
+            &remote,
+            PathBuf::default(),
+            String::default(),
+        )
+        .await?;
+        assert_eq!(
+            resolved_lineage,
+            PackageLineage {
+                base_hash: "LATEST_HASH".to_string(),
+                latest_hash: "LATEST_HASH".to_string(),
+                remote: RemoteManifest {
+                    hash: "LATEST_HASH".to_string(),
+                    ..source_lineage.remote
+                },
+                ..source_lineage
+            }
+        );
+        Ok(())
+    }
 }

@@ -165,6 +165,7 @@ impl LocalDomain {
         target_uri: S3PackageUri,
     ) -> Result<RemoteManifest, Error> {
         let mut storage = fs::LocalStorage::new();
+        let mut remote = s3_utils::RemoteS3::new();
         log::debug!("Source URI: {:?}, target URI: {:?}", uri, target_uri);
         // TODO: make get_object_attributes() calls concurrently across list_objects() pages
         // TODO: increase concurrency, to do that we need to figure out how to deal
@@ -243,13 +244,13 @@ impl LocalDomain {
             &new_remote.hash,
         )
         .await?;
-        new_remote.upload_from(&cache_path).await?;
-        new_remote.upload_legacy(&table).await?;
+        new_remote.upload_from(&mut remote, &cache_path).await?;
+        new_remote.upload_legacy(&mut remote, &table).await?;
         let top_hash = table.top_hash();
         new_remote
-            .put_timestamp_tag(chrono::Utc::now(), &top_hash)
+            .put_timestamp_tag(&mut remote, chrono::Utc::now(), &top_hash)
             .await?;
-        new_remote.update_latest(&top_hash).await?;
+        new_remote.update_latest(&mut remote, &top_hash).await?;
 
         Ok(new_remote)
     }
@@ -357,11 +358,13 @@ impl InstalledPackage {
     pub async fn push(&self) -> Result<(), Error> {
         let mut storage = fs::LocalStorage::new();
         let lineage = self.lineage.read().await?;
+        let mut remote = s3_utils::RemoteS3::new();
         let lineage = push_package(
             lineage,
             &self.manifest().await?,
             &self.paths,
             &mut storage,
+            &mut remote,
             self.namespace.to_string(),
         )
         .await?;
@@ -385,18 +388,21 @@ impl InstalledPackage {
 
     pub async fn certify_latest(&self) -> Result<(), Error> {
         let lineage = self.lineage.read().await?;
-        let lineage = certify_latest(lineage).await?;
+        let mut remote = s3_utils::RemoteS3::new();
+        let lineage = certify_latest(lineage, &mut remote).await?;
         self.lineage.write(lineage).await
     }
 
     pub async fn reset_to_latest(&self) -> Result<(), Error> {
         let mut storage = fs::LocalStorage::new();
+        let remote = s3_utils::RemoteS3::new();
         let lineage = self.lineage.read().await?;
         let lineage = reset_to_latest(
             lineage,
             &self.manifest().await?,
             &self.paths,
             &mut storage,
+            &remote,
             self.working_folder(),
             self.namespace.to_string(),
         )
