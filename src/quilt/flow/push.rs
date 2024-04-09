@@ -20,6 +20,7 @@ use crate::quilt::manifest;
 use crate::quilt::manifest_handle;
 use crate::quilt::remote::Remote;
 use crate::quilt::storage;
+use crate::quilt::storage::s3::S3Uri;
 use crate::quilt::storage::Storage;
 use crate::quilt::Error;
 use crate::quilt4::checksum;
@@ -48,7 +49,6 @@ pub async fn push_package(
     // keeping track of the resulting versionIds
     //
     // TODO: FAIL if the remote bucket does NOT support versioning (as it would be destructive)
-    let client = crate::s3_utils::get_client_for_bucket(&remote_manifest_address.bucket).await?;
 
     // ignore removed items, upload changed and new items
     for row in local_manifest.records.values_mut() {
@@ -63,45 +63,24 @@ pub async fn push_package(
         let file_path: PathBuf = local_url.to_file_path().unwrap();
 
         let s3_key = format!("{}/{}", namespace, row.name);
-        log::debug!(
-            "uploading to s3({}): {}",
-            remote_manifest_address.bucket,
-            s3_key
-        );
+        let s3_uri = S3Uri {
+            bucket: remote_manifest_address.bucket.to_string(),
+            key: format!("{}/{}", namespace, row.name),
+            version: None,
+        };
+        log::debug!("Uploading to S3: {}", s3_uri);
 
         // TODO: upload in parallel. use a stream?
         let (version_id, checksum) = if row.size < storage::s3::MULTIPART_THRESHOLD {
             let body = ByteStream::read_from().path(&file_path).build().await?;
 
-            let response = client
-                .put_object()
-                .bucket(&remote_manifest_address.bucket)
-                .key(&s3_key)
-                .body(body)
-                .checksum_algorithm(ChecksumAlgorithm::Sha256)
-                .send()
-                .await
-                .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
-
-            let s3_checksum_b64 = response
-                .checksum_sha256
-                .ok_or(Error::Checksum("missing checksum".to_string()))?;
-
-            let s3_checksum = BASE64_STANDARD.decode(s3_checksum_b64)?;
-
-            let checksum = if row.size == 0 {
-                // Edge case: a 0-byte upload is treated as an empty list of chunks, rather than
-                // a list of a 0-byte chunk. Its checksum is sha256(''), NOT sha256(sha256('')).
-                s3_checksum
-            } else {
-                checksum::calculate_sha256_checksum(s3_checksum.as_ref())
-                    .await?
-                    .to_vec()
-            };
-
-            (response.version_id, checksum)
+            remote
+                .put_object_and_checksum(&s3_uri, body, row.size)
+                .await?
         } else {
             let (chunksize, num_chunks) = checksum::get_checksum_chunksize_and_parts(row.size);
+            let client =
+                crate::s3_utils::get_client_for_bucket(&remote_manifest_address.bucket).await?;
             let upload_id = client
                 .create_multipart_upload()
                 .bucket(&remote_manifest_address.bucket)
@@ -200,7 +179,7 @@ pub async fn push_package(
     .await?;
 
     // Push the (cached) relaxed manifest to the remote, don't tag it yet
-    new_remote.upload_from(remote, &cache_path).await?;
+    new_remote.upload_from(storage, remote, &cache_path).await?;
 
     // Upload a quilt3 manifest for backward compatibility.
     new_remote.upload_legacy(remote, &local_manifest).await?;
@@ -240,9 +219,16 @@ pub async fn push_package(
 mod tests {
     use super::*;
 
+    use std::collections::HashMap;
+
+    use crate::quilt::lineage::CommitState;
+    use crate::quilt::lineage::PackageLineage;
+    use crate::quilt::manifest_handle::RemoteManifest;
     use crate::quilt::mocks;
     use crate::quilt::remote::mock_remote::MockRemote;
     use crate::quilt::storage::mock_storage::MockStorage;
+    use crate::quilt::S3PackageUri;
+    use crate::utils::local_uri_parquet;
 
     #[tokio::test]
     async fn test_no_push_if_no_commit() -> Result<(), Error> {
@@ -250,6 +236,40 @@ mod tests {
         let mut remote = MockRemote::default();
         let lineage = push_package(
             PackageLineage::default(),
+            &mocks::manifest::default(),
+            &paths::DomainPaths::default(),
+            &mut storage,
+            &mut remote,
+            String::default(),
+        )
+        .await?;
+        assert_eq!(lineage, PackageLineage::default());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_push() -> Result<(), Error> {
+        let remote_manifest: RemoteManifest =
+            S3PackageUri::try_from("quilt+s3://b#package=a@__FOO__")?.into();
+        let lineage = PackageLineage {
+            commit: Some(CommitState::default()),
+            remote: remote_manifest,
+            ..PackageLineage::default()
+        };
+        let jsonl = std::fs::read(local_uri_parquet())?;
+        let manifest_key =
+            ".quilt/packages/b/770459d4230273fd44b272c552d1204458175e7d7cb26fcd601c662cf5f72d05";
+        let mut storage = MockStorage {
+            registry: HashMap::from([(PathBuf::from(manifest_key), jsonl.clone())]),
+        };
+        let mut remote = MockRemote {
+            registry: HashMap::from([(
+                "s3://b/.quilt/packages/1220__FOO__.parquet".to_string(),
+                jsonl,
+            )]),
+        };
+        let lineage = push_package(
+            lineage,
             &mocks::manifest::default(),
             &paths::DomainPaths::default(),
             &mut storage,

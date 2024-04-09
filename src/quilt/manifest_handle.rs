@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use aws_smithy_types::byte_stream::ByteStream;
 use serde::Deserialize;
 use serde::Serialize;
 use tracing::log;
@@ -77,11 +76,13 @@ impl RemoteManifest {
 
     pub async fn upload_from(
         &self,
+        storage: &mut impl Storage,
         remote: &mut impl Remote,
         manifest_path: &PathBuf,
     ) -> Result<(), Error> {
         // TODO: FAIL if the manifest with this hash already exists?
-        let body = ByteStream::from_path(manifest_path).await?;
+        let table = Table::read_from_path(storage, manifest_path).await?;
+        let body = Manifest::from(&table).to_jsonlines().as_bytes().to_vec();
         let s3uri = s3::S3Uri::from(self);
         log::info!("writing remote manifest to {}", s3uri.key);
 

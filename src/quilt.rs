@@ -244,7 +244,9 @@ impl LocalDomain {
             &new_remote.hash,
         )
         .await?;
-        new_remote.upload_from(&mut remote, &cache_path).await?;
+        new_remote
+            .upload_from(&mut storage, &mut remote, &cache_path)
+            .await?;
         new_remote.upload_legacy(&mut remote, &table).await?;
         let top_hash = table.top_hash();
         new_remote

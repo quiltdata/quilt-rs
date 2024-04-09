@@ -7,6 +7,7 @@ use aws_sdk_s3::error::DisplayErrorContext;
 use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput;
 use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::types::ChecksumAlgorithm;
 use aws_types::region::Region;
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
@@ -21,6 +22,7 @@ use tracing::log;
 use crate::quilt::manifest::MULTIHASH_SHA256_CHUNKED;
 use crate::quilt::remote::Remote;
 use crate::quilt::s3;
+use crate::quilt4::checksum;
 use crate::quilt4::checksum::get_checksum_chunksize_and_parts;
 use crate::Error;
 
@@ -256,6 +258,39 @@ impl Remote for RemoteS3 {
             .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
 
         Ok(())
+    }
+
+    async fn put_object_and_checksum(
+        &mut self,
+        s3_uri: &s3::S3Uri,
+        contents: impl Into<ByteStream>,
+        size: u64,
+    ) -> Result<(Option<String>, Vec<u8>), Error> {
+        let client = get_client_for_bucket(&s3_uri.bucket).await?;
+        let response = client
+            .put_object()
+            .bucket(&s3_uri.bucket)
+            .key(&s3_uri.key)
+            .body(contents.into())
+            .checksum_algorithm(ChecksumAlgorithm::Sha256)
+            .send()
+            .await
+            .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
+        let s3_checksum_b64 = response
+            .checksum_sha256
+            .ok_or(Error::Checksum("missing checksum".to_string()))?;
+        let s3_checksum = BASE64_STANDARD.decode(s3_checksum_b64)?;
+        let checksum = if size == 0 {
+            // Edge case: a 0-byte upload is treated as an empty list of chunks, rather than
+            // a list of a 0-byte chunk. Its checksum is sha256(''), NOT sha256(sha256('')).
+            s3_checksum
+        } else {
+            checksum::calculate_sha256_checksum(s3_checksum.as_ref())
+                .await?
+                .to_vec()
+        };
+
+        Ok((response.version_id, checksum))
     }
 }
 

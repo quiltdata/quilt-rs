@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 
 use aws_sdk_s3::primitives::ByteStream;
+use std::io::Write;
 use tokio::io::AsyncRead;
 use tracing::log;
 
 use crate::quilt::s3::S3Uri;
+use crate::quilt4::checksum;
 use crate::Error;
 
 use super::Remote;
@@ -47,5 +49,23 @@ impl Remote for MockRemote {
         self.registry
             .insert(key, contents.into().collect().await?.to_vec());
         Ok(())
+    }
+
+    async fn put_object_and_checksum(
+        &mut self,
+        s3_uri: &S3Uri,
+        contents: impl Into<ByteStream>,
+        size: u64,
+    ) -> Result<(Option<String>, Vec<u8>), Error> {
+        let key = s3_uri.to_string();
+        let contents_vec = contents.into().collect().await?.to_vec();
+
+        let mut temp_file = tempfile::tempfile()?;
+        temp_file.write_all(&contents_vec)?;
+        let file = tokio::fs::File::from_std(temp_file);
+        let hash = checksum::calculate_sha256_chunked_checksum(file, size).await?;
+
+        self.registry.insert(key, contents_vec);
+        Ok((Some("version".to_string()), hash.to_vec()))
     }
 }

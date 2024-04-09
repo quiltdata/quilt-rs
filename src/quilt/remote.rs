@@ -19,4 +19,11 @@ pub trait Remote {
         s3_uri: &S3Uri,
         contents: impl Into<ByteStream>,
     ) -> Result<(), Error>;
+
+    async fn put_object_and_checksum(
+        &mut self,
+        s3_uri: &S3Uri,
+        contents: impl Into<ByteStream>,
+        size: u64,
+    ) -> Result<(Option<String>, Vec<u8>), Error>;
 }
