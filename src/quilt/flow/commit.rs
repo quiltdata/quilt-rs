@@ -162,24 +162,13 @@ pub async fn commit_package(
 mod tests {
     use super::*;
 
-    use temp_dir::TempDir;
-
     use crate::quilt::mocks;
     use crate::quilt::storage::mock_storage::MockStorage;
 
     #[tokio::test]
     async fn test_commit() -> Result<(), Error> {
-        let working_dir = TempDir::new()?;
         let namespace = "foo/bar".to_string();
         let mut storage = MockStorage::default();
-
-        let domain_paths = &paths::DomainPaths::new(working_dir.path().to_path_buf());
-        // storage
-        //     .create_dir_all(&domain_paths.installed_manifests(&namespace))
-        //     .await?;
-        // storage.create_dir_all(&domain_paths.objects_dir()).await?;
-        tokio::fs::create_dir_all(&domain_paths.installed_manifests(&namespace)).await?;
-        tokio::fs::create_dir_all(&domain_paths.objects_dir()).await?;
 
         let commit_message = "Lorem ipsum".to_string();
         let mut user_meta = serde_json::Map::new();
@@ -190,22 +179,22 @@ mod tests {
 
         let lineage = PackageLineage::default();
         assert!(lineage.commit.is_none());
-        let manifest = mocks::manifest::default();
         let lineage = commit_package(
             lineage,
-            &manifest,
-            domain_paths,
+            &mocks::manifest::default(),
+            &paths::DomainPaths::default(),
             &mut storage,
-            working_dir.path().to_path_buf(),
+            PathBuf::default(),
             namespace,
-            commit_message.clone(),
+            commit_message,
             Some(user_meta),
         )
         .await?;
-        assert_eq!(
-            lineage.commit.unwrap().hash,
-            "56c329d2390c9c6efedb698f47b75f096112c89a7751d55a426507ec6c432897".to_string()
-        );
+        let hash = "56c329d2390c9c6efedb698f47b75f096112c89a7751d55a426507ec6c432897";
+        assert!(storage
+            .registry
+            .contains_key(&PathBuf::from(format!(".quilt/installed/foo/bar/{}", hash))));
+        assert_eq!(lineage.commit.unwrap().hash, hash.to_string());
         Ok(())
     }
 }

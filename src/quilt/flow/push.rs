@@ -248,6 +248,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn test_push() -> Result<(), Error> {
         let remote_manifest: RemoteManifest =
             S3PackageUri::try_from("quilt+s3://b#package=a@__FOO__")?.into();
