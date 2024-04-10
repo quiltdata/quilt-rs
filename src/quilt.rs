@@ -109,27 +109,29 @@ impl LocalDomain {
         &self,
         remote_manifest: &RemoteManifest,
     ) -> Result<InstalledPackage, Error> {
+        let mut storage = fs::LocalStorage::new();
         // Read the lineage
-        let lineage: DomainLineage = self.lineage.read().await?;
+        let lineage: DomainLineage = self.lineage.read(&mut storage).await?;
         let mut storage = fs::LocalStorage::new();
         let remote = s3_utils::RemoteS3::new();
         let lineage =
             install_package(lineage, &self.paths, &mut storage, &remote, remote_manifest).await?;
-        self.lineage.write(&lineage).await?;
+        self.lineage.write(&mut storage, &lineage).await?;
 
         Ok(self.create_installed_package(remote_manifest.namespace.clone()))
     }
 
     pub async fn uninstall_package(&self, namespace: impl AsRef<str>) -> Result<(), Error> {
-        let storage = fs::LocalStorage::new();
-        let lineage = self.lineage.read().await?;
+        let mut storage = fs::LocalStorage::new();
+        let lineage = self.lineage.read(&mut storage).await?;
         // FIXME: write lineage in the end?
         uninstall_package(lineage, &self.paths, &storage, namespace).await?;
         Ok(())
     }
 
     pub async fn list_installed_packages(&self) -> Result<Vec<InstalledPackage>, Error> {
-        let lineage = self.lineage.read().await?;
+        let mut storage = fs::LocalStorage::new();
+        let lineage = self.lineage.read(&mut storage).await?;
         let mut namespaces: Vec<String> = lineage.packages.into_keys().collect();
         namespaces.sort();
         let packages = namespaces
@@ -147,7 +149,8 @@ impl LocalDomain {
         &self,
         namespace: &str,
     ) -> Result<Option<InstalledPackage>, Error> {
-        let lineage = self.lineage.read().await?;
+        let mut storage = fs::LocalStorage::new();
+        let lineage = self.lineage.read(&mut storage).await?;
         if lineage.packages.contains_key(namespace) {
             Ok(Some(InstalledPackage {
                 paths: self.paths.clone(),
@@ -266,17 +269,10 @@ pub struct InstalledPackage {
 }
 
 impl InstalledPackage {
-    pub async fn entries_paths(&self) -> Result<Vec<String>, Error> {
-        self.lineage
-            .read()
-            .await
-            .map(|l| l.paths.into_keys().collect())
-    }
-
-    async fn manifest(&self) -> Result<impl ReadableManifest, Error> {
+    async fn manifest(&self, storage: &mut impl Storage) -> Result<impl ReadableManifest, Error> {
         // read recorded hash
         // get installed manifest
-        self.lineage.read().await.map(|l| {
+        self.lineage.read(storage).await.map(|l| {
             InstalledManifest::new(
                 self.namespace.to_string(),
                 l.current_hash().to_string(),
@@ -292,16 +288,12 @@ impl InstalledPackage {
     pub async fn status(&self) -> Result<InstalledPackageStatus, Error> {
         let remote = s3_utils::RemoteS3::new();
         let mut storage = fs::LocalStorage::new();
-        let lineage = self.lineage.read().await?;
+        let lineage = self.lineage.read(&mut storage).await?;
         let lineage = refresh_latest_hash(lineage, &remote).await?;
-        let (lineage, status) = create_status(
-            lineage,
-            &mut storage,
-            &self.manifest().await?,
-            self.working_folder(),
-        )
-        .await?;
-        self.lineage.write(lineage).await?;
+        let manifest = self.manifest(&mut storage).await?;
+        let (lineage, status) =
+            create_status(lineage, &mut storage, &manifest, self.working_folder()).await?;
+        self.lineage.write(&mut storage, lineage).await?;
         Ok(status)
     }
 
@@ -310,10 +302,11 @@ impl InstalledPackage {
             return Ok(());
         }
         let mut storage = fs::LocalStorage::new();
-        let lineage = self.lineage.read().await?;
+        let lineage = self.lineage.read(&mut storage).await?;
+        let manifest = self.manifest(&mut storage).await?;
         let lineage = install_paths(
             lineage,
-            &self.manifest().await?,
+            &manifest,
             &self.paths,
             self.working_folder(),
             self.namespace.to_string(),
@@ -321,14 +314,14 @@ impl InstalledPackage {
             paths,
         )
         .await?;
-        self.lineage.write(lineage).await
+        self.lineage.write(&mut storage, lineage).await
     }
 
     pub async fn uninstall_paths(&self, paths: &Vec<String>) -> Result<(), Error> {
         let mut storage = fs::LocalStorage::new();
-        let lineage = self.lineage.read().await?;
+        let lineage = self.lineage.read(&mut storage).await?;
         let lineage = uninstall_paths(lineage, self.working_folder(), &mut storage, paths).await?;
-        self.lineage.write(lineage).await
+        self.lineage.write(&mut storage, lineage).await
     }
 
     pub async fn revert_paths(&self, paths: &Vec<String>) -> Result<(), Error> {
@@ -342,10 +335,11 @@ impl InstalledPackage {
         user_meta: Option<manifest::JsonObject>,
     ) -> Result<(), Error> {
         let mut storage = fs::LocalStorage::new();
-        let lineage = self.lineage.read().await?;
+        let lineage = self.lineage.read(&mut storage).await?;
+        let manifest = self.manifest(&mut storage).await?;
         let lineage = commit_package(
             lineage,
-            &self.manifest().await?,
+            &manifest,
             &self.paths,
             &mut storage,
             self.working_folder(),
@@ -354,54 +348,58 @@ impl InstalledPackage {
             user_meta,
         )
         .await?;
-        self.lineage.write(lineage).await
+        self.lineage.write(&mut storage, lineage).await
     }
 
     pub async fn push(&self) -> Result<(), Error> {
         let mut storage = fs::LocalStorage::new();
-        let lineage = self.lineage.read().await?;
+        let lineage = self.lineage.read(&mut storage).await?;
         let mut remote = s3_utils::RemoteS3::new();
+        let manifest = self.manifest(&mut storage).await?;
         let lineage = push_package(
             lineage,
-            &self.manifest().await?,
+            &manifest,
             &self.paths,
             &mut storage,
             &mut remote,
             self.namespace.to_string(),
         )
         .await?;
-        self.lineage.write(lineage).await
+        self.lineage.write(&mut storage, lineage).await
     }
 
     pub async fn pull(&self) -> Result<(), Error> {
         let mut storage = fs::LocalStorage::new();
-        let lineage = self.lineage.read().await?;
+        let lineage = self.lineage.read(&mut storage).await?;
+        let manifest = self.manifest(&mut storage).await?;
         let lineage = pull_package(
             lineage,
-            &self.manifest().await?,
+            &manifest,
             &self.paths,
             &mut storage,
             self.working_folder(),
             self.namespace.to_string(),
         )
         .await?;
-        self.lineage.write(lineage).await
+        self.lineage.write(&mut storage, lineage).await
     }
 
     pub async fn certify_latest(&self) -> Result<(), Error> {
-        let lineage = self.lineage.read().await?;
+        let mut storage = fs::LocalStorage::new();
+        let lineage = self.lineage.read(&mut storage).await?;
         let mut remote = s3_utils::RemoteS3::new();
         let lineage = certify_latest(lineage, &mut remote).await?;
-        self.lineage.write(lineage).await
+        self.lineage.write(&mut storage, lineage).await
     }
 
     pub async fn reset_to_latest(&self) -> Result<(), Error> {
         let mut storage = fs::LocalStorage::new();
         let remote = s3_utils::RemoteS3::new();
-        let lineage = self.lineage.read().await?;
+        let lineage = self.lineage.read(&mut storage).await?;
+        let manifest = self.manifest(&mut storage).await?;
         let lineage = reset_to_latest(
             lineage,
-            &self.manifest().await?,
+            &manifest,
             &self.paths,
             &mut storage,
             &remote,
@@ -409,7 +407,7 @@ impl InstalledPackage {
             self.namespace.to_string(),
         )
         .await?;
-        self.lineage.write(lineage).await
+        self.lineage.write(&mut storage, lineage).await
     }
 }
 

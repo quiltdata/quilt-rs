@@ -73,6 +73,10 @@ impl Storage for LocalStorage {
     async fn create_file(&mut self, path: impl AsRef<Path>) -> Result<fs::File, Error> {
         Ok(fs::File::create(path.as_ref()).await?)
     }
+
+    async fn read_to_string(&mut self, path: impl AsRef<Path>) -> Result<String, Error> {
+        Ok(fs::read_to_string(&path).await?)
+    }
 }
 
 impl Default for LocalStorage {

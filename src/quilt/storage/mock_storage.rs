@@ -95,4 +95,14 @@ impl Storage for MockStorage {
             .or_default();
         Ok(tokio::fs::File::from_std(temp_file))
     }
+
+    async fn read_to_string(&mut self, path: impl AsRef<Path>) -> Result<String, Error> {
+        match self.registry.get(path.as_ref()) {
+            Some(vec) => Ok(std::str::from_utf8(vec)?.to_string()),
+            None => Err(Error::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "",
+            ))),
+        }
+    }
 }

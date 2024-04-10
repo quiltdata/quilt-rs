@@ -47,4 +47,6 @@ pub trait Storage {
     async fn open_file(&mut self, path: impl AsRef<Path>) -> Result<tokio::fs::File, Error>;
 
     async fn create_file(&mut self, path: impl AsRef<Path>) -> Result<tokio::fs::File, Error>;
+
+    async fn read_to_string(&mut self, path: impl AsRef<Path>) -> Result<String, Error>;
 }
