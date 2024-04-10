@@ -425,6 +425,7 @@ pub struct Conflict {
 mod tests {
     use super::*;
     use temp_testdir::TempDir;
+    use tokio::io::AsyncWriteExt;
     use tokio_test::assert_err;
     use tokio_test::block_on;
 
@@ -526,11 +527,13 @@ mod tests {
         log::debug!("readme_path: {readme_path:?}");
 
         let old_readme =
-            block_on(fs::read_to_string(&readme_path)).expect("Failed to read 'READ ME.md'");
+            block_on(tokio::fs::read_to_string(&readme_path)).expect("Failed to read 'READ ME.md'");
 
         let timestamp = get_timestamp();
         log::debug!("timestamp: {timestamp:?}");
-        block_on(fs::write(readme_path, timestamp.as_bytes()))
+        let mut readme_file =
+            block_on(tokio::fs::File::create(readme_path)).expect("Failed to create file");
+        block_on(readme_file.write_all(timestamp.as_bytes()))
             .expect("Failed to overwrite 'READ ME.md'");
         let status = block_on(installed_package.status()).expect("Failed to get status");
         let expected_status = InstalledPackageStatus::new(

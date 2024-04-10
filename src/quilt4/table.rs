@@ -135,7 +135,7 @@ impl Table {
         storage: &mut impl Storage,
         path: impl AsRef<Path>,
     ) -> Result<Self, Error> {
-        let file = storage.open(path).await?;
+        let file = storage.open_file(path).await?;
         Table::read_rows_impl(file).await
     }
 
@@ -189,7 +189,7 @@ impl Table {
         if let Some(parent) = path.parent() {
             storage.create_dir_all(parent).await?;
         }
-        let file = storage.create(path).await?;
+        let file = storage.create_file(path).await?;
         let mut writer = AsyncArrowWriter::try_new(file, schema.clone(), Some(props)).unwrap();
 
         Table::write_row_impl(&mut writer, schema.clone(), &self.header).await?;

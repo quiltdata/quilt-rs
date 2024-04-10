@@ -38,3 +38,33 @@ impl fmt::Display for Manifest4 {
         write!(f, "Manifest4({})", self.table)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::collections::BTreeMap;
+
+    use crate::quilt4::row4::Row4;
+
+    #[test]
+    fn test_manifest_formatting_default() {
+        let manifest = Manifest4::new(Table::default());
+        assert_eq!(format!("{}", manifest), "Manifest4(Table({}))");
+    }
+
+    #[test]
+    fn test_manifest_formatting_with_records() {
+        let manifest = Manifest4::new(Table {
+            records: BTreeMap::from([("foo".to_string(), Row4::default())]),
+            ..Table::default()
+        });
+        assert_eq!(
+            format!("{}", manifest),
+            format!(
+                r###"Manifest4(Table({{"foo": "Row4(.)@.^0#[]$$Object {}$Null"}}))"###,
+                r###"{\"message\": String(\"\"), \"version\": String(\"v0\")}"###
+            )
+        );
+    }
+}

@@ -52,7 +52,7 @@ impl Storage for MockStorage {
         Ok(()) // No-op
     }
 
-    async fn remove_dir_all(&self, _path: impl AsRef<Path>) -> Result<(), std::io::Error> {
+    async fn remove_dir_all(&self, _path: impl AsRef<Path>) -> Result<(), Error> {
         Ok(()) // No-op
     }
 
@@ -76,19 +76,19 @@ impl Storage for MockStorage {
     }
 
     /// Overwrite the `write` method to do nothing.
-    async fn write(&mut self, path: PathBuf, bytes: &[u8]) -> Result<(), Error> {
+    async fn write_file(&mut self, path: PathBuf, bytes: &[u8]) -> Result<(), Error> {
         self.registry.insert(path, bytes.to_vec());
         Ok(())
     }
 
-    async fn open(&mut self, path: impl AsRef<Path>) -> Result<tokio::fs::File, Error> {
+    async fn open_file(&mut self, path: impl AsRef<Path>) -> Result<tokio::fs::File, Error> {
         let mut temp_file = tempfile::tempfile()?;
         let stored_file = self.registry.get(path.as_ref()).unwrap();
         temp_file.write_all(stored_file)?;
         Ok(tokio::fs::File::from_std(temp_file))
     }
 
-    async fn create(&mut self, path: impl AsRef<Path>) -> Result<tokio::fs::File, Error> {
+    async fn create_file(&mut self, path: impl AsRef<Path>) -> Result<tokio::fs::File, Error> {
         let temp_file = tempfile::tempfile()?;
         self.registry
             .entry(path.as_ref().to_path_buf())
