@@ -5,6 +5,7 @@ use std::path::PathBuf;
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub enum TestFile {
     Parquet,
+    ParquetChecksumed,
     Json,
     Domain,
 }
@@ -23,6 +24,7 @@ pub fn remote_s3_uri() -> String {
 pub fn local_uri(key: TestFile) -> PathBuf {
     let files: HashMap<TestFile, &str> = HashMap::from([
         (TestFile::Parquet, TEST_LOCAL_PARQUET),
+        (TestFile::ParquetChecksumed, TEST_LOCAL_PARQUET_CHECKSUMED),
         (TestFile::Json, TEST_LOCAL_JSONL),
         (TestFile::Domain, ""),
     ]);
@@ -43,6 +45,11 @@ pub fn local_uri_parquet() -> PathBuf {
 pub fn local_uri_json() -> PathBuf {
     local_uri(TestFile::Json)
 }
+
+pub fn local_uri_parquet_checksumed() -> PathBuf {
+    local_uri(TestFile::ParquetChecksumed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

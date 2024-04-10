@@ -228,7 +228,7 @@ mod tests {
     use crate::quilt::remote::mock_remote::MockRemote;
     use crate::quilt::storage::mock_storage::MockStorage;
     use crate::quilt::S3PackageUri;
-    use crate::utils::local_uri_parquet;
+    use crate::utils::local_uri_parquet_checksumed;
 
     #[tokio::test]
     async fn test_no_push_if_no_commit() -> Result<(), Error> {
@@ -248,7 +248,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn test_push() -> Result<(), Error> {
         let remote_manifest: RemoteManifest =
             S3PackageUri::try_from("quilt+s3://b#package=a@__FOO__")?.into();
@@ -257,17 +256,23 @@ mod tests {
             remote: remote_manifest,
             ..PackageLineage::default()
         };
-        let jsonl = std::fs::read(local_uri_parquet())?;
+        let jsonl = std::fs::read(local_uri_parquet_checksumed())?;
         let manifest_key =
             ".quilt/packages/b/770459d4230273fd44b272c552d1204458175e7d7cb26fcd601c662cf5f72d05";
         let mut storage = MockStorage {
             registry: HashMap::from([(PathBuf::from(manifest_key), jsonl.clone())]),
         };
         let mut remote = MockRemote {
-            registry: HashMap::from([(
-                "s3://b/.quilt/packages/1220__FOO__.parquet".to_string(),
-                jsonl,
-            )]),
+            registry: HashMap::from([
+                (
+                    "s3://b/.quilt/packages/1220__FOO__.parquet".to_string(),
+                    jsonl,
+                ),
+                (
+                    "s3://b/.quilt/named_packages/a/latest".to_string(),
+                    b"abcdef".into(),
+                ),
+            ]),
         };
         let lineage = push_package(
             lineage,
@@ -278,7 +283,16 @@ mod tests {
             String::default(),
         )
         .await?;
-        assert_eq!(lineage, PackageLineage::default());
+        let result_remote_manifest: RemoteManifest = S3PackageUri::try_from("quilt+s3://b#package=a@770459d4230273fd44b272c552d1204458175e7d7cb26fcd601c662cf5f72d05")?.into();
+        assert_eq!(
+            lineage,
+            PackageLineage {
+                remote: result_remote_manifest,
+                base_hash: "".to_string(), // Huh?
+                latest_hash: "abcdef".to_string(),
+                ..PackageLineage::default()
+            }
+        );
         Ok(())
     }
 }

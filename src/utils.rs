@@ -11,12 +11,14 @@ pub static TEST_S3_URI: &str = "s3://quilt-example/akarve/test_dest/README.md";
 
 pub static TEST_DOMAIN: &str = "tests/test_domain";
 pub static TEST_LOCAL_PARQUET: &str = ".quilt/packages/12201234.parquet";
+pub static TEST_LOCAL_PARQUET_CHECKSUMED: &str = ".quilt/packages/checksumed.parquet";
 pub static TEST_LOCAL_JSONL: &str =
     ".quilt/packages/0428ab8c8b0fe83d9e57fb6b26ff190173caad00ed7aeb683ce26cc4b56ea4bb";
 
 pub use helpers::local_uri_domain;
 pub use helpers::local_uri_json;
 pub use helpers::local_uri_parquet;
+pub use helpers::local_uri_parquet_checksumed;
 
 pub use helpers::remote_quilt_uri;
 pub use helpers::remote_s3_uri;
