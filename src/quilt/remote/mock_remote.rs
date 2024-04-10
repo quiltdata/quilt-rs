@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use aws_sdk_s3::primitives::ByteStream;
 use std::io::Write;
 use tokio::io::AsyncRead;
+use tokio::io::AsyncReadExt;
 use tracing::log;
 
 use crate::quilt::s3::S3Uri;
@@ -67,5 +68,31 @@ impl Remote for MockRemote {
 
         self.registry.insert(key, contents_vec);
         Ok((Some("version".to_string()), hash.to_vec()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // use std::collections::HashMap;
+
+    #[tokio::test]
+    async fn test_get_object() -> Result<(), Error> {
+        let remote = MockRemote {
+            registry: HashMap::from([("s3://found/n?versionId=v".to_string(), b"Hello".to_vec())]),
+        };
+        let s3_uri_not_found = S3Uri::try_from("s3://b/n?versionId=v")?;
+        let not_found = remote.get_object(&s3_uri_not_found).await;
+        match not_found {
+            Err(err) => assert_eq!(err.to_string(), "S3 error: Key doesn't exists".to_string()),
+            Ok(_) => panic!("shouldn't happen"),
+        }
+        let s3_uri_found = S3Uri::try_from("s3://found/n?versionId=v")?;
+        let mut found = remote.get_object(&s3_uri_found).await?;
+        let mut output = Vec::new();
+        found.read_to_end(&mut output).await?;
+        assert_eq!(output, b"Hello");
+        Ok(())
     }
 }
