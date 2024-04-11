@@ -255,6 +255,12 @@ impl Table {
 
         hex::encode(hasher.finalize())
     }
+
+    pub fn remove_record(&mut self, key: &str) -> Result<Row4, Error> {
+        self.records
+            .remove(key)
+            .ok_or(Error::Table(format!("Cannot remove {}", key)))
+    }
 }
 
 impl fmt::Display for Table {

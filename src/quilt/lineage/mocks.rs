@@ -6,6 +6,13 @@ use crate::quilt::manifest_handle::RemoteManifest;
 use crate::quilt::uri::S3PackageUri;
 use crate::quilt::Error;
 
+pub fn path_state() -> PathState {
+    PathState {
+        timestamp: chrono::DateTime::default(),
+        hash: multihash::Multihash::wrap(0xb510, b"pedestrian").unwrap(),
+    }
+}
+
 fn commit_state_with_hash(hash: &str) -> Option<CommitState> {
     Some(CommitState {
         hash: hash.to_string(),
@@ -16,7 +23,7 @@ fn commit_state_with_hash(hash: &str) -> Option<CommitState> {
 fn lineage_paths(keys: &Vec<&str>) -> LineagePaths {
     let mut paths = BTreeMap::new();
     for key in keys {
-        paths.insert(key.to_string(), PathState::default());
+        paths.insert(key.to_string(), path_state());
     }
     paths
 }

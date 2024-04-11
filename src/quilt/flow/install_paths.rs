@@ -16,6 +16,7 @@ use crate::quilt::Storage;
 use crate::s3_utils;
 use crate::Error;
 
+// FIXME: use impl Storage and impl Remote
 async fn cache_immutable_object(object_dest: &PathBuf, uri: &s3::S3Uri) -> Result<(), Error> {
     let version = uri
         .version
@@ -159,11 +160,11 @@ mod tests {
 
         let mut storage = MockStorage::with_paths(vec![working_dir
             .path()
-            .join(PathBuf::from(".quilt/objects/48656c6c6f20776f726c64"))]);
+            .join(PathBuf::from(".quilt/objects/7065646573747269616e"))]);
 
         let lineage = mocks::lineage::with_commit_hash("fghijk");
         let entries_paths = vec!["a/a".to_string()];
-        let manifest = mocks::manifest::with_record_keys(entries_paths.clone())?;
+        let manifest = mocks::manifest::with_record_keys(entries_paths.clone());
 
         assert!(lineage.paths.is_empty());
         let lineage = install_paths(
@@ -189,7 +190,7 @@ mod tests {
         let lineage = mocks::lineage::with_commit_hash("fghijk");
         let mut storage = MockStorage::default();
         let entries_paths = vec!["z/z".to_string()];
-        let manifest = mocks::manifest::with_record_keys(vec!["a/a".to_string()])?;
+        let manifest = mocks::manifest::with_record_keys(vec!["a/a".to_string()]);
 
         assert!(lineage.paths.is_empty());
         let lineage = install_paths(

@@ -4,7 +4,7 @@ use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
 use crate::quilt::flow::browse::cache_remote_manifest;
 use crate::quilt::flow::install_paths::install_paths;
-use crate::quilt::flow::status::create_status;
+use crate::quilt::flow::status::InstalledPackageStatus;
 use crate::quilt::flow::uninstall_paths::uninstall_paths;
 use crate::quilt::lineage::PackageLineage;
 use crate::quilt::manifest_handle;
@@ -18,9 +18,9 @@ pub async fn pull_package(
     paths: &DomainPaths,
     storage: &mut impl Storage,
     working_dir: PathBuf,
+    status: InstalledPackageStatus,
     namespace: String,
 ) -> Result<PackageLineage, Error> {
-    let (lineage, status) = create_status(lineage, storage, manifest, working_dir.clone()).await?;
     if !status.changes.is_empty() {
         return Err(Error::Package("package has pending changes".to_string()));
     }
@@ -80,6 +80,9 @@ pub async fn pull_package(
 mod tests {
     use super::*;
 
+    use std::collections::BTreeMap;
+
+    use crate::quilt::flow::status::Change;
     use crate::quilt::mocks;
     use crate::quilt::storage::mock_storage::MockStorage;
     use crate::quilt::RemoteManifest;
@@ -89,12 +92,23 @@ mod tests {
         let mut storage = MockStorage::default();
         let lineage = mocks::lineage::with_paths(&vec!["a/a"]);
 
+        let status = InstalledPackageStatus {
+            changes: BTreeMap::from([(
+                "foo".to_string(),
+                Change {
+                    previous: None,
+                    current: None,
+                },
+            )]),
+            ..InstalledPackageStatus::default()
+        };
         let error = pull_package(
             lineage,
-            &mocks::manifest::with_record_keys(vec!["a/a".to_string()])?,
+            &mocks::manifest::with_record_keys(vec!["a/a".to_string()]),
             &DomainPaths::default(),
             &mut storage,
             PathBuf::default(),
+            status,
             String::default(),
         )
         .await;
@@ -115,6 +129,7 @@ mod tests {
             &DomainPaths::default(),
             &mut storage,
             PathBuf::default(),
+            InstalledPackageStatus::default(),
             String::default(),
         )
         .await;
@@ -141,6 +156,7 @@ mod tests {
             &DomainPaths::default(),
             &mut storage,
             PathBuf::default(),
+            InstalledPackageStatus::default(),
             String::default(),
         )
         .await;
@@ -168,6 +184,7 @@ mod tests {
             &DomainPaths::default(),
             &mut storage,
             PathBuf::default(),
+            InstalledPackageStatus::default(),
             String::default(),
         )
         .await;

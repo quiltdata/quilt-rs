@@ -24,7 +24,7 @@ pub struct CommitState {
     pub prev_hashes: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PathState {
     pub timestamp: chrono::DateTime<chrono::Utc>,
     #[serde(

@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::path::PathBuf;
 
 use serde_json::json;
@@ -9,22 +10,92 @@ use crate::quilt::Storage;
 use crate::Error;
 use crate::Row4;
 
-use crate::quilt::flow::status::create_status;
 use crate::quilt::flow::status::Change;
+use crate::quilt::flow::status::InstalledPackageStatus;
+use crate::quilt::flow::status::PackageFileFingerprint;
 use crate::quilt::lineage::CommitState;
 use crate::quilt::lineage::PackageLineage;
 use crate::quilt::lineage::PathState;
 use crate::quilt::manifest::JsonObject;
 use crate::quilt::manifest_handle::ReadableManifest;
+use crate::quilt4::table::Table;
+
+fn remove_entry(
+    table: &mut Table,
+    lineage: &mut PackageLineage,
+    logical_key: &str,
+    previous: PackageFileFingerprint,
+) -> Result<(), Error> {
+    let removed = table.remove_record(logical_key)?;
+    if removed.size != previous.size || removed.hash != previous.hash {
+        return Err(Error::Commit(format!(
+            "unexpected size or hash for removed {}",
+            logical_key
+        )));
+    }
+    lineage.paths.remove(logical_key);
+    Ok(())
+}
+
+async fn modify_entry(
+    storage: &mut impl Storage,
+    paths: &paths::DomainPaths,
+    working_dir: &Path,
+    table: &mut Table,
+    lineage: &mut PackageLineage,
+    logical_key: &str,
+    current: PackageFileFingerprint,
+) -> Result<(), Error> {
+    let objects_dir = paths.objects_dir();
+    // FIXME: This should really be done when the domain is created.
+    storage.create_dir_all(&objects_dir).await?;
+    let object_dest = objects_dir.join(hex::encode(current.hash.digest()));
+    let new_physical_key = Url::from_file_path(&object_dest)
+        .map_err(|_| Error::Commit(format!("Failed to create URL from {:?}", &object_dest)))?
+        .into();
+
+    if table
+        .records
+        .insert(
+            logical_key.to_owned(),
+            Row4 {
+                name: logical_key.to_owned(),
+                place: new_physical_key,
+                size: current.size,
+                hash: current.hash,
+                info: serde_json::Value::default(),
+                meta: serde_json::Value::default(),
+            },
+        )
+        .is_some()
+    {
+        return Err(Error::Commit(format!("cannot overwrite {}", logical_key)));
+    }
+
+    let work_dest = working_dir.join(logical_key);
+
+    if !storage.exists(&object_dest).await {
+        storage.copy(&work_dest, object_dest).await?;
+    }
+    lineage.paths.insert(
+        logical_key.to_string(),
+        PathState {
+            timestamp: storage.modified_timestamp(&work_dest).await?,
+            hash: current.hash,
+        },
+    );
+    Ok(())
+}
 
 // TODO: move `working_dir` to `paths`, and `paths` to `storage`
 #[allow(clippy::too_many_arguments)]
 pub async fn commit_package(
-    lineage: PackageLineage,
+    mut lineage: PackageLineage,
     manifest: &(impl ReadableManifest + Sync),
     paths: &paths::DomainPaths,
     storage: &mut impl Storage,
     working_dir: PathBuf,
+    status: InstalledPackageStatus,
     namespace: String,
     message: String,
     user_meta: Option<JsonObject>,
@@ -64,68 +135,23 @@ pub async fn commit_package(
     // NOTE: each commit MUST include all paths from prior commits
     //       (since the last pull, until reset by a sync)
 
-    // TODO: Maybe have the user pass this as an argument?
-    let (mut lineage, status) =
-        create_status(lineage, storage, manifest, working_dir.clone()).await?;
-
-    let objects_dir = paths.objects_dir();
-    // TODO: This should really be done when the domain is created.
-    storage.create_dir_all(&objects_dir).await?;
-
     let mut table = manifest.read(storage).await?;
 
     for (logical_key, Change { current, previous }) in status.changes {
         if let Some(previous) = previous {
-            let removed = table
-                .records
-                .remove(&logical_key)
-                .ok_or(Error::Commit(format!("cannot remove {}", logical_key)))?;
-            if removed.size != previous.size || removed.hash != previous.hash {
-                return Err(Error::Commit(format!(
-                    "unexpected size or hash for removed {}",
-                    logical_key
-                )));
-            }
-            lineage.paths.remove(&logical_key);
+            remove_entry(&mut table, &mut lineage, &logical_key, previous)?;
         }
         if let Some(current) = current {
-            let object_dest = objects_dir.join(hex::encode(current.hash.digest()));
-            let new_physical_key = Url::from_file_path(&object_dest)
-                .map_err(|_| {
-                    Error::Commit(format!("Failed to create URL from {:?}", &object_dest))
-                })?
-                .into();
-
-            if table
-                .records
-                .insert(
-                    logical_key.to_owned(),
-                    Row4 {
-                        name: logical_key.to_owned(),
-                        place: new_physical_key,
-                        size: current.size,
-                        hash: current.hash,
-                        info: serde_json::Value::default(),
-                        meta: serde_json::Value::default(),
-                    },
-                )
-                .is_some()
-            {
-                return Err(Error::Commit(format!("cannot overwrite {}", logical_key)));
-            }
-
-            let work_dest = working_dir.join(&logical_key);
-
-            if !storage.exists(&object_dest).await {
-                storage.copy(&work_dest, object_dest).await?;
-            }
-            lineage.paths.insert(
-                logical_key,
-                PathState {
-                    timestamp: storage.modified_timestamp(&work_dest).await?,
-                    hash: current.hash,
-                },
-            );
+            modify_entry(
+                storage,
+                paths,
+                &working_dir,
+                &mut table,
+                &mut lineage,
+                &logical_key,
+                current,
+            )
+            .await?;
         }
     }
 
@@ -140,7 +166,6 @@ pub async fn commit_package(
     let new_top_hash = table.top_hash();
 
     let new_manifest_path = paths.installed_manifest(&namespace, &new_top_hash);
-
     table.write_to_path(storage, &new_manifest_path).await?;
 
     let mut prev_hashes = Vec::new();
@@ -161,6 +186,9 @@ pub async fn commit_package(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::collections::BTreeMap;
+    use std::collections::HashMap;
 
     use crate::quilt::mocks;
     use crate::quilt::storage::mock_storage::MockStorage;
@@ -185,6 +213,7 @@ mod tests {
             &paths::DomainPaths::default(),
             &mut storage,
             PathBuf::default(),
+            InstalledPackageStatus::default(),
             namespace,
             commit_message,
             Some(user_meta),
@@ -195,6 +224,243 @@ mod tests {
             .registry
             .contains_key(&PathBuf::from(format!(".quilt/installed/foo/bar/{}", hash))));
         assert_eq!(lineage.commit.unwrap().hash, hash.to_string());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_removing_and_commit() -> Result<(), Error> {
+        let namespace = "foo/bar".to_string();
+        let mut storage = MockStorage::default();
+
+        let commit_message = "Lorem ipsum".to_string();
+        let mut user_meta = serde_json::Map::new();
+        user_meta.insert(
+            "lorem".to_string(),
+            serde_json::Value::String("ipsum".to_string()),
+        );
+        let status = InstalledPackageStatus {
+            changes: BTreeMap::from([(
+                "foo".to_string(),
+                Change {
+                    previous: Some(mocks::status::package_file_fingerprint()),
+                    current: None,
+                },
+            )]),
+            ..InstalledPackageStatus::default()
+        };
+
+        let lineage = mocks::lineage::with_paths(&vec!["foo"]);
+        let manifest = mocks::manifest::with_record_keys(vec!["foo".to_string()]);
+
+        assert!(
+            lineage.commit.is_none(),
+            "Initial lineage has commit already"
+        );
+        assert!(
+            lineage.paths.contains_key("foo"),
+            "Initial lineage doesn't have testing path"
+        );
+
+        let lineage = commit_package(
+            lineage,
+            &manifest,
+            &paths::DomainPaths::default(),
+            &mut storage,
+            PathBuf::default(),
+            status,
+            namespace,
+            commit_message,
+            Some(user_meta),
+        )
+        .await?;
+
+        let hash = "56c329d2390c9c6efedb698f47b75f096112c89a7751d55a426507ec6c432897";
+        assert!(
+            !lineage.paths.contains_key("foo"),
+            "Commited lineage still has a path, that should be clear after commit"
+        );
+        assert!(
+            storage
+                .registry
+                .contains_key(&PathBuf::from(format!(".quilt/installed/foo/bar/{}", hash))),
+            "Registry doesn't have installed package with a new hash"
+        );
+        assert_eq!(lineage.commit.unwrap().hash, hash.to_string());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_adding_and_commit() -> Result<(), Error> {
+        let namespace = "foo/bar".to_string();
+        let mut storage = MockStorage {
+            registry: HashMap::from([(PathBuf::from("/working-dir/bar"), Vec::new())]),
+        };
+
+        let status = InstalledPackageStatus {
+            changes: BTreeMap::from([(
+                "bar".to_string(),
+                Change {
+                    current: Some(mocks::status::package_file_fingerprint()),
+                    previous: None,
+                },
+            )]),
+            ..InstalledPackageStatus::default()
+        };
+
+        let lineage = PackageLineage::default();
+        let manifest = mocks::manifest::with_record_keys(vec!["foo".to_string()]);
+
+        assert!(
+            lineage.commit.is_none(),
+            "Initial lineage has commit already"
+        );
+        assert!(
+            !lineage.paths.contains_key("bar"),
+            "Initial lineage has path, but shouldn't because we test _new_ file"
+        );
+
+        let lineage = commit_package(
+            lineage,
+            &manifest,
+            &paths::DomainPaths::new(PathBuf::from("/")),
+            &mut storage,
+            PathBuf::from("/working-dir"),
+            status,
+            namespace,
+            "Lorem ipsum".to_string(),
+            None,
+        )
+        .await?;
+
+        let hash = "7065646573747269616e";
+        assert!(
+            lineage.paths.contains_key("bar"),
+            "Commited lineage doesn't have path, but should have. We added new file and it should be there."
+        );
+        assert!(
+            storage
+                .registry
+                .contains_key(&PathBuf::from(format!("/.quilt/objects/{}", hash))),
+            "Registry doesn't have installed path"
+        );
+        assert_eq!(
+            lineage.commit.unwrap().hash,
+            // NOTE: I copied this hash from the test result itself.
+            //       I don't know what is the right hash
+            "cab702f67a810907dde744a637f4686c3b57f36852c438e15c2075d865b29738"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_adding_manifest_already_has_it() -> Result<(), Error> {
+        let namespace = "foo/bar".to_string();
+        let mut storage = MockStorage::default();
+
+        let status = InstalledPackageStatus {
+            changes: BTreeMap::from([(
+                "foo".to_string(),
+                Change {
+                    current: Some(mocks::status::package_file_fingerprint()),
+                    previous: None,
+                },
+            )]),
+            ..InstalledPackageStatus::default()
+        };
+
+        let lineage = mocks::lineage::with_paths(&vec!["foo"]);
+        let manifest = mocks::manifest::with_record_keys(vec!["foo".to_string()]);
+
+        let result = commit_package(
+            lineage,
+            &manifest,
+            &paths::DomainPaths::new(PathBuf::from("/")),
+            &mut storage,
+            PathBuf::default(),
+            status,
+            namespace,
+            "Lorem ipsum".to_string(),
+            None,
+        )
+        .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Commit error: cannot overwrite foo"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_modifying_and_commit() -> Result<(), Error> {
+        let namespace = "foo/bar".to_string();
+        let mut storage = MockStorage {
+            registry: HashMap::from([(PathBuf::from("/working-dir/bar"), Vec::new())]),
+        };
+
+        let status = InstalledPackageStatus {
+            changes: BTreeMap::from([(
+                "bar".to_string(),
+                Change {
+                    previous: Some(PackageFileFingerprint {
+                        size: 0,
+                        hash: multihash::Multihash::wrap(0xb510, b"pedestrian")?,
+                    }),
+                    current: Some(PackageFileFingerprint {
+                        size: 0,
+                        hash: multihash::Multihash::wrap(0xb510, b"walker")?,
+                    }),
+                },
+            )]),
+            ..InstalledPackageStatus::default()
+        };
+
+        let lineage = mocks::lineage::with_paths(&vec!["bar"]);
+        let manifest = mocks::manifest::with_record_keys(vec!["bar".to_string()]);
+
+        assert!(
+            lineage.commit.is_none(),
+            "Initial lineage has commit already"
+        );
+        assert!(
+            lineage.paths.contains_key("bar"),
+            "Initial lineage doesn't have path, but should because we test installed and modified file"
+        );
+
+        let lineage = commit_package(
+            lineage,
+            &manifest,
+            &paths::DomainPaths::new(PathBuf::from("/")),
+            &mut storage,
+            PathBuf::from("/working-dir"),
+            status,
+            namespace,
+            "Lorem ipsum".to_string(),
+            None,
+        )
+        .await?;
+
+        let hash = "77616c6b6572";
+        assert!(
+            lineage.paths.contains_key("bar"),
+            "Commited lineage doesn't have path, but should have. We added new file and it should be there."
+        );
+        assert!(
+            storage
+                .registry
+                .contains_key(&PathBuf::from(format!("/.quilt/objects/{}", hash))),
+            "Registry doesn't have installed path"
+        );
+        assert_eq!(
+            lineage.commit.unwrap().hash,
+            // NOTE: I copied this hash from the test result itself.
+            //       I don't know what is the right hash
+            "48e56751fda714b87fd3e5cb0a496cd0daa6d76ac45f0a89c5dc4c3fbbfe522e"
+        );
+
         Ok(())
     }
 }

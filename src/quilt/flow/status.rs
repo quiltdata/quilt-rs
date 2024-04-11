@@ -308,7 +308,7 @@ mod tests {
     #[tokio::test]
     async fn test_removed_files() -> Result<(), Error> {
         let lineage = mocks::lineage::with_paths(&vec!["a/a"]);
-        let manifest = mocks::manifest::with_record_keys(vec!["a/a".to_string()])?;
+        let manifest = mocks::manifest::with_record_keys(vec!["a/a".to_string()]);
         let (_, status) = create_status(
             lineage,
             &mut MockStorage::default(),

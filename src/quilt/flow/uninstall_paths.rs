@@ -41,7 +41,6 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::quilt::lineage::PathState;
     use crate::quilt::mocks;
     use crate::quilt::storage::mock_storage::MockStorage;
 
@@ -80,8 +79,8 @@ mod tests {
         assert_eq!(
             modified_lineage.paths,
             BTreeMap::from([
-                ("a/a".to_string(), PathState::default()),
-                ("b/b".to_string(), PathState::default()),
+                ("a/a".to_string(), mocks::lineage::path_state()),
+                ("b/b".to_string(), mocks::lineage::path_state()),
             ])
         );
         Ok(())

@@ -101,7 +101,7 @@ impl Storage for MockStorage {
             Some(vec) => Ok(std::str::from_utf8(vec)?.to_string()),
             None => Err(Error::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                "",
+                format!("Failed reading to string path {:?}", path.as_ref()),
             ))),
         }
     }

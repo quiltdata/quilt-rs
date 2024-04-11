@@ -337,12 +337,17 @@ impl InstalledPackage {
         let mut storage = fs::LocalStorage::new();
         let lineage = self.lineage.read(&mut storage).await?;
         let manifest = self.manifest(&mut storage).await?;
+
+        let (lineage, status) =
+            create_status(lineage, &mut storage, &manifest, self.working_folder()).await?;
+
         let lineage = commit_package(
             lineage,
             &manifest,
             &self.paths,
             &mut storage,
             self.working_folder(),
+            status,
             self.namespace.to_string(),
             message,
             user_meta,
@@ -372,12 +377,15 @@ impl InstalledPackage {
         let mut storage = fs::LocalStorage::new();
         let lineage = self.lineage.read(&mut storage).await?;
         let manifest = self.manifest(&mut storage).await?;
+        let (lineage, status) =
+            create_status(lineage, &mut storage, &manifest, self.working_folder()).await?;
         let lineage = pull_package(
             lineage,
             &manifest,
             &self.paths,
             &mut storage,
             self.working_folder(),
+            status,
             self.namespace.to_string(),
         )
         .await?;
