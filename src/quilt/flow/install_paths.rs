@@ -158,9 +158,15 @@ mod tests {
 
         let domain_paths = &paths::DomainPaths::new(working_dir.path().to_path_buf());
 
-        let mut storage = MockStorage::with_paths(vec![working_dir
-            .path()
-            .join(PathBuf::from(".quilt/objects/7065646573747269616e"))]);
+        let mut storage = MockStorage::default();
+        storage
+            .write_file(
+                working_dir
+                    .path()
+                    .join(PathBuf::from(".quilt/objects/7065646573747269616e")),
+                &Vec::new(),
+            )
+            .await?;
 
         let lineage = mocks::lineage::with_commit_hash("fghijk");
         let entries_paths = vec!["a/a".to_string()];
@@ -178,9 +184,11 @@ mod tests {
         )
         .await?;
         assert!(lineage.paths.contains_key("a/a"));
-        assert!(storage
-            .registry
-            .contains_key(&working_dir.path().join(PathBuf::from("a/a"))));
+        assert!(
+            storage
+                .exists(&working_dir.path().join(PathBuf::from("a/a")))
+                .await
+        );
 
         Ok(())
     }

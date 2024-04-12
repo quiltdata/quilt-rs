@@ -1,6 +1,7 @@
-use std::collections::HashMap;
 use std::path::Path;
-use std::path::PathBuf;
+
+use chrono::DateTime;
+use chrono::Utc;
 
 use tempfile;
 
@@ -9,109 +10,102 @@ use crate::Error;
 use super::Storage;
 
 /// A mock implementation of the `Storage` trait.
-#[derive(Default)]
 pub(crate) struct MockStorage {
-    /// A map of paths that are currently stored and their corresponding content
-    pub(crate) registry: HashMap<PathBuf, Vec<u8>>,
+    pub(crate) temp_dir: tempfile::TempDir,
 }
 
-impl MockStorage {
-    /// Create the mock storage with these file names "installed"
-    pub(crate) fn with_keys(keys: &Vec<&str>) -> MockStorage {
-        let mut registry = HashMap::new();
-        for key in keys {
-            registry.insert(PathBuf::from(key), Vec::new());
+impl Default for MockStorage {
+    fn default() -> Self {
+        MockStorage {
+            temp_dir: tempfile::tempdir().expect("Failed to create temporrary directory"),
         }
-        MockStorage { registry }
     }
+}
 
-    /// Create the mock storage with these paths "installed"
-    pub(crate) fn with_paths(paths: Vec<PathBuf>) -> MockStorage {
-        let mut registry = HashMap::new();
-        for path in paths {
-            registry.insert(path, Vec::new());
-        }
-        MockStorage { registry }
+impl MockStorage {}
+
+fn relative_to_temp_dir(temp_dir: &tempfile::TempDir, path: impl AsRef<Path>) -> impl AsRef<Path> {
+    if path.as_ref().starts_with("/") {
+        temp_dir
+            .as_ref()
+            .join(path.as_ref().strip_prefix("/").unwrap())
+    } else {
+        temp_dir.as_ref().join(&path)
     }
+}
+
+async fn create_parent(path: impl AsRef<Path>) -> Result<(), Error> {
+    Ok(tokio::fs::create_dir_all(path.as_ref().parent().unwrap()).await?)
 }
 
 impl Storage for MockStorage {
-    async fn copy(
-        &mut self,
-        from: impl AsRef<Path>,
-        to: impl AsRef<Path>,
-    ) -> Result<u64, std::io::Error> {
-        let file = self.registry.get(from.as_ref()).unwrap();
-        self.registry
-            .insert(to.as_ref().to_path_buf(), file.clone());
-        Ok(0)
+    async fn copy(&mut self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<u64, Error> {
+        let from_path = relative_to_temp_dir(&self.temp_dir, &from);
+        let to_path = relative_to_temp_dir(&self.temp_dir, &to);
+        create_parent(&to_path).await?;
+        Ok(tokio::fs::copy(from_path, to_path).await?)
     }
 
-    async fn create_dir_all(&self, _path: impl AsRef<Path>) -> Result<(), std::io::Error> {
-        Ok(()) // No-op
+    async fn create_dir_all(&self, path: impl AsRef<Path>) -> Result<(), Error> {
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        Ok(tokio::fs::create_dir_all(rel_path).await?)
     }
 
-    async fn remove_dir_all(&self, _path: impl AsRef<Path>) -> Result<(), Error> {
-        Ok(()) // No-op
+    async fn remove_dir_all(&self, path: impl AsRef<Path>) -> Result<(), Error> {
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        Ok(tokio::fs::remove_dir_all(rel_path).await?)
     }
 
     /// Overwrite the `remove_file` method to do nothing.
-    async fn remove_file(&mut self, path: PathBuf) -> Result<(), std::io::Error> {
-        self.registry.remove(&path);
-        Ok(())
+    async fn remove_file(&mut self, path: impl AsRef<Path>) -> Result<(), std::io::Error> {
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        tokio::fs::remove_file(rel_path).await
     }
 
     /// Overwrite the `exists` method to check if the path is in the set of paths.
     async fn exists(&self, path: impl AsRef<std::path::Path>) -> bool {
-        self.registry.contains_key(path.as_ref())
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        tokio::fs::metadata(rel_path).await.is_ok()
     }
 
     /// Return the current time as the modified timestamp.
     async fn modified_timestamp(
         &self,
-        _path: impl AsRef<Path>,
+        path: impl AsRef<Path>,
     ) -> Result<chrono::DateTime<chrono::Utc>, Error> {
-        Ok(chrono::Utc::now())
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        create_parent(&rel_path).await?;
+        let modified = tokio::fs::metadata(rel_path)
+            .await
+            .map(|m| m.modified())??;
+        Ok(DateTime::<Utc>::from(modified))
     }
 
     /// Overwrite the `write` method to do nothing.
-    async fn write_file(&mut self, path: PathBuf, bytes: &[u8]) -> Result<(), Error> {
-        self.registry.insert(path, bytes.to_vec());
-        Ok(())
+    async fn write_file(&mut self, path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), Error> {
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        create_parent(&rel_path).await?;
+        Ok(tokio::fs::write(rel_path, bytes).await?)
     }
 
     async fn open_file(&mut self, path: impl AsRef<Path>) -> Result<tokio::fs::File, Error> {
-        let temp_dir = tempfile::tempdir()?.into_path();
-        let temp_file_path = temp_dir.join(&path);
-        let stored_file = self.registry.get(path.as_ref()).unwrap();
-        std::fs::create_dir_all(temp_file_path.parent().unwrap())?;
-        std::fs::write(&temp_file_path, stored_file)?;
-        Ok(tokio::fs::File::open(temp_file_path).await?)
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        Ok(tokio::fs::File::open(rel_path).await?)
     }
 
     async fn create_file(&mut self, path: impl AsRef<Path>) -> Result<tokio::fs::File, Error> {
-        let temp_dir = tempfile::tempdir()?.into_path();
-        self.registry
-            .entry(path.as_ref().to_path_buf())
-            .or_default();
-        // TODO: there is a is_absolute() and is_root() methods
-        //       but how to create relative path from absolute?
-        let temp_file_path = if path.as_ref().starts_with("/") {
-            temp_dir.join(path.as_ref().strip_prefix("/").unwrap())
-        } else {
-            temp_dir.join(&path)
-        };
-        std::fs::create_dir_all(temp_file_path.parent().unwrap())?;
-        Ok(tokio::fs::File::create(temp_file_path).await?)
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        create_parent(&rel_path).await?;
+        Ok(tokio::fs::File::create(rel_path).await?)
     }
 
     async fn read_to_string(&mut self, path: impl AsRef<Path>) -> Result<String, Error> {
-        match self.registry.get(path.as_ref()) {
-            Some(vec) => Ok(std::str::from_utf8(vec)?.to_string()),
-            None => Err(Error::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("Failed reading to string path {:?}", path.as_ref()),
-            ))),
-        }
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        Ok(tokio::fs::read_to_string(rel_path).await?)
+    }
+
+    async fn read_file(&mut self, path: impl AsRef<Path>) -> Result<Vec<u8>, Error> {
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        Ok(tokio::fs::read(&rel_path).await?)
     }
 }

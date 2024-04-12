@@ -187,9 +187,11 @@ mod tests {
         let jsonl = std::fs::read(local_uri_parquet_checksumed())?;
         let manifest_key =
             ".quilt/packages/b/770459d4230273fd44b272c552d1204458175e7d7cb26fcd601c662cf5f72d05";
-        let mut storage = MockStorage {
-            registry: HashMap::from([(PathBuf::from(manifest_key), jsonl.clone())]),
-        };
+        let mut storage = MockStorage::default();
+        storage
+            .write_file(PathBuf::from(manifest_key), &jsonl)
+            .await?;
+
         let mut remote = MockRemote {
             registry: HashMap::from([
                 (
@@ -237,9 +239,10 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let manifest_key =
             ".quilt/packages/b/0f85671863dadacf3a0e62212f1b9151a11f72228e4c82ed86ff27d46ec31d87";
-        let mut storage = MockStorage {
-            registry: HashMap::from([(PathBuf::from(manifest_key), jsonl.clone())]),
-        };
+        let mut storage = MockStorage::default();
+        storage
+            .write_file(PathBuf::from(manifest_key), &jsonl)
+            .await?;
         let mut remote = MockRemote {
             registry: HashMap::from([
                 (

@@ -300,8 +300,6 @@ impl TryFrom<Manifest> for Table {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use crate::quilt::storage::mock_storage::MockStorage;
     use crate::utils::local_uri_parquet;
 
@@ -309,9 +307,10 @@ mod tests {
 
     #[tokio::test]
     async fn read_existing_local() -> Result<(), Error> {
-        let mut storage = MockStorage {
-            registry: HashMap::from([(local_uri_parquet(), std::fs::read(local_uri_parquet())?)]),
-        };
+        let mut storage = MockStorage::default();
+        storage
+            .write_file(local_uri_parquet(), &std::fs::read(local_uri_parquet())?)
+            .await?;
         let table = Table::read_from_path(&mut storage, &local_uri_parquet())
             .await
             .unwrap();

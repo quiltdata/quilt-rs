@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::path::PathBuf;
 
 use crate::Error;
 
@@ -19,15 +18,11 @@ pub trait Storage {
     async fn exists(&self, path: impl AsRef<Path>) -> bool;
 
     /// Copy a file from one location to another.
-    async fn copy(
-        &mut self,
-        from: impl AsRef<Path>,
-        to: impl AsRef<Path>,
-    ) -> Result<u64, std::io::Error>;
+    async fn copy(&mut self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<u64, Error>;
 
     /// Recursively creates a directory and all of its parent components if they
     /// are missing.
-    async fn create_dir_all(&self, path: impl AsRef<Path>) -> Result<(), std::io::Error>;
+    async fn create_dir_all(&self, path: impl AsRef<Path>) -> Result<(), Error>;
 
     /// Removes a directory at this path, after removing all its contents.
     async fn remove_dir_all(&self, path: impl AsRef<Path>) -> Result<(), Error>;
@@ -39,14 +34,16 @@ pub trait Storage {
     ) -> Result<chrono::DateTime<chrono::Utc>, Error>;
 
     /// Remove a file from the filesystem.
-    async fn remove_file(&mut self, path: PathBuf) -> Result<(), std::io::Error>;
+    async fn remove_file(&mut self, path: impl AsRef<Path>) -> Result<(), std::io::Error>;
 
     /// Writes bytes to a file
-    async fn write_file(&mut self, path: PathBuf, bytes: &[u8]) -> Result<(), Error>;
+    async fn write_file(&mut self, path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), Error>;
 
     async fn open_file(&mut self, path: impl AsRef<Path>) -> Result<tokio::fs::File, Error>;
 
     async fn create_file(&mut self, path: impl AsRef<Path>) -> Result<tokio::fs::File, Error>;
 
     async fn read_to_string(&mut self, path: impl AsRef<Path>) -> Result<String, Error>;
+
+    async fn read_file(&mut self, path: impl AsRef<Path>) -> Result<Vec<u8>, Error>;
 }

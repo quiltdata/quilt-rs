@@ -56,8 +56,12 @@ mod tests {
         let lineage = DomainLineage {
             packages: BTreeMap::from([("foo/bar".to_string(), PackageLineage::default())]),
         };
-        let storage = MockStorage::default();
         let paths = paths::DomainPaths::default();
+        let storage = MockStorage::default();
+        storage
+            .create_dir_all(paths.installed_manifests("foo/bar"))
+            .await?;
+        storage.create_dir_all(paths.working_dir("foo/bar")).await?;
 
         let lineage = uninstall_package(lineage, &paths, &storage, "foo/bar").await?;
         assert!(lineage.packages.is_empty());

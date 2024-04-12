@@ -63,18 +63,27 @@ mod tests {
         let installed_paths = vec!["a/a", "test folde/r", "b/b"];
         let lineage = mocks::lineage::with_paths(&installed_paths);
 
-        let mut storage = MockStorage::with_keys(&installed_paths);
+        let mut storage = MockStorage::default();
+        storage
+            .write_file(PathBuf::from("a/a"), &Vec::new())
+            .await?;
+        storage
+            .write_file(PathBuf::from("test folde/r"), &Vec::new())
+            .await?;
+        storage
+            .write_file(PathBuf::from("b/b"), &Vec::new())
+            .await?;
 
         let paths_to_uninstall = vec!["test folde/r".to_string()];
 
         let key = PathBuf::from("test folde/r");
-        assert!(storage.registry.get(&key).is_some(),);
+        assert!(storage.exists(&key).await);
 
         let modified_lineage =
             uninstall_paths(lineage, PathBuf::new(), &mut storage, &paths_to_uninstall).await?;
 
         // Check that the key was removed
-        assert!(storage.registry.get(&key).is_none());
+        assert!(!storage.exists(&key).await);
 
         assert_eq!(
             modified_lineage.paths,

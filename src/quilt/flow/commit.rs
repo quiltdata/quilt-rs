@@ -188,7 +188,6 @@ mod tests {
     use super::*;
 
     use std::collections::BTreeMap;
-    use std::collections::HashMap;
 
     use crate::quilt::mocks;
     use crate::quilt::storage::mock_storage::MockStorage;
@@ -222,9 +221,11 @@ mod tests {
         )
         .await?;
         let hash = "56c329d2390c9c6efedb698f47b75f096112c89a7751d55a426507ec6c432897";
-        assert!(storage
-            .registry
-            .contains_key(&PathBuf::from(format!(".quilt/installed/foo/bar/{}", hash))));
+        assert!(
+            storage
+                .exists(&PathBuf::from(format!(".quilt/installed/foo/bar/{}", hash)))
+                .await
+        );
         assert_eq!(lineage.commit.unwrap().hash, hash.to_string());
         Ok(())
     }
@@ -283,8 +284,8 @@ mod tests {
         );
         assert!(
             storage
-                .registry
-                .contains_key(&PathBuf::from(format!(".quilt/installed/foo/bar/{}", hash))),
+                .exists(&PathBuf::from(format!(".quilt/installed/foo/bar/{}", hash)))
+                .await,
             "Registry doesn't have installed package with a new hash"
         );
         assert_eq!(lineage.commit.unwrap().hash, hash.to_string());
@@ -295,9 +296,10 @@ mod tests {
     #[tokio::test]
     async fn test_adding_and_commit() -> Result<(), Error> {
         let namespace = "foo/bar".to_string();
-        let mut storage = MockStorage {
-            registry: HashMap::from([(PathBuf::from("/working-dir/bar"), Vec::new())]),
-        };
+        let mut storage = MockStorage::default();
+        storage
+            .write_file(PathBuf::from("/working-dir/bar"), &Vec::new())
+            .await?;
 
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
@@ -342,8 +344,8 @@ mod tests {
         );
         assert!(
             storage
-                .registry
-                .contains_key(&PathBuf::from(format!("/.quilt/objects/{}", hash))),
+                .exists(&PathBuf::from(format!("/.quilt/objects/{}", hash)))
+                .await,
             "Registry doesn't have installed path"
         );
         assert_eq!(
@@ -399,9 +401,10 @@ mod tests {
     #[tokio::test]
     async fn test_modifying_and_commit() -> Result<(), Error> {
         let namespace = "foo/bar".to_string();
-        let mut storage = MockStorage {
-            registry: HashMap::from([(PathBuf::from("/working-dir/bar"), Vec::new())]),
-        };
+        let mut storage = MockStorage::default();
+        storage
+            .write_file(PathBuf::from("/working-dir/bar"), &Vec::new())
+            .await?;
 
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
@@ -452,8 +455,8 @@ mod tests {
         );
         assert!(
             storage
-                .registry
-                .contains_key(&PathBuf::from(format!("/.quilt/objects/{}", hash))),
+                .exists(&PathBuf::from(format!("/.quilt/objects/{}", hash)))
+                .await,
             "Registry doesn't have installed path"
         );
         assert_eq!(

@@ -119,12 +119,8 @@ mod tests {
         )
         .await?;
         assert_eq!(result.packages.get("b").unwrap().remote, remote_manifest);
-        assert!(storage
-            .registry
-            .contains_key(&PathBuf::from(".quilt/installed/b/c")),);
-        assert!(storage
-            .registry
-            .contains_key(&PathBuf::from(".quilt/packages/a/c")));
+        assert!(storage.exists(&PathBuf::from(".quilt/installed/b/c")).await);
+        assert!(storage.exists(&PathBuf::from(".quilt/packages/a/c")).await);
         Ok(())
     }
 }

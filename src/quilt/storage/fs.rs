@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::path::PathBuf;
 
 use chrono::DateTime;
 use chrono::Utc;
@@ -33,23 +32,19 @@ pub async fn get_file_modified_ts(path: impl AsRef<Path>) -> Result<DateTime<Utc
 pub struct LocalStorage {}
 
 impl Storage for LocalStorage {
-    async fn copy(
-        &mut self,
-        from: impl AsRef<Path>,
-        to: impl AsRef<Path>,
-    ) -> Result<u64, std::io::Error> {
-        fs::copy(from, to).await
+    async fn copy(&mut self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<u64, Error> {
+        Ok(fs::copy(from, to).await?)
     }
 
-    async fn create_dir_all(&self, path: impl AsRef<Path>) -> Result<(), std::io::Error> {
-        fs::create_dir_all(path).await
+    async fn create_dir_all(&self, path: impl AsRef<Path>) -> Result<(), Error> {
+        Ok(fs::create_dir_all(path).await?)
     }
 
     async fn remove_dir_all(&self, path: impl AsRef<Path>) -> Result<(), Error> {
         Ok(fs::remove_dir_all(path).await?)
     }
 
-    async fn remove_file(&mut self, path: PathBuf) -> Result<(), std::io::Error> {
+    async fn remove_file(&mut self, path: impl AsRef<Path>) -> Result<(), std::io::Error> {
         fs::remove_file(path).await
     }
 
@@ -62,7 +57,7 @@ impl Storage for LocalStorage {
         get_file_modified_ts(path).await
     }
 
-    async fn write_file(&mut self, path: PathBuf, bytes: &[u8]) -> Result<(), Error> {
+    async fn write_file(&mut self, path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), Error> {
         write(path, bytes).await
     }
 
@@ -76,6 +71,10 @@ impl Storage for LocalStorage {
 
     async fn read_to_string(&mut self, path: impl AsRef<Path>) -> Result<String, Error> {
         Ok(fs::read_to_string(&path).await?)
+    }
+
+    async fn read_file(&mut self, path: impl AsRef<Path>) -> Result<Vec<u8>, Error> {
+        Ok(fs::read(&path).await?)
     }
 }
 

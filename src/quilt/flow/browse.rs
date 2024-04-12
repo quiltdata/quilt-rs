@@ -113,7 +113,8 @@ mod tests {
             hash: "c".to_string(),
         };
         let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
-        let mut storage = MockStorage::with_paths(vec![cache_path]);
+        let mut storage = MockStorage::default();
+        storage.write_file(cache_path, &Vec::new()).await?;
         let remote = MockRemote::default();
         let cached_manifest =
             cache_remote_manifest(&paths, &mut storage, &remote, &manifest).await?;
@@ -137,7 +138,8 @@ mod tests {
             hash: "c".to_string(),
         };
         let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
-        let mut storage = MockStorage::with_paths(vec![cache_path]);
+        let mut storage = MockStorage::default();
+        storage.write_file(cache_path, &Vec::new()).await?;
         let remote = MockRemote::default();
         let cached_manifest =
             cache_remote_manifest(&paths, &mut storage, &remote, &manifest).await?;
@@ -168,9 +170,8 @@ mod tests {
         let cached_manifest =
             cache_remote_manifest(&paths, &mut storage, &remote, &manifest).await?;
         assert!(storage
-            .registry
-            .get(&PathBuf::from(".quilt/packages/a/c"))
-            .unwrap()
+            .read_file(&PathBuf::from(".quilt/packages/a/c"))
+            .await?
             .is_empty());
         assert_eq!(
             cached_manifest,
@@ -199,9 +200,7 @@ mod tests {
         )]));
         let cached_manifest =
             cache_remote_manifest(&paths, &mut storage, &remote, &manifest).await?;
-        assert!(storage
-            .registry
-            .contains_key(&PathBuf::from(".quilt/packages/a/c")));
+        assert!(storage.exists(&PathBuf::from(".quilt/packages/a/c")).await);
         assert_eq!(
             cached_manifest,
             CachedManifest {

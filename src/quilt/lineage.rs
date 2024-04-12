@@ -182,8 +182,6 @@ impl PackageLineageIo {
 mod tests {
     use super::*;
 
-    use std::collections::HashMap;
-
     use crate::quilt::storage::mock_storage::MockStorage;
 
     #[test]
@@ -226,10 +224,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_domain_lineage_from_file() -> Result<(), Error> {
-        let mut storage = MockStorage {
-            registry: HashMap::from([(PathBuf::default(), br###"{"packages":{}}"###.to_vec())]),
-        };
-        let lineage = DomainLineageIo::default().read(&mut storage).await?;
+        let mut storage = MockStorage::default();
+        let file_path = PathBuf::from("foo");
+        storage
+            .write_file(&file_path, br###"{"packages":{}}"###.as_ref())
+            .await?;
+        let lineage = DomainLineageIo::new(file_path).read(&mut storage).await?;
         assert_eq!(lineage, DomainLineage::default());
         Ok(())
     }
@@ -237,7 +237,9 @@ mod tests {
     #[tokio::test]
     async fn test_domain_lineage_from_nothing() -> Result<(), Error> {
         let mut storage = MockStorage::default();
-        let lineage = DomainLineageIo::default().read(&mut storage).await?;
+        let lineage = DomainLineageIo::new(PathBuf::from("does-not-exist"))
+            .read(&mut storage)
+            .await?;
         assert_eq!(lineage, DomainLineage::default());
         Ok(())
     }
@@ -245,16 +247,17 @@ mod tests {
     #[tokio::test]
     async fn test_domain_lineage_write() -> Result<(), Error> {
         let mut storage = MockStorage::default();
-        assert!(!storage.registry.contains_key(&PathBuf::from("")));
-        DomainLineageIo::default()
+        let file_path = PathBuf::from("foo");
+        assert!(!storage.exists(&file_path).await);
+        DomainLineageIo::new(file_path.clone())
             .write(&mut storage, &DomainLineage::default())
             .await?;
-        assert!(storage.registry.contains_key(&PathBuf::from("")));
+        assert!(storage.exists(&file_path).await);
         let manifest = br###"{
   "packages": {}
 }"###
             .to_vec();
-        assert_eq!(storage.registry.get(&PathBuf::from("")).unwrap(), &manifest);
+        assert_eq!(storage.read_file(&file_path).await?, manifest);
         Ok(())
     }
 
