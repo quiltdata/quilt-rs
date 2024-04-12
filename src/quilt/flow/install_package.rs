@@ -63,11 +63,11 @@ mod tests {
     use super::*;
 
     use std::collections::BTreeMap;
-    use std::collections::HashMap;
     use std::path::PathBuf;
 
     use crate::quilt::remote::mock_remote::MockRemote;
     use crate::quilt::storage::mock_storage::MockStorage;
+    use crate::quilt::storage::s3::S3Uri;
 
     #[tokio::test]
     async fn test_if_already_installed() -> Result<(), Error> {
@@ -99,16 +99,19 @@ mod tests {
             hash: "c".to_string(),
             namespace: "b".to_string(),
         };
-        let remote = MockRemote::new(HashMap::from([
-            (
-                "s3://a/.quilt/packages/1220c.parquet".to_string(),
+        let remote = MockRemote::default();
+        remote
+            .put_object(
+                &S3Uri::try_from("s3://a/.quilt/packages/1220c.parquet")?,
                 Vec::new(),
-            ),
-            (
-                "s3://a/.quilt/named_packages/b/latest".to_string(),
+            )
+            .await?;
+        remote
+            .put_object(
+                &S3Uri::try_from("s3://a/.quilt/named_packages/b/latest")?,
                 Vec::new(),
-            ),
-        ]));
+            )
+            .await?;
         let storage = MockStorage::default();
         let result = install_package(
             DomainLineage::default(),

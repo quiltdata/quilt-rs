@@ -65,12 +65,11 @@ pub async fn reset_to_latest(
 mod tests {
     use super::*;
 
-    use std::collections::HashMap;
-
     use crate::quilt::lineage::PackageLineage;
     use crate::quilt::mocks;
     use crate::quilt::remote::mock_remote::MockRemote;
     use crate::quilt::storage::mock_storage::MockStorage;
+    use crate::quilt::storage::s3::S3Uri;
     use crate::quilt::RemoteManifest;
     use crate::utils::local_uri_json;
 
@@ -78,12 +77,13 @@ mod tests {
     async fn test_if_already_latest() -> Result<(), Error> {
         let source_lineage = mocks::lineage::with_remote("quilt+s3://b#package=a@foo")?;
 
-        let remote = MockRemote {
-            registry: HashMap::from([(
-                "s3://b/.quilt/named_packages/a/latest".to_string(),
-                b"foo".into(),
-            )]),
-        };
+        let remote = MockRemote::default();
+        remote
+            .put_object(
+                &S3Uri::try_from("s3://b/.quilt/named_packages/a/latest")?,
+                b"foo".to_vec(),
+            )
+            .await?;
 
         let resolved_lineage = reset_to_latest(
             source_lineage.clone(),
@@ -104,15 +104,19 @@ mod tests {
         let source_lineage = mocks::lineage::with_remote("quilt+s3://b#package=a@OUTDATED_HASH")?;
 
         let jsonl = std::fs::read(local_uri_json())?;
-        let remote = MockRemote {
-            registry: HashMap::from([
-                (
-                    "s3://b/.quilt/named_packages/a/latest".to_string(),
-                    b"LATEST_HASH".into(),
-                ),
-                ("s3://b/.quilt/packages/LATEST_HASH".to_string(), jsonl),
-            ]),
-        };
+        let remote = MockRemote::default();
+        remote
+            .put_object(
+                &S3Uri::try_from("s3://b/.quilt/named_packages/a/latest")?,
+                b"LATEST_HASH".to_vec(),
+            )
+            .await?;
+        remote
+            .put_object(
+                &S3Uri::try_from("s3://b/.quilt/packages/LATEST_HASH")?,
+                jsonl,
+            )
+            .await?;
 
         let resolved_lineage = reset_to_latest(
             source_lineage.clone(),

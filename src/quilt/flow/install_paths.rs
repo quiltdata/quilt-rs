@@ -7,7 +7,8 @@ use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use url::Url;
 
-use crate::paths;
+use crate::paths::scaffold_paths;
+use crate::paths::DomainPaths;
 use crate::quilt::lineage::PackageLineage;
 use crate::quilt::lineage::PathState;
 use crate::quilt::manifest_handle::ReadableManifest;
@@ -64,7 +65,7 @@ async fn create_mutable_copy(
 pub async fn install_paths(
     mut lineage: PackageLineage,
     manifest: &(impl ReadableManifest + Sync),
-    paths: &paths::DomainPaths,
+    paths: &DomainPaths,
     working_dir: PathBuf,
     namespace: String,
     storage: &impl Storage,
@@ -73,6 +74,8 @@ pub async fn install_paths(
     if entries_paths.is_empty() {
         return Ok(lineage);
     }
+
+    scaffold_paths(storage, paths.required_installed_package_paths(&namespace)).await?;
 
     // TODO: what happens if paths are already installed? Ignore, or error?
     // Fail early if path is already installed
@@ -156,7 +159,7 @@ mod tests {
 
         let namespace = "foo/bar".to_string();
 
-        let domain_paths = &paths::DomainPaths::new(working_dir.path().to_path_buf());
+        let domain_paths = &DomainPaths::new(working_dir.path().to_path_buf());
 
         let storage = MockStorage::default();
         storage
@@ -204,7 +207,7 @@ mod tests {
         let lineage = install_paths(
             lineage,
             &manifest,
-            &paths::DomainPaths::default(),
+            &DomainPaths::default(),
             PathBuf::new(),
             String::default(),
             &storage,

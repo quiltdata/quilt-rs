@@ -45,7 +45,7 @@ pub async fn cache_manifest(
     bucket: &str,
     hash: &str,
 ) -> Result<PathBuf, Error> {
-    scaffold_paths(paths, storage).await?;
+    scaffold_paths(storage, paths.required_local_domain_paths()).await?;
     let cache_path = paths.manifest_cache(bucket, hash);
     storage
         .create_dir_all(&cache_path.parent().unwrap())
@@ -65,7 +65,7 @@ pub async fn cache_remote_manifest(
     remote: &impl Remote,
     remote_manifest: &RemoteManifest,
 ) -> Result<CachedManifest, Error> {
-    scaffold_paths(paths, storage).await?;
+    scaffold_paths(storage, paths.required_local_domain_paths()).await?;
     // check if the manifest is already cached
     // if not, download and cache it
     // return cached manifest
@@ -92,7 +92,7 @@ pub async fn browse_remote_manifest(
     remote: &impl Remote,
     remote_manifest: &RemoteManifest,
 ) -> Result<Table, Error> {
-    scaffold_paths(paths, storage).await?;
+    scaffold_paths(storage, paths.required_local_domain_paths()).await?;
     cache_remote_manifest(paths, storage, remote, remote_manifest)
         .await?
         .read(storage)
@@ -102,8 +102,6 @@ pub async fn browse_remote_manifest(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use std::collections::HashMap;
 
     use crate::quilt::remote::mock_remote::MockRemote;
     use crate::quilt::storage::mock_storage::MockStorage;
@@ -166,10 +164,13 @@ mod tests {
             namespace: "b".to_string(),
             hash: "c".to_string(),
         };
-        let remote = MockRemote::new(HashMap::from([(
-            "s3://a/.quilt/packages/1220c.parquet".to_string(),
-            Vec::new(),
-        )]));
+        let remote = MockRemote::default();
+        remote
+            .put_object(
+                &S3Uri::try_from("s3://a/.quilt/packages/1220c.parquet")?,
+                Vec::new(),
+            )
+            .await?;
         let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
         assert!(storage
             .read_file(&PathBuf::from(".quilt/packages/a/c"))
@@ -196,10 +197,10 @@ mod tests {
             hash: "c".to_string(),
         };
         let jsonl = std::fs::read(local_uri_json())?;
-        let remote = MockRemote::new(HashMap::from([(
-            "s3://a/.quilt/packages/c".to_string(),
-            jsonl,
-        )]));
+        let remote = MockRemote::default();
+        remote
+            .put_object(&S3Uri::try_from("s3://a/.quilt/packages/c")?, jsonl)
+            .await?;
         let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
         assert!(storage.exists(&PathBuf::from(".quilt/packages/a/c")).await);
         assert_eq!(

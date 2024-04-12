@@ -146,8 +146,6 @@ pub async fn push_package(
 mod tests {
     use super::*;
 
-    use std::collections::HashMap;
-
     use crate::quilt::lineage::CommitState;
     use crate::quilt::lineage::PackageLineage;
     use crate::quilt::manifest_handle::RemoteManifest;
@@ -192,18 +190,19 @@ mod tests {
             .write_file(PathBuf::from(manifest_key), &jsonl)
             .await?;
 
-        let mut remote = MockRemote {
-            registry: HashMap::from([
-                (
-                    "s3://b/.quilt/packages/1220__FOO__.parquet".to_string(),
-                    jsonl,
-                ),
-                (
-                    "s3://b/.quilt/named_packages/a/latest".to_string(),
-                    b"abcdef".into(),
-                ),
-            ]),
-        };
+        let mut remote = MockRemote::default();
+        remote
+            .put_object(
+                &S3Uri::try_from("s3://b/.quilt/packages/1220__FOO__.parquet")?,
+                jsonl,
+            )
+            .await?;
+        remote
+            .put_object(
+                &S3Uri::try_from("s3://b/.quilt/named_packages/a/latest")?,
+                b"abcdef".to_vec(),
+            )
+            .await?;
         let lineage = push_package(
             lineage,
             &mocks::manifest::default(),
@@ -243,18 +242,19 @@ mod tests {
         storage
             .write_file(PathBuf::from(manifest_key), &jsonl)
             .await?;
-        let mut remote = MockRemote {
-            registry: HashMap::from([
-                (
-                    "s3://b/.quilt/packages/1220__FOO__.parquet".to_string(),
-                    jsonl,
-                ),
-                (
-                    "s3://b/.quilt/named_packages/a/latest".to_string(),
-                    b"abcdef".into(),
-                ),
-            ]),
-        };
+        let mut remote = MockRemote::default();
+        remote
+            .put_object(
+                &S3Uri::try_from("s3://b/.quilt/packages/1220__FOO__.parquet")?,
+                jsonl,
+            )
+            .await?;
+        remote
+            .put_object(
+                &S3Uri::try_from("s3://b/.quilt/named_packages/a/latest")?,
+                b"abcdef".to_vec(),
+            )
+            .await?;
 
         let file_path = temp_dir.into_path().join("bar");
         tokio::fs::copy(local_uri_parquet_checksumed(), &file_path).await?;

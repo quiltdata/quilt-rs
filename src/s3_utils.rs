@@ -247,7 +247,7 @@ impl Remote for RemoteS3 {
     }
 
     async fn put_object(
-        &mut self,
+        &self,
         s3_uri: &s3::S3Uri,
         contents: impl Into<ByteStream>,
     ) -> Result<(), Error> {
@@ -265,7 +265,7 @@ impl Remote for RemoteS3 {
     }
 
     async fn put_object_and_checksum(
-        &mut self,
+        &self,
         s3_uri: &s3::S3Uri,
         contents: impl Into<ByteStream>,
         size: u64,
@@ -298,7 +298,7 @@ impl Remote for RemoteS3 {
     }
 
     async fn multipart_upload_and_checksum(
-        &mut self,
+        &self,
         s3_uri: &s3::S3Uri,
         file_path: impl AsRef<Path>,
         size: u64,

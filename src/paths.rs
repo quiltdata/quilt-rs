@@ -1,5 +1,6 @@
-use multihash::Multihash;
 use std::path::PathBuf;
+
+use multihash::Multihash;
 
 use crate::quilt::storage::Storage;
 
@@ -79,6 +80,16 @@ impl DomainPaths {
             self.root_dir.join(MANIFEST_DIR),
         ]
     }
+
+    pub fn required_installed_package_paths(&self, namespace: &str) -> Vec<PathBuf> {
+        let mut paths = vec![];
+        paths.extend(self.required_local_domain_paths());
+        paths.extend(vec![
+            self.working_dir(namespace),
+            self.installed_manifests(namespace),
+        ]);
+        paths
+    }
 }
 
 pub async fn copy_cached_to_installed(
@@ -97,11 +108,7 @@ pub async fn copy_cached_to_installed(
     Ok(())
 }
 
-pub async fn scaffold_local_domain_paths(
-    paths: &DomainPaths,
-    storage: &impl Storage,
-) -> Result<(), Error> {
-    let paths = paths.required_local_domain_paths();
+pub async fn scaffold_paths(storage: &impl Storage, paths: Vec<PathBuf>) -> Result<(), Error> {
     for path in paths {
         storage.create_dir_all(&path).await?
     }

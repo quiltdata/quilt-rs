@@ -192,9 +192,8 @@ impl InstalledManifest {
 mod tests {
     use super::*;
 
-    use std::collections::HashMap;
-
     use crate::quilt::remote::mock_remote::MockRemote;
+    use crate::quilt::storage::s3::S3Uri;
 
     #[tokio::test]
     async fn test_resolve_existing_hash() -> Result<(), Error> {
@@ -215,12 +214,13 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_remote_hash() -> Result<(), Error> {
         let uri = S3PackageUri::try_from("quilt+s3://b#package=foo")?;
-        let remote = MockRemote {
-            registry: HashMap::from([(
-                "s3://b/.quilt/named_packages/foo/latest".to_string(),
+        let remote = MockRemote::default();
+        remote
+            .put_object(
+                &S3Uri::try_from("s3://b/.quilt/named_packages/foo/latest")?,
                 b"abcdef".to_vec(),
-            )]),
-        };
+            )
+            .await?;
         let remote_manifest = RemoteManifest::resolve(&remote, &uri).await?;
         assert_eq!(
             remote_manifest,
