@@ -71,6 +71,14 @@ impl DomainPaths {
     pub fn working_dir(&self, namespace: &str) -> PathBuf {
         self.root_dir.join(namespace)
     }
+
+    pub fn required_paths(&self) -> Vec<PathBuf> {
+        vec![
+            self.root_dir.join(INSTALLED_DIR),
+            self.objects_dir(),
+            self.root_dir.join(MANIFEST_DIR),
+        ]
+    }
 }
 
 pub async fn copy_cached_to_installed(
@@ -87,4 +95,31 @@ pub async fn copy_cached_to_installed(
         )
         .await?;
     Ok(())
+}
+
+pub async fn scaffold_paths(paths: &DomainPaths, storage: &impl Storage) -> Result<(), Error> {
+    let paths = paths.required_paths();
+    for path in paths {
+        storage.create_dir_all(&path).await?
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_required_paths() {
+        let paths = DomainPaths::new(PathBuf::from("foo/bar"));
+        let scaffolded_paths = paths.required_paths();
+        assert_eq!(
+            scaffolded_paths,
+            vec![
+                PathBuf::from("foo/bar/.quilt/installed"),
+                PathBuf::from("foo/bar/.quilt/objects"),
+                PathBuf::from("foo/bar/.quilt/packages"),
+            ]
+        )
+    }
 }

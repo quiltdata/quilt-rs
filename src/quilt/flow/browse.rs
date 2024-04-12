@@ -2,7 +2,9 @@ use std::path::PathBuf;
 
 use tokio::io::AsyncReadExt;
 
-use crate::paths;
+use crate::paths::get_manifest_key_legacy;
+use crate::paths::scaffold_paths;
+use crate::paths::DomainPaths;
 use crate::quilt::manifest::Manifest;
 use crate::quilt::manifest_handle::CachedManifest;
 use crate::quilt::manifest_handle::ReadableManifest;
@@ -28,7 +30,7 @@ async fn fetch_parquet(remote: &impl Remote, manifest: &RemoteManifest) -> Resul
 async fn fetch_jsonl(remote: &impl Remote, manifest: &RemoteManifest) -> Result<Table, Error> {
     let s3_uri = S3Uri {
         bucket: manifest.bucket.clone(),
-        key: paths::get_manifest_key_legacy(&manifest.hash),
+        key: get_manifest_key_legacy(&manifest.hash),
         version: None,
     };
     let contents = remote.get_object(&s3_uri).await?;
@@ -37,12 +39,13 @@ async fn fetch_jsonl(remote: &impl Remote, manifest: &RemoteManifest) -> Result<
 }
 
 pub async fn cache_manifest(
-    paths: &paths::DomainPaths,
+    paths: &DomainPaths,
     storage: &mut impl Storage,
     manifest: &Table,
     bucket: &str,
     hash: &str,
 ) -> Result<PathBuf, Error> {
+    scaffold_paths(&paths, storage).await?;
     let cache_path = paths.manifest_cache(bucket, hash);
     storage
         .create_dir_all(&cache_path.parent().unwrap())
@@ -57,11 +60,12 @@ pub async fn cache_manifest(
 //        or RemoteManifest::browse -> CachedManifest
 //        or CachedManifest::try_from(RemoteManifest)
 pub async fn cache_remote_manifest(
-    paths: &paths::DomainPaths,
+    paths: &DomainPaths,
     storage: &mut impl Storage,
     remote: &impl Remote,
     remote_manifest: &RemoteManifest,
 ) -> Result<CachedManifest, Error> {
+    scaffold_paths(&paths, storage).await?;
     // check if the manifest is already cached
     // if not, download and cache it
     // return cached manifest
@@ -83,11 +87,12 @@ pub async fn cache_remote_manifest(
 }
 
 pub async fn browse_remote_manifest(
-    paths: &paths::DomainPaths,
+    paths: &DomainPaths,
     storage: &mut impl Storage,
     remote: &impl Remote,
     remote_manifest: &RemoteManifest,
 ) -> Result<Table, Error> {
+    scaffold_paths(&paths, storage).await?;
     cache_remote_manifest(paths, storage, remote, remote_manifest)
         .await?
         .read(storage)
@@ -106,7 +111,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_if_cached() -> Result<(), Error> {
-        let paths = paths::DomainPaths::default();
+        let paths = DomainPaths::default();
         let manifest = RemoteManifest {
             bucket: "a".to_string(),
             namespace: "b".to_string(),
@@ -131,7 +136,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_if_cached_random_file() -> Result<(), Error> {
-        let paths = paths::DomainPaths::default();
+        let paths = DomainPaths::default();
         let manifest = RemoteManifest {
             bucket: "a".to_string(),
             namespace: "b".to_string(),
@@ -157,7 +162,7 @@ mod tests {
     #[tokio::test]
     async fn test_caching_parquet() -> Result<(), Error> {
         let mut storage = MockStorage::default();
-        let paths = paths::DomainPaths::default();
+        let paths = DomainPaths::default();
         let manifest = RemoteManifest {
             bucket: "a".to_string(),
             namespace: "b".to_string(),
@@ -187,7 +192,7 @@ mod tests {
     #[tokio::test]
     async fn test_caching_jsonl() -> Result<(), Error> {
         let mut storage = MockStorage::default();
-        let paths = paths::DomainPaths::default();
+        let paths = DomainPaths::default();
         let manifest = RemoteManifest {
             bucket: "a".to_string(),
             namespace: "b".to_string(),
