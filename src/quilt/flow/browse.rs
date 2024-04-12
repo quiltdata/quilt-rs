@@ -40,12 +40,12 @@ async fn fetch_jsonl(remote: &impl Remote, manifest: &RemoteManifest) -> Result<
 
 pub async fn cache_manifest(
     paths: &DomainPaths,
-    storage: &mut impl Storage,
+    storage: &impl Storage,
     manifest: &Table,
     bucket: &str,
     hash: &str,
 ) -> Result<PathBuf, Error> {
-    scaffold_paths(&paths, storage).await?;
+    scaffold_paths(paths, storage).await?;
     let cache_path = paths.manifest_cache(bucket, hash);
     storage
         .create_dir_all(&cache_path.parent().unwrap())
@@ -61,11 +61,11 @@ pub async fn cache_manifest(
 //        or CachedManifest::try_from(RemoteManifest)
 pub async fn cache_remote_manifest(
     paths: &DomainPaths,
-    storage: &mut impl Storage,
+    storage: &impl Storage,
     remote: &impl Remote,
     remote_manifest: &RemoteManifest,
 ) -> Result<CachedManifest, Error> {
-    scaffold_paths(&paths, storage).await?;
+    scaffold_paths(paths, storage).await?;
     // check if the manifest is already cached
     // if not, download and cache it
     // return cached manifest
@@ -88,11 +88,11 @@ pub async fn cache_remote_manifest(
 
 pub async fn browse_remote_manifest(
     paths: &DomainPaths,
-    storage: &mut impl Storage,
+    storage: &impl Storage,
     remote: &impl Remote,
     remote_manifest: &RemoteManifest,
 ) -> Result<Table, Error> {
-    scaffold_paths(&paths, storage).await?;
+    scaffold_paths(paths, storage).await?;
     cache_remote_manifest(paths, storage, remote, remote_manifest)
         .await?
         .read(storage)
@@ -118,11 +118,10 @@ mod tests {
             hash: "c".to_string(),
         };
         let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
-        let mut storage = MockStorage::default();
+        let storage = MockStorage::default();
         storage.write_file(cache_path, &Vec::new()).await?;
         let remote = MockRemote::default();
-        let cached_manifest =
-            cache_remote_manifest(&paths, &mut storage, &remote, &manifest).await?;
+        let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
         assert_eq!(
             cached_manifest,
             CachedManifest {
@@ -143,14 +142,13 @@ mod tests {
             hash: "c".to_string(),
         };
         let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
-        let mut storage = MockStorage::default();
+        let storage = MockStorage::default();
         storage.write_file(cache_path, &Vec::new()).await?;
         let remote = MockRemote::default();
-        let cached_manifest =
-            cache_remote_manifest(&paths, &mut storage, &remote, &manifest).await?;
+        let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
         assert_eq!(
             cached_manifest
-                .read(&mut storage)
+                .read(&storage)
                 .await
                 .unwrap_err()
                 .to_string(),
@@ -161,7 +159,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_caching_parquet() -> Result<(), Error> {
-        let mut storage = MockStorage::default();
+        let storage = MockStorage::default();
         let paths = DomainPaths::default();
         let manifest = RemoteManifest {
             bucket: "a".to_string(),
@@ -172,8 +170,7 @@ mod tests {
             "s3://a/.quilt/packages/1220c.parquet".to_string(),
             Vec::new(),
         )]));
-        let cached_manifest =
-            cache_remote_manifest(&paths, &mut storage, &remote, &manifest).await?;
+        let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
         assert!(storage
             .read_file(&PathBuf::from(".quilt/packages/a/c"))
             .await?
@@ -191,7 +188,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_caching_jsonl() -> Result<(), Error> {
-        let mut storage = MockStorage::default();
+        let storage = MockStorage::default();
         let paths = DomainPaths::default();
         let manifest = RemoteManifest {
             bucket: "a".to_string(),
@@ -203,8 +200,7 @@ mod tests {
             "s3://a/.quilt/packages/c".to_string(),
             jsonl,
         )]));
-        let cached_manifest =
-            cache_remote_manifest(&paths, &mut storage, &remote, &manifest).await?;
+        let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
         assert!(storage.exists(&PathBuf::from(".quilt/packages/a/c")).await);
         assert_eq!(
             cached_manifest,

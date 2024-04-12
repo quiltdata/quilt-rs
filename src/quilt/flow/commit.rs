@@ -38,7 +38,7 @@ fn remove_entry(
 }
 
 async fn modify_entry(
-    storage: &mut impl Storage,
+    storage: &impl Storage,
     paths: &paths::DomainPaths,
     working_dir: &Path,
     table: &mut Table,
@@ -93,7 +93,7 @@ pub async fn commit_package(
     mut lineage: PackageLineage,
     manifest: &(impl ReadableManifest + Sync),
     paths: &paths::DomainPaths,
-    storage: &mut impl Storage,
+    storage: &impl Storage,
     working_dir: PathBuf,
     status: InstalledPackageStatus,
     namespace: String,
@@ -197,7 +197,7 @@ mod tests {
     #[tokio::test]
     async fn test_commit() -> Result<(), Error> {
         let namespace = "foo/bar".to_string();
-        let mut storage = MockStorage::default();
+        let storage = MockStorage::default();
 
         let commit_message = "Lorem ipsum".to_string();
         let mut user_meta = serde_json::Map::new();
@@ -212,7 +212,7 @@ mod tests {
             lineage,
             &mocks::manifest::default(),
             &paths::DomainPaths::default(),
-            &mut storage,
+            &storage,
             PathBuf::default(),
             InstalledPackageStatus::default(),
             namespace,
@@ -233,7 +233,7 @@ mod tests {
     #[tokio::test]
     async fn test_removing_and_commit() -> Result<(), Error> {
         let namespace = "foo/bar".to_string();
-        let mut storage = MockStorage::default();
+        let storage = MockStorage::default();
 
         let commit_message = "Lorem ipsum".to_string();
         let mut user_meta = serde_json::Map::new();
@@ -268,7 +268,7 @@ mod tests {
             lineage,
             &manifest,
             &paths::DomainPaths::default(),
-            &mut storage,
+            &storage,
             PathBuf::default(),
             status,
             namespace,
@@ -296,7 +296,7 @@ mod tests {
     #[tokio::test]
     async fn test_adding_and_commit() -> Result<(), Error> {
         let namespace = "foo/bar".to_string();
-        let mut storage = MockStorage::default();
+        let storage = MockStorage::default();
         storage
             .write_file(PathBuf::from("/working-dir/bar"), &Vec::new())
             .await?;
@@ -328,7 +328,7 @@ mod tests {
             lineage,
             &manifest,
             &paths::DomainPaths::new(PathBuf::from("/")),
-            &mut storage,
+            &storage,
             PathBuf::from("/working-dir"),
             status,
             namespace,
@@ -361,7 +361,7 @@ mod tests {
     #[tokio::test]
     async fn test_adding_manifest_already_has_it() -> Result<(), Error> {
         let namespace = "foo/bar".to_string();
-        let mut storage = MockStorage::default();
+        let storage = MockStorage::default();
 
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
@@ -381,7 +381,7 @@ mod tests {
             lineage,
             &manifest,
             &paths::DomainPaths::new(PathBuf::from("/")),
-            &mut storage,
+            &storage,
             PathBuf::default(),
             status,
             namespace,
@@ -401,7 +401,7 @@ mod tests {
     #[tokio::test]
     async fn test_modifying_and_commit() -> Result<(), Error> {
         let namespace = "foo/bar".to_string();
-        let mut storage = MockStorage::default();
+        let storage = MockStorage::default();
         storage
             .write_file(PathBuf::from("/working-dir/bar"), &Vec::new())
             .await?;
@@ -439,7 +439,7 @@ mod tests {
             lineage,
             &manifest,
             &paths::DomainPaths::new(PathBuf::from("/")),
-            &mut storage,
+            &storage,
             PathBuf::from("/working-dir"),
             status,
             namespace,

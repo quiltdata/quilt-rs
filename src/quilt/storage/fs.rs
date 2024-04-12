@@ -32,7 +32,7 @@ pub async fn get_file_modified_ts(path: impl AsRef<Path>) -> Result<DateTime<Utc
 pub struct LocalStorage {}
 
 impl Storage for LocalStorage {
-    async fn copy(&mut self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<u64, Error> {
+    async fn copy(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<u64, Error> {
         Ok(fs::copy(from, to).await?)
     }
 
@@ -44,7 +44,7 @@ impl Storage for LocalStorage {
         Ok(fs::remove_dir_all(path).await?)
     }
 
-    async fn remove_file(&mut self, path: impl AsRef<Path>) -> Result<(), std::io::Error> {
+    async fn remove_file(&self, path: impl AsRef<Path>) -> Result<(), std::io::Error> {
         fs::remove_file(path).await
     }
 
@@ -57,23 +57,23 @@ impl Storage for LocalStorage {
         get_file_modified_ts(path).await
     }
 
-    async fn write_file(&mut self, path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), Error> {
+    async fn write_file(&self, path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), Error> {
         write(path, bytes).await
     }
 
-    async fn open_file(&mut self, path: impl AsRef<Path>) -> Result<fs::File, Error> {
+    async fn open_file(&self, path: impl AsRef<Path>) -> Result<fs::File, Error> {
         Ok(fs::File::open(path).await?)
     }
 
-    async fn create_file(&mut self, path: impl AsRef<Path>) -> Result<fs::File, Error> {
+    async fn create_file(&self, path: impl AsRef<Path>) -> Result<fs::File, Error> {
         Ok(fs::File::create(path.as_ref()).await?)
     }
 
-    async fn read_to_string(&mut self, path: impl AsRef<Path>) -> Result<String, Error> {
+    async fn read_to_string(&self, path: impl AsRef<Path>) -> Result<String, Error> {
         Ok(fs::read_to_string(&path).await?)
     }
 
-    async fn read_file(&mut self, path: impl AsRef<Path>) -> Result<Vec<u8>, Error> {
+    async fn read_file(&self, path: impl AsRef<Path>) -> Result<Vec<u8>, Error> {
         Ok(fs::read(&path).await?)
     }
 }
@@ -114,7 +114,7 @@ mod tests {
         let temp_dir = tempdir()?;
         let dest = temp_dir.path().join("foo");
 
-        let mut storage = LocalStorage::default();
+        let storage = LocalStorage::default();
 
         assert!(fs::metadata(&dest).await.is_err());
         storage.copy(local_uri_json(), &dest).await?;
@@ -144,7 +144,7 @@ mod tests {
         let temp_dir = tempdir()?;
         let dest = temp_dir.path().join("foo");
 
-        let mut storage = LocalStorage::default();
+        let storage = LocalStorage::default();
 
         let mut new_file = storage.create_file(&dest).await?;
         new_file.write_all(b"Hello").await?;

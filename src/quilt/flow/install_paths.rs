@@ -49,7 +49,7 @@ async fn cache_immutable_object(object_dest: &PathBuf, uri: &s3::S3Uri) -> Resul
 }
 
 async fn create_mutable_copy(
-    storage: &mut impl Storage,
+    storage: &impl Storage,
     immutable_source: &PathBuf,
     mutable_target: &PathBuf,
 ) -> Result<chrono::DateTime<chrono::Utc>, Error> {
@@ -67,7 +67,7 @@ pub async fn install_paths(
     paths: &paths::DomainPaths,
     working_dir: PathBuf,
     namespace: String,
-    storage: &mut impl Storage,
+    storage: &impl Storage,
     entries_paths: &Vec<String>,
 ) -> Result<PackageLineage, Error> {
     if entries_paths.is_empty() {
@@ -158,7 +158,7 @@ mod tests {
 
         let domain_paths = &paths::DomainPaths::new(working_dir.path().to_path_buf());
 
-        let mut storage = MockStorage::default();
+        let storage = MockStorage::default();
         storage
             .write_file(
                 working_dir
@@ -179,7 +179,7 @@ mod tests {
             domain_paths,
             working_dir.path().to_path_buf(),
             namespace,
-            &mut storage,
+            &storage,
             &entries_paths,
         )
         .await?;
@@ -196,7 +196,7 @@ mod tests {
     #[tokio::test]
     async fn test_installing_path_that_doesnt_exists_in_manifest() -> Result<(), Error> {
         let lineage = mocks::lineage::with_commit_hash("fghijk");
-        let mut storage = MockStorage::default();
+        let storage = MockStorage::default();
         let entries_paths = vec!["z/z".to_string()];
         let manifest = mocks::manifest::with_record_keys(vec!["a/a".to_string()]);
 
@@ -207,7 +207,7 @@ mod tests {
             &paths::DomainPaths::default(),
             PathBuf::new(),
             String::default(),
-            &mut storage,
+            &storage,
             &entries_paths,
         )
         .await;

@@ -36,7 +36,7 @@ pub mod manifest {
     pub fn default() -> impl ReadableManifest {
         struct InMemoryManifest {}
         impl ReadableManifest for InMemoryManifest {
-            async fn read(&self, _storage: &mut impl Storage) -> Result<Table, Error> {
+            async fn read(&self, _storage: &impl Storage) -> Result<Table, Error> {
                 Ok(Table::default())
             }
         }
@@ -48,7 +48,7 @@ pub mod manifest {
             keys: Vec<String>,
         }
         impl ReadableManifest for InMemoryManifest {
-            async fn read(&self, _storage: &mut impl Storage) -> Result<Table, Error> {
+            async fn read(&self, _storage: &impl Storage) -> Result<Table, Error> {
                 let mut records = BTreeMap::new();
                 for key in &self.keys {
                     records.insert(key.to_string(), row4_with_name(key.to_string()));
@@ -67,7 +67,7 @@ pub mod manifest {
             rows: Vec<Row4>,
         }
         impl ReadableManifest for InMemoryManifest {
-            async fn read(&self, _storage: &mut impl Storage) -> Result<Table, Error> {
+            async fn read(&self, _storage: &impl Storage) -> Result<Table, Error> {
                 let mut records = BTreeMap::new();
                 for row in &self.rows {
                     records.insert(row.name.to_string(), row.clone());

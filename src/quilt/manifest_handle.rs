@@ -76,7 +76,7 @@ impl RemoteManifest {
 
     pub async fn upload_from(
         &self,
-        storage: &mut impl Storage,
+        storage: &impl Storage,
         remote: &mut impl Remote,
         manifest_path: &PathBuf,
     ) -> Result<(), Error> {
@@ -126,7 +126,7 @@ pub trait ReadableManifest {
 
     fn read(
         &self,
-        storage: &mut impl Storage,
+        storage: &impl Storage,
     ) -> impl std::future::Future<Output = Result<Table, Error>>
     where
         Self: Sync,

@@ -83,7 +83,7 @@ impl DomainPaths {
 
 pub async fn copy_cached_to_installed(
     paths: &DomainPaths,
-    storage: &mut impl Storage,
+    storage: &impl Storage,
     cached_manifest_bucket: &str,
     installed_manifest_namespace: &str,
     hash: &str,

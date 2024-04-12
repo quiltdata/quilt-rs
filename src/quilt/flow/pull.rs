@@ -16,7 +16,7 @@ pub async fn pull_package(
     lineage: PackageLineage,
     manifest: &(impl manifest_handle::ReadableManifest + Sync),
     paths: &DomainPaths,
-    storage: &mut impl Storage,
+    storage: &impl Storage,
     working_dir: PathBuf,
     status: InstalledPackageStatus,
     namespace: String,
@@ -89,7 +89,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_pull_if_changes() -> Result<(), Error> {
-        let mut storage = MockStorage::default();
+        let storage = MockStorage::default();
         let lineage = mocks::lineage::with_paths(&vec!["a/a"]);
 
         let status = InstalledPackageStatus {
@@ -106,7 +106,7 @@ mod tests {
             lineage,
             &mocks::manifest::with_record_keys(vec!["a/a".to_string()]),
             &DomainPaths::default(),
-            &mut storage,
+            &storage,
             PathBuf::default(),
             status,
             String::default(),
@@ -121,13 +121,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_pull_if_commit() {
-        let mut storage = MockStorage::default();
+        let storage = MockStorage::default();
         let lineage = mocks::lineage::with_commit();
         let error = pull_package(
             lineage,
             &mocks::manifest::default(),
             &DomainPaths::default(),
-            &mut storage,
+            &storage,
             PathBuf::default(),
             InstalledPackageStatus::default(),
             String::default(),
@@ -141,7 +141,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_pull_if_diverged() {
-        let mut storage = MockStorage::default();
+        let storage = MockStorage::default();
         let lineage = PackageLineage {
             remote: RemoteManifest {
                 hash: "a".to_string(),
@@ -154,7 +154,7 @@ mod tests {
             lineage,
             &mocks::manifest::default(),
             &DomainPaths::default(),
-            &mut storage,
+            &storage,
             PathBuf::default(),
             InstalledPackageStatus::default(),
             String::default(),
@@ -168,7 +168,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_pull_if_up_to_date() {
-        let mut storage = MockStorage::default();
+        let storage = MockStorage::default();
         let lineage = PackageLineage {
             remote: RemoteManifest {
                 hash: "a".to_string(),
@@ -182,7 +182,7 @@ mod tests {
             lineage,
             &mocks::manifest::default(),
             &DomainPaths::default(),
-            &mut storage,
+            &storage,
             PathBuf::default(),
             InstalledPackageStatus::default(),
             String::default(),

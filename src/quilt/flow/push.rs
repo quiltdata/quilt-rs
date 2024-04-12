@@ -21,7 +21,7 @@ pub async fn push_package(
     mut lineage: PackageLineage,
     manifest: &(impl manifest_handle::ReadableManifest + Sync),
     paths: &paths::DomainPaths,
-    storage: &mut impl Storage,
+    storage: &impl Storage,
     remote: &mut impl Remote,
     namespace: String,
 ) -> Result<PackageLineage, Error> {
@@ -160,13 +160,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_push_if_no_commit() -> Result<(), Error> {
-        let mut storage = MockStorage::default();
+        let storage = MockStorage::default();
         let mut remote = MockRemote::default();
         let lineage = push_package(
             PackageLineage::default(),
             &mocks::manifest::default(),
             &paths::DomainPaths::default(),
-            &mut storage,
+            &storage,
             &mut remote,
             String::default(),
         )
@@ -187,7 +187,7 @@ mod tests {
         let jsonl = std::fs::read(local_uri_parquet_checksumed())?;
         let manifest_key =
             ".quilt/packages/b/770459d4230273fd44b272c552d1204458175e7d7cb26fcd601c662cf5f72d05";
-        let mut storage = MockStorage::default();
+        let storage = MockStorage::default();
         storage
             .write_file(PathBuf::from(manifest_key), &jsonl)
             .await?;
@@ -208,7 +208,7 @@ mod tests {
             lineage,
             &mocks::manifest::default(),
             &paths::DomainPaths::default(),
-            &mut storage,
+            &storage,
             &mut remote,
             String::default(),
         )
@@ -239,7 +239,7 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let manifest_key =
             ".quilt/packages/b/0f85671863dadacf3a0e62212f1b9151a11f72228e4c82ed86ff27d46ec31d87";
-        let mut storage = MockStorage::default();
+        let storage = MockStorage::default();
         storage
             .write_file(PathBuf::from(manifest_key), &jsonl)
             .await?;
@@ -269,7 +269,7 @@ mod tests {
             lineage,
             &manifest,
             &paths::DomainPaths::default(),
-            &mut storage,
+            &storage,
             &mut remote,
             String::default(),
         )

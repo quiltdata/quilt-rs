@@ -10,7 +10,7 @@ use crate::Error;
 pub async fn install_package(
     lineage: DomainLineage,
     paths: &paths::DomainPaths,
-    storage: &mut impl Storage,
+    storage: &impl Storage,
     remote: &impl Remote,
     remote_manifest: &RemoteManifest,
 ) -> Result<DomainLineage, Error> {
@@ -77,7 +77,7 @@ mod tests {
         let result = install_package(
             lineage,
             &paths::DomainPaths::default(),
-            &mut MockStorage::default(),
+            &MockStorage::default(),
             &MockRemote::default(),
             &RemoteManifest {
                 namespace: "foo".to_string(),
@@ -109,11 +109,11 @@ mod tests {
                 Vec::new(),
             ),
         ]));
-        let mut storage = MockStorage::default();
+        let storage = MockStorage::default();
         let result = install_package(
             DomainLineage::default(),
             &paths::DomainPaths::default(),
-            &mut storage,
+            &storage,
             &remote,
             &remote_manifest,
         )

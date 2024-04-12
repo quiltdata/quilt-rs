@@ -110,7 +110,7 @@ pub async fn refresh_latest_hash(
 
 pub async fn create_status(
     lineage: PackageLineage,
-    storage: &mut impl Storage,
+    storage: &impl Storage,
     manifest: &(impl ReadableManifest + Sync),
     working_dir: PathBuf,
 ) -> Result<(PackageLineage, InstalledPackageStatus), Error> {
@@ -234,10 +234,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_default_status() -> Result<(), Error> {
-        let mut storage = MockStorage::default();
+        let storage = MockStorage::default();
         let (_lineage, status) = create_status(
             PackageLineage::default(),
-            &mut storage,
+            &storage,
             &mocks::manifest::default(),
             PathBuf::default(),
         )
@@ -255,7 +255,7 @@ mod tests {
 
         let (_lineage, status) = create_status(
             lineage,
-            &mut MockStorage::default(),
+            &MockStorage::default(),
             &mocks::manifest::default(),
             PathBuf::default(),
         )
@@ -273,7 +273,7 @@ mod tests {
 
         let (_, status) = create_status(
             lineage,
-            &mut MockStorage::default(),
+            &MockStorage::default(),
             &mocks::manifest::default(),
             PathBuf::default(),
         )
@@ -296,7 +296,7 @@ mod tests {
 
         let (_, status) = create_status(
             lineage,
-            &mut MockStorage::default(),
+            &MockStorage::default(),
             &mocks::manifest::default(),
             PathBuf::default(),
         )
@@ -311,7 +311,7 @@ mod tests {
         let manifest = mocks::manifest::with_record_keys(vec!["a/a".to_string()]);
         let (_, status) = create_status(
             lineage,
-            &mut MockStorage::default(),
+            &MockStorage::default(),
             &manifest,
             PathBuf::default(),
         )

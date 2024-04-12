@@ -132,7 +132,7 @@ impl Table {
 
     // Read quilt4's Parquet format
     pub async fn read_from_path(
-        storage: &mut impl Storage,
+        storage: &impl Storage,
         path: impl AsRef<Path>,
     ) -> Result<Self, Error> {
         let file = storage.open_file(path.as_ref()).await?;
@@ -168,11 +168,7 @@ impl Table {
     }
 
     // Write quilt4's Parquet format
-    pub async fn write_to_path(
-        &self,
-        storage: &mut impl Storage,
-        path: &PathBuf,
-    ) -> Result<(), Error> {
+    pub async fn write_to_path(&self, storage: &impl Storage, path: &PathBuf) -> Result<(), Error> {
         let schema = Arc::new(Schema::new(vec![
             Field::new("name", DataType::Utf8, false),
             Field::new("place", DataType::Utf8, false),
@@ -307,11 +303,11 @@ mod tests {
 
     #[tokio::test]
     async fn read_existing_local() -> Result<(), Error> {
-        let mut storage = MockStorage::default();
+        let storage = MockStorage::default();
         storage
             .write_file(local_uri_parquet(), &std::fs::read(local_uri_parquet())?)
             .await?;
-        let table = Table::read_from_path(&mut storage, &local_uri_parquet())
+        let table = Table::read_from_path(&storage, &local_uri_parquet())
             .await
             .unwrap();
         assert_eq!(table.records.len(), 2);
@@ -328,8 +324,8 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn read_write_local() {
-        let mut storage = MockStorage::default();
-        let table1 = Table::read_from_path(&mut storage, &local_uri_parquet())
+        let storage = MockStorage::default();
+        let table1 = Table::read_from_path(&storage, &local_uri_parquet())
             .await
             .unwrap();
         assert_eq!(table1.records.len(), 2);
@@ -337,14 +333,9 @@ mod tests {
         let temp_dir = temp_testdir::TempDir::default();
         let temp_path = temp_dir.join("test.parquet");
 
-        table1
-            .write_to_path(&mut storage, &temp_path)
-            .await
-            .unwrap();
+        table1.write_to_path(&storage, &temp_path).await.unwrap();
 
-        let table2 = Table::read_from_path(&mut storage, &temp_path)
-            .await
-            .unwrap();
+        let table2 = Table::read_from_path(&storage, &temp_path).await.unwrap();
 
         assert_eq!(table2.records.len(), 2);
         assert_eq!(table2.records, table1.records);
