@@ -72,7 +72,7 @@ impl DomainPaths {
         self.root_dir.join(namespace)
     }
 
-    pub fn required_paths(&self) -> Vec<PathBuf> {
+    pub fn required_local_domain_paths(&self) -> Vec<PathBuf> {
         vec![
             self.root_dir.join(INSTALLED_DIR),
             self.objects_dir(),
@@ -97,8 +97,11 @@ pub async fn copy_cached_to_installed(
     Ok(())
 }
 
-pub async fn scaffold_paths(paths: &DomainPaths, storage: &impl Storage) -> Result<(), Error> {
-    let paths = paths.required_paths();
+pub async fn scaffold_local_domain_paths(
+    paths: &DomainPaths,
+    storage: &impl Storage,
+) -> Result<(), Error> {
+    let paths = paths.required_local_domain_paths();
     for path in paths {
         storage.create_dir_all(&path).await?
     }
@@ -112,7 +115,7 @@ mod tests {
     #[test]
     fn test_required_paths() {
         let paths = DomainPaths::new(PathBuf::from("foo/bar"));
-        let scaffolded_paths = paths.required_paths();
+        let scaffolded_paths = paths.required_local_domain_paths();
         assert_eq!(
             scaffolded_paths,
             vec![

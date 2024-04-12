@@ -76,7 +76,7 @@ pub async fn cache_remote_manifest(
         // Does not exist yet
         if is_parquet(remote, remote_manifest).await? {
             let manifest = fetch_parquet(remote, remote_manifest).await?;
-            storage.write_file(cache_path.clone(), &manifest).await?;
+            storage.write_file(&cache_path, &manifest).await?;
         } else {
             let manifest = fetch_jsonl(remote, remote_manifest).await?;
             manifest.write_to_path(storage, &cache_path).await?;
