@@ -28,7 +28,7 @@ pub async fn get_file_modified_ts(path: impl AsRef<Path>) -> Result<DateTime<Utc
     Ok(DateTime::<Utc>::from(modified))
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LocalStorage {}
 
 impl Storage for LocalStorage {

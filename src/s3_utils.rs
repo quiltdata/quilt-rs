@@ -211,7 +211,7 @@ pub async fn calculate_attrs_for_key(
     )))
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RemoteS3 {}
 
 impl Default for RemoteS3 {

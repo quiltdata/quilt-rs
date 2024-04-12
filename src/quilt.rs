@@ -23,6 +23,7 @@ use crate::Error;
 use crate::Row4;
 use crate::Table;
 
+pub use crate::quilt::remote::Remote;
 pub use flow::status::UpstreamDiscreteState;
 pub use flow::status::UpstreamState;
 pub use lineage::CommitState;
@@ -57,30 +58,37 @@ use flow::status::refresh_latest_hash;
 use flow::status::Change;
 use flow::status::ChangeSet;
 use flow::status::InstalledPackageStatus;
-use flow::status::PackageFileFingerprint;
 use flow::uninstall_package::uninstall_package;
 use flow::uninstall_paths::uninstall_paths;
 
+// TODO: make Remote non mutable and add it to LocalDomain
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LocalDomain {
+pub struct LocalDomain<S: Storage = fs::LocalStorage> {
+    // pub struct LocalDomain<S: Storage = fs::LocalStorage, R: Remote = s3_utils::RemoteS3> {
     paths: paths::DomainPaths,
     lineage: lineage::DomainLineageIo,
+    storage: S,
+    // remote: R,
 }
 
 impl LocalDomain {
     pub fn new(root_dir: PathBuf) -> Self {
         let paths = paths::DomainPaths::new(root_dir.clone());
         let lineage = lineage::DomainLineageIo::new(paths.lineage());
-        Self { paths, lineage }
+        let storage = fs::LocalStorage::new();
+        Self {
+            storage,
+            paths,
+            lineage,
+        }
     }
 
     pub async fn browse_remote_manifest(
         &self,
         remote_manifest: &RemoteManifest,
     ) -> Result<Table, Error> {
-        let storage = fs::LocalStorage::new();
         let remote = s3_utils::RemoteS3::new();
-        browse_remote_manifest(&self.paths, &storage, &remote, remote_manifest).await
+        browse_remote_manifest(&self.paths, &self.storage, &remote, remote_manifest).await
     }
 
     fn create_installed_package(&self, namespace: String) -> InstalledPackage {
@@ -88,6 +96,7 @@ impl LocalDomain {
             lineage: self.lineage.create_package_lineage(namespace.clone()),
             namespace: namespace.clone(),
             paths: self.paths.clone(),
+            storage: self.storage.clone(),
         }
     }
 
@@ -95,29 +104,31 @@ impl LocalDomain {
         &self,
         remote_manifest: &RemoteManifest,
     ) -> Result<InstalledPackage, Error> {
-        let storage = fs::LocalStorage::new();
         // Read the lineage
-        let lineage: DomainLineage = self.lineage.read(&storage).await?;
-        let storage = fs::LocalStorage::new();
+        let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
         let remote = s3_utils::RemoteS3::new();
-        let lineage =
-            install_package(lineage, &self.paths, &storage, &remote, remote_manifest).await?;
-        self.lineage.write(&storage, &lineage).await?;
+        let lineage = install_package(
+            lineage,
+            &self.paths,
+            &self.storage,
+            &remote,
+            remote_manifest,
+        )
+        .await?;
+        self.lineage.write(&self.storage, &lineage).await?;
 
         Ok(self.create_installed_package(remote_manifest.namespace.clone()))
     }
 
     pub async fn uninstall_package(&self, namespace: impl AsRef<str>) -> Result<(), Error> {
-        let storage = fs::LocalStorage::new();
-        let lineage = self.lineage.read(&storage).await?;
+        let lineage = self.lineage.read(&self.storage).await?;
         // FIXME: write lineage in the end?
-        uninstall_package(lineage, &self.paths, &storage, namespace).await?;
+        uninstall_package(lineage, &self.paths, &self.storage, namespace).await?;
         Ok(())
     }
 
     pub async fn list_installed_packages(&self) -> Result<Vec<InstalledPackage>, Error> {
-        let storage = fs::LocalStorage::new();
-        let lineage = self.lineage.read(&storage).await?;
+        let lineage = self.lineage.read(&self.storage).await?;
         let mut namespaces: Vec<String> = lineage.packages.into_keys().collect();
         namespaces.sort();
         let packages = namespaces
@@ -126,6 +137,7 @@ impl LocalDomain {
                 lineage: self.lineage.create_package_lineage(namespace.clone()),
                 paths: self.paths.clone(),
                 namespace,
+                storage: self.storage.clone(),
             })
             .collect();
         Ok(packages)
@@ -135,13 +147,13 @@ impl LocalDomain {
         &self,
         namespace: &str,
     ) -> Result<Option<InstalledPackage>, Error> {
-        let storage = fs::LocalStorage::new();
-        let lineage = self.lineage.read(&storage).await?;
+        let lineage = self.lineage.read(&self.storage).await?;
         if lineage.packages.contains_key(namespace) {
             Ok(Some(InstalledPackage {
                 paths: self.paths.clone(),
                 lineage: self.lineage.create_package_lineage(namespace.to_string()),
                 namespace: namespace.to_string(),
+                storage: self.storage.clone(),
             }))
         } else {
             Ok(None)
@@ -153,7 +165,6 @@ impl LocalDomain {
         uri: &s3::S3Uri,
         target_uri: S3PackageUri,
     ) -> Result<RemoteManifest, Error> {
-        let storage = fs::LocalStorage::new();
         let mut remote = s3_utils::RemoteS3::new();
         log::debug!("Source URI: {:?}, target URI: {:?}", uri, target_uri);
         // TODO: make get_object_attributes() calls concurrently across list_objects() pages
@@ -227,14 +238,14 @@ impl LocalDomain {
         };
         let cache_path = cache_manifest(
             &self.paths,
-            &storage,
+            &self.storage,
             &table,
             &new_remote.bucket,
             &new_remote.hash,
         )
         .await?;
         new_remote
-            .upload_from(&storage, &mut remote, &cache_path)
+            .upload_from(&self.storage, &mut remote, &cache_path)
             .await?;
         new_remote.upload_legacy(&mut remote, &table).await?;
         let top_hash = table.top_hash();
@@ -248,10 +259,11 @@ impl LocalDomain {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct InstalledPackage {
+pub struct InstalledPackage<S: Storage + Clone = fs::LocalStorage> {
     paths: paths::DomainPaths,
     lineage: lineage::PackageLineageIo,
     pub namespace: String,
+    storage: S,
 }
 
 impl InstalledPackage {
@@ -273,13 +285,12 @@ impl InstalledPackage {
 
     pub async fn status(&self) -> Result<InstalledPackageStatus, Error> {
         let remote = s3_utils::RemoteS3::new();
-        let storage = fs::LocalStorage::new();
-        let lineage = self.lineage.read(&storage).await?;
+        let lineage = self.lineage.read(&self.storage).await?;
         let lineage = refresh_latest_hash(lineage, &remote).await?;
-        let manifest = self.manifest(&storage).await?;
+        let manifest = self.manifest(&self.storage).await?;
         let (lineage, status) =
-            create_status(lineage, &storage, &manifest, self.working_folder()).await?;
-        self.lineage.write(&storage, lineage).await?;
+            create_status(lineage, &self.storage, &manifest, self.working_folder()).await?;
+        self.lineage.write(&self.storage, lineage).await?;
         Ok(status)
     }
 
@@ -287,27 +298,25 @@ impl InstalledPackage {
         if paths.is_empty() {
             return Ok(());
         }
-        let storage = fs::LocalStorage::new();
-        let lineage = self.lineage.read(&storage).await?;
-        let manifest = self.manifest(&storage).await?;
+        let lineage = self.lineage.read(&self.storage).await?;
+        let manifest = self.manifest(&self.storage).await?;
         let lineage = install_paths(
             lineage,
             &manifest,
             &self.paths,
             self.working_folder(),
             self.namespace.to_string(),
-            &storage,
+            &self.storage,
             paths,
         )
         .await?;
-        self.lineage.write(&storage, lineage).await
+        self.lineage.write(&self.storage, lineage).await
     }
 
     pub async fn uninstall_paths(&self, paths: &Vec<String>) -> Result<(), Error> {
-        let storage = fs::LocalStorage::new();
-        let lineage = self.lineage.read(&storage).await?;
-        let lineage = uninstall_paths(lineage, self.working_folder(), &storage, paths).await?;
-        self.lineage.write(&storage, lineage).await
+        let lineage = self.lineage.read(&self.storage).await?;
+        let lineage = uninstall_paths(lineage, self.working_folder(), &self.storage, paths).await?;
+        self.lineage.write(&self.storage, lineage).await
     }
 
     pub async fn revert_paths(&self, paths: &Vec<String>) -> Result<(), Error> {
@@ -320,18 +329,17 @@ impl InstalledPackage {
         message: String,
         user_meta: Option<manifest::JsonObject>,
     ) -> Result<(), Error> {
-        let storage = fs::LocalStorage::new();
-        let lineage = self.lineage.read(&storage).await?;
-        let manifest = self.manifest(&storage).await?;
+        let lineage = self.lineage.read(&self.storage).await?;
+        let manifest = self.manifest(&self.storage).await?;
 
         let (lineage, status) =
-            create_status(lineage, &storage, &manifest, self.working_folder()).await?;
+            create_status(lineage, &self.storage, &manifest, self.working_folder()).await?;
 
         let lineage = commit_package(
             lineage,
             &manifest,
             &self.paths,
-            &storage,
+            &self.storage,
             self.working_folder(),
             status,
             self.namespace.to_string(),
@@ -339,78 +347,66 @@ impl InstalledPackage {
             user_meta,
         )
         .await?;
-        self.lineage.write(&storage, lineage).await
+        self.lineage.write(&self.storage, lineage).await
     }
 
     pub async fn push(&self) -> Result<(), Error> {
-        let storage = fs::LocalStorage::new();
-        let lineage = self.lineage.read(&storage).await?;
+        let lineage = self.lineage.read(&self.storage).await?;
         let mut remote = s3_utils::RemoteS3::new();
-        let manifest = self.manifest(&storage).await?;
+        let manifest = self.manifest(&self.storage).await?;
         let lineage = push_package(
             lineage,
             &manifest,
             &self.paths,
-            &storage,
+            &self.storage,
             &mut remote,
             self.namespace.to_string(),
         )
         .await?;
-        self.lineage.write(&storage, lineage).await
+        self.lineage.write(&self.storage, lineage).await
     }
 
     pub async fn pull(&self) -> Result<(), Error> {
-        let storage = fs::LocalStorage::new();
-        let lineage = self.lineage.read(&storage).await?;
-        let manifest = self.manifest(&storage).await?;
+        let lineage = self.lineage.read(&self.storage).await?;
+        let manifest = self.manifest(&self.storage).await?;
         let (lineage, status) =
-            create_status(lineage, &storage, &manifest, self.working_folder()).await?;
+            create_status(lineage, &self.storage, &manifest, self.working_folder()).await?;
         let lineage = pull_package(
             lineage,
             &manifest,
             &self.paths,
-            &storage,
+            &self.storage,
             self.working_folder(),
             status,
             self.namespace.to_string(),
         )
         .await?;
-        self.lineage.write(&storage, lineage).await
+        self.lineage.write(&self.storage, lineage).await
     }
 
     pub async fn certify_latest(&self) -> Result<(), Error> {
-        let storage = fs::LocalStorage::new();
-        let lineage = self.lineage.read(&storage).await?;
+        let lineage = self.lineage.read(&self.storage).await?;
         let mut remote = s3_utils::RemoteS3::new();
         let lineage = certify_latest(lineage, &mut remote).await?;
-        self.lineage.write(&storage, lineage).await
+        self.lineage.write(&self.storage, lineage).await
     }
 
     pub async fn reset_to_latest(&self) -> Result<(), Error> {
-        let storage = fs::LocalStorage::new();
         let remote = s3_utils::RemoteS3::new();
-        let lineage = self.lineage.read(&storage).await?;
-        let manifest = self.manifest(&storage).await?;
+        let lineage = self.lineage.read(&self.storage).await?;
+        let manifest = self.manifest(&self.storage).await?;
         let lineage = reset_to_latest(
             lineage,
             &manifest,
             &self.paths,
-            &storage,
+            &self.storage,
             &remote,
             self.working_folder(),
             self.namespace.to_string(),
         )
         .await?;
-        self.lineage.write(&storage, lineage).await
+        self.lineage.write(&self.storage, lineage).await
     }
-}
-
-// a conflict is identified by the identifiers of the two conflicting manifests
-#[derive(Debug, PartialEq)]
-pub struct Conflict {
-    package: InstalledPackage,
-    changes: ChangeSet<String, PackageFileFingerprint>,
-    folder: PathBuf,
 }
 
 #[cfg(test)]
@@ -422,6 +418,7 @@ mod tests {
     use tokio_test::block_on;
 
     use crate::quilt::flow::browse::cache_remote_manifest;
+    use crate::quilt::flow::status::PackageFileFingerprint;
     use crate::quilt::manifest::MULTIHASH_SHA256;
     use crate::quilt::storage::mock_storage::MockStorage;
     use crate::quilt4::checksum::calculate_sha256_checksum;

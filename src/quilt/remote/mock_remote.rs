@@ -25,6 +25,7 @@ impl MockRemote {
     }
 }
 
+// TODO: instead of `&mut self` use MockStorage with temp data
 impl Remote for MockRemote {
     async fn get_object(&self, s3_uri: &S3Uri) -> Result<impl AsyncRead + Send + Unpin, Error> {
         let key = s3_uri.to_string();
