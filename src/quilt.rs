@@ -61,23 +61,9 @@ use flow::status::PackageFileFingerprint;
 use flow::uninstall_package::uninstall_package;
 use flow::uninstall_paths::uninstall_paths;
 
-// XXX: is this necessary?
-#[derive(Debug, PartialEq, Eq)]
-struct S3Domain {
-    bucket: String,
-}
-
-impl From<&S3PackageUri> for S3Domain {
-    fn from(uri: &S3PackageUri) -> Self {
-        Self {
-            bucket: uri.bucket.clone(),
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalDomain {
-    pub paths: paths::DomainPaths,
+    paths: paths::DomainPaths,
     lineage: lineage::DomainLineageIo,
 }
 
