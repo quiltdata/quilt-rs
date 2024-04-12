@@ -187,3 +187,49 @@ impl InstalledManifest {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::collections::HashMap;
+
+    use crate::quilt::remote::mock_remote::MockRemote;
+
+    #[tokio::test]
+    async fn test_resolve_existing_hash() -> Result<(), Error> {
+        let uri = S3PackageUri::try_from("quilt+s3://b#package=foo@hjknlmn")?;
+        let remote = MockRemote::default();
+        let remote_manifest = RemoteManifest::resolve(&remote, &uri).await?;
+        assert_eq!(
+            remote_manifest,
+            RemoteManifest {
+                bucket: "b".to_string(),
+                namespace: "foo".to_string(),
+                hash: "hjknlmn".to_string(),
+            },
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_resolve_remote_hash() -> Result<(), Error> {
+        let uri = S3PackageUri::try_from("quilt+s3://b#package=foo")?;
+        let remote = MockRemote {
+            registry: HashMap::from([(
+                "s3://b/.quilt/named_packages/foo/latest".to_string(),
+                b"abcdef".to_vec(),
+            )]),
+        };
+        let remote_manifest = RemoteManifest::resolve(&remote, &uri).await?;
+        assert_eq!(
+            remote_manifest,
+            RemoteManifest {
+                bucket: "b".to_string(),
+                namespace: "foo".to_string(),
+                hash: "abcdef".to_string(),
+            },
+        );
+        Ok(())
+    }
+}
