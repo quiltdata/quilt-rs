@@ -135,7 +135,7 @@ impl Table {
         storage: &mut impl Storage,
         path: impl AsRef<Path>,
     ) -> Result<Self, Error> {
-        let file = storage.open_file(path).await?;
+        let file = storage.open_file(path.as_ref()).await?;
         Table::read_rows_impl(file).await
     }
 

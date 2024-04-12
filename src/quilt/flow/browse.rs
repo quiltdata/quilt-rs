@@ -100,8 +100,6 @@ mod tests {
 
     use std::collections::HashMap;
 
-    use temp_testdir::TempDir;
-
     use crate::quilt::remote::mock_remote::MockRemote;
     use crate::quilt::storage::mock_storage::MockStorage;
     use crate::utils::local_uri_json;
@@ -132,8 +130,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_if_cached_random_file() -> Result<(), Error> {
-        let root_dir = TempDir::default();
-        let paths = paths::DomainPaths::new(root_dir.to_path_buf());
+        let paths = paths::DomainPaths::default();
         let manifest = RemoteManifest {
             bucket: "a".to_string(),
             namespace: "b".to_string(),

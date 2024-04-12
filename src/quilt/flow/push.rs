@@ -1,13 +1,6 @@
 use std::path::PathBuf;
 
-use aws_sdk_s3::error::DisplayErrorContext;
-use aws_sdk_s3::types::ChecksumAlgorithm;
-use aws_sdk_s3::types::CompletedMultipartUpload;
-use aws_sdk_s3::types::CompletedPart;
 use aws_smithy_types::byte_stream::ByteStream;
-use aws_smithy_types::byte_stream::Length;
-use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
 use multihash::Multihash;
 use tracing::log;
 use url::Url;
@@ -23,7 +16,6 @@ use crate::quilt::storage;
 use crate::quilt::storage::s3::S3Uri;
 use crate::quilt::storage::Storage;
 use crate::quilt::Error;
-use crate::quilt4::checksum;
 
 pub async fn push_package(
     mut lineage: PackageLineage,
@@ -78,74 +70,9 @@ pub async fn push_package(
                 .put_object_and_checksum(&s3_uri, body, row.size)
                 .await?
         } else {
-            let (chunksize, num_chunks) = checksum::get_checksum_chunksize_and_parts(row.size);
-            let client =
-                crate::s3_utils::get_client_for_bucket(&remote_manifest_address.bucket).await?;
-            let upload_id = client
-                .create_multipart_upload()
-                .bucket(&remote_manifest_address.bucket)
-                .key(&s3_key)
-                .checksum_algorithm(ChecksumAlgorithm::Sha256)
-                .send()
-                .await
-                .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?
-                .upload_id
-                .ok_or(Error::UploadId("failed to get an UploadId".to_string()))?;
-
-            let mut parts: Vec<CompletedPart> = Vec::new();
-            for chunk_idx in 0..num_chunks {
-                let part_number = chunk_idx as i32 + 1;
-                let offset = chunk_idx * chunksize;
-                let length = chunksize.min(row.size - offset);
-                let chunk_body = ByteStream::read_from()
-                    .path(&file_path)
-                    .offset(offset)
-                    .length(Length::Exact(length)) // https://github.com/awslabs/aws-sdk-rust/issues/821
-                    .build()
-                    .await?;
-                let part_response = client
-                    .upload_part()
-                    .bucket(&remote_manifest_address.bucket)
-                    .key(&s3_key)
-                    .upload_id(&upload_id)
-                    .part_number(part_number)
-                    .checksum_algorithm(ChecksumAlgorithm::Sha256)
-                    .body(chunk_body)
-                    .send()
-                    .await
-                    .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
-                parts.push(
-                    CompletedPart::builder()
-                        .part_number(part_number)
-                        .e_tag(part_response.e_tag.unwrap_or_default())
-                        .checksum_sha256(part_response.checksum_sha256.unwrap_or_default())
-                        .build(),
-                );
-            }
-
-            let response = client
-                .complete_multipart_upload()
-                .bucket(&remote_manifest_address.bucket)
-                .key(&s3_key)
-                .upload_id(&upload_id)
-                .multipart_upload(
-                    CompletedMultipartUpload::builder()
-                        .set_parts(Some(parts))
-                        .build(),
-                )
-                .send()
-                .await
-                .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
-
-            let s3_checksum = response
-                .checksum_sha256
-                .ok_or(Error::Checksum("missing checksum".to_string()))?;
-            let (checksum_b64, _) = s3_checksum
-                .split_once('-')
-                .ok_or(Error::Checksum("unexpected checksum".to_string()))?;
-            let checksum = BASE64_STANDARD.decode(checksum_b64)?;
-
-            (response.version_id, checksum)
+            remote
+                .multipart_upload_and_checksum(&s3_uri, file_path, row.size)
+                .await?
         };
 
         // Update the manifest with the sha2-256-chunked checksum.
@@ -229,6 +156,7 @@ mod tests {
     use crate::quilt::storage::mock_storage::MockStorage;
     use crate::quilt::S3PackageUri;
     use crate::utils::local_uri_parquet_checksumed;
+    use crate::Row4;
 
     #[tokio::test]
     async fn test_no_push_if_no_commit() -> Result<(), Error> {
@@ -248,7 +176,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_push() -> Result<(), Error> {
+    async fn test_no_entries_push() -> Result<(), Error> {
         let remote_manifest: RemoteManifest =
             S3PackageUri::try_from("quilt+s3://b#package=a@__FOO__")?.into();
         let lineage = PackageLineage {
@@ -293,6 +221,73 @@ mod tests {
                 ..PackageLineage::default()
             }
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_single_chunk_push() -> Result<(), Error> {
+        let remote_manifest: RemoteManifest =
+            S3PackageUri::try_from("quilt+s3://b#package=a@__FOO__")?.into();
+        let lineage = PackageLineage {
+            commit: Some(CommitState::default()),
+            remote: remote_manifest,
+            ..PackageLineage::default()
+        };
+        let jsonl = std::fs::read(local_uri_parquet_checksumed())?;
+        let temp_dir = tempfile::tempdir()?;
+        let manifest_key =
+            ".quilt/packages/b/0f85671863dadacf3a0e62212f1b9151a11f72228e4c82ed86ff27d46ec31d87";
+        let mut storage = MockStorage {
+            registry: HashMap::from([(PathBuf::from(manifest_key), jsonl.clone())]),
+        };
+        let mut remote = MockRemote {
+            registry: HashMap::from([
+                (
+                    "s3://b/.quilt/packages/1220__FOO__.parquet".to_string(),
+                    jsonl,
+                ),
+                (
+                    "s3://b/.quilt/named_packages/a/latest".to_string(),
+                    b"abcdef".into(),
+                ),
+            ]),
+        };
+
+        let file_path = temp_dir.into_path().join("bar");
+        tokio::fs::copy(local_uri_parquet_checksumed(), &file_path).await?;
+
+        let manifest = mocks::manifest::with_rows(vec![Row4 {
+            name: "bar".to_string(),
+            place: format!("file://{}", file_path.display()),
+            ..Row4::default()
+        }]);
+
+        let lineage = push_package(
+            lineage,
+            &manifest,
+            &paths::DomainPaths::default(),
+            &mut storage,
+            &mut remote,
+            String::default(),
+        )
+        .await?;
+        let result_remote_manifest: RemoteManifest = S3PackageUri::try_from("quilt+s3://b#package=a@0f85671863dadacf3a0e62212f1b9151a11f72228e4c82ed86ff27d46ec31d87")?.into();
+        assert_eq!(
+            lineage,
+            PackageLineage {
+                remote: result_remote_manifest,
+                base_hash: "".to_string(), // Huh?
+                latest_hash: "abcdef".to_string(),
+                ..PackageLineage::default()
+            }
+        );
+        // drop(temp_dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_multichunk_push() -> Result<(), Error> {
         Ok(())
     }
 }

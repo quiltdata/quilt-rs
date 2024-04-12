@@ -27,7 +27,7 @@ pub mod manifest {
     pub fn row4_with_name(name: String) -> Row4 {
         Row4 {
             name,
-            place: "s3://z/x/y?versionId=foo".to_string(),
+            place: "file:///z/x/y".to_string(),
             hash: Multihash::wrap(0xb510, b"pedestrian").unwrap(),
             ..Row4::default()
         }
@@ -60,5 +60,24 @@ pub mod manifest {
             }
         }
         InMemoryManifest { keys }
+    }
+
+    pub fn with_rows(rows: Vec<Row4>) -> impl ReadableManifest {
+        struct InMemoryManifest {
+            rows: Vec<Row4>,
+        }
+        impl ReadableManifest for InMemoryManifest {
+            async fn read(&self, _storage: &mut impl Storage) -> Result<Table, Error> {
+                let mut records = BTreeMap::new();
+                for row in &self.rows {
+                    records.insert(row.name.to_string(), row.clone());
+                }
+                Ok(Table {
+                    records,
+                    ..Table::default()
+                })
+            }
+        }
+        InMemoryManifest { rows }
     }
 }

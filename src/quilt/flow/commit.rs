@@ -193,6 +193,8 @@ mod tests {
     use crate::quilt::mocks;
     use crate::quilt::storage::mock_storage::MockStorage;
 
+    // NOTE: Tests use "/" path for working directory, because it then parsed with Url and have to be absolute path
+
     #[tokio::test]
     async fn test_commit() -> Result<(), Error> {
         let namespace = "foo/bar".to_string();

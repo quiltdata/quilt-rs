@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use aws_sdk_s3::primitives::ByteStream;
 use tokio::io::AsyncRead;
 
@@ -24,6 +26,13 @@ pub trait Remote {
         &mut self,
         s3_uri: &S3Uri,
         contents: impl Into<ByteStream>,
+        size: u64,
+    ) -> Result<(Option<String>, Vec<u8>), Error>;
+
+    async fn multipart_upload_and_checksum(
+        &mut self,
+        s3_uri: &S3Uri,
+        file_path: impl AsRef<Path>,
         size: u64,
     ) -> Result<(Option<String>, Vec<u8>), Error>;
 }

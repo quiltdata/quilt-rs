@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;
 use std::io::Write;
@@ -68,6 +69,15 @@ impl Remote for MockRemote {
 
         self.registry.insert(key, contents_vec);
         Ok((Some("version".to_string()), hash.to_vec()))
+    }
+
+    async fn multipart_upload_and_checksum(
+        &mut self,
+        _s3_uri: &S3Uri,
+        _file_path: impl AsRef<Path>,
+        _size: u64,
+    ) -> Result<(Option<String>, Vec<u8>), Error> {
+        Ok((None, Vec::new()))
     }
 }
 

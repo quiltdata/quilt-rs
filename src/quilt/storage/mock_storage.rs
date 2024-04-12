@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -82,18 +81,28 @@ impl Storage for MockStorage {
     }
 
     async fn open_file(&mut self, path: impl AsRef<Path>) -> Result<tokio::fs::File, Error> {
-        let mut temp_file = tempfile::tempfile()?;
+        let temp_dir = tempfile::tempdir()?.into_path();
+        let temp_file_path = temp_dir.join(&path);
         let stored_file = self.registry.get(path.as_ref()).unwrap();
-        temp_file.write_all(stored_file)?;
-        Ok(tokio::fs::File::from_std(temp_file))
+        std::fs::create_dir_all(temp_file_path.parent().unwrap())?;
+        std::fs::write(&temp_file_path, stored_file)?;
+        Ok(tokio::fs::File::open(temp_file_path).await?)
     }
 
     async fn create_file(&mut self, path: impl AsRef<Path>) -> Result<tokio::fs::File, Error> {
-        let temp_file = tempfile::tempfile()?;
+        let temp_dir = tempfile::tempdir()?.into_path();
         self.registry
             .entry(path.as_ref().to_path_buf())
             .or_default();
-        Ok(tokio::fs::File::from_std(temp_file))
+        // TODO: there is a is_absolute() and is_root() methods
+        //       but how to create relative path from absolute?
+        let temp_file_path = if path.as_ref().starts_with("/") {
+            temp_dir.join(path.as_ref().strip_prefix("/").unwrap())
+        } else {
+            temp_dir.join(&path)
+        };
+        std::fs::create_dir_all(temp_file_path.parent().unwrap())?;
+        Ok(tokio::fs::File::create(temp_file_path).await?)
     }
 
     async fn read_to_string(&mut self, path: impl AsRef<Path>) -> Result<String, Error> {
