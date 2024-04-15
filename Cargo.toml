@@ -39,6 +39,7 @@ serde_json = "1.0.115"
 sha2 = "0.10.8"
 tabled = "0.15.0"
 temp-dir = "0.1.13"
+tempfile = "3.10.1"
 thiserror = "1.0.58"
 tokio = { version = "1.37.0", features = ["full"] }
 tokio-stream = "0.1.15"

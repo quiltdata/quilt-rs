@@ -1,27 +1,15 @@
 use std::path::Path;
-use std::path::PathBuf;
 
+use chrono::DateTime;
+use chrono::Utc;
 use tokio::fs;
-use tokio::io::AsyncRead;
 use tokio::io::AsyncWriteExt;
 
 use crate::Error;
 
 use super::Storage;
 
-pub type File = Box<dyn AsyncRead + Unpin + Send>;
-
-pub async fn open(path: impl AsRef<Path>) -> Result<File, Error> {
-    // real impl
-    Ok(fs::File::open(path)
-        .await
-        // .map(|file| Box::new(file) as Box<dyn io::AsyncRead + Unpin>)
-        .map(|file| Box::new(file) as File)?)
-
-    // TODO: fake impl
-}
-
-pub async fn write(path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), Error> {
+async fn write(path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), Error> {
     let Some(parent) = path.as_ref().parent() else {
         return Err(Error::MissingParentPath(path.as_ref().to_owned()));
     };
@@ -35,105 +23,58 @@ pub async fn write(path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), Error> {
     Ok(())
 }
 
-pub async fn read_to_string(path: impl AsRef<Path>) -> Result<String, std::io::Error> {
-    fs::read_to_string(path).await
+pub async fn get_file_modified_ts(path: impl AsRef<Path>) -> Result<DateTime<Utc>, Error> {
+    let modified = fs::metadata(path).await.map(|m| m.modified())??;
+    Ok(DateTime::<Utc>::from(modified))
 }
 
-// XXX: scope?
-// fn child(&self, path: &str) -> Self;
-
-// #[derive(Clone)]
-// pub struct MemoryFile {
-//     contents: String,
-// }
-//
-// impl AsyncRead for MemoryFile {
-//     fn poll_read(
-//         self: std::pin::Pin<&mut Self>,
-//         _cx: &mut std::task::Context<'_>,
-//         _buf: &mut ReadBuf<'_>,
-//     ) -> std::task::Poll<std::io::Result<()>> {
-//         // TODO: put the data into the buffer
-//         std::task::Poll::Ready(Ok(()))
-//     }
-// }
-//
-// // XXX: use object_store? it has InMemory impl
-// pub type MemoryFS = HashMap<String, String>;
-//
-// pub trait MemoryFSUtil {
-//     fn from_strs<'a>(strs: impl IntoIterator<Item = (&'a str, &'a str)>) -> Self;
-// }
-//
-// impl MemoryFSUtil for MemoryFS {
-//     fn from_strs<'a>(strs: impl IntoIterator<Item = (&'a str, &'a str)>) -> Self {
-//         strs.into_iter()
-//             .map(|(k, v)| (k.to_string(), v.to_string()))
-//             .collect()
-//     }
-// }
-
-// fn get(&self, path: &str) -> Option<String> {
-//     let key = self.path.join(path).into_os_string().into_string().unwrap();
-//     self.root_fs.get(&key).cloned()
-// }
-
-// async fn open(&self, path: &str) -> Result<LocalFile, Error> {
-//     match self.get(path) {
-//         Some(contents) => Ok(Box::new(MemoryFile { contents: contents.clone() })),
-//         None => Err(format!("file not found: {}", path)),
-//     }
-// }
-//
-// async fn exists(&self, path: &str) -> bool {
-//     self.get(path).is_some()
-// }
-
-pub async fn get_file_modified_ts(
-    path: impl AsRef<Path>,
-) -> Result<chrono::DateTime<chrono::Utc>, Error> {
-    let modified = tokio::fs::metadata(path).await.map(|m| m.modified())??;
-    Ok(chrono::DateTime::<chrono::Utc>::from(modified))
-}
-
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LocalStorage {}
 
 impl Storage for LocalStorage {
-    async fn copy(
-        &self,
-        from: impl AsRef<Path>,
-        to: impl AsRef<Path>,
-    ) -> Result<u64, std::io::Error> {
-        tokio::fs::copy(from, to).await
+    async fn copy(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<u64, Error> {
+        Ok(fs::copy(from, to).await?)
     }
 
-    async fn create_dir_all(&self, path: impl AsRef<Path>) -> Result<(), std::io::Error> {
-        tokio::fs::create_dir_all(path).await
+    async fn create_dir_all(&self, path: impl AsRef<Path>) -> Result<(), Error> {
+        Ok(fs::create_dir_all(path).await?)
     }
 
-    async fn remove_dir_all(&self, path: impl AsRef<Path>) -> Result<(), std::io::Error> {
-        tokio::fs::remove_dir_all(path).await
+    async fn remove_dir_all(&self, path: impl AsRef<Path>) -> Result<(), Error> {
+        Ok(fs::remove_dir_all(path).await?)
     }
 
-    async fn remove_file(&mut self, path: PathBuf) -> Result<(), std::io::Error> {
+    async fn remove_file(&self, path: impl AsRef<Path>) -> Result<(), std::io::Error> {
         fs::remove_file(path).await
     }
 
     /// Check if a path exists in the filesystem.
     async fn exists(&self, path: impl AsRef<Path>) -> bool {
-        tokio::fs::metadata(path).await.is_ok()
+        fs::metadata(path).await.is_ok()
     }
 
-    async fn modified_timestamp(
-        &self,
-        path: impl AsRef<Path>,
-    ) -> Result<chrono::DateTime<chrono::Utc>, Error> {
+    async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Result<DateTime<Utc>, Error> {
         get_file_modified_ts(path).await
     }
 
-    async fn write(&mut self, path: PathBuf, bytes: &[u8]) -> Result<(), Error> {
+    async fn write_file(&self, path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), Error> {
         write(path, bytes).await
+    }
+
+    async fn open_file(&self, path: impl AsRef<Path>) -> Result<fs::File, Error> {
+        Ok(fs::File::open(path).await?)
+    }
+
+    async fn create_file(&self, path: impl AsRef<Path>) -> Result<fs::File, Error> {
+        Ok(fs::File::create(path.as_ref()).await?)
+    }
+
+    async fn read_to_string(&self, path: impl AsRef<Path>) -> Result<String, Error> {
+        Ok(fs::read_to_string(&path).await?)
+    }
+
+    async fn read_file(&self, path: impl AsRef<Path>) -> Result<Vec<u8>, Error> {
+        Ok(fs::read(&path).await?)
     }
 }
 
@@ -146,5 +87,71 @@ impl Default for LocalStorage {
 impl LocalStorage {
     pub fn new() -> Self {
         LocalStorage {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use tempfile::tempdir;
+    use tokio::io::AsyncWriteExt;
+
+    use crate::utils::local_uri_json;
+
+    #[tokio::test]
+    #[ignore] // It doesn't work in CI. In CI file has `now` date
+    async fn test_getting_file_modified_ts() -> Result<(), Error> {
+        let timestamp = get_file_modified_ts(local_uri_json()).await?;
+        assert_eq!(
+            timestamp.to_string(),
+            "2024-01-15 11:31:00.615186989 UTC".to_string()
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_copy() -> Result<(), Error> {
+        let temp_dir = tempdir()?;
+        let dest = temp_dir.path().join("foo");
+
+        let storage = LocalStorage::default();
+
+        assert!(fs::metadata(&dest).await.is_err());
+        storage.copy(local_uri_json(), &dest).await?;
+        assert!(fs::metadata(dest).await.is_ok());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_dirs() -> Result<(), Error> {
+        let temp_dir = tempdir()?;
+        let dest = temp_dir.path().join("foo").join("bar");
+
+        let storage = LocalStorage::default();
+
+        assert!(fs::metadata(&dest).await.is_err());
+        storage.create_dir_all(&dest).await?;
+        assert!(fs::metadata(&dest).await.is_ok());
+        storage.remove_dir_all(dest.parent().unwrap()).await?;
+        assert!(fs::metadata(&dest).await.is_err());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_files() -> Result<(), Error> {
+        let temp_dir = tempdir()?;
+        let dest = temp_dir.path().join("foo");
+
+        let storage = LocalStorage::default();
+
+        let mut new_file = storage.create_file(&dest).await?;
+        new_file.write_all(b"Hello").await?;
+        let contents = fs::read(dest).await?;
+        assert_eq!(contents, b"Hello");
+
+        Ok(())
     }
 }

@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use tokio::fs;
 
 use multihash::Multihash;
 use serde::de::Error as DeserializeError;
@@ -9,6 +8,10 @@ use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
 
+#[cfg(test)]
+pub mod mocks;
+
+use crate::quilt::storage::Storage;
 use crate::Error;
 
 use super::RemoteManifest;
@@ -21,7 +24,7 @@ pub struct CommitState {
     pub prev_hashes: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PathState {
     pub timestamp: chrono::DateTime<chrono::Utc>,
     #[serde(
@@ -79,7 +82,7 @@ impl PackageLineage {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct DomainLineage {
     #[serde(default = "BTreeMap::new")]
     pub packages: BTreeMap<String, PackageLineage>,
@@ -93,7 +96,7 @@ impl TryFrom<&str> for DomainLineage {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DomainLineageIo {
     path: PathBuf,
 }
@@ -103,21 +106,33 @@ impl DomainLineageIo {
         DomainLineageIo { path }
     }
 
-    pub async fn read(&self) -> Result<DomainLineage, Error> {
-        let contents = fs::read_to_string(&self.path).await.or_else(|err| {
-            if err.kind() == std::io::ErrorKind::NotFound {
-                Ok("{}".into())
-            } else {
-                Err(err)
-            }
-        })?;
+    pub async fn read(&self, storage: &impl Storage) -> Result<DomainLineage, Error> {
+        let contents = storage
+            .read_to_string(&self.path)
+            .await
+            .or_else(|err| match err {
+                Error::Io(inner_err) => {
+                    if inner_err.kind() == std::io::ErrorKind::NotFound {
+                        Ok("{}".into())
+                    } else {
+                        Err(Error::Io(inner_err))
+                    }
+                }
+                other => Err(other),
+            })?;
 
         DomainLineage::try_from(&contents[..])
     }
 
-    pub async fn write(&self, lineage: &DomainLineage) -> Result<(), Error> {
+    pub async fn write(
+        &self,
+        storage: &impl Storage,
+        lineage: &DomainLineage,
+    ) -> Result<(), Error> {
         let contents = serde_json::to_string_pretty(lineage)?;
-        fs::write(&self.path, contents.as_bytes()).await?;
+        storage
+            .write_file(self.path.clone(), contents.as_bytes())
+            .await?;
         Ok(())
     }
 
@@ -140,8 +155,8 @@ impl PackageLineageIo {
         }
     }
 
-    pub async fn read(&self) -> Result<PackageLineage, Error> {
-        let domain_lineage = self.domain_lineage.read().await?;
+    pub async fn read(&self, storage: &impl Storage) -> Result<PackageLineage, Error> {
+        let domain_lineage = self.domain_lineage.read(storage).await?;
         let namespace = domain_lineage.packages.get(&self.namespace);
 
         match namespace {
@@ -150,18 +165,24 @@ impl PackageLineageIo {
         }
     }
 
-    pub async fn write(&self, lineage: PackageLineage) -> Result<(), Error> {
-        let mut domain_lineage = self.domain_lineage.read().await?;
+    pub async fn write(
+        &self,
+        storage: &impl Storage,
+        lineage: PackageLineage,
+    ) -> Result<(), Error> {
+        let mut domain_lineage = self.domain_lineage.read(storage).await?;
         domain_lineage
             .packages
             .insert(self.namespace.clone(), lineage);
-        self.domain_lineage.write(&domain_lineage).await
+        self.domain_lineage.write(storage, &domain_lineage).await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::quilt::storage::mock_storage::MockStorage;
 
     #[test]
     fn test_syntax_error() {
@@ -199,5 +220,58 @@ mod tests {
                 packages: BTreeMap::new(),
             }
         )
+    }
+
+    #[tokio::test]
+    async fn test_domain_lineage_from_file() -> Result<(), Error> {
+        let storage = MockStorage::default();
+        let file_path = PathBuf::from("foo");
+        storage
+            .write_file(&file_path, br###"{"packages":{}}"###.as_ref())
+            .await?;
+        let lineage = DomainLineageIo::new(file_path).read(&storage).await?;
+        assert_eq!(lineage, DomainLineage::default());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_domain_lineage_from_nothing() -> Result<(), Error> {
+        let storage = MockStorage::default();
+        let lineage = DomainLineageIo::new(PathBuf::from("does-not-exist"))
+            .read(&storage)
+            .await?;
+        assert_eq!(lineage, DomainLineage::default());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_domain_lineage_write() -> Result<(), Error> {
+        let storage = MockStorage::default();
+        let file_path = PathBuf::from("foo");
+        assert!(!storage.exists(&file_path).await);
+        DomainLineageIo::new(file_path.clone())
+            .write(&storage, &DomainLineage::default())
+            .await?;
+        assert!(storage.exists(&file_path).await);
+        let manifest = br###"{
+  "packages": {}
+}"###
+            .to_vec();
+        assert_eq!(storage.read_file(&file_path).await?, manifest);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_domain_lineage_create_package_lineage() -> Result<(), Error> {
+        let domain_lineage = DomainLineageIo::default();
+        let lineage = domain_lineage.create_package_lineage("foo".to_string());
+        assert_eq!(
+            lineage,
+            PackageLineageIo {
+                namespace: "foo".to_string(),
+                domain_lineage,
+            }
+        );
+        Ok(())
     }
 }

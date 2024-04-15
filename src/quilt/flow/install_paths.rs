@@ -7,7 +7,8 @@ use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use url::Url;
 
-use crate::paths;
+use crate::paths::scaffold_paths;
+use crate::paths::DomainPaths;
 use crate::quilt::lineage::PackageLineage;
 use crate::quilt::lineage::PathState;
 use crate::quilt::manifest_handle::ReadableManifest;
@@ -15,8 +16,8 @@ use crate::quilt::storage::s3;
 use crate::quilt::Storage;
 use crate::s3_utils;
 use crate::Error;
-use crate::UPath;
 
+// FIXME: use impl Storage and impl Remote
 async fn cache_immutable_object(object_dest: &PathBuf, uri: &s3::S3Uri) -> Result<(), Error> {
     let version = uri
         .version
@@ -49,7 +50,7 @@ async fn cache_immutable_object(object_dest: &PathBuf, uri: &s3::S3Uri) -> Resul
 }
 
 async fn create_mutable_copy(
-    storage: &mut impl Storage,
+    storage: &impl Storage,
     immutable_source: &PathBuf,
     mutable_target: &PathBuf,
 ) -> Result<chrono::DateTime<chrono::Utc>, Error> {
@@ -64,15 +65,17 @@ async fn create_mutable_copy(
 pub async fn install_paths(
     mut lineage: PackageLineage,
     manifest: &(impl ReadableManifest + Sync),
-    paths: &paths::DomainPaths,
+    paths: &DomainPaths,
     working_dir: PathBuf,
     namespace: String,
-    storage: &mut impl Storage,
+    storage: &impl Storage,
     entries_paths: &Vec<String>,
 ) -> Result<PackageLineage, Error> {
     if entries_paths.is_empty() {
         return Ok(lineage);
     }
+
+    scaffold_paths(storage, paths.required_installed_package_paths(&namespace)).await?;
 
     // TODO: what happens if paths are already installed? Ignore, or error?
     // Fail early if path is already installed
@@ -96,7 +99,7 @@ pub async fn install_paths(
     //   add installed package entry:
     //     remote: RemoteManifest
 
-    let mut table = manifest.read().await?;
+    let mut table = manifest.read(storage).await?;
 
     for path in entries_paths {
         // TODO: Consider using a hashmap or treemap for manifest.rows
@@ -134,7 +137,7 @@ pub async fn install_paths(
     let installed_manifest_path = paths.installed_manifest(&namespace, lineage.current_hash());
 
     table
-        .write_to_upath(&UPath::Local(installed_manifest_path))
+        .write_to_path(storage, &installed_manifest_path)
         .await?;
 
     Ok(lineage)
@@ -144,57 +147,33 @@ pub async fn install_paths(
 mod tests {
     use super::*;
 
-    use std::collections::BTreeMap;
     use std::path::PathBuf;
-    use temp_dir::TempDir;
+    use tempfile;
 
-    use crate::quilt::lineage::CommitState;
-    use crate::quilt::storage::fs::LocalStorage;
+    use crate::quilt::mocks;
     use crate::quilt::storage::mock_storage::MockStorage;
-    use crate::Row4;
-    use crate::Table;
-
-    struct InMemoryManifest {}
-    impl ReadableManifest for InMemoryManifest {
-        async fn read(&self) -> Result<Table, Error> {
-            Ok(Table {
-                records: BTreeMap::from([(
-                    "a/a".to_string(),
-                    Row4 {
-                        name: "a/a".to_string(),
-                        place: "s3://data-yaml-spec-tests/scale/10u/e0-0.txt?versionId=jHb6DGN43Ex7EhbxZc2G9JnAkWSeTfEY".to_string(),
-                        hash: multihash::Multihash::wrap(345, b"Hello world")?,
-                        ..Row4::default()
-                    },
-                )]),
-                ..Table::default()
-            })
-        }
-    }
 
     #[tokio::test]
     async fn test_installing_one_path() -> Result<(), Error> {
-        let working_dir = TempDir::new()?;
+        let working_dir = tempfile::tempdir()?;
 
         let namespace = "foo/bar".to_string();
 
-        let domain_paths = &paths::DomainPaths::new(working_dir.path().to_path_buf());
-        // TODO: Can't use MockStorage because of Table::write_to_upath
-        let mut storage = LocalStorage::new();
-        storage
-            .create_dir_all(domain_paths.installed_manifests(&namespace))
-            .await?;
-        storage.create_dir_all(domain_paths.objects_dir()).await?;
+        let domain_paths = &DomainPaths::new(working_dir.path().to_path_buf());
 
-        let lineage = PackageLineage {
-            commit: Some(CommitState {
-                hash: "fghijk".to_string(),
-                ..CommitState::default()
-            }),
-            ..PackageLineage::default()
-        };
+        let storage = MockStorage::default();
+        storage
+            .write_file(
+                working_dir
+                    .path()
+                    .join(PathBuf::from(".quilt/objects/7065646573747269616e")),
+                &Vec::new(),
+            )
+            .await?;
+
+        let lineage = mocks::lineage::with_commit_hash("fghijk");
         let entries_paths = vec!["a/a".to_string()];
-        let manifest = InMemoryManifest {};
+        let manifest = mocks::manifest::with_record_keys(entries_paths.clone());
 
         assert!(lineage.paths.is_empty());
         let lineage = install_paths(
@@ -203,36 +182,35 @@ mod tests {
             domain_paths,
             working_dir.path().to_path_buf(),
             namespace,
-            &mut storage,
+            &storage,
             &entries_paths,
         )
         .await?;
         assert!(lineage.paths.contains_key("a/a"));
+        assert!(
+            storage
+                .exists(&working_dir.path().join(PathBuf::from("a/a")))
+                .await
+        );
 
         Ok(())
     }
 
     #[tokio::test]
     async fn test_installing_path_that_doesnt_exists_in_manifest() -> Result<(), Error> {
-        let lineage = PackageLineage {
-            commit: Some(CommitState {
-                hash: "fghijk".to_string(),
-                ..CommitState::default()
-            }),
-            ..PackageLineage::default()
-        };
-        let mut storage = MockStorage::default();
+        let lineage = mocks::lineage::with_commit_hash("fghijk");
+        let storage = MockStorage::default();
         let entries_paths = vec!["z/z".to_string()];
-        let manifest = InMemoryManifest {};
+        let manifest = mocks::manifest::with_record_keys(vec!["a/a".to_string()]);
 
         assert!(lineage.paths.is_empty());
         let lineage = install_paths(
             lineage,
             &manifest,
-            &paths::DomainPaths::default(),
+            &DomainPaths::default(),
             PathBuf::new(),
             String::default(),
-            &mut storage,
+            &storage,
             &entries_paths,
         )
         .await;

@@ -2443,6 +2443,7 @@ dependencies = [
  "tabled",
  "temp-dir",
  "temp_testdir",
+ "tempfile",
  "thiserror",
  "tokio",
  "tokio-stream",

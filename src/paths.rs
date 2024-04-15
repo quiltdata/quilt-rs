@@ -1,5 +1,8 @@
-use multihash::Multihash;
 use std::path::PathBuf;
+
+use multihash::Multihash;
+
+use crate::quilt::storage::Storage;
 
 use crate::Error;
 
@@ -69,18 +72,64 @@ impl DomainPaths {
     pub fn working_dir(&self, namespace: &str) -> PathBuf {
         self.root_dir.join(namespace)
     }
+
+    pub fn required_local_domain_paths(&self) -> Vec<PathBuf> {
+        vec![
+            self.root_dir.join(INSTALLED_DIR),
+            self.objects_dir(),
+            self.root_dir.join(MANIFEST_DIR),
+        ]
+    }
+
+    pub fn required_installed_package_paths(&self, namespace: &str) -> Vec<PathBuf> {
+        let mut paths = vec![];
+        paths.extend(self.required_local_domain_paths());
+        paths.extend(vec![
+            self.working_dir(namespace),
+            self.installed_manifests(namespace),
+        ]);
+        paths
+    }
 }
 
 pub async fn copy_cached_to_installed(
     paths: &DomainPaths,
+    storage: &impl Storage,
     cached_manifest_bucket: &str,
     installed_manifest_namespace: &str,
     hash: &str,
 ) -> Result<(), Error> {
-    tokio::fs::copy(
-        paths.manifest_cache(cached_manifest_bucket, hash),
-        paths.installed_manifest(installed_manifest_namespace, hash),
-    )
-    .await?;
+    storage
+        .copy(
+            paths.manifest_cache(cached_manifest_bucket, hash),
+            paths.installed_manifest(installed_manifest_namespace, hash),
+        )
+        .await?;
     Ok(())
+}
+
+pub async fn scaffold_paths(storage: &impl Storage, paths: Vec<PathBuf>) -> Result<(), Error> {
+    for path in paths {
+        storage.create_dir_all(&path).await?
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_required_paths() {
+        let paths = DomainPaths::new(PathBuf::from("foo/bar"));
+        let scaffolded_paths = paths.required_local_domain_paths();
+        assert_eq!(
+            scaffolded_paths,
+            vec![
+                PathBuf::from("foo/bar/.quilt/installed"),
+                PathBuf::from("foo/bar/.quilt/objects"),
+                PathBuf::from("foo/bar/.quilt/packages"),
+            ]
+        )
+    }
 }
