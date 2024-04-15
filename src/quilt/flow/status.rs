@@ -110,7 +110,7 @@ pub async fn refresh_latest_hash(
 
 pub async fn create_status(
     lineage: PackageLineage,
-    storage: &impl Storage,
+    storage: &(impl Storage + Sync),
     manifest: &(impl ReadableManifest + Sync),
     working_dir: PathBuf,
 ) -> Result<(PackageLineage, InstalledPackageStatus), Error> {

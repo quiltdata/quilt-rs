@@ -21,7 +21,7 @@ pub async fn push_package(
     mut lineage: PackageLineage,
     manifest: &(impl manifest_handle::ReadableManifest + Sync),
     paths: &paths::DomainPaths,
-    storage: &impl Storage,
+    storage: &(impl Storage + Sync),
     remote: &impl Remote,
     namespace: String,
 ) -> Result<PackageLineage, Error> {

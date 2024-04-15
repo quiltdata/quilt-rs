@@ -16,7 +16,7 @@ pub async fn pull_package(
     lineage: PackageLineage,
     manifest: &(impl manifest_handle::ReadableManifest + Sync),
     paths: &DomainPaths,
-    storage: &impl Storage,
+    storage: &(impl Storage + Sync),
     working_dir: PathBuf,
     status: InstalledPackageStatus,
     namespace: String,

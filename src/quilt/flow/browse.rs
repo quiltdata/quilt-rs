@@ -61,7 +61,7 @@ pub async fn cache_manifest(
 //        or CachedManifest::try_from(RemoteManifest)
 pub async fn cache_remote_manifest(
     paths: &DomainPaths,
-    storage: &impl Storage,
+    storage: &(impl Storage + Sync),
     remote: &impl Remote,
     remote_manifest: &RemoteManifest,
 ) -> Result<CachedManifest, Error> {
@@ -88,7 +88,7 @@ pub async fn cache_remote_manifest(
 
 pub async fn browse_remote_manifest(
     paths: &DomainPaths,
-    storage: &impl Storage,
+    storage: &(impl Storage + Sync),
     remote: &impl Remote,
     remote_manifest: &RemoteManifest,
 ) -> Result<Table, Error> {

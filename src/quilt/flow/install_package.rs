@@ -10,7 +10,7 @@ use crate::Error;
 pub async fn install_package(
     lineage: DomainLineage,
     paths: &paths::DomainPaths,
-    storage: &impl Storage,
+    storage: &(impl Storage + Sync),
     remote: &impl Remote,
     remote_manifest: &RemoteManifest,
 ) -> Result<DomainLineage, Error> {

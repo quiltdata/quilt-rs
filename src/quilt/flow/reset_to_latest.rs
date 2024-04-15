@@ -15,7 +15,7 @@ pub async fn reset_to_latest(
     lineage: PackageLineage,
     manifest: &(impl ReadableManifest + Sync),
     paths: &DomainPaths,
-    storage: &impl Storage,
+    storage: &(impl Storage + std::marker::Sync),
     remote: &impl Remote,
     working_dir: PathBuf,
     namespace: String,

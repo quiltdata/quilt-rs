@@ -122,8 +122,8 @@ pub trait ReadableManifest {
 
     fn read(
         &self,
-        storage: &impl Storage,
-    ) -> impl std::future::Future<Output = Result<Table, Error>>
+        storage: &(impl Storage + Sync),
+    ) -> impl std::future::Future<Output = Result<Table, Error>> + Send
     where
         Self: Sync,
     {
