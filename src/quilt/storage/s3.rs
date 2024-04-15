@@ -24,7 +24,7 @@ impl S3Uri {
 
     pub async fn put_contents(
         &self,
-        remote: &mut impl Remote,
+        remote: &impl Remote,
         contents: impl Into<ByteStream>,
     ) -> Result<(), Error> {
         put_object_contents(remote, self, contents).await
@@ -105,7 +105,7 @@ pub async fn get_object_contents(remote: &impl Remote, uri: &S3Uri) -> Result<St
 }
 
 pub async fn put_object_contents(
-    remote: &mut impl Remote,
+    remote: &impl Remote,
     uri: &S3Uri,
     contents: impl Into<ByteStream>,
 ) -> Result<(), Error> {

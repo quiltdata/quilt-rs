@@ -61,14 +61,12 @@ use flow::status::InstalledPackageStatus;
 use flow::uninstall_package::uninstall_package;
 use flow::uninstall_paths::uninstall_paths;
 
-// TODO: make Remote non mutable and add it to LocalDomain
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LocalDomain<S: Storage = fs::LocalStorage> {
-    // pub struct LocalDomain<S: Storage = fs::LocalStorage, R: Remote = s3_utils::RemoteS3> {
+pub struct LocalDomain<S: Storage = fs::LocalStorage, R: Remote = s3_utils::RemoteS3> {
     paths: paths::DomainPaths,
     lineage: lineage::DomainLineageIo,
     storage: S,
-    // remote: R,
+    remote: R,
 }
 
 impl LocalDomain {
@@ -76,10 +74,12 @@ impl LocalDomain {
         let paths = paths::DomainPaths::new(root_dir.clone());
         let lineage = lineage::DomainLineageIo::new(paths.lineage());
         let storage = fs::LocalStorage::new();
+        let remote = s3_utils::RemoteS3::new();
         Self {
-            storage,
-            paths,
             lineage,
+            paths,
+            remote,
+            storage,
         }
     }
 
@@ -87,8 +87,7 @@ impl LocalDomain {
         &self,
         remote_manifest: &RemoteManifest,
     ) -> Result<Table, Error> {
-        let remote = s3_utils::RemoteS3::new();
-        browse_remote_manifest(&self.paths, &self.storage, &remote, remote_manifest).await
+        browse_remote_manifest(&self.paths, &self.storage, &self.remote, remote_manifest).await
     }
 
     fn create_installed_package(&self, namespace: String) -> InstalledPackage {
@@ -96,6 +95,7 @@ impl LocalDomain {
             lineage: self.lineage.create_package_lineage(namespace.clone()),
             namespace: namespace.clone(),
             paths: self.paths.clone(),
+            remote: self.remote.clone(),
             storage: self.storage.clone(),
         }
     }
@@ -106,12 +106,11 @@ impl LocalDomain {
     ) -> Result<InstalledPackage, Error> {
         // Read the lineage
         let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
-        let remote = s3_utils::RemoteS3::new();
         let lineage = install_package(
             lineage,
             &self.paths,
             &self.storage,
-            &remote,
+            &self.remote,
             remote_manifest,
         )
         .await?;
@@ -135,8 +134,9 @@ impl LocalDomain {
             .into_iter()
             .map(|namespace| InstalledPackage {
                 lineage: self.lineage.create_package_lineage(namespace.clone()),
-                paths: self.paths.clone(),
                 namespace,
+                paths: self.paths.clone(),
+                remote: self.remote.clone(),
                 storage: self.storage.clone(),
             })
             .collect();
@@ -150,9 +150,10 @@ impl LocalDomain {
         let lineage = self.lineage.read(&self.storage).await?;
         if lineage.packages.contains_key(namespace) {
             Ok(Some(InstalledPackage {
-                paths: self.paths.clone(),
                 lineage: self.lineage.create_package_lineage(namespace.to_string()),
                 namespace: namespace.to_string(),
+                paths: self.paths.clone(),
+                remote: self.remote.clone(),
                 storage: self.storage.clone(),
             }))
         } else {
@@ -165,7 +166,6 @@ impl LocalDomain {
         uri: &s3::S3Uri,
         target_uri: S3PackageUri,
     ) -> Result<RemoteManifest, Error> {
-        let mut remote = s3_utils::RemoteS3::new();
         log::debug!("Source URI: {:?}, target URI: {:?}", uri, target_uri);
         // TODO: make get_object_attributes() calls concurrently across list_objects() pages
         // TODO: increase concurrency, to do that we need to figure out how to deal
@@ -245,25 +245,29 @@ impl LocalDomain {
         )
         .await?;
         new_remote
-            .upload_from(&self.storage, &mut remote, &cache_path)
+            .upload_from(&self.storage, &self.remote, &cache_path)
             .await?;
-        new_remote.upload_legacy(&mut remote, &table).await?;
+        new_remote.upload_legacy(&self.remote, &table).await?;
         let top_hash = table.top_hash();
         new_remote
-            .put_timestamp_tag(&mut remote, chrono::Utc::now(), &top_hash)
+            .put_timestamp_tag(&self.remote, chrono::Utc::now(), &top_hash)
             .await?;
-        new_remote.update_latest(&mut remote, &top_hash).await?;
+        new_remote.update_latest(&self.remote, &top_hash).await?;
 
         Ok(new_remote)
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct InstalledPackage<S: Storage + Clone = fs::LocalStorage> {
-    paths: paths::DomainPaths,
+pub struct InstalledPackage<
+    S: Storage + Clone = fs::LocalStorage,
+    R: Remote + Clone = s3_utils::RemoteS3,
+> {
     lineage: lineage::PackageLineageIo,
-    pub namespace: String,
+    paths: paths::DomainPaths,
+    remote: R,
     storage: S,
+    pub namespace: String,
 }
 
 impl InstalledPackage {
@@ -284,9 +288,8 @@ impl InstalledPackage {
     }
 
     pub async fn status(&self) -> Result<InstalledPackageStatus, Error> {
-        let remote = s3_utils::RemoteS3::new();
         let lineage = self.lineage.read(&self.storage).await?;
-        let lineage = refresh_latest_hash(lineage, &remote).await?;
+        let lineage = refresh_latest_hash(lineage, &self.remote).await?;
         let manifest = self.manifest(&self.storage).await?;
         let (lineage, status) =
             create_status(lineage, &self.storage, &manifest, self.working_folder()).await?;
@@ -352,14 +355,13 @@ impl InstalledPackage {
 
     pub async fn push(&self) -> Result<(), Error> {
         let lineage = self.lineage.read(&self.storage).await?;
-        let mut remote = s3_utils::RemoteS3::new();
         let manifest = self.manifest(&self.storage).await?;
         let lineage = push_package(
             lineage,
             &manifest,
             &self.paths,
             &self.storage,
-            &mut remote,
+            &self.remote,
             self.namespace.to_string(),
         )
         .await?;
@@ -386,13 +388,11 @@ impl InstalledPackage {
 
     pub async fn certify_latest(&self) -> Result<(), Error> {
         let lineage = self.lineage.read(&self.storage).await?;
-        let mut remote = s3_utils::RemoteS3::new();
-        let lineage = certify_latest(lineage, &mut remote).await?;
+        let lineage = certify_latest(lineage, &self.remote).await?;
         self.lineage.write(&self.storage, lineage).await
     }
 
     pub async fn reset_to_latest(&self) -> Result<(), Error> {
-        let remote = s3_utils::RemoteS3::new();
         let lineage = self.lineage.read(&self.storage).await?;
         let manifest = self.manifest(&self.storage).await?;
         let lineage = reset_to_latest(
@@ -400,7 +400,7 @@ impl InstalledPackage {
             &manifest,
             &self.paths,
             &self.storage,
-            &remote,
+            &self.remote,
             self.working_folder(),
             self.namespace.to_string(),
         )

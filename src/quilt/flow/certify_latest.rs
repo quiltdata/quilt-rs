@@ -4,7 +4,7 @@ use crate::Error;
 
 pub async fn certify_latest(
     mut lineage: PackageLineage,
-    remote: &mut impl Remote,
+    remote: &impl Remote,
 ) -> Result<PackageLineage, Error> {
     let new_latest = lineage.remote.hash.clone();
     lineage.remote.update_latest(remote, &new_latest).await?;

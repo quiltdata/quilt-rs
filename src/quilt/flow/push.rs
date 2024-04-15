@@ -22,7 +22,7 @@ pub async fn push_package(
     manifest: &(impl manifest_handle::ReadableManifest + Sync),
     paths: &paths::DomainPaths,
     storage: &impl Storage,
-    remote: &mut impl Remote,
+    remote: &impl Remote,
     namespace: String,
 ) -> Result<PackageLineage, Error> {
     let commit = match lineage.commit {
