@@ -24,7 +24,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_certifying_latest() -> Result<(), Error> {
-        let mut remote = MockRemote::default();
+        let remote = MockRemote::default();
         remote
             .put_object(
                 &S3Uri::try_from("s3://b/.quilt/named_packages/a/latest")?,
@@ -32,7 +32,7 @@ mod tests {
             )
             .await?;
         let source_lineage = mocks::lineage::with_remote("quilt+s3://b#package=a@LATEST_HASH")?;
-        let resolved_lineage = certify_latest(source_lineage.clone(), &mut remote).await?;
+        let resolved_lineage = certify_latest(source_lineage.clone(), &remote).await?;
         assert_eq!(
             resolved_lineage,
             PackageLineage {

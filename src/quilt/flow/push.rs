@@ -159,13 +159,13 @@ mod tests {
     #[tokio::test]
     async fn test_no_push_if_no_commit() -> Result<(), Error> {
         let storage = MockStorage::default();
-        let mut remote = MockRemote::default();
+        let remote = MockRemote::default();
         let lineage = push_package(
             PackageLineage::default(),
             &mocks::manifest::default(),
             &paths::DomainPaths::default(),
             &storage,
-            &mut remote,
+            &remote,
             String::default(),
         )
         .await?;
@@ -190,7 +190,7 @@ mod tests {
             .write_file(PathBuf::from(manifest_key), &jsonl)
             .await?;
 
-        let mut remote = MockRemote::default();
+        let remote = MockRemote::default();
         remote
             .put_object(
                 &S3Uri::try_from("s3://b/.quilt/packages/1220__FOO__.parquet")?,
@@ -208,7 +208,7 @@ mod tests {
             &mocks::manifest::default(),
             &paths::DomainPaths::default(),
             &storage,
-            &mut remote,
+            &remote,
             String::default(),
         )
         .await?;
@@ -242,7 +242,7 @@ mod tests {
         storage
             .write_file(PathBuf::from(manifest_key), &jsonl)
             .await?;
-        let mut remote = MockRemote::default();
+        let remote = MockRemote::default();
         remote
             .put_object(
                 &S3Uri::try_from("s3://b/.quilt/packages/1220__FOO__.parquet")?,
@@ -270,7 +270,7 @@ mod tests {
             &manifest,
             &paths::DomainPaths::default(),
             &storage,
-            &mut remote,
+            &remote,
             String::default(),
         )
         .await?;
