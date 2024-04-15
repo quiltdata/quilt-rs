@@ -23,7 +23,17 @@ impl Remote for MockRemote {
     async fn get_object(&self, s3_uri: &S3Uri) -> Result<impl AsyncRead + Send + Unpin, Error> {
         let key = s3_uri.to_string();
         log::debug!("Mocking {} get request", key);
-        self.storage.open_file(&key).await
+
+        self.storage.open_file(&key).await.map_err(|err| match err {
+            Error::Io(inner_err) => {
+                if inner_err.kind() == std::io::ErrorKind::NotFound {
+                    Error::S3("Key doesn't exists".to_string())
+                } else {
+                    Error::Io(inner_err)
+                }
+            }
+            other => other,
+        })
     }
 
     async fn exists(&self, s3_uri: &S3Uri) -> Result<bool, Error> {
