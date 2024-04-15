@@ -9,7 +9,7 @@ use crate::Error;
 
 use super::Storage;
 
-async fn write(path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), Error> {
+async fn write(path: impl AsRef<Path> + Send, bytes: &[u8]) -> Result<(), Error> {
     let Some(parent) = path.as_ref().parent() else {
         return Err(Error::MissingParentPath(path.as_ref().to_owned()));
     };
@@ -57,7 +57,7 @@ impl Storage for LocalStorage {
         get_file_modified_ts(path).await
     }
 
-    async fn write_file(&self, path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), Error> {
+    async fn write_file(&self, path: impl AsRef<Path> + Send, bytes: &[u8]) -> Result<(), Error> {
         write(path, bytes).await
     }
 
