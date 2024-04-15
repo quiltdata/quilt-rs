@@ -100,6 +100,7 @@ mod tests {
     use crate::utils::local_uri_json;
 
     #[tokio::test]
+    #[ignore] // It doesn't work in CI. In CI file has `now` date
     async fn test_getting_file_modified_ts() -> Result<(), Error> {
         let timestamp = get_file_modified_ts(local_uri_json()).await?;
         assert_eq!(
