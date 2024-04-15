@@ -271,10 +271,10 @@ pub struct InstalledPackage<
 }
 
 impl InstalledPackage {
-    async fn manifest(&self, storage: &impl Storage) -> Result<impl ReadableManifest, Error> {
+    async fn readable_manifest(&self) -> Result<impl ReadableManifest, Error> {
         // read recorded hash
         // get installed manifest
-        self.lineage.read(storage).await.map(|l| {
+        self.lineage.read(&self.storage).await.map(|l| {
             InstalledManifest::new(
                 self.namespace.to_string(),
                 l.current_hash().to_string(),
@@ -283,14 +283,22 @@ impl InstalledPackage {
         })
     }
 
+    pub async fn manifest(&self) -> Result<Table, Error> {
+        self.readable_manifest().await?.read(&self.storage).await
+    }
+
     pub fn working_folder(&self) -> PathBuf {
         self.paths.working_dir(&self.namespace)
+    }
+
+    pub async fn lineage(&self) -> Result<PackageLineage, Error> {
+        self.lineage.read(&self.storage).await
     }
 
     pub async fn status(&self) -> Result<InstalledPackageStatus, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
         let lineage = refresh_latest_hash(lineage, &self.remote).await?;
-        let manifest = self.manifest(&self.storage).await?;
+        let manifest = self.readable_manifest().await?;
         let (lineage, status) =
             create_status(lineage, &self.storage, &manifest, self.working_folder()).await?;
         self.lineage.write(&self.storage, lineage).await?;
@@ -302,7 +310,7 @@ impl InstalledPackage {
             return Ok(());
         }
         let lineage = self.lineage.read(&self.storage).await?;
-        let manifest = self.manifest(&self.storage).await?;
+        let manifest = self.readable_manifest().await?;
         let lineage = install_paths(
             lineage,
             &manifest,
@@ -333,7 +341,7 @@ impl InstalledPackage {
         user_meta: Option<manifest::JsonObject>,
     ) -> Result<(), Error> {
         let lineage = self.lineage.read(&self.storage).await?;
-        let manifest = self.manifest(&self.storage).await?;
+        let manifest = self.readable_manifest().await?;
 
         let (lineage, status) =
             create_status(lineage, &self.storage, &manifest, self.working_folder()).await?;
@@ -355,7 +363,7 @@ impl InstalledPackage {
 
     pub async fn push(&self) -> Result<(), Error> {
         let lineage = self.lineage.read(&self.storage).await?;
-        let manifest = self.manifest(&self.storage).await?;
+        let manifest = self.readable_manifest().await?;
         let lineage = push_package(
             lineage,
             &manifest,
@@ -370,7 +378,7 @@ impl InstalledPackage {
 
     pub async fn pull(&self) -> Result<(), Error> {
         let lineage = self.lineage.read(&self.storage).await?;
-        let manifest = self.manifest(&self.storage).await?;
+        let manifest = self.readable_manifest().await?;
         let (lineage, status) =
             create_status(lineage, &self.storage, &manifest, self.working_folder()).await?;
         let lineage = pull_package(
@@ -394,7 +402,7 @@ impl InstalledPackage {
 
     pub async fn reset_to_latest(&self) -> Result<(), Error> {
         let lineage = self.lineage.read(&self.storage).await?;
-        let manifest = self.manifest(&self.storage).await?;
+        let manifest = self.readable_manifest().await?;
         let lineage = reset_to_latest(
             lineage,
             &manifest,

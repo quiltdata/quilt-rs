@@ -68,7 +68,7 @@ pub async fn install_paths(
     paths: &DomainPaths,
     working_dir: PathBuf,
     namespace: String,
-    storage: &impl Storage,
+    storage: &(impl Storage + Sync),
     entries_paths: &Vec<String>,
 ) -> Result<PackageLineage, Error> {
     if entries_paths.is_empty() {

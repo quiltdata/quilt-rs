@@ -39,7 +39,10 @@ pub trait Storage {
     /// Writes bytes to a file
     async fn write_file(&self, path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), Error>;
 
-    async fn open_file(&self, path: impl AsRef<Path>) -> Result<tokio::fs::File, Error>;
+    fn open_file(
+        &self,
+        path: impl AsRef<Path> + Send,
+    ) -> impl std::future::Future<Output = Result<tokio::fs::File, Error>> + Send;
 
     async fn create_file(&self, path: impl AsRef<Path>) -> Result<tokio::fs::File, Error>;
 

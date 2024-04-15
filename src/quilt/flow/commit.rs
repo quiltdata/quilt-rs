@@ -93,7 +93,7 @@ pub async fn commit_package(
     mut lineage: PackageLineage,
     manifest: &(impl ReadableManifest + Sync),
     paths: &paths::DomainPaths,
-    storage: &impl Storage,
+    storage: &(impl Storage + Sync),
     working_dir: PathBuf,
     status: InstalledPackageStatus,
     namespace: String,
