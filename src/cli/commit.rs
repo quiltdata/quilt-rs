@@ -13,7 +13,7 @@ pub struct Output {}
 
 impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let output = vec!["Commit"];
+        let output = ["Commit"];
         write!(f, "{}", output.join("\n"))
     }
 }
