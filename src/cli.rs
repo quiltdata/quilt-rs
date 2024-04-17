@@ -5,6 +5,7 @@ use clap::Subcommand;
 use tracing::log;
 
 mod browse;
+mod commit;
 mod install;
 mod list;
 mod model;
@@ -28,6 +29,19 @@ enum Commands {
     Browse {
         #[arg(value_name = "PKG_URI")]
         uri: String,
+    },
+    /// Commit new package revision
+    Commit {
+        /// Path to local domain
+        #[arg(short, long)]
+        domain: PathBuf,
+        /// Commit message
+        #[arg(short, long)]
+        message: String,
+        /// Namespace of the package to commit new revision
+        /// Ex. foo/bar
+        #[arg(short, long)]
+        namespace: String,
     },
     /// Install package locally
     Install {
@@ -85,6 +99,16 @@ pub async fn init() -> Result<(), Error> {
             print(browse::command(m, args).await);
             Ok(())
         }
+        Commands::Commit {
+            domain,
+            namespace,
+            message,
+        } => {
+            let args = commit::Input { message, namespace };
+            log::info!("Installing {:?}", args);
+            print(commit::command(Model::from(domain), args).await);
+            Ok(())
+        }
         Commands::Install {
             path,
             domain,
@@ -138,6 +162,9 @@ pub enum Error {
 
     #[error("Failed to create temp dir: {0}")]
     TempDir(String),
+
+    #[error("Package {0} not found")]
+    NamespaceNotFound(String),
 }
 
 impl From<quilt_rs::Error> for Error {

@@ -3,6 +3,7 @@ use temp_dir::TempDir;
 use tokio::sync;
 
 use crate::cli::browse;
+use crate::cli::commit;
 use crate::cli::install;
 use crate::cli::list;
 use crate::cli::package;
@@ -19,6 +20,11 @@ pub trait Commands {
     async fn browse(&self, args: browse::Input) -> Result<browse::Output, Error> {
         let local_domain = &self.get_local_domain().lock().await;
         browse::model(local_domain, args).await
+    }
+
+    async fn commit(&self, args: commit::Input) -> Result<commit::Output, Error> {
+        let local_domain = &self.get_local_domain().lock().await;
+        commit::model(local_domain, args).await
     }
 
     async fn install(&self, args: install::Input) -> Result<install::Output, Error> {
