@@ -1,32 +1,30 @@
+use std::str::Utf8Error;
+
+use aws_smithy_types::byte_stream;
+use reqwest::header::ToStrError;
+use temp_dir::TempDir;
+use thiserror::Error;
+use tracing::log;
+
 mod paths;
 mod quilt4;
-mod s3_utils;
 
 pub mod quilt;
 pub mod utils;
 pub mod cli;
 
-use std::str::Utf8Error;
-
-use aws_smithy_types::byte_stream;
-
 pub use quilt4::manifest::Manifest4;
 pub use quilt4::row4::Row4;
 pub use quilt4::table::Table;
-pub use quilt4::upath::UPath;
 pub use quilt4::uri::UriParser;
 pub use quilt4::uri::UriQuilt;
-use tracing::log;
 
 pub use quilt::InstalledPackage;
+pub mod s3_utils;
 pub use quilt::LocalDomain;
 pub use quilt::Manifest;
 pub use quilt::RemoteManifest;
 pub use quilt::S3PackageUri;
-
-use reqwest::header::ToStrError;
-use temp_dir::TempDir;
-use thiserror::Error;
 
 /// The error type for this library
 #[derive(Error, Debug)]
@@ -55,6 +53,9 @@ pub enum Error {
 
     #[error("Arrow error: {0}")]
     Arrow(#[from] arrow::error::ArrowError),
+
+    #[error("Parquet error: {0}")]
+    Parquet(#[from] parquet::errors::ParquetError),
 
     #[error("Manifest header: {0}")]
     ManifestHeader(String),

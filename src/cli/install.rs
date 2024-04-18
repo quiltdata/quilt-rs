@@ -13,7 +13,7 @@ pub struct Input {
 
 #[derive(Debug)]
 pub struct Output {
-    installed_package: crate::InstalledPackage,
+    installed_package: quilt_rs::InstalledPackage,
     package_dir: std::path::PathBuf,
     paths: Option<Vec<std::path::PathBuf>>,
 }
@@ -44,25 +44,23 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 }
 
 async fn install_package(
-    local_domain: &crate::LocalDomain,
-    uri: &crate::S3PackageUri,
+    local_domain: &quilt_rs::LocalDomain,
+    uri: &quilt_rs::S3PackageUri,
     namespace: Option<String>,
-) -> Result<(crate::InstalledPackage, String), Error> {
+) -> Result<quilt_rs::InstalledPackage, Error> {
+    let remote = quilt_rs::s3_utils::RemoteS3::new();
     let namespace = namespace.unwrap_or(uri.namespace.clone());
     let installed_package = local_domain.get_installed_package(&namespace).await?;
     if let Some(installed_package) = installed_package {
         // FIXME: check the actual remote_manifest
-        return Ok((installed_package, namespace));
+        return Ok(installed_package);
     }
-    let remote_manifest = crate::RemoteManifest::resolve(uri).await?;
-    Ok((
-        local_domain.install_package(&remote_manifest).await?,
-        namespace,
-    ))
+    let remote_manifest = quilt_rs::RemoteManifest::resolve(&remote, uri).await?;
+    Ok(local_domain.install_package(&remote_manifest).await?)
 }
 
 async fn install_paths(
-    installed_package: &crate::InstalledPackage,
+    installed_package: &quilt_rs::InstalledPackage,
     paths: Vec<String>,
 ) -> Result<Vec<String>, Error> {
     installed_package.install_paths(&paths).await?;
@@ -100,16 +98,16 @@ fn get_entries(
 }
 
 pub async fn model(
-    local_domain: &crate::LocalDomain,
+    local_domain: &quilt_rs::LocalDomain,
     Input {
         namespace,
         paths,
         uri,
     }: Input,
 ) -> Result<Output, Error> {
-    let uri: crate::S3PackageUri = uri.parse()?;
-    let (installed_package, namespace) = install_package(local_domain, &uri, namespace).await?;
-    let package_dir = local_domain.paths.working_dir(&namespace);
+    let uri: quilt_rs::S3PackageUri = uri.parse()?;
+    let installed_package = install_package(local_domain, &uri, namespace).await?;
+    let package_dir = installed_package.working_folder();
     let Entries { keys, paths } = get_entries(&package_dir, uri.path, paths);
 
     if let Some(keys) = keys {

@@ -1,9 +1,11 @@
 use super::*;
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub enum TestFile {
     Parquet,
+    ParquetChecksumed,
     Json,
     Domain,
 }
@@ -19,61 +21,62 @@ pub fn remote_s3_uri() -> String {
     format!("s3://{}/{}", TEST_BUCKET, TEST_PACKAGE)
 }
 
-pub fn local_uri(key: TestFile) -> String {
+pub fn local_uri(key: TestFile) -> PathBuf {
     let files: HashMap<TestFile, &str> = HashMap::from([
         (TestFile::Parquet, TEST_LOCAL_PARQUET),
+        (TestFile::ParquetChecksumed, TEST_LOCAL_PARQUET_CHECKSUMED),
         (TestFile::Json, TEST_LOCAL_JSONL),
         (TestFile::Domain, ""),
     ]);
 
     let cwd = std::env::current_dir().unwrap();
     let domain = cwd.join(TEST_DOMAIN);
-    let path = domain.join(files[&key]);
-    let path_string = path.to_string_lossy();
-    format!("file://{}", path_string)
+    domain.join(files[&key])
 }
 
-pub fn local_uri_domain() -> String {
+pub fn local_uri_domain() -> PathBuf {
     local_uri(TestFile::Domain)
 }
 
-pub fn local_uri_parquet() -> String {
+pub fn local_uri_parquet() -> PathBuf {
     local_uri(TestFile::Parquet)
 }
 
-pub fn local_uri_json() -> String {
+pub fn local_uri_json() -> PathBuf {
     local_uri(TestFile::Json)
 }
 
-pub fn current_domain() -> String {
-    format!(
-        "file://{}/tests/test_domain/.quilt",
-        std::env::current_dir().unwrap().to_string_lossy()
-    )
+pub fn local_uri_parquet_checksumed() -> PathBuf {
+    local_uri(TestFile::ParquetChecksumed)
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn current_domain() -> PathBuf {
+        std::env::current_dir()
+            .unwrap()
+            .join("./tests/test_domain/.quilt")
+    }
+
     #[test]
     fn test_local_uri_domain() {
         let expected = current_domain();
-        let actual = format!("{}.quilt", local_uri_domain());
+        let actual = local_uri_domain().join(".quilt");
         assert_eq!(actual, expected);
     }
 
     #[test]
     fn test_local_uri_parquet() {
-        let expected = format!("{}/packages/12201234.parquet", current_domain());
+        let expected = current_domain().join("./packages/12201234.parquet");
         assert_eq!(local_uri_parquet(), expected);
     }
 
     #[test]
     fn test_local_uri_json() {
-        let expected = format!(
-            "{}/packages/5f1b1e4928dbb5d700cfd37ed5f5180134d1ad93a0a700f17e43275654c262f4",
-            current_domain()
-        );
+        let expected = current_domain()
+            .join("./packages/0428ab8c8b0fe83d9e57fb6b26ff190173caad00ed7aeb683ce26cc4b56ea4bb");
         assert_eq!(local_uri_json(), expected);
     }
 }
