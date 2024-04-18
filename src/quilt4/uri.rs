@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
-use url::{form_urlencoded, Url};
+use serde::Deserialize;
+use serde::Serialize;
+use url::form_urlencoded;
+use url::Url;
 
 use crate::Error;
 const LATEST_TAG: &str = "latest";

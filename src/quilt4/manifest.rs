@@ -11,11 +11,7 @@
 //! Before 1.0, they will be renamed to Manifest/Entry
 //! and the existing types will be obsoleted.
 //!
-use super::{
-    table::Table,
-    // entry::Entry4,
-    upath::UPath,
-};
+use super::table::Table;
 use std::fmt;
 
 #[derive(Clone, Debug)]
@@ -32,7 +28,7 @@ impl Manifest4 {
         unimplemented!()
     }
 
-    pub async fn write4(&self, _path: UPath) {
+    pub async fn write4(&self) {
         unimplemented!()
     }
 }
@@ -40,5 +36,35 @@ impl Manifest4 {
 impl fmt::Display for Manifest4 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Manifest4({})", self.table)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::collections::BTreeMap;
+
+    use crate::quilt4::row4::Row4;
+
+    #[test]
+    fn test_manifest_formatting_default() {
+        let manifest = Manifest4::new(Table::default());
+        assert_eq!(format!("{}", manifest), "Manifest4(Table({}))");
+    }
+
+    #[test]
+    fn test_manifest_formatting_with_records() {
+        let manifest = Manifest4::new(Table {
+            records: BTreeMap::from([("foo".to_string(), Row4::default())]),
+            ..Table::default()
+        });
+        assert_eq!(
+            format!("{}", manifest),
+            format!(
+                r###"Manifest4(Table({{"foo": "Row4(.)@.^0#[]$$Object {}$Null"}}))"###,
+                r###"{\"message\": String(\"\"), \"version\": String(\"v0\")}"###
+            )
+        );
     }
 }

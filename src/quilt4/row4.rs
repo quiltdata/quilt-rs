@@ -8,14 +8,15 @@
 use multihash::Multihash;
 use std::fmt;
 
-use super::{row3::Row3, upath::UPath};
+use crate::quilt::manifest::Manifest;
+use crate::quilt4::row3::Row3;
+use crate::quilt4::table::HEADER_ROW;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row4 {
     pub name: String,
     // scheme: Enum<file,s3,https>
     pub place: String,
-    pub path: Option<UPath>,
     pub size: u64,
     pub hash: Multihash<256>,
     pub info: serde_json::Value, // system metadata
@@ -42,10 +43,38 @@ impl fmt::Display for Row4 {
             + &format!("#{:?}", self.hash.digest())
             + &format!("$${:?}", self.info)
             + &format!("${:?}", self.meta);
-        if self.path.is_some() {
-            write!(f, "{}", result + &format!("${:?}", self.path))
-        } else {
-            write!(f, "{}", result)
+        write!(f, "{}", result)
+    }
+}
+
+impl From<Manifest> for Row4 {
+    fn from(quilt3_manifest: Manifest) -> Self {
+        Row4 {
+            info: serde_json::json!({
+                "message": quilt3_manifest.header.message,
+                "version": quilt3_manifest.header.version,
+            }),
+            meta: match quilt3_manifest.header.user_meta.clone() {
+                Some(meta) => meta.into(),
+                None => serde_json::Value::Null,
+            },
+            ..Row4::default()
+        }
+    }
+}
+
+impl Default for Row4 {
+    fn default() -> Self {
+        Row4 {
+            name: HEADER_ROW.into(),
+            place: HEADER_ROW.into(),
+            size: 0,
+            hash: Multihash::default(),
+            info: serde_json::json!({
+                "message": String::default(),
+                "version": "v0",
+            }),
+            meta: serde_json::Value::Null,
         }
     }
 }
@@ -58,7 +87,6 @@ mod tests {
     fn test_formatting_without_path() -> Result<(), multihash::Error> {
         let row = Row4 {
             name: "Foo".to_string(),
-            path: None,
             place: "Bar".to_string(),
             size: 123,
             hash: Multihash::wrap(345, b"hello world")?,
@@ -66,21 +94,6 @@ mod tests {
             meta: serde_json::json!({"foo":"bar"}),
         };
         assert_eq!(row.to_string(), r##"Row4(Foo)@Bar^123#[104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100]$$Bool(false)$Object {"foo": String("bar")}"##.to_string());
-        Ok(())
-    }
-
-    #[test]
-    fn test_formatting_with_path() -> Result<(), multihash::Error> {
-        let row = Row4 {
-            name: "Foo".to_string(),
-            path: Some(UPath::parse("file://parent/child").unwrap()),
-            place: "Bar".to_string(),
-            size: 123,
-            hash: Multihash::wrap(345, b"hello world")?,
-            info: serde_json::Value::Bool(false),
-            meta: serde_json::json!({"foo":"bar"}),
-        };
-        assert_eq!(row.to_string(), r##"Row4(Foo)@Bar^123#[104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100]$$Bool(false)$Object {"foo": String("bar")}$Some(Local("/child"))"##.to_string());
         Ok(())
     }
 }

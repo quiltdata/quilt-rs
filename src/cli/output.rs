@@ -1,3 +1,5 @@
+use tracing::log;
+
 use crate::cli::Error;
 
 #[derive(Debug)]
@@ -9,6 +11,6 @@ pub enum Std {
 pub fn print(output: Std) {
     match output {
         Std::Out(str) => println!("{}", str),
-        Std::Err(err) => tracing::error!("{}", err),
+        Std::Err(err) => log::error!("{}", err),
     }
 }

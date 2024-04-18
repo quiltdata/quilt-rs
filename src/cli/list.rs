@@ -40,12 +40,13 @@ mod tests {
 
     #[tokio::test]
     async fn list() -> Result<(), Error> {
+        let remote = quilt_rs::s3_utils::RemoteS3::new();
         let temp_dir = TempDir::default();
         let local_path = PathBuf::from(temp_dir.as_ref());
         let local_domain = quilt_rs::LocalDomain::new(local_path);
         let uri: quilt_rs::S3PackageUri =
             "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md".parse()?;
-        let remote_manifest = quilt_rs::RemoteManifest::resolve(&uri).await?;
+        let remote_manifest = quilt_rs::RemoteManifest::resolve(&remote, &uri).await?;
         let _ = local_domain.install_package(&remote_manifest).await?;
         let output = model(&local_domain).await?;
         assert_eq!(

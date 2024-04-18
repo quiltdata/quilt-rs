@@ -1,13 +1,24 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
+use std::collections::HashSet;
 
-use base64::{prelude::BASE64_STANDARD, Engine};
+use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
 use multihash::Multihash;
-use serde::{Deserialize, Deserializer, Serialize};
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
+use serde::Deserialize;
+use serde::Deserializer;
+use serde::Serialize;
+use tokio::io::AsyncBufReadExt;
+use tokio::io::AsyncRead;
+use tokio::io::AsyncWrite;
+use tokio::io::AsyncWriteExt;
+use tokio::io::BufReader;
+use tokio::io::BufWriter;
 
-use crate::{Error, Table};
+use crate::Error;
+use crate::Table;
 
-use super::{Change, ChangeSet};
+use super::Change;
+use super::ChangeSet;
 
 pub type JsonObject = serde_json::Map<String, serde_json::Value>;
 
@@ -142,7 +153,7 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    pub async fn from_file<F: AsyncRead + Unpin + Send>(file: F) -> Result<Self, Error> {
+    pub async fn from_reader<F: AsyncRead + Unpin + Send>(file: F) -> Result<Self, Error> {
         let reader = BufReader::new(file);
         let mut lines = reader.lines();
 
@@ -312,9 +323,24 @@ impl From<&Table> for Manifest {
     }
 }
 
+impl Default for Manifest {
+    fn default() -> Self {
+        Manifest {
+            header: ManifestHeader {
+                version: "v0".to_string(),
+                message: Some("".to_string()),
+                user_meta: None,
+            },
+            rows: Vec::new(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::Row4;
 
     #[test]
     fn test_equality_of_strictly_equal() {
@@ -354,5 +380,67 @@ mod tests {
             meta: None,
         };
         assert!(left == right)
+    }
+
+    #[test]
+    fn test_manifest_from_table() -> Result<(), Error> {
+        let default_table = Table::default();
+        let default_manifest = Manifest::default();
+        assert_eq!(Manifest::from(&default_table), default_manifest);
+
+        let mut user_meta = serde_json::Map::new();
+        user_meta.insert(
+            "foo".to_string(),
+            serde_json::Value::String("bar".to_string()),
+        );
+        let mut meta = serde_json::Map::new();
+        meta.insert(
+            "version".to_string(),
+            serde_json::Value::String("v0".to_string()),
+        );
+        let mut info = serde_json::Map::new();
+        info.insert(
+            "message".to_string(),
+            serde_json::Value::String("test".to_string()),
+        );
+
+        let table = Table {
+            header: Row4 {
+                name: ".".to_string(),
+                place: "".to_string(),
+                size: 0,
+                hash: multihash::Multihash::default(),
+                info: serde_json::Value::Object(info),
+                meta: serde_json::Value::Object(user_meta.clone()),
+            },
+            records: BTreeMap::from([(
+                "foo/bar".to_string(),
+                Row4 {
+                    name: "foo/bar".to_string(),
+                    place: "s3://z/x/y?versionId=foo".to_string(),
+                    size: 123,
+                    hash: multihash::Multihash::wrap(0xb510, b"abcdef")?,
+                    info: serde_json::Value::Null,
+                    meta: serde_json::Value::Object(meta.clone()),
+                },
+            )]),
+        };
+        let reference_manifest = Manifest {
+            header: ManifestHeader {
+                version: "v0".to_string(),
+                message: Some("test".to_string()),
+                // user_meta: Some(serde_json::json!({"foo": "bar"})),
+                user_meta: Some(user_meta),
+            },
+            rows: vec![ManifestRow {
+                logical_key: "foo/bar".to_string(),
+                physical_key: "s3://z/x/y?versionId=foo".to_string(),
+                hash: ContentHash::SHA256Chunked("YWJjZGVm".to_string()),
+                size: 123,
+                meta: Some(meta),
+            }],
+        };
+        assert_eq!(Manifest::from(&table), reference_manifest);
+        Ok(())
     }
 }

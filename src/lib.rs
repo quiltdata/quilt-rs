@@ -1,21 +1,29 @@
+use std::str::Utf8Error;
+
+use aws_smithy_types::byte_stream;
+use reqwest::header::ToStrError;
+use temp_dir::TempDir;
+use thiserror::Error;
+use tracing::log;
+
+mod paths;
 mod quilt4;
-mod s3_utils;
 
 pub mod quilt;
 pub mod utils;
 
-use std::str::Utf8Error;
+pub use quilt4::manifest::Manifest4;
+pub use quilt4::row4::Row4;
+pub use quilt4::table::Table;
+pub use quilt4::uri::UriParser;
+pub use quilt4::uri::UriQuilt;
 
-use aws_smithy_types::byte_stream;
-pub use quilt4::{
-    manifest::Manifest4, row4::Row4, table::Table, upath::UPath, uri::UriParser, uri::UriQuilt,
-};
-
-pub use quilt::{InstalledPackage, LocalDomain, Manifest, RemoteManifest, S3PackageUri};
-
-use reqwest::header::ToStrError;
-use temp_dir::TempDir;
-use thiserror::Error;
+pub use quilt::InstalledPackage;
+pub mod s3_utils;
+pub use quilt::LocalDomain;
+pub use quilt::Manifest;
+pub use quilt::RemoteManifest;
+pub use quilt::S3PackageUri;
 
 /// The error type for this library
 #[derive(Error, Debug)]
@@ -45,6 +53,9 @@ pub enum Error {
     #[error("Arrow error: {0}")]
     Arrow(#[from] arrow::error::ArrowError),
 
+    #[error("Parquet error: {0}")]
+    Parquet(#[from] parquet::errors::ParquetError),
+
     #[error("Manifest header: {0}")]
     ManifestHeader(String),
 
@@ -69,7 +80,7 @@ pub enum Error {
     #[error("The given package is not installed: {0}")]
     PackageNotInstalled(String),
 
-    #[error("Duplicate paths: {0}")]
+    #[error("Failed to install path: {0}")]
     InstallPath(String),
 
     #[error("Uninstall error: {0}")]
@@ -77,6 +88,9 @@ pub enum Error {
 
     #[error("Invalid multihash: {0}")]
     InvalidMultihash(String),
+
+    #[error("Multihash error: {0}")]
+    Multihash(#[from] multihash::Error),
 
     #[error("Invalid URI scheme: {0}")]
     InvalidScheme(String),
@@ -124,10 +138,10 @@ pub async fn install_temporarily(
         namespace: namespace.to_string(),
         hash: hash.to_string(),
     };
-    tracing::info!("remote_manifest: {:?}", remote_manifest);
+    log::info!("remote_manifest: {:?}", remote_manifest);
 
     let result = loc.install_package(&remote_manifest).await;
-    tracing::info!("result: {:?}", result);
+    log::info!("result: {:?}", result);
     result
 }
 
@@ -137,7 +151,7 @@ pub async fn installed_packages(dir: Option<String>) -> Result<Vec<InstalledPack
         None => std::env::current_dir().unwrap(),
     };
     let local_domain = LocalDomain::new(path_buf);
-    println!("local_domain: {:?}", local_domain);
+    log::debug!("local_domain: {:?}", local_domain);
     let installed_packages = local_domain
         .list_installed_packages()
         .await
@@ -164,7 +178,7 @@ mod tests {
         let result = installed_packages(Some(dir.to_string())).await;
         assert!(result.is_ok());
         let packages = result.unwrap();
-        println!("packages[{}]: {:?}", crate::utils::TEST_DOMAIN, packages);
+        log::debug!("packages[{}]: {:?}", crate::utils::TEST_DOMAIN, packages);
         let count = packages.len();
         assert!(count == 0); // TODO: add data.json to fix this
     }
