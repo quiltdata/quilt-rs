@@ -11,6 +11,7 @@ mod list;
 mod model;
 mod output;
 mod package;
+mod push;
 mod uninstall;
 
 use model::Model;
@@ -76,6 +77,16 @@ enum Commands {
         #[arg(short, long, value_name = "PKG_URI")]
         target: String,
     },
+    /// Push
+    Push {
+        /// Path to local domain
+        #[arg(short, long)]
+        domain: PathBuf,
+        /// Namespace of the package to push
+        /// Ex. foo/bar
+        #[arg(short, long)]
+        namespace: String,
+    },
     /// Uninstall package from local domain
     Uninstall {
         /// Namespace of the package to uninstall.
@@ -105,7 +116,7 @@ pub async fn init() -> Result<(), Error> {
             message,
         } => {
             let args = commit::Input { message, namespace };
-            log::info!("Installing {:?}", args);
+            log::info!("Committing {:?}", args);
             print(commit::command(Model::from(domain), args).await);
             Ok(())
         }
@@ -138,6 +149,12 @@ pub async fn init() -> Result<(), Error> {
             let args = package::Input { target, uri };
             log::info!("Packaging {:?} using {:?}", args, temp_dir);
             print(package::command(m, args).await);
+            Ok(())
+        }
+        Commands::Push { domain, namespace } => {
+            let args = push::Input { namespace };
+            log::info!("Pushing {:?}", args);
+            print(push::command(Model::from(domain), args).await);
             Ok(())
         }
         Commands::Uninstall { domain, namespace } => {
