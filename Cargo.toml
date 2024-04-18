@@ -33,7 +33,7 @@ multihash = "0.19.1"
 object_store = { version = "0.9.1", features = ["aws", "base64", "reqwest", "serde", "serde_json"] }
 parquet = { version = "51.0.0", features = ["async", "object_store"] }
 percent-encoding = "2.3.1"
-reqwest = "0.12.2"
+reqwest = "0.12.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.115"
 sha2 = "0.10.8"
