@@ -4,22 +4,23 @@ use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
 use crate::quilt::flow::browse::cache_remote_manifest;
 use crate::quilt::flow::install_paths::install_paths;
-use crate::quilt::flow::status::create_status;
+use crate::quilt::flow::status::InstalledPackageStatus;
 use crate::quilt::flow::uninstall_paths::uninstall_paths;
 use crate::quilt::lineage::PackageLineage;
 use crate::quilt::manifest_handle;
 use crate::quilt::storage::Storage;
 use crate::quilt::Error;
+use crate::s3_utils;
 
 pub async fn pull_package(
     lineage: PackageLineage,
     manifest: &(impl manifest_handle::ReadableManifest + Sync),
     paths: &DomainPaths,
-    storage: &mut impl Storage,
+    storage: &(impl Storage + Sync),
     working_dir: PathBuf,
+    status: InstalledPackageStatus,
     namespace: String,
 ) -> Result<PackageLineage, Error> {
-    let (lineage, status) = create_status(lineage, storage, manifest, working_dir.clone()).await?;
     if !status.changes.is_empty() {
         return Err(Error::Package("package has pending changes".to_string()));
     }
@@ -47,16 +48,18 @@ pub async fn pull_package(
     lineage.remote.hash = lineage.latest_hash.clone();
     lineage.base_hash = lineage.latest_hash.clone();
 
-    cache_remote_manifest(paths, storage, &lineage.remote).await?;
+    let remote = s3_utils::RemoteS3::new();
+    cache_remote_manifest(paths, storage, &remote, &lineage.remote).await?;
     copy_cached_to_installed(
         paths,
+        storage,
         &lineage.remote.bucket,
         &namespace,
         &lineage.remote.hash,
     )
     .await?;
 
-    let materialized_manifest = manifest.read().await?;
+    let materialized_manifest = manifest.read(storage).await?;
     let paths_to_install = installed_paths
         .into_iter()
         .filter(|x| materialized_manifest.records.contains_key(x))
@@ -79,44 +82,33 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::quilt::lineage::CommitState;
-    use crate::quilt::lineage::PathState;
-    use crate::quilt::manifest_handle::ReadableManifest;
+    use crate::quilt::flow::status::Change;
+    use crate::quilt::mocks;
     use crate::quilt::storage::mock_storage::MockStorage;
     use crate::quilt::RemoteManifest;
-    use crate::Row4;
-    use crate::Table;
-
-    struct InMemoryManifest {}
-    impl ReadableManifest for InMemoryManifest {
-        async fn read(&self) -> Result<Table, Error> {
-            Ok(Table::default())
-        }
-    }
 
     #[tokio::test]
-    async fn test_no_pull_if_changes() {
-        let mut storage = MockStorage::default();
-        let lineage = PackageLineage {
-            paths: BTreeMap::from([("a/a".to_string(), PathState::default())]),
-            ..PackageLineage::default()
-        };
-        struct RemovedFilesManifest {}
-        impl ReadableManifest for RemovedFilesManifest {
-            async fn read(&self) -> Result<Table, Error> {
-                Ok(Table {
-                    records: BTreeMap::from([("a/a".to_string(), Row4::default())]),
-                    ..Table::default()
-                })
-            }
-        }
+    async fn test_no_pull_if_changes() -> Result<(), Error> {
+        let storage = MockStorage::default();
+        let lineage = mocks::lineage::with_paths(&vec!["a/a"]);
 
+        let status = InstalledPackageStatus {
+            changes: BTreeMap::from([(
+                "foo".to_string(),
+                Change {
+                    previous: None,
+                    current: None,
+                },
+            )]),
+            ..InstalledPackageStatus::default()
+        };
         let error = pull_package(
             lineage,
-            &(RemovedFilesManifest {}),
+            &mocks::manifest::with_record_keys(vec!["a/a".to_string()]),
             &DomainPaths::default(),
-            &mut storage,
+            &storage,
             PathBuf::default(),
+            status,
             String::default(),
         )
         .await;
@@ -124,21 +116,20 @@ mod tests {
             error.unwrap_err().to_string(),
             "General error regarding package: package has pending changes".to_string()
         );
+        Ok(())
     }
 
     #[tokio::test]
     async fn test_no_pull_if_commit() {
-        let mut storage = MockStorage::default();
-        let lineage = PackageLineage {
-            commit: Some(CommitState::default()),
-            ..PackageLineage::default()
-        };
+        let storage = MockStorage::default();
+        let lineage = mocks::lineage::with_commit();
         let error = pull_package(
             lineage,
-            &(InMemoryManifest {}),
+            &mocks::manifest::default(),
             &DomainPaths::default(),
-            &mut storage,
+            &storage,
             PathBuf::default(),
+            InstalledPackageStatus::default(),
             String::default(),
         )
         .await;
@@ -150,7 +141,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_pull_if_diverged() {
-        let mut storage = MockStorage::default();
+        let storage = MockStorage::default();
         let lineage = PackageLineage {
             remote: RemoteManifest {
                 hash: "a".to_string(),
@@ -161,10 +152,11 @@ mod tests {
         };
         let error = pull_package(
             lineage,
-            &(InMemoryManifest {}),
+            &mocks::manifest::default(),
             &DomainPaths::default(),
-            &mut storage,
+            &storage,
             PathBuf::default(),
+            InstalledPackageStatus::default(),
             String::default(),
         )
         .await;
@@ -176,7 +168,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_pull_if_up_to_date() {
-        let mut storage = MockStorage::default();
+        let storage = MockStorage::default();
         let lineage = PackageLineage {
             remote: RemoteManifest {
                 hash: "a".to_string(),
@@ -188,10 +180,11 @@ mod tests {
         };
         let error = pull_package(
             lineage,
-            &(InMemoryManifest {}),
+            &mocks::manifest::default(),
             &DomainPaths::default(),
-            &mut storage,
+            &storage,
             PathBuf::default(),
+            InstalledPackageStatus::default(),
             String::default(),
         )
         .await;

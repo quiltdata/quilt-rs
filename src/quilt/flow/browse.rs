@@ -1,70 +1,57 @@
 use std::path::PathBuf;
 
-use arrow::error::ArrowError;
-use aws_sdk_s3::error::DisplayErrorContext;
-use aws_sdk_s3::error::SdkError;
-use storage::Storage;
 use tokio::io::AsyncReadExt;
 
-use crate::paths;
+use crate::paths::get_manifest_key_legacy;
+use crate::paths::scaffold_paths;
+use crate::paths::DomainPaths;
 use crate::quilt::manifest::Manifest;
 use crate::quilt::manifest_handle::CachedManifest;
 use crate::quilt::manifest_handle::ReadableManifest;
 use crate::quilt::manifest_handle::RemoteManifest;
-use crate::quilt::storage;
+use crate::quilt::remote::Remote;
+use crate::quilt::s3::S3Uri;
+use crate::quilt::storage::Storage;
 use crate::quilt::Error;
-use crate::s3_utils;
 use crate::Table;
-use crate::UPath;
 
-async fn is_parquet(client: &aws_sdk_s3::Client, manifest: &RemoteManifest) -> Result<bool, Error> {
-    match client
-        .head_object()
-        .bucket(&manifest.bucket)
-        .key(paths::get_manifest_key(&manifest.hash))
-        .send()
-        .await
-    {
-        Ok(_) => Ok(true),
-        Err(SdkError::ServiceError(err)) if err.err().is_not_found() => Ok(false),
-        Err(err) => Err(Error::S3(DisplayErrorContext(err).to_string())),
-    }
+async fn is_parquet(remote: &impl Remote, manifest: &RemoteManifest) -> Result<bool, Error> {
+    remote.exists(&S3Uri::from(manifest)).await
 }
 
-async fn fetch_parquet(
-    client: &aws_sdk_s3::Client,
-    manifest: &RemoteManifest,
-) -> Result<Vec<u8>, Error> {
-    let key = paths::get_manifest_key(&manifest.hash);
-    let mut contents = s3_utils::get_object(client, &manifest.bucket, &key).await?;
+async fn fetch_parquet(remote: &impl Remote, manifest: &RemoteManifest) -> Result<Vec<u8>, Error> {
+    let s3_uri = S3Uri::from(manifest);
+    let mut contents = remote.get_object(&s3_uri).await?;
     let mut output = Vec::new();
     contents.read_to_end(&mut output).await?;
     Ok(output)
 }
 
-async fn fetch_jsonl(
-    client: &aws_sdk_s3::Client,
-    manifest: &RemoteManifest,
-) -> Result<Table, Error> {
-    let key = paths::get_manifest_key_legacy(&manifest.hash);
-    let contents = s3_utils::get_object(client, &manifest.bucket, &key).await?;
+async fn fetch_jsonl(remote: &impl Remote, manifest: &RemoteManifest) -> Result<Table, Error> {
+    let s3_uri = S3Uri {
+        bucket: manifest.bucket.clone(),
+        key: get_manifest_key_legacy(&manifest.hash),
+        version: None,
+    };
+    let contents = remote.get_object(&s3_uri).await?;
     let quilt3_manifest = Manifest::from_reader(contents).await?;
     Table::try_from(quilt3_manifest)
 }
 
 pub async fn cache_manifest(
-    paths: &paths::DomainPaths,
-    storage: &mut impl Storage,
+    paths: &DomainPaths,
+    storage: &impl Storage,
     manifest: &Table,
     bucket: &str,
     hash: &str,
-) -> Result<PathBuf, ArrowError> {
+) -> Result<PathBuf, Error> {
+    scaffold_paths(storage, paths.required_local_domain_paths()).await?;
     let cache_path = paths.manifest_cache(bucket, hash);
     storage
         .create_dir_all(&cache_path.parent().unwrap())
         .await?;
     manifest
-        .write_to_upath(&UPath::Local(cache_path.clone()))
+        .write_to_path(storage, &cache_path)
         .await
         .map(|_| cache_path)
 }
@@ -73,10 +60,12 @@ pub async fn cache_manifest(
 //        or RemoteManifest::browse -> CachedManifest
 //        or CachedManifest::try_from(RemoteManifest)
 pub async fn cache_remote_manifest(
-    paths: &paths::DomainPaths,
-    storage: &mut impl Storage,
+    paths: &DomainPaths,
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
     remote_manifest: &RemoteManifest,
 ) -> Result<CachedManifest, Error> {
+    scaffold_paths(storage, paths.required_local_domain_paths()).await?;
     // check if the manifest is already cached
     // if not, download and cache it
     // return cached manifest
@@ -85,13 +74,12 @@ pub async fn cache_remote_manifest(
 
     if !storage.exists(&cache_path).await {
         // Does not exist yet
-        let client = crate::s3_utils::get_client_for_bucket(&remote_manifest.bucket).await?;
-        if is_parquet(&client, remote_manifest).await? {
-            let manifest = fetch_parquet(&client, remote_manifest).await?;
-            storage.write(cache_path.clone(), &manifest).await?;
+        if is_parquet(remote, remote_manifest).await? {
+            let manifest = fetch_parquet(remote, remote_manifest).await?;
+            storage.write_file(&cache_path, &manifest).await?;
         } else {
-            let manifest = fetch_jsonl(&client, remote_manifest).await?;
-            manifest.write_to_upath(&UPath::Local(cache_path)).await?;
+            let manifest = fetch_jsonl(remote, remote_manifest).await?;
+            manifest.write_to_path(storage, &cache_path).await?;
         };
     }
 
@@ -99,13 +87,15 @@ pub async fn cache_remote_manifest(
 }
 
 pub async fn browse_remote_manifest(
-    paths: &paths::DomainPaths,
-    storage: &mut impl Storage,
-    remote: &RemoteManifest,
+    paths: &DomainPaths,
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    remote_manifest: &RemoteManifest,
 ) -> Result<Table, Error> {
-    cache_remote_manifest(paths, storage, remote)
+    scaffold_paths(storage, paths.required_local_domain_paths()).await?;
+    cache_remote_manifest(paths, storage, remote, remote_manifest)
         .await?
-        .read()
+        .read(storage)
         .await
 }
 
@@ -113,24 +103,23 @@ pub async fn browse_remote_manifest(
 mod tests {
     use super::*;
 
-    use temp_testdir::TempDir;
-
-    use crate::quilt::storage::fs::LocalStorage;
+    use crate::quilt::remote::mock_remote::MockRemote;
     use crate::quilt::storage::mock_storage::MockStorage;
+    use crate::utils::local_uri_json;
 
     #[tokio::test]
     async fn test_if_cached() -> Result<(), Error> {
-        let root_dir = TempDir::default();
-        let mut storage = MockStorage::default();
-        let paths = paths::DomainPaths::new(root_dir.to_path_buf());
+        let paths = DomainPaths::default();
         let manifest = RemoteManifest {
             bucket: "a".to_string(),
             namespace: "b".to_string(),
             hash: "c".to_string(),
         };
         let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
-        storage.write(cache_path, &(Vec::new())).await?;
-        let cached_manifest = cache_remote_manifest(&paths, &mut storage, &manifest).await?;
+        let storage = MockStorage::default();
+        storage.write_file(cache_path, &Vec::new()).await?;
+        let remote = MockRemote::default();
+        let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
         assert_eq!(
             cached_manifest,
             CachedManifest {
@@ -144,21 +133,83 @@ mod tests {
 
     #[tokio::test]
     async fn test_if_cached_random_file() -> Result<(), Error> {
-        let root_dir = TempDir::default();
-        // TODO: Can't use MockStorage because of parquet file reader
-        let mut storage = LocalStorage::default();
-        let paths = paths::DomainPaths::new(root_dir.to_path_buf());
+        let paths = DomainPaths::default();
         let manifest = RemoteManifest {
             bucket: "a".to_string(),
             namespace: "b".to_string(),
             hash: "c".to_string(),
         };
         let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
-        storage.write(cache_path, &(Vec::new())).await?;
-        let cached_manifest = cache_remote_manifest(&paths, &mut storage, &manifest).await?;
+        let storage = MockStorage::default();
+        storage.write_file(cache_path, &Vec::new()).await?;
+        let remote = MockRemote::default();
+        let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
         assert_eq!(
-            cached_manifest.read().await.unwrap_err().to_string(),
-            "Arrow error: Parquet argument error: External: Invalid argument (os error 22)"
+            cached_manifest
+                .read(&storage)
+                .await
+                .unwrap_err()
+                .to_string(),
+            "Parquet error: External: Invalid argument (os error 22)"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_caching_parquet() -> Result<(), Error> {
+        let storage = MockStorage::default();
+        let paths = DomainPaths::default();
+        let manifest = RemoteManifest {
+            bucket: "a".to_string(),
+            namespace: "b".to_string(),
+            hash: "c".to_string(),
+        };
+        let remote = MockRemote::default();
+        remote
+            .put_object(
+                &S3Uri::try_from("s3://a/.quilt/packages/1220c.parquet")?,
+                Vec::new(),
+            )
+            .await?;
+        let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
+        assert!(storage
+            .read_file(&PathBuf::from(".quilt/packages/a/c"))
+            .await?
+            .is_empty());
+        assert_eq!(
+            cached_manifest,
+            CachedManifest {
+                paths,
+                bucket: "a".to_string(),
+                hash: "c".to_string(),
+            }
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_caching_jsonl() -> Result<(), Error> {
+        let storage = MockStorage::default();
+        let paths = DomainPaths::default();
+        let manifest = RemoteManifest {
+            bucket: "a".to_string(),
+            namespace: "b".to_string(),
+            hash: "c".to_string(),
+        };
+        let jsonl = std::fs::read(local_uri_json())?;
+        let remote = MockRemote::default();
+        remote
+            .put_object(&S3Uri::try_from("s3://a/.quilt/packages/c")?, jsonl)
+            .await?;
+        let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
+        assert!(storage.exists(&PathBuf::from(".quilt/packages/a/c")).await);
+        assert_eq!(
+            cached_manifest,
+            CachedManifest {
+                paths,
+                bucket: "a".to_string(),
+                hash: "c".to_string(),
+            }
         );
         Ok(())
     }

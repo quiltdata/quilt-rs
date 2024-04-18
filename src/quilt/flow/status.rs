@@ -13,6 +13,7 @@ use crate::quilt::lineage::PackageLineage;
 use crate::quilt::manifest::MULTIHASH_SHA256;
 use crate::quilt::manifest::MULTIHASH_SHA256_CHUNKED;
 use crate::quilt::manifest_handle::ReadableManifest;
+use crate::quilt::remote::Remote;
 use crate::quilt::storage::Storage;
 use crate::quilt4::checksum::calculate_sha256_checksum;
 use crate::quilt4::checksum::calculate_sha256_chunked_checksum;
@@ -95,8 +96,11 @@ impl InstalledPackageStatus {
     }
 }
 
-pub async fn refresh_latest_hash(mut lineage: PackageLineage) -> Result<PackageLineage, Error> {
-    let latest_hash = lineage.remote.resolve_latest().await?;
+pub async fn refresh_latest_hash(
+    mut lineage: PackageLineage,
+    remote: &impl Remote,
+) -> Result<PackageLineage, Error> {
+    let latest_hash = lineage.remote.resolve_latest(remote).await?;
     if lineage.latest_hash == latest_hash {
         return Ok(lineage);
     }
@@ -106,7 +110,7 @@ pub async fn refresh_latest_hash(mut lineage: PackageLineage) -> Result<PackageL
 
 pub async fn create_status(
     lineage: PackageLineage,
-    _storage: &mut impl Storage,
+    storage: &(impl Storage + Sync),
     manifest: &(impl ReadableManifest + Sync),
     working_dir: PathBuf,
 ) -> Result<(PackageLineage, InstalledPackageStatus), Error> {
@@ -117,7 +121,7 @@ pub async fn create_status(
     // installed entries marked as "installed" (initially as "downloading")
     // modified entries marked as "modified", etc
 
-    let table = manifest.read().await?;
+    let table = manifest.read(storage).await?;
 
     let mut orig_paths = HashMap::new();
     for path in lineage.paths.keys() {
@@ -224,28 +228,17 @@ pub async fn create_status(
 mod tests {
     use super::*;
 
-    use std::collections::BTreeMap;
-
     use crate::quilt::lineage::CommitState;
-    use crate::quilt::lineage::PathState;
+    use crate::quilt::mocks;
     use crate::quilt::storage::mock_storage::MockStorage;
-    use crate::Row4;
-    use crate::Table;
-
-    struct InMemoryManifest {}
-    impl ReadableManifest for InMemoryManifest {
-        async fn read(&self) -> Result<Table, Error> {
-            Ok(Table::default())
-        }
-    }
 
     #[tokio::test]
     async fn test_default_status() -> Result<(), Error> {
-        let mut storage = MockStorage::default();
+        let storage = MockStorage::default();
         let (_lineage, status) = create_status(
             PackageLineage::default(),
-            &mut storage,
-            &(InMemoryManifest {}),
+            &storage,
+            &mocks::manifest::default(),
             PathBuf::default(),
         )
         .await?;
@@ -255,23 +248,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_behind() -> Result<(), Error> {
-        let same_hash = "AAA".to_string();
-        let other_hash = "BBB".to_string();
-        let mut storage = MockStorage::default();
-        let lineage = PackageLineage {
-            commit: Some(CommitState {
-                hash: same_hash.clone(),
-                ..CommitState::default()
-            }),
-            base_hash: same_hash.clone(),
-            latest_hash: other_hash,
-            ..PackageLineage::default()
-        };
+        let base_hash = "AAA";
+        let latest_hash = "BBB";
+        let commit_hash = "AAA";
+        let lineage = mocks::lineage::with_commit_hashes(base_hash, latest_hash, commit_hash);
 
         let (_lineage, status) = create_status(
             lineage,
-            &mut storage,
-            &(InMemoryManifest {}),
+            &MockStorage::default(),
+            &mocks::manifest::default(),
             PathBuf::default(),
         )
         .await?;
@@ -281,23 +266,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_ahead() -> Result<(), Error> {
-        let same_hash = "AAA".to_string();
-        let other_hash = "BBB".to_string();
-        let mut storage = MockStorage::default();
-        let lineage = PackageLineage {
-            commit: Some(CommitState {
-                hash: other_hash,
-                ..CommitState::default()
-            }),
-            base_hash: same_hash.clone(),
-            latest_hash: same_hash.clone(),
-            ..PackageLineage::default()
-        };
+        let base_hash = "AAA";
+        let latest_hash = "AAA";
+        let commit_hash = "BBB";
+        let lineage = mocks::lineage::with_commit_hashes(base_hash, latest_hash, commit_hash);
 
         let (_, status) = create_status(
             lineage,
-            &mut storage,
-            &(InMemoryManifest {}),
+            &MockStorage::default(),
+            &mocks::manifest::default(),
             PathBuf::default(),
         )
         .await?;
@@ -307,7 +284,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_diverged() -> Result<(), Error> {
-        let mut storage = MockStorage::default();
         let lineage = PackageLineage {
             commit: Some(CommitState {
                 hash: "aaa".to_string(),
@@ -320,8 +296,8 @@ mod tests {
 
         let (_, status) = create_status(
             lineage,
-            &mut storage,
-            &(InMemoryManifest {}),
+            &MockStorage::default(),
+            &mocks::manifest::default(),
             PathBuf::default(),
         )
         .await?;
@@ -331,30 +307,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_removed_files() -> Result<(), Error> {
-        let mut storage = MockStorage::default();
-        let lineage = PackageLineage {
-            paths: BTreeMap::from([("a/a".to_string(), PathState::default())]),
-            ..PackageLineage::default()
-        };
-        struct RemovedFilesManifest {}
-        impl ReadableManifest for RemovedFilesManifest {
-            async fn read(&self) -> Result<Table, Error> {
-                Ok(Table {
-                    records: BTreeMap::from([("a/a".to_string(), Row4::default())]),
-                    ..Table::default()
-                })
-            }
-        }
+        let lineage = mocks::lineage::with_paths(&vec!["a/a"]);
+        let manifest = mocks::manifest::with_record_keys(vec!["a/a".to_string()]);
         let (_, status) = create_status(
             lineage,
-            &mut storage,
-            &(RemovedFilesManifest {}),
+            &MockStorage::default(),
+            &manifest,
             PathBuf::default(),
         )
         .await?;
 
         // It's "removed", because it's present in lineage and manifest,
-        // but absent from file system
+        // but absent from file system (FIXME)
         let removed_file = status.changes.get("a/a").unwrap();
         assert!(removed_file.current.is_none());
         assert!(removed_file.previous.is_some());

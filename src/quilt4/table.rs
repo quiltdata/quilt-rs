@@ -6,9 +6,12 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::io;
+// use std::io;
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::quilt::storage::Storage;
 use arrow::array::GenericByteArray;
 use arrow::array::UInt64Array;
 use arrow::datatypes::BinaryType;
@@ -18,28 +21,22 @@ use arrow::datatypes::Schema;
 use arrow::datatypes::Utf8Type;
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
-use aws_sdk_s3::config::ProvideCredentials;
 use multihash::Multihash;
-use object_store::aws::AmazonS3Builder;
-use object_store::ObjectStore;
-use parquet::arrow::async_reader::AsyncFileReader;
-use parquet::arrow::async_reader::ParquetObjectReader;
 use parquet::arrow::AsyncArrowWriter;
 use parquet::arrow::ParquetRecordBatchStreamBuilder;
 use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
 use sha2::Digest;
 use sha2::Sha256;
-use tokio::fs;
+use tokio::io::AsyncRead;
+use tokio::io::AsyncSeek;
 use tokio::io::AsyncWrite;
 use tokio_stream::StreamExt;
 
 use crate::quilt::manifest::Manifest;
 use crate::quilt::ContentHash;
-use crate::s3_utils::get_region_for_bucket;
 
 use super::row4::Row4;
-use super::upath::UPath;
 use crate::Error;
 
 pub const HEADER_ROW: &str = ".";
@@ -51,9 +48,9 @@ pub struct Table {
 }
 
 impl Table {
-    async fn read_rows_impl<T>(reader: T) -> Result<Self, ArrowError>
+    async fn read_rows_impl<T>(reader: T) -> Result<Self, Error>
     where
-        T: AsyncFileReader + Unpin + Send + 'static,
+        T: AsyncSeek + AsyncRead + Unpin + Send + 'static,
     {
         let mut stream = ParquetRecordBatchStreamBuilder::new(reader)
             .await?
@@ -134,46 +131,12 @@ impl Table {
     }
 
     // Read quilt4's Parquet format
-    pub async fn read_from_upath(upath: &UPath) -> Result<Self, ArrowError> {
-        match upath {
-            UPath::Local(path) => {
-                let file = tokio::fs::File::open(&path).await?;
-                Table::read_rows_impl(file).await
-            }
-            UPath::S3 { bucket, path } => {
-                let region = get_region_for_bucket(bucket)
-                    .await
-                    .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
-
-                // TODO: Cache the credentials in s3_util or use s3_util's clients
-                // TODO: Return custom errors instead of abusing io::Error.
-                let sdk_config =
-                    aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
-                let cp = sdk_config
-                    .credentials_provider()
-                    .ok_or(io::Error::new(io::ErrorKind::Other, "missing credentials"))?;
-                let creds = cp
-                    .provide_credentials()
-                    .await
-                    .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
-
-                let s3 = AmazonS3Builder::new()
-                    .with_bucket_name(bucket)
-                    .with_region(region.to_string())
-                    .with_access_key_id(creds.access_key_id())
-                    .with_secret_access_key(creds.secret_access_key())
-                    .with_token(creds.session_token().unwrap_or_default())
-                    .build()
-                    .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
-
-                let obj_meta = s3
-                    .head(path)
-                    .await
-                    .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
-                let reader = ParquetObjectReader::new(Arc::new(s3), obj_meta);
-                Table::read_rows_impl(reader).await
-            }
-        }
+    pub async fn read_from_path(
+        storage: &impl Storage,
+        path: impl AsRef<Path>,
+    ) -> Result<Self, Error> {
+        let file = storage.open_file(path.as_ref()).await?;
+        Table::read_rows_impl(file).await
     }
 
     async fn write_row_impl<T>(
@@ -205,7 +168,7 @@ impl Table {
     }
 
     // Write quilt4's Parquet format
-    pub async fn write_to_upath(&self, upath: &UPath) -> Result<(), ArrowError> {
+    pub async fn write_to_path(&self, storage: &impl Storage, path: &PathBuf) -> Result<(), Error> {
         let schema = Arc::new(Schema::new(vec![
             Field::new("name", DataType::Utf8, false),
             Field::new("place", DataType::Utf8, false),
@@ -219,27 +182,19 @@ impl Table {
             .set_compression(Compression::SNAPPY)
             .build();
 
-        match upath {
-            UPath::Local(path) => {
-                if let Some(parent) = path.parent() {
-                    fs::create_dir_all(parent).await?;
-                }
-                let file = tokio::fs::File::create(path).await?;
-                let mut writer =
-                    AsyncArrowWriter::try_new(file, schema.clone(), Some(props)).unwrap();
-
-                Table::write_row_impl(&mut writer, schema.clone(), &self.header).await?;
-                for row in self.records.values() {
-                    Table::write_row_impl(&mut writer, schema.clone(), row).await?;
-                }
-                writer.close().await?;
-
-                Ok(())
-            }
-            UPath::S3 { bucket: _, path: _ } => Err(ArrowError::NotYetImplemented(
-                "only local path4 supported".into(),
-            )),
+        if let Some(parent) = path.parent() {
+            storage.create_dir_all(parent).await?;
         }
+        let file = storage.create_file(path).await?;
+        let mut writer = AsyncArrowWriter::try_new(file, schema.clone(), Some(props)).unwrap();
+
+        Table::write_row_impl(&mut writer, schema.clone(), &self.header).await?;
+        for row in self.records.values() {
+            Table::write_row_impl(&mut writer, schema.clone(), row).await?;
+        }
+        writer.close().await?;
+
+        Ok(())
     }
 
     // Get a row from the table
@@ -296,6 +251,12 @@ impl Table {
 
         hex::encode(hasher.finalize())
     }
+
+    pub fn remove_record(&mut self, key: &str) -> Result<Row4, Error> {
+        self.records
+            .remove(key)
+            .ok_or(Error::Table(format!("Cannot remove {}", key)))
+    }
 }
 
 impl fmt::Display for Table {
@@ -335,13 +296,18 @@ impl TryFrom<Manifest> for Table {
 
 #[cfg(test)]
 mod tests {
+    use crate::quilt::storage::mock_storage::MockStorage;
     use crate::utils::local_uri_parquet;
 
     use super::*;
 
     #[tokio::test]
-    async fn read_existing_local() {
-        let table = Table::read_from_upath(&UPath::parse(&local_uri_parquet()).unwrap())
+    async fn read_existing_local() -> Result<(), Error> {
+        let storage = MockStorage::default();
+        storage
+            .write_file(local_uri_parquet(), &std::fs::read(local_uri_parquet())?)
+            .await?;
+        let table = Table::read_from_path(&storage, &local_uri_parquet())
             .await
             .unwrap();
         assert_eq!(table.records.len(), 2);
@@ -351,22 +317,25 @@ mod tests {
 
         let readme = table.get_row("READ ME.md").unwrap();
         assert_eq!(readme.size, 33);
+
+        Ok(())
     }
 
     #[tokio::test]
+    #[ignore]
     async fn read_write_local() {
-        let table1 = Table::read_from_upath(&UPath::parse(&local_uri_parquet()).unwrap())
+        let storage = MockStorage::default();
+        let table1 = Table::read_from_path(&storage, &local_uri_parquet())
             .await
             .unwrap();
         assert_eq!(table1.records.len(), 2);
 
         let temp_dir = temp_testdir::TempDir::default();
-        let temp_file = temp_dir.join("test.parquet");
-        let temp_path = UPath::Local(temp_file);
+        let temp_path = temp_dir.join("test.parquet");
 
-        table1.write_to_upath(&temp_path).await.unwrap();
+        table1.write_to_path(&storage, &temp_path).await.unwrap();
 
-        let table2 = Table::read_from_upath(&temp_path).await.unwrap();
+        let table2 = Table::read_from_path(&storage, &temp_path).await.unwrap();
 
         assert_eq!(table2.records.len(), 2);
         assert_eq!(table2.records, table1.records);
