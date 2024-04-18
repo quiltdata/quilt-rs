@@ -11,6 +11,7 @@ mod quilt4;
 
 pub mod quilt;
 pub mod utils;
+pub mod s3_utils;
 
 pub use quilt4::manifest::Manifest4;
 pub use quilt4::row4::Row4;
@@ -19,7 +20,6 @@ pub use quilt4::uri::UriParser;
 pub use quilt4::uri::UriQuilt;
 
 pub use quilt::InstalledPackage;
-pub mod s3_utils;
 pub use quilt::LocalDomain;
 pub use quilt::Manifest;
 pub use quilt::RemoteManifest;

@@ -1,5 +1,7 @@
 # Types
 
+> WORK IN PROGRESS
+> 
 The goal of this document is to have a common understanding of the types used in
 the project. It is a draft and a work in progress. Please extend and improve if possible.
 

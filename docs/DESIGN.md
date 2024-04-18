@@ -1,86 +1,120 @@
-# quilt-rs v0.7 Design Review
+# quilt-rs Design Overview
 
-## I. Objectives
+## I. Introduction
 
-### quilt-rs 
+The primary purpose of quilt-rs is to provide a simple and efficient Rust API for managing Quilt packages and registries.
 
-The purpose of quilt-rs is to provide a simple and efficient API for managing Quilt packages and registries.
-In particular, we need objects that represent both on-disk data structures and the operations that can be performed on them. Importantly, we also want the ability to transpasrently support multiple storage backends (local filesystem, S3, mock, etc.) and registry types (i.e., flat vs versioned).
+In particular, we need objects that represent both on-disk data structures and the operations that can be performed on them. Importantly, we ultimately want the ability to transparently support multiple storage backends (local filesystem, S3, mock, etc.) and registry types (i.e., flat vs versioned).
 
-### Refactoring
+This document captures the current "as implemented" architecture, and identifies the key areas that may need to be refactored to meet the above requirements.
 
-The objective of this design is to refactor the existing codebase to it easier to understand, test, and extend. Specifically:
+## II. Key Concepts
 
-1. Create standalone  components that can be unit-tested individually
-2. Use Rust's type system to enforce invariants
-3. Use Rust's ownership model to manage memory, to avoid unecessary locks
-4. Use single-threaded sync calls wherever possible, and only introduce concurrency where absolutely necessary
-5. Decouple the storage layer from the domain layer, so that we can easily swap out storage backends
+### II.A. Packages
 
-## II. Architecture
+Quilt provides a universal data abstraction layer for managing "data packages", immutable, self-describing data containers whose cryptographically secure checksum acts a unique identifier.
+Crucially, each Package is a logical collection that abstracts away the physical location of the data, allowing users to interact with the data in a consistent way regardless of where and how it is stored.
 
-The new architecture has three layer:
+### II.B. Manifests
 
-1. Storage: the interface for interacting with storage layers, and the corresponding implementations and support objects
-2. Model: the in-memory data structures that represent and cache on-disk packages and registries
-3. Commands: the high-level operations that can be performed on the model objects
+Manifests are the primary data structure used to define a Quilt package. They contain:
 
-Unlike in Python, the Model objects do not manage their own Storage.  Instead, Commands manage the Storage, and the Model objects are passed in as arguments.
+- standard `info` about the package: version, commit message
+- optional package-level user-specified `meta` data
+- one `Entry` for each object "contained" in the package
 
-### II.A. Storage Types
+### II.C. Entries
 
-1. **UPath**: an type representing a path in any supported storage layer (currently filesystems and S3, plus Mock).  
-   1. A UPath can be created from any supported URL (currently only `file:` and `s3:`), and can be converted back to a URL.
-   2. There are subtypes for `UPathObject` and `UPathPrefix`, which are used to distinguish between objects ("files") and prefixes ("folders")
-   3. UPath will probably be an Enum with variants for each supported storage type
+Each Entry in a manifest represents a single object in the package. It contains:
 
-2. **Store**: a trait that defines the interface for interacting with storage layers. 
-   1. The three basic methods are `read`, `write`, and `hash` for  `UPathObject`, plus `list` for `UPathPrefix`.  Each of these takes a `Vec<UPath>` as input, allowing the Storage layer to optimize for batch operations (using concurrency if necessary).
-   2. The concrete implementations are:
-      1. `StoreFiles`: a local filesystem implementation
-      2. `StoreS3Objects`: an S3 implementation
-      3. `StoreMock`: a mock implementation for testing
-   3. UPath objects have a `defaultStore` method that returns the appropriate Store implementation for that UPath, though users can instead use `StoreMock`.
-   4. Store objects are stateless [and thread-safe?], so they can be shared across threads.
-3. **QuiltURI**: a type that represents a Quilt+ URI, which is a URL with a `quilt+` scheme.  This is used to identify a package or registry in a Quilt-compatible storage system.
-   1. Provides accessor methods for the `domain`, `package`, and (optional) `revision` components of the URI.
-   2. May also contain one more `path` fragments, which are used to identify specific objects within a package.
-   3. Used to locate a `Manifest` object
-   4. In general, requires Storage access to find the hash necessary to create a `PackageRef`
-4. **PackageName**: a string containing exactly one slash, and only alphanumeric characters plus hyphen and underscore.
-5. **PackageRef**: a type that represents a reference to a Quilt package.  This is a combination of a `UPath` to the `Registry` and a `hash`, as well as the original `QuiltURI` and `PackageName`. It is used to identify a specific package instance, and can be dereferenced to a `Manifest`. [Might be called a RemotePackage?]
-6. **Manifest**: a type that represents the on-disk manifest for a Quilt package. This needs to exist a the Storage layer, because Manifests may be lazily loaded and queried in by chunks or columns.
+- name: the logical name of the object
+- place: the physical URI of the object
+- hash: the hash of the object (as a `MultiHash`)
+- size: the size of the object in bytes
+- info: optional system-generated metadata
+- meta: optional user-specified metadata
 
-### II.B. Model Objects
+### II.D. Registries
 
-#### Immutable
+Registries are special folders within a storage system that contain Manifests,
+and associate them with the Namespaces used to identify Packages.
+They may also contain configuration information for systems that work with Packages.
 
-1. **Entry**: a type that represents a single object in a package.  This is a lightweight object defined by its `name` (with one or more slashes) and `place` (a valid URL). It also contains the object's `hash`, `size`, system `info` and user `meta`.
-2. **Header**: a special Entry beginning with `.` that represents the package's metadata (the `size`, `hash`, and `place` fields are currently unused).
-3. **PackageInstance**: a type that corresponding to a single `Manifest` (dereferenced `PackageRef`) that contains:
-   1. Hash
-   2. Header (currently only one)
-   3. Entries [or a lazy-list pulled dynamically from the Manifest?]
+### II.E. Domains
 
-#### Mutable
+A Domain is a location (e.g., an S3 bucket or local folder) that contains both a Registry
+and a Store for the actual data objects.
 
-These objects each are created from a `UPathPrefix`, and represent on-disk folders.
+### II.F. Stores
 
-1. **Namespace**: a container that uses a `Revision` (Tag or Timestamp) to find the hash of a specific package.  It can be iterated to get a list of package `Revisions`, and is used to construct a `PackageRef`.
-2. **PackageStore**: a container that caches `PackageInstance` objects, and can look them up (or load them) by hash.
-3. **Registry**: a container for the Namespace and PackageStore
-4. **Lineage**: a data structure (Manifest?) tracking the the most recent actions for each Namespace, as well as any WorkingFolders
-5. **Domain**: a container for the Registry and Store, which is used to manage the local cache and remote storage.
-6. **WorkingFolder**: the editable folder users use to edit package contents before committing them to the Registry.
-7. **InstalledPackage**: a type that represents a package that has been installed in the local cache.  It contains a `PackageRef` and a `PackageInstance`, and is used to track the installed packages.
+Each Store may be Versioned or Flat. Versioned Stores assign a versionId to reach revision of an object, while Flat Stores simply overwrite tyem.  Currently, the system assumes S3 stores are versioned, while local stores are flat.  When using a flat store, the Registry caches each known version of the object to avoid overwrites.
 
-### II.C. Command Objects
+### II.G. Revisions
 
-These command objects are returned by model objects, then called with the default or user-provided Store and one or more Domain objects.
+A Revision is a specific version of a Package.  It is identified by a hash of the package contents, and may be tagged with a human-readable name.  The most recent Revision is called `latest`.
 
-1. **Browse**: a command that translates a `PackageRef` into a `PackageInstance`, and stores it in the local cache.
-2. **Install**: a command that installs a `PackageInstance` into an `InstalledPackage` in the local cache, and copies it into a `WorkingFolder`.
-3. **Commit**: a command that commits a `WorkingFolder` to the `Registry`, creating a new `Revision` in the corresponding `Namespace`.
-4. **Push**: a command that pushes a `Revision` to a remote `Domain`.
-5. **Pull**: a command that pulls newer `Revision` from a remote `Domain` to the local cache.
-6. **List**: return all the `names` in a `PackageInstance`
+Unlike software packages, Quilt packages can be extremely large (thousands of files, terabytes of data).
+Therefore, the Quilt API must make it easy to only download and modify the parts of a package that are needed.  This complicates the semantics of updating Revisions stored across different systems, as Manifests do not currently keep track of their entire Revision history.
+
+### II.H. Lineages
+
+To address the Revision history problem, `quilt_rs` added a new concept called Lineages. The Lineage file for a Domain tracks which Packages have been downloaded and installed, and from where.
+It also tracks which Revisions of each Package have been "checked out" for users to edit.
+
+## III. Current Architecture
+
+### III.A. Library Module
+
+The `lib.rs` file contains the following modules and exported types:
+
+> EP: Descriptions by ChatGPT.  Can someone cross-check?
+
+
+1. `paths` (*private*): abstracts away the local filesystem
+2. `quilt` (**public**): legacy module, primarily focused on managing the local cache
+   1. `InstalledPackage`:  represents a package that has been installed in the local cache.  It contains a PackageRef and a PackageInstance, and is used to track the installed packages.
+   2. `LocalDomain`:  represents the local cache, and contains a list of InstalledPackages
+   3. `Manifest`:  represents the on-disk manifest for a Quilt package. This needs to exist at the Storage layer, because Manifests may be lazily loaded and queried in by chunks or columns.
+   4. `RemoteManifest`: references a remote manifest, and is used to create a PackageRef.
+   5. `S3PackageUri`:  represents a Quilt+ URI, which is a URL with a `quilt+` scheme.  This is used to identify a package or registry in a Quilt-compatible storage system.
+3. `quilt4` (*private*): this is the newer module, primary focused on managing Parquet manifests
+   1. `manifest::Manifest4`:  represents the high-level manifest object
+   2. `row4::Row4`:  represents a row in a Parquet manifest.
+   3. `table::Table`:  represents a low-level Parquet table.
+   4. `uri::UriParser`: parses a URI into a `UriQuilt` object.
+   5. `uri::UriQuilt`: represents a Quilt URI, which is a URL with a `quilt` scheme.  This is used to uniquely identify a package, registry, or path.
+4. `s3_utils` (**public**): contains utilities for working with S3
+5. `utils` (**public**): contains general utilities
+
+It also defines the `Error` type and two high-level functions:
+
+- `install_temporarily`: installs a package into a temporary folder
+- `installed_packages`: returns a list of all currently installed packages
+
+### III.B. Main Module
+
+`quilt_rs` provides a simple CLI interface for interacting with Quilt packages.
+The functionality for this is in the `cli` module, which supports the following commands:
+
+- `Browse`
+- `Install`
+- `List`
+- `Package`
+- `Uninstall`
+
+> EP: Is there a `Push` command?
+
+## IV. Open Issues
+
+### IV.A. Generic Storage Layer
+
+1. Is Storage a single pure function?  Or a set of methods on UPath? Or does it manage concurrency?
+2. Do we need to lock Storage? One lock per Domain?
+3. Should 'Domain' contain a mutable cache? Or should it store all its state in the filesystem, and read it in each time?
+4. Should `execute` be on the Domain object, since it typically needs to update both Contents and Registry?
+5. Do we need something like `OpenDAL` to unify S3 buckets and local filesystems into a single Storage trait?
+
+### IV.B. Object Lifecycles
+
+
+
