@@ -96,6 +96,14 @@ impl TryFrom<&str> for DomainLineage {
     }
 }
 
+impl TryFrom<Vec<u8>> for DomainLineage {
+    type Error = Error;
+
+    fn try_from(input: Vec<u8>) -> Result<Self, Self::Error> {
+        serde_json::from_slice(&input).map_err(Error::LineageParse)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DomainLineageIo {
     path: PathBuf,
@@ -108,7 +116,7 @@ impl DomainLineageIo {
 
     pub async fn read(&self, storage: &impl Storage) -> Result<DomainLineage, Error> {
         let contents = storage
-            .read_to_string(&self.path)
+            .read_file(&self.path)
             .await
             .or_else(|err| match err {
                 Error::Io(inner_err) => {
@@ -121,7 +129,7 @@ impl DomainLineageIo {
                 other => Err(other),
             })?;
 
-        DomainLineage::try_from(&contents[..])
+        DomainLineage::try_from(contents)
     }
 
     pub async fn write(
@@ -216,6 +224,16 @@ mod tests {
     fn test_parsing_json_ok() {
         assert_eq!(
             DomainLineage::try_from(r###"{"packages":{}}"###).unwrap(),
+            DomainLineage {
+                packages: BTreeMap::new(),
+            }
+        )
+    }
+
+    #[test]
+    fn test_vec8_parsing_json_ok() {
+        assert_eq!(
+            DomainLineage::try_from(r###"{"packages":{}}"###.as_bytes().to_vec()).unwrap(),
             DomainLineage {
                 packages: BTreeMap::new(),
             }
