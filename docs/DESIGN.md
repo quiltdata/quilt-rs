@@ -66,8 +66,8 @@ object to avoid overwrites.
 ### II.G. Revisions
 
 A Revision is a specific version of a Package.  It is identified by a hash of
-the package contents, and may be tagged with a human-readable name.  The most
-recent Revision is called `latest`.
+the package contents, and may be tagged with a human-readable name.  The tag for
+most recent Revision is called `latest`.
 
 Unlike software packages, Quilt packages can be extremely large (thousands of
 files, terabytes of data). Therefore, the Quilt API must make it easy to only
@@ -88,31 +88,26 @@ Package have been "checked out" for users to edit.
 
 The `lib.rs` file contains the following modules and exported types:
 
-> EP: Descriptions by ChatGPT.  Can someone cross-check?
-
-
-1. `paths` (*private*): abstracts away the local filesystem
+1. `paths` (*private*): handles path scaffolding and the directory environment 
 2. `quilt` (**public**): legacy module, primarily focused on managing the local
    cache
    1. `InstalledPackage`: represents a package that has been installed in the
-      local cache.  It contains a `PackageRef` and a `PackageInstance`, and is
-      used to track the installed packages.
-   2. `LocalDomain`: represents the local cache, and contains a list of
-      `InstalledPackages`
-   3. `Manifest`: represents the on-disk manifest for a Quilt package. This
-      needs to exist at the Storage layer, because Manifests may be lazily
-      loaded and queried in by chunks or columns.
-   4. `RemoteManifest`: references a remote manifest, and is used to create a
-      `PackageRef`.
+      local cache. It keeps a reference to the `lineage`, `namespace`, `paths`,
+      `remote`, and `storage` to help manage the package.
+   2. `LocalDomain`: represents the local cache for a concrete `storage` and
+      `remote`.
+   3. `Manifest`: represents the on-disk manifest for a Quilt package. 
+   4. `RemoteManifest`: references a remote manifest and keeps track of the
+      objects in it.
    5. `S3PackageUri`: represents a Quilt+ URI, which is a URL with a `quilt+`
-      scheme.  This is used to identify a package or registry in a
+      scheme. This is used to identify a package or registry in a
       Quilt-compatible storage system.
-3. `quilt4` (*private*): this is the newer module, primary focused on managing
+3. `quilt4`: this is the newer module, primary focused on managing
    Parquet manifests
    1. `manifest::Manifest4`: represents the high-level manifest object
-   2. `row4::Row4`: represents a row in a Parquet manifest.
-   3. `table::Table`: represents a low-level Parquet table.
-   4. `uri::UriParser`: parses a URI into a `UriQuilt` object.
+   2. `row4::Row4`: provides methods to decode/encode quilt3's JSONL format
+   3. `table::Table`: a wrapper for arrow-rs's Table, the native Manifest format for quilt4
+   4. `uri::UriParser`: parses a URI. To be replaced with `url::Url` in the future 
    5. `uri::UriQuilt`: represents a Quilt URI, which is a URL with a `quilt`
       scheme.  This is used to uniquely identify a package, registry, or path.
 4. `s3_utils` (**public**): contains utilities for working with S3
@@ -134,24 +129,3 @@ commands:
 - `List`
 - `Package`
 - `Uninstall`
-
-> EP: Is there a `Push` command?
-
-## IV. Open Issues
-
-### IV.A. Generic Storage Layer
-
-1. Is Storage a single pure function?  Or a set of methods on `UPath`? Or does
-   it manage concurrency?
-2. Do we need to lock Storage? One lock per Domain?
-3. Should 'Domain' contain a mutable cache? Or should it store all its state in
-   the filesystem, and read it in each time?
-4. Should `execute` be on the Domain object, since it typically needs to update
-   both Contents and Registry?
-5. Do we need something like `OpenDAL` to unify S3 buckets and local filesystems
-   into a single Storage trait?
-
-### IV.B. Object Lifecycles
-
-
-
