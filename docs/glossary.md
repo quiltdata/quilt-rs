@@ -1,5 +1,3 @@
-# Types
-
 > WORK IN PROGRESS
 > 
 The goal of this document is to have a common understanding of the types used in
@@ -150,15 +148,22 @@ We might add the following types in the future.
 
 ## Info
 
+Packages can have arbitrary metadata.
+In order to allow for future changes, we might want to have a type that can be
+extended in the future.
+
+```rust
 #[non_exhaustive]
 enum Info {
     Version0(Version0),
     UnknownVersion(Json),
 }
 
+/// An example of a versioned info struct, which simply contains a message.
 struct Version0 {
     message: String,
 }
+```
 
 ## UserMeta
 
