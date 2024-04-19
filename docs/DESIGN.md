@@ -111,7 +111,6 @@ The `lib.rs` file contains the following modules and exported types:
    5. `uri::UriQuilt`: represents a Quilt URI, which is a URL with a `quilt`
       scheme.  This is used to uniquely identify a package, registry, or path.
 4. `s3_utils` (**public**): contains utilities for working with S3
-5. `utils` (**public**): contains general utilities
 
 It also defines the `Error` type and two high-level functions:
 
