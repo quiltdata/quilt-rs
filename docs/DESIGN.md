@@ -13,7 +13,7 @@ This document captures the current "as implemented" architecture, and identifies
 ### II.A. Packages
 
 Quilt provides a universal data abstraction layer for managing "data packages", immutable, self-describing data containers whose cryptographically secure checksum acts a unique identifier.
-Crucially, each Package is a logical collection that abstracts away the physical location of the data, allowing users to interact with the data in a consistent way regardless of where and how it is stored.
+Crucially, each Package is a logical collection that abstracts away the physical location of the data, allowing users to interact with the data consistently, regardless of where and how it is stored.
 
 ### II.B. Manifests
 
@@ -37,8 +37,8 @@ Each Entry in a manifest represents a single object in the package. It contains:
 ### II.D. Registries
 
 Registries are special folders within a storage system that contain Manifests,
-and associate them with the Namespaces used to identify Packages.
-They may also contain configuration information for systems that work with Packages.
+and associate them with the Namespaces used to identify packages.
+They may also contain configuration information for systems that work with packages.
 
 ### II.E. Domains
 
@@ -47,7 +47,7 @@ and a Store for the actual data objects.
 
 ### II.F. Stores
 
-Each Store may be Versioned or Flat. Versioned Stores assign a versionId to reach revision of an object, while Flat Stores simply overwrite tyem.  Currently, the system assumes S3 stores are versioned, while local stores are flat.  When using a flat store, the Registry caches each known version of the object to avoid overwrites.
+Each Store may be Versioned or Flat. Versioned Stores assign a `versionId` to reach revision of an object, while Flat Stores simply overwrite them.  Currently, the system assumes S3 stores are versioned, while local stores are flat.  When using a flat store, the Registry caches each known version of the object to avoid overwrites.
 
 ### II.G. Revisions
 
@@ -72,15 +72,15 @@ The `lib.rs` file contains the following modules and exported types:
 
 1. `paths` (*private*): abstracts away the local filesystem
 2. `quilt` (**public**): legacy module, primarily focused on managing the local cache
-   1. `InstalledPackage`:  represents a package that has been installed in the local cache.  It contains a PackageRef and a PackageInstance, and is used to track the installed packages.
-   2. `LocalDomain`:  represents the local cache, and contains a list of InstalledPackages
-   3. `Manifest`:  represents the on-disk manifest for a Quilt package. This needs to exist at the Storage layer, because Manifests may be lazily loaded and queried in by chunks or columns.
-   4. `RemoteManifest`: references a remote manifest, and is used to create a PackageRef.
-   5. `S3PackageUri`:  represents a Quilt+ URI, which is a URL with a `quilt+` scheme.  This is used to identify a package or registry in a Quilt-compatible storage system.
+   1. `InstalledPackage`: represents a package that has been installed in the local cache.  It contains a `PackageRef` and a `PackageInstance`, and is used to track the installed packages.
+   2. `LocalDomain`: represents the local cache, and contains a list of `InstalledPackages`
+   3. `Manifest`: represents the on-disk manifest for a Quilt package. This needs to exist at the Storage layer, because Manifests may be lazily loaded and queried in by chunks or columns.
+   4. `RemoteManifest`: references a remote manifest, and is used to create a `PackageRef`.
+   5. `S3PackageUri`: represents a Quilt+ URI, which is a URL with a `quilt+` scheme.  This is used to identify a package or registry in a Quilt-compatible storage system.
 3. `quilt4` (*private*): this is the newer module, primary focused on managing Parquet manifests
-   1. `manifest::Manifest4`:  represents the high-level manifest object
-   2. `row4::Row4`:  represents a row in a Parquet manifest.
-   3. `table::Table`:  represents a low-level Parquet table.
+   1. `manifest::Manifest4`: represents the high-level manifest object
+   2. `row4::Row4`: represents a row in a Parquet manifest.
+   3. `table::Table`: represents a low-level Parquet table.
    4. `uri::UriParser`: parses a URI into a `UriQuilt` object.
    5. `uri::UriQuilt`: represents a Quilt URI, which is a URL with a `quilt` scheme.  This is used to uniquely identify a package, registry, or path.
 4. `s3_utils` (**public**): contains utilities for working with S3
@@ -108,7 +108,7 @@ The functionality for this is in the `cli` module, which supports the following 
 
 ### IV.A. Generic Storage Layer
 
-1. Is Storage a single pure function?  Or a set of methods on UPath? Or does it manage concurrency?
+1. Is Storage a single pure function?  Or a set of methods on `UPath`? Or does it manage concurrency?
 2. Do we need to lock Storage? One lock per Domain?
 3. Should 'Domain' contain a mutable cache? Or should it store all its state in the filesystem, and read it in each time?
 4. Should `execute` be on the Domain object, since it typically needs to update both Contents and Registry?
