@@ -10,8 +10,8 @@ mod paths;
 mod quilt4;
 
 pub mod quilt;
-pub mod utils;
 pub mod s3_utils;
+pub mod utils;
 
 pub use quilt4::manifest::Manifest4;
 pub use quilt4::row4::Row4;
