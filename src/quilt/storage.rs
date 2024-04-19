@@ -69,9 +69,6 @@ pub trait Storage {
         path: impl AsRef<Path>,
     ) -> impl Future<Output = Result<tokio::fs::File, Error>>;
 
-    fn read_to_string(&self, path: impl AsRef<Path>)
-        -> impl Future<Output = Result<String, Error>>;
-
     fn read_file(
         &self,
         path: impl AsRef<Path> + Send + Sync,
