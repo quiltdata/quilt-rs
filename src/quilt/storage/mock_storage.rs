@@ -99,11 +99,6 @@ impl Storage for MockStorage {
         Ok(tokio::fs::File::create(rel_path).await?)
     }
 
-    async fn read_to_string(&self, path: impl AsRef<Path>) -> Result<String, Error> {
-        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
-        Ok(tokio::fs::read_to_string(rel_path).await?)
-    }
-
     async fn read_file(&self, path: impl AsRef<Path>) -> Result<Vec<u8>, Error> {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
         Ok(tokio::fs::read(&rel_path).await?)
