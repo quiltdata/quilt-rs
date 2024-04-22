@@ -13,6 +13,7 @@ mod output;
 mod package;
 mod pull;
 mod push;
+mod status;
 mod uninstall;
 
 use model::Model;
@@ -98,6 +99,15 @@ enum Commands {
         #[arg(short, long)]
         namespace: String,
     },
+    /// Status of the package: modified, up-to-date, outdated
+    Status {
+        /// Path to local domain
+        #[arg(short, long)]
+        domain: PathBuf,
+        /// Namespace of the package. Ex. foo/bar
+        #[arg(short, long)]
+        namespace: String,
+    },
     /// Uninstall package from local domain
     Uninstall {
         /// Namespace of the package to uninstall.
@@ -172,6 +182,12 @@ pub async fn init() -> Result<(), Error> {
             let args = push::Input { namespace };
             log::info!("Pushing {:?}", args);
             print(push::command(Model::from(domain), args).await);
+            Ok(())
+        }
+        Commands::Status { domain, namespace } => {
+            let args = status::Input { namespace };
+            log::info!("Status {:?}", args);
+            print(status::command(Model::from(domain), args).await);
             Ok(())
         }
         Commands::Uninstall { domain, namespace } => {
