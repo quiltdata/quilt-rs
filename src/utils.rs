@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-pub static TEST_DOMAIN: &str = "fixtures/test_domain";
 pub static TEST_LOCAL_PARQUET: &str = "fixtures/manifest.parquet";
 pub static TEST_LOCAL_PARQUET_CHECKSUMMED: &str = "fixtures/checksummed.parquet";
 pub static TEST_LOCAL_JSONL: &str = "fixtures/manifest.jsonl";
