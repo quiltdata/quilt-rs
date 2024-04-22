@@ -1,6 +1,7 @@
 use std::future::Future;
 use std::path::Path;
 
+use aws_sdk_s3::primitives::ByteStream;
 use chrono::DateTime;
 use chrono::Utc;
 
@@ -73,4 +74,9 @@ pub trait Storage {
         &self,
         path: impl AsRef<Path> + Send + Sync,
     ) -> impl Future<Output = Result<Vec<u8>, Error>> + Send + Sync;
+
+    fn read_byte_stream(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+    ) -> impl Future<Output = Result<ByteStream, Error>> + Send + Sync;
 }

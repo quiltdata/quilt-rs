@@ -76,13 +76,13 @@ impl RemoteManifest {
 
     pub async fn upload_from(
         &self,
-        storage: &impl Storage,
+        storage: &impl Storage, // FIXME: use it for tests
         remote: &impl Remote,
         manifest_path: &PathBuf,
     ) -> Result<(), Error> {
         // TODO: FAIL if the manifest with this hash already exists?
-        let table = Table::read_from_path(storage, manifest_path).await?;
-        let body = Manifest::from(&table).to_jsonlines().as_bytes().to_vec();
+        let body = storage.read_byte_stream(manifest_path).await?;
+        // let body = Manifest::from(&table).to_jsonlines().as_bytes().to_vec();
         let s3uri = s3::S3Uri::from(self);
         log::info!("writing remote manifest to {}", s3uri.key);
 

@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use aws_sdk_s3::primitives::ByteStream;
 use chrono::DateTime;
 use chrono::Utc;
 use tokio::fs;
@@ -71,6 +72,13 @@ impl Storage for LocalStorage {
 
     async fn read_file(&self, path: impl AsRef<Path>) -> Result<Vec<u8>, Error> {
         Ok(fs::read(&path).await?)
+    }
+
+    async fn read_byte_stream(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+    ) -> Result<ByteStream, Error> {
+        Ok(ByteStream::from_path(path).await?)
     }
 }
 
