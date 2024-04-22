@@ -76,7 +76,7 @@ impl RemoteManifest {
 
     pub async fn upload_from(
         &self,
-        storage: &impl Storage, // FIXME: use it for tests
+        storage: &impl Storage,
         remote: &impl Remote,
         manifest_path: &PathBuf,
     ) -> Result<(), Error> {
