@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use aws_sdk_s3::primitives::ByteStream;
 use chrono::DateTime;
 use chrono::Utc;
 
@@ -102,5 +103,13 @@ impl Storage for MockStorage {
     async fn read_file(&self, path: impl AsRef<Path>) -> Result<Vec<u8>, Error> {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
         Ok(tokio::fs::read(&rel_path).await?)
+    }
+
+    async fn read_byte_stream(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+    ) -> Result<ByteStream, Error> {
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        Ok(ByteStream::from_path(rel_path).await?)
     }
 }

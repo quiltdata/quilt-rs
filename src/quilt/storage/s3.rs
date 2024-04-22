@@ -111,16 +111,6 @@ pub async fn put_object_contents(
 ) -> Result<(), Error> {
     // let client = crate::s3_utils::get_client_for_bucket(&uri.bucket).await?;
     remote.put_object(uri, contents).await
-    //client
-    //    .put_object()
-    //    .bucket(&uri.bucket)
-    //    .key(&uri.key)
-    //    .body(contents.into())
-    //    .send()
-    //    .await
-    //    .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
-
-    // Ok(())
 }
 
 pub fn make_s3_url(bucket: &str, s3_key: &str, version_id: Option<&str>) -> Url {
