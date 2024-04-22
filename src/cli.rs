@@ -11,6 +11,7 @@ mod list;
 mod model;
 mod output;
 mod package;
+mod pull;
 mod push;
 mod uninstall;
 
@@ -76,6 +77,16 @@ enum Commands {
         /// quilt+s3 URI for new package
         #[arg(short, long, value_name = "PKG_URI")]
         target: String,
+    },
+    /// Pull
+    Pull {
+        /// Path to local domain
+        #[arg(short, long)]
+        domain: PathBuf,
+        /// Namespace of the package to pull
+        /// Ex. foo/bar
+        #[arg(short, long)]
+        namespace: String,
     },
     /// Push
     Push {
@@ -149,6 +160,12 @@ pub async fn init() -> Result<(), Error> {
             let args = package::Input { target, uri };
             log::info!("Packaging {:?} using {:?}", args, temp_dir);
             print(package::command(m, args).await);
+            Ok(())
+        }
+        Commands::Pull { domain, namespace } => {
+            let args = pull::Input { namespace };
+            log::info!("Pull {:?}", args);
+            print(pull::command(Model::from(domain), args).await);
             Ok(())
         }
         Commands::Push { domain, namespace } => {

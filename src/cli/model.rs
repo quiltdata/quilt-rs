@@ -7,6 +7,7 @@ use crate::cli::commit;
 use crate::cli::install;
 use crate::cli::list;
 use crate::cli::package;
+use crate::cli::pull;
 use crate::cli::push;
 use crate::cli::uninstall;
 use crate::cli::Error;
@@ -41,6 +42,11 @@ pub trait Commands {
     async fn package(&self, args: package::Input) -> Result<package::Output, Error> {
         let local_domain = &self.get_local_domain().lock().await;
         package::model(local_domain, args).await
+    }
+
+    async fn pull(&self, args: pull::Input) -> Result<pull::Output, Error> {
+        let local_domain = &self.get_local_domain().lock().await;
+        pull::model(local_domain, args).await
     }
 
     async fn push(&self, args: push::Input) -> Result<push::Output, Error> {
