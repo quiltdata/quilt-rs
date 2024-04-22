@@ -1,3 +1,5 @@
+use quilt_rs::quilt::lineage::CommitState;
+
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
 use crate::cli::Error;
@@ -9,12 +11,18 @@ pub struct Input {
 }
 
 #[derive(Debug)]
-pub struct Output {}
+pub struct Output {
+    pub hash: Option<String>,
+}
 
 impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let output = ["Commit"];
-        write!(f, "{}", output.join("\n"))
+        match &self.hash {
+            Some(hash) => {
+                write!(f, r##"New commit "{}" created"##, hash)
+            }
+            None => write!(f, "Nothing commited"),
+        }
     }
 }
 
@@ -30,14 +38,11 @@ async fn commit_package(
     namespace: String,
     message: String,
     user_meta: Option<quilt_rs::quilt::manifest::JsonObject>,
-) -> Result<(), Error> {
+) -> Result<Option<CommitState>, Error> {
     let installed_package = local_domain.get_installed_package(&namespace).await?;
 
     match installed_package {
-        Some(installed_package) => {
-            installed_package.commit(message, user_meta).await?;
-            Ok(())
-        }
+        Some(installed_package) => Ok(installed_package.commit(message, user_meta).await?),
         None => Err(Error::NamespaceNotFound(namespace.to_string())),
     }
 }
@@ -46,6 +51,8 @@ pub async fn model(
     local_domain: &quilt_rs::LocalDomain,
     Input { message, namespace }: Input,
 ) -> Result<Output, Error> {
-    commit_package(local_domain, namespace, message, None).await?;
-    Ok(Output {})
+    let commit_state = commit_package(local_domain, namespace, message, None).await?;
+    Ok(Output {
+        hash: commit_state.map(|s| s.hash),
+    })
 }
