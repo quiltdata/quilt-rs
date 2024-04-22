@@ -153,7 +153,7 @@ mod tests {
     use crate::quilt::remote::mock_remote::MockRemote;
     use crate::quilt::storage::mock_storage::MockStorage;
     use crate::quilt::S3PackageUri;
-    use crate::utils::local_uri_parquet_checksumed;
+    use crate::utils::local_uri_parquet_checksummed;
     use crate::Row4;
 
     #[tokio::test]
@@ -182,7 +182,7 @@ mod tests {
             remote: remote_manifest,
             ..PackageLineage::default()
         };
-        let jsonl = std::fs::read(local_uri_parquet_checksumed())?;
+        let jsonl = std::fs::read(local_uri_parquet_checksummed())?;
         let manifest_key =
             ".quilt/packages/b/770459d4230273fd44b272c552d1204458175e7d7cb26fcd601c662cf5f72d05";
         let storage = MockStorage::default();
@@ -234,7 +234,7 @@ mod tests {
             remote: remote_manifest,
             ..PackageLineage::default()
         };
-        let jsonl = std::fs::read(local_uri_parquet_checksumed())?;
+        let jsonl = std::fs::read(local_uri_parquet_checksummed())?;
         let temp_dir = tempfile::tempdir()?;
         let manifest_key =
             ".quilt/packages/b/0f85671863dadacf3a0e62212f1b9151a11f72228e4c82ed86ff27d46ec31d87";
@@ -257,7 +257,7 @@ mod tests {
             .await?;
 
         let file_path = temp_dir.into_path().join("bar");
-        tokio::fs::copy(local_uri_parquet_checksumed(), &file_path).await?;
+        tokio::fs::copy(local_uri_parquet_checksummed(), &file_path).await?;
 
         let manifest = mocks::manifest::with_rows(vec![Row4 {
             name: "bar".to_string(),

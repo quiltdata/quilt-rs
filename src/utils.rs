@@ -1,24 +1,38 @@
-pub mod helpers;
-// pub mod parquet_object_store;
+use std::collections::HashMap;
+use std::path::PathBuf;
 
-pub static TEST_REGION: &str = "us-east=1";
-pub static TEST_BUCKET: &str = "quilt-example";
-pub static TEST_PACKAGE: &str = "akarve/test_dest";
-pub static TEST_FILE: &str = "README.md";
-pub static TEST_HASH: &str = "6c3758a4d2bf8fe730be5d12f5e095950dc123c373f55f66ca4b3ced74772b22";
-pub static TEST_URI_STRING: &str = "quilt+s3://quilt-example#package=akarve/test_dest";
-pub static TEST_S3_URI: &str = "s3://quilt-example/akarve/test_dest/README.md";
+pub static TEST_LOCAL_PARQUET: &str = "fixtures/manifest.parquet";
+pub static TEST_LOCAL_PARQUET_CHECKSUMMED: &str = "fixtures/checksummed.parquet";
+pub static TEST_LOCAL_JSONL: &str = "fixtures/manifest.jsonl";
 
-pub static TEST_DOMAIN: &str = "tests/test_domain";
-pub static TEST_LOCAL_PARQUET: &str = ".quilt/packages/12201234.parquet";
-pub static TEST_LOCAL_PARQUET_CHECKSUMED: &str = ".quilt/packages/checksumed.parquet";
-pub static TEST_LOCAL_JSONL: &str =
-    ".quilt/packages/0428ab8c8b0fe83d9e57fb6b26ff190173caad00ed7aeb683ce26cc4b56ea4bb";
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub enum TestFile {
+    Parquet,
+    ParquetChecksummed,
+    Json,
+    Domain,
+}
 
-pub use helpers::local_uri_domain;
-pub use helpers::local_uri_json;
-pub use helpers::local_uri_parquet;
-pub use helpers::local_uri_parquet_checksumed;
+pub fn local_uri(key: TestFile) -> PathBuf {
+    let files: HashMap<TestFile, &str> = HashMap::from([
+        (TestFile::Parquet, TEST_LOCAL_PARQUET),
+        (TestFile::ParquetChecksummed, TEST_LOCAL_PARQUET_CHECKSUMMED),
+        (TestFile::Json, TEST_LOCAL_JSONL),
+        (TestFile::Domain, ""),
+    ]);
 
-pub use helpers::remote_quilt_uri;
-pub use helpers::remote_s3_uri;
+    let cwd = std::env::current_dir().unwrap();
+    cwd.join(files[&key])
+}
+
+pub fn local_uri_parquet() -> PathBuf {
+    local_uri(TestFile::Parquet)
+}
+
+pub fn local_uri_json() -> PathBuf {
+    local_uri(TestFile::Json)
+}
+
+pub fn local_uri_parquet_checksummed() -> PathBuf {
+    local_uri(TestFile::ParquetChecksummed)
+}

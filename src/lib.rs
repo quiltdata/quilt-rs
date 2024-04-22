@@ -2,16 +2,18 @@ use std::str::Utf8Error;
 
 use aws_smithy_types::byte_stream;
 use reqwest::header::ToStrError;
-use temp_dir::TempDir;
 use thiserror::Error;
-use tracing::log;
 
 mod paths;
 mod quilt4;
 
 pub mod quilt;
+
+#[cfg(test)]
+/// Utilities for testing only
+mod utils;
+
 pub mod s3_utils;
-pub mod utils;
 
 pub use quilt4::manifest::Manifest4;
 pub use quilt4::row4::Row4;
@@ -124,62 +126,4 @@ pub enum Error {
 
     #[error("Unimplemented")]
     Unimplemented,
-}
-
-pub async fn install_temporarily(
-    bucket: &str,
-    namespace: &str,
-    hash: &str,
-) -> Result<InstalledPackage, Error> {
-    let temp_folder = TempDir::new().unwrap();
-    let loc = LocalDomain::new(temp_folder.path().to_path_buf());
-    let remote_manifest = RemoteManifest {
-        bucket: bucket.to_string(),
-        namespace: namespace.to_string(),
-        hash: hash.to_string(),
-    };
-    log::info!("remote_manifest: {:?}", remote_manifest);
-
-    let result = loc.install_package(&remote_manifest).await;
-    log::info!("result: {:?}", result);
-    result
-}
-
-pub async fn installed_packages(dir: Option<String>) -> Result<Vec<InstalledPackage>, Error> {
-    let path_buf = match dir {
-        Some(dir) => std::path::PathBuf::from(dir),
-        None => std::env::current_dir().unwrap(),
-    };
-    let local_domain = LocalDomain::new(path_buf);
-    log::debug!("local_domain: {:?}", local_domain);
-    let installed_packages = local_domain
-        .list_installed_packages()
-        .await
-        .expect("Failed to list installed packages");
-    Ok(installed_packages)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_installed_packages_in_cwd() {
-        let result = installed_packages(None).await;
-        assert!(result.is_ok());
-        let packages = result.unwrap();
-        let count = packages.len();
-        assert_eq!(count, 0);
-    }
-
-    #[tokio::test]
-    async fn test_installed_packages_in_test_domain() {
-        let dir = crate::utils::TEST_DOMAIN.to_string();
-        let result = installed_packages(Some(dir.to_string())).await;
-        assert!(result.is_ok());
-        let packages = result.unwrap();
-        log::debug!("packages[{}]: {:?}", crate::utils::TEST_DOMAIN, packages);
-        let count = packages.len();
-        assert!(count == 0); // TODO: add data.json to fix this
-    }
 }
