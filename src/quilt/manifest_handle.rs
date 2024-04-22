@@ -92,7 +92,7 @@ impl RemoteManifest {
     pub async fn upload_legacy(&self, remote: &impl Remote, table: &Table) -> Result<(), Error> {
         let s3uri = s3::S3Uri {
             bucket: self.bucket.clone(),
-            key: paths::get_manifest_key(&self.hash),
+            key: paths::get_manifest_key_legacy(&self.hash),
             version: None,
         };
 
