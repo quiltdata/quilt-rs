@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-* Make `utils` module private as it only contains helper functions for testing
+* Make `utils` module private as it only contains helper functions for testing. Remove dummy tests.
 
 ## [0.5.8] - 2024-03-25
 
