@@ -121,8 +121,8 @@ impl LocalDomain {
 
     pub async fn uninstall_package(&self, namespace: impl AsRef<str>) -> Result<(), Error> {
         let lineage = self.lineage.read(&self.storage).await?;
-        // FIXME: write lineage in the end?
-        uninstall_package(lineage, &self.paths, &self.storage, namespace).await?;
+        let lineage = uninstall_package(lineage, &self.paths, &self.storage, namespace).await?;
+        self.lineage.write(&self.storage, &lineage).await?;
         Ok(())
     }
 
