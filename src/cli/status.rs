@@ -1,6 +1,6 @@
+use quilt_rs::DiscreteChange;
 use quilt_rs::InstalledPackageStatus;
 use quilt_rs::UpstreamDiscreteState;
-use quilt_rs::DiscreteChange;
 
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
