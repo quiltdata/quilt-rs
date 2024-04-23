@@ -83,6 +83,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::quilt::flow::status::Change;
+    use crate::quilt::flow::status::DiscreteChange;
     use crate::quilt::mocks;
     use crate::quilt::storage::mock_storage::MockStorage;
     use crate::quilt::RemoteManifest;
@@ -98,6 +99,7 @@ mod tests {
                 Change {
                     previous: None,
                     current: None,
+                    state: DiscreteChange::Pristine,
                 },
             )]),
             ..InstalledPackageStatus::default()

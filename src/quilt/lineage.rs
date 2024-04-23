@@ -135,13 +135,13 @@ impl DomainLineageIo {
     pub async fn write(
         &self,
         storage: &impl Storage,
-        lineage: &DomainLineage,
-    ) -> Result<(), Error> {
-        let contents = serde_json::to_string_pretty(lineage)?;
+        lineage: DomainLineage,
+    ) -> Result<DomainLineage, Error> {
+        let contents = serde_json::to_string_pretty(&lineage)?;
         storage
             .write_file(self.path.clone(), contents.as_bytes())
             .await?;
-        Ok(())
+        Ok(lineage)
     }
 
     pub fn create_package_lineage(&self, namespace: String) -> PackageLineageIo {
@@ -177,12 +177,13 @@ impl PackageLineageIo {
         &self,
         storage: &impl Storage,
         lineage: PackageLineage,
-    ) -> Result<(), Error> {
+    ) -> Result<PackageLineage, Error> {
         let mut domain_lineage = self.domain_lineage.read(storage).await?;
         domain_lineage
             .packages
-            .insert(self.namespace.clone(), lineage);
-        self.domain_lineage.write(storage, &domain_lineage).await
+            .insert(self.namespace.clone(), lineage.clone());
+        self.domain_lineage.write(storage, domain_lineage).await?;
+        Ok(lineage)
     }
 }
 
@@ -268,7 +269,7 @@ mod tests {
         let file_path = PathBuf::from("foo");
         assert!(!storage.exists(&file_path).await);
         DomainLineageIo::new(file_path.clone())
-            .write(&storage, &DomainLineage::default())
+            .write(&storage, DomainLineage::default())
             .await?;
         assert!(storage.exists(&file_path).await);
         let manifest = br###"{

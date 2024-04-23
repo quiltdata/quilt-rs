@@ -5,11 +5,15 @@ use clap::Subcommand;
 use tracing::log;
 
 mod browse;
+mod commit;
 mod install;
 mod list;
 mod model;
 mod output;
 mod package;
+mod pull;
+mod push;
+mod status;
 mod uninstall;
 
 use model::Model;
@@ -28,6 +32,22 @@ enum Commands {
     Browse {
         #[arg(value_name = "PKG_URI")]
         uri: String,
+    },
+    /// Commit new package revision
+    Commit {
+        /// Path to local domain
+        #[arg(short, long)]
+        domain: PathBuf,
+        /// Commit message
+        #[arg(short, long)]
+        message: String,
+        /// JSON string for user meta
+        #[arg(short, long)]
+        user_meta: Option<String>,
+        /// Namespace of the package to commit new revision
+        /// Ex. foo/bar
+        #[arg(short, long)]
+        namespace: String,
     },
     /// Install package locally
     Install {
@@ -62,6 +82,35 @@ enum Commands {
         #[arg(short, long, value_name = "PKG_URI")]
         target: String,
     },
+    /// Pull
+    Pull {
+        /// Path to local domain
+        #[arg(short, long)]
+        domain: PathBuf,
+        /// Namespace of the package to pull
+        /// Ex. foo/bar
+        #[arg(short, long)]
+        namespace: String,
+    },
+    /// Push
+    Push {
+        /// Path to local domain
+        #[arg(short, long)]
+        domain: PathBuf,
+        /// Namespace of the package to push
+        /// Ex. foo/bar
+        #[arg(short, long)]
+        namespace: String,
+    },
+    /// Status of the package: modified, up-to-date, outdated
+    Status {
+        /// Path to local domain
+        #[arg(short, long)]
+        domain: PathBuf,
+        /// Namespace of the package. Ex. foo/bar
+        #[arg(short, long)]
+        namespace: String,
+    },
     /// Uninstall package from local domain
     Uninstall {
         /// Namespace of the package to uninstall.
@@ -83,6 +132,30 @@ pub async fn init() -> Result<(), Error> {
             let args = browse::Input { uri };
             log::info!("Browsing {:?} using {:?}", args, temp_dir);
             print(browse::command(m, args).await);
+            Ok(())
+        }
+        Commands::Commit {
+            domain,
+            namespace,
+            message,
+            user_meta,
+        } => {
+            let user_meta = match &user_meta {
+                Some(object) => match serde_json::from_str(object)? {
+                    serde_json::Value::Object(object) => Some(object),
+                    _ => {
+                        return Err(Error::CommitMetaInvalid(object.to_string()));
+                    }
+                },
+                None => None,
+            };
+            let args = commit::Input {
+                message,
+                namespace,
+                user_meta,
+            };
+            log::info!("Committing {:?}", args);
+            print(commit::command(Model::from(domain), args).await);
             Ok(())
         }
         Commands::Install {
@@ -116,6 +189,24 @@ pub async fn init() -> Result<(), Error> {
             print(package::command(m, args).await);
             Ok(())
         }
+        Commands::Pull { domain, namespace } => {
+            let args = pull::Input { namespace };
+            log::info!("Pull {:?}", args);
+            print(pull::command(Model::from(domain), args).await);
+            Ok(())
+        }
+        Commands::Push { domain, namespace } => {
+            let args = push::Input { namespace };
+            log::info!("Pushing {:?}", args);
+            print(push::command(Model::from(domain), args).await);
+            Ok(())
+        }
+        Commands::Status { domain, namespace } => {
+            let args = status::Input { namespace };
+            log::info!("Status {:?}", args);
+            print(status::command(Model::from(domain), args).await);
+            Ok(())
+        }
         Commands::Uninstall { domain, namespace } => {
             if !domain.exists() {
                 return Err(Error::Domain(domain));
@@ -138,6 +229,15 @@ pub enum Error {
 
     #[error("Failed to create temp dir: {0}")]
     TempDir(String),
+
+    #[error("Package {0} not found")]
+    NamespaceNotFound(String),
+
+    #[error("Invalid JSON for user_meta object. Object is required")]
+    CommitMetaInvalid(String),
+
+    #[error("JSON error: {0}")]
+    Json(#[from] serde_json::Error),
 }
 
 impl From<quilt_rs::Error> for Error {

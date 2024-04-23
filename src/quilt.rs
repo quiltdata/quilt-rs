@@ -28,6 +28,7 @@ pub use flow::status::UpstreamDiscreteState;
 pub use flow::status::UpstreamState;
 pub use lineage::CommitState;
 pub use lineage::DomainLineage;
+pub use lineage::LineagePaths;
 pub use lineage::PackageLineage;
 pub use lineage::PathState;
 pub use manifest::ContentHash;
@@ -55,8 +56,6 @@ use flow::push::push_package;
 use flow::reset_to_latest::reset_to_latest;
 use flow::status::create_status;
 use flow::status::refresh_latest_hash;
-use flow::status::Change;
-use flow::status::ChangeSet;
 use flow::status::InstalledPackageStatus;
 use flow::uninstall_package::uninstall_package;
 use flow::uninstall_paths::uninstall_paths;
@@ -90,7 +89,7 @@ impl LocalDomain {
         browse_remote_manifest(&self.paths, &self.storage, &self.remote, remote_manifest).await
     }
 
-    fn create_installed_package(&self, namespace: String) -> InstalledPackage {
+    pub fn create_installed_package(&self, namespace: String) -> InstalledPackage {
         InstalledPackage {
             lineage: self.lineage.create_package_lineage(namespace.clone()),
             namespace: namespace.clone(),
@@ -114,7 +113,7 @@ impl LocalDomain {
             remote_manifest,
         )
         .await?;
-        self.lineage.write(&self.storage, &lineage).await?;
+        let _fixme = self.lineage.write(&self.storage, lineage).await?;
 
         Ok(self.create_installed_package(remote_manifest.namespace.clone()))
     }
@@ -122,7 +121,7 @@ impl LocalDomain {
     pub async fn uninstall_package(&self, namespace: impl AsRef<str>) -> Result<(), Error> {
         let lineage = self.lineage.read(&self.storage).await?;
         let lineage = uninstall_package(lineage, &self.paths, &self.storage, namespace).await?;
-        self.lineage.write(&self.storage, &lineage).await?;
+        let _fixme = self.lineage.write(&self.storage, lineage).await?;
         Ok(())
     }
 
@@ -305,9 +304,9 @@ impl InstalledPackage {
         Ok(status)
     }
 
-    pub async fn install_paths(&self, paths: &Vec<String>) -> Result<(), Error> {
+    pub async fn install_paths(&self, paths: &Vec<String>) -> Result<LineagePaths, Error> {
         if paths.is_empty() {
-            return Ok(());
+            return Ok(BTreeMap::new());
         }
         let lineage = self.lineage.read(&self.storage).await?;
         let manifest = self.readable_manifest().await?;
@@ -321,13 +320,15 @@ impl InstalledPackage {
             paths,
         )
         .await?;
-        self.lineage.write(&self.storage, lineage).await
+        let lineage = self.lineage.write(&self.storage, lineage).await?;
+        Ok(lineage.paths)
     }
 
-    pub async fn uninstall_paths(&self, paths: &Vec<String>) -> Result<(), Error> {
+    pub async fn uninstall_paths(&self, paths: &Vec<String>) -> Result<LineagePaths, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
         let lineage = uninstall_paths(lineage, self.working_folder(), &self.storage, paths).await?;
-        self.lineage.write(&self.storage, lineage).await
+        let lineage = self.lineage.write(&self.storage, lineage).await?;
+        Ok(lineage.paths)
     }
 
     pub async fn revert_paths(&self, paths: &Vec<String>) -> Result<(), Error> {
@@ -339,7 +340,7 @@ impl InstalledPackage {
         &self,
         message: String,
         user_meta: Option<manifest::JsonObject>,
-    ) -> Result<(), Error> {
+    ) -> Result<Option<CommitState>, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
         let manifest = self.readable_manifest().await?;
 
@@ -358,10 +359,11 @@ impl InstalledPackage {
             user_meta,
         )
         .await?;
-        self.lineage.write(&self.storage, lineage).await
+        let lineage = self.lineage.write(&self.storage, lineage).await?;
+        Ok(lineage.commit)
     }
 
-    pub async fn push(&self) -> Result<(), Error> {
+    pub async fn push(&self) -> Result<RemoteManifest, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
         let manifest = self.readable_manifest().await?;
         let lineage = push_package(
@@ -373,10 +375,11 @@ impl InstalledPackage {
             self.namespace.to_string(),
         )
         .await?;
-        self.lineage.write(&self.storage, lineage).await
+        let lineage = self.lineage.write(&self.storage, lineage).await?;
+        Ok(lineage.remote)
     }
 
-    pub async fn pull(&self) -> Result<(), Error> {
+    pub async fn pull(&self) -> Result<RemoteManifest, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
         let manifest = self.readable_manifest().await?;
         let (lineage, status) =
@@ -391,16 +394,18 @@ impl InstalledPackage {
             self.namespace.to_string(),
         )
         .await?;
-        self.lineage.write(&self.storage, lineage).await
+        let lineage = self.lineage.write(&self.storage, lineage).await?;
+        Ok(lineage.remote)
     }
 
-    pub async fn certify_latest(&self) -> Result<(), Error> {
+    pub async fn certify_latest(&self) -> Result<RemoteManifest, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
         let lineage = certify_latest(lineage, &self.remote).await?;
-        self.lineage.write(&self.storage, lineage).await
+        let lineage = self.lineage.write(&self.storage, lineage).await?;
+        Ok(lineage.remote)
     }
 
-    pub async fn reset_to_latest(&self) -> Result<(), Error> {
+    pub async fn reset_to_latest(&self) -> Result<RemoteManifest, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
         let manifest = self.readable_manifest().await?;
         let lineage = reset_to_latest(
@@ -413,7 +418,8 @@ impl InstalledPackage {
             self.namespace.to_string(),
         )
         .await?;
-        self.lineage.write(&self.storage, lineage).await
+        let lineage = self.lineage.write(&self.storage, lineage).await?;
+        Ok(lineage.remote)
     }
 }
 
@@ -426,6 +432,9 @@ mod tests {
     use tokio_test::block_on;
 
     use crate::quilt::flow::browse::cache_remote_manifest;
+    use crate::quilt::flow::status::Change;
+    use crate::quilt::flow::status::ChangeSet;
+    use crate::quilt::flow::status::DiscreteChange;
     use crate::quilt::flow::status::PackageFileFingerprint;
     use crate::quilt::manifest::MULTIHASH_SHA256;
     use crate::quilt::storage::mock_storage::MockStorage;
@@ -552,6 +561,7 @@ mod tests {
                             block_on(calculate_sha256_checksum(old_readme.as_bytes()))?.as_ref(),
                         )?,
                     }),
+                    state: DiscreteChange::Modified,
                 },
             )]),
         );

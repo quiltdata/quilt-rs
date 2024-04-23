@@ -137,7 +137,13 @@ pub async fn commit_package(
 
     let mut table = manifest.read(storage).await?;
 
-    for (logical_key, Change { current, previous }) in status.changes {
+    for (
+        logical_key,
+        Change {
+            current, previous, ..
+        },
+    ) in status.changes
+    {
         if let Some(previous) = previous {
             remove_entry(&mut table, &mut lineage, &logical_key, previous)?;
         }
@@ -189,6 +195,8 @@ mod tests {
 
     use std::collections::BTreeMap;
 
+    use crate::quilt::flow::status::Change;
+    use crate::quilt::flow::status::DiscreteChange;
     use crate::quilt::mocks;
     use crate::quilt::storage::mock_storage::MockStorage;
 
@@ -247,6 +255,7 @@ mod tests {
                 Change {
                     previous: Some(mocks::status::package_file_fingerprint()),
                     current: None,
+                    state: DiscreteChange::Removed,
                 },
             )]),
             ..InstalledPackageStatus::default()
@@ -307,6 +316,7 @@ mod tests {
                 Change {
                     current: Some(mocks::status::package_file_fingerprint()),
                     previous: None,
+                    state: DiscreteChange::Added,
                 },
             )]),
             ..InstalledPackageStatus::default()
@@ -369,6 +379,7 @@ mod tests {
                 Change {
                     current: Some(mocks::status::package_file_fingerprint()),
                     previous: None,
+                    state: DiscreteChange::Added,
                 },
             )]),
             ..InstalledPackageStatus::default()
@@ -418,6 +429,7 @@ mod tests {
                         size: 0,
                         hash: multihash::Multihash::wrap(0xb510, b"walker")?,
                     }),
+                    state: DiscreteChange::Modified,
                 },
             )]),
             ..InstalledPackageStatus::default()
