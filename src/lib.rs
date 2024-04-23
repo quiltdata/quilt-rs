@@ -21,6 +21,7 @@ pub use quilt4::table::Table;
 pub use quilt4::uri::UriParser;
 pub use quilt4::uri::UriQuilt;
 
+pub use quilt::flow::status::DiscreteChange;
 pub use quilt::flow::status::InstalledPackageStatus;
 pub use quilt::flow::status::PackageFileFingerprint;
 pub use quilt::flow::status::UpstreamDiscreteState;

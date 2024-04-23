@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::collections::HashSet;
 
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
@@ -16,9 +15,6 @@ use tokio::io::BufWriter;
 
 use crate::Error;
 use crate::Table;
-
-use super::Change;
-use super::ChangeSet;
 
 pub type JsonObject = serde_json::Map<String, serde_json::Value>;
 
@@ -241,48 +237,6 @@ impl Manifest {
             .iter()
             .map(|row| (row.logical_key.clone(), row.to_owned()))
             .collect()
-    }
-
-    // other is "previous"
-    pub fn diff_filtered(
-        &self,
-        other: &Self,
-        keys: Option<&HashSet<String>>,
-    ) -> ChangeSet<String, ManifestRow> {
-        let mut changes = ChangeSet::new();
-
-        let self_map = self.rows_map();
-        let other_map = other.rows_map();
-
-        let self_keys: HashSet<&String> = self_map.keys().collect();
-        let other_keys: HashSet<&String> = self_map.keys().collect();
-        let all_keys: HashSet<&String> = self_keys.union(&other_keys).cloned().collect();
-        let all_keys: Vec<&String> = match keys {
-            Some(keys) => all_keys.into_iter().filter(|k| keys.contains(*k)).collect(),
-            None => all_keys.into_iter().collect(),
-        };
-
-        for k in all_keys {
-            let self_row = self_map.get(k);
-            let other_row = other_map.get(k);
-
-            if match (self_row, other_row) {
-                (Some(self_row), Some(other_row)) => self_row == other_row,
-                (None, None) => true,
-                _ => false,
-            } {
-                continue;
-            }
-
-            let change = Change {
-                current: self_row.cloned(),
-                previous: other_row.cloned(),
-            };
-
-            changes.insert(k.to_owned(), change);
-        }
-
-        changes
     }
 }
 

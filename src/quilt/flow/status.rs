@@ -20,9 +20,18 @@ use crate::quilt4::checksum::calculate_sha256_chunked_checksum;
 use crate::Error;
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
+pub enum DiscreteChange {
+    Pristine,
+    Modified,
+    Added,
+    Removed,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct Change<T> {
     pub current: Option<T>,
     pub previous: Option<T>,
+    pub state: DiscreteChange,
 }
 
 pub type ChangeSet<K, T> = BTreeMap<K, Change<T>>;
@@ -74,12 +83,10 @@ pub struct PackageFileFingerprint {
 #[derive(Debug, PartialEq, Default)]
 pub struct InstalledPackageStatus {
     // current commit vs upstream state
-    pub upstream: UpstreamState,
     pub upstream_state: UpstreamDiscreteState,
-    pub dirty: bool, // whether there are uncommitted changes
     // file changes vs current commit
-    pub changes: ChangeSet<String, PackageFileFingerprint>,
-    // XXX: meta?
+    pub changes: ChangeSet<String, PackageFileFingerprint>, // FIXME: String -> PathBuf
+                                                            // XXX: meta?
 }
 
 impl InstalledPackageStatus {
@@ -89,8 +96,6 @@ impl InstalledPackageStatus {
     ) -> Self {
         Self {
             upstream_state: UpstreamDiscreteState::from(&upstream),
-            upstream,
-            dirty: !changes.is_empty(),
             changes,
         }
     }
@@ -182,6 +187,7 @@ pub async fn create_status(
                                     size: orig_size,
                                     hash: orig_hash,
                                 }),
+                                state: DiscreteChange::Modified,
                             },
                         );
                     }
@@ -198,6 +204,7 @@ pub async fn create_status(
                                 hash: file_hash,
                             }),
                             previous: None,
+                            state: DiscreteChange::Added,
                         },
                     );
                 }
@@ -216,6 +223,7 @@ pub async fn create_status(
                     size: orig_size,
                     hash: orig_hash,
                 }),
+                state: DiscreteChange::Removed,
             },
         );
     }

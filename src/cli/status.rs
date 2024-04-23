@@ -1,5 +1,6 @@
 use quilt_rs::InstalledPackageStatus;
 use quilt_rs::UpstreamDiscreteState;
+use quilt_rs::DiscreteChange;
 
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
@@ -16,14 +17,8 @@ pub struct Output {
 }
 
 #[derive(tabled::Tabled)]
-struct StatusHeader {
-    title: String,
-    description: String,
-}
-
-#[derive(tabled::Tabled)]
 struct StatusEntry {
-    filename: String,
+    path: String,
     status: String,
 }
 
@@ -47,15 +42,12 @@ impl std::fmt::Display for Output {
                 .changes
                 .iter()
                 .map(|(name, change)| StatusEntry {
-                    filename: name.to_string(),
-                    status: if change.current.is_some() && change.previous.is_some() {
-                        "Modified".to_string()
-                    } else if change.current.is_some() {
-                        "Added".to_string()
-                    } else if change.previous.is_some() {
-                        "Removed".to_string()
-                    } else {
-                        "".to_string()
+                    path: name.to_string(),
+                    status: match change.state {
+                        DiscreteChange::Modified => "Modified".to_string(),
+                        DiscreteChange::Added => "Added".to_string(),
+                        DiscreteChange::Removed => "Removed".to_string(),
+                        DiscreteChange::Pristine => "".to_string(),
                     },
                 });
             let mut entries_table = tabled::Table::new(entries);

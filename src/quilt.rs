@@ -56,8 +56,6 @@ use flow::push::push_package;
 use flow::reset_to_latest::reset_to_latest;
 use flow::status::create_status;
 use flow::status::refresh_latest_hash;
-use flow::status::Change;
-use flow::status::ChangeSet;
 use flow::status::InstalledPackageStatus;
 use flow::uninstall_package::uninstall_package;
 use flow::uninstall_paths::uninstall_paths;
@@ -434,6 +432,9 @@ mod tests {
     use tokio_test::block_on;
 
     use crate::quilt::flow::browse::cache_remote_manifest;
+    use crate::quilt::flow::status::Change;
+    use crate::quilt::flow::status::ChangeSet;
+    use crate::quilt::flow::status::DiscreteChange;
     use crate::quilt::flow::status::PackageFileFingerprint;
     use crate::quilt::manifest::MULTIHASH_SHA256;
     use crate::quilt::storage::mock_storage::MockStorage;
@@ -560,6 +561,7 @@ mod tests {
                             block_on(calculate_sha256_checksum(old_readme.as_bytes()))?.as_ref(),
                         )?,
                     }),
+                    state: DiscreteChange::Modified,
                 },
             )]),
         );
