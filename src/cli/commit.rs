@@ -8,6 +8,7 @@ use crate::cli::Error;
 pub struct Input {
     pub message: String,
     pub namespace: String,
+    pub user_meta: Option<quilt_rs::quilt::manifest::JsonObject>,
 }
 
 #[derive(Debug)]
@@ -49,9 +50,13 @@ async fn commit_package(
 
 pub async fn model(
     local_domain: &quilt_rs::LocalDomain,
-    Input { message, namespace }: Input,
+    Input {
+        message,
+        namespace,
+        user_meta,
+    }: Input,
 ) -> Result<Output, Error> {
-    let commit_state = commit_package(local_domain, namespace, message, None).await?;
+    let commit_state = commit_package(local_domain, namespace, message, user_meta).await?;
     Ok(Output {
         hash: commit_state.map(|s| s.hash),
     })

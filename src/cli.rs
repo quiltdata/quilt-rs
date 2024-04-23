@@ -41,6 +41,9 @@ enum Commands {
         /// Commit message
         #[arg(short, long)]
         message: String,
+        /// JSON string for user meta
+        #[arg(short, long)]
+        user_meta: Option<String>,
         /// Namespace of the package to commit new revision
         /// Ex. foo/bar
         #[arg(short, long)]
@@ -135,8 +138,22 @@ pub async fn init() -> Result<(), Error> {
             domain,
             namespace,
             message,
+            user_meta,
         } => {
-            let args = commit::Input { message, namespace };
+            let user_meta = match &user_meta {
+                Some(object) => match serde_json::from_str(object)? {
+                    serde_json::Value::Object(object) => Some(object),
+                    _ => {
+                        return Err(Error::CommitMetaInvalid(object.to_string()));
+                    }
+                },
+                None => None,
+            };
+            let args = commit::Input {
+                message,
+                namespace,
+                user_meta,
+            };
             log::info!("Committing {:?}", args);
             print(commit::command(Model::from(domain), args).await);
             Ok(())
@@ -215,6 +232,12 @@ pub enum Error {
 
     #[error("Package {0} not found")]
     NamespaceNotFound(String),
+
+    #[error("Invalid JSON for user_meta object. Object is required")]
+    CommitMetaInvalid(String),
+
+    #[error("JSON error: {0}")]
+    Json(#[from] serde_json::Error),
 }
 
 impl From<quilt_rs::Error> for Error {
