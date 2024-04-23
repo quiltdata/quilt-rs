@@ -15,15 +15,54 @@ pub struct Output {
     pub status: InstalledPackageStatus,
 }
 
+#[derive(tabled::Tabled)]
+struct StatusHeader {
+    title: String,
+    description: String,
+}
+
+#[derive(tabled::Tabled)]
+struct StatusEntry {
+    filename: String,
+    status: String,
+}
+
 impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut output: Vec<String> = Vec::new();
         let discrete_state = match self.status.upstream_state {
             UpstreamDiscreteState::UpToDate => "Installed package is up to date",
             UpstreamDiscreteState::Behind => "Your commits are behind the remote",
             UpstreamDiscreteState::Ahead => "Your commits are ahead of the remote",
             UpstreamDiscreteState::Diverged => "Your commits are detached from the remote",
         };
-        write!(f, r##"New commit "{:?}" created"##, discrete_state)
+
+        output.push(discrete_state.to_string());
+
+        if self.status.changes.is_empty() {
+            output.push("No changes".to_string());
+        } else {
+            let entries = self
+                .status
+                .changes
+                .iter()
+                .map(|(name, change)| StatusEntry {
+                    filename: name.to_string(),
+                    status: if change.current.is_some() && change.previous.is_some() {
+                        "Modified".to_string()
+                    } else if change.current.is_some() {
+                        "Added".to_string()
+                    } else if change.previous.is_some() {
+                        "Removed".to_string()
+                    } else {
+                        "".to_string()
+                    },
+                });
+            let mut entries_table = tabled::Table::new(entries);
+            entries_table.with(tabled::settings::Panel::header("Changes:"));
+            output.push(entries_table.to_string());
+        }
+        write!(f, "{}", output.join("\n"))
     }
 }
 
