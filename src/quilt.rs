@@ -89,7 +89,7 @@ impl LocalDomain {
         browse_remote_manifest(&self.paths, &self.storage, &self.remote, remote_manifest).await
     }
 
-    fn create_installed_package(&self, namespace: String) -> InstalledPackage {
+    pub fn create_installed_package(&self, namespace: String) -> InstalledPackage {
         InstalledPackage {
             lineage: self.lineage.create_package_lineage(namespace.clone()),
             namespace: namespace.clone(),
