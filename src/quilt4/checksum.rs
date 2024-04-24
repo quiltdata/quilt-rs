@@ -61,11 +61,25 @@ mod tests {
 
     #[tokio::test]
     async fn test_sha256() {
-        let bytes = "Hello, World!".as_bytes();
-        let hash = calculate_sha256_checksum(bytes).await.unwrap();
+        let bytes = "0123456789abcdef".as_bytes();
+        let hash = calculate_sha256_chunked_checksum(bytes, bytes.len() as u64)
+            .await
+            .unwrap();
         assert_eq!(
             BASE64_STANDARD.encode(hash),
-            "3/1gIbsr1bCvZ2KQgJ7DpTGR3YHH9wpLKGiKNiGCmG8="
+            "Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="
+        );
+    }
+
+    #[tokio::test]
+    async fn test_edge_case() {
+        let bytes = "12345678".as_bytes().repeat(1024 * 1024);
+        let hash = calculate_sha256_chunked_checksum(bytes.as_ref(), bytes.len() as u64)
+            .await
+            .unwrap();
+        assert_eq!(
+            BASE64_STANDARD.encode(hash),
+            "7V3rZ3Q/AmAYax2wsQBZbc7N1EMIxlxRyMiMthGRdwg="
         );
     }
 
