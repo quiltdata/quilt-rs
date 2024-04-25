@@ -79,4 +79,10 @@ pub trait Storage {
         &self,
         path: impl AsRef<Path> + Send + Sync,
     ) -> impl Future<Output = Result<ByteStream, Error>> + Send + Sync;
+
+    fn write_byte_stream(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        body: ByteStream,
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
 }

@@ -2,9 +2,6 @@ use std::collections::hash_map::RandomState;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use aws_sdk_s3::error::DisplayErrorContext;
-use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
 use url::Url;
 
 use crate::paths::scaffold_paths;
@@ -12,41 +9,20 @@ use crate::paths::DomainPaths;
 use crate::quilt::lineage::PackageLineage;
 use crate::quilt::lineage::PathState;
 use crate::quilt::manifest_handle::ReadableManifest;
+use crate::quilt::remote::Remote;
 use crate::quilt::storage::s3;
 use crate::quilt::Storage;
-use crate::s3_utils;
 use crate::Error;
 
 // FIXME: use impl Storage and impl Remote
-async fn cache_immutable_object(object_dest: &PathBuf, uri: &s3::S3Uri) -> Result<(), Error> {
-    let version = uri
-        .version
-        .clone()
-        .ok_or(Error::S3Uri("missing versionId in s3 URL".to_string()))?;
-
-    let mut file = File::create(&object_dest).await?;
-
-    let client = s3_utils::get_client_for_bucket(&uri.bucket).await?;
-
-    let mut object = client
-        .get_object()
-        .bucket(uri.bucket.clone())
-        .key(uri.key.clone())
-        .version_id(version)
-        .send()
-        .await
-        .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
-
-    while let Some(bytes) = object
-        .body
-        .try_next()
-        .await
-        .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?
-    {
-        file.write_all(&bytes).await?;
-    }
-    file.flush().await?;
-    Ok(())
+async fn cache_immutable_object(
+    storage: &impl Storage,
+    remote: &impl Remote,
+    object_dest: &PathBuf,
+    uri: &s3::S3Uri,
+) -> Result<(), Error> {
+    let body = remote.get_object_stream(uri).await?;
+    storage.write_byte_stream(object_dest, body).await
 }
 
 async fn create_mutable_copy(
@@ -62,6 +38,8 @@ async fn create_mutable_copy(
     storage.modified_timestamp(&mutable_target).await
 }
 
+// TODO: move `working_dir` to `paths`, and `paths` to `storage`
+#[allow(clippy::too_many_arguments)]
 pub async fn install_paths(
     mut lineage: PackageLineage,
     manifest: &(impl ReadableManifest + Sync),
@@ -69,6 +47,7 @@ pub async fn install_paths(
     working_dir: PathBuf,
     namespace: String,
     storage: &(impl Storage + Sync),
+    remote: &impl Remote,
     entries_paths: &Vec<String>,
 ) -> Result<PackageLineage, Error> {
     if entries_paths.is_empty() {
@@ -111,7 +90,7 @@ pub async fn install_paths(
         let object_dest = paths.object(row.hash.digest());
 
         if !storage.exists(&object_dest).await {
-            cache_immutable_object(&object_dest, &row.place.parse()?).await?;
+            cache_immutable_object(storage, remote, &object_dest, &row.place.parse()?).await?;
         }
 
         row.place = Url::from_file_path(&object_dest)
@@ -151,18 +130,22 @@ mod tests {
     use tempfile;
 
     use crate::quilt::mocks;
+    use crate::quilt::remote::mock_remote::MockRemote;
     use crate::quilt::storage::mock_storage::MockStorage;
+    use crate::quilt::storage::s3::S3Uri;
+    use crate::Row4;
 
     #[tokio::test]
-    async fn test_installing_one_path() -> Result<(), Error> {
+    async fn test_installing_one_cached_path() -> Result<(), Error> {
         let working_dir = tempfile::tempdir()?;
 
         let namespace = "foo/bar".to_string();
 
         let domain_paths = &DomainPaths::new(working_dir.path().to_path_buf());
 
+        let remote = MockRemote::default();
         let storage = MockStorage::default();
-        let object_path = domain_paths.object(&mocks::row_hash_sample1().digest());
+        let object_path = domain_paths.object(mocks::row_hash_sample1().digest());
         storage
             .write_file(working_dir.path().join(object_path), &Vec::new())
             .await?;
@@ -179,6 +162,7 @@ mod tests {
             working_dir.path().to_path_buf(),
             namespace,
             &storage,
+            &remote,
             &entries_paths,
         )
         .await?;
@@ -193,8 +177,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_installing_one_uncached_path() -> Result<(), Error> {
+        let working_dir = tempfile::tempdir()?;
+
+        let namespace = "foo/bar".to_string();
+
+        let domain_paths = &DomainPaths::new(working_dir.path().to_path_buf());
+
+        let remote = MockRemote::default();
+        let storage = MockStorage::default();
+        let lineage = mocks::lineage::with_commit_hash("fghijk");
+        let entries_paths = vec!["a/a".to_string()];
+        let manifest = mocks::manifest::with_rows(vec![Row4 {
+            name: "a/a".to_string(),
+            hash: mocks::row_hash_sample1(),
+            place: "s3://any/any/any/any/any.md".to_string(),
+            ..Row4::default()
+        }]);
+        remote
+            .put_object(&S3Uri::try_from("s3://any/any/any/any/any.md")?, Vec::new())
+            .await?;
+
+        assert!(lineage.paths.is_empty());
+        let lineage = install_paths(
+            lineage,
+            &manifest,
+            domain_paths,
+            working_dir.path().to_path_buf(),
+            namespace,
+            &storage,
+            &remote,
+            &entries_paths,
+        )
+        .await?;
+        assert!(lineage.paths.contains_key("a/a"));
+        assert!(
+            storage
+                .exists(&working_dir.path().join(PathBuf::from("a/a")))
+                .await
+        );
+        let object_path = domain_paths.object(mocks::row_hash_sample1().digest());
+        assert!(storage.exists(object_path).await);
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_installing_path_that_doesnt_exists_in_manifest() -> Result<(), Error> {
         let lineage = mocks::lineage::with_commit_hash("fghijk");
+        let remote = MockRemote::default();
         let storage = MockStorage::default();
         let entries_paths = vec!["z/z".to_string()];
         let manifest = mocks::manifest::with_record_keys(vec!["a/a".to_string()]);
@@ -207,6 +238,7 @@ mod tests {
             PathBuf::new(),
             String::default(),
             &storage,
+            &remote,
             &entries_paths,
         )
         .await;

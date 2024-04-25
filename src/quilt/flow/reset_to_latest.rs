@@ -56,6 +56,7 @@ pub async fn reset_to_latest(
         working_dir,
         namespace,
         storage,
+        remote,
         &paths_to_install,
     )
     .await

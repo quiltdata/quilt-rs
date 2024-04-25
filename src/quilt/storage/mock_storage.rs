@@ -3,6 +3,7 @@ use std::path::Path;
 use aws_sdk_s3::primitives::ByteStream;
 use chrono::DateTime;
 use chrono::Utc;
+use tokio::io::AsyncWriteExt;
 
 use tempfile;
 
@@ -111,5 +112,20 @@ impl Storage for MockStorage {
     ) -> Result<ByteStream, Error> {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
         Ok(ByteStream::from_path(rel_path).await?)
+    }
+
+    async fn write_byte_stream(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        mut body: ByteStream,
+    ) -> Result<(), Error> {
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        let mut file = tokio::fs::File::create(&rel_path).await?;
+        while let Some(bytes) = body.try_next().await? {
+            file.write_all(&bytes).await?;
+        }
+        file.flush().await?;
+
+        Ok(())
     }
 }

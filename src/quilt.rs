@@ -317,6 +317,7 @@ impl InstalledPackage {
             self.working_folder(),
             self.namespace.to_string(),
             &self.storage,
+            &self.remote,
             paths,
         )
         .await?;

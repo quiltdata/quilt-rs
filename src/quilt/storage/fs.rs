@@ -80,6 +80,20 @@ impl Storage for LocalStorage {
     ) -> Result<ByteStream, Error> {
         Ok(ByteStream::from_path(path).await?)
     }
+
+    async fn write_byte_stream(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        mut body: ByteStream,
+    ) -> Result<(), Error> {
+        let mut file = fs::File::create(&path).await?;
+        while let Some(bytes) = body.try_next().await? {
+            file.write_all(&bytes).await?;
+        }
+        file.flush().await?;
+
+        Ok(())
+    }
 }
 
 impl Default for LocalStorage {

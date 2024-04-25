@@ -36,6 +36,26 @@ impl Remote for MockRemote {
         })
     }
 
+    async fn get_object_stream(&self, s3_uri: &S3Uri) -> Result<ByteStream, Error> {
+        println!("get_object_stream {:?}", s3_uri);
+        let key = s3_uri.to_string();
+        log::debug!("Mocking {} get request", key);
+
+        self.storage
+            .read_byte_stream(&key)
+            .await
+            .map_err(|err| match err {
+                Error::Io(inner_err) => {
+                    if inner_err.kind() == std::io::ErrorKind::NotFound {
+                        Error::S3("Key doesn't exists".to_string())
+                    } else {
+                        Error::Io(inner_err)
+                    }
+                }
+                other => other,
+            })
+    }
+
     async fn exists(&self, s3_uri: &S3Uri) -> Result<bool, Error> {
         let key = s3_uri.to_string();
         log::debug!("Mocking {} exists request", key);
