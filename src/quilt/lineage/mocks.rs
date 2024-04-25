@@ -3,13 +3,14 @@ use std::collections::BTreeMap;
 use super::{CommitState, LineagePaths, PackageLineage};
 use crate::quilt::lineage::PathState;
 use crate::quilt::manifest_handle::RemoteManifest;
+use crate::quilt::mocks;
 use crate::quilt::uri::S3PackageUri;
 use crate::quilt::Error;
 
 pub fn path_state() -> PathState {
     PathState {
         timestamp: chrono::DateTime::default(),
-        hash: multihash::Multihash::wrap(0xb510, b"pedestrian").unwrap(),
+        hash: mocks::row_hash_sample1(),
     }
 }
 

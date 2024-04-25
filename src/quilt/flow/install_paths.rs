@@ -108,7 +108,7 @@ pub async fn install_paths(
             .get_mut(path)
             .ok_or(Error::Table(format!("path {} not found", path)))?;
 
-        let object_dest = paths.object(&row.hash);
+        let object_dest = paths.object(row.hash.digest());
 
         if !storage.exists(&object_dest).await {
             cache_immutable_object(&object_dest, &row.place.parse()?).await?;
@@ -162,13 +162,9 @@ mod tests {
         let domain_paths = &DomainPaths::new(working_dir.path().to_path_buf());
 
         let storage = MockStorage::default();
+        let object_path = domain_paths.object(&mocks::row_hash_sample1().digest());
         storage
-            .write_file(
-                working_dir
-                    .path()
-                    .join(PathBuf::from(".quilt/objects/7065646573747269616e")),
-                &Vec::new(),
-            )
+            .write_file(working_dir.path().join(object_path), &Vec::new())
             .await?;
 
         let lineage = mocks::lineage::with_commit_hash("fghijk");
