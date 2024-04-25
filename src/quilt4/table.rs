@@ -41,6 +41,41 @@ use crate::Error;
 
 pub const HEADER_ROW: &str = ".";
 
+fn serialize_table_header(header: &Row4) -> serde_json::Map<String, serde_json::Value> {
+    let mut header_meta = serde_json::Map::new();
+    if let Some(message) = header.info.get("message") {
+        header_meta.insert("message".to_string(), message.clone());
+    }
+    if header.meta.is_object() {
+        header_meta.insert("user_meta".into(), header.meta.clone());
+    }
+    if let Some(version) = header.info.get("version") {
+        header_meta.insert("version".to_string(), version.clone());
+    }
+    header_meta
+}
+
+// TODO: fix return type to Map<String, serde_json::Value>
+fn serialize_row_entry(row: &Row4) -> serde_json::Value {
+    let mut row_meta = match row.info.as_object() {
+        Some(meta) => meta.clone(),
+        None => serde_json::Map::default(),
+    };
+    // TODO: correct order (alphabetical, as it in header)
+    if row.meta.is_object() {
+        row_meta.insert("user_meta".into(), row.meta.clone());
+    }
+
+    let content_hash: ContentHash = row.hash.try_into().unwrap();
+
+    serde_json::json!({
+        "hash": content_hash,
+        "logical_key": row.name,
+        "meta": row_meta,
+        "size": row.size,
+    })
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Table {
     pub header: Row4,
@@ -216,34 +251,12 @@ impl Table {
         // TODO: Make sure floats are Python-compatible!
         let mut hasher = Sha256::new();
 
-        let mut header_meta = match self.header.info.as_object() {
-            Some(meta) => meta.clone(),
-            None => serde_json::Map::default(),
-        };
-        if self.header.meta.is_object() {
-            header_meta.insert("user_meta".into(), self.header.meta.clone());
-        }
-
+        let header_meta = serialize_table_header(&self.header);
         let header_str = serde_json::to_string(&header_meta).unwrap();
         hasher.update(header_str);
 
         for row in self.records.values() {
-            let mut row_meta = match row.info.as_object() {
-                Some(meta) => meta.clone(),
-                None => serde_json::Map::default(),
-            };
-            if row.meta.is_object() {
-                row_meta.insert("user_meta".into(), row.meta.clone());
-            }
-
-            let content_hash: ContentHash = row.hash.try_into().unwrap();
-
-            let value = serde_json::json!({
-                "logical_key": row.name,
-                "size": row.size,
-                "hash": content_hash,
-                "meta": row_meta,
-            });
+            let value = serialize_row_entry(row);
 
             let value_str = serde_json::to_string(&value).unwrap();
             hasher.update(value_str);
@@ -395,6 +408,41 @@ mod tests {
             ]),
         };
         assert_eq!(table.to_string(), r##"Table({"one": "Row4(AA)@AB^100#[65]$$Null$Null", "two": "Row4(BA)@BB^200#[66]$$Null$Null"})"##.to_string());
+        Ok(())
+    }
+
+    #[test]
+    fn test_top_hash() -> Result<(), Error> {
+        let manifest = Table {
+            header: Row4 {
+                meta: serde_json::json!({
+                       "1234567890": "a",
+                }),
+                info: serde_json::json!({
+                       "message": "Second revision",
+                       "version": "v0",
+                }),
+                ..Row4::default()
+            },
+            records: BTreeMap::from([(
+                "test.md".to_string(),
+                Row4 {
+                    name: "test.md".to_string(),
+                    place: "doesn't matter".to_string(),
+                    size: 3568,
+                    hash: ContentHash::SHA256Chunked(
+                        "MhntcZnyIL1AIPJNNh8LwzB68M5lFBW0pTEMFTeOSJo=".to_string(),
+                    )
+                    .try_into()?,
+                    info: serde_json::Value::Null,
+                    meta: serde_json::Value::Null,
+                },
+            )]),
+        };
+        assert_eq!(
+            manifest.top_hash(),
+            "83571a1d923f1ff9a965855030e85a5bac89b4b5af45d7f920b80e89343eca1f".to_string()
+        );
         Ok(())
     }
 }
