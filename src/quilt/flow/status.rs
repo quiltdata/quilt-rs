@@ -5,8 +5,7 @@ use std::path::PathBuf;
 
 use multihash::Multihash;
 use serde::Serialize;
-use tokio::fs::read_dir;
-use tokio::fs::File;
+
 use tracing::log;
 
 use crate::quilt::lineage::PackageLineage;
@@ -143,7 +142,7 @@ pub async fn create_status(
     let mut changes = ChangeSet::new();
 
     while let Some(dir) = queue.pop_front() {
-        let mut dir_entries = match read_dir(&dir).await {
+        let mut dir_entries = match storage.read_dir(&dir).await {
             Ok(dir_entries) => dir_entries,
             Err(err) => {
                 log::error!("Failed to read directory {:?}: {}", dir, err);
@@ -158,7 +157,7 @@ pub async fn create_status(
             if file_type.is_dir() {
                 queue.push_back(file_path);
             } else if file_type.is_file() {
-                let file = File::open(&file_path).await?;
+                let file = storage.open_file(&file_path).await?;
                 let file_metadata = file.metadata().await?;
 
                 let relative_path = file_path.strip_prefix(&working_dir).unwrap();

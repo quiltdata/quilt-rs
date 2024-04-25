@@ -70,6 +70,10 @@ impl Storage for LocalStorage {
         Ok(fs::File::create(path.as_ref()).await?)
     }
 
+    async fn read_dir(&self, path: impl AsRef<Path>) -> Result<fs::ReadDir, Error> {
+        Ok(fs::read_dir(&path).await?)
+    }
+
     async fn read_file(&self, path: impl AsRef<Path>) -> Result<Vec<u8>, Error> {
         Ok(fs::read(&path).await?)
     }
