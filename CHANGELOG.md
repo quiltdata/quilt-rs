@@ -1,8 +1,13 @@
 # CHANGELOG
 
-## [Unreleased]
+## [0.7.0]
+
+* Fix order of JSON in manifest to make checksums constant
+
+## [0.6.0]
 
 * Make `utils` module private as it only contains helper functions for testing. Remove dummy tests.
+* Refactor code to introduce tests
 
 ## [0.5.8] - 2024-03-25
 
