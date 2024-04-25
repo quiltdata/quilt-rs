@@ -256,7 +256,7 @@ impl Table {
         hasher.update(header_str);
 
         for row in self.records.values() {
-            let value = serialize_row_entry(&row);
+            let value = serialize_row_entry(row);
 
             let value_str = serde_json::to_string(&value).unwrap();
             hasher.update(value_str);
