@@ -69,20 +69,19 @@ async fn install_paths(
 
 fn get_entries(
     root: &std::path::Path,
-    uri_path: Option<String>,
+    uri_path: Option<PathBuf>,
     arg_paths: Option<Vec<PathBuf>>,
 ) -> Option<Vec<std::path::PathBuf>> {
     let mut keys = Vec::new();
     let mut paths = Vec::new();
-    if uri_path.is_some() {
-        let logical_key = uri_path.unwrap();
+    if let Some(logical_key) = uri_path {
         paths.push(root.to_path_buf().join(&logical_key));
         keys.push(logical_key);
     }
     if arg_paths.is_some() {
         let logical_keys = arg_paths.unwrap();
         for logical_key in logical_keys {
-            keys.push(logical_key.display().to_string());
+            keys.push(logical_key.clone());
             paths.push(root.to_path_buf().join(logical_key));
         }
     }
