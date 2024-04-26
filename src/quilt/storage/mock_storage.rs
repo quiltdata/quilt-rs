@@ -27,13 +27,23 @@ impl Default for MockStorage {
 
 impl MockStorage {}
 
-fn relative_to_temp_dir(temp_dir: &tempfile::TempDir, path: impl AsRef<Path>) -> impl AsRef<Path> {
+pub fn relative_to_temp_dir(
+    temp_dir: &impl AsRef<Path>,
+    path: impl AsRef<Path>,
+) -> impl AsRef<Path> {
     if path.as_ref().starts_with("/") {
-        temp_dir
-            .as_ref()
-            .join(path.as_ref().strip_prefix("/").unwrap())
+        if path.as_ref().starts_with(temp_dir) {
+            // already relative, for example, in recursive calls like `read_dir`
+            temp_dir
+                .as_ref()
+                .join(path.as_ref().strip_prefix(temp_dir.as_ref()).unwrap())
+        } else {
+            temp_dir
+                .as_ref()
+                .join(path.as_ref().strip_prefix("/").unwrap())
+        }
     } else {
-        temp_dir.as_ref().join(&path)
+        temp_dir.as_ref().join(path)
     }
 }
 
@@ -82,7 +92,7 @@ impl Storage for MockStorage {
         Ok(DateTime::<Utc>::from(modified))
     }
 
-    /// Overwrite the `write` method to do nothing.
+    /// Overwrite the `write` method
     async fn write_file(&self, path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), Error> {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
         create_parent(&rel_path).await?;
