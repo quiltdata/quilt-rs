@@ -26,7 +26,7 @@ pub async fn reset_to_latest(
         return Ok(lineage);
     }
 
-    let entries_paths: Vec<String> = lineage.paths.clone().into_keys().collect();
+    let entries_paths: Vec<PathBuf> = lineage.paths.clone().into_keys().collect();
     let mut lineage =
         uninstall_paths(lineage, working_dir.clone(), storage, &entries_paths).await?;
 

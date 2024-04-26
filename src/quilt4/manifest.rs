@@ -11,8 +11,9 @@
 //! Before 1.0, they will be renamed to Manifest/Entry
 //! and the existing types will be obsoleted.
 //!
-use super::table::Table;
 use std::fmt;
+
+use super::table::Table;
 
 #[derive(Clone, Debug)]
 pub struct Manifest4 {
@@ -44,6 +45,7 @@ mod tests {
     use super::*;
 
     use std::collections::BTreeMap;
+    use std::path::PathBuf;
 
     use crate::quilt4::row4::Row4;
 
@@ -56,7 +58,7 @@ mod tests {
     #[test]
     fn test_manifest_formatting_with_records() {
         let manifest = Manifest4::new(Table {
-            records: BTreeMap::from([("foo".to_string(), Row4::default())]),
+            records: BTreeMap::from([(PathBuf::from("foo"), Row4::default())]),
             ..Table::default()
         });
         assert_eq!(

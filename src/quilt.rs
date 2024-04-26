@@ -185,7 +185,7 @@ impl LocalDomain {
             }),
             meta: serde_json::Value::Null, // TODO: accept user meta?
         };
-        let mut records: BTreeMap<String, Row4> = BTreeMap::new();
+        let mut records: BTreeMap<PathBuf, Row4> = BTreeMap::new();
 
         let prefix_len = uri.key.len();
         let mut p = client
@@ -208,7 +208,7 @@ impl LocalDomain {
             }))
             .await?
             {
-                let name = attrs.key[prefix_len..].to_string();
+                let name = PathBuf::from(attrs.key[prefix_len..].to_string());
                 records.insert(
                     name.clone(),
                     Row4 {
@@ -304,7 +304,7 @@ impl InstalledPackage {
         Ok(status)
     }
 
-    pub async fn install_paths(&self, paths: &Vec<String>) -> Result<LineagePaths, Error> {
+    pub async fn install_paths(&self, paths: &Vec<PathBuf>) -> Result<LineagePaths, Error> {
         if paths.is_empty() {
             return Ok(BTreeMap::new());
         }
@@ -325,7 +325,7 @@ impl InstalledPackage {
         Ok(lineage.paths)
     }
 
-    pub async fn uninstall_paths(&self, paths: &Vec<String>) -> Result<LineagePaths, Error> {
+    pub async fn uninstall_paths(&self, paths: &Vec<PathBuf>) -> Result<LineagePaths, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
         let lineage = uninstall_paths(lineage, self.working_folder(), &self.storage, paths).await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;

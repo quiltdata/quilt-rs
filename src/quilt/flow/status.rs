@@ -79,20 +79,19 @@ pub struct PackageFileFingerprint {
     pub hash: Multihash<256>,
 }
 
-// FIXME: ChangeSet<__PathBuf__, ...>
 #[derive(Debug, PartialEq, Default)]
 pub struct InstalledPackageStatus {
     // current commit vs upstream state
     pub upstream_state: UpstreamDiscreteState,
     // file changes vs current commit
-    pub changes: ChangeSet<String, PackageFileFingerprint>, // FIXME: String -> PathBuf
-                                                            // XXX: meta?
+    pub changes: ChangeSet<PathBuf, PackageFileFingerprint>,
+    // XXX: meta?
 }
 
 impl InstalledPackageStatus {
     pub fn new(
         upstream: UpstreamState,
-        changes: ChangeSet<String, PackageFileFingerprint>,
+        changes: ChangeSet<PathBuf, PackageFileFingerprint>,
     ) -> Self {
         Self {
             upstream_state: UpstreamDiscreteState::from(&upstream),
@@ -131,7 +130,7 @@ pub async fn create_status(
     let mut orig_paths = HashMap::new();
     for path in lineage.paths.keys() {
         let row = table.get_row(path).ok_or(Error::ManifestPath(format!(
-            "path {} not found in installed manifest",
+            "path {:?} not found in installed manifest",
             path
         )))?;
         orig_paths.insert(PathBuf::from(path), (row.hash, row.size));
@@ -177,7 +176,7 @@ pub async fn create_status(
 
                     if file_hash != orig_hash {
                         changes.insert(
-                            relative_path.display().to_string(),
+                            relative_path.to_path_buf(),
                             Change {
                                 current: Some(PackageFileFingerprint {
                                     size: file_metadata.len(),
@@ -197,7 +196,7 @@ pub async fn create_status(
                     let file_hash =
                         Multihash::wrap(MULTIHASH_SHA256_CHUNKED, sha256_hash.as_ref())?;
                     changes.insert(
-                        relative_path.display().to_string(),
+                        relative_path.to_path_buf(),
                         Change {
                             current: Some(PackageFileFingerprint {
                                 size: file_metadata.len(),
@@ -209,14 +208,14 @@ pub async fn create_status(
                     );
                 }
             } else {
-                log::warn!("Unexpected file type: {}", file_path.display());
+                log::warn!("Unexpected file type: {:?}", file_path);
             }
         }
     }
 
     for (orig_path, (orig_hash, orig_size)) in orig_paths {
         changes.insert(
-            orig_path.display().to_string(),
+            orig_path.to_path_buf(),
             Change {
                 current: None,
                 previous: Some(PackageFileFingerprint {
@@ -317,8 +316,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_removed_files() -> Result<(), Error> {
-        let lineage = mocks::lineage::with_paths(&vec!["a/a"]);
-        let manifest = mocks::manifest::with_record_keys(vec!["a/a".to_string()]);
+        let lineage = mocks::lineage::with_paths(vec![PathBuf::from("a/a")]);
+        let manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("a/a")]);
         let (_, status) = create_status(
             lineage,
             &MockStorage::default(),
@@ -329,7 +328,7 @@ mod tests {
 
         // It's "removed", because it's present in lineage and manifest,
         // but absent from file system (FIXME)
-        let removed_file = status.changes.get("a/a").unwrap();
+        let removed_file = status.changes.get(&PathBuf::from("a/a")).unwrap();
         assert!(removed_file.current.is_none());
         assert!(removed_file.previous.is_some());
         Ok(())
@@ -345,7 +344,7 @@ mod tests {
         let file_path = PathBuf::from("inside/package/file.pq");
         storage
             .write_file(
-                working_dir.join(file_path),
+                working_dir.join(&file_path),
                 &std::fs::read(local_uri_parquet())?,
             )
             .await?;
@@ -353,7 +352,7 @@ mod tests {
         let (_, status) =
             create_status(lineage, &storage, &manifest, working_dir.to_path_buf()).await?;
 
-        let added_file = status.changes.get("inside/package/file.pq").unwrap();
+        let added_file = status.changes.get(&file_path).unwrap();
         assert!(added_file.previous.is_none());
         if let Some(current) = &added_file.current {
             assert_eq!(current.size, 5324);

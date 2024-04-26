@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -28,7 +29,7 @@ pub struct S3PackageUri {
     pub bucket: String,
     pub namespace: String,
     pub revision: RevisionPointer,
-    pub path: Option<String>,
+    pub path: Option<PathBuf>,
 }
 
 impl TryFrom<&str> for S3PackageUri {
@@ -63,7 +64,7 @@ impl TryFrom<&str> for S3PackageUri {
             None => (pkg_spec, RevisionPointer::default()),
         };
 
-        let path = params.remove("path");
+        let path = params.remove("path").map(PathBuf::from);
 
         if !params.is_empty() {
             return Err(Error::PackageURI(format!(
@@ -204,7 +205,7 @@ mod tests {
                 bucket: "bucket".to_string(),
                 namespace: "foo/bar".to_string(),
                 revision: RevisionPointer::Hash("latest".to_string()),
-                path: Some("read/me.md".to_string()),
+                path: Some(PathBuf::from("read/me.md")),
             }
         );
         Ok(())
@@ -219,7 +220,7 @@ mod tests {
                 bucket: "bucket".to_string(),
                 namespace: "foo/bar".to_string(),
                 revision: RevisionPointer::Tag("latest".to_string()),
-                path: Some("read/me.md".to_string()),
+                path: Some(PathBuf::from("read/me.md")),
             }
         );
         Ok(())

@@ -41,8 +41,8 @@ impl std::fmt::Display for Output {
                 .status
                 .changes
                 .iter()
-                .map(|(name, change)| StatusEntry {
-                    path: name.to_string(),
+                .map(|(path, change)| StatusEntry {
+                    path: path.display().to_string(),
                     status: match change.state {
                         DiscreteChange::Modified => "Modified".to_string(),
                         DiscreteChange::Added => "Added".to_string(),

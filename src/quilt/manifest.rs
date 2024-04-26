@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
@@ -78,7 +78,7 @@ impl TryInto<Multihash<256>> for ContentHash {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 struct Quilt3ManifestRow {
-    pub logical_key: String,
+    pub logical_key: PathBuf,
     pub physical_keys: Vec<String>,
     pub hash: ContentHash,
     // XXX: u64 cannot be safely deserialized by standard JS json parser,
@@ -108,7 +108,7 @@ impl From<ManifestRow> for Quilt3ManifestRow {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ManifestRow {
-    pub logical_key: String,
+    pub logical_key: PathBuf,
     // XXX: use Url to have validated string?
     pub physical_key: String,
     pub hash: ContentHash,
@@ -210,34 +210,34 @@ impl Manifest {
         buf
     }
 
-    pub fn find_path(&self, path: impl AsRef<str>) -> Option<usize> {
-        let path = path.as_ref();
-        self.rows
-            .binary_search_by(|row| row.logical_key.as_str().cmp(path))
-            .ok()
-    }
+    // pub fn find_path(&self, path: impl AsRef<str>) -> Option<usize> {
+    //     let path = path.as_ref();
+    //     self.rows
+    //         .binary_search_by(|row| row.logical_key.cmp(path))
+    //         .ok()
+    // }
 
-    pub fn get(&self, path: impl AsRef<str>) -> Option<&ManifestRow> {
-        let idx = self.find_path(path)?;
-        Some(&self.rows[idx])
-    }
+    // pub fn get(&self, path: impl AsRef<str>) -> Option<&ManifestRow> {
+    //     let idx = self.find_path(path)?;
+    //     Some(&self.rows[idx])
+    // }
 
-    pub fn get_mut(&mut self, path: impl AsRef<str>) -> Option<&mut ManifestRow> {
-        let idx = self.find_path(path)?;
-        Some(&mut self.rows[idx])
-    }
+    // pub fn get_mut(&mut self, path: impl AsRef<str>) -> Option<&mut ManifestRow> {
+    //     let idx = self.find_path(path)?;
+    //     Some(&mut self.rows[idx])
+    // }
 
-    pub fn has_path(&self, path: impl AsRef<str>) -> bool {
-        // TODO: handle directories
-        self.find_path(path).is_some()
-    }
+    // pub fn has_path(&self, path: impl AsRef<str>) -> bool {
+    //     // TODO: handle directories
+    //     self.find_path(path).is_some()
+    // }
 
-    pub fn rows_map(&self) -> BTreeMap<String, ManifestRow> {
-        self.rows
-            .iter()
-            .map(|row| (row.logical_key.clone(), row.to_owned()))
-            .collect()
-    }
+    // pub fn rows_map(&self) -> BTreeMap<String, ManifestRow> {
+    //     self.rows
+    //         .iter()
+    //         .map(|row| (row.logical_key.clone(), row.to_owned()))
+    //         .collect()
+    // }
 }
 
 impl From<&Table> for Manifest {
@@ -294,19 +294,22 @@ impl Default for Manifest {
 mod tests {
     use super::*;
 
+    use std::collections::BTreeMap;
+
+    use crate::quilt4::table::HEADER_ROW;
     use crate::Row4;
 
     #[test]
     fn test_equality_of_strictly_equal() {
         let left = ManifestRow {
-            logical_key: "A".to_string(),
+            logical_key: PathBuf::from("A"),
             physical_key: "B".to_string(),
             hash: ContentHash::SHA256("C".to_string()),
             size: 1,
             meta: None,
         };
         let right = ManifestRow {
-            logical_key: "A".to_string(),
+            logical_key: PathBuf::from("A"),
             physical_key: "B".to_string(),
             hash: ContentHash::SHA256("C".to_string()),
             size: 1,
@@ -320,14 +323,14 @@ mod tests {
         let mut meta = serde_json::Map::new();
         meta.insert("foo".to_string(), serde_json::json!("bar"));
         let left = ManifestRow {
-            logical_key: "A".to_string(),
+            logical_key: PathBuf::from("A"),
             physical_key: "FOO".to_string(),
             hash: ContentHash::SHA256("C".to_string()),
             size: 1,
             meta: Some(meta),
         };
         let right = ManifestRow {
-            logical_key: "A".to_string(),
+            logical_key: PathBuf::from("A"),
             physical_key: "BAR".to_string(),
             hash: ContentHash::SHA256("C".to_string()),
             size: 1,
@@ -360,17 +363,17 @@ mod tests {
 
         let table = Table {
             header: Row4 {
-                name: ".".to_string(),
-                place: "".to_string(),
+                name: HEADER_ROW.into(),
+                place: HEADER_ROW.into(),
                 size: 0,
                 hash: multihash::Multihash::default(),
                 info: serde_json::Value::Object(info),
                 meta: serde_json::Value::Object(user_meta.clone()),
             },
             records: BTreeMap::from([(
-                "foo/bar".to_string(),
+                PathBuf::from("foo/bar"),
                 Row4 {
-                    name: "foo/bar".to_string(),
+                    name: PathBuf::from("foo/bar"),
                     place: "s3://z/x/y?versionId=foo".to_string(),
                     size: 123,
                     hash: multihash::Multihash::wrap(0xb510, b"abcdef")?,
@@ -387,7 +390,7 @@ mod tests {
                 user_meta: Some(user_meta),
             },
             rows: vec![ManifestRow {
-                logical_key: "foo/bar".to_string(),
+                logical_key: PathBuf::from("foo/bar"),
                 physical_key: "s3://z/x/y?versionId=foo".to_string(),
                 hash: ContentHash::SHA256Chunked("YWJjZGVm".to_string()),
                 size: 123,

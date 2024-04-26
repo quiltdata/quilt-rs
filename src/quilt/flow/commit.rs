@@ -23,13 +23,13 @@ use crate::quilt4::table::Table;
 fn remove_entry(
     table: &mut Table,
     lineage: &mut PackageLineage,
-    logical_key: &str,
+    logical_key: &PathBuf,
     previous: PackageFileFingerprint,
 ) -> Result<(), Error> {
     let removed = table.remove_record(logical_key)?;
     if removed.size != previous.size || removed.hash != previous.hash {
         return Err(Error::Commit(format!(
-            "unexpected size or hash for removed {}",
+            "unexpected size or hash for removed {:?}",
             logical_key
         )));
     }
@@ -43,7 +43,7 @@ async fn modify_entry(
     working_dir: &Path,
     table: &mut Table,
     lineage: &mut PackageLineage,
-    logical_key: &str,
+    logical_key: &PathBuf,
     current: PackageFileFingerprint,
 ) -> Result<(), Error> {
     let objects_dir = paths.objects_dir();
@@ -57,9 +57,9 @@ async fn modify_entry(
     if table
         .records
         .insert(
-            logical_key.to_owned(),
+            logical_key.clone(),
             Row4 {
-                name: logical_key.to_owned(),
+                name: logical_key.clone(),
                 place: new_physical_key,
                 size: current.size,
                 hash: current.hash,
@@ -69,7 +69,7 @@ async fn modify_entry(
         )
         .is_some()
     {
-        return Err(Error::Commit(format!("cannot overwrite {}", logical_key)));
+        return Err(Error::Commit(format!("cannot overwrite {:?}", logical_key)));
     }
 
     let work_dest = working_dir.join(logical_key);
@@ -78,7 +78,7 @@ async fn modify_entry(
         storage.copy(&work_dest, object_dest).await?;
     }
     lineage.paths.insert(
-        logical_key.to_string(),
+        logical_key.clone(),
         PathState {
             timestamp: storage.modified_timestamp(&work_dest).await?,
             hash: current.hash,
@@ -251,7 +251,7 @@ mod tests {
         );
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
-                "foo".to_string(),
+                PathBuf::from("foo"),
                 Change {
                     previous: Some(mocks::status::package_file_fingerprint()),
                     current: None,
@@ -261,15 +261,15 @@ mod tests {
             ..InstalledPackageStatus::default()
         };
 
-        let lineage = mocks::lineage::with_paths(&vec!["foo"]);
-        let manifest = mocks::manifest::with_record_keys(vec!["foo".to_string()]);
+        let lineage = mocks::lineage::with_paths(vec![PathBuf::from("foo")]);
+        let manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("foo")]);
 
         assert!(
             lineage.commit.is_none(),
             "Initial lineage has commit already"
         );
         assert!(
-            lineage.paths.contains_key("foo"),
+            lineage.paths.contains_key(&PathBuf::from("foo")),
             "Initial lineage doesn't have testing path"
         );
 
@@ -288,7 +288,7 @@ mod tests {
 
         let hash = "56c329d2390c9c6efedb698f47b75f096112c89a7751d55a426507ec6c432897";
         assert!(
-            !lineage.paths.contains_key("foo"),
+            !lineage.paths.contains_key(&PathBuf::from("foo")),
             "Commited lineage still has a path, that should be clear after commit"
         );
         assert!(
@@ -312,7 +312,7 @@ mod tests {
 
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
-                "bar".to_string(),
+                PathBuf::from("bar"),
                 Change {
                     current: Some(mocks::status::package_file_fingerprint()),
                     previous: None,
@@ -323,14 +323,14 @@ mod tests {
         };
 
         let lineage = PackageLineage::default();
-        let manifest = mocks::manifest::with_record_keys(vec!["foo".to_string()]);
+        let manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("foo")]);
 
         assert!(
             lineage.commit.is_none(),
             "Initial lineage has commit already"
         );
         assert!(
-            !lineage.paths.contains_key("bar"),
+            !lineage.paths.contains_key(&PathBuf::from("bar")),
             "Initial lineage has path, but shouldn't because we test _new_ file"
         );
 
@@ -349,7 +349,7 @@ mod tests {
 
         let hash = "7065646573747269616e";
         assert!(
-            lineage.paths.contains_key("bar"),
+            lineage.paths.contains_key(&PathBuf::from("bar")),
             "Commited lineage doesn't have path, but should have. We added new file and it should be there."
         );
         assert!(
@@ -375,7 +375,7 @@ mod tests {
 
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
-                "foo".to_string(),
+                PathBuf::from("foo"),
                 Change {
                     current: Some(mocks::status::package_file_fingerprint()),
                     previous: None,
@@ -385,8 +385,8 @@ mod tests {
             ..InstalledPackageStatus::default()
         };
 
-        let lineage = mocks::lineage::with_paths(&vec!["foo"]);
-        let manifest = mocks::manifest::with_record_keys(vec!["foo".to_string()]);
+        let lineage = mocks::lineage::with_paths(vec![PathBuf::from("foo")]);
+        let manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("foo")]);
 
         let result = commit_package(
             lineage,
@@ -403,7 +403,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Commit error: cannot overwrite foo"
+            r#"Commit error: cannot overwrite "foo""#
         );
 
         Ok(())
@@ -419,7 +419,7 @@ mod tests {
 
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
-                "bar".to_string(),
+                PathBuf::from("bar"),
                 Change {
                     previous: Some(PackageFileFingerprint {
                         size: 0,
@@ -435,15 +435,15 @@ mod tests {
             ..InstalledPackageStatus::default()
         };
 
-        let lineage = mocks::lineage::with_paths(&vec!["bar"]);
-        let manifest = mocks::manifest::with_record_keys(vec!["bar".to_string()]);
+        let lineage = mocks::lineage::with_paths(vec![PathBuf::from("bar")]);
+        let manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("bar")]);
 
         assert!(
             lineage.commit.is_none(),
             "Initial lineage has commit already"
         );
         assert!(
-            lineage.paths.contains_key("bar"),
+            lineage.paths.contains_key(&PathBuf::from("bar")),
             "Initial lineage doesn't have path, but should because we test installed and modified file"
         );
 
@@ -462,7 +462,7 @@ mod tests {
 
         let hash = "77616c6b6572";
         assert!(
-            lineage.paths.contains_key("bar"),
+            lineage.paths.contains_key(&PathBuf::from("bar")),
             "Commited lineage doesn't have path, but should have. We added new file and it should be there."
         );
         assert!(

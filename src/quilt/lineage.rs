@@ -53,7 +53,7 @@ fn str_to_multihash<'de, D: Deserializer<'de>>(
 /// A map of paths to their state
 ///
 /// The key is the name of the path, and the value is the state of the path
-pub type LineagePaths = BTreeMap<String, PathState>;
+pub type LineagePaths = BTreeMap<PathBuf, PathState>;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct PackageLineage {

@@ -4,9 +4,10 @@
 //! Row4 is the native entry format for quilt4.
 //! It provides methods to decode/encode quilt3's JSONL format
 //!
+use std::fmt;
+use std::path::PathBuf;
 
 use multihash::Multihash;
-use std::fmt;
 
 use crate::quilt::manifest::Manifest;
 use crate::quilt4::row3::Row3;
@@ -14,7 +15,7 @@ use crate::quilt4::table::HEADER_ROW;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row4 {
-    pub name: String,
+    pub name: PathBuf,
     // scheme: Enum<file,s3,https>
     pub place: String,
     pub size: u64,
@@ -37,7 +38,7 @@ impl Row4 {
 
 impl fmt::Display for Row4 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let result = format!("Row4({})", self.name)
+        let result = format!("Row4({})", self.name.display())
             + &format!("@{}", self.place)
             + &format!("^{:?}", self.size)
             + &format!("#{:?}", self.hash.digest())
@@ -86,7 +87,7 @@ mod tests {
     #[test]
     fn test_formatting_without_path() -> Result<(), multihash::Error> {
         let row = Row4 {
-            name: "Foo".to_string(),
+            name: PathBuf::from("Foo"),
             place: "Bar".to_string(),
             size: 123,
             hash: Multihash::wrap(345, b"hello world")?,

@@ -21,6 +21,7 @@ pub mod manifest {
     use super::row_hash_sample1;
 
     use std::collections::BTreeMap;
+    use std::path::PathBuf;
 
     use crate::quilt::manifest_handle::ReadableManifest;
     use crate::quilt::storage::Storage;
@@ -28,7 +29,7 @@ pub mod manifest {
     use crate::Row4;
     use crate::Table;
 
-    pub fn row4_with_name(name: String) -> Row4 {
+    pub fn row4_with_name(name: PathBuf) -> Row4 {
         Row4 {
             name,
             place: "file:///z/x/y".to_string(),
@@ -47,15 +48,15 @@ pub mod manifest {
         InMemoryManifest {}
     }
 
-    pub fn with_record_keys(keys: Vec<String>) -> impl ReadableManifest {
+    pub fn with_record_keys(keys: Vec<PathBuf>) -> impl ReadableManifest {
         struct InMemoryManifest {
-            keys: Vec<String>,
+            keys: Vec<PathBuf>,
         }
         impl ReadableManifest for InMemoryManifest {
             async fn read(&self, _storage: &impl Storage) -> Result<Table, Error> {
                 let mut records = BTreeMap::new();
                 for key in &self.keys {
-                    records.insert(key.to_string(), row4_with_name(key.to_string()));
+                    records.insert(key.clone(), row4_with_name(key.clone()));
                 }
                 Ok(Table {
                     records,
@@ -74,7 +75,7 @@ pub mod manifest {
             async fn read(&self, _storage: &impl Storage) -> Result<Table, Error> {
                 let mut records = BTreeMap::new();
                 for row in &self.rows {
-                    records.insert(row.name.to_string(), row.clone());
+                    records.insert(row.name.clone(), row.clone());
                 }
                 Ok(Table {
                     records,
