@@ -73,7 +73,7 @@ fn get_entries(
 ) -> Vec<std::path::PathBuf> {
     let mut paths = Vec::new();
     if let Some(logical_key) = uri_path {
-        paths.push(root.to_path_buf().join(&logical_key));
+        paths.push(root.to_path_buf().join(logical_key));
     }
     if arg_paths.is_some() {
         let logical_keys = arg_paths.unwrap();
