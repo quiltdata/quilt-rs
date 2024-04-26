@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use super::{CommitState, LineagePaths, PackageLineage};
 use crate::quilt::lineage::PathState;
@@ -21,15 +22,15 @@ fn commit_state_with_hash(hash: &str) -> Option<CommitState> {
     })
 }
 
-fn lineage_paths(keys: &Vec<&str>) -> LineagePaths {
+fn lineage_paths(keys: Vec<PathBuf>) -> LineagePaths {
     let mut paths = BTreeMap::new();
     for key in keys {
-        paths.insert(key.to_string(), path_state());
+        paths.insert(key, path_state());
     }
     paths
 }
 
-pub fn with_paths(keys: &Vec<&str>) -> PackageLineage {
+pub fn with_paths(keys: Vec<PathBuf>) -> PackageLineage {
     PackageLineage {
         paths: lineage_paths(keys),
         ..PackageLineage::default()

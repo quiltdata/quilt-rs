@@ -61,22 +61,17 @@ async fn install_package(
 
 async fn install_paths(
     installed_package: &quilt_rs::InstalledPackage,
-    paths: Vec<String>,
-) -> Result<Vec<String>, Error> {
-    installed_package.install_paths(&paths).await?;
-    Ok(paths)
-}
-
-struct Entries {
-    paths: Option<Vec<std::path::PathBuf>>,
-    keys: Option<Vec<String>>,
+    paths: &Vec<PathBuf>,
+) -> Result<(), Error> {
+    installed_package.install_paths(paths).await?;
+    Ok(())
 }
 
 fn get_entries(
     root: &std::path::Path,
     uri_path: Option<String>,
     arg_paths: Option<Vec<PathBuf>>,
-) -> Entries {
+) -> Option<Vec<std::path::PathBuf>> {
     let mut keys = Vec::new();
     let mut paths = Vec::new();
     if uri_path.is_some() {
@@ -91,9 +86,10 @@ fn get_entries(
             paths.push(root.to_path_buf().join(logical_key));
         }
     }
-    Entries {
-        paths: if paths.is_empty() { None } else { Some(paths) },
-        keys: if keys.is_empty() { None } else { Some(keys) },
+    if paths.is_empty() {
+        None
+    } else {
+        Some(paths)
     }
 }
 
@@ -108,10 +104,10 @@ pub async fn model(
     let uri: quilt_rs::S3PackageUri = uri.parse()?;
     let installed_package = install_package(local_domain, &uri, namespace).await?;
     let package_dir = installed_package.working_folder();
-    let Entries { keys, paths } = get_entries(&package_dir, uri.path, paths);
+    let paths = get_entries(&package_dir, uri.path, paths);
 
-    if let Some(keys) = keys {
-        install_paths(&installed_package, keys).await?;
+    if let Some(paths) = &paths {
+        install_paths(&installed_package, paths).await?;
     }
 
     Ok(Output {

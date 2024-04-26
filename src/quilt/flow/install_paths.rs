@@ -48,7 +48,7 @@ pub async fn install_paths(
     namespace: String,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    entries_paths: &Vec<String>,
+    entries_paths: &Vec<PathBuf>,
 ) -> Result<PackageLineage, Error> {
     if entries_paths.is_empty() {
         return Ok(lineage);
@@ -58,7 +58,7 @@ pub async fn install_paths(
 
     // TODO: what happens if paths are already installed? Ignore, or error?
     // Fail early if path is already installed
-    if !HashSet::<String, RandomState>::from_iter(lineage.paths.keys().cloned())
+    if !HashSet::<PathBuf, RandomState>::from_iter(lineage.paths.keys().cloned())
         .is_disjoint(&HashSet::from_iter(entries_paths.to_owned()))
     {
         return Err(Error::InstallPath(
@@ -85,7 +85,7 @@ pub async fn install_paths(
         let row = table
             .records
             .get_mut(path)
-            .ok_or(Error::Table(format!("path {} not found", path)))?;
+            .ok_or(Error::Table(format!("path {:?} not found", path)))?;
 
         let object_dest = paths.object(row.hash.digest());
 
@@ -151,7 +151,7 @@ mod tests {
             .await?;
 
         let lineage = mocks::lineage::with_commit_hash("fghijk");
-        let entries_paths = vec!["a/a".to_string()];
+        let entries_paths = vec![PathBuf::from("a/a")];
         let manifest = mocks::manifest::with_record_keys(entries_paths.clone());
 
         assert!(lineage.paths.is_empty());
@@ -166,7 +166,7 @@ mod tests {
             &entries_paths,
         )
         .await?;
-        assert!(lineage.paths.contains_key("a/a"));
+        assert!(lineage.paths.contains_key(&PathBuf::from("a/a")));
         assert!(
             storage
                 .exists(&working_dir.path().join(PathBuf::from("a/a")))
@@ -187,9 +187,9 @@ mod tests {
         let remote = MockRemote::default();
         let storage = MockStorage::default();
         let lineage = mocks::lineage::with_commit_hash("fghijk");
-        let entries_paths = vec!["a/a".to_string()];
+        let entries_paths = vec![PathBuf::from("a/a")];
         let manifest = mocks::manifest::with_rows(vec![Row4 {
-            name: "a/a".to_string(),
+            name: PathBuf::from("a/a"),
             hash: mocks::row_hash_sample1(),
             place: "s3://any/any/any/any/any.md".to_string(),
             ..Row4::default()
@@ -210,7 +210,7 @@ mod tests {
             &entries_paths,
         )
         .await?;
-        assert!(lineage.paths.contains_key("a/a"));
+        assert!(lineage.paths.contains_key(&PathBuf::from("a/a")));
         assert!(
             storage
                 .exists(&working_dir.path().join(PathBuf::from("a/a")))
@@ -227,8 +227,8 @@ mod tests {
         let lineage = mocks::lineage::with_commit_hash("fghijk");
         let remote = MockRemote::default();
         let storage = MockStorage::default();
-        let entries_paths = vec!["z/z".to_string()];
-        let manifest = mocks::manifest::with_record_keys(vec!["a/a".to_string()]);
+        let entries_paths = vec![PathBuf::from("z/z")];
+        let manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("a/a")]);
 
         assert!(lineage.paths.is_empty());
         let lineage = install_paths(
@@ -244,7 +244,7 @@ mod tests {
         .await;
         assert_eq!(
             lineage.unwrap_err().to_string(),
-            "Table error: path z/z not found".to_string()
+            r#"Table error: path "z/z" not found"#
         );
         Ok(())
     }

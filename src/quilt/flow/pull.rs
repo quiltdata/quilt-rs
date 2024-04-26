@@ -39,7 +39,7 @@ pub async fn pull_package(
 
     // TODO: What should we do about installed paths?
     // They may or may not exist in the updated package.
-    let installed_paths: Vec<String> = lineage.paths.keys().cloned().collect();
+    let installed_paths: Vec<PathBuf> = lineage.paths.keys().cloned().collect();
     let mut lineage =
         uninstall_paths(lineage, working_dir.clone(), storage, &installed_paths).await?;
 
@@ -93,7 +93,7 @@ mod tests {
     #[tokio::test]
     async fn test_no_pull_if_changes() -> Result<(), Error> {
         let storage = MockStorage::default();
-        let lineage = mocks::lineage::with_paths(&vec!["a/a"]);
+        let lineage = mocks::lineage::with_paths(vec![PathBuf::from("a/a")]);
 
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
@@ -108,7 +108,7 @@ mod tests {
         };
         let error = pull_package(
             lineage,
-            &mocks::manifest::with_record_keys(vec!["a/a".to_string()]),
+            &mocks::manifest::with_record_keys(vec![PathBuf::from("a/a")]),
             &DomainPaths::default(),
             &storage,
             PathBuf::default(),

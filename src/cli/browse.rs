@@ -35,7 +35,7 @@ impl std::fmt::Display for Output {
         output.push(header_table.to_string());
 
         let entries = self.manifest.records.values().map(|e| RemoteManifestEntry {
-            name: e.name.to_string(),
+            name: e.name.display().to_string(),
             place: e.place.to_string(),
             size: e.size,
         });
@@ -88,11 +88,21 @@ mod tests {
             })
         );
         assert_eq!(
-            output.manifest.records.get("READ ME.md").unwrap().place,
+            output
+                .manifest
+                .records
+                .get(&PathBuf::from("READ ME.md"))
+                .unwrap()
+                .place,
             "s3://udp-spec/spec/quiltcore/READ%20ME.md?versionId=.l3tAGbfEBC4c.L2ywTpWbnweSpYLe8a"
         );
         assert_eq!(
-            output.manifest.records.get("timestamp.txt").unwrap().place,
+            output
+                .manifest
+                .records
+                .get(&PathBuf::from("timestamp.txt"))
+                .unwrap()
+                .place,
             "s3://udp-spec/spec/quiltcore/timestamp.txt?versionId=lifktjQgrgewg1FGXxls3UKtJSjl2shy"
         );
         Ok(())

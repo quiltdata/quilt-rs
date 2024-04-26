@@ -79,7 +79,7 @@ fn serialize_row_entry(row: &Row4) -> serde_json::Value {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Table {
     pub header: Row4,
-    pub records: BTreeMap<String, Row4>, // FIXME: PathBuf
+    pub records: BTreeMap<PathBuf, Row4>,
 }
 
 impl Table {
@@ -186,7 +186,10 @@ impl Table {
         let batch = RecordBatch::try_new(
             schema,
             vec![
-                Arc::new(GenericByteArray::<Utf8Type>::from(vec![row.name.as_str()])),
+                Arc::new(GenericByteArray::<Utf8Type>::from(vec![row
+                    .name
+                    .display()
+                    .to_string()])),
                 Arc::new(GenericByteArray::<Utf8Type>::from(vec![row.place.as_str()])),
                 Arc::new(UInt64Array::from(vec![row.size])),
                 Arc::new(GenericByteArray::<BinaryType>::from(vec![hash])),
@@ -233,7 +236,7 @@ impl Table {
     }
 
     // Get a row from the table
-    pub fn get_row(&self, name: &str) -> Option<&Row4> {
+    pub fn get_row(&self, name: &PathBuf) -> Option<&Row4> {
         self.records.get(name)
     }
 
@@ -265,10 +268,10 @@ impl Table {
         hex::encode(hasher.finalize())
     }
 
-    pub fn remove_record(&mut self, key: &str) -> Result<Row4, Error> {
+    pub fn remove_record(&mut self, path: &PathBuf) -> Result<Row4, Error> {
         self.records
-            .remove(key)
-            .ok_or(Error::Table(format!("Cannot remove {}", key)))
+            .remove(path)
+            .ok_or(Error::Table(format!("Cannot remove {:?}", path)))
     }
 }
 
@@ -328,7 +331,7 @@ mod tests {
         let header = table.get_header();
         assert_eq!(header.size, 0);
 
-        let readme = table.get_row("READ ME.md").unwrap();
+        let readme = table.get_row(&PathBuf::from("READ ME.md")).unwrap();
         assert_eq!(readme.size, 33);
 
         Ok(())
@@ -358,7 +361,7 @@ mod tests {
     fn test_formatting_no_records() -> Result<(), multihash::Error> {
         let table = Table {
             header: Row4 {
-                name: "Foo".to_string(),
+                name: PathBuf::from("Foo"),
                 place: "Bar".to_string(),
                 size: 123,
                 hash: Multihash::wrap(345, b"hello world")?,
@@ -375,7 +378,7 @@ mod tests {
     fn test_formatting_records() -> Result<(), multihash::Error> {
         let table = Table {
             header: Row4 {
-                name: "Foo".to_string(),
+                name: PathBuf::from("Foo"),
                 place: "Bar".to_string(),
                 size: 123,
                 hash: Multihash::wrap(345, b"hello world")?,
@@ -384,9 +387,9 @@ mod tests {
             },
             records: BTreeMap::from([
                 (
-                    "one".to_string(),
+                    PathBuf::from("one"),
                     Row4 {
-                        name: "AA".to_string(),
+                        name: PathBuf::from("AA"),
                         place: "AB".to_string(),
                         size: 100,
                         hash: Multihash::wrap(100, b"A")?,
@@ -395,9 +398,9 @@ mod tests {
                     },
                 ),
                 (
-                    "two".to_string(),
+                    PathBuf::from("two"),
                     Row4 {
-                        name: "BA".to_string(),
+                        name: PathBuf::from("BA"),
                         place: "BB".to_string(),
                         size: 200,
                         hash: Multihash::wrap(200, b"B")?,
@@ -425,9 +428,9 @@ mod tests {
                 ..Row4::default()
             },
             records: BTreeMap::from([(
-                "test.md".to_string(),
+                PathBuf::from("test.md"),
                 Row4 {
-                    name: "test.md".to_string(),
+                    name: PathBuf::from("test.md"),
                     place: "doesn't matter".to_string(),
                     size: 3568,
                     hash: ContentHash::SHA256Chunked(

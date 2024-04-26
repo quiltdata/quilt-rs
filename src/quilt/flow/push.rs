@@ -54,10 +54,10 @@ pub async fn push_package(
         let local_url = Url::parse(&row.place)?;
         let file_path: PathBuf = local_url.to_file_path().unwrap();
 
-        let s3_key = format!("{}/{}", namespace, row.name);
+        let s3_key = format!("{}/{}", namespace, row.name.display());
         let s3_uri = S3Uri {
             bucket: remote_manifest_address.bucket.to_string(),
-            key: format!("{}/{}", namespace, row.name),
+            key: format!("{}/{}", namespace, row.name.display()),
             version: None,
         };
         log::debug!("Uploading to S3: {}", s3_uri);
@@ -260,7 +260,7 @@ mod tests {
         tokio::fs::copy(local_uri_parquet_checksummed(), &file_path).await?;
 
         let manifest = mocks::manifest::with_rows(vec![Row4 {
-            name: "bar".to_string(),
+            name: PathBuf::from("bar"),
             place: format!("file://{}", file_path.display()),
             ..Row4::default()
         }]);

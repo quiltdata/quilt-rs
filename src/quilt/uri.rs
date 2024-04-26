@@ -28,7 +28,7 @@ pub struct S3PackageUri {
     pub bucket: String,
     pub namespace: String,
     pub revision: RevisionPointer,
-    pub path: Option<String>,
+    pub path: Option<String>, // FIXME: PathBuf
 }
 
 impl TryFrom<&str> for S3PackageUri {

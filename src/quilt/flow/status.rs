@@ -130,7 +130,7 @@ pub async fn create_status(
     let mut orig_paths = HashMap::new();
     for path in lineage.paths.keys() {
         let row = table.get_row(path).ok_or(Error::ManifestPath(format!(
-            "path {} not found in installed manifest",
+            "path {:?} not found in installed manifest",
             path
         )))?;
         orig_paths.insert(PathBuf::from(path), (row.hash, row.size));
@@ -316,8 +316,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_removed_files() -> Result<(), Error> {
-        let lineage = mocks::lineage::with_paths(&vec!["a/a"]);
-        let manifest = mocks::manifest::with_record_keys(vec!["a/a".to_string()]);
+        let lineage = mocks::lineage::with_paths(vec![PathBuf::from("a/a")]);
+        let manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("a/a")]);
         let (_, status) = create_status(
             lineage,
             &MockStorage::default(),
