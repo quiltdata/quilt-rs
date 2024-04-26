@@ -208,7 +208,7 @@ pub async fn create_status(
                     );
                 }
             } else {
-                log::warn!("Unexpected file type: {}", file_path.display());
+                log::warn!("Unexpected file type: {:?}", file_path);
             }
         }
     }
