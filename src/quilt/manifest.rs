@@ -108,7 +108,7 @@ impl From<ManifestRow> for Quilt3ManifestRow {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ManifestRow {
-    pub logical_key: String,
+    pub logical_key: String, // FIXME: PathBuf
     // XXX: use Url to have validated string?
     pub physical_key: String,
     pub hash: ContentHash,

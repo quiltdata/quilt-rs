@@ -79,7 +79,7 @@ fn serialize_row_entry(row: &Row4) -> serde_json::Value {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Table {
     pub header: Row4,
-    pub records: BTreeMap<String, Row4>,
+    pub records: BTreeMap<String, Row4>, // FIXME: PathBuf
 }
 
 impl Table {

@@ -145,7 +145,12 @@ pub async fn commit_package(
     ) in status.changes
     {
         if let Some(previous) = previous {
-            remove_entry(&mut table, &mut lineage, &logical_key, previous)?;
+            remove_entry(
+                &mut table,
+                &mut lineage,
+                &logical_key.display().to_string(),
+                previous,
+            )?;
         }
         if let Some(current) = current {
             modify_entry(
@@ -154,7 +159,7 @@ pub async fn commit_package(
                 &working_dir,
                 &mut table,
                 &mut lineage,
-                &logical_key,
+                &logical_key.display().to_string(),
                 current,
             )
             .await?;
@@ -251,7 +256,7 @@ mod tests {
         );
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
-                "foo".to_string(),
+                PathBuf::from("foo"),
                 Change {
                     previous: Some(mocks::status::package_file_fingerprint()),
                     current: None,
@@ -312,7 +317,7 @@ mod tests {
 
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
-                "bar".to_string(),
+                PathBuf::from("bar"),
                 Change {
                     current: Some(mocks::status::package_file_fingerprint()),
                     previous: None,
@@ -375,7 +380,7 @@ mod tests {
 
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
-                "foo".to_string(),
+                PathBuf::from("foo"),
                 Change {
                     current: Some(mocks::status::package_file_fingerprint()),
                     previous: None,
@@ -419,7 +424,7 @@ mod tests {
 
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
-                "bar".to_string(),
+                PathBuf::from("bar"),
                 Change {
                     previous: Some(PackageFileFingerprint {
                         size: 0,

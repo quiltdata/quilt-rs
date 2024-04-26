@@ -18,7 +18,7 @@ pub struct Output {
 
 #[derive(tabled::Tabled)]
 struct StatusEntry {
-    path: String,
+    path: String, // TODO: PathBuf
     status: String,
 }
 
@@ -42,7 +42,7 @@ impl std::fmt::Display for Output {
                 .changes
                 .iter()
                 .map(|(name, change)| StatusEntry {
-                    path: name.to_string(),
+                    path: name.display().to_string(),
                     status: match change.state {
                         DiscreteChange::Modified => "Modified".to_string(),
                         DiscreteChange::Added => "Added".to_string(),

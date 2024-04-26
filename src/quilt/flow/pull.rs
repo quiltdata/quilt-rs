@@ -97,7 +97,7 @@ mod tests {
 
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
-                "foo".to_string(),
+                PathBuf::from("foo"),
                 Change {
                     previous: None,
                     current: None,
