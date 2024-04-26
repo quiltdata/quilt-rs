@@ -508,7 +508,7 @@ mod tests {
         // downloads manifest for latest revision into an editable working copy
         // creates install folder and Lineages it to remote_package_uri
 
-        let paths = vec![PathBuf::from(test_uri.path.unwrap())];
+        let paths = vec![test_uri.path.unwrap()];
         let installed_package = block_on(local_domain.install_package(&remote_manifest))
             .expect("Failed to install package");
         block_on(installed_package.install_paths(&paths)).expect("Failed to install paths");
