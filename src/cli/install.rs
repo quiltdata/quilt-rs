@@ -15,7 +15,7 @@ pub struct Input {
 pub struct Output {
     installed_package: quilt_rs::InstalledPackage,
     package_dir: std::path::PathBuf,
-    paths: Option<Vec<std::path::PathBuf>>,
+    paths: Vec<std::path::PathBuf>,
 }
 
 impl std::fmt::Display for Output {
@@ -24,13 +24,12 @@ impl std::fmt::Display for Output {
             "Package {:?} installed to {:?}",
             self.installed_package, self.package_dir,
         )];
-        match &self.paths {
-            Some(paths) => {
-                for path in paths {
-                    output.push(format!("Path: {:?}", path));
-                }
+        if self.paths.is_empty() {
+            output.push("No paths installed".to_string())
+        } else {
+            for path in &self.paths {
+                output.push(format!("Path: {:?}", path));
             }
-            None => output.push("No paths installed".to_string()),
         }
         write!(f, "{}", output.join("\n"))
     }
@@ -71,25 +70,18 @@ fn get_entries(
     root: &std::path::Path,
     uri_path: Option<PathBuf>,
     arg_paths: Option<Vec<PathBuf>>,
-) -> Option<Vec<std::path::PathBuf>> {
-    let mut keys = Vec::new();
+) -> Vec<std::path::PathBuf> {
     let mut paths = Vec::new();
     if let Some(logical_key) = uri_path {
         paths.push(root.to_path_buf().join(&logical_key));
-        keys.push(logical_key);
     }
     if arg_paths.is_some() {
         let logical_keys = arg_paths.unwrap();
         for logical_key in logical_keys {
-            keys.push(logical_key.clone());
             paths.push(root.to_path_buf().join(logical_key));
         }
     }
-    if paths.is_empty() {
-        None
-    } else {
-        Some(paths)
-    }
+    paths
 }
 
 pub async fn model(
@@ -105,8 +97,8 @@ pub async fn model(
     let package_dir = installed_package.working_folder();
     let paths = get_entries(&package_dir, uri.path, paths);
 
-    if let Some(paths) = &paths {
-        install_paths(&installed_package, paths).await?;
+    if !paths.is_empty() {
+        install_paths(&installed_package, &paths).await?;
     }
 
     Ok(Output {
