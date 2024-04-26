@@ -361,11 +361,15 @@ mod tests {
             let hash_str: ContentHash = hash.try_into()?;
             assert_eq!(
                 hash_str,
-                ContentHash::SHA256("EfrtXWeClWPJ/IVKjQeAmMKhJV45/GcpjDm1IhvhJAY=".to_string())
+                ContentHash::SHA256Chunked(
+                    "EfrtXWeClWPJ/IVKjQeAmMKhJV45/GcpjDm1IhvhJAY=".to_string()
+                )
             );
             Ok(())
         } else {
             panic!()
         }
     }
+
+    // TODO: add tests for every type of chunksum
 }
