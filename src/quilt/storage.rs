@@ -4,6 +4,7 @@ use std::path::Path;
 use aws_sdk_s3::primitives::ByteStream;
 use chrono::DateTime;
 use chrono::Utc;
+use tokio::fs::{File, ReadDir};
 
 use crate::Error;
 
@@ -63,12 +64,14 @@ pub trait Storage {
     fn open_file(
         &self,
         path: impl AsRef<Path> + Send,
-    ) -> impl Future<Output = Result<tokio::fs::File, Error>> + Send;
+    ) -> impl Future<Output = Result<File, Error>> + Send;
 
-    fn create_file(
+    fn create_file(&self, path: impl AsRef<Path>) -> impl Future<Output = Result<File, Error>>;
+
+    fn read_dir(
         &self,
-        path: impl AsRef<Path>,
-    ) -> impl Future<Output = Result<tokio::fs::File, Error>>;
+        path: impl AsRef<Path> + Send + Sync,
+    ) -> impl Future<Output = Result<ReadDir, Error>> + Send + Sync;
 
     fn read_file(
         &self,
@@ -79,4 +82,10 @@ pub trait Storage {
         &self,
         path: impl AsRef<Path> + Send + Sync,
     ) -> impl Future<Output = Result<ByteStream, Error>> + Send + Sync;
+
+    fn write_byte_stream(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        body: ByteStream,
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
 }

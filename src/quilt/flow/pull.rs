@@ -48,6 +48,7 @@ pub async fn pull_package(
     lineage.remote.hash = lineage.latest_hash.clone();
     lineage.base_hash = lineage.latest_hash.clone();
 
+    // FIXME: pass from outside
     let remote = s3_utils::RemoteS3::new();
     cache_remote_manifest(paths, storage, &remote, &lineage.remote).await?;
     copy_cached_to_installed(
@@ -71,6 +72,7 @@ pub async fn pull_package(
         working_dir,
         namespace,
         storage,
+        &remote,
         &paths_to_install,
     )
     .await

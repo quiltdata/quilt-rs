@@ -5,8 +5,7 @@ use std::path::PathBuf;
 
 use multihash::Multihash;
 use serde::Serialize;
-use tokio::fs::read_dir;
-use tokio::fs::File;
+
 use tracing::log;
 
 use crate::quilt::lineage::PackageLineage;
@@ -80,6 +79,7 @@ pub struct PackageFileFingerprint {
     pub hash: Multihash<256>,
 }
 
+// FIXME: ChangeSet<__PathBuf__, ...>
 #[derive(Debug, PartialEq, Default)]
 pub struct InstalledPackageStatus {
     // current commit vs upstream state
@@ -143,7 +143,7 @@ pub async fn create_status(
     let mut changes = ChangeSet::new();
 
     while let Some(dir) = queue.pop_front() {
-        let mut dir_entries = match read_dir(&dir).await {
+        let mut dir_entries = match storage.read_dir(&dir).await {
             Ok(dir_entries) => dir_entries,
             Err(err) => {
                 log::error!("Failed to read directory {:?}: {}", dir, err);
@@ -158,7 +158,7 @@ pub async fn create_status(
             if file_type.is_dir() {
                 queue.push_back(file_path);
             } else if file_type.is_file() {
-                let file = File::open(&file_path).await?;
+                let file = storage.open_file(&file_path).await?;
                 let file_metadata = file.metadata().await?;
 
                 let relative_path = file_path.strip_prefix(&working_dir).unwrap();
@@ -237,8 +237,10 @@ mod tests {
     use super::*;
 
     use crate::quilt::lineage::CommitState;
+    use crate::quilt::manifest::ContentHash;
     use crate::quilt::mocks;
     use crate::quilt::storage::mock_storage::MockStorage;
+    use crate::utils::local_uri_parquet;
 
     #[tokio::test]
     async fn test_default_status() -> Result<(), Error> {
@@ -332,4 +334,42 @@ mod tests {
         assert!(removed_file.previous.is_some());
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_added_files() -> Result<(), Error> {
+        let lineage = PackageLineage::default();
+        let manifest = mocks::manifest::default();
+
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join(PathBuf::from("foo/bar"));
+        let file_path = PathBuf::from("inside/package/file.pq");
+        storage
+            .write_file(
+                working_dir.join(file_path),
+                &std::fs::read(local_uri_parquet())?,
+            )
+            .await?;
+
+        let (_, status) =
+            create_status(lineage, &storage, &manifest, working_dir.to_path_buf()).await?;
+
+        let added_file = status.changes.get("inside/package/file.pq").unwrap();
+        assert!(added_file.previous.is_none());
+        if let Some(current) = &added_file.current {
+            assert_eq!(current.size, 5324);
+            let hash = current.hash;
+            let hash_str: ContentHash = hash.try_into()?;
+            assert_eq!(
+                hash_str,
+                ContentHash::SHA256Chunked(
+                    "EfrtXWeClWPJ/IVKjQeAmMKhJV45/GcpjDm1IhvhJAY=".to_string()
+                )
+            );
+            Ok(())
+        } else {
+            panic!()
+        }
+    }
+
+    // TODO: add tests for every type of chunksum
 }

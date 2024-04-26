@@ -14,6 +14,8 @@ pub mod mock_remote;
 pub trait Remote {
     async fn get_object(&self, s3_uri: &S3Uri) -> Result<impl AsyncRead + Send + Unpin, Error>;
 
+    async fn get_object_stream(&self, s3_uri: &S3Uri) -> Result<ByteStream, Error>;
+
     async fn exists(&self, s3_uri: &S3Uri) -> Result<bool, Error>;
 
     async fn put_object(

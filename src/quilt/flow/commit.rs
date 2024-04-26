@@ -423,7 +423,7 @@ mod tests {
                 Change {
                     previous: Some(PackageFileFingerprint {
                         size: 0,
-                        hash: multihash::Multihash::wrap(0xb510, b"pedestrian")?,
+                        hash: mocks::row_hash_sample1(),
                     }),
                     current: Some(PackageFileFingerprint {
                         size: 0,

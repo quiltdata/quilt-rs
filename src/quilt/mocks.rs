@@ -1,22 +1,26 @@
 pub use crate::quilt::lineage::mocks as lineage;
 
+pub fn row_hash_sample1() -> multihash::Multihash<256> {
+    multihash::Multihash::wrap(0xb510, b"pedestrian").expect("Unexpected")
+}
+
 pub mod status {
-    use multihash::Multihash;
+    use super::row_hash_sample1;
 
     use crate::quilt::flow::status::PackageFileFingerprint;
 
     pub fn package_file_fingerprint() -> PackageFileFingerprint {
         PackageFileFingerprint {
             size: 0,
-            hash: Multihash::wrap(0xb510, b"pedestrian").unwrap(),
+            hash: row_hash_sample1(),
         }
     }
 }
 
 pub mod manifest {
-    use std::collections::BTreeMap;
+    use super::row_hash_sample1;
 
-    use multihash::Multihash;
+    use std::collections::BTreeMap;
 
     use crate::quilt::manifest_handle::ReadableManifest;
     use crate::quilt::storage::Storage;
@@ -28,7 +32,7 @@ pub mod manifest {
         Row4 {
             name,
             place: "file:///z/x/y".to_string(),
-            hash: Multihash::wrap(0xb510, b"pedestrian").unwrap(),
+            hash: row_hash_sample1(),
             ..Row4::default()
         }
     }
