@@ -22,10 +22,10 @@ use model::Model;
 use output::print;
 
 fn parse_optional_namespace(namespace: Option<String>) -> Result<Option<Namespace>, Error> {
-    match namespace {
-        Some(namespace) => Ok(Some(namespace.try_into()?)),
-        None => Ok(None),
-    }
+    Ok(match namespace {
+        Some(namespace) => Some(namespace.try_into()?),
+        None => None,
+    })
 }
 
 #[derive(Parser)]
