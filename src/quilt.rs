@@ -42,6 +42,7 @@ pub use manifest_handle::RemoteManifest;
 pub use storage::fs;
 pub use storage::s3;
 pub use storage::Storage;
+pub use uri::Namespace;
 pub use uri::RevisionPointer;
 pub use uri::S3PackageUri;
 
@@ -89,7 +90,7 @@ impl LocalDomain {
         browse_remote_manifest(&self.paths, &self.storage, &self.remote, remote_manifest).await
     }
 
-    pub fn create_installed_package(&self, namespace: String) -> InstalledPackage {
+    pub fn create_installed_package(&self, namespace: Namespace) -> InstalledPackage {
         InstalledPackage {
             lineage: self.lineage.create_package_lineage(namespace.clone()),
             namespace: namespace.clone(),
@@ -118,7 +119,7 @@ impl LocalDomain {
         Ok(self.create_installed_package(remote_manifest.namespace.clone()))
     }
 
-    pub async fn uninstall_package(&self, namespace: impl AsRef<str>) -> Result<(), Error> {
+    pub async fn uninstall_package(&self, namespace: Namespace) -> Result<(), Error> {
         let lineage = self.lineage.read(&self.storage).await?;
         let lineage = uninstall_package(lineage, &self.paths, &self.storage, namespace).await?;
         let _fixme = self.lineage.write(&self.storage, lineage).await?;
@@ -127,7 +128,7 @@ impl LocalDomain {
 
     pub async fn list_installed_packages(&self) -> Result<Vec<InstalledPackage>, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
-        let mut namespaces: Vec<String> = lineage.packages.into_keys().collect();
+        let mut namespaces: Vec<Namespace> = lineage.packages.into_keys().collect();
         namespaces.sort();
         let packages = namespaces
             .into_iter()
@@ -144,13 +145,13 @@ impl LocalDomain {
 
     pub async fn get_installed_package(
         &self,
-        namespace: &str,
+        namespace: &Namespace,
     ) -> Result<Option<InstalledPackage>, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
         if lineage.packages.contains_key(namespace) {
             Ok(Some(InstalledPackage {
-                lineage: self.lineage.create_package_lineage(namespace.to_string()),
-                namespace: namespace.to_string(),
+                lineage: self.lineage.create_package_lineage(namespace.clone()),
+                namespace: namespace.clone(),
                 paths: self.paths.clone(),
                 remote: self.remote.clone(),
                 storage: self.storage.clone(),
@@ -266,7 +267,7 @@ pub struct InstalledPackage<
     paths: paths::DomainPaths,
     remote: R,
     storage: S,
-    pub namespace: String,
+    pub namespace: Namespace,
 }
 
 impl InstalledPackage {
@@ -275,7 +276,7 @@ impl InstalledPackage {
         // get installed manifest
         self.lineage.read(&self.storage).await.map(|l| {
             InstalledManifest::new(
-                self.namespace.to_string(),
+                self.namespace.clone(),
                 l.current_hash().to_string(),
                 self.paths.clone(),
             )
@@ -315,7 +316,7 @@ impl InstalledPackage {
             &manifest,
             &self.paths,
             self.working_folder(),
-            self.namespace.to_string(),
+            self.namespace.clone(),
             &self.storage,
             &self.remote,
             paths,
@@ -355,7 +356,7 @@ impl InstalledPackage {
             &self.storage,
             self.working_folder(),
             status,
-            self.namespace.to_string(),
+            self.namespace.clone(),
             message,
             user_meta,
         )
@@ -373,7 +374,7 @@ impl InstalledPackage {
             &self.paths,
             &self.storage,
             &self.remote,
-            self.namespace.to_string(),
+            self.namespace.clone(),
         )
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
@@ -392,7 +393,7 @@ impl InstalledPackage {
             &self.storage,
             self.working_folder(),
             status,
-            self.namespace.to_string(),
+            self.namespace.clone(),
         )
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
@@ -416,7 +417,7 @@ impl InstalledPackage {
             &self.storage,
             &self.remote,
             self.working_folder(),
-            self.namespace.to_string(),
+            self.namespace.clone(),
         )
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
@@ -460,7 +461,7 @@ mod tests {
             test_uri,
             S3PackageUri {
                 bucket: "udp-spec".into(),
-                namespace: "spec/quiltcore".into(),
+                namespace: ("spec", "quiltcore").into(),
                 path: Some("READ ME.md".into()),
                 revision: RevisionPointer::default(),
             }

@@ -1,12 +1,14 @@
 use std::path::PathBuf;
 
+use quilt_rs::quilt::uri::Namespace;
+
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
 use crate::cli::Error;
 
 #[derive(Debug)]
 pub struct Input {
-    pub namespace: Option<String>,
+    pub namespace: Option<Namespace>,
     pub paths: Option<Vec<PathBuf>>,
     pub uri: String,
 }
@@ -45,12 +47,11 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 async fn install_package(
     local_domain: &quilt_rs::LocalDomain,
     uri: &quilt_rs::S3PackageUri,
-    namespace: Option<String>,
+    namespace: Option<Namespace>,
 ) -> Result<quilt_rs::InstalledPackage, Error> {
     let remote = quilt_rs::s3_utils::RemoteS3::new();
     let namespace = namespace.unwrap_or(uri.namespace.clone());
-    let installed_package = local_domain.get_installed_package(&namespace).await?;
-    if let Some(installed_package) = installed_package {
+    if let Some(installed_package) = local_domain.get_installed_package(&namespace).await? {
         // FIXME: check the actual remote_manifest
         return Ok(installed_package);
     }

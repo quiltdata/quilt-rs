@@ -71,8 +71,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_if_already_installed() -> Result<(), Error> {
+        let namespace = ("foo", "bar");
         let lineage = DomainLineage {
-            packages: BTreeMap::from([("foo".to_string(), PackageLineage::default())]),
+            packages: BTreeMap::from([(namespace.into(), PackageLineage::default())]),
         };
         let result = install_package(
             lineage,
@@ -80,14 +81,14 @@ mod tests {
             &MockStorage::default(),
             &MockRemote::default(),
             &RemoteManifest {
-                namespace: "foo".to_string(),
+                namespace: namespace.into(),
                 ..RemoteManifest::default()
             },
         )
         .await;
         assert_eq!(
             result.unwrap_err().to_string(),
-            "The package foo is already installed"
+            "The package foo/bar is already installed"
         );
         Ok(())
     }
@@ -97,7 +98,7 @@ mod tests {
         let remote_manifest = RemoteManifest {
             bucket: "a".to_string(),
             hash: "c".to_string(),
-            namespace: "b".to_string(),
+            namespace: ("f", "b").into(),
         };
         let remote = MockRemote::default();
         remote
@@ -108,7 +109,7 @@ mod tests {
             .await?;
         remote
             .put_object(
-                &S3Uri::try_from("s3://a/.quilt/named_packages/b/latest")?,
+                &S3Uri::try_from("s3://a/.quilt/named_packages/f/b/latest")?,
                 Vec::new(),
             )
             .await?;
@@ -121,8 +122,15 @@ mod tests {
             &remote_manifest,
         )
         .await?;
-        assert_eq!(result.packages.get("b").unwrap().remote, remote_manifest);
-        assert!(storage.exists(&PathBuf::from(".quilt/installed/b/c")).await);
+        assert_eq!(
+            result.packages.get(&("f", "b").into()).unwrap().remote,
+            remote_manifest
+        );
+        assert!(
+            storage
+                .exists(&PathBuf::from(".quilt/installed/f/b/c"))
+                .await
+        );
         assert!(storage.exists(&PathBuf::from(".quilt/packages/a/c")).await);
         Ok(())
     }

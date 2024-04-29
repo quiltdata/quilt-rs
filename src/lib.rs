@@ -25,6 +25,7 @@ pub use quilt::flow::status::DiscreteChange;
 pub use quilt::flow::status::InstalledPackageStatus;
 pub use quilt::flow::status::PackageFileFingerprint;
 pub use quilt::flow::status::UpstreamDiscreteState;
+pub use quilt::uri::Namespace;
 pub use quilt::InstalledPackage;
 pub use quilt::LocalDomain;
 pub use quilt::Manifest;
@@ -68,6 +69,9 @@ pub enum Error {
     #[error("Manifest path error: {0}")]
     ManifestPath(String),
 
+    #[error("Invalid namespace: {0}")]
+    Namespace(String),
+
     #[error("Cannot convert to string: {0}")]
     ToString(#[from] ToStrError),
 
@@ -81,10 +85,10 @@ pub enum Error {
     Utf8(#[from] Utf8Error),
 
     #[error("The package {0} is already installed")]
-    PackageAlreadyInstalled(String),
+    PackageAlreadyInstalled(Namespace),
 
     #[error("The given package is not installed: {0}")]
-    PackageNotInstalled(String),
+    PackageNotInstalled(Namespace),
 
     #[error("Failed to install path: {0}")]
     InstallPath(String),

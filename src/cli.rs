@@ -4,6 +4,8 @@ use clap::Parser;
 use clap::Subcommand;
 use tracing::log;
 
+use quilt_rs::quilt::uri::Namespace;
+
 mod browse;
 mod commit;
 mod install;
@@ -18,6 +20,13 @@ mod uninstall;
 
 use model::Model;
 use output::print;
+
+fn parse_optional_namespace(namespace: Option<String>) -> Result<Option<Namespace>, Error> {
+    Ok(match namespace {
+        Some(namespace) => Some(namespace.try_into()?),
+        None => None,
+    })
+}
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -151,7 +160,7 @@ pub async fn init() -> Result<(), Error> {
             };
             let args = commit::Input {
                 message,
-                namespace,
+                namespace: namespace.try_into()?,
                 user_meta,
             };
             log::info!("Committing {:?}", args);
@@ -165,7 +174,7 @@ pub async fn init() -> Result<(), Error> {
             uri,
         } => {
             let args = install::Input {
-                namespace,
+                namespace: parse_optional_namespace(namespace)?,
                 paths: path,
                 uri,
             };
@@ -177,7 +186,6 @@ pub async fn init() -> Result<(), Error> {
             if !domain.exists() {
                 return Err(Error::Domain(domain));
             }
-            // TODO: validate domain exists
             log::info!("Listing installed packages");
             print(list::command(Model::from(domain)).await);
             Ok(())
@@ -190,19 +198,25 @@ pub async fn init() -> Result<(), Error> {
             Ok(())
         }
         Commands::Pull { domain, namespace } => {
-            let args = pull::Input { namespace };
+            let args = pull::Input {
+                namespace: namespace.try_into()?,
+            };
             log::info!("Pull {:?}", args);
             print(pull::command(Model::from(domain), args).await);
             Ok(())
         }
         Commands::Push { domain, namespace } => {
-            let args = push::Input { namespace };
+            let args = push::Input {
+                namespace: namespace.try_into()?,
+            };
             log::info!("Pushing {:?}", args);
             print(push::command(Model::from(domain), args).await);
             Ok(())
         }
         Commands::Status { domain, namespace } => {
-            let args = status::Input { namespace };
+            let args = status::Input {
+                namespace: namespace.try_into()?,
+            };
             log::info!("Status {:?}", args);
             print(status::command(Model::from(domain), args).await);
             Ok(())
@@ -211,7 +225,9 @@ pub async fn init() -> Result<(), Error> {
             if !domain.exists() {
                 return Err(Error::Domain(domain));
             }
-            let args = uninstall::Input { namespace };
+            let args = uninstall::Input {
+                namespace: namespace.try_into()?,
+            };
             log::info!("Uninstalling {:?}", args);
             print(uninstall::command(Model::from(domain), args).await);
             Ok(())
@@ -231,7 +247,7 @@ pub enum Error {
     TempDir(String),
 
     #[error("Package {0} not found")]
-    NamespaceNotFound(String),
+    NamespaceNotFound(Namespace),
 
     #[error("Invalid JSON for user_meta object. Object is required")]
     CommitMetaInvalid(String),

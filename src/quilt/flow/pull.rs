@@ -9,6 +9,7 @@ use crate::quilt::flow::uninstall_paths::uninstall_paths;
 use crate::quilt::lineage::PackageLineage;
 use crate::quilt::manifest_handle;
 use crate::quilt::storage::Storage;
+use crate::quilt::uri::Namespace;
 use crate::quilt::Error;
 use crate::s3_utils;
 
@@ -19,7 +20,7 @@ pub async fn pull_package(
     storage: &(impl Storage + Sync),
     working_dir: PathBuf,
     status: InstalledPackageStatus,
-    namespace: String,
+    namespace: Namespace,
 ) -> Result<PackageLineage, Error> {
     if !status.changes.is_empty() {
         return Err(Error::Package("package has pending changes".to_string()));
@@ -113,7 +114,7 @@ mod tests {
             &storage,
             PathBuf::default(),
             status,
-            String::default(),
+            Namespace::default(),
         )
         .await;
         assert_eq!(
@@ -134,7 +135,7 @@ mod tests {
             &storage,
             PathBuf::default(),
             InstalledPackageStatus::default(),
-            String::default(),
+            Namespace::default(),
         )
         .await;
         assert_eq!(
@@ -161,7 +162,7 @@ mod tests {
             &storage,
             PathBuf::default(),
             InstalledPackageStatus::default(),
-            String::default(),
+            Namespace::default(),
         )
         .await;
         assert_eq!(
@@ -189,7 +190,7 @@ mod tests {
             &storage,
             PathBuf::default(),
             InstalledPackageStatus::default(),
-            String::default(),
+            Namespace::default(),
         )
         .await;
         assert_eq!(

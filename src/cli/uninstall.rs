@@ -2,13 +2,15 @@ use crate::cli::model::Commands;
 use crate::cli::output::Std;
 use crate::cli::Error;
 
+use quilt_rs::quilt::uri::Namespace;
+
 #[derive(Debug)]
 pub struct Input {
-    pub namespace: String,
+    pub namespace: Namespace,
 }
 
 pub struct Output {
-    namespace: String,
+    namespace: Namespace,
 }
 
 impl std::fmt::Display for Output {
@@ -29,7 +31,7 @@ pub async fn model(
 
     Input { namespace }: Input,
 ) -> Result<Output, Error> {
-    local_domain.uninstall_package(&namespace).await?;
+    local_domain.uninstall_package(namespace.clone()).await?;
     Ok(Output { namespace })
 }
 

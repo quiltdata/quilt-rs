@@ -12,6 +12,7 @@ use serde::Serializer;
 pub mod mocks;
 
 use crate::quilt::storage::Storage;
+use crate::quilt::uri::Namespace;
 use crate::Error;
 
 use super::RemoteManifest;
@@ -85,7 +86,7 @@ impl PackageLineage {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct DomainLineage {
     #[serde(default = "BTreeMap::new")]
-    pub packages: BTreeMap<String, PackageLineage>,
+    pub packages: BTreeMap<Namespace, PackageLineage>,
 }
 
 impl TryFrom<&str> for DomainLineage {
@@ -144,7 +145,7 @@ impl DomainLineageIo {
         Ok(lineage)
     }
 
-    pub fn create_package_lineage(&self, namespace: String) -> PackageLineageIo {
+    pub fn create_package_lineage(&self, namespace: Namespace) -> PackageLineageIo {
         PackageLineageIo::new(self.clone(), namespace)
     }
 }
@@ -152,11 +153,11 @@ impl DomainLineageIo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageLineageIo {
     domain_lineage: DomainLineageIo,
-    namespace: String,
+    namespace: Namespace,
 }
 
 impl PackageLineageIo {
-    pub fn new(domain_lineage: DomainLineageIo, namespace: String) -> Self {
+    pub fn new(domain_lineage: DomainLineageIo, namespace: Namespace) -> Self {
         PackageLineageIo {
             domain_lineage,
             namespace,
@@ -282,12 +283,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_domain_lineage_create_package_lineage() -> Result<(), Error> {
+        let namespace = ("foo", "bar");
         let domain_lineage = DomainLineageIo::default();
-        let lineage = domain_lineage.create_package_lineage("foo".to_string());
+        let lineage = domain_lineage.create_package_lineage(namespace.into());
         assert_eq!(
             lineage,
             PackageLineageIo {
-                namespace: "foo".to_string(),
+                namespace: namespace.into(),
                 domain_lineage,
             }
         );

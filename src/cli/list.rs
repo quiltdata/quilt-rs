@@ -51,7 +51,7 @@ mod tests {
         let output = model(&local_domain).await?;
         assert_eq!(
             output.installed_packages_list[0].namespace,
-            "spec/quiltcore"
+            ("spec", "quiltcore").into()
         );
         Ok(())
     }
