@@ -1,4 +1,6 @@
-use std::cmp::{Ord, Ordering, PartialOrd};
+use std::cmp::Ord;
+use std::cmp::Ordering;
+use std::cmp::PartialOrd;
 use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
@@ -131,7 +133,7 @@ impl<'de> Deserialize<'de> for Namespace {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct S3PackageUri {
     pub bucket: String,
     pub namespace: Namespace,

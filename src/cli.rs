@@ -173,9 +173,8 @@ pub async fn init() -> Result<(), Error> {
             namespace,
             uri,
         } => {
-            let namespace = parse_optional_namespace(namespace)?;
             let args = install::Input {
-                namespace,
+                namespace: parse_optional_namespace(namespace)?,
                 paths: path,
                 uri,
             };
@@ -187,7 +186,6 @@ pub async fn init() -> Result<(), Error> {
             if !domain.exists() {
                 return Err(Error::Domain(domain));
             }
-            // TODO: validate domain exists
             log::info!("Listing installed packages");
             print(list::command(Model::from(domain)).await);
             Ok(())
