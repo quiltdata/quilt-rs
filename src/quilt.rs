@@ -145,13 +145,13 @@ impl LocalDomain {
 
     pub async fn get_installed_package(
         &self,
-        namespace: Namespace,
+        namespace: &Namespace,
     ) -> Result<Option<InstalledPackage>, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
-        if lineage.packages.contains_key(&namespace) {
+        if lineage.packages.contains_key(namespace) {
             Ok(Some(InstalledPackage {
                 lineage: self.lineage.create_package_lineage(namespace.clone()),
-                namespace,
+                namespace: namespace.clone(),
                 paths: self.paths.clone(),
                 remote: self.remote.clone(),
                 storage: self.storage.clone(),

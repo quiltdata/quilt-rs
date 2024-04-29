@@ -51,8 +51,7 @@ async fn install_package(
 ) -> Result<quilt_rs::InstalledPackage, Error> {
     let remote = quilt_rs::s3_utils::RemoteS3::new();
     let namespace = namespace.unwrap_or(uri.namespace.clone());
-    let installed_package = local_domain.get_installed_package(namespace).await?;
-    if let Some(installed_package) = installed_package {
+    if let Some(installed_package) = local_domain.get_installed_package(&namespace).await? {
         // FIXME: check the actual remote_manifest
         return Ok(installed_package);
     }

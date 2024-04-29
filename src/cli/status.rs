@@ -70,11 +70,7 @@ async fn get_status(
     local_domain: &quilt_rs::LocalDomain,
     namespace: Namespace,
 ) -> Result<InstalledPackageStatus, Error> {
-    let installed_package = local_domain
-        .get_installed_package(namespace.clone())
-        .await?;
-
-    match installed_package {
+    match local_domain.get_installed_package(&namespace).await? {
         Some(installed_package) => Ok(installed_package.status().await?),
         None => Err(Error::NamespaceNotFound(namespace)),
     }
