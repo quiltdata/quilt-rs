@@ -56,7 +56,7 @@ fn str_to_multihash<'de, D: Deserializer<'de>>(
 /// The key is the name of the path, and the value is the state of the path
 pub type LineagePaths = BTreeMap<PathBuf, PathState>;
 
-#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct PackageLineage {
     pub commit: Option<CommitState>,
     pub remote: RemoteManifest,
@@ -83,46 +83,17 @@ impl PackageLineage {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct DomainLineage {
-    pub packages: BTreeMap<Namespace, PackageLineage>,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct DomainLineageJson {
     #[serde(default = "BTreeMap::new")]
-    pub packages: BTreeMap<String, PackageLineage>,
-}
-
-impl TryFrom<DomainLineageJson> for DomainLineage {
-    type Error = Error;
-
-    fn try_from(input: DomainLineageJson) -> Result<Self, Self::Error> {
-        let mut packages = BTreeMap::new();
-        for (key, value) in input.packages.iter() {
-            packages.insert(Namespace::try_from(key.to_string())?, value.clone());
-        }
-        Ok(DomainLineage { packages })
-    }
-}
-
-impl From<&DomainLineage> for DomainLineageJson {
-    fn from(input: &DomainLineage) -> Self {
-        let mut packages = BTreeMap::new();
-        for (key, value) in input.packages.iter() {
-            packages.insert(key.to_string(), value.clone());
-        }
-        DomainLineageJson { packages }
-    }
+    pub packages: BTreeMap<Namespace, PackageLineage>,
 }
 
 impl TryFrom<&str> for DomainLineage {
     type Error = Error;
 
     fn try_from(input: &str) -> Result<Self, Self::Error> {
-        serde_json::from_str::<DomainLineageJson>(input)
-            .map_err(Error::LineageParse)?
-            .try_into()
+        serde_json::from_str(input).map_err(Error::LineageParse)
     }
 }
 
@@ -130,9 +101,7 @@ impl TryFrom<Vec<u8>> for DomainLineage {
     type Error = Error;
 
     fn try_from(input: Vec<u8>) -> Result<Self, Self::Error> {
-        serde_json::from_slice::<DomainLineageJson>(&input)
-            .map_err(Error::LineageParse)?
-            .try_into()
+        serde_json::from_slice(&input).map_err(Error::LineageParse)
     }
 }
 
@@ -169,17 +138,11 @@ impl DomainLineageIo {
         storage: &impl Storage,
         lineage: DomainLineage,
     ) -> Result<DomainLineage, Error> {
-        // Ok(serde_json::to_string_pretty(&lineage)?)
         let contents = serde_json::to_string_pretty(&lineage)?;
         storage
             .write_file(self.path.clone(), contents.as_bytes())
             .await?;
         Ok(lineage)
-        // let contents = serde_json::to_string_pretty(&DomainLineageJson::from(&lineage))?;
-        // storage
-        //     .write_file(self.path.clone(), contents.as_bytes())
-        //     .await?;
-        // Ok(lineage)
     }
 
     pub fn create_package_lineage(&self, namespace: Namespace) -> PackageLineageIo {
