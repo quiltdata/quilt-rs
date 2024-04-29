@@ -23,7 +23,7 @@ use output::print;
 
 fn parse_optional_namespace(namespace: Option<String>) -> Result<Option<Namespace>, Error> {
     match namespace {
-        Some(namespace_str) => Ok(Some(Namespace::try_from(namespace_str)?)),
+        Some(namespace) => Ok(Some(namespace.try_into()?)),
         None => Ok(None),
     }
 }
@@ -160,7 +160,7 @@ pub async fn init() -> Result<(), Error> {
             };
             let args = commit::Input {
                 message,
-                namespace: Namespace::try_from(namespace)?,
+                namespace: namespace.try_into()?,
                 user_meta,
             };
             log::info!("Committing {:?}", args);
@@ -201,7 +201,7 @@ pub async fn init() -> Result<(), Error> {
         }
         Commands::Pull { domain, namespace } => {
             let args = pull::Input {
-                namespace: Namespace::try_from(namespace)?,
+                namespace: namespace.try_into()?,
             };
             log::info!("Pull {:?}", args);
             print(pull::command(Model::from(domain), args).await);
@@ -209,7 +209,7 @@ pub async fn init() -> Result<(), Error> {
         }
         Commands::Push { domain, namespace } => {
             let args = push::Input {
-                namespace: Namespace::try_from(namespace)?,
+                namespace: namespace.try_into()?,
             };
             log::info!("Pushing {:?}", args);
             print(push::command(Model::from(domain), args).await);
@@ -217,7 +217,7 @@ pub async fn init() -> Result<(), Error> {
         }
         Commands::Status { domain, namespace } => {
             let args = status::Input {
-                namespace: Namespace::try_from(namespace)?,
+                namespace: namespace.try_into()?,
             };
             log::info!("Status {:?}", args);
             print(status::command(Model::from(domain), args).await);
@@ -228,7 +228,7 @@ pub async fn init() -> Result<(), Error> {
                 return Err(Error::Domain(domain));
             }
             let args = uninstall::Input {
-                namespace: Namespace::try_from(namespace)?,
+                namespace: namespace.try_into()?,
             };
             log::info!("Uninstalling {:?}", args);
             print(uninstall::command(Model::from(domain), args).await);
