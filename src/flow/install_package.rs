@@ -1,7 +1,7 @@
+use crate::flow::browse::cache_remote_manifest;
 use crate::lineage::DomainLineage;
 use crate::lineage::PackageLineage;
 use crate::paths;
-use crate::quilt::flow::browse::cache_remote_manifest;
 use crate::quilt::manifest_handle::RemoteManifest;
 use crate::quilt::remote::Remote;
 use crate::quilt::Storage;

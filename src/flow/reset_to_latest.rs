@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 
+use crate::flow::browse::cache_remote_manifest;
+use crate::flow::install_paths::install_paths;
+use crate::flow::uninstall_paths::uninstall_paths;
 use crate::lineage::PackageLineage;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
-use crate::quilt::flow::browse::cache_remote_manifest;
-use crate::quilt::flow::install_paths::install_paths;
-use crate::quilt::flow::uninstall_paths::uninstall_paths;
 use crate::quilt::manifest_handle::ReadableManifest;
 use crate::quilt::remote::Remote;
 use crate::quilt::storage::Storage;
@@ -67,7 +67,7 @@ pub async fn reset_to_latest(
 mod tests {
     use super::*;
 
-    use crate::quilt::lineage::PackageLineage;
+    use crate::lineage::PackageLineage;
     use crate::quilt::mocks;
     use crate::quilt::remote::mock_remote::MockRemote;
     use crate::quilt::storage::mock_storage::MockStorage;

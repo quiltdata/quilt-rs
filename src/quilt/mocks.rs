@@ -7,7 +7,7 @@ pub fn row_hash_sample1() -> multihash::Multihash<256> {
 pub mod status {
     use super::row_hash_sample1;
 
-    use crate::quilt::flow::status::PackageFileFingerprint;
+    use crate::flow::status::PackageFileFingerprint;
 
     pub fn package_file_fingerprint() -> PackageFileFingerprint {
         PackageFileFingerprint {

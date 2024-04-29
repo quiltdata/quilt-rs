@@ -12,7 +12,7 @@ use crate::quilt::manifest_handle::RemoteManifest;
 use crate::quilt::remote::Remote;
 use crate::quilt::s3::S3Uri;
 use crate::quilt::storage::Storage;
-use crate::quilt::Error;
+use crate::Error;
 use crate::Table;
 
 async fn is_parquet(remote: &impl Remote, manifest: &RemoteManifest) -> Result<bool, Error> {

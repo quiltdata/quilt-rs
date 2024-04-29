@@ -1,17 +1,17 @@
 use std::path::PathBuf;
 
+use crate::flow::browse::cache_remote_manifest;
+use crate::flow::install_paths::install_paths;
+use crate::flow::status::InstalledPackageStatus;
+use crate::flow::uninstall_paths::uninstall_paths;
 use crate::lineage::PackageLineage;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
-use crate::quilt::flow::browse::cache_remote_manifest;
-use crate::quilt::flow::install_paths::install_paths;
-use crate::quilt::flow::status::InstalledPackageStatus;
-use crate::quilt::flow::uninstall_paths::uninstall_paths;
 use crate::quilt::manifest_handle;
 use crate::quilt::storage::Storage;
 use crate::quilt::uri::Namespace;
-use crate::quilt::Error;
 use crate::s3_utils;
+use crate::Error;
 
 pub async fn pull_package(
     lineage: PackageLineage,
@@ -85,8 +85,8 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::quilt::flow::status::Change;
-    use crate::quilt::flow::status::DiscreteChange;
+    use crate::flow::status::Change;
+    use crate::flow::status::DiscreteChange;
     use crate::quilt::mocks;
     use crate::quilt::storage::mock_storage::MockStorage;
     use crate::quilt::RemoteManifest;

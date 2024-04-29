@@ -5,10 +5,10 @@ use multihash::Multihash;
 use tracing::log;
 use url::Url;
 
+use crate::flow::browse::browse_remote_manifest;
+use crate::flow::browse::cache_manifest;
 use crate::lineage::PackageLineage;
 use crate::paths;
-use crate::quilt::flow::browse::browse_remote_manifest;
-use crate::quilt::flow::browse::cache_manifest;
 use crate::quilt::manifest;
 use crate::quilt::manifest_handle;
 use crate::quilt::remote::Remote;
@@ -16,7 +16,7 @@ use crate::quilt::storage;
 use crate::quilt::storage::s3::S3Uri;
 use crate::quilt::storage::Storage;
 use crate::quilt::uri::Namespace;
-use crate::quilt::Error;
+use crate::Error;
 
 pub async fn push_package(
     mut lineage: PackageLineage,
@@ -147,8 +147,8 @@ pub async fn push_package(
 mod tests {
     use super::*;
 
-    use crate::quilt::lineage::CommitState;
-    use crate::quilt::lineage::PackageLineage;
+    use crate::lineage::CommitState;
+    use crate::lineage::PackageLineage;
     use crate::quilt::manifest_handle::RemoteManifest;
     use crate::quilt::mocks;
     use crate::quilt::remote::mock_remote::MockRemote;

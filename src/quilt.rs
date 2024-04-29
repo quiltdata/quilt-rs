@@ -5,7 +5,6 @@ use aws_sdk_s3::error::DisplayErrorContext;
 use multihash::Multihash;
 use tracing::log;
 
-pub mod flow;
 pub mod manifest;
 pub mod manifest_handle;
 pub mod remote;
@@ -28,9 +27,9 @@ use crate::lineage::DomainLineage;
 use crate::lineage::LineagePaths;
 use crate::lineage::PackageLineage;
 
+pub use crate::flow::status::UpstreamDiscreteState;
+pub use crate::flow::status::UpstreamState;
 pub use crate::quilt::remote::Remote;
-pub use flow::status::UpstreamDiscreteState;
-pub use flow::status::UpstreamState;
 pub use manifest::ContentHash;
 pub use manifest::Manifest;
 pub use manifest::ManifestHeader;
@@ -46,20 +45,20 @@ pub use uri::Namespace;
 pub use uri::RevisionPointer;
 pub use uri::S3PackageUri;
 
-use flow::browse::browse_remote_manifest;
-use flow::browse::cache_manifest;
-use flow::certify_latest::certify_latest;
-use flow::commit::commit_package;
-use flow::install_package::install_package;
-use flow::install_paths::install_paths;
-use flow::pull::pull_package;
-use flow::push::push_package;
-use flow::reset_to_latest::reset_to_latest;
-use flow::status::create_status;
-use flow::status::refresh_latest_hash;
-use flow::status::InstalledPackageStatus;
-use flow::uninstall_package::uninstall_package;
-use flow::uninstall_paths::uninstall_paths;
+use crate::flow::browse::browse_remote_manifest;
+use crate::flow::browse::cache_manifest;
+use crate::flow::certify_latest::certify_latest;
+use crate::flow::commit::commit_package;
+use crate::flow::install_package::install_package;
+use crate::flow::install_paths::install_paths;
+use crate::flow::pull::pull_package;
+use crate::flow::push::push_package;
+use crate::flow::reset_to_latest::reset_to_latest;
+use crate::flow::status::create_status;
+use crate::flow::status::refresh_latest_hash;
+use crate::flow::status::InstalledPackageStatus;
+use crate::flow::uninstall_package::uninstall_package;
+use crate::flow::uninstall_paths::uninstall_paths;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalDomain<S: Storage = fs::LocalStorage, R: Remote = s3_utils::RemoteS3> {
@@ -433,11 +432,11 @@ mod tests {
     use tokio_test::assert_err;
     use tokio_test::block_on;
 
-    use crate::quilt::flow::browse::cache_remote_manifest;
-    use crate::quilt::flow::status::Change;
-    use crate::quilt::flow::status::ChangeSet;
-    use crate::quilt::flow::status::DiscreteChange;
-    use crate::quilt::flow::status::PackageFileFingerprint;
+    use crate::flow::browse::cache_remote_manifest;
+    use crate::flow::status::Change;
+    use crate::flow::status::ChangeSet;
+    use crate::flow::status::DiscreteChange;
+    use crate::flow::status::PackageFileFingerprint;
     use crate::quilt::manifest::MULTIHASH_SHA256;
     use crate::quilt::storage::mock_storage::MockStorage;
     use crate::quilt4::checksum::calculate_sha256_checksum;

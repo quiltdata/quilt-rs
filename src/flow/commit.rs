@@ -10,12 +10,12 @@ use crate::quilt::Storage;
 use crate::Error;
 use crate::Row4;
 
+use crate::flow::status::Change;
+use crate::flow::status::InstalledPackageStatus;
+use crate::flow::status::PackageFileFingerprint;
 use crate::lineage::CommitState;
 use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
-use crate::quilt::flow::status::Change;
-use crate::quilt::flow::status::InstalledPackageStatus;
-use crate::quilt::flow::status::PackageFileFingerprint;
 use crate::quilt::manifest::JsonObject;
 use crate::quilt::manifest_handle::ReadableManifest;
 use crate::quilt::uri::Namespace;
@@ -196,8 +196,8 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::quilt::flow::status::Change;
-    use crate::quilt::flow::status::DiscreteChange;
+    use crate::flow::status::Change;
+    use crate::flow::status::DiscreteChange;
     use crate::quilt::mocks;
     use crate::quilt::storage::mock_storage::MockStorage;
 

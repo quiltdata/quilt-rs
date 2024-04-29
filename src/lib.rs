@@ -4,6 +4,7 @@ use aws_smithy_types::byte_stream;
 use reqwest::header::ToStrError;
 use thiserror::Error;
 
+mod flow;
 mod paths;
 mod quilt4;
 
@@ -22,10 +23,10 @@ pub use quilt4::table::Table;
 pub use quilt4::uri::UriParser;
 pub use quilt4::uri::UriQuilt;
 
-pub use quilt::flow::status::DiscreteChange;
-pub use quilt::flow::status::InstalledPackageStatus;
-pub use quilt::flow::status::PackageFileFingerprint;
-pub use quilt::flow::status::UpstreamDiscreteState;
+pub use flow::status::DiscreteChange;
+pub use flow::status::InstalledPackageStatus;
+pub use flow::status::PackageFileFingerprint;
+pub use flow::status::UpstreamDiscreteState;
 pub use quilt::uri::Namespace;
 pub use quilt::InstalledPackage;
 pub use quilt::LocalDomain;
