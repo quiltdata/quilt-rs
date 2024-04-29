@@ -68,13 +68,12 @@ mod tests {
     use crate::quilt::remote::mock_remote::MockRemote;
     use crate::quilt::storage::mock_storage::MockStorage;
     use crate::quilt::storage::s3::S3Uri;
-    use crate::quilt::uri::Namespace;
 
     #[tokio::test]
     async fn test_if_already_installed() -> Result<(), Error> {
-        let namespace = Namespace::from(("foo", "bar"));
+        let namespace = ("foo", "bar");
         let lineage = DomainLineage {
-            packages: BTreeMap::from([(namespace.clone(), PackageLineage::default())]),
+            packages: BTreeMap::from([(namespace.into(), PackageLineage::default())]),
         };
         let result = install_package(
             lineage,
@@ -82,7 +81,7 @@ mod tests {
             &MockStorage::default(),
             &MockRemote::default(),
             &RemoteManifest {
-                namespace,
+                namespace: namespace.into(),
                 ..RemoteManifest::default()
             },
         )

@@ -205,7 +205,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit() -> Result<(), Error> {
-        let namespace = Namespace::from(("foo", "bar"));
         let storage = MockStorage::default();
 
         let commit_message = "Lorem ipsum".to_string();
@@ -224,7 +223,7 @@ mod tests {
             &storage,
             PathBuf::default(),
             InstalledPackageStatus::default(),
-            namespace,
+            ("foo", "bar").into(),
             commit_message,
             Some(user_meta),
         )
@@ -241,7 +240,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_removing_and_commit() -> Result<(), Error> {
-        let namespace = Namespace::from(("foo", "bar"));
         let storage = MockStorage::default();
 
         let commit_message = "Lorem ipsum".to_string();
@@ -281,7 +279,7 @@ mod tests {
             &storage,
             PathBuf::default(),
             status,
-            namespace,
+            ("foo", "bar").into(),
             commit_message,
             Some(user_meta),
         )
@@ -305,7 +303,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_adding_and_commit() -> Result<(), Error> {
-        let namespace = Namespace::from(("foo", "bar"));
         let storage = MockStorage::default();
         storage
             .write_file(PathBuf::from("/working-dir/bar"), &Vec::new())
@@ -342,7 +339,7 @@ mod tests {
             &storage,
             PathBuf::from("/working-dir"),
             status,
-            namespace,
+            ("foo", "bar").into(),
             "Lorem ipsum".to_string(),
             None,
         )
@@ -371,7 +368,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_adding_manifest_already_has_it() -> Result<(), Error> {
-        let namespace = Namespace::from(("foo", "bar"));
         let storage = MockStorage::default();
 
         let status = InstalledPackageStatus {
@@ -396,7 +392,7 @@ mod tests {
             &storage,
             PathBuf::default(),
             status,
-            namespace,
+            ("foo", "bar").into(),
             "Lorem ipsum".to_string(),
             None,
         )
@@ -412,7 +408,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_modifying_and_commit() -> Result<(), Error> {
-        let namespace = Namespace::from(("foo", "bar"));
         let storage = MockStorage::default();
         storage
             .write_file(PathBuf::from("/working-dir/bar"), &Vec::new())
@@ -455,7 +450,7 @@ mod tests {
             &storage,
             PathBuf::from("/working-dir"),
             status,
-            namespace,
+            ("foo", "bar").into(),
             "Lorem ipsum".to_string(),
             None,
         )

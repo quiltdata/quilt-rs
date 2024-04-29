@@ -320,13 +320,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_domain_lineage_create_package_lineage() -> Result<(), Error> {
-        let namespace = Namespace::from(("foo", "bar"));
+        let namespace = ("foo", "bar");
         let domain_lineage = DomainLineageIo::default();
-        let lineage = domain_lineage.create_package_lineage(namespace.clone());
+        let lineage = domain_lineage.create_package_lineage(namespace.into());
         assert_eq!(
             lineage,
             PackageLineageIo {
-                namespace,
+                namespace: namespace.into(),
                 domain_lineage,
             }
         );

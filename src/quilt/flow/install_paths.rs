@@ -140,8 +140,6 @@ mod tests {
     async fn test_installing_one_cached_path() -> Result<(), Error> {
         let working_dir = tempfile::tempdir()?;
 
-        let namespace = Namespace::from(("foo", "bar"));
-
         let domain_paths = &DomainPaths::new(working_dir.path().to_path_buf());
 
         let remote = MockRemote::default();
@@ -161,7 +159,7 @@ mod tests {
             &manifest,
             domain_paths,
             working_dir.path().to_path_buf(),
-            namespace,
+            ("foo", "bar").into(),
             &storage,
             &remote,
             &entries_paths,
@@ -180,8 +178,6 @@ mod tests {
     #[tokio::test]
     async fn test_installing_one_uncached_path() -> Result<(), Error> {
         let working_dir = tempfile::tempdir()?;
-
-        let namespace = Namespace::from(("foo", "bar"));
 
         let domain_paths = &DomainPaths::new(working_dir.path().to_path_buf());
 
@@ -205,7 +201,7 @@ mod tests {
             &manifest,
             domain_paths,
             working_dir.path().to_path_buf(),
-            namespace,
+            ("foo", "bar").into(),
             &storage,
             &remote,
             &entries_paths,
