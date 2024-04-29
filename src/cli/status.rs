@@ -1,3 +1,4 @@
+use quilt_rs::quilt::uri::Namespace;
 use quilt_rs::DiscreteChange;
 use quilt_rs::InstalledPackageStatus;
 use quilt_rs::UpstreamDiscreteState;
@@ -8,7 +9,7 @@ use crate::cli::Error;
 
 #[derive(Debug)]
 pub struct Input {
-    pub namespace: String,
+    pub namespace: Namespace,
 }
 
 #[derive(Debug)]
@@ -67,13 +68,15 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 
 async fn get_status(
     local_domain: &quilt_rs::LocalDomain,
-    namespace: String,
+    namespace: Namespace,
 ) -> Result<InstalledPackageStatus, Error> {
-    let installed_package = local_domain.get_installed_package(&namespace).await?;
+    let installed_package = local_domain
+        .get_installed_package(namespace.clone())
+        .await?;
 
     match installed_package {
         Some(installed_package) => Ok(installed_package.status().await?),
-        None => Err(Error::NamespaceNotFound(namespace.to_string())),
+        None => Err(Error::NamespaceNotFound(namespace)),
     }
 }
 

@@ -1,8 +1,14 @@
+use std::cmp::{Ord, Ordering, PartialOrd};
 use std::collections::HashMap;
+use std::fmt;
 use std::path::PathBuf;
 
+use serde::de;
+use serde::de::Visitor;
 use serde::Deserialize;
+use serde::Deserializer;
 use serde::Serialize;
+use serde::Serializer;
 use url::form_urlencoded;
 use url::Url;
 
@@ -24,10 +30,111 @@ impl Default for RevisionPointer {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct Namespace {
+    prefix: String,
+    name: String,
+}
+
+impl Ord for Namespace {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.prefix.cmp(&other.prefix) {
+            Ordering::Equal => self.name.cmp(&other.name),
+            Ordering::Less => Ordering::Less,
+            Ordering::Greater => Ordering::Greater,
+        }
+    }
+}
+
+impl PartialOrd for Namespace {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl fmt::Display for Namespace {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}/{}", self.prefix, self.name)
+    }
+}
+
+impl From<(String, String)> for Namespace {
+    fn from((prefix, name): (String, String)) -> Self {
+        Namespace { prefix, name }
+    }
+}
+
+impl From<(&str, &str)> for Namespace {
+    fn from((prefix, name): (&str, &str)) -> Self {
+        (prefix.to_string(), name.to_string()).into()
+    }
+}
+
+impl TryFrom<&str> for Namespace {
+    type Error = Error;
+
+    fn try_from(input: &str) -> Result<Self, Self::Error> {
+        input
+            .split_once('/')
+            .ok_or(Error::Namespace("Failed to parse namespace".to_string()))
+            .map(|x| x.into())
+    }
+}
+
+impl TryFrom<String> for Namespace {
+    type Error = Error;
+
+    fn try_from(input: String) -> Result<Self, Self::Error> {
+        input.as_str().try_into()
+    }
+}
+
+impl Serialize for Namespace {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+struct NamespaceVisitor;
+
+impl<'de> Visitor<'de> for NamespaceVisitor {
+    type Value = Namespace;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a string prefix and a string name divided with /")
+    }
+
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Namespace::try_from(value).map_err(|e| E::custom(format!("Failed parse namespace {}", e)))
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Namespace::try_from(value).map_err(|e| E::custom(format!("Failed parse namespace {}", e)))
+    }
+}
+
+impl<'de> Deserialize<'de> for Namespace {
+    fn deserialize<D>(deserializer: D) -> Result<Namespace, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_string(NamespaceVisitor)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct S3PackageUri {
     pub bucket: String,
-    pub namespace: String,
+    pub namespace: Namespace,
     pub revision: RevisionPointer,
     pub path: Option<PathBuf>,
 }
@@ -57,10 +164,9 @@ impl TryFrom<&str> for S3PackageUri {
             .ok_or(Error::PackageURI("missing package in fragment".to_string()))?;
 
         let (namespace, revision) = match pkg_spec.split_once('@') {
-            Some((namespace, top_hash)) => (
-                namespace.to_string(),
-                RevisionPointer::Hash(top_hash.into()),
-            ),
+            Some((namespace, top_hash)) => {
+                (namespace.into(), RevisionPointer::Hash(top_hash.into()))
+            }
             None => (pkg_spec, RevisionPointer::default()),
         };
 
@@ -80,7 +186,7 @@ impl TryFrom<&str> for S3PackageUri {
 
         Ok(Self {
             bucket: bucket.to_string(),
-            namespace,
+            namespace: namespace.try_into()?,
             path,
             revision,
         })
@@ -119,7 +225,7 @@ mod tests {
             uri,
             S3PackageUri {
                 bucket: "bucket".to_string(),
-                namespace: "foo/bar".to_string(),
+                namespace: ("foo", "bar").into(),
                 revision: RevisionPointer::Hash("latest".to_string()),
                 path: None,
             }
@@ -136,7 +242,7 @@ mod tests {
             uri,
             S3PackageUri {
                 bucket: "bucket".to_string(),
-                namespace: "foo/bar".to_string(),
+                namespace: ("foo", "bar").into(),
                 revision: RevisionPointer::Hash("latest".to_string()),
                 path: None,
             }
@@ -203,7 +309,7 @@ mod tests {
             uri,
             S3PackageUri {
                 bucket: "bucket".to_string(),
-                namespace: "foo/bar".to_string(),
+                namespace: ("foo", "bar").into(),
                 revision: RevisionPointer::Hash("latest".to_string()),
                 path: Some(PathBuf::from("read/me.md")),
             }
@@ -218,7 +324,7 @@ mod tests {
             uri,
             S3PackageUri {
                 bucket: "bucket".to_string(),
-                namespace: "foo/bar".to_string(),
+                namespace: ("foo", "bar").into(),
                 revision: RevisionPointer::Tag("latest".to_string()),
                 path: Some(PathBuf::from("read/me.md")),
             }

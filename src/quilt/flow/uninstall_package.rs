@@ -2,6 +2,7 @@ use tracing::log;
 
 use crate::paths;
 use crate::quilt::lineage::DomainLineage;
+use crate::quilt::uri::Namespace;
 use crate::quilt::Storage;
 use crate::Error;
 
@@ -9,20 +10,21 @@ pub async fn uninstall_package(
     mut lineage: DomainLineage,
     paths: &paths::DomainPaths,
     storage: &impl Storage,
-    namespace: impl AsRef<str>,
+    namespace: Namespace,
 ) -> Result<DomainLineage, Error> {
-    let namespace = namespace.as_ref();
     log::debug!("Uninstalling package {}", namespace);
 
     lineage
         .packages
-        .remove(namespace)
+        .remove(&namespace)
         .ok_or(Error::PackageNotInstalled(namespace.to_owned()))?;
 
     storage
-        .remove_dir_all(paths.installed_manifests(namespace))
+        .remove_dir_all(paths.installed_manifests(&namespace))
         .await?;
-    storage.remove_dir_all(paths.working_dir(namespace)).await?;
+    storage
+        .remove_dir_all(paths.working_dir(&namespace))
+        .await?;
 
     // TODO: Remove object files? But need to make sure no other manifest uses them.
 
@@ -44,7 +46,7 @@ mod tests {
         let storage = MockStorage::default();
         let paths = paths::DomainPaths::default();
 
-        let result = uninstall_package(lineage, &paths, &storage, "foo/bar").await;
+        let result = uninstall_package(lineage, &paths, &storage, ("foo", "bar").into()).await;
         assert_eq!(
             result.unwrap_err().to_string(),
             "The given package is not installed: foo/bar"
@@ -54,16 +56,19 @@ mod tests {
     #[tokio::test]
     async fn test_uninstall_package() -> Result<(), Error> {
         let lineage = DomainLineage {
-            packages: BTreeMap::from([("foo/bar".to_string(), PackageLineage::default())]),
+            packages: BTreeMap::from([(("foo", "bar").into(), PackageLineage::default())]),
         };
         let paths = paths::DomainPaths::default();
         let storage = MockStorage::default();
+        let namespace = Namespace::from(("foo", "bar"));
         storage
-            .create_dir_all(paths.installed_manifests("foo/bar"))
+            .create_dir_all(paths.installed_manifests(&namespace))
             .await?;
-        storage.create_dir_all(paths.working_dir("foo/bar")).await?;
+        storage
+            .create_dir_all(paths.working_dir(&namespace))
+            .await?;
 
-        let lineage = uninstall_package(lineage, &paths, &storage, "foo/bar").await?;
+        let lineage = uninstall_package(lineage, &paths, &storage, namespace).await?;
         assert!(lineage.packages.is_empty());
         Ok(())
     }

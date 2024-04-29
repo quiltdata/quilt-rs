@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::quilt::storage::Storage;
-
+use crate::quilt::uri::Namespace;
 use crate::Error;
 
 const MANIFEST_DIR: &str = ".quilt/packages";
@@ -10,7 +10,7 @@ const OBJECTS_DIR: &str = ".quilt/objects";
 const LINEAGE_FILE: &str = ".quilt/data.json";
 const INSTALLED_DIR: &str = ".quilt/installed";
 
-pub fn tag_key(namespace: &str, tag: &str) -> String {
+pub fn tag_key(namespace: &Namespace, tag: &str) -> String {
     format!("{}/{}/{}", TAGS_DIR, namespace, tag)
 }
 
@@ -37,13 +37,15 @@ impl DomainPaths {
     }
 
     /// Path to the installed manifest
-    pub fn installed_manifest(&self, namespace: &str, hash: &str) -> PathBuf {
+    pub fn installed_manifest(&self, namespace: &Namespace, hash: &str) -> PathBuf {
         self.installed_manifests(namespace).join(hash)
     }
 
     /// Directory for storing installed manifests
-    pub fn installed_manifests(&self, namespace: &str) -> PathBuf {
-        self.root_dir.join(INSTALLED_DIR).join(namespace)
+    pub fn installed_manifests(&self, namespace: &Namespace) -> PathBuf {
+        self.root_dir
+            .join(INSTALLED_DIR)
+            .join(namespace.to_string())
     }
 
     /// Path to the lineage file
@@ -67,8 +69,8 @@ impl DomainPaths {
     }
 
     /// Directory for storing installed files that can be modified
-    pub fn working_dir(&self, namespace: &str) -> PathBuf {
-        self.root_dir.join(namespace)
+    pub fn working_dir(&self, namespace: &Namespace) -> PathBuf {
+        self.root_dir.join(namespace.to_string())
     }
 
     pub fn required_local_domain_paths(&self) -> Vec<PathBuf> {
@@ -79,7 +81,7 @@ impl DomainPaths {
         ]
     }
 
-    pub fn required_installed_package_paths(&self, namespace: &str) -> Vec<PathBuf> {
+    pub fn required_installed_package_paths(&self, namespace: &Namespace) -> Vec<PathBuf> {
         let mut paths = vec![];
         paths.extend(self.required_local_domain_paths());
         paths.extend(vec![
@@ -94,7 +96,7 @@ pub async fn copy_cached_to_installed(
     paths: &DomainPaths,
     storage: &impl Storage,
     cached_manifest_bucket: &str,
-    installed_manifest_namespace: &str,
+    installed_manifest_namespace: &Namespace,
     hash: &str,
 ) -> Result<(), Error> {
     storage

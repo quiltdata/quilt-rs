@@ -9,6 +9,7 @@ use crate::quilt::lineage::PackageLineage;
 use crate::quilt::manifest_handle::ReadableManifest;
 use crate::quilt::remote::Remote;
 use crate::quilt::storage::Storage;
+use crate::quilt::uri::Namespace;
 use crate::Error;
 
 pub async fn reset_to_latest(
@@ -18,7 +19,7 @@ pub async fn reset_to_latest(
     storage: &(impl Storage + std::marker::Sync),
     remote: &impl Remote,
     working_dir: PathBuf,
-    namespace: String,
+    namespace: Namespace,
 ) -> Result<PackageLineage, Error> {
     let new_latest = lineage.remote.resolve_latest(remote).await?;
     if new_latest == lineage.remote.hash {
@@ -39,7 +40,7 @@ pub async fn reset_to_latest(
         paths,
         storage,
         &lineage.remote.bucket,
-        &namespace.to_string(),
+        &namespace,
         &lineage.remote.hash,
     )
     .await?;
@@ -76,12 +77,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_if_already_latest() -> Result<(), Error> {
-        let source_lineage = mocks::lineage::with_remote("quilt+s3://b#package=a@foo")?;
+        let source_lineage = mocks::lineage::with_remote("quilt+s3://b#package=f/a@foo")?;
 
         let remote = MockRemote::default();
         remote
             .put_object(
-                &S3Uri::try_from("s3://b/.quilt/named_packages/a/latest")?,
+                &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
                 b"foo".to_vec(),
             )
             .await?;
@@ -93,7 +94,7 @@ mod tests {
             &MockStorage::default(),
             &remote,
             PathBuf::default(),
-            String::default(),
+            Namespace::default(),
         )
         .await?;
         assert_eq!(resolved_lineage, source_lineage);
@@ -102,13 +103,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_reseting_to_latest() -> Result<(), Error> {
-        let source_lineage = mocks::lineage::with_remote("quilt+s3://b#package=a@OUTDATED_HASH")?;
+        let source_lineage = mocks::lineage::with_remote("quilt+s3://b#package=f/a@OUTDATED_HASH")?;
 
         let jsonl = std::fs::read(local_uri_json())?;
         let remote = MockRemote::default();
         remote
             .put_object(
-                &S3Uri::try_from("s3://b/.quilt/named_packages/a/latest")?,
+                &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
                 b"LATEST_HASH".to_vec(),
             )
             .await?;
@@ -126,7 +127,7 @@ mod tests {
             &MockStorage::default(),
             &remote,
             PathBuf::default(),
-            String::default(),
+            Namespace::default(),
         )
         .await?;
         assert_eq!(

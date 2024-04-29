@@ -15,6 +15,7 @@ use crate::quilt::remote::Remote;
 use crate::quilt::storage;
 use crate::quilt::storage::s3::S3Uri;
 use crate::quilt::storage::Storage;
+use crate::quilt::uri::Namespace;
 use crate::quilt::Error;
 
 pub async fn push_package(
@@ -23,7 +24,7 @@ pub async fn push_package(
     paths: &paths::DomainPaths,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    namespace: String,
+    namespace: Namespace,
 ) -> Result<PackageLineage, Error> {
     let commit = match lineage.commit {
         None => return Ok(lineage), // nothing to commit
@@ -166,7 +167,7 @@ mod tests {
             &paths::DomainPaths::default(),
             &storage,
             &remote,
-            String::default(),
+            Namespace::default(),
         )
         .await?;
         assert_eq!(lineage, PackageLineage::default());
@@ -176,7 +177,7 @@ mod tests {
     #[tokio::test]
     async fn test_no_entries_push() -> Result<(), Error> {
         let remote_manifest: RemoteManifest =
-            S3PackageUri::try_from("quilt+s3://b#package=a@__FOO__")?.into();
+            S3PackageUri::try_from("quilt+s3://b#package=a/c@__FOO__")?.into();
         let lineage = PackageLineage {
             commit: Some(CommitState::default()),
             remote: remote_manifest,
@@ -199,7 +200,7 @@ mod tests {
             .await?;
         remote
             .put_object(
-                &S3Uri::try_from("s3://b/.quilt/named_packages/a/latest")?,
+                &S3Uri::try_from("s3://b/.quilt/named_packages/a/c/latest")?,
                 b"abcdef".to_vec(),
             )
             .await?;
@@ -209,10 +210,10 @@ mod tests {
             &paths::DomainPaths::default(),
             &storage,
             &remote,
-            String::default(),
+            Namespace::default(),
         )
         .await?;
-        let result_remote_manifest: RemoteManifest = S3PackageUri::try_from("quilt+s3://b#package=a@770459d4230273fd44b272c552d1204458175e7d7cb26fcd601c662cf5f72d05")?.into();
+        let result_remote_manifest: RemoteManifest = S3PackageUri::try_from("quilt+s3://b#package=a/c@770459d4230273fd44b272c552d1204458175e7d7cb26fcd601c662cf5f72d05")?.into();
         assert_eq!(
             lineage,
             PackageLineage {
@@ -228,7 +229,7 @@ mod tests {
     #[tokio::test]
     async fn test_single_chunk_push() -> Result<(), Error> {
         let remote_manifest: RemoteManifest =
-            S3PackageUri::try_from("quilt+s3://b#package=a@__FOO__")?.into();
+            S3PackageUri::try_from("quilt+s3://b#package=f/a@__FOO__")?.into();
         let lineage = PackageLineage {
             commit: Some(CommitState::default()),
             remote: remote_manifest,
@@ -251,7 +252,7 @@ mod tests {
             .await?;
         remote
             .put_object(
-                &S3Uri::try_from("s3://b/.quilt/named_packages/a/latest")?,
+                &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
                 b"abcdef".to_vec(),
             )
             .await?;
@@ -271,10 +272,10 @@ mod tests {
             &paths::DomainPaths::default(),
             &storage,
             &remote,
-            String::default(),
+            Namespace::default(),
         )
         .await?;
-        let result_remote_manifest: RemoteManifest = S3PackageUri::try_from("quilt+s3://b#package=a@0f85671863dadacf3a0e62212f1b9151a11f72228e4c82ed86ff27d46ec31d87")?.into();
+        let result_remote_manifest: RemoteManifest = S3PackageUri::try_from("quilt+s3://b#package=f/a@0f85671863dadacf3a0e62212f1b9151a11f72228e4c82ed86ff27d46ec31d87")?.into();
         assert_eq!(
             lineage,
             PackageLineage {
@@ -284,7 +285,6 @@ mod tests {
                 ..PackageLineage::default()
             }
         );
-        // drop(temp_dir);
         Ok(())
     }
 

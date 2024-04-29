@@ -112,7 +112,7 @@ mod tests {
         let paths = DomainPaths::default();
         let manifest = RemoteManifest {
             bucket: "a".to_string(),
-            namespace: "b".to_string(),
+            namespace: ("f", "b").into(),
             hash: "c".to_string(),
         };
         let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
@@ -136,7 +136,7 @@ mod tests {
         let paths = DomainPaths::default();
         let manifest = RemoteManifest {
             bucket: "a".to_string(),
-            namespace: "b".to_string(),
+            namespace: ("f", "b").into(),
             hash: "c".to_string(),
         };
         let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
@@ -161,7 +161,7 @@ mod tests {
         let paths = DomainPaths::default();
         let manifest = RemoteManifest {
             bucket: "a".to_string(),
-            namespace: "b".to_string(),
+            namespace: ("f", "b").into(),
             hash: "c".to_string(),
         };
         let remote = MockRemote::default();
@@ -193,7 +193,7 @@ mod tests {
         let paths = DomainPaths::default();
         let manifest = RemoteManifest {
             bucket: "a".to_string(),
-            namespace: "b".to_string(),
+            namespace: ("f", "b").into(),
             hash: "c".to_string(),
         };
         let jsonl = std::fs::read(local_uri_json())?;

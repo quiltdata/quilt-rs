@@ -9,12 +9,13 @@ use crate::quilt::paths;
 use crate::quilt::remote::Remote;
 use crate::quilt::storage::s3;
 use crate::quilt::storage::Storage;
+use crate::quilt::uri::Namespace;
 use crate::quilt::uri::RevisionPointer;
 use crate::quilt::uri::S3PackageUri;
 use crate::quilt::Error;
 use crate::quilt::Table;
 
-pub fn tag_uri(bucket: &str, namespace: &str, tag: &str) -> s3::S3Uri {
+pub fn tag_uri(bucket: &str, namespace: &Namespace, tag: &str) -> s3::S3Uri {
     s3::S3Uri {
         bucket: bucket.to_owned(),
         key: paths::tag_key(namespace, tag),
@@ -25,7 +26,7 @@ pub fn tag_uri(bucket: &str, namespace: &str, tag: &str) -> s3::S3Uri {
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteManifest {
     pub bucket: String,
-    pub namespace: String,
+    pub namespace: Namespace,
     pub hash: String,
 }
 
@@ -164,7 +165,7 @@ impl CachedManifest {
 #[derive(Clone, Debug, PartialEq)]
 pub struct InstalledManifest {
     pub hash: String,
-    pub namespace: String,
+    pub namespace: Namespace,
     pub paths: paths::DomainPaths,
 }
 
@@ -175,7 +176,7 @@ impl ReadableManifest for InstalledManifest {
 }
 
 impl InstalledManifest {
-    pub fn new(namespace: String, hash: String, paths: paths::DomainPaths) -> Self {
+    pub fn new(namespace: Namespace, hash: String, paths: paths::DomainPaths) -> Self {
         InstalledManifest {
             hash,
             namespace,
@@ -193,14 +194,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_existing_hash() -> Result<(), Error> {
-        let uri = S3PackageUri::try_from("quilt+s3://b#package=foo@hjknlmn")?;
+        let uri = S3PackageUri::try_from("quilt+s3://b#package=foo/bar@hjknlmn")?;
         let remote = MockRemote::default();
         let remote_manifest = RemoteManifest::resolve(&remote, &uri).await?;
         assert_eq!(
             remote_manifest,
             RemoteManifest {
                 bucket: "b".to_string(),
-                namespace: "foo".to_string(),
+                namespace: ("foo", "bar").into(),
                 hash: "hjknlmn".to_string(),
             },
         );
@@ -209,11 +210,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_remote_hash() -> Result<(), Error> {
-        let uri = S3PackageUri::try_from("quilt+s3://b#package=foo")?;
+        let uri = S3PackageUri::try_from("quilt+s3://b#package=foo/bar")?;
         let remote = MockRemote::default();
         remote
             .put_object(
-                &S3Uri::try_from("s3://b/.quilt/named_packages/foo/latest")?,
+                &S3Uri::try_from("s3://b/.quilt/named_packages/foo/bar/latest")?,
                 b"abcdef".to_vec(),
             )
             .await?;
@@ -222,7 +223,7 @@ mod tests {
             remote_manifest,
             RemoteManifest {
                 bucket: "b".to_string(),
-                namespace: "foo".to_string(),
+                namespace: ("foo", "bar").into(),
                 hash: "abcdef".to_string(),
             },
         );

@@ -12,6 +12,7 @@ use serde::Serializer;
 pub mod mocks;
 
 use crate::quilt::storage::Storage;
+use crate::quilt::uri::Namespace;
 use crate::Error;
 
 use super::RemoteManifest;
@@ -55,7 +56,7 @@ fn str_to_multihash<'de, D: Deserializer<'de>>(
 /// The key is the name of the path, and the value is the state of the path
 pub type LineagePaths = BTreeMap<PathBuf, PathState>;
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
 pub struct PackageLineage {
     pub commit: Option<CommitState>,
     pub remote: RemoteManifest,
@@ -82,17 +83,46 @@ impl PackageLineage {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
 pub struct DomainLineage {
+    pub packages: BTreeMap<Namespace, PackageLineage>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct DomainLineageJson {
     #[serde(default = "BTreeMap::new")]
     pub packages: BTreeMap<String, PackageLineage>,
+}
+
+impl TryFrom<DomainLineageJson> for DomainLineage {
+    type Error = Error;
+
+    fn try_from(input: DomainLineageJson) -> Result<Self, Self::Error> {
+        let mut packages = BTreeMap::new();
+        for (key, value) in input.packages.iter() {
+            packages.insert(Namespace::try_from(key.to_string())?, value.clone());
+        }
+        Ok(DomainLineage { packages })
+    }
+}
+
+impl From<&DomainLineage> for DomainLineageJson {
+    fn from(input: &DomainLineage) -> Self {
+        let mut packages = BTreeMap::new();
+        for (key, value) in input.packages.iter() {
+            packages.insert(key.to_string(), value.clone());
+        }
+        DomainLineageJson { packages }
+    }
 }
 
 impl TryFrom<&str> for DomainLineage {
     type Error = Error;
 
     fn try_from(input: &str) -> Result<Self, Self::Error> {
-        serde_json::from_str(input).map_err(Error::LineageParse)
+        serde_json::from_str::<DomainLineageJson>(input)
+            .map_err(Error::LineageParse)?
+            .try_into()
     }
 }
 
@@ -100,7 +130,9 @@ impl TryFrom<Vec<u8>> for DomainLineage {
     type Error = Error;
 
     fn try_from(input: Vec<u8>) -> Result<Self, Self::Error> {
-        serde_json::from_slice(&input).map_err(Error::LineageParse)
+        serde_json::from_slice::<DomainLineageJson>(&input)
+            .map_err(Error::LineageParse)?
+            .try_into()
     }
 }
 
@@ -137,14 +169,20 @@ impl DomainLineageIo {
         storage: &impl Storage,
         lineage: DomainLineage,
     ) -> Result<DomainLineage, Error> {
+        // Ok(serde_json::to_string_pretty(&lineage)?)
         let contents = serde_json::to_string_pretty(&lineage)?;
         storage
             .write_file(self.path.clone(), contents.as_bytes())
             .await?;
         Ok(lineage)
+        // let contents = serde_json::to_string_pretty(&DomainLineageJson::from(&lineage))?;
+        // storage
+        //     .write_file(self.path.clone(), contents.as_bytes())
+        //     .await?;
+        // Ok(lineage)
     }
 
-    pub fn create_package_lineage(&self, namespace: String) -> PackageLineageIo {
+    pub fn create_package_lineage(&self, namespace: Namespace) -> PackageLineageIo {
         PackageLineageIo::new(self.clone(), namespace)
     }
 }
@@ -152,11 +190,11 @@ impl DomainLineageIo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageLineageIo {
     domain_lineage: DomainLineageIo,
-    namespace: String,
+    namespace: Namespace,
 }
 
 impl PackageLineageIo {
-    pub fn new(domain_lineage: DomainLineageIo, namespace: String) -> Self {
+    pub fn new(domain_lineage: DomainLineageIo, namespace: Namespace) -> Self {
         PackageLineageIo {
             domain_lineage,
             namespace,
@@ -282,12 +320,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_domain_lineage_create_package_lineage() -> Result<(), Error> {
+        let namespace = Namespace::from(("foo", "bar"));
         let domain_lineage = DomainLineageIo::default();
-        let lineage = domain_lineage.create_package_lineage("foo".to_string());
+        let lineage = domain_lineage.create_package_lineage(namespace.clone());
         assert_eq!(
             lineage,
             PackageLineageIo {
-                namespace: "foo".to_string(),
+                namespace,
                 domain_lineage,
             }
         );

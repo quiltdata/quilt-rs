@@ -11,6 +11,7 @@ use crate::quilt::lineage::PathState;
 use crate::quilt::manifest_handle::ReadableManifest;
 use crate::quilt::remote::Remote;
 use crate::quilt::storage::s3;
+use crate::quilt::uri::Namespace;
 use crate::quilt::Storage;
 use crate::Error;
 
@@ -45,7 +46,7 @@ pub async fn install_paths(
     manifest: &(impl ReadableManifest + Sync),
     paths: &DomainPaths,
     working_dir: PathBuf,
-    namespace: String,
+    namespace: Namespace,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     entries_paths: &Vec<PathBuf>,
@@ -139,7 +140,7 @@ mod tests {
     async fn test_installing_one_cached_path() -> Result<(), Error> {
         let working_dir = tempfile::tempdir()?;
 
-        let namespace = "foo/bar".to_string();
+        let namespace = Namespace::from(("foo", "bar"));
 
         let domain_paths = &DomainPaths::new(working_dir.path().to_path_buf());
 
@@ -180,7 +181,7 @@ mod tests {
     async fn test_installing_one_uncached_path() -> Result<(), Error> {
         let working_dir = tempfile::tempdir()?;
 
-        let namespace = "foo/bar".to_string();
+        let namespace = Namespace::from(("foo", "bar"));
 
         let domain_paths = &DomainPaths::new(working_dir.path().to_path_buf());
 
@@ -236,7 +237,7 @@ mod tests {
             &manifest,
             &DomainPaths::default(),
             PathBuf::new(),
-            String::default(),
+            Namespace::default(),
             &storage,
             &remote,
             &entries_paths,

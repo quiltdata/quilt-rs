@@ -1,4 +1,5 @@
 use quilt_rs::quilt::lineage::CommitState;
+use quilt_rs::quilt::uri::Namespace;
 
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
@@ -7,7 +8,7 @@ use crate::cli::Error;
 #[derive(Debug)]
 pub struct Input {
     pub message: String,
-    pub namespace: String,
+    pub namespace: Namespace,
     pub user_meta: Option<quilt_rs::quilt::manifest::JsonObject>,
 }
 
@@ -36,15 +37,17 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 
 async fn commit_package(
     local_domain: &quilt_rs::LocalDomain,
-    namespace: String,
+    namespace: Namespace,
     message: String,
     user_meta: Option<quilt_rs::quilt::manifest::JsonObject>,
 ) -> Result<Option<CommitState>, Error> {
-    let installed_package = local_domain.get_installed_package(&namespace).await?;
+    let installed_package = local_domain
+        .get_installed_package(namespace.clone())
+        .await?;
 
     match installed_package {
         Some(installed_package) => Ok(installed_package.commit(message, user_meta).await?),
-        None => Err(Error::NamespaceNotFound(namespace.to_string())),
+        None => Err(Error::NamespaceNotFound(namespace)),
     }
 }
 

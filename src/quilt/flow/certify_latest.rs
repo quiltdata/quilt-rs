@@ -27,11 +27,11 @@ mod tests {
         let remote = MockRemote::default();
         remote
             .put_object(
-                &S3Uri::try_from("s3://b/.quilt/named_packages/a/latest")?,
+                &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
                 b"OUTDATED_HASH".to_vec(),
             )
             .await?;
-        let source_lineage = mocks::lineage::with_remote("quilt+s3://b#package=a@LATEST_HASH")?;
+        let source_lineage = mocks::lineage::with_remote("quilt+s3://b#package=f/a@LATEST_HASH")?;
         let resolved_lineage = certify_latest(source_lineage.clone(), &remote).await?;
         assert_eq!(
             resolved_lineage,

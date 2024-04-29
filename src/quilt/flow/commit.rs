@@ -18,6 +18,7 @@ use crate::quilt::lineage::PackageLineage;
 use crate::quilt::lineage::PathState;
 use crate::quilt::manifest::JsonObject;
 use crate::quilt::manifest_handle::ReadableManifest;
+use crate::quilt::uri::Namespace;
 use crate::quilt4::table::Table;
 
 fn remove_entry(
@@ -96,7 +97,7 @@ pub async fn commit_package(
     storage: &(impl Storage + Sync),
     working_dir: PathBuf,
     status: InstalledPackageStatus,
-    namespace: String,
+    namespace: Namespace,
     message: String,
     user_meta: Option<JsonObject>,
 ) -> Result<PackageLineage, Error> {
@@ -204,7 +205,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit() -> Result<(), Error> {
-        let namespace = "foo/bar".to_string();
+        let namespace = Namespace::from(("foo", "bar"));
         let storage = MockStorage::default();
 
         let commit_message = "Lorem ipsum".to_string();
@@ -240,7 +241,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_removing_and_commit() -> Result<(), Error> {
-        let namespace = "foo/bar".to_string();
+        let namespace = Namespace::from(("foo", "bar"));
         let storage = MockStorage::default();
 
         let commit_message = "Lorem ipsum".to_string();
@@ -304,7 +305,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_adding_and_commit() -> Result<(), Error> {
-        let namespace = "foo/bar".to_string();
+        let namespace = Namespace::from(("foo", "bar"));
         let storage = MockStorage::default();
         storage
             .write_file(PathBuf::from("/working-dir/bar"), &Vec::new())
@@ -370,7 +371,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_adding_manifest_already_has_it() -> Result<(), Error> {
-        let namespace = "foo/bar".to_string();
+        let namespace = Namespace::from(("foo", "bar"));
         let storage = MockStorage::default();
 
         let status = InstalledPackageStatus {
@@ -411,7 +412,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_modifying_and_commit() -> Result<(), Error> {
-        let namespace = "foo/bar".to_string();
+        let namespace = Namespace::from(("foo", "bar"));
         let storage = MockStorage::default();
         storage
             .write_file(PathBuf::from("/working-dir/bar"), &Vec::new())
