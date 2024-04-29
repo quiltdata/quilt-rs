@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use tracing::log;
 
-use crate::quilt::lineage::PackageLineage;
+use crate::lineage::PackageLineage;
 use crate::quilt::storage::Storage;
 use crate::Error;
 

@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 
+use crate::lineage::PackageLineage;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
 use crate::quilt::flow::browse::cache_remote_manifest;
 use crate::quilt::flow::install_paths::install_paths;
 use crate::quilt::flow::status::InstalledPackageStatus;
 use crate::quilt::flow::uninstall_paths::uninstall_paths;
-use crate::quilt::lineage::PackageLineage;
 use crate::quilt::manifest_handle;
 use crate::quilt::storage::Storage;
 use crate::quilt::uri::Namespace;

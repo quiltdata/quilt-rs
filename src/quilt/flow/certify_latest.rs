@@ -1,4 +1,4 @@
-use crate::quilt::lineage::PackageLineage;
+use crate::lineage::PackageLineage;
 use crate::quilt::remote::Remote;
 use crate::Error;
 

@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use tracing::log;
 
-use crate::quilt::lineage::PackageLineage;
+use crate::lineage::PackageLineage;
 use crate::quilt::manifest::MULTIHASH_SHA256;
 use crate::quilt::manifest::MULTIHASH_SHA256_CHUNKED;
 use crate::quilt::manifest_handle::ReadableManifest;
@@ -235,7 +235,7 @@ pub async fn create_status(
 mod tests {
     use super::*;
 
-    use crate::quilt::lineage::CommitState;
+    use crate::lineage::CommitState;
     use crate::quilt::manifest::ContentHash;
     use crate::quilt::mocks;
     use crate::quilt::storage::mock_storage::MockStorage;

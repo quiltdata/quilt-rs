@@ -5,10 +5,10 @@ use multihash::Multihash;
 use tracing::log;
 use url::Url;
 
+use crate::lineage::PackageLineage;
 use crate::paths;
 use crate::quilt::flow::browse::browse_remote_manifest;
 use crate::quilt::flow::browse::cache_manifest;
-use crate::quilt::lineage::PackageLineage;
 use crate::quilt::manifest;
 use crate::quilt::manifest_handle;
 use crate::quilt::remote::Remote;

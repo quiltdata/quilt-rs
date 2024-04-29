@@ -7,6 +7,7 @@ use thiserror::Error;
 mod paths;
 mod quilt4;
 
+pub mod lineage;
 pub mod quilt;
 
 #[cfg(test)]

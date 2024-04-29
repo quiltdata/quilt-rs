@@ -1,4 +1,4 @@
-pub use crate::quilt::lineage::mocks as lineage;
+pub use crate::lineage::mocks as lineage;
 
 pub fn row_hash_sample1() -> multihash::Multihash<256> {
     multihash::Multihash::wrap(0xb510, b"pedestrian").expect("Unexpected")

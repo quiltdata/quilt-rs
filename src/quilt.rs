@@ -6,7 +6,6 @@ use multihash::Multihash;
 use tracing::log;
 
 pub mod flow;
-pub mod lineage;
 pub mod manifest;
 pub mod manifest_handle;
 pub mod remote;
@@ -16,6 +15,7 @@ pub mod uri;
 #[cfg(test)]
 pub mod mocks;
 
+use crate::lineage;
 use crate::paths;
 use crate::quilt4::table::HEADER_ROW;
 use crate::s3_utils;
@@ -23,14 +23,14 @@ use crate::Error;
 use crate::Row4;
 use crate::Table;
 
+use crate::lineage::CommitState;
+use crate::lineage::DomainLineage;
+use crate::lineage::LineagePaths;
+use crate::lineage::PackageLineage;
+
 pub use crate::quilt::remote::Remote;
 pub use flow::status::UpstreamDiscreteState;
 pub use flow::status::UpstreamState;
-pub use lineage::CommitState;
-pub use lineage::DomainLineage;
-pub use lineage::LineagePaths;
-pub use lineage::PackageLineage;
-pub use lineage::PathState;
 pub use manifest::ContentHash;
 pub use manifest::Manifest;
 pub use manifest::ManifestHeader;

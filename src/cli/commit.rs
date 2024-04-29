@@ -1,4 +1,4 @@
-use quilt_rs::quilt::lineage::CommitState;
+use quilt_rs::lineage::CommitState;
 use quilt_rs::quilt::uri::Namespace;
 
 use crate::cli::model::Commands;

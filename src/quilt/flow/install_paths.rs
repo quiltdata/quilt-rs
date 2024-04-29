@@ -4,10 +4,10 @@ use std::path::PathBuf;
 
 use url::Url;
 
+use crate::lineage::PackageLineage;
+use crate::lineage::PathState;
 use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
-use crate::quilt::lineage::PackageLineage;
-use crate::quilt::lineage::PathState;
 use crate::quilt::manifest_handle::ReadableManifest;
 use crate::quilt::remote::Remote;
 use crate::quilt::storage::s3;

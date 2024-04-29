@@ -10,12 +10,12 @@ use crate::quilt::Storage;
 use crate::Error;
 use crate::Row4;
 
+use crate::lineage::CommitState;
+use crate::lineage::PackageLineage;
+use crate::lineage::PathState;
 use crate::quilt::flow::status::Change;
 use crate::quilt::flow::status::InstalledPackageStatus;
 use crate::quilt::flow::status::PackageFileFingerprint;
-use crate::quilt::lineage::CommitState;
-use crate::quilt::lineage::PackageLineage;
-use crate::quilt::lineage::PathState;
 use crate::quilt::manifest::JsonObject;
 use crate::quilt::manifest_handle::ReadableManifest;
 use crate::quilt::uri::Namespace;

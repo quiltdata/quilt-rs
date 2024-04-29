@@ -1,7 +1,7 @@
 use tracing::log;
 
+use crate::lineage::DomainLineage;
 use crate::paths;
-use crate::quilt::lineage::DomainLineage;
 use crate::quilt::uri::Namespace;
 use crate::quilt::Storage;
 use crate::Error;
@@ -37,7 +37,7 @@ mod tests {
 
     use super::*;
 
-    use crate::quilt::lineage::PackageLineage;
+    use crate::lineage::PackageLineage;
     use crate::quilt::storage::mock_storage::MockStorage;
 
     #[tokio::test]
