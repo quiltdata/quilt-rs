@@ -119,12 +119,12 @@ mod tests {
     use tempfile::tempdir;
     use tokio::io::AsyncWriteExt;
 
-    use crate::utils::local_uri_json;
+    use crate::mocks;
 
     #[tokio::test]
     #[ignore] // It doesn't work in CI. In CI file has `now` date
     async fn test_getting_file_modified_ts() -> Result<(), Error> {
-        let timestamp = get_file_modified_ts(local_uri_json()).await?;
+        let timestamp = get_file_modified_ts(mocks::manifest::jsonl()).await?;
         assert_eq!(
             timestamp.to_string(),
             "2024-01-15 11:31:00.615186989 UTC".to_string()
@@ -140,7 +140,7 @@ mod tests {
         let storage = LocalStorage::default();
 
         assert!(fs::metadata(&dest).await.is_err());
-        storage.copy(local_uri_json(), &dest).await?;
+        storage.copy(mocks::manifest::jsonl(), &dest).await?;
         assert!(fs::metadata(dest).await.is_ok());
 
         Ok(())

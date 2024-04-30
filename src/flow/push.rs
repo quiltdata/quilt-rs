@@ -151,7 +151,6 @@ mod tests {
     use crate::manifest::Row;
     use crate::mocks;
     use crate::uri::S3PackageUri;
-    use crate::utils::local_uri_parquet_checksummed;
 
     #[tokio::test]
     async fn test_no_push_if_no_commit() -> Result<(), Error> {
@@ -179,7 +178,7 @@ mod tests {
             remote: manifest_uri,
             ..PackageLineage::default()
         };
-        let jsonl = std::fs::read(local_uri_parquet_checksummed())?;
+        let jsonl = std::fs::read(mocks::manifest::parquet_checksummed())?;
         let manifest_key =
             ".quilt/packages/b/770459d4230273fd44b272c552d1204458175e7d7cb26fcd601c662cf5f72d05";
         let storage = mocks::storage::MockStorage::default();
@@ -231,7 +230,7 @@ mod tests {
             remote: manifest_uri,
             ..PackageLineage::default()
         };
-        let jsonl = std::fs::read(local_uri_parquet_checksummed())?;
+        let jsonl = std::fs::read(mocks::manifest::parquet_checksummed())?;
         let temp_dir = tempfile::tempdir()?;
         let manifest_key =
             ".quilt/packages/b/0f85671863dadacf3a0e62212f1b9151a11f72228e4c82ed86ff27d46ec31d87";
@@ -254,7 +253,7 @@ mod tests {
             .await?;
 
         let file_path = temp_dir.into_path().join("bar");
-        tokio::fs::copy(local_uri_parquet_checksummed(), &file_path).await?;
+        tokio::fs::copy(mocks::manifest::parquet_checksummed(), &file_path).await?;
 
         let mut manifest = mocks::manifest::with_rows(vec![Row {
             name: PathBuf::from("bar"),

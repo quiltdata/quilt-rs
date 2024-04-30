@@ -30,6 +30,26 @@ pub mod manifest {
     use crate::manifest::Row;
     use crate::manifest::Table;
 
+    static TEST_LOCAL_PARQUET: &str = "fixtures/manifest.parquet";
+    static TEST_LOCAL_PARQUET_CHECKSUMMED: &str = "fixtures/checksummed.parquet";
+    static TEST_LOCAL_JSONL: &str = "fixtures/manifest.jsonl";
+
+    fn local_uri(key: &str) -> PathBuf {
+        std::env::current_dir().unwrap().join(key)
+    }
+
+    pub fn parquet() -> PathBuf {
+        local_uri(TEST_LOCAL_PARQUET)
+    }
+
+    pub fn jsonl() -> PathBuf {
+        local_uri(TEST_LOCAL_JSONL)
+    }
+
+    pub fn parquet_checksummed() -> PathBuf {
+        local_uri(TEST_LOCAL_PARQUET_CHECKSUMMED)
+    }
+
     pub fn row_with_name(name: PathBuf) -> Row {
         Row {
             name,

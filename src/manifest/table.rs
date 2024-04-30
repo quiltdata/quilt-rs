@@ -312,7 +312,6 @@ impl TryFrom<Manifest> for Table {
 #[cfg(test)]
 mod tests {
     use crate::mocks;
-    use crate::utils::local_uri_parquet;
 
     use super::*;
 
@@ -320,9 +319,9 @@ mod tests {
     async fn read_existing_local() -> Result<(), Error> {
         let storage = mocks::storage::MockStorage::default();
         storage
-            .write_file(local_uri_parquet(), &std::fs::read(local_uri_parquet())?)
+            .write_file(mocks::manifest::parquet(), &std::fs::read(mocks::manifest::parquet())?)
             .await?;
-        let table = Table::read_from_path(&storage, &local_uri_parquet())
+        let table = Table::read_from_path(&storage, &mocks::manifest::parquet())
             .await
             .unwrap();
         assert_eq!(table.records.len(), 2);
@@ -340,7 +339,7 @@ mod tests {
     #[ignore]
     async fn read_write_local() {
         let storage = mocks::storage::MockStorage::default();
-        let table1 = Table::read_from_path(&storage, &local_uri_parquet())
+        let table1 = Table::read_from_path(&storage, &mocks::manifest::parquet())
             .await
             .unwrap();
         assert_eq!(table1.records.len(), 2);

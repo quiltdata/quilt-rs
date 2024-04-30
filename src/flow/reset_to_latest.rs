@@ -70,7 +70,6 @@ mod tests {
     use crate::mocks;
     use crate::uri::ManifestUri;
     use crate::uri::S3Uri;
-    use crate::utils::local_uri_json;
 
     #[tokio::test]
     async fn test_if_already_latest() -> Result<(), Error> {
@@ -102,7 +101,7 @@ mod tests {
     async fn test_reseting_to_latest() -> Result<(), Error> {
         let source_lineage = mocks::lineage::with_remote("quilt+s3://b#package=f/a@OUTDATED_HASH")?;
 
-        let jsonl = std::fs::read(local_uri_json())?;
+        let jsonl = std::fs::read(mocks::manifest::jsonl())?;
         let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(

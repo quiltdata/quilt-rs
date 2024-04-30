@@ -95,8 +95,6 @@ mod tests {
     use super::*;
 
     use crate::mocks;
-    use crate::utils::local_uri_json;
-    use crate::utils::local_uri_parquet;
 
     #[tokio::test]
     async fn test_if_cached() -> Result<(), Error> {
@@ -107,7 +105,7 @@ mod tests {
             hash: "c".to_string(),
         };
         let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
-        let parquet = std::fs::read(local_uri_parquet())?;
+        let parquet = std::fs::read(mocks::manifest::parquet())?;
         let storage = mocks::storage::MockStorage::default();
         storage.write_file(cache_path, &parquet).await?;
         let remote = mocks::remote::MockRemote::default();
@@ -148,7 +146,7 @@ mod tests {
             namespace: ("f", "b").into(),
             hash: "c".to_string(),
         };
-        let parquet = std::fs::read(local_uri_parquet())?;
+        let parquet = std::fs::read(mocks::manifest::parquet())?;
         let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(
@@ -179,7 +177,7 @@ mod tests {
             namespace: ("f", "b").into(),
             hash: "c".to_string(),
         };
-        let jsonl = std::fs::read(local_uri_json())?;
+        let jsonl = std::fs::read(mocks::manifest::jsonl())?;
         let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(&S3Uri::try_from("s3://a/.quilt/packages/c")?, jsonl.clone())

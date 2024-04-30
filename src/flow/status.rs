@@ -158,7 +158,6 @@ mod tests {
     use crate::lineage::CommitState;
     use crate::lineage::UpstreamDiscreteState;
     use crate::mocks;
-    use crate::utils::local_uri_parquet;
 
     #[tokio::test]
     async fn test_default_status() -> Result<(), Error> {
@@ -264,7 +263,7 @@ mod tests {
         storage
             .write_file(
                 working_dir.join(&file_path),
-                &std::fs::read(local_uri_parquet())?,
+                &std::fs::read(mocks::manifest::parquet())?,
             )
             .await?;
 

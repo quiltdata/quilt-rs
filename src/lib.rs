@@ -15,10 +15,6 @@ pub mod quilt;
 pub mod uri;
 
 #[cfg(test)]
-/// Utilities for testing only
-mod utils; // FIXME: move to mocks and fixtures
-
-#[cfg(test)]
 pub mod mocks;
 
 pub use manifest::Manifest;
