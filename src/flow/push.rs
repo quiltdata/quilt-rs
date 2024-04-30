@@ -15,7 +15,7 @@ use crate::quilt::manifest;
 use crate::quilt::manifest_handle;
 use crate::quilt::Namespace;
 use crate::quilt4::checksum::MULTIPART_THRESHOLD;
-use crate::uri::RemoteManifest;
+use crate::uri::ManifestUri;
 use crate::uri::S3Uri;
 use crate::Error;
 
@@ -32,11 +32,10 @@ pub async fn push_package(
         Some(commit) => commit,
     };
 
-    let remote_manifest_address = &lineage.remote;
+    let manifest_uri = &lineage.remote;
 
     let mut local_manifest = manifest.read(storage).await?;
-    let remote_manifest =
-        browse_remote_manifest(paths, storage, remote, remote_manifest_address).await?;
+    let remote_manifest = browse_remote_manifest(paths, storage, remote, manifest_uri).await?;
 
     // ## copy data
     // Copy each of the _modified_ paths from their local_key to remote_key,
@@ -58,7 +57,7 @@ pub async fn push_package(
 
         let s3_key = format!("{}/{}", namespace, row.name.display());
         let s3_uri = S3Uri {
-            bucket: remote_manifest_address.bucket.to_string(),
+            bucket: manifest_uri.bucket.to_string(),
             key: format!("{}/{}", namespace, row.name.display()),
             version: None,
         };
@@ -81,7 +80,7 @@ pub async fn push_package(
         row.hash = Multihash::wrap(manifest::MULTIHASH_SHA256_CHUNKED, checksum.as_ref())?;
 
         let remote_url = S3Uri {
-            bucket: remote_manifest_address.bucket.clone(),
+            bucket: manifest_uri.bucket.clone(),
             key: s3_key,
             version: version_id,
         };
@@ -92,9 +91,9 @@ pub async fn push_package(
     }
 
     let top_hash = local_manifest.top_hash();
-    let new_remote = RemoteManifest {
+    let new_remote = ManifestUri {
         hash: top_hash.clone(),
-        ..remote_manifest_address.clone()
+        ..manifest_uri.clone()
     };
 
     // Cache the relaxed manifest
@@ -174,11 +173,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_entries_push() -> Result<(), Error> {
-        let remote_manifest: RemoteManifest =
+        let manifest_uri: ManifestUri =
             S3PackageUri::try_from("quilt+s3://b#package=a/c@__FOO__")?.into();
         let lineage = PackageLineage {
             commit: Some(CommitState::default()),
-            remote: remote_manifest,
+            remote: manifest_uri,
             ..PackageLineage::default()
         };
         let jsonl = std::fs::read(local_uri_parquet_checksummed())?;
@@ -211,11 +210,11 @@ mod tests {
             Namespace::default(),
         )
         .await?;
-        let result_remote_manifest: RemoteManifest = S3PackageUri::try_from("quilt+s3://b#package=a/c@770459d4230273fd44b272c552d1204458175e7d7cb26fcd601c662cf5f72d05")?.into();
+        let manifest_uri: ManifestUri = S3PackageUri::try_from("quilt+s3://b#package=a/c@770459d4230273fd44b272c552d1204458175e7d7cb26fcd601c662cf5f72d05")?.into();
         assert_eq!(
             lineage,
             PackageLineage {
-                remote: result_remote_manifest,
+                remote: manifest_uri,
                 base_hash: "".to_string(), // Huh?
                 latest_hash: "abcdef".to_string(),
                 ..PackageLineage::default()
@@ -226,11 +225,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_single_chunk_push() -> Result<(), Error> {
-        let remote_manifest: RemoteManifest =
+        let manifest_uri: ManifestUri =
             S3PackageUri::try_from("quilt+s3://b#package=f/a@__FOO__")?.into();
         let lineage = PackageLineage {
             commit: Some(CommitState::default()),
-            remote: remote_manifest,
+            remote: manifest_uri,
             ..PackageLineage::default()
         };
         let jsonl = std::fs::read(local_uri_parquet_checksummed())?;
@@ -273,11 +272,11 @@ mod tests {
             Namespace::default(),
         )
         .await?;
-        let result_remote_manifest: RemoteManifest = S3PackageUri::try_from("quilt+s3://b#package=f/a@0f85671863dadacf3a0e62212f1b9151a11f72228e4c82ed86ff27d46ec31d87")?.into();
+        let manifest_uri: ManifestUri = S3PackageUri::try_from("quilt+s3://b#package=f/a@0f85671863dadacf3a0e62212f1b9151a11f72228e4c82ed86ff27d46ec31d87")?.into();
         assert_eq!(
             lineage,
             PackageLineage {
-                remote: result_remote_manifest,
+                remote: manifest_uri,
                 base_hash: "".to_string(), // Huh?
                 latest_hash: "abcdef".to_string(),
                 ..PackageLineage::default()

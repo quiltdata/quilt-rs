@@ -1,11 +1,9 @@
 mod manifest;
 mod package;
 mod s3;
-pub mod tag;
+mod tag;
 
-// FIXME: add TagUri and ManifestUri
-
-pub use manifest::RemoteManifest;
+pub use manifest::ManifestUri;
 pub use package::Namespace;
 pub use package::RevisionPointer;
 pub use package::S3PackageUri;

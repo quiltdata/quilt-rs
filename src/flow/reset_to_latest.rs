@@ -69,7 +69,7 @@ mod tests {
 
     use crate::lineage::PackageLineage;
     use crate::quilt::mocks;
-    use crate::quilt::RemoteManifest;
+    use crate::quilt::ManifestUri;
     use crate::uri::S3Uri;
     use crate::utils::local_uri_json;
 
@@ -133,7 +133,7 @@ mod tests {
             PackageLineage {
                 base_hash: "LATEST_HASH".to_string(),
                 latest_hash: "LATEST_HASH".to_string(),
-                remote: RemoteManifest {
+                remote: ManifestUri {
                     hash: "LATEST_HASH".to_string(),
                     ..source_lineage.remote
                 },

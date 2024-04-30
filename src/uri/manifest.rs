@@ -11,7 +11,6 @@ use crate::paths;
 use crate::quilt::manifest::Manifest;
 use crate::quilt::Namespace;
 use crate::quilt::RevisionPointer;
-use crate::uri::tag::Tag;
 use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
 use crate::uri::TagUri;
@@ -19,25 +18,25 @@ use crate::Error;
 use crate::Table;
 
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RemoteManifest {
+pub struct ManifestUri {
     pub bucket: String,
     pub namespace: Namespace,
     pub hash: String,
 }
 
-impl RemoteManifest {
-    pub async fn resolve(remote: &impl Remote, uri: &S3PackageUri) -> Result<Self, Error> {
+async fn resolve_top_hash(remote: &impl Remote, uri: TagUri) -> Result<String, Error> {
+    let stream = remote.get_object_stream(&uri.into()).await?;
+    bytestream_to_string(stream).await
+}
+
+impl ManifestUri {
+    pub async fn from_package_uri(remote: &impl Remote, uri: &S3PackageUri) -> Result<Self, Error> {
         // resolve the actual hash
         let top_hash = match &uri.revision {
             RevisionPointer::Hash(top_hash) => top_hash.clone(),
             RevisionPointer::Tag(_) => {
-                let uri = TagUri {
-                    bucket: uri.bucket.clone(),
-                    namespace: uri.namespace.clone(),
-                    tag: Tag::Latest,
-                };
-                let stream = remote.get_object_stream(&uri.into()).await?;
-                bytestream_to_string(stream).await?
+                let uri = TagUri::latest(&uri.into());
+                resolve_top_hash(remote, uri).await?
             }
         };
 
@@ -49,13 +48,8 @@ impl RemoteManifest {
     }
 
     pub async fn resolve_latest(&self, remote: &impl Remote) -> Result<String, Error> {
-        let uri = TagUri {
-            bucket: self.bucket.clone(),
-            namespace: self.namespace.clone(),
-            tag: Tag::Latest,
-        };
-        let stream = remote.get_object_stream(&uri.into()).await?;
-        bytestream_to_string(stream).await
+        let uri = TagUri::latest(self);
+        resolve_top_hash(remote, uri).await
     }
 
     async fn put_tag(
@@ -113,8 +107,8 @@ impl RemoteManifest {
     }
 }
 
-impl From<&RemoteManifest> for S3Uri {
-    fn from(remote: &RemoteManifest) -> S3Uri {
+impl From<&ManifestUri> for S3Uri {
+    fn from(remote: &ManifestUri) -> S3Uri {
         S3Uri {
             bucket: remote.bucket.clone(),
             key: paths::get_manifest_key(&remote.hash),
@@ -133,10 +127,10 @@ mod tests {
     async fn test_resolve_existing_hash() -> Result<(), Error> {
         let uri = S3PackageUri::try_from("quilt+s3://b#package=foo/bar@hjknlmn")?;
         let remote = mocks::remote::MockRemote::default();
-        let remote_manifest = RemoteManifest::resolve(&remote, &uri).await?;
+        let manifest_uri = ManifestUri::from_package_uri(&remote, &uri).await?;
         assert_eq!(
-            remote_manifest,
-            RemoteManifest {
+            manifest_uri,
+            ManifestUri {
                 bucket: "b".to_string(),
                 namespace: ("foo", "bar").into(),
                 hash: "hjknlmn".to_string(),
@@ -155,10 +149,10 @@ mod tests {
                 b"abcdef".to_vec(),
             )
             .await?;
-        let remote_manifest = RemoteManifest::resolve(&remote, &uri).await?;
+        let manifest_uri = ManifestUri::from_package_uri(&remote, &uri).await?;
         assert_eq!(
-            remote_manifest,
-            RemoteManifest {
+            manifest_uri,
+            ManifestUri {
                 bucket: "b".to_string(),
                 namespace: ("foo", "bar").into(),
                 hash: "abcdef".to_string(),

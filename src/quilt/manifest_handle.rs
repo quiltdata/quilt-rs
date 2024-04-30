@@ -5,7 +5,7 @@ use crate::quilt::paths;
 use crate::quilt::Error;
 use crate::quilt::Namespace;
 use crate::quilt::Table;
-use crate::uri::RemoteManifest;
+use crate::uri::ManifestUri;
 
 pub trait ReadableManifest {
     fn get_path_buf(&self) -> PathBuf {
@@ -41,14 +41,14 @@ impl ReadableManifest for CachedManifest {
 }
 
 impl CachedManifest {
-    pub fn from_remote_manifest(
-        remote_manifest: &RemoteManifest,
+    pub fn from_manifest_uri(
+        manifest_uri: &ManifestUri,
         paths: &paths::DomainPaths,
     ) -> CachedManifest {
         CachedManifest {
             paths: paths.clone(),
-            bucket: remote_manifest.bucket.clone(),
-            hash: remote_manifest.hash.clone(),
+            bucket: manifest_uri.bucket.clone(),
+            hash: manifest_uri.hash.clone(),
         }
     }
 }

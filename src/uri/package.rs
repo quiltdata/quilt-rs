@@ -14,7 +14,7 @@ use serde::Serializer;
 use url::form_urlencoded;
 use url::Url;
 
-use crate::uri::RemoteManifest;
+use crate::uri::ManifestUri;
 use crate::Error;
 
 const LATEST_TAG: &str = "latest";
@@ -204,9 +204,9 @@ impl std::str::FromStr for S3PackageUri {
     }
 }
 
-impl From<S3PackageUri> for RemoteManifest {
-    fn from(uri: S3PackageUri) -> RemoteManifest {
-        RemoteManifest {
+impl From<S3PackageUri> for ManifestUri {
+    fn from(uri: S3PackageUri) -> ManifestUri {
+        ManifestUri {
             bucket: uri.bucket,
             namespace: uri.namespace,
             hash: match uri.revision {
@@ -214,6 +214,12 @@ impl From<S3PackageUri> for RemoteManifest {
                 RevisionPointer::Tag(h) => h,
             },
         }
+    }
+}
+
+impl From<&S3PackageUri> for ManifestUri {
+    fn from(uri: &S3PackageUri) -> ManifestUri {
+        ManifestUri::from(uri.clone())
     }
 }
 

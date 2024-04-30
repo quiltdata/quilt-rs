@@ -88,7 +88,7 @@ mod tests {
     use crate::flow::status::Change;
     use crate::flow::status::DiscreteChange;
     use crate::quilt::mocks;
-    use crate::quilt::RemoteManifest;
+    use crate::quilt::ManifestUri;
 
     #[tokio::test]
     async fn test_no_pull_if_changes() -> Result<(), Error> {
@@ -147,9 +147,9 @@ mod tests {
     async fn test_no_pull_if_diverged() {
         let storage = mocks::storage::MockStorage::default();
         let lineage = PackageLineage {
-            remote: RemoteManifest {
+            remote: ManifestUri {
                 hash: "a".to_string(),
-                ..RemoteManifest::default()
+                ..ManifestUri::default()
             },
             base_hash: "b".to_string(),
             ..PackageLineage::default()
@@ -174,9 +174,9 @@ mod tests {
     async fn test_no_pull_if_up_to_date() {
         let storage = mocks::storage::MockStorage::default();
         let lineage = PackageLineage {
-            remote: RemoteManifest {
+            remote: ManifestUri {
                 hash: "a".to_string(),
-                ..RemoteManifest::default()
+                ..ManifestUri::default()
             },
             base_hash: "a".to_string(),
             latest_hash: "a".to_string(),

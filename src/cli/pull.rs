@@ -1,5 +1,5 @@
+use quilt_rs::quilt::ManifestUri;
 use quilt_rs::quilt::Namespace;
-use quilt_rs::quilt::RemoteManifest;
 
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
@@ -31,7 +31,7 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 async fn pull_package(
     local_domain: &quilt_rs::LocalDomain,
     namespace: Namespace,
-) -> Result<RemoteManifest, Error> {
+) -> Result<ManifestUri, Error> {
     match local_domain.get_installed_package(&namespace).await? {
         Some(installed_package) => Ok(installed_package.pull().await?),
         None => Err(Error::NamespaceNotFound(namespace)),
@@ -42,8 +42,8 @@ pub async fn model(
     local_domain: &quilt_rs::LocalDomain,
     Input { namespace }: Input,
 ) -> Result<Output, Error> {
-    let remote_manifest = pull_package(local_domain, namespace).await?;
+    let manifest_uri = pull_package(local_domain, namespace).await?;
     Ok(Output {
-        hash: remote_manifest.hash,
+        hash: manifest_uri.hash,
     })
 }

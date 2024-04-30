@@ -28,8 +28,8 @@ pub use flow::status::UpstreamDiscreteState;
 pub use quilt::InstalledPackage;
 pub use quilt::LocalDomain;
 pub use quilt::Manifest;
+pub use quilt::ManifestUri;
 pub use quilt::Namespace;
-pub use quilt::RemoteManifest;
 pub use quilt::S3PackageUri;
 
 /// The error type for this library

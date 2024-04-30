@@ -10,16 +10,16 @@ use crate::paths::DomainPaths;
 use crate::quilt::manifest::Manifest;
 use crate::quilt::manifest_handle::CachedManifest;
 use crate::quilt::manifest_handle::ReadableManifest;
-use crate::uri::RemoteManifest;
+use crate::uri::ManifestUri;
 use crate::uri::S3Uri;
 use crate::Error;
 use crate::Table;
 
-async fn is_parquet(remote: &impl Remote, manifest: &RemoteManifest) -> Result<bool, Error> {
+async fn is_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Result<bool, Error> {
     remote.exists(&S3Uri::from(manifest)).await
 }
 
-async fn fetch_parquet(remote: &impl Remote, manifest: &RemoteManifest) -> Result<Vec<u8>, Error> {
+async fn fetch_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Result<Vec<u8>, Error> {
     let s3_uri = S3Uri::from(manifest);
     let mut contents = remote.get_object(&s3_uri).await?;
     let mut output = Vec::new();
@@ -27,7 +27,7 @@ async fn fetch_parquet(remote: &impl Remote, manifest: &RemoteManifest) -> Resul
     Ok(output)
 }
 
-async fn fetch_jsonl(remote: &impl Remote, manifest: &RemoteManifest) -> Result<Table, Error> {
+async fn fetch_jsonl(remote: &impl Remote, manifest: &ManifestUri) -> Result<Table, Error> {
     let s3_uri = S3Uri {
         bucket: manifest.bucket.clone(),
         key: get_manifest_key_legacy(&manifest.hash),
@@ -63,37 +63,37 @@ pub async fn cache_remote_manifest(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    remote_manifest: &RemoteManifest,
+    manifest_uri: &ManifestUri,
 ) -> Result<CachedManifest, Error> {
     scaffold_paths(storage, paths.required_local_domain_paths()).await?;
     // check if the manifest is already cached
     // if not, download and cache it
     // return cached manifest
 
-    let cache_path = paths.manifest_cache(&remote_manifest.bucket, &remote_manifest.hash);
+    let cache_path = paths.manifest_cache(&manifest_uri.bucket, &manifest_uri.hash);
 
     if !storage.exists(&cache_path).await {
         // Does not exist yet
-        if is_parquet(remote, remote_manifest).await? {
-            let manifest = fetch_parquet(remote, remote_manifest).await?;
+        if is_parquet(remote, manifest_uri).await? {
+            let manifest = fetch_parquet(remote, manifest_uri).await?;
             storage.write_file(&cache_path, &manifest).await?;
         } else {
-            let manifest = fetch_jsonl(remote, remote_manifest).await?;
+            let manifest = fetch_jsonl(remote, manifest_uri).await?;
             manifest.write_to_path(storage, &cache_path).await?;
         };
     }
 
-    Ok(CachedManifest::from_remote_manifest(remote_manifest, paths))
+    Ok(CachedManifest::from_manifest_uri(manifest_uri, paths))
 }
 
 pub async fn browse_remote_manifest(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    remote_manifest: &RemoteManifest,
+    manifest_uri: &ManifestUri,
 ) -> Result<Table, Error> {
     scaffold_paths(storage, paths.required_local_domain_paths()).await?;
-    cache_remote_manifest(paths, storage, remote, remote_manifest)
+    cache_remote_manifest(paths, storage, remote, manifest_uri)
         .await?
         .read(storage)
         .await
@@ -109,7 +109,7 @@ mod tests {
     #[tokio::test]
     async fn test_if_cached() -> Result<(), Error> {
         let paths = DomainPaths::default();
-        let manifest = RemoteManifest {
+        let manifest = ManifestUri {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
             hash: "c".to_string(),
@@ -133,7 +133,7 @@ mod tests {
     #[tokio::test]
     async fn test_if_cached_random_file() -> Result<(), Error> {
         let paths = DomainPaths::default();
-        let manifest = RemoteManifest {
+        let manifest = ManifestUri {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
             hash: "c".to_string(),
@@ -158,7 +158,7 @@ mod tests {
     async fn test_caching_parquet() -> Result<(), Error> {
         let storage = mocks::storage::MockStorage::default();
         let paths = DomainPaths::default();
-        let manifest = RemoteManifest {
+        let manifest = ManifestUri {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
             hash: "c".to_string(),
@@ -190,7 +190,7 @@ mod tests {
     async fn test_caching_jsonl() -> Result<(), Error> {
         let storage = mocks::storage::MockStorage::default();
         let paths = DomainPaths::default();
-        let manifest = RemoteManifest {
+        let manifest = ManifestUri {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
             hash: "c".to_string(),

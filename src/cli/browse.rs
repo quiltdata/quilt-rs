@@ -59,11 +59,9 @@ pub async fn model(
 ) -> Result<Output, Error> {
     let remote = quilt_rs::io::remote::s3::RemoteS3::new();
     let uri: quilt_rs::S3PackageUri = uri.parse()?;
-    let remote_manifest = quilt_rs::RemoteManifest::resolve(&remote, &uri).await?;
+    let manifest_uri = quilt_rs::ManifestUri::from_package_uri(&remote, &uri).await?;
     Ok(Output {
-        manifest: local_domain
-            .browse_remote_manifest(&remote_manifest)
-            .await?,
+        manifest: local_domain.browse_remote_manifest(&manifest_uri).await?,
     })
 }
 

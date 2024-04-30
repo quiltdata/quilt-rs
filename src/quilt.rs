@@ -50,7 +50,7 @@ use crate::lineage::LineagePaths;
 use crate::lineage::PackageLineage;
 use crate::paths;
 use crate::quilt4::table::HEADER_ROW;
-pub use crate::uri::RemoteManifest;
+pub use crate::uri::ManifestUri;
 use crate::uri::S3Uri;
 use crate::Error;
 use crate::Row4;
@@ -78,11 +78,8 @@ impl LocalDomain {
         }
     }
 
-    pub async fn browse_remote_manifest(
-        &self,
-        remote_manifest: &RemoteManifest,
-    ) -> Result<Table, Error> {
-        browse_remote_manifest(&self.paths, &self.storage, &self.remote, remote_manifest).await
+    pub async fn browse_remote_manifest(&self, manifest_uri: &ManifestUri) -> Result<Table, Error> {
+        browse_remote_manifest(&self.paths, &self.storage, &self.remote, manifest_uri).await
     }
 
     pub fn create_installed_package(&self, namespace: Namespace) -> InstalledPackage {
@@ -97,7 +94,7 @@ impl LocalDomain {
 
     pub async fn install_package(
         &self,
-        remote_manifest: &RemoteManifest,
+        manifest_uri: &ManifestUri,
     ) -> Result<InstalledPackage, Error> {
         // Read the lineage
         let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
@@ -106,12 +103,12 @@ impl LocalDomain {
             &self.paths,
             &self.storage,
             &self.remote,
-            remote_manifest,
+            manifest_uri,
         )
         .await?;
         let _fixme = self.lineage.write(&self.storage, lineage).await?;
 
-        Ok(self.create_installed_package(remote_manifest.namespace.clone()))
+        Ok(self.create_installed_package(manifest_uri.namespace.clone()))
     }
 
     pub async fn uninstall_package(&self, namespace: Namespace) -> Result<(), Error> {
@@ -160,7 +157,7 @@ impl LocalDomain {
         &self,
         uri: &S3Uri,
         target_uri: S3PackageUri,
-    ) -> Result<RemoteManifest, Error> {
+    ) -> Result<ManifestUri, Error> {
         log::debug!("Source URI: {:?}, target URI: {:?}", uri, target_uri);
         // TODO: make get_object_attributes() calls concurrently across list_objects() pages
         // TODO: increase concurrency, to do that we need to figure out how to deal
@@ -226,7 +223,7 @@ impl LocalDomain {
         }
 
         let table = Table { header, records };
-        let new_remote = RemoteManifest {
+        let new_remote = ManifestUri {
             bucket: target_uri.bucket,
             namespace: target_uri.namespace,
             hash: table.top_hash(),
@@ -358,7 +355,7 @@ impl InstalledPackage {
         Ok(lineage.commit)
     }
 
-    pub async fn push(&self) -> Result<RemoteManifest, Error> {
+    pub async fn push(&self) -> Result<ManifestUri, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
         let manifest = self.readable_manifest().await?;
         let lineage = push_package(
@@ -374,7 +371,7 @@ impl InstalledPackage {
         Ok(lineage.remote)
     }
 
-    pub async fn pull(&self) -> Result<RemoteManifest, Error> {
+    pub async fn pull(&self) -> Result<ManifestUri, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
         let manifest = self.readable_manifest().await?;
         let (lineage, status) =
@@ -393,14 +390,14 @@ impl InstalledPackage {
         Ok(lineage.remote)
     }
 
-    pub async fn certify_latest(&self) -> Result<RemoteManifest, Error> {
+    pub async fn certify_latest(&self) -> Result<ManifestUri, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
         let lineage = certify_latest(lineage, &self.remote).await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(lineage.remote)
     }
 
-    pub async fn reset_to_latest(&self) -> Result<RemoteManifest, Error> {
+    pub async fn reset_to_latest(&self) -> Result<ManifestUri, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
         let manifest = self.readable_manifest().await?;
         let lineage = reset_to_latest(
@@ -479,14 +476,14 @@ mod tests {
         // ## Pull the manifest
 
         let remote = RemoteS3::new();
-        let remote_manifest = block_on(RemoteManifest::resolve(&remote, &test_uri))
+        let manifest_uri = block_on(ManifestUri::from_package_uri(&remote, &test_uri))
             .expect("Failed to resolve manifest");
 
         let cached_manifest = block_on(cache_remote_manifest(
             &local_domain.paths,
             &storage,
             &remote,
-            &remote_manifest,
+            &manifest_uri,
         ))
         .expect("Failed to cache the manifest");
 
@@ -503,7 +500,7 @@ mod tests {
         // creates install folder and Lineages it to remote_package_uri
 
         let paths = vec![test_uri.path.unwrap()];
-        let installed_package = block_on(local_domain.install_package(&remote_manifest))
+        let installed_package = block_on(local_domain.install_package(&manifest_uri))
             .expect("Failed to install package");
         block_on(installed_package.install_paths(&paths)).expect("Failed to install paths");
 

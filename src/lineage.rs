@@ -15,7 +15,7 @@ use crate::io::storage::Storage;
 use crate::quilt::Namespace;
 use crate::Error;
 
-use super::RemoteManifest;
+use super::ManifestUri;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct CommitState {
@@ -59,7 +59,7 @@ pub type LineagePaths = BTreeMap<PathBuf, PathState>;
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct PackageLineage {
     pub commit: Option<CommitState>,
-    pub remote: RemoteManifest,
+    pub remote: ManifestUri,
     pub base_hash: String,
     pub latest_hash: String,
     // installed paths
@@ -68,7 +68,7 @@ pub struct PackageLineage {
 }
 
 impl PackageLineage {
-    pub fn from_remote(remote: RemoteManifest, latest_hash: String) -> Self {
+    pub fn from_remote(remote: ManifestUri, latest_hash: String) -> Self {
         Self {
             base_hash: remote.hash.clone(),
             remote,

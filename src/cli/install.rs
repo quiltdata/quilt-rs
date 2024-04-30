@@ -55,8 +55,8 @@ async fn install_package(
         // FIXME: check the actual remote_manifest
         return Ok(installed_package);
     }
-    let remote_manifest = quilt_rs::RemoteManifest::resolve(&remote, uri).await?;
-    Ok(local_domain.install_package(&remote_manifest).await?)
+    let manifest_uri = quilt_rs::ManifestUri::from_package_uri(&remote, uri).await?;
+    Ok(local_domain.install_package(&manifest_uri).await?)
 }
 
 async fn install_paths(

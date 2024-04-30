@@ -4,7 +4,7 @@ use crate::io::storage::Storage;
 use crate::lineage::DomainLineage;
 use crate::lineage::PackageLineage;
 use crate::paths;
-use crate::uri::RemoteManifest;
+use crate::uri::ManifestUri;
 use crate::Error;
 
 pub async fn install_package(
@@ -12,30 +12,30 @@ pub async fn install_package(
     paths: &paths::DomainPaths,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    remote_manifest: &RemoteManifest,
+    manifest_uri: &ManifestUri,
 ) -> Result<DomainLineage, Error> {
     // bail if already installed
     // TODO: if compatible (same remote), just return the installed package
-    if lineage.packages.contains_key(&remote_manifest.namespace) {
+    if lineage.packages.contains_key(&manifest_uri.namespace) {
         return Err(Error::PackageAlreadyInstalled(
-            remote_manifest.namespace.clone(),
+            manifest_uri.namespace.clone(),
         ));
     }
 
-    cache_remote_manifest(paths, storage, remote, remote_manifest).await?;
+    cache_remote_manifest(paths, storage, remote, manifest_uri).await?;
 
     // Make an "installed" copy of the remote manifest.
     let installed_manifest_path =
-        paths.installed_manifest(&remote_manifest.namespace, &remote_manifest.hash);
+        paths.installed_manifest(&manifest_uri.namespace, &manifest_uri.hash);
     storage
         .create_dir_all(&installed_manifest_path.parent().unwrap())
         .await?;
     paths::copy_cached_to_installed(
         paths,
         storage,
-        &remote_manifest.bucket,
-        &remote_manifest.namespace,
-        &remote_manifest.hash,
+        &manifest_uri.bucket,
+        &manifest_uri.namespace,
+        &manifest_uri.hash,
     )
     .await?;
 
@@ -44,16 +44,16 @@ pub async fn install_package(
     storage.create_dir_all(&objects_dir).await?;
 
     // Create the working dir.
-    let working_dir = paths.working_dir(&remote_manifest.namespace);
+    let working_dir = paths.working_dir(&manifest_uri.namespace);
     storage.create_dir_all(&working_dir).await?;
 
     // Resolve and record latest manifest hash
-    let latest_hash = remote_manifest.resolve_latest(remote).await?;
+    let latest_hash = manifest_uri.resolve_latest(remote).await?;
     // Update the lineage (with empty paths).
     let mut lineage = lineage;
     lineage.packages.insert(
-        remote_manifest.namespace.clone(),
-        PackageLineage::from_remote(remote_manifest.to_owned(), latest_hash),
+        manifest_uri.namespace.clone(),
+        PackageLineage::from_remote(manifest_uri.to_owned(), latest_hash),
     );
     Ok(lineage)
 }
@@ -79,9 +79,9 @@ mod tests {
             &paths::DomainPaths::default(),
             &mocks::storage::MockStorage::default(),
             &mocks::remote::MockRemote::default(),
-            &RemoteManifest {
+            &ManifestUri {
                 namespace: namespace.into(),
-                ..RemoteManifest::default()
+                ..ManifestUri::default()
             },
         )
         .await;
@@ -94,7 +94,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_installing() -> Result<(), Error> {
-        let remote_manifest = RemoteManifest {
+        let manifest_uri = ManifestUri {
             bucket: "a".to_string(),
             hash: "c".to_string(),
             namespace: ("f", "b").into(),
@@ -118,12 +118,12 @@ mod tests {
             &paths::DomainPaths::default(),
             &storage,
             &remote,
-            &remote_manifest,
+            &manifest_uri,
         )
         .await?;
         assert_eq!(
             result.packages.get(&("f", "b").into()).unwrap().remote,
-            remote_manifest
+            manifest_uri
         );
         assert!(
             storage
