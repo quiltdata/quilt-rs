@@ -319,7 +319,10 @@ mod tests {
     async fn read_existing_local() -> Result<(), Error> {
         let storage = mocks::storage::MockStorage::default();
         storage
-            .write_file(mocks::manifest::parquet(), &std::fs::read(mocks::manifest::parquet())?)
+            .write_file(
+                mocks::manifest::parquet(),
+                &std::fs::read(mocks::manifest::parquet())?,
+            )
             .await?;
         let table = Table::read_from_path(&storage, &mocks::manifest::parquet())
             .await
