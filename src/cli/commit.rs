@@ -1,5 +1,5 @@
 use quilt_rs::lineage::CommitState;
-use quilt_rs::quilt::Namespace;
+use quilt_rs::uri::Namespace;
 
 use crate::cli::model::Commands;
 use crate::cli::output::Std;

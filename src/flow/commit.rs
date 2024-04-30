@@ -19,7 +19,7 @@ use crate::lineage::PathState;
 use crate::manifest::JsonObject;
 use crate::manifest::Table;
 use crate::quilt::manifest_handle::ReadableManifest;
-use crate::quilt::Namespace;
+use crate::uri::Namespace;
 
 fn remove_entry(
     table: &mut Table,

@@ -56,9 +56,6 @@ pub async fn cache_manifest(
         .map(|_| cache_path)
 }
 
-// FIXME: CachedManifest::browse(&RemoteManifest)
-//        or RemoteManifest::browse -> CachedManifest
-//        or CachedManifest::try_from(RemoteManifest)
 pub async fn cache_remote_manifest(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),

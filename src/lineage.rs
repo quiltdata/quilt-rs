@@ -12,7 +12,7 @@ use serde::Serializer;
 pub mod mocks;
 
 use crate::io::storage::Storage;
-use crate::quilt::Namespace;
+use crate::uri::Namespace;
 use crate::Error;
 
 use super::ManifestUri;

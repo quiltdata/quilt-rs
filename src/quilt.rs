@@ -6,23 +6,11 @@ use multihash::Multihash;
 use tracing::log;
 
 pub mod manifest_handle;
+use manifest_handle::InstalledManifest;
+use manifest_handle::ReadableManifest;
 
 #[cfg(test)]
 pub mod mocks;
-
-pub use crate::checksum::ContentHash;
-pub use crate::flow::status::UpstreamDiscreteState; // FIXME: to lineage
-pub use crate::flow::status::UpstreamState; // FIXME: to lineage
-pub use crate::io::remote::Remote;
-pub use crate::manifest::Manifest; // TODO: check if they are used
-pub use crate::manifest::ManifestHeader; // TODO: check if they are used
-pub use crate::manifest::ManifestRow; // TODO: check if they are used
-pub use crate::uri::ManifestUri;
-pub use crate::uri::Namespace;
-pub use crate::uri::RevisionPointer;
-pub use crate::uri::S3PackageUri;
-pub use manifest_handle::InstalledManifest;
-pub use manifest_handle::ReadableManifest;
 
 use crate::flow::browse::browse_remote_manifest;
 use crate::flow::browse::cache_manifest;
@@ -41,6 +29,7 @@ use crate::flow::uninstall_paths::uninstall_paths;
 use crate::io::remote::s3::RemoteS3;
 use crate::io::remote::utils::get_attrs_for_key;
 use crate::io::remote::utils::get_client_for_bucket;
+use crate::io::remote::Remote;
 use crate::io::storage::fs;
 use crate::io::storage::Storage;
 use crate::lineage;
@@ -52,6 +41,9 @@ use crate::manifest::JsonObject;
 use crate::manifest::Row;
 use crate::manifest::HEADER_ROW;
 use crate::paths;
+use crate::uri::ManifestUri;
+use crate::uri::Namespace;
+use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
 use crate::Error;
 use crate::Table;
@@ -430,7 +422,9 @@ mod tests {
     use crate::flow::status::ChangeSet;
     use crate::flow::status::DiscreteChange;
     use crate::flow::status::PackageFileFingerprint;
+    use crate::flow::status::UpstreamState;
     use crate::quilt::mocks;
+    use crate::uri::RevisionPointer;
 
     fn get_timestamp() -> String {
         std::time::SystemTime::now()

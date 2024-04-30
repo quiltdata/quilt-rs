@@ -9,7 +9,7 @@ use crate::lineage::PackageLineage;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
 use crate::quilt::manifest_handle::ReadableManifest;
-use crate::quilt::Namespace;
+use crate::uri::Namespace;
 use crate::Error;
 
 pub async fn reset_to_latest(
@@ -69,7 +69,7 @@ mod tests {
 
     use crate::lineage::PackageLineage;
     use crate::quilt::mocks;
-    use crate::quilt::ManifestUri;
+    use crate::uri::ManifestUri;
     use crate::uri::S3Uri;
     use crate::utils::local_uri_json;
 

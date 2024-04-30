@@ -1,5 +1,5 @@
 use crate::paths;
-use crate::quilt::Namespace;
+use crate::uri::Namespace;
 use crate::uri::ManifestUri;
 use crate::uri::S3Uri;
 

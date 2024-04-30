@@ -4,13 +4,13 @@ use aws_smithy_types::byte_stream;
 use reqwest::header::ToStrError;
 use thiserror::Error;
 
-mod checksum;
 mod flow;
-mod paths;
 
+pub mod checksum;
 pub mod io;
 pub mod lineage;
 pub mod manifest;
+pub mod paths;
 pub mod quilt;
 pub mod uri;
 
@@ -24,13 +24,13 @@ pub use manifest::Table;
 pub use flow::status::DiscreteChange;
 pub use flow::status::InstalledPackageStatus;
 pub use flow::status::PackageFileFingerprint;
-pub use flow::status::UpstreamDiscreteState;
+pub use flow::status::UpstreamDiscreteState; // FIXME: to lineage
+pub use manifest::Manifest;
 pub use quilt::InstalledPackage;
 pub use quilt::LocalDomain;
-pub use quilt::Manifest;
-pub use quilt::ManifestUri;
-pub use quilt::Namespace;
-pub use quilt::S3PackageUri;
+pub use uri::ManifestUri;
+pub use uri::Namespace;
+pub use uri::S3PackageUri;
 
 /// The error type for this library
 #[derive(Error, Debug)]

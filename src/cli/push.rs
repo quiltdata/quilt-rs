@@ -1,5 +1,5 @@
-use quilt_rs::quilt::ManifestUri;
-use quilt_rs::quilt::Namespace;
+use quilt_rs::uri::ManifestUri;
+use quilt_rs::uri::Namespace;
 
 use crate::cli::model::Commands;
 use crate::cli::output::Std;

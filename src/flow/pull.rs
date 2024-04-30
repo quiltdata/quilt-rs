@@ -10,7 +10,7 @@ use crate::lineage::PackageLineage;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
 use crate::quilt::manifest_handle;
-use crate::quilt::Namespace;
+use crate::uri::Namespace;
 use crate::Error;
 
 pub async fn pull_package(
@@ -88,7 +88,7 @@ mod tests {
     use crate::flow::status::Change;
     use crate::flow::status::DiscreteChange;
     use crate::quilt::mocks;
-    use crate::quilt::ManifestUri;
+    use crate::uri::ManifestUri;
 
     #[tokio::test]
     async fn test_no_pull_if_changes() -> Result<(), Error> {

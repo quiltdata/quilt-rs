@@ -5,16 +5,16 @@ use multihash::Multihash;
 use tracing::log;
 use url::Url;
 
+use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use crate::checksum::MULTIPART_THRESHOLD;
 use crate::flow::browse::browse_remote_manifest;
 use crate::flow::browse::cache_manifest;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
-use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use crate::paths;
 use crate::quilt::manifest_handle;
-use crate::quilt::Namespace;
+use crate::uri::Namespace;
 use crate::uri::ManifestUri;
 use crate::uri::S3Uri;
 use crate::Error;
@@ -150,7 +150,7 @@ mod tests {
     use crate::lineage::CommitState;
     use crate::lineage::PackageLineage;
     use crate::quilt::mocks;
-    use crate::quilt::S3PackageUri;
+    use crate::uri::S3PackageUri;
     use crate::utils::local_uri_parquet_checksummed;
     use crate::Row;
 

@@ -24,7 +24,6 @@ pub struct ManifestHeader {
     pub user_meta: Option<JsonObject>,
 }
 
-// FIXME: check if it is used somewhere
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 struct Quilt3ManifestRow {
     pub logical_key: PathBuf,

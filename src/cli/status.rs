@@ -1,4 +1,4 @@
-use quilt_rs::quilt::Namespace;
+use quilt_rs::uri::Namespace;
 use quilt_rs::DiscreteChange;
 use quilt_rs::InstalledPackageStatus;
 use quilt_rs::UpstreamDiscreteState;
