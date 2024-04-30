@@ -1,11 +1,7 @@
 use std::fmt;
 
-use aws_sdk_s3::primitives::ByteStream;
 use url::Url;
 
-use crate::io::remote::s3::get_object_contents;
-use crate::io::remote::s3::put_object_contents;
-use crate::io::remote::Remote;
 use crate::Error;
 
 pub const MPU_MAX_PARTS: u64 = 10_000;
@@ -19,21 +15,7 @@ pub struct S3Uri {
 }
 
 // FIXME: goes to src/uri?
-impl S3Uri {
-    //FIXME: #[deprecated]
-    pub async fn get_contents(&self, remote: &impl Remote) -> Result<String, Error> {
-        get_object_contents(remote, self).await
-    }
-
-    //FIXME: #[deprecated]
-    pub async fn put_contents(
-        &self,
-        remote: &impl Remote,
-        contents: impl Into<ByteStream>,
-    ) -> Result<(), Error> {
-        put_object_contents(remote, self, contents).await
-    }
-}
+impl S3Uri {}
 
 impl TryFrom<&str> for S3Uri {
     type Error = Error;

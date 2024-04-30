@@ -19,7 +19,14 @@ use crate::Error;
 
 use crate::s3_utils::get_client_for_bucket;
 
-pub async fn get_object_stream(
+pub async fn bytestream_to_string(bytestream: ByteStream) -> Result<String, Error> {
+    let mut reader = bytestream.into_async_read();
+    let mut contents = Vec::new();
+    reader.read_to_end(&mut contents).await?;
+    String::from_utf8(contents).map_err(|err| Error::Utf8(err.utf8_error()))
+}
+
+async fn get_object_stream(
     client: &aws_sdk_s3::Client,
     s3_uri: &S3Uri,
 ) -> Result<ByteStream, Error> {
@@ -36,34 +43,8 @@ pub async fn get_object_stream(
     Ok(result.body)
 }
 
-pub async fn get_object(
-    client: &aws_sdk_s3::Client,
-    s3_uri: &S3Uri,
-) -> Result<impl AsyncRead, Error> {
+async fn get_object(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Result<impl AsyncRead, Error> {
     Ok(get_object_stream(client, s3_uri).await?.into_async_read())
-}
-
-pub async fn get_object_bytes(remote: &impl Remote, uri: &S3Uri) -> Result<Vec<u8>, Error> {
-    let mut reader = remote.get_object(uri).await?;
-
-    let mut contents = Vec::new();
-
-    reader.read_to_end(&mut contents).await?;
-
-    Ok(contents)
-}
-
-pub async fn get_object_contents(remote: &impl Remote, uri: &S3Uri) -> Result<String, Error> {
-    let bytes = get_object_bytes(remote, uri).await?;
-    String::from_utf8(bytes).map_err(|err| Error::Utf8(err.utf8_error()))
-}
-
-pub async fn put_object_contents(
-    remote: &impl Remote,
-    uri: &S3Uri,
-    contents: impl Into<ByteStream>,
-) -> Result<(), Error> {
-    remote.put_object(uri, contents).await
 }
 
 #[derive(Clone, Debug)]

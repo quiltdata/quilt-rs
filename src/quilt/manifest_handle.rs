@@ -4,6 +4,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use tracing::log;
 
+use crate::io::remote::s3::bytestream_to_string;
 use crate::io::remote::Remote;
 use crate::io::s3;
 use crate::io::storage::Storage;
@@ -36,9 +37,9 @@ impl RemoteManifest {
         let top_hash = match &uri.revision {
             RevisionPointer::Hash(top_hash) => top_hash.clone(),
             RevisionPointer::Tag(tag) => {
-                tag_uri(&uri.bucket, &uri.namespace, tag)
-                    .get_contents(remote)
-                    .await?
+                let uri = tag_uri(&uri.bucket, &uri.namespace, tag);
+                let stream = remote.get_object_stream(&uri).await?;
+                bytestream_to_string(stream).await?
             }
         };
 
@@ -50,15 +51,14 @@ impl RemoteManifest {
     }
 
     pub async fn resolve_latest(&self, remote: &impl Remote) -> Result<String, Error> {
-        tag_uri(&self.bucket, &self.namespace, "latest")
-            .get_contents(remote)
-            .await
+        let uri = tag_uri(&self.bucket, &self.namespace, "latest");
+        let stream = remote.get_object_stream(&uri).await?;
+        bytestream_to_string(stream).await
     }
 
     async fn put_tag(&self, remote: &impl Remote, tag: &str, hash: &str) -> Result<(), Error> {
-        tag_uri(&self.bucket, &self.namespace, tag)
-            .put_contents(remote, hash.as_bytes().to_vec())
-            .await
+        let uri = tag_uri(&self.bucket, &self.namespace, tag);
+        remote.put_object(&uri, hash.as_bytes().to_vec()).await
     }
 
     pub async fn put_timestamp_tag(
@@ -86,8 +86,7 @@ impl RemoteManifest {
         // let body = Manifest::from(&table).to_jsonlines().as_bytes().to_vec();
         let s3uri = s3::S3Uri::from(self);
         log::info!("writing remote manifest to {}", s3uri.key);
-
-        s3uri.put_contents(remote, body).await
+        remote.put_object(&s3uri, body).await
     }
 
     pub async fn upload_legacy(&self, remote: &impl Remote, table: &Table) -> Result<(), Error> {
@@ -96,16 +95,17 @@ impl RemoteManifest {
             key: paths::get_manifest_key_legacy(&self.hash),
             version: None,
         };
-
-        s3uri
-            .put_contents(
-                remote,
+        remote
+            .put_object(
+                &s3uri,
                 Manifest::from(table).to_jsonlines().as_bytes().to_vec(),
             )
             .await
     }
 }
 
+// TODO: ManifestUrl?
+// also From<&RemoteManifest> for TagUri
 impl From<&RemoteManifest> for s3::S3Uri {
     fn from(remote: &RemoteManifest) -> s3::S3Uri {
         s3::S3Uri {
