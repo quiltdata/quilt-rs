@@ -8,14 +8,14 @@ use serde::Serialize;
 
 use tracing::log;
 
+use crate::checksum::calculate_sha256_checksum;
+use crate::checksum::calculate_sha256_chunked_checksum;
+use crate::checksum::MULTIHASH_SHA256;
+use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
-use crate::manifest::MULTIHASH_SHA256;
-use crate::manifest::MULTIHASH_SHA256_CHUNKED;
 use crate::quilt::manifest_handle::ReadableManifest;
-use crate::quilt4::checksum::calculate_sha256_checksum;
-use crate::quilt4::checksum::calculate_sha256_chunked_checksum;
 use crate::Error;
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -235,8 +235,8 @@ pub async fn create_status(
 mod tests {
     use super::*;
 
+    use crate::checksum::ContentHash;
     use crate::lineage::CommitState;
-    use crate::manifest::ContentHash;
     use crate::quilt::mocks;
     use crate::utils::local_uri_parquet;
 

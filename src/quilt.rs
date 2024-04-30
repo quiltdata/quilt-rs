@@ -10,10 +10,10 @@ pub mod manifest_handle;
 #[cfg(test)]
 pub mod mocks;
 
-pub use crate::flow::status::UpstreamDiscreteState;
-pub use crate::flow::status::UpstreamState;
+pub use crate::checksum::ContentHash;
+pub use crate::flow::status::UpstreamDiscreteState; // FIXME: to lineage
+pub use crate::flow::status::UpstreamState; // FIXME: to lineage
 pub use crate::io::remote::Remote;
-pub use crate::manifest::ContentHash;
 pub use crate::manifest::Manifest; // TODO: check if they are used
 pub use crate::manifest::ManifestHeader; // TODO: check if they are used
 pub use crate::manifest::ManifestRow; // TODO: check if they are used
@@ -423,14 +423,14 @@ mod tests {
     use tokio_test::assert_err;
     use tokio_test::block_on;
 
+    use crate::checksum::calculate_sha256_checksum;
+    use crate::checksum::MULTIHASH_SHA256;
     use crate::flow::browse::cache_remote_manifest;
     use crate::flow::status::Change;
     use crate::flow::status::ChangeSet;
     use crate::flow::status::DiscreteChange;
     use crate::flow::status::PackageFileFingerprint;
-    use crate::manifest::MULTIHASH_SHA256;
     use crate::quilt::mocks;
-    use crate::quilt4::checksum::calculate_sha256_checksum;
 
     fn get_timestamp() -> String {
         std::time::SystemTime::now()

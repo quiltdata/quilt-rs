@@ -81,7 +81,7 @@ mod tests {
             info: serde_json::Value::Bool(false),
             meta: serde_json::json!({"foo":"bar"}),
         };
-        assert_eq!(row.to_string(), r##"Row4(Foo)@Bar^123#[104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100]$$Bool(false)$Object {"foo": String("bar")}"##.to_string());
+        assert_eq!(row.to_string(), r##"Row(Foo)@Bar^123#[104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100]$$Bool(false)$Object {"foo": String("bar")}"##.to_string());
         Ok(())
     }
 }

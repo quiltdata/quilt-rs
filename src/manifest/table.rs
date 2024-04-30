@@ -11,7 +11,9 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::checksum::ContentHash;
 use crate::io::storage::Storage;
+use crate::manifest::Manifest;
 use arrow::array::GenericByteArray;
 use arrow::array::UInt64Array;
 use arrow::datatypes::BinaryType;
@@ -32,9 +34,6 @@ use tokio::io::AsyncRead;
 use tokio::io::AsyncSeek;
 use tokio::io::AsyncWrite;
 use tokio_stream::StreamExt;
-
-use crate::manifest::Manifest;
-use crate::quilt::ContentHash;
 
 use crate::manifest::Row;
 use crate::Error;
@@ -410,7 +409,7 @@ mod tests {
                 ),
             ]),
         };
-        assert_eq!(table.to_string(), r##"Table({"one": "Row4(AA)@AB^100#[65]$$Null$Null", "two": "Row4(BA)@BB^200#[66]$$Null$Null"})"##.to_string());
+        assert_eq!(table.to_string(), r##"Table({"one": "Row(AA)@AB^100#[65]$$Null$Null", "two": "Row(BA)@BB^200#[66]$$Null$Null"})"##.to_string());
         Ok(())
     }
 

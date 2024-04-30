@@ -1,8 +1,5 @@
 use std::path::PathBuf;
 
-use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
-use multihash::Multihash;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
@@ -13,6 +10,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
 use tokio::io::BufWriter;
 
+use crate::checksum::ContentHash;
 use crate::manifest::Table;
 use crate::Error;
 
@@ -26,56 +24,7 @@ pub struct ManifestHeader {
     pub user_meta: Option<JsonObject>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
-#[serde(tag = "type", content = "value")]
-pub enum ContentHash {
-    SHA256(String),
-    #[serde(rename = "sha2-256-chunked")]
-    SHA256Chunked(String),
-}
-
-pub const MULTIHASH_SHA256: u64 = 0x16;
-pub const MULTIHASH_SHA256_CHUNKED: u64 = 0xb510;
-
-impl TryFrom<Multihash<256>> for ContentHash {
-    type Error = Error;
-
-    fn try_from(value: Multihash<256>) -> Result<Self, Self::Error> {
-        match value.code() {
-            MULTIHASH_SHA256 => Ok(ContentHash::SHA256(hex::encode(value.digest()))),
-            MULTIHASH_SHA256_CHUNKED => Ok(ContentHash::SHA256Chunked(
-                BASE64_STANDARD.encode(value.digest()),
-            )),
-            code => Err(Error::InvalidMultihash(format!(
-                "Unexpected code: {:#06x}",
-                code
-            ))),
-        }
-    }
-}
-
-impl TryInto<Multihash<256>> for ContentHash {
-    type Error = Error;
-
-    fn try_into(self) -> Result<Multihash<256>, Self::Error> {
-        match self {
-            ContentHash::SHA256(hash) => {
-                let hash_bytes =
-                    hex::decode(hash).map_err(|err| Error::InvalidMultihash(err.to_string()))?;
-                Multihash::wrap(MULTIHASH_SHA256, &hash_bytes)
-                    .map_err(|err| Error::InvalidMultihash(err.to_string()))
-            }
-            ContentHash::SHA256Chunked(hash) => {
-                let hash_bytes = BASE64_STANDARD
-                    .decode(hash)
-                    .map_err(|err| Error::InvalidMultihash(err.to_string()))?;
-                Multihash::wrap(MULTIHASH_SHA256_CHUNKED, &hash_bytes)
-                    .map_err(|err| Error::InvalidMultihash(err.to_string()))
-            }
-        }
-    }
-}
-
+// FIXME: check if it is used somewhere
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 struct Quilt3ManifestRow {
     pub logical_key: PathBuf,

@@ -17,10 +17,10 @@ use sha2::Sha256;
 use tokio::io::AsyncReadExt;
 use tracing::log;
 
-use crate::manifest::MULTIHASH_SHA256_CHUNKED;
-use crate::quilt4::checksum::get_checksum_chunksize_and_parts;
-use crate::quilt4::checksum::MPU_MAX_PARTS;
-use crate::quilt4::checksum::MULTIPART_THRESHOLD;
+use crate::checksum::get_checksum_chunksize_and_parts;
+use crate::checksum::MPU_MAX_PARTS;
+use crate::checksum::MULTIHASH_SHA256_CHUNKED;
+use crate::checksum::MULTIPART_THRESHOLD;
 use crate::Error;
 
 pub async fn bytestream_to_string(bytestream: ByteStream) -> Result<String, Error> {

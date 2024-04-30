@@ -5,16 +5,16 @@ use multihash::Multihash;
 use tracing::log;
 use url::Url;
 
+use crate::checksum::MULTIPART_THRESHOLD;
 use crate::flow::browse::browse_remote_manifest;
 use crate::flow::browse::cache_manifest;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
-use crate::manifest::MULTIHASH_SHA256_CHUNKED;
+use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use crate::paths;
 use crate::quilt::manifest_handle;
 use crate::quilt::Namespace;
-use crate::quilt4::checksum::MULTIPART_THRESHOLD;
 use crate::uri::ManifestUri;
 use crate::uri::S3Uri;
 use crate::Error;

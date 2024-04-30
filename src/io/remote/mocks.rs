@@ -5,9 +5,9 @@ use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 use tracing::log;
 
+use crate::checksum;
 use crate::io::storage::mocks::MockStorage;
 use crate::io::storage::Storage;
-use crate::quilt4::checksum;
 use crate::uri::S3Uri;
 use crate::Error;
 

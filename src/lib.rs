@@ -4,9 +4,9 @@ use aws_smithy_types::byte_stream;
 use reqwest::header::ToStrError;
 use thiserror::Error;
 
+mod checksum;
 mod flow;
 mod paths;
-mod quilt4;
 
 pub mod io;
 pub mod lineage;

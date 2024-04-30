@@ -11,8 +11,8 @@ use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
 use tokio::io::AsyncRead;
 
+use crate::checksum;
 use crate::io::remote::Remote;
-use crate::quilt4::checksum;
 use crate::uri::S3Uri;
 use crate::Error;
 
