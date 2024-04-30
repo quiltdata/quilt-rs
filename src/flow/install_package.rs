@@ -67,6 +67,7 @@ mod tests {
 
     use crate::mocks;
     use crate::uri::S3Uri;
+    use crate::utils::local_uri_parquet;
 
     #[tokio::test]
     async fn test_if_already_installed() -> Result<(), Error> {
@@ -99,11 +100,12 @@ mod tests {
             hash: "c".to_string(),
             namespace: ("f", "b").into(),
         };
+        let parquet = std::fs::read(local_uri_parquet())?;
         let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(
                 &S3Uri::try_from("s3://a/.quilt/packages/1220c.parquet")?,
-                Vec::new(),
+                parquet,
             )
             .await?;
         remote

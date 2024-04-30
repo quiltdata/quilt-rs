@@ -5,8 +5,6 @@ use aws_sdk_s3::error::DisplayErrorContext;
 use multihash::Multihash;
 use tracing::log;
 
-pub mod manifest_handle;
-
 use crate::flow::browse::browse_remote_manifest;
 use crate::flow::browse::cache_manifest;
 use crate::flow::certify_latest::certify_latest;
@@ -406,7 +404,6 @@ mod tests {
     use crate::lineage::PackageFileFingerprint;
     use crate::lineage::UpstreamState;
     use crate::mocks;
-    use crate::quilt::manifest_handle::ReadableManifest;
     use crate::uri::RevisionPointer;
 
     fn get_timestamp() -> String {
@@ -456,16 +453,13 @@ mod tests {
         let manifest_uri = block_on(ManifestUri::from_package_uri(&remote, &test_uri))
             .expect("Failed to resolve manifest");
 
-        let cached_manifest = block_on(cache_remote_manifest(
+        let manifest = block_on(cache_remote_manifest(
             &local_domain.paths,
             &storage,
             &remote,
             &manifest_uri,
         ))
         .expect("Failed to cache the manifest");
-
-        let manifest =
-            block_on(cached_manifest.read(&storage)).expect("Failed to parse the manifest");
 
         log::debug!("manifest: {manifest:?}");
         // TODO: assert manifest has the expected contents

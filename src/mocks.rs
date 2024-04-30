@@ -4,8 +4,6 @@ pub use crate::io::remote::mocks as remote;
 
 pub use crate::io::storage::mocks as storage;
 
-// TODO: move to src/mocks.rs
-
 pub fn row_hash_sample1() -> multihash::Multihash<256> {
     multihash::Multihash::wrap(0xb510, b"pedestrian").expect("Unexpected")
 }
@@ -29,11 +27,8 @@ pub mod manifest {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
-    use crate::io::storage::Storage;
     use crate::manifest::Row;
     use crate::manifest::Table;
-    use crate::quilt::manifest_handle::ReadableManifest;
-    use crate::Error;
 
     pub fn row_with_name(name: PathBuf) -> Row {
         Row {
@@ -42,16 +37,6 @@ pub mod manifest {
             hash: row_hash_sample1(),
             ..Row::default()
         }
-    }
-
-    pub fn default() -> impl ReadableManifest {
-        struct InMemoryManifest {}
-        impl ReadableManifest for InMemoryManifest {
-            async fn read(&self, _storage: &impl Storage) -> Result<Table, Error> {
-                Ok(Table::default())
-            }
-        }
-        InMemoryManifest {}
     }
 
     pub fn with_record_keys(keys: Vec<PathBuf>) -> Table {

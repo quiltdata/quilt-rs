@@ -9,8 +9,6 @@ use crate::manifest::Table;
 use crate::paths::get_manifest_key_legacy;
 use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
-use crate::quilt::manifest_handle::CachedManifest;
-use crate::quilt::manifest_handle::ReadableManifest;
 use crate::uri::ManifestUri;
 use crate::uri::S3Uri;
 use crate::Error;
@@ -61,7 +59,7 @@ pub async fn cache_remote_manifest(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
-) -> Result<CachedManifest, Error> {
+) -> Result<Table, Error> {
     scaffold_paths(storage, paths.required_local_domain_paths()).await?;
     // check if the manifest is already cached
     // if not, download and cache it
@@ -80,7 +78,7 @@ pub async fn cache_remote_manifest(
         };
     }
 
-    Ok(CachedManifest::from_manifest_uri(manifest_uri, paths))
+    Table::read_from_path(storage, &cache_path).await
 }
 
 pub async fn browse_remote_manifest(
@@ -89,11 +87,7 @@ pub async fn browse_remote_manifest(
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
 ) -> Result<Table, Error> {
-    scaffold_paths(storage, paths.required_local_domain_paths()).await?;
-    cache_remote_manifest(paths, storage, remote, manifest_uri)
-        .await?
-        .read(storage)
-        .await
+    cache_remote_manifest(paths, storage, remote, manifest_uri).await
 }
 
 #[cfg(test)]
@@ -102,6 +96,7 @@ mod tests {
 
     use crate::mocks;
     use crate::utils::local_uri_json;
+    use crate::utils::local_uri_parquet;
 
     #[tokio::test]
     async fn test_if_cached() -> Result<(), Error> {
@@ -112,17 +107,14 @@ mod tests {
             hash: "c".to_string(),
         };
         let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
+        let parquet = std::fs::read(local_uri_parquet())?;
         let storage = mocks::storage::MockStorage::default();
-        storage.write_file(cache_path, &Vec::new()).await?;
+        storage.write_file(cache_path, &parquet).await?;
         let remote = mocks::remote::MockRemote::default();
         let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
         assert_eq!(
-            cached_manifest,
-            CachedManifest {
-                paths,
-                bucket: "a".to_string(),
-                hash: "c".to_string(),
-            }
+            cached_manifest.header.info.get("message").unwrap(),
+            "test_spec_write 2023-11-29T14:01:39.543975"
         );
         Ok(())
     }
@@ -139,13 +131,9 @@ mod tests {
         let storage = mocks::storage::MockStorage::default();
         storage.write_file(cache_path, &Vec::new()).await?;
         let remote = mocks::remote::MockRemote::default();
-        let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
+        let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await;
         assert_eq!(
-            cached_manifest
-                .read(&storage)
-                .await
-                .unwrap_err()
-                .to_string(),
+            cached_manifest.unwrap_err().to_string(),
             "Parquet error: External: Invalid argument (os error 22)"
         );
         Ok(())
@@ -160,25 +148,24 @@ mod tests {
             namespace: ("f", "b").into(),
             hash: "c".to_string(),
         };
+        let parquet = std::fs::read(local_uri_parquet())?;
         let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(
                 &S3Uri::try_from("s3://a/.quilt/packages/1220c.parquet")?,
-                Vec::new(),
+                parquet.clone(),
             )
             .await?;
         let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
-        assert!(storage
-            .read_file(&PathBuf::from(".quilt/packages/a/c"))
-            .await?
-            .is_empty());
         assert_eq!(
-            cached_manifest,
-            CachedManifest {
-                paths,
-                bucket: "a".to_string(),
-                hash: "c".to_string(),
-            }
+            storage
+                .read_file(&PathBuf::from(".quilt/packages/a/c"))
+                .await?,
+            parquet
+        );
+        assert_eq!(
+            cached_manifest.header.info.get("message").unwrap(),
+            "test_spec_write 2023-11-29T14:01:39.543975"
         );
         Ok(())
     }
@@ -195,18 +182,14 @@ mod tests {
         let jsonl = std::fs::read(local_uri_json())?;
         let remote = mocks::remote::MockRemote::default();
         remote
-            .put_object(&S3Uri::try_from("s3://a/.quilt/packages/c")?, jsonl)
+            .put_object(&S3Uri::try_from("s3://a/.quilt/packages/c")?, jsonl.clone())
             .await?;
         let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
         assert!(storage.exists(&PathBuf::from(".quilt/packages/a/c")).await);
-        assert_eq!(
-            cached_manifest,
-            CachedManifest {
-                paths,
-                bucket: "a".to_string(),
-                hash: "c".to_string(),
-            }
-        );
+        assert!(cached_manifest
+            .records
+            .get(&PathBuf::from("README.md"))
+            .is_some());
         Ok(())
     }
 }

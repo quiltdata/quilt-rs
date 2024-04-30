@@ -15,7 +15,6 @@ use crate::uri::Namespace;
 use crate::uri::S3Uri;
 use crate::Error;
 
-// FIXME: use impl Storage and impl Remote
 async fn cache_immutable_object(
     storage: &impl Storage,
     remote: &impl Remote,
