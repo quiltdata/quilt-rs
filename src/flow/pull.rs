@@ -4,11 +4,11 @@ use crate::flow::browse::cache_remote_manifest;
 use crate::flow::install_paths::install_paths;
 use crate::flow::status::InstalledPackageStatus;
 use crate::flow::uninstall_paths::uninstall_paths;
+use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
 use crate::quilt::manifest_handle;
-use crate::quilt::storage::Storage;
 use crate::quilt::uri::Namespace;
 use crate::s3_utils;
 use crate::Error;
@@ -87,8 +87,8 @@ mod tests {
 
     use crate::flow::status::Change;
     use crate::flow::status::DiscreteChange;
+    use crate::io::storage::mocks::MockStorage;
     use crate::quilt::mocks;
-    use crate::quilt::storage::mock_storage::MockStorage;
     use crate::quilt::RemoteManifest;
 
     #[tokio::test]

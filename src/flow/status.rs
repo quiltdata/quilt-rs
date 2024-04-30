@@ -13,7 +13,7 @@ use crate::quilt::manifest::MULTIHASH_SHA256;
 use crate::quilt::manifest::MULTIHASH_SHA256_CHUNKED;
 use crate::quilt::manifest_handle::ReadableManifest;
 use crate::quilt::remote::Remote;
-use crate::quilt::storage::Storage;
+use crate::io::storage::Storage;
 use crate::quilt4::checksum::calculate_sha256_checksum;
 use crate::quilt4::checksum::calculate_sha256_chunked_checksum;
 use crate::Error;
@@ -238,7 +238,7 @@ mod tests {
     use crate::lineage::CommitState;
     use crate::quilt::manifest::ContentHash;
     use crate::quilt::mocks;
-    use crate::quilt::storage::mock_storage::MockStorage;
+    use crate::io::storage::mocks::MockStorage;
     use crate::utils::local_uri_parquet;
 
     #[tokio::test]

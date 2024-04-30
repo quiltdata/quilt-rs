@@ -20,7 +20,7 @@ impl std::fmt::Display for Output {
         write!(
             f,
             "Manifest {} created",
-            quilt_rs::quilt::storage::s3::S3Uri::from(&self.remote_manifest)
+            quilt_rs::io::s3::S3Uri::from(&self.remote_manifest)
         )
     }
 }

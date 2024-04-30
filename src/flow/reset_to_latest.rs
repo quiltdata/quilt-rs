@@ -3,12 +3,12 @@ use std::path::PathBuf;
 use crate::flow::browse::cache_remote_manifest;
 use crate::flow::install_paths::install_paths;
 use crate::flow::uninstall_paths::uninstall_paths;
+use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
 use crate::quilt::manifest_handle::ReadableManifest;
 use crate::quilt::remote::Remote;
-use crate::quilt::storage::Storage;
 use crate::quilt::uri::Namespace;
 use crate::Error;
 
@@ -67,11 +67,11 @@ pub async fn reset_to_latest(
 mod tests {
     use super::*;
 
+    use crate::io::s3::S3Uri;
+    use crate::io::storage::mocks::MockStorage;
     use crate::lineage::PackageLineage;
     use crate::quilt::mocks;
     use crate::quilt::remote::mock_remote::MockRemote;
-    use crate::quilt::storage::mock_storage::MockStorage;
-    use crate::quilt::storage::s3::S3Uri;
     use crate::quilt::RemoteManifest;
     use crate::utils::local_uri_json;
 

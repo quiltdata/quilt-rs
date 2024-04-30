@@ -17,7 +17,7 @@ pub async fn certify_latest(
 mod tests {
     use super::*;
 
-    use crate::quilt::storage::s3::S3Uri;
+    use crate::io::s3::S3Uri;
 
     use crate::quilt::mocks;
     use crate::quilt::remote::mock_remote::MockRemote;

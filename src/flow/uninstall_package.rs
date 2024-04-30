@@ -1,9 +1,9 @@
 use tracing::log;
 
+use crate::io::storage::Storage;
 use crate::lineage::DomainLineage;
 use crate::paths;
 use crate::quilt::uri::Namespace;
-use crate::quilt::Storage;
 use crate::Error;
 
 pub async fn uninstall_package(
@@ -38,7 +38,7 @@ mod tests {
     use super::*;
 
     use crate::lineage::PackageLineage;
-    use crate::quilt::storage::mock_storage::MockStorage;
+    use crate::io::storage::mocks::MockStorage;
 
     #[tokio::test]
     async fn test_panic_if_no_installed_package() {

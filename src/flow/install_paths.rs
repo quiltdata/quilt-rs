@@ -4,15 +4,15 @@ use std::path::PathBuf;
 
 use url::Url;
 
+use crate::io::s3;
+use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
 use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
 use crate::quilt::manifest_handle::ReadableManifest;
 use crate::quilt::remote::Remote;
-use crate::quilt::storage::s3;
 use crate::quilt::uri::Namespace;
-use crate::quilt::Storage;
 use crate::Error;
 
 // FIXME: use impl Storage and impl Remote
@@ -132,8 +132,8 @@ mod tests {
 
     use crate::quilt::mocks;
     use crate::quilt::remote::mock_remote::MockRemote;
-    use crate::quilt::storage::mock_storage::MockStorage;
-    use crate::quilt::storage::s3::S3Uri;
+    use crate::io::storage::mocks::MockStorage;
+    use crate::io::s3::S3Uri;
     use crate::Row4;
 
     #[tokio::test]

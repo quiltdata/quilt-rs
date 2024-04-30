@@ -23,8 +23,8 @@ pub mod manifest {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
+    use crate::io::storage::Storage;
     use crate::quilt::manifest_handle::ReadableManifest;
-    use crate::quilt::storage::Storage;
     use crate::Error;
     use crate::Row4;
     use crate::Table;

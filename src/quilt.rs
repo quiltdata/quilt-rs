@@ -8,7 +8,6 @@ use tracing::log;
 pub mod manifest;
 pub mod manifest_handle;
 pub mod remote;
-pub mod storage;
 pub mod uri;
 
 #[cfg(test)]
@@ -38,9 +37,6 @@ pub use manifest_handle::CachedManifest;
 pub use manifest_handle::InstalledManifest;
 pub use manifest_handle::ReadableManifest;
 pub use manifest_handle::RemoteManifest;
-pub use storage::fs;
-pub use storage::s3;
-pub use storage::Storage;
 pub use uri::Namespace;
 pub use uri::RevisionPointer;
 pub use uri::S3PackageUri;
@@ -59,6 +55,9 @@ use crate::flow::status::refresh_latest_hash;
 use crate::flow::status::InstalledPackageStatus;
 use crate::flow::uninstall_package::uninstall_package;
 use crate::flow::uninstall_paths::uninstall_paths;
+use crate::io::s3;
+use crate::io::storage::fs;
+use crate::io::storage::Storage;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalDomain<S: Storage = fs::LocalStorage, R: Remote = s3_utils::RemoteS3> {
@@ -437,8 +436,8 @@ mod tests {
     use crate::flow::status::ChangeSet;
     use crate::flow::status::DiscreteChange;
     use crate::flow::status::PackageFileFingerprint;
+    use crate::io::storage::mocks::MockStorage;
     use crate::quilt::manifest::MULTIHASH_SHA256;
-    use crate::quilt::storage::mock_storage::MockStorage;
     use crate::quilt4::checksum::calculate_sha256_checksum;
 
     fn get_timestamp() -> String {

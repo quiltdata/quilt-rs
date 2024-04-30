@@ -25,7 +25,7 @@ use tracing::log;
 
 use crate::quilt::manifest::MULTIHASH_SHA256_CHUNKED;
 use crate::quilt::remote::Remote;
-use crate::quilt::s3;
+use crate::io::s3;
 use crate::quilt4::checksum;
 use crate::quilt4::checksum::get_checksum_chunksize_and_parts;
 use crate::Error;

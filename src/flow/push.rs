@@ -7,14 +7,14 @@ use url::Url;
 
 use crate::flow::browse::browse_remote_manifest;
 use crate::flow::browse::cache_manifest;
+use crate::io::s3;
+use crate::io::s3::S3Uri;
+use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::paths;
 use crate::quilt::manifest;
 use crate::quilt::manifest_handle;
 use crate::quilt::remote::Remote;
-use crate::quilt::storage;
-use crate::quilt::storage::s3::S3Uri;
-use crate::quilt::storage::Storage;
 use crate::quilt::uri::Namespace;
 use crate::Error;
 
@@ -64,7 +64,7 @@ pub async fn push_package(
         log::debug!("Uploading to S3: {}", s3_uri);
 
         // TODO: upload in parallel. use a stream?
-        let (version_id, checksum) = if row.size < storage::s3::MULTIPART_THRESHOLD {
+        let (version_id, checksum) = if row.size < s3::MULTIPART_THRESHOLD {
             let body = ByteStream::read_from().path(&file_path).build().await?;
 
             remote
@@ -79,7 +79,7 @@ pub async fn push_package(
         // Update the manifest with the sha2-256-chunked checksum.
         row.hash = Multihash::wrap(manifest::MULTIHASH_SHA256_CHUNKED, checksum.as_ref())?;
 
-        let remote_url = storage::s3::make_s3_url(
+        let remote_url = s3::make_s3_url(
             &remote_manifest_address.bucket,
             &s3_key,
             version_id.as_deref(),
@@ -152,7 +152,7 @@ mod tests {
     use crate::quilt::manifest_handle::RemoteManifest;
     use crate::quilt::mocks;
     use crate::quilt::remote::mock_remote::MockRemote;
-    use crate::quilt::storage::mock_storage::MockStorage;
+    use crate::io::storage::mocks::MockStorage;
     use crate::quilt::S3PackageUri;
     use crate::utils::local_uri_parquet_checksummed;
     use crate::Row4;

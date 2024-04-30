@@ -5,7 +5,7 @@ use tokio::io::AsyncReadExt;
 use tokio::io::BufReader;
 use tokio::io::{self};
 
-use crate::quilt::s3;
+use crate::io::s3;
 
 pub fn get_checksum_chunksize_and_parts(file_size: u64) -> (u64, u64) {
     let mut chunksize = s3::MULTIPART_THRESHOLD;

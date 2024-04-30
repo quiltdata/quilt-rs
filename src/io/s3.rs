@@ -17,6 +17,7 @@ pub struct S3Uri {
     pub version: Option<String>,
 }
 
+// FIXME: goes to src/uri?
 impl S3Uri {
     pub async fn get_contents(&self, remote: &impl Remote) -> Result<String, Error> {
         get_object_contents(remote, self).await
@@ -89,6 +90,7 @@ impl std::str::FromStr for S3Uri {
     }
 }
 
+// FIXME: goes to io/remote/s3
 pub async fn get_object_bytes(remote: &impl Remote, uri: &S3Uri) -> Result<Vec<u8>, Error> {
     let mut reader = remote.get_object(uri).await?;
 
@@ -99,11 +101,13 @@ pub async fn get_object_bytes(remote: &impl Remote, uri: &S3Uri) -> Result<Vec<u
     Ok(contents)
 }
 
+// FIXME: goes to io/remote/s3
 pub async fn get_object_contents(remote: &impl Remote, uri: &S3Uri) -> Result<String, Error> {
     let bytes = get_object_bytes(remote, uri).await?;
     String::from_utf8(bytes).map_err(|err| Error::Utf8(err.utf8_error()))
 }
 
+// FIXME: goes to io/remote/s3
 pub async fn put_object_contents(
     remote: &impl Remote,
     uri: &S3Uri,
@@ -113,6 +117,7 @@ pub async fn put_object_contents(
     remote.put_object(uri, contents).await
 }
 
+// FIXME: goes to src/uri
 pub fn make_s3_url(bucket: &str, s3_key: &str, version_id: Option<&str>) -> Url {
     let mut remote_url = Url::parse("s3://").unwrap();
     remote_url

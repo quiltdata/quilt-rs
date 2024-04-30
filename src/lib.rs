@@ -8,6 +8,7 @@ mod flow;
 mod paths;
 mod quilt4;
 
+pub mod io;
 pub mod lineage;
 pub mod quilt;
 

@@ -9,11 +9,10 @@ use tokio::fs::{File, ReadDir};
 use crate::Error;
 
 pub mod fs;
-pub mod s3;
 
 // Mock storage is only available during testing.
 #[cfg(test)]
-pub mod mock_storage;
+pub mod mocks;
 
 /// Storage operations for the underlying filesystem.
 ///

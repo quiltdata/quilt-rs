@@ -11,7 +11,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::quilt::storage::Storage;
+use crate::io::storage::Storage;
 use arrow::array::GenericByteArray;
 use arrow::array::UInt64Array;
 use arrow::datatypes::BinaryType;
@@ -312,7 +312,7 @@ impl TryFrom<Manifest> for Table {
 
 #[cfg(test)]
 mod tests {
-    use crate::quilt::storage::mock_storage::MockStorage;
+    use crate::io::storage::mocks::MockStorage;
     use crate::utils::local_uri_parquet;
 
     use super::*;

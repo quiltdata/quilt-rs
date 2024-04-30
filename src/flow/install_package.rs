@@ -1,10 +1,10 @@
 use crate::flow::browse::cache_remote_manifest;
+use crate::io::storage::Storage;
 use crate::lineage::DomainLineage;
 use crate::lineage::PackageLineage;
 use crate::paths;
 use crate::quilt::manifest_handle::RemoteManifest;
 use crate::quilt::remote::Remote;
-use crate::quilt::Storage;
 use crate::Error;
 
 pub async fn install_package(
@@ -65,9 +65,9 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
+    use crate::io::s3::S3Uri;
+    use crate::io::storage::mocks::MockStorage;
     use crate::quilt::remote::mock_remote::MockRemote;
-    use crate::quilt::storage::mock_storage::MockStorage;
-    use crate::quilt::storage::s3::S3Uri;
 
     #[tokio::test]
     async fn test_if_already_installed() -> Result<(), Error> {

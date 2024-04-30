@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use tokio::io::AsyncReadExt;
 
+use crate::io::s3::S3Uri;
+use crate::io::storage::Storage;
 use crate::paths::get_manifest_key_legacy;
 use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
@@ -10,8 +12,6 @@ use crate::quilt::manifest_handle::CachedManifest;
 use crate::quilt::manifest_handle::ReadableManifest;
 use crate::quilt::manifest_handle::RemoteManifest;
 use crate::quilt::remote::Remote;
-use crate::quilt::s3::S3Uri;
-use crate::quilt::storage::Storage;
 use crate::Error;
 use crate::Table;
 
@@ -104,7 +104,7 @@ mod tests {
     use super::*;
 
     use crate::quilt::remote::mock_remote::MockRemote;
-    use crate::quilt::storage::mock_storage::MockStorage;
+    use crate::io::storage::mocks::MockStorage;
     use crate::utils::local_uri_json;
 
     #[tokio::test]

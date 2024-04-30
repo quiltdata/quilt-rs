@@ -11,7 +11,7 @@ use serde::Serializer;
 #[cfg(test)]
 pub mod mocks;
 
-use crate::quilt::storage::Storage;
+use crate::io::storage::Storage;
 use crate::quilt::uri::Namespace;
 use crate::Error;
 
@@ -192,7 +192,7 @@ impl PackageLineageIo {
 mod tests {
     use super::*;
 
-    use crate::quilt::storage::mock_storage::MockStorage;
+    use crate::io::storage::mocks::MockStorage;
 
     #[test]
     fn test_syntax_error() {

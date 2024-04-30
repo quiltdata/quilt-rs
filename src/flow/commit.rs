@@ -5,8 +5,8 @@ use serde_json::json;
 use tracing::log;
 use url::Url;
 
+use crate::io::storage::Storage;
 use crate::paths;
-use crate::quilt::Storage;
 use crate::Error;
 use crate::Row4;
 
@@ -199,7 +199,7 @@ mod tests {
     use crate::flow::status::Change;
     use crate::flow::status::DiscreteChange;
     use crate::quilt::mocks;
-    use crate::quilt::storage::mock_storage::MockStorage;
+    use crate::io::storage::mocks::MockStorage;
 
     // NOTE: Tests use "/" path for working directory, because it then parsed with Url and have to be absolute path
 

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::quilt::storage::Storage;
+use crate::io::storage::Storage;
 use crate::quilt::uri::Namespace;
 use crate::Error;
 
