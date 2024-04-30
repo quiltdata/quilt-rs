@@ -65,9 +65,8 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
-    use crate::io::remote::mocks::MockRemote;
     use crate::io::s3::S3Uri;
-    use crate::io::storage::mocks::MockStorage;
+    use crate::quilt::mocks;
 
     #[tokio::test]
     async fn test_if_already_installed() -> Result<(), Error> {
@@ -78,8 +77,8 @@ mod tests {
         let result = install_package(
             lineage,
             &paths::DomainPaths::default(),
-            &MockStorage::default(),
-            &MockRemote::default(),
+            &mocks::storage::MockStorage::default(),
+            &mocks::remote::MockRemote::default(),
             &RemoteManifest {
                 namespace: namespace.into(),
                 ..RemoteManifest::default()
@@ -100,7 +99,7 @@ mod tests {
             hash: "c".to_string(),
             namespace: ("f", "b").into(),
         };
-        let remote = MockRemote::default();
+        let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(
                 &S3Uri::try_from("s3://a/.quilt/packages/1220c.parquet")?,
@@ -113,7 +112,7 @@ mod tests {
                 Vec::new(),
             )
             .await?;
-        let storage = MockStorage::default();
+        let storage = mocks::storage::MockStorage::default();
         let result = install_package(
             DomainLineage::default(),
             &paths::DomainPaths::default(),

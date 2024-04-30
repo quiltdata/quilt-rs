@@ -67,9 +67,7 @@ pub async fn reset_to_latest(
 mod tests {
     use super::*;
 
-    use crate::io::remote::mocks::MockRemote;
     use crate::io::s3::S3Uri;
-    use crate::io::storage::mocks::MockStorage;
     use crate::lineage::PackageLineage;
     use crate::quilt::mocks;
     use crate::quilt::RemoteManifest;
@@ -79,7 +77,7 @@ mod tests {
     async fn test_if_already_latest() -> Result<(), Error> {
         let source_lineage = mocks::lineage::with_remote("quilt+s3://b#package=f/a@foo")?;
 
-        let remote = MockRemote::default();
+        let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(
                 &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
@@ -91,7 +89,7 @@ mod tests {
             source_lineage.clone(),
             &mocks::manifest::default(),
             &DomainPaths::default(),
-            &MockStorage::default(),
+            &mocks::storage::MockStorage::default(),
             &remote,
             PathBuf::default(),
             Namespace::default(),
@@ -106,7 +104,7 @@ mod tests {
         let source_lineage = mocks::lineage::with_remote("quilt+s3://b#package=f/a@OUTDATED_HASH")?;
 
         let jsonl = std::fs::read(local_uri_json())?;
-        let remote = MockRemote::default();
+        let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(
                 &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
@@ -124,7 +122,7 @@ mod tests {
             source_lineage.clone(),
             &mocks::manifest::default(),
             &DomainPaths::default(),
-            &MockStorage::default(),
+            &mocks::storage::MockStorage::default(),
             &remote,
             PathBuf::default(),
             Namespace::default(),

@@ -1,8 +1,10 @@
-// FIXME
-// use crate::io::remote::mocks::MockRemote →
-// use crate::mocks::remote::MockRemote
-
 pub use crate::lineage::mocks as lineage;
+
+pub use crate::io::remote::mocks as remote;
+
+pub use crate::io::storage::mocks as storage;
+
+// TODO: move to src/mocks.rs
 
 pub fn row_hash_sample1() -> multihash::Multihash<256> {
     multihash::Multihash::wrap(0xb510, b"pedestrian").expect("Unexpected")

@@ -103,8 +103,7 @@ pub async fn browse_remote_manifest(
 mod tests {
     use super::*;
 
-    use crate::io::remote::mocks::MockRemote;
-    use crate::io::storage::mocks::MockStorage;
+    use crate::quilt::mocks;
     use crate::utils::local_uri_json;
 
     #[tokio::test]
@@ -116,9 +115,9 @@ mod tests {
             hash: "c".to_string(),
         };
         let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
-        let storage = MockStorage::default();
+        let storage = mocks::storage::MockStorage::default();
         storage.write_file(cache_path, &Vec::new()).await?;
-        let remote = MockRemote::default();
+        let remote = mocks::remote::MockRemote::default();
         let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
         assert_eq!(
             cached_manifest,
@@ -140,9 +139,9 @@ mod tests {
             hash: "c".to_string(),
         };
         let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
-        let storage = MockStorage::default();
+        let storage = mocks::storage::MockStorage::default();
         storage.write_file(cache_path, &Vec::new()).await?;
-        let remote = MockRemote::default();
+        let remote = mocks::remote::MockRemote::default();
         let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
         assert_eq!(
             cached_manifest
@@ -157,14 +156,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_caching_parquet() -> Result<(), Error> {
-        let storage = MockStorage::default();
+        let storage = mocks::storage::MockStorage::default();
         let paths = DomainPaths::default();
         let manifest = RemoteManifest {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
             hash: "c".to_string(),
         };
-        let remote = MockRemote::default();
+        let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(
                 &S3Uri::try_from("s3://a/.quilt/packages/1220c.parquet")?,
@@ -189,7 +188,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_caching_jsonl() -> Result<(), Error> {
-        let storage = MockStorage::default();
+        let storage = mocks::storage::MockStorage::default();
         let paths = DomainPaths::default();
         let manifest = RemoteManifest {
             bucket: "a".to_string(),
@@ -197,7 +196,7 @@ mod tests {
             hash: "c".to_string(),
         };
         let jsonl = std::fs::read(local_uri_json())?;
-        let remote = MockRemote::default();
+        let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(&S3Uri::try_from("s3://a/.quilt/packages/c")?, jsonl)
             .await?;

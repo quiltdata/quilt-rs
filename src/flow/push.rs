@@ -147,8 +147,6 @@ pub async fn push_package(
 mod tests {
     use super::*;
 
-    use crate::io::remote::mocks::MockRemote;
-    use crate::io::storage::mocks::MockStorage;
     use crate::lineage::CommitState;
     use crate::lineage::PackageLineage;
     use crate::quilt::manifest_handle::RemoteManifest;
@@ -159,8 +157,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_push_if_no_commit() -> Result<(), Error> {
-        let storage = MockStorage::default();
-        let remote = MockRemote::default();
+        let storage = mocks::storage::MockStorage::default();
+        let remote = mocks::remote::MockRemote::default();
         let lineage = push_package(
             PackageLineage::default(),
             &mocks::manifest::default(),
@@ -186,12 +184,12 @@ mod tests {
         let jsonl = std::fs::read(local_uri_parquet_checksummed())?;
         let manifest_key =
             ".quilt/packages/b/770459d4230273fd44b272c552d1204458175e7d7cb26fcd601c662cf5f72d05";
-        let storage = MockStorage::default();
+        let storage = mocks::storage::MockStorage::default();
         storage
             .write_file(PathBuf::from(manifest_key), &jsonl)
             .await?;
 
-        let remote = MockRemote::default();
+        let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(
                 &S3Uri::try_from("s3://b/.quilt/packages/1220__FOO__.parquet")?,
@@ -239,11 +237,11 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let manifest_key =
             ".quilt/packages/b/0f85671863dadacf3a0e62212f1b9151a11f72228e4c82ed86ff27d46ec31d87";
-        let storage = MockStorage::default();
+        let storage = mocks::storage::MockStorage::default();
         storage
             .write_file(PathBuf::from(manifest_key), &jsonl)
             .await?;
-        let remote = MockRemote::default();
+        let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(
                 &S3Uri::try_from("s3://b/.quilt/packages/1220__FOO__.parquet")?,

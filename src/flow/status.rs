@@ -235,7 +235,6 @@ pub async fn create_status(
 mod tests {
     use super::*;
 
-    use crate::io::storage::mocks::MockStorage;
     use crate::lineage::CommitState;
     use crate::quilt::manifest::ContentHash;
     use crate::quilt::mocks;
@@ -243,7 +242,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_default_status() -> Result<(), Error> {
-        let storage = MockStorage::default();
+        let storage = mocks::storage::MockStorage::default();
         let (_lineage, status) = create_status(
             PackageLineage::default(),
             &storage,
@@ -264,7 +263,7 @@ mod tests {
 
         let (_lineage, status) = create_status(
             lineage,
-            &MockStorage::default(),
+            &mocks::storage::MockStorage::default(),
             &mocks::manifest::default(),
             PathBuf::default(),
         )
@@ -282,7 +281,7 @@ mod tests {
 
         let (_, status) = create_status(
             lineage,
-            &MockStorage::default(),
+            &mocks::storage::MockStorage::default(),
             &mocks::manifest::default(),
             PathBuf::default(),
         )
@@ -305,7 +304,7 @@ mod tests {
 
         let (_, status) = create_status(
             lineage,
-            &MockStorage::default(),
+            &mocks::storage::MockStorage::default(),
             &mocks::manifest::default(),
             PathBuf::default(),
         )
@@ -320,7 +319,7 @@ mod tests {
         let manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("a/a")]);
         let (_, status) = create_status(
             lineage,
-            &MockStorage::default(),
+            &mocks::storage::MockStorage::default(),
             &manifest,
             PathBuf::default(),
         )
@@ -339,7 +338,7 @@ mod tests {
         let lineage = PackageLineage::default();
         let manifest = mocks::manifest::default();
 
-        let storage = MockStorage::default();
+        let storage = mocks::storage::MockStorage::default();
         let working_dir = storage.temp_dir.as_ref().join(PathBuf::from("foo/bar"));
         let file_path = PathBuf::from("inside/package/file.pq");
         storage

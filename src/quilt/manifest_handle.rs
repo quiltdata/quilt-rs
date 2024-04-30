@@ -189,13 +189,13 @@ impl InstalledManifest {
 mod tests {
     use super::*;
 
-    use crate::io::remote::mocks::MockRemote;
     use crate::io::s3::S3Uri;
+    use crate::quilt::mocks;
 
     #[tokio::test]
     async fn test_resolve_existing_hash() -> Result<(), Error> {
         let uri = S3PackageUri::try_from("quilt+s3://b#package=foo/bar@hjknlmn")?;
-        let remote = MockRemote::default();
+        let remote = mocks::remote::MockRemote::default();
         let remote_manifest = RemoteManifest::resolve(&remote, &uri).await?;
         assert_eq!(
             remote_manifest,
@@ -211,7 +211,7 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_remote_hash() -> Result<(), Error> {
         let uri = S3PackageUri::try_from("quilt+s3://b#package=foo/bar")?;
-        let remote = MockRemote::default();
+        let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(
                 &S3Uri::try_from("s3://b/.quilt/named_packages/foo/bar/latest")?,

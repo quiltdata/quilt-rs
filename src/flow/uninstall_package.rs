@@ -37,13 +37,13 @@ mod tests {
 
     use super::*;
 
-    use crate::io::storage::mocks::MockStorage;
     use crate::lineage::PackageLineage;
+    use crate::quilt::mocks;
 
     #[tokio::test]
     async fn test_panic_if_no_installed_package() {
         let lineage = DomainLineage::default();
-        let storage = MockStorage::default();
+        let storage = mocks::storage::MockStorage::default();
         let paths = paths::DomainPaths::default();
 
         let result = uninstall_package(lineage, &paths, &storage, ("foo", "bar").into()).await;
@@ -59,7 +59,7 @@ mod tests {
             packages: BTreeMap::from([(("foo", "bar").into(), PackageLineage::default())]),
         };
         let paths = paths::DomainPaths::default();
-        let storage = MockStorage::default();
+        let storage = mocks::storage::MockStorage::default();
         let namespace = Namespace::from(("foo", "bar"));
         storage
             .create_dir_all(paths.installed_manifests(&namespace))

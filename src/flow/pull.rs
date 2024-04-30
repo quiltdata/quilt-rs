@@ -87,13 +87,12 @@ mod tests {
 
     use crate::flow::status::Change;
     use crate::flow::status::DiscreteChange;
-    use crate::io::storage::mocks::MockStorage;
     use crate::quilt::mocks;
     use crate::quilt::RemoteManifest;
 
     #[tokio::test]
     async fn test_no_pull_if_changes() -> Result<(), Error> {
-        let storage = MockStorage::default();
+        let storage = mocks::storage::MockStorage::default();
         let lineage = mocks::lineage::with_paths(vec![PathBuf::from("a/a")]);
 
         let status = InstalledPackageStatus {
@@ -126,7 +125,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_pull_if_commit() {
-        let storage = MockStorage::default();
+        let storage = mocks::storage::MockStorage::default();
         let lineage = mocks::lineage::with_commit();
         let error = pull_package(
             lineage,
@@ -146,7 +145,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_pull_if_diverged() {
-        let storage = MockStorage::default();
+        let storage = mocks::storage::MockStorage::default();
         let lineage = PackageLineage {
             remote: RemoteManifest {
                 hash: "a".to_string(),
@@ -173,7 +172,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_pull_if_up_to_date() {
-        let storage = MockStorage::default();
+        let storage = mocks::storage::MockStorage::default();
         let lineage = PackageLineage {
             remote: RemoteManifest {
                 hash: "a".to_string(),

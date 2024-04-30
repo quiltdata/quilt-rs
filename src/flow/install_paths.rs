@@ -130,9 +130,7 @@ mod tests {
     use std::path::PathBuf;
     use tempfile;
 
-    use crate::io::remote::mocks::MockRemote;
     use crate::io::s3::S3Uri;
-    use crate::io::storage::mocks::MockStorage;
     use crate::quilt::mocks;
     use crate::Row4;
 
@@ -142,8 +140,8 @@ mod tests {
 
         let domain_paths = &DomainPaths::new(working_dir.path().to_path_buf());
 
-        let remote = MockRemote::default();
-        let storage = MockStorage::default();
+        let remote = mocks::remote::MockRemote::default();
+        let storage = mocks::storage::MockStorage::default();
         let object_path = domain_paths.object(mocks::row_hash_sample1().digest());
         storage
             .write_file(working_dir.path().join(object_path), &Vec::new())
@@ -181,8 +179,8 @@ mod tests {
 
         let domain_paths = &DomainPaths::new(working_dir.path().to_path_buf());
 
-        let remote = MockRemote::default();
-        let storage = MockStorage::default();
+        let remote = mocks::remote::MockRemote::default();
+        let storage = mocks::storage::MockStorage::default();
         let lineage = mocks::lineage::with_commit_hash("fghijk");
         let entries_paths = vec![PathBuf::from("a/a")];
         let manifest = mocks::manifest::with_rows(vec![Row4 {
@@ -222,8 +220,8 @@ mod tests {
     #[tokio::test]
     async fn test_installing_path_that_doesnt_exists_in_manifest() -> Result<(), Error> {
         let lineage = mocks::lineage::with_commit_hash("fghijk");
-        let remote = MockRemote::default();
-        let storage = MockStorage::default();
+        let remote = mocks::remote::MockRemote::default();
+        let storage = mocks::storage::MockStorage::default();
         let entries_paths = vec![PathBuf::from("z/z")];
         let manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("a/a")]);
 

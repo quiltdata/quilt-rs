@@ -312,14 +312,14 @@ impl TryFrom<Manifest> for Table {
 
 #[cfg(test)]
 mod tests {
-    use crate::io::storage::mocks::MockStorage;
+    use crate::quilt::mocks;
     use crate::utils::local_uri_parquet;
 
     use super::*;
 
     #[tokio::test]
     async fn read_existing_local() -> Result<(), Error> {
-        let storage = MockStorage::default();
+        let storage = mocks::storage::MockStorage::default();
         storage
             .write_file(local_uri_parquet(), &std::fs::read(local_uri_parquet())?)
             .await?;
@@ -340,7 +340,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn read_write_local() {
-        let storage = MockStorage::default();
+        let storage = mocks::storage::MockStorage::default();
         let table1 = Table::read_from_path(&storage, &local_uri_parquet())
             .await
             .unwrap();

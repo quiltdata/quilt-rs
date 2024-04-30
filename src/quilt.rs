@@ -434,8 +434,8 @@ mod tests {
     use crate::flow::status::ChangeSet;
     use crate::flow::status::DiscreteChange;
     use crate::flow::status::PackageFileFingerprint;
-    use crate::io::storage::mocks::MockStorage;
     use crate::quilt::manifest::MULTIHASH_SHA256;
+    use crate::quilt::mocks;
     use crate::quilt4::checksum::calculate_sha256_checksum;
 
     fn get_timestamp() -> String {
@@ -477,7 +477,7 @@ mod tests {
         let temp_dir = TempDir::default();
         let local_path = PathBuf::from(temp_dir.as_ref());
         let local_domain = LocalDomain::new(local_path);
-        let storage = MockStorage::default();
+        let storage = mocks::storage::MockStorage::default();
 
         // ## Pull the manifest
 

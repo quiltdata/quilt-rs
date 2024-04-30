@@ -192,7 +192,7 @@ impl PackageLineageIo {
 mod tests {
     use super::*;
 
-    use crate::io::storage::mocks::MockStorage;
+    use crate::quilt::mocks;
 
     #[test]
     fn test_syntax_error() {
@@ -244,7 +244,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_domain_lineage_from_file() -> Result<(), Error> {
-        let storage = MockStorage::default();
+        let storage = mocks::storage::MockStorage::default();
         let file_path = PathBuf::from("foo");
         storage
             .write_file(&file_path, br###"{"packages":{}}"###.as_ref())
@@ -256,7 +256,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_domain_lineage_from_nothing() -> Result<(), Error> {
-        let storage = MockStorage::default();
+        let storage = mocks::storage::MockStorage::default();
         let lineage = DomainLineageIo::new(PathBuf::from("does-not-exist"))
             .read(&storage)
             .await?;
@@ -266,7 +266,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_domain_lineage_write() -> Result<(), Error> {
-        let storage = MockStorage::default();
+        let storage = mocks::storage::MockStorage::default();
         let file_path = PathBuf::from("foo");
         assert!(!storage.exists(&file_path).await);
         DomainLineageIo::new(file_path.clone())

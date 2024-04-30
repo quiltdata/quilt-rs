@@ -17,13 +17,12 @@ pub async fn certify_latest(
 mod tests {
     use super::*;
 
-    use crate::io::remote::mocks::MockRemote;
     use crate::io::s3::S3Uri;
     use crate::quilt::mocks;
 
     #[tokio::test]
     async fn test_certifying_latest() -> Result<(), Error> {
-        let remote = MockRemote::default();
+        let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(
                 &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
