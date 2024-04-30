@@ -6,7 +6,6 @@ use tracing::log;
 
 use crate::io::remote::utils::bytestream_to_string;
 use crate::io::remote::Remote;
-use crate::io::s3;
 use crate::io::storage::Storage;
 use crate::quilt::manifest::Manifest;
 use crate::quilt::paths;
@@ -15,9 +14,10 @@ use crate::quilt::uri::RevisionPointer;
 use crate::quilt::uri::S3PackageUri;
 use crate::quilt::Error;
 use crate::quilt::Table;
+use crate::uri::S3Uri;
 
-pub fn tag_uri(bucket: &str, namespace: &Namespace, tag: &str) -> s3::S3Uri {
-    s3::S3Uri {
+pub fn tag_uri(bucket: &str, namespace: &Namespace, tag: &str) -> S3Uri {
+    S3Uri {
         bucket: bucket.to_owned(),
         key: paths::tag_key(namespace, tag),
         version: None,
@@ -84,13 +84,13 @@ impl RemoteManifest {
         // TODO: FAIL if the manifest with this hash already exists?
         let body = storage.read_byte_stream(manifest_path).await?;
         // let body = Manifest::from(&table).to_jsonlines().as_bytes().to_vec();
-        let s3uri = s3::S3Uri::from(self);
+        let s3uri = S3Uri::from(self);
         log::info!("writing remote manifest to {}", s3uri.key);
         remote.put_object(&s3uri, body).await
     }
 
     pub async fn upload_legacy(&self, remote: &impl Remote, table: &Table) -> Result<(), Error> {
-        let s3uri = s3::S3Uri {
+        let s3uri = S3Uri {
             bucket: self.bucket.clone(),
             key: paths::get_manifest_key_legacy(&self.hash),
             version: None,
@@ -106,9 +106,9 @@ impl RemoteManifest {
 
 // TODO: ManifestUrl?
 // also From<&RemoteManifest> for TagUri
-impl From<&RemoteManifest> for s3::S3Uri {
-    fn from(remote: &RemoteManifest) -> s3::S3Uri {
-        s3::S3Uri {
+impl From<&RemoteManifest> for S3Uri {
+    fn from(remote: &RemoteManifest) -> S3Uri {
+        S3Uri {
             bucket: remote.bucket.clone(),
             key: paths::get_manifest_key(&remote.hash),
             version: None,
@@ -189,7 +189,6 @@ impl InstalledManifest {
 mod tests {
     use super::*;
 
-    use crate::io::s3::S3Uri;
     use crate::quilt::mocks;
 
     #[tokio::test]

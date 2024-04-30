@@ -8,15 +8,17 @@ use url::Url;
 use crate::flow::browse::browse_remote_manifest;
 use crate::flow::browse::cache_manifest;
 use crate::io::remote::Remote;
-use crate::io::s3;
-use crate::io::s3::S3Uri;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::paths;
 use crate::quilt::manifest;
 use crate::quilt::manifest_handle;
 use crate::quilt::uri::Namespace;
+use crate::quilt4::checksum::MULTIPART_THRESHOLD;
+use crate::uri::S3Uri;
 use crate::Error;
+
+use crate::uri::make_s3_url;
 
 pub async fn push_package(
     mut lineage: PackageLineage,
@@ -64,7 +66,7 @@ pub async fn push_package(
         log::debug!("Uploading to S3: {}", s3_uri);
 
         // TODO: upload in parallel. use a stream?
-        let (version_id, checksum) = if row.size < s3::MULTIPART_THRESHOLD {
+        let (version_id, checksum) = if row.size < MULTIPART_THRESHOLD {
             let body = ByteStream::read_from().path(&file_path).build().await?;
 
             remote
@@ -79,7 +81,7 @@ pub async fn push_package(
         // Update the manifest with the sha2-256-chunked checksum.
         row.hash = Multihash::wrap(manifest::MULTIHASH_SHA256_CHUNKED, checksum.as_ref())?;
 
-        let remote_url = s3::make_s3_url(
+        let remote_url = make_s3_url(
             &remote_manifest_address.bucket,
             &s3_key,
             version_id.as_deref(),

@@ -3,7 +3,7 @@ use std::path::Path;
 use aws_sdk_s3::primitives::ByteStream;
 use tokio::io::AsyncRead;
 
-use crate::io::s3::S3Uri;
+use crate::uri::S3Uri;
 use crate::Error;
 
 pub mod s3;

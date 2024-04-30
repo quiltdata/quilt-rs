@@ -17,9 +17,10 @@ use sha2::Sha256;
 use tokio::io::AsyncReadExt;
 use tracing::log;
 
-use crate::io::s3;
 use crate::quilt::manifest::MULTIHASH_SHA256_CHUNKED;
 use crate::quilt4::checksum::get_checksum_chunksize_and_parts;
+use crate::quilt4::checksum::MPU_MAX_PARTS;
+use crate::quilt4::checksum::MULTIPART_THRESHOLD;
 use crate::Error;
 
 pub async fn bytestream_to_string(bytestream: ByteStream) -> Result<String, Error> {
@@ -100,7 +101,7 @@ pub fn get_compliant_chunked_checksum(attrs: &GetObjectAttributesOutput) -> Opti
         .decode(checksum_sha256.as_bytes())
         .expect("AWS checksum must be valid base64");
     let object_size = attrs.object_size.expect("ObjectSize must be requested");
-    if (object_size as u64) < s3::MULTIPART_THRESHOLD {
+    if (object_size as u64) < MULTIPART_THRESHOLD {
         if let Some(object_parts) = &attrs.object_parts {
             if object_parts
                 .total_parts_count
@@ -151,7 +152,7 @@ pub async fn get_attrs_for_key(
         .object_attributes(aws_sdk_s3::types::ObjectAttributes::Checksum)
         .object_attributes(aws_sdk_s3::types::ObjectAttributes::ObjectParts)
         .object_attributes(aws_sdk_s3::types::ObjectAttributes::ObjectSize)
-        .max_parts(s3::MPU_MAX_PARTS as i32)
+        .max_parts(MPU_MAX_PARTS as i32)
         .send()
         .await;
     let attrs = match attr_result {

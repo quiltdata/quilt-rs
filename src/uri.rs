@@ -4,18 +4,12 @@ use url::Url;
 
 use crate::Error;
 
-pub const MPU_MAX_PARTS: u64 = 10_000;
-pub const MULTIPART_THRESHOLD: u64 = 8 * 1024 * 1024;
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct S3Uri {
     pub bucket: String,
     pub key: String,
     pub version: Option<String>,
 }
-
-// FIXME: goes to src/uri?
-impl S3Uri {}
 
 impl TryFrom<&str> for S3Uri {
     type Error = Error;
@@ -75,7 +69,7 @@ impl std::str::FromStr for S3Uri {
     }
 }
 
-// FIXME: goes to src/uri
+// FIXME: goes to src/uri, FIXME: make it private?
 pub fn make_s3_url(bucket: &str, s3_key: &str, version_id: Option<&str>) -> Url {
     let mut remote_url = Url::parse("s3://").unwrap();
     remote_url

@@ -67,10 +67,10 @@ pub async fn reset_to_latest(
 mod tests {
     use super::*;
 
-    use crate::io::s3::S3Uri;
     use crate::lineage::PackageLineage;
     use crate::quilt::mocks;
     use crate::quilt::RemoteManifest;
+    use crate::uri::S3Uri;
     use crate::utils::local_uri_json;
 
     #[tokio::test]

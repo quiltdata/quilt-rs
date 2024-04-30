@@ -56,9 +56,11 @@ use crate::flow::status::InstalledPackageStatus;
 use crate::flow::uninstall_package::uninstall_package;
 use crate::flow::uninstall_paths::uninstall_paths;
 use crate::io::remote::s3::RemoteS3;
-use crate::io::s3;
 use crate::io::storage::fs;
 use crate::io::storage::Storage;
+use crate::uri::S3Uri;
+
+use crate::uri::make_s3_url;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalDomain<S: Storage = fs::LocalStorage, R: Remote = RemoteS3> {
@@ -162,7 +164,7 @@ impl LocalDomain {
 
     pub async fn package_s3_prefix(
         &self,
-        uri: &s3::S3Uri,
+        uri: &S3Uri,
         target_uri: S3PackageUri,
     ) -> Result<RemoteManifest, Error> {
         log::debug!("Source URI: {:?}, target URI: {:?}", uri, target_uri);
@@ -213,12 +215,8 @@ impl LocalDomain {
                     name.clone(),
                     Row4 {
                         name,
-                        place: s3::make_s3_url(
-                            &uri.bucket,
-                            &attrs.key,
-                            attrs.version_id.as_deref(),
-                        )
-                        .into(),
+                        place: make_s3_url(&uri.bucket, &attrs.key, attrs.version_id.as_deref())
+                            .into(),
                         // XXX: can we use `as u64` safely here?
                         size: attrs.size,
                         hash: attrs.hash,

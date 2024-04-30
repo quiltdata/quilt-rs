@@ -5,7 +5,6 @@ use std::path::PathBuf;
 use url::Url;
 
 use crate::io::remote::Remote;
-use crate::io::s3;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
@@ -13,6 +12,7 @@ use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
 use crate::quilt::manifest_handle::ReadableManifest;
 use crate::quilt::uri::Namespace;
+use crate::uri::S3Uri;
 use crate::Error;
 
 // FIXME: use impl Storage and impl Remote
@@ -20,7 +20,7 @@ async fn cache_immutable_object(
     storage: &impl Storage,
     remote: &impl Remote,
     object_dest: &PathBuf,
-    uri: &s3::S3Uri,
+    uri: &S3Uri,
 ) -> Result<(), Error> {
     let body = remote.get_object_stream(uri).await?;
     storage.write_byte_stream(object_dest, body).await
@@ -130,7 +130,6 @@ mod tests {
     use std::path::PathBuf;
     use tempfile;
 
-    use crate::io::s3::S3Uri;
     use crate::quilt::mocks;
     use crate::Row4;
 

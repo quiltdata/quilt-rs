@@ -11,6 +11,7 @@ mod quilt4;
 pub mod io;
 pub mod lineage;
 pub mod quilt;
+pub mod uri;
 
 #[cfg(test)]
 /// Utilities for testing only

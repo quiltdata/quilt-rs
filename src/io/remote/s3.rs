@@ -12,8 +12,8 @@ use base64::Engine;
 use tokio::io::AsyncRead;
 
 use crate::io::remote::Remote;
-use crate::io::s3::S3Uri;
 use crate::quilt4::checksum;
+use crate::uri::S3Uri;
 use crate::Error;
 
 use crate::io::remote::utils::get_client_for_bucket;

@@ -65,8 +65,8 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
-    use crate::io::s3::S3Uri;
     use crate::quilt::mocks;
+    use crate::uri::S3Uri;
 
     #[tokio::test]
     async fn test_if_already_installed() -> Result<(), Error> {

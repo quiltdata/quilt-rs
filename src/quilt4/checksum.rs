@@ -5,13 +5,14 @@ use tokio::io::AsyncReadExt;
 use tokio::io::BufReader;
 use tokio::io::{self};
 
-use crate::io::s3;
+pub const MPU_MAX_PARTS: u64 = 10_000;
+pub const MULTIPART_THRESHOLD: u64 = 8 * 1024 * 1024;
 
 pub fn get_checksum_chunksize_and_parts(file_size: u64) -> (u64, u64) {
-    let mut chunksize = s3::MULTIPART_THRESHOLD;
+    let mut chunksize = MULTIPART_THRESHOLD;
     let mut num_parts = file_size.div_ceil(chunksize);
 
-    while num_parts > s3::MPU_MAX_PARTS {
+    while num_parts > MPU_MAX_PARTS {
         chunksize *= 2;
         num_parts = file_size.div_ceil(chunksize);
     }
