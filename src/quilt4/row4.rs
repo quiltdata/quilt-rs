@@ -10,7 +10,6 @@ use std::path::PathBuf;
 use multihash::Multihash;
 
 use crate::quilt::manifest::Manifest;
-use crate::quilt4::row3::Row3;
 use crate::quilt4::table::HEADER_ROW;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -22,18 +21,6 @@ pub struct Row4 {
     pub hash: Multihash<256>,
     pub info: serde_json::Value, // system metadata
     pub meta: serde_json::Value, // user metadata
-}
-
-impl Row4 {
-    pub fn from_row3(_row3: Row3) -> Self {
-        // Implementation goes here
-        unimplemented!()
-    }
-
-    pub fn to_row3(&self) -> Row3 {
-        // Implementation goes here
-        unimplemented!()
-    }
 }
 
 impl fmt::Display for Row4 {

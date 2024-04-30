@@ -17,7 +17,6 @@ pub mod uri;
 /// Utilities for testing only
 mod utils; // FIXME: move to mocks and fixtures
 
-pub use quilt4::manifest::Manifest4;
 pub use quilt4::row4::Row4;
 pub use quilt4::table::Table;
 
