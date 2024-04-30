@@ -10,7 +10,7 @@ use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
 use crate::quilt::manifest_handle;
 use crate::quilt::uri::Namespace;
-use crate::s3_utils;
+use crate::io::remote::s3::RemoteS3;
 use crate::Error;
 
 pub async fn pull_package(
@@ -50,7 +50,7 @@ pub async fn pull_package(
     lineage.base_hash = lineage.latest_hash.clone();
 
     // FIXME: pass from outside
-    let remote = s3_utils::RemoteS3::new();
+    let remote = RemoteS3::new();
     cache_remote_manifest(paths, storage, &remote, &lineage.remote).await?;
     copy_cached_to_installed(
         paths,

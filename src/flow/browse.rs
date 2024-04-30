@@ -11,7 +11,7 @@ use crate::quilt::manifest::Manifest;
 use crate::quilt::manifest_handle::CachedManifest;
 use crate::quilt::manifest_handle::ReadableManifest;
 use crate::quilt::manifest_handle::RemoteManifest;
-use crate::quilt::remote::Remote;
+use crate::io::remote::Remote;
 use crate::Error;
 use crate::Table;
 
@@ -103,7 +103,7 @@ pub async fn browse_remote_manifest(
 mod tests {
     use super::*;
 
-    use crate::quilt::remote::mock_remote::MockRemote;
+    use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::utils::local_uri_json;
 

@@ -8,7 +8,7 @@ use crate::lineage::PackageLineage;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
 use crate::quilt::manifest_handle::ReadableManifest;
-use crate::quilt::remote::Remote;
+use crate::io::remote::Remote;
 use crate::quilt::uri::Namespace;
 use crate::Error;
 
@@ -71,7 +71,7 @@ mod tests {
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::PackageLineage;
     use crate::quilt::mocks;
-    use crate::quilt::remote::mock_remote::MockRemote;
+    use crate::io::remote::mocks::MockRemote;
     use crate::quilt::RemoteManifest;
     use crate::utils::local_uri_json;
 

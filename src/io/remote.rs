@@ -3,11 +3,13 @@ use std::path::Path;
 use aws_sdk_s3::primitives::ByteStream;
 use tokio::io::AsyncRead;
 
-use crate::quilt::s3::S3Uri;
+use crate::io::s3::S3Uri;
 use crate::Error;
 
+pub mod s3;
+
 #[cfg(test)]
-pub mod mock_remote;
+pub mod mocks;
 
 /// This trait encapsulates the S3 operations that Quilt needs to perform.
 #[allow(async_fn_in_trait)]

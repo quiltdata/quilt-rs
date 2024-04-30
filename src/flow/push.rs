@@ -7,6 +7,7 @@ use url::Url;
 
 use crate::flow::browse::browse_remote_manifest;
 use crate::flow::browse::cache_manifest;
+use crate::io::remote::Remote;
 use crate::io::s3;
 use crate::io::s3::S3Uri;
 use crate::io::storage::Storage;
@@ -14,7 +15,6 @@ use crate::lineage::PackageLineage;
 use crate::paths;
 use crate::quilt::manifest;
 use crate::quilt::manifest_handle;
-use crate::quilt::remote::Remote;
 use crate::quilt::uri::Namespace;
 use crate::Error;
 
@@ -147,12 +147,12 @@ pub async fn push_package(
 mod tests {
     use super::*;
 
+    use crate::io::remote::mocks::MockRemote;
+    use crate::io::storage::mocks::MockStorage;
     use crate::lineage::CommitState;
     use crate::lineage::PackageLineage;
     use crate::quilt::manifest_handle::RemoteManifest;
     use crate::quilt::mocks;
-    use crate::quilt::remote::mock_remote::MockRemote;
-    use crate::io::storage::mocks::MockStorage;
     use crate::quilt::S3PackageUri;
     use crate::utils::local_uri_parquet_checksummed;
     use crate::Row4;

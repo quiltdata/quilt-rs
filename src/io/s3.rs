@@ -1,10 +1,11 @@
 use std::fmt;
 
 use aws_sdk_s3::primitives::ByteStream;
-use tokio::io::AsyncReadExt;
 use url::Url;
 
-use crate::quilt::remote::Remote;
+use crate::io::remote::s3::get_object_contents;
+use crate::io::remote::s3::put_object_contents;
+use crate::io::remote::Remote;
 use crate::Error;
 
 pub const MPU_MAX_PARTS: u64 = 10_000;
@@ -19,10 +20,12 @@ pub struct S3Uri {
 
 // FIXME: goes to src/uri?
 impl S3Uri {
+    //FIXME: #[deprecated]
     pub async fn get_contents(&self, remote: &impl Remote) -> Result<String, Error> {
         get_object_contents(remote, self).await
     }
 
+    //FIXME: #[deprecated]
     pub async fn put_contents(
         &self,
         remote: &impl Remote,
@@ -88,33 +91,6 @@ impl std::str::FromStr for S3Uri {
     fn from_str(input: &str) -> Result<Self, Self::Err> {
         S3Uri::try_from(input)
     }
-}
-
-// FIXME: goes to io/remote/s3
-pub async fn get_object_bytes(remote: &impl Remote, uri: &S3Uri) -> Result<Vec<u8>, Error> {
-    let mut reader = remote.get_object(uri).await?;
-
-    let mut contents = Vec::new();
-
-    reader.read_to_end(&mut contents).await?;
-
-    Ok(contents)
-}
-
-// FIXME: goes to io/remote/s3
-pub async fn get_object_contents(remote: &impl Remote, uri: &S3Uri) -> Result<String, Error> {
-    let bytes = get_object_bytes(remote, uri).await?;
-    String::from_utf8(bytes).map_err(|err| Error::Utf8(err.utf8_error()))
-}
-
-// FIXME: goes to io/remote/s3
-pub async fn put_object_contents(
-    remote: &impl Remote,
-    uri: &S3Uri,
-    contents: impl Into<ByteStream>,
-) -> Result<(), Error> {
-    // let client = crate::s3_utils::get_client_for_bucket(&uri.bucket).await?;
-    remote.put_object(uri, contents).await
 }
 
 // FIXME: goes to src/uri

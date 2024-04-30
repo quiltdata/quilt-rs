@@ -7,7 +7,7 @@ use tracing::log;
 
 use crate::io::storage::mocks::MockStorage;
 use crate::io::storage::Storage;
-use crate::quilt::s3::S3Uri;
+use crate::io::s3::S3Uri;
 use crate::quilt4::checksum;
 use crate::Error;
 

@@ -4,11 +4,11 @@ use serde::Deserialize;
 use serde::Serialize;
 use tracing::log;
 
-use crate::quilt::manifest::Manifest;
-use crate::quilt::paths;
-use crate::quilt::remote::Remote;
+use crate::io::remote::Remote;
 use crate::io::s3;
 use crate::io::storage::Storage;
+use crate::quilt::manifest::Manifest;
+use crate::quilt::paths;
 use crate::quilt::uri::Namespace;
 use crate::quilt::uri::RevisionPointer;
 use crate::quilt::uri::S3PackageUri;
@@ -189,7 +189,7 @@ impl InstalledManifest {
 mod tests {
     use super::*;
 
-    use crate::quilt::remote::mock_remote::MockRemote;
+    use crate::io::remote::mocks::MockRemote;
     use crate::io::s3::S3Uri;
 
     #[tokio::test]

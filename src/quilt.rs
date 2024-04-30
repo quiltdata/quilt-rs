@@ -7,7 +7,6 @@ use tracing::log;
 
 pub mod manifest;
 pub mod manifest_handle;
-pub mod remote;
 pub mod uri;
 
 #[cfg(test)]
@@ -28,7 +27,7 @@ use crate::lineage::PackageLineage;
 
 pub use crate::flow::status::UpstreamDiscreteState;
 pub use crate::flow::status::UpstreamState;
-pub use crate::quilt::remote::Remote;
+pub use crate::io::remote::Remote;
 pub use manifest::ContentHash;
 pub use manifest::Manifest;
 pub use manifest::ManifestHeader;
@@ -58,9 +57,10 @@ use crate::flow::uninstall_paths::uninstall_paths;
 use crate::io::s3;
 use crate::io::storage::fs;
 use crate::io::storage::Storage;
+use crate::io::remote::s3::RemoteS3;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LocalDomain<S: Storage = fs::LocalStorage, R: Remote = s3_utils::RemoteS3> {
+pub struct LocalDomain<S: Storage = fs::LocalStorage, R: Remote = RemoteS3> {
     paths: paths::DomainPaths,
     lineage: lineage::DomainLineageIo,
     storage: S,
@@ -72,7 +72,7 @@ impl LocalDomain {
         let paths = paths::DomainPaths::new(root_dir.clone());
         let lineage = lineage::DomainLineageIo::new(paths.lineage());
         let storage = fs::LocalStorage::new();
-        let remote = s3_utils::RemoteS3::new();
+        let remote = RemoteS3::new();
         Self {
             lineage,
             paths,
@@ -259,7 +259,7 @@ impl LocalDomain {
 #[derive(Clone, Debug, PartialEq)]
 pub struct InstalledPackage<
     S: Storage + Clone = fs::LocalStorage,
-    R: Remote + Clone = s3_utils::RemoteS3,
+    R: Remote + Clone = RemoteS3,
 > {
     lineage: lineage::PackageLineageIo,
     paths: paths::DomainPaths,
@@ -483,7 +483,7 @@ mod tests {
 
         // ## Pull the manifest
 
-        let remote = s3_utils::RemoteS3::new();
+        let remote = RemoteS3::new();
         let remote_manifest = block_on(RemoteManifest::resolve(&remote, &test_uri))
             .expect("Failed to resolve manifest");
 

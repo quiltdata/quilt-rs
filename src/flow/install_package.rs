@@ -4,7 +4,7 @@ use crate::lineage::DomainLineage;
 use crate::lineage::PackageLineage;
 use crate::paths;
 use crate::quilt::manifest_handle::RemoteManifest;
-use crate::quilt::remote::Remote;
+use crate::io::remote::Remote;
 use crate::Error;
 
 pub async fn install_package(
@@ -67,7 +67,7 @@ mod tests {
 
     use crate::io::s3::S3Uri;
     use crate::io::storage::mocks::MockStorage;
-    use crate::quilt::remote::mock_remote::MockRemote;
+    use crate::io::remote::mocks::MockRemote;
 
     #[tokio::test]
     async fn test_if_already_installed() -> Result<(), Error> {
