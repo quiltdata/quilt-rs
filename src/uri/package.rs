@@ -14,7 +14,7 @@ use serde::Serializer;
 use url::form_urlencoded;
 use url::Url;
 
-use crate::quilt::manifest_handle::RemoteManifest;
+use crate::uri::RemoteManifest;
 use crate::Error;
 
 const LATEST_TAG: &str = "latest";

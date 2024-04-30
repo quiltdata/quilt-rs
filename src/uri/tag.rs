@@ -1,6 +1,6 @@
 use crate::paths;
-use crate::quilt::manifest_handle::RemoteManifest;
 use crate::quilt::Namespace;
+use crate::uri::RemoteManifest;
 use crate::uri::S3Uri;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

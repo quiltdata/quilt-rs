@@ -4,7 +4,7 @@ use crate::io::storage::Storage;
 use crate::lineage::DomainLineage;
 use crate::lineage::PackageLineage;
 use crate::paths;
-use crate::quilt::manifest_handle::RemoteManifest;
+use crate::uri::RemoteManifest;
 use crate::Error;
 
 pub async fn install_package(

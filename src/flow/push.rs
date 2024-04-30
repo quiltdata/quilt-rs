@@ -15,6 +15,7 @@ use crate::quilt::manifest;
 use crate::quilt::manifest_handle;
 use crate::quilt::Namespace;
 use crate::quilt4::checksum::MULTIPART_THRESHOLD;
+use crate::uri::RemoteManifest;
 use crate::uri::S3Uri;
 use crate::Error;
 
@@ -91,7 +92,7 @@ pub async fn push_package(
     }
 
     let top_hash = local_manifest.top_hash();
-    let new_remote = manifest_handle::RemoteManifest {
+    let new_remote = RemoteManifest {
         hash: top_hash.clone(),
         ..remote_manifest_address.clone()
     };
@@ -149,7 +150,6 @@ mod tests {
 
     use crate::lineage::CommitState;
     use crate::lineage::PackageLineage;
-    use crate::quilt::manifest_handle::RemoteManifest;
     use crate::quilt::mocks;
     use crate::quilt::S3PackageUri;
     use crate::utils::local_uri_parquet_checksummed;

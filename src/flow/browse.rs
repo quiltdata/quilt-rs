@@ -10,7 +10,7 @@ use crate::paths::DomainPaths;
 use crate::quilt::manifest::Manifest;
 use crate::quilt::manifest_handle::CachedManifest;
 use crate::quilt::manifest_handle::ReadableManifest;
-use crate::quilt::manifest_handle::RemoteManifest;
+use crate::uri::RemoteManifest;
 use crate::uri::S3Uri;
 use crate::Error;
 use crate::Table;

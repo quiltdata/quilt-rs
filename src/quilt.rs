@@ -21,10 +21,8 @@ pub use manifest::ContentHash;
 pub use manifest::Manifest;
 pub use manifest::ManifestHeader;
 pub use manifest::ManifestRow;
-pub use manifest_handle::CachedManifest;
 pub use manifest_handle::InstalledManifest;
 pub use manifest_handle::ReadableManifest;
-pub use manifest_handle::RemoteManifest;
 
 use crate::flow::browse::browse_remote_manifest;
 use crate::flow::browse::cache_manifest;
@@ -52,6 +50,7 @@ use crate::lineage::LineagePaths;
 use crate::lineage::PackageLineage;
 use crate::paths;
 use crate::quilt4::table::HEADER_ROW;
+pub use crate::uri::RemoteManifest;
 use crate::uri::S3Uri;
 use crate::Error;
 use crate::Row4;
@@ -245,7 +244,6 @@ impl LocalDomain {
             .await?;
         new_remote.upload_legacy(&self.remote, &table).await?;
         let top_hash = table.top_hash();
-
 
         new_remote
             .put_timestamp_tag(&self.remote, chrono::Utc::now(), &top_hash)
