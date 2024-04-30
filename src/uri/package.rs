@@ -141,6 +141,7 @@ pub struct S3PackageUri {
     pub path: Option<PathBuf>,
 }
 
+// TODO: consider using S3Uri
 impl TryFrom<&str> for S3PackageUri {
     type Error = Error;
 

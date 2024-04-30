@@ -11,20 +11,6 @@ pub mod manifest_handle;
 #[cfg(test)]
 pub mod mocks;
 
-use crate::io::remote::utils::get_attrs_for_key;
-use crate::io::remote::utils::get_client_for_bucket;
-use crate::lineage;
-use crate::paths;
-use crate::quilt4::table::HEADER_ROW;
-use crate::Error;
-use crate::Row4;
-use crate::Table;
-
-use crate::lineage::CommitState;
-use crate::lineage::DomainLineage;
-use crate::lineage::LineagePaths;
-use crate::lineage::PackageLineage;
-
 pub use crate::flow::status::UpstreamDiscreteState;
 pub use crate::flow::status::UpstreamState;
 pub use crate::io::remote::Remote;
@@ -55,9 +41,21 @@ use crate::flow::status::InstalledPackageStatus;
 use crate::flow::uninstall_package::uninstall_package;
 use crate::flow::uninstall_paths::uninstall_paths;
 use crate::io::remote::s3::RemoteS3;
+use crate::io::remote::utils::get_attrs_for_key;
+use crate::io::remote::utils::get_client_for_bucket;
 use crate::io::storage::fs;
 use crate::io::storage::Storage;
+use crate::lineage;
+use crate::lineage::CommitState;
+use crate::lineage::DomainLineage;
+use crate::lineage::LineagePaths;
+use crate::lineage::PackageLineage;
+use crate::paths;
+use crate::quilt4::table::HEADER_ROW;
 use crate::uri::S3Uri;
+use crate::Error;
+use crate::Row4;
+use crate::Table;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalDomain<S: Storage = fs::LocalStorage, R: Remote = RemoteS3> {
@@ -247,6 +245,8 @@ impl LocalDomain {
             .await?;
         new_remote.upload_legacy(&self.remote, &table).await?;
         let top_hash = table.top_hash();
+
+
         new_remote
             .put_timestamp_tag(&self.remote, chrono::Utc::now(), &top_hash)
             .await?;

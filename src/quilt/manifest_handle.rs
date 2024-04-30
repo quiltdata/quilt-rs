@@ -13,16 +13,10 @@ use crate::quilt::Error;
 use crate::quilt::Namespace;
 use crate::quilt::RevisionPointer;
 use crate::quilt::Table;
+use crate::uri::tag::Tag;
 use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
-
-pub fn tag_uri(bucket: &str, namespace: &Namespace, tag: &str) -> S3Uri {
-    S3Uri {
-        bucket: bucket.to_owned(),
-        key: paths::tag_key(namespace, tag),
-        version: None,
-    }
-}
+use crate::uri::TagUri;
 
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteManifest {
@@ -36,9 +30,13 @@ impl RemoteManifest {
         // resolve the actual hash
         let top_hash = match &uri.revision {
             RevisionPointer::Hash(top_hash) => top_hash.clone(),
-            RevisionPointer::Tag(tag) => {
-                let uri = tag_uri(&uri.bucket, &uri.namespace, tag);
-                let stream = remote.get_object_stream(&uri).await?;
+            RevisionPointer::Tag(_) => {
+                let uri = TagUri {
+                    bucket: uri.bucket.clone(),
+                    namespace: uri.namespace.clone(),
+                    tag: Tag::Latest,
+                };
+                let stream = remote.get_object_stream(&uri.into()).await?;
                 bytestream_to_string(stream).await?
             }
         };
@@ -51,14 +49,24 @@ impl RemoteManifest {
     }
 
     pub async fn resolve_latest(&self, remote: &impl Remote) -> Result<String, Error> {
-        let uri = tag_uri(&self.bucket, &self.namespace, "latest");
-        let stream = remote.get_object_stream(&uri).await?;
+        let uri = TagUri {
+            bucket: self.bucket.clone(),
+            namespace: self.namespace.clone(),
+            tag: Tag::Latest,
+        };
+        let stream = remote.get_object_stream(&uri.into()).await?;
         bytestream_to_string(stream).await
     }
 
-    async fn put_tag(&self, remote: &impl Remote, tag: &str, hash: &str) -> Result<(), Error> {
-        let uri = tag_uri(&self.bucket, &self.namespace, tag);
-        remote.put_object(&uri, hash.as_bytes().to_vec()).await
+    async fn put_tag(
+        &self,
+        remote: &impl Remote,
+        tag_uri: TagUri,
+        hash: &str,
+    ) -> Result<(), Error> {
+        remote
+            .put_object(&tag_uri.into(), hash.as_bytes().to_vec())
+            .await
     }
 
     pub async fn put_timestamp_tag(
@@ -67,12 +75,13 @@ impl RemoteManifest {
         timestamp: chrono::DateTime<chrono::Utc>,
         hash: &str,
     ) -> Result<(), Error> {
-        self.put_tag(remote, &timestamp.timestamp().to_string(), hash)
-            .await
+        let uri = TagUri::timestamp(self, timestamp);
+        self.put_tag(remote, uri, hash).await
     }
 
     pub async fn update_latest(&self, remote: &impl Remote, hash: &str) -> Result<(), Error> {
-        self.put_tag(remote, "latest", hash).await
+        let uri = TagUri::latest(self);
+        self.put_tag(remote, uri, hash).await
     }
 
     pub async fn upload_from(
