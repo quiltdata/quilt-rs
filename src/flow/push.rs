@@ -10,8 +10,8 @@ use crate::flow::browse::cache_manifest;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
+use crate::manifest::MULTIHASH_SHA256_CHUNKED;
 use crate::paths;
-use crate::quilt::manifest;
 use crate::quilt::manifest_handle;
 use crate::quilt::Namespace;
 use crate::quilt4::checksum::MULTIPART_THRESHOLD;
@@ -77,7 +77,7 @@ pub async fn push_package(
         };
 
         // Update the manifest with the sha2-256-chunked checksum.
-        row.hash = Multihash::wrap(manifest::MULTIHASH_SHA256_CHUNKED, checksum.as_ref())?;
+        row.hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, checksum.as_ref())?;
 
         let remote_url = S3Uri {
             bucket: manifest_uri.bucket.clone(),
@@ -152,7 +152,7 @@ mod tests {
     use crate::quilt::mocks;
     use crate::quilt::S3PackageUri;
     use crate::utils::local_uri_parquet_checksummed;
-    use crate::Row4;
+    use crate::Row;
 
     #[tokio::test]
     async fn test_no_push_if_no_commit() -> Result<(), Error> {
@@ -257,10 +257,10 @@ mod tests {
         let file_path = temp_dir.into_path().join("bar");
         tokio::fs::copy(local_uri_parquet_checksummed(), &file_path).await?;
 
-        let manifest = mocks::manifest::with_rows(vec![Row4 {
+        let manifest = mocks::manifest::with_rows(vec![Row {
             name: PathBuf::from("bar"),
             place: format!("file://{}", file_path.display()),
-            ..Row4::default()
+            ..Row::default()
         }]);
 
         let lineage = push_package(

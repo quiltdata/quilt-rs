@@ -33,15 +33,15 @@ use tokio::io::AsyncSeek;
 use tokio::io::AsyncWrite;
 use tokio_stream::StreamExt;
 
-use crate::quilt::manifest::Manifest;
+use crate::manifest::Manifest;
 use crate::quilt::ContentHash;
 
-use super::row4::Row4;
+use crate::manifest::Row;
 use crate::Error;
 
 pub const HEADER_ROW: &str = ".";
 
-fn serialize_table_header(header: &Row4) -> serde_json::Map<String, serde_json::Value> {
+fn serialize_table_header(header: &Row) -> serde_json::Map<String, serde_json::Value> {
     let mut header_meta = serde_json::Map::new();
     if let Some(message) = header.info.get("message") {
         header_meta.insert("message".to_string(), message.clone());
@@ -56,7 +56,7 @@ fn serialize_table_header(header: &Row4) -> serde_json::Map<String, serde_json::
 }
 
 // TODO: fix return type to Map<String, serde_json::Value>
-fn serialize_row_entry(row: &Row4) -> serde_json::Value {
+fn serialize_row_entry(row: &Row) -> serde_json::Value {
     let mut row_meta = match row.info.as_object() {
         Some(meta) => meta.clone(),
         None => serde_json::Map::default(),
@@ -78,8 +78,8 @@ fn serialize_row_entry(row: &Row4) -> serde_json::Value {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Table {
-    pub header: Row4,
-    pub records: BTreeMap<PathBuf, Row4>,
+    pub header: Row,
+    pub records: BTreeMap<PathBuf, Row>,
 }
 
 impl Table {
@@ -91,7 +91,7 @@ impl Table {
             .await?
             .build()?;
 
-        let mut header: Option<Row4> = None;
+        let mut header: Option<Row> = None;
         let mut records = BTreeMap::new();
         while let Some(item) = stream.try_next().await? {
             let name_column = item
@@ -140,7 +140,7 @@ impl Table {
                         .map_err(|err| ArrowError::SchemaError(err.to_string()))?
                 };
 
-                let row = Row4 {
+                let row = Row {
                     name: name.into(),
                     place: place_column.value(idx).into(),
                     size: size_column.value(idx),
@@ -177,7 +177,7 @@ impl Table {
     async fn write_row_impl<T>(
         writer: &mut AsyncArrowWriter<T>,
         schema: Arc<Schema>,
-        row: &Row4,
+        row: &Row,
     ) -> Result<(), ArrowError>
     where
         T: AsyncWrite + Unpin + Send,
@@ -236,16 +236,16 @@ impl Table {
     }
 
     // Get a row from the table
-    pub fn get_row(&self, name: &PathBuf) -> Option<&Row4> {
+    pub fn get_row(&self, name: &PathBuf) -> Option<&Row> {
         self.records.get(name)
     }
 
-    pub fn get_header(&self) -> &Row4 {
+    pub fn get_header(&self) -> &Row {
         &self.header
     }
     // TBD: Store header metadata as PARQUET Metadata?
 
-    pub fn list_names(&self) -> Vec<Row4> {
+    pub fn list_names(&self) -> Vec<Row> {
         // Implementation goes here
         unimplemented!()
     }
@@ -268,7 +268,7 @@ impl Table {
         hex::encode(hasher.finalize())
     }
 
-    pub fn remove_record(&mut self, path: &PathBuf) -> Result<Row4, Error> {
+    pub fn remove_record(&mut self, path: &PathBuf) -> Result<Row, Error> {
         self.records
             .remove(path)
             .ok_or(Error::Table(format!("Cannot remove {:?}", path)))
@@ -295,7 +295,7 @@ impl TryFrom<Manifest> for Table {
             let meta = info.remove("user_meta").unwrap_or_default();
             records.insert(
                 row.logical_key.clone(),
-                Row4 {
+                Row {
                     name: row.logical_key,
                     place: row.physical_key,
                     size: row.size,
@@ -305,7 +305,7 @@ impl TryFrom<Manifest> for Table {
                 },
             );
         }
-        let header = Row4::from(quilt3_manifest);
+        let header = Row::from(quilt3_manifest);
         Ok(Table { header, records })
     }
 }
@@ -360,7 +360,7 @@ mod tests {
     #[test]
     fn test_formatting_no_records() -> Result<(), multihash::Error> {
         let table = Table {
-            header: Row4 {
+            header: Row {
                 name: PathBuf::from("Foo"),
                 place: "Bar".to_string(),
                 size: 123,
@@ -377,7 +377,7 @@ mod tests {
     #[test]
     fn test_formatting_records() -> Result<(), multihash::Error> {
         let table = Table {
-            header: Row4 {
+            header: Row {
                 name: PathBuf::from("Foo"),
                 place: "Bar".to_string(),
                 size: 123,
@@ -388,7 +388,7 @@ mod tests {
             records: BTreeMap::from([
                 (
                     PathBuf::from("one"),
-                    Row4 {
+                    Row {
                         name: PathBuf::from("AA"),
                         place: "AB".to_string(),
                         size: 100,
@@ -399,7 +399,7 @@ mod tests {
                 ),
                 (
                     PathBuf::from("two"),
-                    Row4 {
+                    Row {
                         name: PathBuf::from("BA"),
                         place: "BB".to_string(),
                         size: 200,
@@ -417,7 +417,7 @@ mod tests {
     #[test]
     fn test_top_hash() -> Result<(), Error> {
         let manifest = Table {
-            header: Row4 {
+            header: Row {
                 meta: serde_json::json!({
                        "1234567890": "a",
                 }),
@@ -425,11 +425,11 @@ mod tests {
                        "message": "Second revision",
                        "version": "v0",
                 }),
-                ..Row4::default()
+                ..Row::default()
             },
             records: BTreeMap::from([(
                 PathBuf::from("test.md"),
-                Row4 {
+                Row {
                     name: PathBuf::from("test.md"),
                     place: "doesn't matter".to_string(),
                     size: 3568,

@@ -10,6 +10,7 @@ mod quilt4;
 
 pub mod io;
 pub mod lineage;
+pub mod manifest;
 pub mod quilt;
 pub mod uri;
 
@@ -17,8 +18,8 @@ pub mod uri;
 /// Utilities for testing only
 mod utils; // FIXME: move to mocks and fixtures
 
-pub use quilt4::row4::Row4;
-pub use quilt4::table::Table;
+pub use manifest::Row;
+pub use manifest::Table;
 
 pub use flow::status::DiscreteChange;
 pub use flow::status::InstalledPackageStatus;

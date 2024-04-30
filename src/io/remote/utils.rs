@@ -17,7 +17,7 @@ use sha2::Sha256;
 use tokio::io::AsyncReadExt;
 use tracing::log;
 
-use crate::quilt::manifest::MULTIHASH_SHA256_CHUNKED;
+use crate::manifest::MULTIHASH_SHA256_CHUNKED;
 use crate::quilt4::checksum::get_checksum_chunksize_and_parts;
 use crate::quilt4::checksum::MPU_MAX_PARTS;
 use crate::quilt4::checksum::MULTIPART_THRESHOLD;

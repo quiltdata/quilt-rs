@@ -8,7 +8,7 @@ use url::Url;
 use crate::io::storage::Storage;
 use crate::paths;
 use crate::Error;
-use crate::Row4;
+use crate::Row;
 
 use crate::flow::status::Change;
 use crate::flow::status::InstalledPackageStatus;
@@ -16,10 +16,10 @@ use crate::flow::status::PackageFileFingerprint;
 use crate::lineage::CommitState;
 use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
-use crate::quilt::manifest::JsonObject;
+use crate::manifest::JsonObject;
+use crate::manifest::Table;
 use crate::quilt::manifest_handle::ReadableManifest;
 use crate::quilt::Namespace;
-use crate::quilt4::table::Table;
 
 fn remove_entry(
     table: &mut Table,
@@ -59,7 +59,7 @@ async fn modify_entry(
         .records
         .insert(
             logical_key.clone(),
-            Row4 {
+            Row {
                 name: logical_key.clone(),
                 place: new_physical_key,
                 size: current.size,

@@ -131,7 +131,7 @@ mod tests {
     use tempfile;
 
     use crate::quilt::mocks;
-    use crate::Row4;
+    use crate::Row;
 
     #[tokio::test]
     async fn test_installing_one_cached_path() -> Result<(), Error> {
@@ -182,11 +182,11 @@ mod tests {
         let storage = mocks::storage::MockStorage::default();
         let lineage = mocks::lineage::with_commit_hash("fghijk");
         let entries_paths = vec![PathBuf::from("a/a")];
-        let manifest = mocks::manifest::with_rows(vec![Row4 {
+        let manifest = mocks::manifest::with_rows(vec![Row {
             name: PathBuf::from("a/a"),
             hash: mocks::row_hash_sample1(),
             place: "s3://any/any/any/any/any.md".to_string(),
-            ..Row4::default()
+            ..Row::default()
         }]);
         remote
             .put_object(&S3Uri::try_from("s3://any/any/any/any/any.md")?, Vec::new())

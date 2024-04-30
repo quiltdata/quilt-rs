@@ -11,8 +11,8 @@ use tracing::log;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
-use crate::quilt::manifest::MULTIHASH_SHA256;
-use crate::quilt::manifest::MULTIHASH_SHA256_CHUNKED;
+use crate::manifest::MULTIHASH_SHA256;
+use crate::manifest::MULTIHASH_SHA256_CHUNKED;
 use crate::quilt::manifest_handle::ReadableManifest;
 use crate::quilt4::checksum::calculate_sha256_checksum;
 use crate::quilt4::checksum::calculate_sha256_chunked_checksum;
@@ -236,7 +236,7 @@ mod tests {
     use super::*;
 
     use crate::lineage::CommitState;
-    use crate::quilt::manifest::ContentHash;
+    use crate::manifest::ContentHash;
     use crate::quilt::mocks;
     use crate::utils::local_uri_parquet;
 

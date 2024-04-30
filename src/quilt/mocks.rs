@@ -32,15 +32,15 @@ pub mod manifest {
     use crate::io::storage::Storage;
     use crate::quilt::manifest_handle::ReadableManifest;
     use crate::Error;
-    use crate::Row4;
+    use crate::Row;
     use crate::Table;
 
-    pub fn row4_with_name(name: PathBuf) -> Row4 {
-        Row4 {
+    pub fn row4_with_name(name: PathBuf) -> Row {
+        Row {
             name,
             place: "file:///z/x/y".to_string(),
             hash: row_hash_sample1(),
-            ..Row4::default()
+            ..Row::default()
         }
     }
 
@@ -73,9 +73,9 @@ pub mod manifest {
         InMemoryManifest { keys }
     }
 
-    pub fn with_rows(rows: Vec<Row4>) -> impl ReadableManifest {
+    pub fn with_rows(rows: Vec<Row>) -> impl ReadableManifest {
         struct InMemoryManifest {
-            rows: Vec<Row4>,
+            rows: Vec<Row>,
         }
         impl ReadableManifest for InMemoryManifest {
             async fn read(&self, _storage: &impl Storage) -> Result<Table, Error> {

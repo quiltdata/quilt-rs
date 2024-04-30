@@ -6,6 +6,7 @@ use crate::Error;
 
 const MANIFEST_DIR: &str = ".quilt/packages";
 const TAGS_DIR: &str = ".quilt/named_packages";
+
 const OBJECTS_DIR: &str = ".quilt/objects";
 const LINEAGE_FILE: &str = ".quilt/data.json";
 const INSTALLED_DIR: &str = ".quilt/installed";

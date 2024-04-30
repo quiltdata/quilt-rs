@@ -1,7 +1,7 @@
 //!
-//! # Row4
+//! # Row
 //!
-//! Row4 is the native entry format for quilt4.
+//! Row is the native entry format for quilt4.
 //! It provides methods to decode/encode quilt3's JSONL format
 //!
 use std::fmt;
@@ -9,11 +9,11 @@ use std::path::PathBuf;
 
 use multihash::Multihash;
 
-use crate::quilt::manifest::Manifest;
-use crate::quilt4::table::HEADER_ROW;
+use crate::manifest::Manifest;
+use crate::manifest::HEADER_ROW;
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Row4 {
+pub struct Row {
     pub name: PathBuf,
     // scheme: Enum<file,s3,https>
     pub place: String,
@@ -23,9 +23,9 @@ pub struct Row4 {
     pub meta: serde_json::Value, // user metadata
 }
 
-impl fmt::Display for Row4 {
+impl fmt::Display for Row {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let result = format!("Row4({})", self.name.display())
+        let result = format!("Row({})", self.name.display())
             + &format!("@{}", self.place)
             + &format!("^{:?}", self.size)
             + &format!("#{:?}", self.hash.digest())
@@ -35,9 +35,9 @@ impl fmt::Display for Row4 {
     }
 }
 
-impl From<Manifest> for Row4 {
+impl From<Manifest> for Row {
     fn from(quilt3_manifest: Manifest) -> Self {
-        Row4 {
+        Row {
             info: serde_json::json!({
                 "message": quilt3_manifest.header.message,
                 "version": quilt3_manifest.header.version,
@@ -46,14 +46,14 @@ impl From<Manifest> for Row4 {
                 Some(meta) => meta.into(),
                 None => serde_json::Value::Null,
             },
-            ..Row4::default()
+            ..Row::default()
         }
     }
 }
 
-impl Default for Row4 {
+impl Default for Row {
     fn default() -> Self {
-        Row4 {
+        Row {
             name: HEADER_ROW.into(),
             place: HEADER_ROW.into(),
             size: 0,
@@ -73,7 +73,7 @@ mod tests {
 
     #[test]
     fn test_formatting_without_path() -> Result<(), multihash::Error> {
-        let row = Row4 {
+        let row = Row {
             name: PathBuf::from("Foo"),
             place: "Bar".to_string(),
             size: 123,

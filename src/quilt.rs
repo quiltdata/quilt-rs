@@ -5,7 +5,6 @@ use aws_sdk_s3::error::DisplayErrorContext;
 use multihash::Multihash;
 use tracing::log;
 
-pub mod manifest;
 pub mod manifest_handle;
 
 #[cfg(test)]
@@ -14,13 +13,14 @@ pub mod mocks;
 pub use crate::flow::status::UpstreamDiscreteState;
 pub use crate::flow::status::UpstreamState;
 pub use crate::io::remote::Remote;
+pub use crate::manifest::ContentHash;
+pub use crate::manifest::Manifest; // TODO: check if they are used
+pub use crate::manifest::ManifestHeader; // TODO: check if they are used
+pub use crate::manifest::ManifestRow; // TODO: check if they are used
+pub use crate::uri::ManifestUri;
 pub use crate::uri::Namespace;
 pub use crate::uri::RevisionPointer;
 pub use crate::uri::S3PackageUri;
-pub use manifest::ContentHash;
-pub use manifest::Manifest;
-pub use manifest::ManifestHeader;
-pub use manifest::ManifestRow;
 pub use manifest_handle::InstalledManifest;
 pub use manifest_handle::ReadableManifest;
 
@@ -48,12 +48,12 @@ use crate::lineage::CommitState;
 use crate::lineage::DomainLineage;
 use crate::lineage::LineagePaths;
 use crate::lineage::PackageLineage;
+use crate::manifest::JsonObject;
+use crate::manifest::Row;
+use crate::manifest::HEADER_ROW;
 use crate::paths;
-use crate::quilt4::table::HEADER_ROW;
-pub use crate::uri::ManifestUri;
 use crate::uri::S3Uri;
 use crate::Error;
-use crate::Row4;
 use crate::Table;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -167,7 +167,7 @@ impl LocalDomain {
         let client = get_client_for_bucket(&uri.bucket).await?;
 
         // XXX: we need real API to build manifests
-        let header = Row4 {
+        let header = Row {
             name: HEADER_ROW.into(),
             place: HEADER_ROW.into(),
             size: 0,
@@ -178,7 +178,7 @@ impl LocalDomain {
             }),
             meta: serde_json::Value::Null, // TODO: accept user meta?
         };
-        let mut records: BTreeMap<PathBuf, Row4> = BTreeMap::new();
+        let mut records: BTreeMap<PathBuf, Row> = BTreeMap::new();
 
         let prefix_len = uri.key.len();
         let mut p = client
@@ -209,7 +209,7 @@ impl LocalDomain {
                 };
                 records.insert(
                     name.clone(),
-                    Row4 {
+                    Row {
                         name,
                         place: record_url.to_string(),
                         // XXX: can we use `as u64` safely here?
@@ -331,7 +331,7 @@ impl InstalledPackage {
     pub async fn commit(
         &self,
         message: String,
-        user_meta: Option<manifest::JsonObject>,
+        user_meta: Option<JsonObject>,
     ) -> Result<Option<CommitState>, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
         let manifest = self.readable_manifest().await?;
@@ -428,7 +428,7 @@ mod tests {
     use crate::flow::status::ChangeSet;
     use crate::flow::status::DiscreteChange;
     use crate::flow::status::PackageFileFingerprint;
-    use crate::quilt::manifest::MULTIHASH_SHA256;
+    use crate::manifest::MULTIHASH_SHA256;
     use crate::quilt::mocks;
     use crate::quilt4::checksum::calculate_sha256_checksum;
 

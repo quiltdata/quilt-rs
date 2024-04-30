@@ -13,8 +13,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
 use tokio::io::BufWriter;
 
+use crate::manifest::Table;
 use crate::Error;
-use crate::Table;
 
 pub type JsonObject = serde_json::Map<String, serde_json::Value>;
 
@@ -296,8 +296,8 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::quilt4::table::HEADER_ROW;
-    use crate::Row4;
+    use crate::manifest::Row;
+    use crate::manifest::HEADER_ROW;
 
     #[test]
     fn test_equality_of_strictly_equal() {
@@ -362,7 +362,7 @@ mod tests {
         );
 
         let table = Table {
-            header: Row4 {
+            header: Row {
                 name: HEADER_ROW.into(),
                 place: HEADER_ROW.into(),
                 size: 0,
@@ -372,7 +372,7 @@ mod tests {
             },
             records: BTreeMap::from([(
                 PathBuf::from("foo/bar"),
-                Row4 {
+                Row {
                     name: PathBuf::from("foo/bar"),
                     place: "s3://z/x/y?versionId=foo".to_string(),
                     size: 123,

@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
 use crate::io::storage::Storage;
+use crate::manifest::Table;
 use crate::quilt::paths;
 use crate::quilt::Error;
 use crate::quilt::Namespace;
-use crate::quilt::Table;
 use crate::uri::ManifestUri;
 
 pub trait ReadableManifest {

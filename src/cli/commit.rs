@@ -9,7 +9,7 @@ use crate::cli::Error;
 pub struct Input {
     pub message: String,
     pub namespace: Namespace,
-    pub user_meta: Option<quilt_rs::quilt::manifest::JsonObject>,
+    pub user_meta: Option<quilt_rs::manifest::JsonObject>,
 }
 
 #[derive(Debug)]
@@ -39,7 +39,7 @@ async fn commit_package(
     local_domain: &quilt_rs::LocalDomain,
     namespace: Namespace,
     message: String,
-    user_meta: Option<quilt_rs::quilt::manifest::JsonObject>,
+    user_meta: Option<quilt_rs::manifest::JsonObject>,
 ) -> Result<Option<CommitState>, Error> {
     match local_domain.get_installed_package(&namespace).await? {
         Some(installed_package) => Ok(installed_package.commit(message, user_meta).await?),

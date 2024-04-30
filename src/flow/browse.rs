@@ -4,10 +4,10 @@ use tokio::io::AsyncReadExt;
 
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
+use crate::manifest::Manifest;
 use crate::paths::get_manifest_key_legacy;
 use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
-use crate::quilt::manifest::Manifest;
 use crate::quilt::manifest_handle::CachedManifest;
 use crate::quilt::manifest_handle::ReadableManifest;
 use crate::uri::ManifestUri;
