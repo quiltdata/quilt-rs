@@ -4,7 +4,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use tracing::log;
 
-use crate::io::remote::s3::bytestream_to_string;
+use crate::io::remote::utils::bytestream_to_string;
 use crate::io::remote::Remote;
 use crate::io::s3;
 use crate::io::storage::Storage;

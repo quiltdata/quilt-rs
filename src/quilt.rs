@@ -12,10 +12,11 @@ pub mod uri;
 #[cfg(test)]
 pub mod mocks;
 
+use crate::io::remote::utils::get_attrs_for_key;
+use crate::io::remote::utils::get_client_for_bucket;
 use crate::lineage;
 use crate::paths;
 use crate::quilt4::table::HEADER_ROW;
-use crate::s3_utils;
 use crate::Error;
 use crate::Row4;
 use crate::Table;
@@ -170,7 +171,7 @@ impl LocalDomain {
         //       with fd limits on Mac by default it's 256
         // TODO: s3 uri key ends with / and has no version
         // FIXME: filter or fail on keys with `.` or `..` in path segments as quilt3 do
-        let client = crate::s3_utils::get_client_for_bucket(&uri.bucket).await?;
+        let client = get_client_for_bucket(&uri.bucket).await?;
 
         // XXX: we need real API to build manifests
         let header = Row4 {
@@ -199,7 +200,7 @@ impl LocalDomain {
             let page_contents_iter = page.contents.iter().flatten();
 
             for attrs in futures::future::try_join_all(page_contents_iter.map(|obj| {
-                s3_utils::get_attrs_for_key(
+                get_attrs_for_key(
                     client.clone(),
                     &uri.bucket,
                     obj.key.as_ref().expect("object key expected to be present"),

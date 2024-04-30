@@ -10,21 +10,13 @@ use aws_smithy_types::byte_stream::Length;
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
 use tokio::io::AsyncRead;
-use tokio::io::AsyncReadExt;
 
 use crate::io::remote::Remote;
 use crate::io::s3::S3Uri;
 use crate::quilt4::checksum;
 use crate::Error;
 
-use crate::s3_utils::get_client_for_bucket;
-
-pub async fn bytestream_to_string(bytestream: ByteStream) -> Result<String, Error> {
-    let mut reader = bytestream.into_async_read();
-    let mut contents = Vec::new();
-    reader.read_to_end(&mut contents).await?;
-    String::from_utf8(contents).map_err(|err| Error::Utf8(err.utf8_error()))
-}
+use crate::io::remote::utils::get_client_for_bucket;
 
 async fn get_object_stream(
     client: &aws_sdk_s3::Client,

@@ -5,6 +5,7 @@ use std::sync::RwLock;
 use aws_config::BehaviorVersion;
 use aws_sdk_s3::error::DisplayErrorContext;
 use aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput;
+use aws_sdk_s3::primitives::ByteStream;
 use aws_types::region::Region;
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
@@ -13,12 +14,20 @@ use multihash::Multihash;
 use parquet::data_type::AsBytes;
 use sha2::Digest;
 use sha2::Sha256;
+use tokio::io::AsyncReadExt;
 use tracing::log;
 
 use crate::io::s3;
 use crate::quilt::manifest::MULTIHASH_SHA256_CHUNKED;
 use crate::quilt4::checksum::get_checksum_chunksize_and_parts;
 use crate::Error;
+
+pub async fn bytestream_to_string(bytestream: ByteStream) -> Result<String, Error> {
+    let mut reader = bytestream.into_async_read();
+    let mut contents = Vec::new();
+    reader.read_to_end(&mut contents).await?;
+    String::from_utf8(contents).map_err(|err| Error::Utf8(err.utf8_error()))
+}
 
 pub async fn find_bucket_region(client: &reqwest::Client, bucket: &str) -> Result<String, Error> {
     let response = client

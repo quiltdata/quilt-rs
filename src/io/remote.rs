@@ -7,6 +7,7 @@ use crate::io::s3::S3Uri;
 use crate::Error;
 
 pub mod s3;
+pub mod utils; // TODO: make it private after refactoring package_s3_folder
 
 #[cfg(test)]
 pub mod mocks;

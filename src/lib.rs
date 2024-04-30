@@ -14,9 +14,7 @@ pub mod quilt;
 
 #[cfg(test)]
 /// Utilities for testing only
-mod utils;
-
-pub mod s3_utils;
+mod utils; // FIXME: move to mocks
 
 pub use quilt4::manifest::Manifest4;
 pub use quilt4::row4::Row4;
