@@ -198,8 +198,8 @@ mod tests {
 
     use crate::flow::status::Change;
     use crate::flow::status::DiscreteChange;
-    use crate::quilt::mocks;
     use crate::io::storage::mocks::MockStorage;
+    use crate::quilt::mocks;
 
     // NOTE: Tests use "/" path for working directory, because it then parsed with Url and have to be absolute path
 

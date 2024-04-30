@@ -3,8 +3,8 @@ use std::path::PathBuf;
 
 use tracing::log;
 
-use crate::lineage::PackageLineage;
 use crate::io::storage::Storage;
+use crate::lineage::PackageLineage;
 use crate::Error;
 
 fn not_found_error(path: &PathBuf) -> Error {
@@ -41,8 +41,8 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::quilt::mocks;
     use crate::io::storage::mocks::MockStorage;
+    use crate::quilt::mocks;
 
     #[tokio::test]
     async fn uninstall_not_installed_path() -> Result<(), Error> {

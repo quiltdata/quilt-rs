@@ -8,12 +8,12 @@ use serde::Serialize;
 
 use tracing::log;
 
+use crate::io::remote::Remote;
+use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::quilt::manifest::MULTIHASH_SHA256;
 use crate::quilt::manifest::MULTIHASH_SHA256_CHUNKED;
 use crate::quilt::manifest_handle::ReadableManifest;
-use crate::io::remote::Remote;
-use crate::io::storage::Storage;
 use crate::quilt4::checksum::calculate_sha256_checksum;
 use crate::quilt4::checksum::calculate_sha256_chunked_checksum;
 use crate::Error;
@@ -235,10 +235,10 @@ pub async fn create_status(
 mod tests {
     use super::*;
 
+    use crate::io::storage::mocks::MockStorage;
     use crate::lineage::CommitState;
     use crate::quilt::manifest::ContentHash;
     use crate::quilt::mocks;
-    use crate::io::storage::mocks::MockStorage;
     use crate::utils::local_uri_parquet;
 
     #[tokio::test]

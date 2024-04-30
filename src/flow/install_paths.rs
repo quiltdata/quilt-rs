@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use url::Url;
 
+use crate::io::remote::Remote;
 use crate::io::s3;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
@@ -11,7 +12,6 @@ use crate::lineage::PathState;
 use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
 use crate::quilt::manifest_handle::ReadableManifest;
-use crate::io::remote::Remote;
 use crate::quilt::uri::Namespace;
 use crate::Error;
 
@@ -130,10 +130,10 @@ mod tests {
     use std::path::PathBuf;
     use tempfile;
 
-    use crate::quilt::mocks;
     use crate::io::remote::mocks::MockRemote;
-    use crate::io::storage::mocks::MockStorage;
     use crate::io::s3::S3Uri;
+    use crate::io::storage::mocks::MockStorage;
+    use crate::quilt::mocks;
     use crate::Row4;
 
     #[tokio::test]

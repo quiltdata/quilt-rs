@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use tokio::io::AsyncReadExt;
 
+use crate::io::remote::Remote;
 use crate::io::s3::S3Uri;
 use crate::io::storage::Storage;
 use crate::paths::get_manifest_key_legacy;
@@ -11,7 +12,6 @@ use crate::quilt::manifest::Manifest;
 use crate::quilt::manifest_handle::CachedManifest;
 use crate::quilt::manifest_handle::ReadableManifest;
 use crate::quilt::manifest_handle::RemoteManifest;
-use crate::io::remote::Remote;
 use crate::Error;
 use crate::Table;
 

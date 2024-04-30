@@ -37,8 +37,8 @@ mod tests {
 
     use super::*;
 
-    use crate::lineage::PackageLineage;
     use crate::io::storage::mocks::MockStorage;
+    use crate::lineage::PackageLineage;
 
     #[tokio::test]
     async fn test_panic_if_no_installed_package() {

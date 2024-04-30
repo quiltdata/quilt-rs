@@ -2,7 +2,6 @@
 // use crate::io::remote::mocks::MockRemote →
 // use crate::mocks::remote::MockRemote
 
-
 pub use crate::lineage::mocks as lineage;
 
 pub fn row_hash_sample1() -> multihash::Multihash<256> {

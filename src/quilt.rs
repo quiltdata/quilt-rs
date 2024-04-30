@@ -54,10 +54,10 @@ use crate::flow::status::refresh_latest_hash;
 use crate::flow::status::InstalledPackageStatus;
 use crate::flow::uninstall_package::uninstall_package;
 use crate::flow::uninstall_paths::uninstall_paths;
+use crate::io::remote::s3::RemoteS3;
 use crate::io::s3;
 use crate::io::storage::fs;
 use crate::io::storage::Storage;
-use crate::io::remote::s3::RemoteS3;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalDomain<S: Storage = fs::LocalStorage, R: Remote = RemoteS3> {
@@ -257,10 +257,7 @@ impl LocalDomain {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct InstalledPackage<
-    S: Storage + Clone = fs::LocalStorage,
-    R: Remote + Clone = RemoteS3,
-> {
+pub struct InstalledPackage<S: Storage + Clone = fs::LocalStorage, R: Remote + Clone = RemoteS3> {
     lineage: lineage::PackageLineageIo,
     paths: paths::DomainPaths,
     remote: R,

@@ -4,13 +4,13 @@ use crate::flow::browse::cache_remote_manifest;
 use crate::flow::install_paths::install_paths;
 use crate::flow::status::InstalledPackageStatus;
 use crate::flow::uninstall_paths::uninstall_paths;
+use crate::io::remote::s3::RemoteS3;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
 use crate::quilt::manifest_handle;
 use crate::quilt::uri::Namespace;
-use crate::io::remote::s3::RemoteS3;
 use crate::Error;
 
 pub async fn pull_package(

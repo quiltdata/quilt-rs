@@ -1,5 +1,5 @@
-use crate::lineage::PackageLineage;
 use crate::io::remote::Remote;
+use crate::lineage::PackageLineage;
 use crate::Error;
 
 pub async fn certify_latest(
@@ -17,9 +17,9 @@ pub async fn certify_latest(
 mod tests {
     use super::*;
 
+    use crate::io::remote::mocks::MockRemote;
     use crate::io::s3::S3Uri;
     use crate::quilt::mocks;
-    use crate::io::remote::mocks::MockRemote;
 
     #[tokio::test]
     async fn test_certifying_latest() -> Result<(), Error> {
