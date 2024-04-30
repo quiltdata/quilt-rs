@@ -4,7 +4,6 @@ use crate::io::storage::Storage;
 use crate::manifest::Table;
 use crate::quilt::paths;
 use crate::quilt::Error;
-use crate::quilt::Namespace;
 use crate::uri::ManifestUri;
 
 pub trait ReadableManifest {
@@ -49,29 +48,6 @@ impl CachedManifest {
             paths: paths.clone(),
             bucket: manifest_uri.bucket.clone(),
             hash: manifest_uri.hash.clone(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct InstalledManifest {
-    pub hash: String,
-    pub namespace: Namespace,
-    pub paths: paths::DomainPaths,
-}
-
-impl ReadableManifest for InstalledManifest {
-    fn get_path_buf(&self) -> PathBuf {
-        self.paths.installed_manifest(&self.namespace, &self.hash)
-    }
-}
-
-impl InstalledManifest {
-    pub fn new(namespace: Namespace, hash: String, paths: paths::DomainPaths) -> Self {
-        InstalledManifest {
-            hash,
-            namespace,
-            paths,
         }
     }
 }

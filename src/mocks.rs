@@ -35,7 +35,7 @@ pub mod manifest {
     use crate::quilt::manifest_handle::ReadableManifest;
     use crate::Error;
 
-    pub fn row4_with_name(name: PathBuf) -> Row {
+    pub fn row_with_name(name: PathBuf) -> Row {
         Row {
             name,
             place: "file:///z/x/y".to_string(),
@@ -54,41 +54,25 @@ pub mod manifest {
         InMemoryManifest {}
     }
 
-    pub fn with_record_keys(keys: Vec<PathBuf>) -> impl ReadableManifest {
-        struct InMemoryManifest {
-            keys: Vec<PathBuf>,
+    pub fn with_record_keys(keys: Vec<PathBuf>) -> Table {
+        let mut records = BTreeMap::new();
+        for key in &keys {
+            records.insert(key.clone(), row_with_name(key.clone()));
         }
-        impl ReadableManifest for InMemoryManifest {
-            async fn read(&self, _storage: &impl Storage) -> Result<Table, Error> {
-                let mut records = BTreeMap::new();
-                for key in &self.keys {
-                    records.insert(key.clone(), row4_with_name(key.clone()));
-                }
-                Ok(Table {
-                    records,
-                    ..Table::default()
-                })
-            }
+        Table {
+            records,
+            ..Table::default()
         }
-        InMemoryManifest { keys }
     }
 
-    pub fn with_rows(rows: Vec<Row>) -> impl ReadableManifest {
-        struct InMemoryManifest {
-            rows: Vec<Row>,
+    pub fn with_rows(rows: Vec<Row>) -> Table {
+        let mut records = BTreeMap::new();
+        for row in &rows {
+            records.insert(row.name.clone(), row.clone());
         }
-        impl ReadableManifest for InMemoryManifest {
-            async fn read(&self, _storage: &impl Storage) -> Result<Table, Error> {
-                let mut records = BTreeMap::new();
-                for row in &self.rows {
-                    records.insert(row.name.clone(), row.clone());
-                }
-                Ok(Table {
-                    records,
-                    ..Table::default()
-                })
-            }
+        Table {
+            records,
+            ..Table::default()
         }
-        InMemoryManifest { rows }
     }
 }

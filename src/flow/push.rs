@@ -13,7 +13,7 @@ use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::paths;
-use crate::quilt::manifest_handle;
+use crate::manifest::Table;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::uri::S3Uri;
@@ -21,7 +21,7 @@ use crate::Error;
 
 pub async fn push_package(
     mut lineage: PackageLineage,
-    manifest: &(impl manifest_handle::ReadableManifest + Sync),
+    local_manifest: &mut Table,
     paths: &paths::DomainPaths,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
@@ -34,7 +34,6 @@ pub async fn push_package(
 
     let manifest_uri = &lineage.remote;
 
-    let mut local_manifest = manifest.read(storage).await?;
     let remote_manifest = browse_remote_manifest(paths, storage, remote, manifest_uri).await?;
 
     // ## copy data
@@ -100,7 +99,7 @@ pub async fn push_package(
     let cache_path = cache_manifest(
         paths,
         storage,
-        &local_manifest,
+        local_manifest,
         &new_remote.bucket,
         &new_remote.hash,
     )
@@ -110,7 +109,7 @@ pub async fn push_package(
     new_remote.upload_from(storage, remote, &cache_path).await?;
 
     // Upload a quilt3 manifest for backward compatibility.
-    new_remote.upload_legacy(remote, &local_manifest).await?;
+    new_remote.upload_legacy(remote, local_manifest).await?;
 
     log::debug!("uploaded remote manifest: {new_remote:?}");
 
@@ -160,7 +159,7 @@ mod tests {
         let remote = mocks::remote::MockRemote::default();
         let lineage = push_package(
             PackageLineage::default(),
-            &mocks::manifest::default(),
+            &mut Table::default(),
             &paths::DomainPaths::default(),
             &storage,
             &remote,
@@ -203,7 +202,7 @@ mod tests {
             .await?;
         let lineage = push_package(
             lineage,
-            &mocks::manifest::default(),
+            &mut Table::default(),
             &paths::DomainPaths::default(),
             &storage,
             &remote,
@@ -257,7 +256,7 @@ mod tests {
         let file_path = temp_dir.into_path().join("bar");
         tokio::fs::copy(local_uri_parquet_checksummed(), &file_path).await?;
 
-        let manifest = mocks::manifest::with_rows(vec![Row {
+        let mut manifest = mocks::manifest::with_rows(vec![Row {
             name: PathBuf::from("bar"),
             place: format!("file://{}", file_path.display()),
             ..Row::default()
@@ -265,7 +264,7 @@ mod tests {
 
         let lineage = push_package(
             lineage,
-            &manifest,
+            &mut manifest,
             &paths::DomainPaths::default(),
             &storage,
             &remote,

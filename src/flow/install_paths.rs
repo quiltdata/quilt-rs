@@ -8,9 +8,9 @@ use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
+use crate::manifest::Table;
 use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
-use crate::quilt::manifest_handle::ReadableManifest;
 use crate::uri::Namespace;
 use crate::uri::S3Uri;
 use crate::Error;
@@ -43,7 +43,7 @@ async fn create_mutable_copy(
 #[allow(clippy::too_many_arguments)]
 pub async fn install_paths(
     mut lineage: PackageLineage,
-    manifest: &(impl ReadableManifest + Sync),
+    table: &mut Table,
     paths: &DomainPaths,
     working_dir: PathBuf,
     namespace: Namespace,
@@ -78,8 +78,6 @@ pub async fn install_paths(
     // record installation into the lineage:
     //   add installed package entry:
     //     remote: RemoteManifest
-
-    let mut table = manifest.read(storage).await?;
 
     for path in entries_paths {
         // TODO: Consider using a hashmap or treemap for manifest.rows
@@ -148,12 +146,12 @@ mod tests {
 
         let lineage = mocks::lineage::with_commit_hash("fghijk");
         let entries_paths = vec![PathBuf::from("a/a")];
-        let manifest = mocks::manifest::with_record_keys(entries_paths.clone());
+        let mut manifest = mocks::manifest::with_record_keys(entries_paths.clone());
 
         assert!(lineage.paths.is_empty());
         let lineage = install_paths(
             lineage,
-            &manifest,
+            &mut manifest,
             domain_paths,
             working_dir.path().to_path_buf(),
             ("foo", "bar").into(),
@@ -182,7 +180,7 @@ mod tests {
         let storage = mocks::storage::MockStorage::default();
         let lineage = mocks::lineage::with_commit_hash("fghijk");
         let entries_paths = vec![PathBuf::from("a/a")];
-        let manifest = mocks::manifest::with_rows(vec![Row {
+        let mut manifest = mocks::manifest::with_rows(vec![Row {
             name: PathBuf::from("a/a"),
             hash: mocks::row_hash_sample1(),
             place: "s3://any/any/any/any/any.md".to_string(),
@@ -195,7 +193,7 @@ mod tests {
         assert!(lineage.paths.is_empty());
         let lineage = install_paths(
             lineage,
-            &manifest,
+            &mut manifest,
             domain_paths,
             working_dir.path().to_path_buf(),
             ("foo", "bar").into(),
@@ -222,12 +220,12 @@ mod tests {
         let remote = mocks::remote::MockRemote::default();
         let storage = mocks::storage::MockStorage::default();
         let entries_paths = vec![PathBuf::from("z/z")];
-        let manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("a/a")]);
+        let mut manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("a/a")]);
 
         assert!(lineage.paths.is_empty());
         let lineage = install_paths(
             lineage,
-            &manifest,
+            &mut manifest,
             &DomainPaths::default(),
             PathBuf::new(),
             Namespace::default(),

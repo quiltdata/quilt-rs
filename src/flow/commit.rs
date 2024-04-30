@@ -18,7 +18,6 @@ use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
 use crate::manifest::JsonObject;
 use crate::manifest::Table;
-use crate::quilt::manifest_handle::ReadableManifest;
 use crate::uri::Namespace;
 
 fn remove_entry(
@@ -92,7 +91,7 @@ async fn modify_entry(
 #[allow(clippy::too_many_arguments)]
 pub async fn commit_package(
     mut lineage: PackageLineage,
-    manifest: &(impl ReadableManifest + Sync),
+    manifest: &mut Table,
     paths: &paths::DomainPaths,
     storage: &(impl Storage + Sync),
     working_dir: PathBuf,
@@ -136,8 +135,6 @@ pub async fn commit_package(
     // NOTE: each commit MUST include all paths from prior commits
     //       (since the last pull, until reset by a sync)
 
-    let mut table = manifest.read(storage).await?;
-
     for (
         logical_key,
         Change {
@@ -146,14 +143,14 @@ pub async fn commit_package(
     ) in status.changes
     {
         if let Some(previous) = previous {
-            remove_entry(&mut table, &mut lineage, &logical_key, previous)?;
+            remove_entry(manifest, &mut lineage, &logical_key, previous)?;
         }
         if let Some(current) = current {
             modify_entry(
                 storage,
                 paths,
                 &working_dir,
-                &mut table,
+                manifest,
                 &mut lineage,
                 &logical_key,
                 current,
@@ -162,18 +159,18 @@ pub async fn commit_package(
         }
     }
 
-    table.header.info = json!({
+    manifest.header.info = json!({
         "message": message,
         "version": "v0",
     });
     if let Some(user_meta) = user_meta {
-        table.header.meta = user_meta.into();
+        manifest.header.meta = user_meta.into();
     }
 
-    let new_top_hash = table.top_hash();
+    let new_top_hash = manifest.top_hash();
 
     let new_manifest_path = paths.installed_manifest(&namespace, &new_top_hash);
-    table.write_to_path(storage, &new_manifest_path).await?;
+    manifest.write_to_path(storage, &new_manifest_path).await?;
 
     let mut prev_hashes = Vec::new();
     if let Some(commit) = lineage.commit {
@@ -217,7 +214,7 @@ mod tests {
         assert!(lineage.commit.is_none());
         let lineage = commit_package(
             lineage,
-            &mocks::manifest::default(),
+            &mut Table::default(),
             &paths::DomainPaths::default(),
             &storage,
             PathBuf::default(),
@@ -260,7 +257,7 @@ mod tests {
         };
 
         let lineage = mocks::lineage::with_paths(vec![PathBuf::from("foo")]);
-        let manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("foo")]);
+        let mut manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("foo")]);
 
         assert!(
             lineage.commit.is_none(),
@@ -273,7 +270,7 @@ mod tests {
 
         let lineage = commit_package(
             lineage,
-            &manifest,
+            &mut manifest,
             &paths::DomainPaths::default(),
             &storage,
             PathBuf::default(),
@@ -320,7 +317,7 @@ mod tests {
         };
 
         let lineage = PackageLineage::default();
-        let manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("foo")]);
+        let mut manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("foo")]);
 
         assert!(
             lineage.commit.is_none(),
@@ -333,7 +330,7 @@ mod tests {
 
         let lineage = commit_package(
             lineage,
-            &manifest,
+            &mut manifest,
             &paths::DomainPaths::new(PathBuf::from("/")),
             &storage,
             PathBuf::from("/working-dir"),
@@ -382,11 +379,11 @@ mod tests {
         };
 
         let lineage = mocks::lineage::with_paths(vec![PathBuf::from("foo")]);
-        let manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("foo")]);
+        let mut manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("foo")]);
 
         let result = commit_package(
             lineage,
-            &manifest,
+            &mut manifest,
             &paths::DomainPaths::new(PathBuf::from("/")),
             &storage,
             PathBuf::default(),
@@ -431,7 +428,7 @@ mod tests {
         };
 
         let lineage = mocks::lineage::with_paths(vec![PathBuf::from("bar")]);
-        let manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("bar")]);
+        let mut manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("bar")]);
 
         assert!(
             lineage.commit.is_none(),
@@ -444,7 +441,7 @@ mod tests {
 
         let lineage = commit_package(
             lineage,
-            &manifest,
+            &mut manifest,
             &paths::DomainPaths::new(PathBuf::from("/")),
             &storage,
             PathBuf::from("/working-dir"),

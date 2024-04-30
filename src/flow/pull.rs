@@ -7,15 +7,15 @@ use crate::io::remote::s3::RemoteS3;
 use crate::io::storage::Storage;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageLineage;
+use crate::manifest::Table;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
-use crate::quilt::manifest_handle;
 use crate::uri::Namespace;
 use crate::Error;
 
 pub async fn pull_package(
     lineage: PackageLineage,
-    manifest: &(impl manifest_handle::ReadableManifest + Sync),
+    manifest: &mut Table,
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
     working_dir: PathBuf,
@@ -61,10 +61,9 @@ pub async fn pull_package(
     )
     .await?;
 
-    let materialized_manifest = manifest.read(storage).await?;
     let paths_to_install = installed_paths
         .into_iter()
-        .filter(|x| materialized_manifest.records.contains_key(x))
+        .filter(|x| manifest.records.contains_key(x))
         .collect();
     install_paths(
         lineage,
@@ -108,7 +107,7 @@ mod tests {
         };
         let error = pull_package(
             lineage,
-            &mocks::manifest::with_record_keys(vec![PathBuf::from("a/a")]),
+            &mut mocks::manifest::with_record_keys(vec![PathBuf::from("a/a")]),
             &DomainPaths::default(),
             &storage,
             PathBuf::default(),
@@ -129,7 +128,7 @@ mod tests {
         let lineage = mocks::lineage::with_commit();
         let error = pull_package(
             lineage,
-            &mocks::manifest::default(),
+            &mut Table::default(),
             &DomainPaths::default(),
             &storage,
             PathBuf::default(),
@@ -156,7 +155,7 @@ mod tests {
         };
         let error = pull_package(
             lineage,
-            &mocks::manifest::default(),
+            &mut Table::default(),
             &DomainPaths::default(),
             &storage,
             PathBuf::default(),
@@ -184,7 +183,7 @@ mod tests {
         };
         let error = pull_package(
             lineage,
-            &mocks::manifest::default(),
+            &mut Table::default(),
             &DomainPaths::default(),
             &storage,
             PathBuf::default(),

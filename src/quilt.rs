@@ -6,8 +6,6 @@ use multihash::Multihash;
 use tracing::log;
 
 pub mod manifest_handle;
-use manifest_handle::InstalledManifest;
-use manifest_handle::ReadableManifest;
 
 use crate::flow::browse::browse_remote_manifest;
 use crate::flow::browse::cache_manifest;
@@ -33,7 +31,6 @@ use crate::lineage::CommitState;
 use crate::lineage::DomainLineage;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::LineagePaths;
-use crate::lineage::PackageLineage;
 use crate::manifest::JsonObject;
 use crate::manifest::Row;
 use crate::manifest::Table;
@@ -250,34 +247,22 @@ pub struct InstalledPackage<S: Storage + Clone = fs::LocalStorage, R: Remote + C
 }
 
 impl InstalledPackage {
-    async fn readable_manifest(&self) -> Result<impl ReadableManifest, Error> {
-        // read recorded hash
-        // get installed manifest
-        self.lineage.read(&self.storage).await.map(|l| {
-            InstalledManifest::new(
-                self.namespace.clone(),
-                l.current_hash().to_string(),
-                self.paths.clone(),
-            )
-        })
-    }
-
     pub async fn manifest(&self) -> Result<Table, Error> {
-        self.readable_manifest().await?.read(&self.storage).await
+        let lineage = self.lineage.read(&self.storage).await?;
+        let pathbuf = self
+            .paths
+            .installed_manifest(&self.namespace, lineage.current_hash());
+        Table::read_from_path(&self.storage, &pathbuf).await
     }
 
     pub fn working_folder(&self) -> PathBuf {
         self.paths.working_dir(&self.namespace)
     }
 
-    pub async fn lineage(&self) -> Result<PackageLineage, Error> {
-        self.lineage.read(&self.storage).await
-    }
-
     pub async fn status(&self) -> Result<InstalledPackageStatus, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
         let lineage = refresh_latest_hash(lineage, &self.remote).await?;
-        let manifest = self.readable_manifest().await?;
+        let manifest = self.manifest().await?;
         let (lineage, status) =
             create_status(lineage, &self.storage, &manifest, self.working_folder()).await?;
         self.lineage.write(&self.storage, lineage).await?;
@@ -289,10 +274,10 @@ impl InstalledPackage {
             return Ok(BTreeMap::new());
         }
         let lineage = self.lineage.read(&self.storage).await?;
-        let manifest = self.readable_manifest().await?;
+        let mut manifest = self.manifest().await?;
         let lineage = install_paths(
             lineage,
-            &manifest,
+            &mut manifest,
             &self.paths,
             self.working_folder(),
             self.namespace.clone(),
@@ -323,14 +308,14 @@ impl InstalledPackage {
         user_meta: Option<JsonObject>,
     ) -> Result<Option<CommitState>, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
-        let manifest = self.readable_manifest().await?;
+        let mut manifest = self.manifest().await?;
 
         let (lineage, status) =
             create_status(lineage, &self.storage, &manifest, self.working_folder()).await?;
 
         let lineage = commit_package(
             lineage,
-            &manifest,
+            &mut manifest,
             &self.paths,
             &self.storage,
             self.working_folder(),
@@ -346,10 +331,10 @@ impl InstalledPackage {
 
     pub async fn push(&self) -> Result<ManifestUri, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
-        let manifest = self.readable_manifest().await?;
+        let mut manifest = self.manifest().await?;
         let lineage = push_package(
             lineage,
-            &manifest,
+            &mut manifest,
             &self.paths,
             &self.storage,
             &self.remote,
@@ -362,12 +347,12 @@ impl InstalledPackage {
 
     pub async fn pull(&self) -> Result<ManifestUri, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
-        let manifest = self.readable_manifest().await?;
+        let mut manifest = self.manifest().await?;
         let (lineage, status) =
             create_status(lineage, &self.storage, &manifest, self.working_folder()).await?;
         let lineage = pull_package(
             lineage,
-            &manifest,
+            &mut manifest,
             &self.paths,
             &self.storage,
             self.working_folder(),
@@ -388,10 +373,10 @@ impl InstalledPackage {
 
     pub async fn reset_to_latest(&self) -> Result<ManifestUri, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
-        let manifest = self.readable_manifest().await?;
+        let mut manifest = self.manifest().await?;
         let lineage = reset_to_latest(
             lineage,
-            &manifest,
+            &mut manifest,
             &self.paths,
             &self.storage,
             &self.remote,
@@ -421,6 +406,7 @@ mod tests {
     use crate::lineage::PackageFileFingerprint;
     use crate::lineage::UpstreamState;
     use crate::mocks;
+    use crate::quilt::manifest_handle::ReadableManifest;
     use crate::uri::RevisionPointer;
 
     fn get_timestamp() -> String {

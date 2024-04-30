@@ -6,15 +6,15 @@ use crate::flow::uninstall_paths::uninstall_paths;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
+use crate::manifest::Table;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
-use crate::quilt::manifest_handle::ReadableManifest;
 use crate::uri::Namespace;
 use crate::Error;
 
 pub async fn reset_to_latest(
     lineage: PackageLineage,
-    manifest: &(impl ReadableManifest + Sync),
+    manifest: &mut Table,
     paths: &DomainPaths,
     storage: &(impl Storage + std::marker::Sync),
     remote: &impl Remote,
@@ -45,10 +45,9 @@ pub async fn reset_to_latest(
     )
     .await?;
 
-    let materialized_manifest = manifest.read(storage).await?;
     let paths_to_install = entries_paths
         .into_iter()
-        .filter(|x| materialized_manifest.records.contains_key(x))
+        .filter(|x| manifest.records.contains_key(x))
         .collect();
     install_paths(
         lineage,
@@ -87,7 +86,7 @@ mod tests {
 
         let resolved_lineage = reset_to_latest(
             source_lineage.clone(),
-            &mocks::manifest::default(),
+            &mut Table::default(),
             &DomainPaths::default(),
             &mocks::storage::MockStorage::default(),
             &remote,
@@ -120,7 +119,7 @@ mod tests {
 
         let resolved_lineage = reset_to_latest(
             source_lineage.clone(),
-            &mocks::manifest::default(),
+            &mut Table::default(),
             &DomainPaths::default(),
             &mocks::storage::MockStorage::default(),
             &remote,

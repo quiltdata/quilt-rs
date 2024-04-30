@@ -18,7 +18,7 @@ use crate::lineage::DiscreteChange;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageFileFingerprint;
 use crate::lineage::PackageLineage;
-use crate::quilt::manifest_handle::ReadableManifest;
+use crate::manifest::Table;
 use crate::Error;
 
 pub async fn refresh_latest_hash(
@@ -36,7 +36,7 @@ pub async fn refresh_latest_hash(
 pub async fn create_status(
     lineage: PackageLineage,
     storage: &(impl Storage + Sync),
-    manifest: &(impl ReadableManifest + Sync),
+    manifest: &Table,
     working_dir: PathBuf,
 ) -> Result<(PackageLineage, InstalledPackageStatus), Error> {
     // compute the status based on the following sources:
@@ -46,11 +46,9 @@ pub async fn create_status(
     // installed entries marked as "installed" (initially as "downloading")
     // modified entries marked as "modified", etc
 
-    let table = manifest.read(storage).await?;
-
     let mut orig_paths = HashMap::new();
     for path in lineage.paths.keys() {
-        let row = table.get_row(path).ok_or(Error::ManifestPath(format!(
+        let row = manifest.get_row(path).ok_or(Error::ManifestPath(format!(
             "path {:?} not found in installed manifest",
             path
         )))?;
@@ -168,7 +166,7 @@ mod tests {
         let (_lineage, status) = create_status(
             PackageLineage::default(),
             &storage,
-            &mocks::manifest::default(),
+            &Table::default(),
             PathBuf::default(),
         )
         .await?;
@@ -186,7 +184,7 @@ mod tests {
         let (_lineage, status) = create_status(
             lineage,
             &mocks::storage::MockStorage::default(),
-            &mocks::manifest::default(),
+            &Table::default(),
             PathBuf::default(),
         )
         .await?;
@@ -204,7 +202,7 @@ mod tests {
         let (_, status) = create_status(
             lineage,
             &mocks::storage::MockStorage::default(),
-            &mocks::manifest::default(),
+            &Table::default(),
             PathBuf::default(),
         )
         .await?;
@@ -227,7 +225,7 @@ mod tests {
         let (_, status) = create_status(
             lineage,
             &mocks::storage::MockStorage::default(),
-            &mocks::manifest::default(),
+            &Table::default(),
             PathBuf::default(),
         )
         .await?;
@@ -258,7 +256,7 @@ mod tests {
     #[tokio::test]
     async fn test_added_files() -> Result<(), Error> {
         let lineage = PackageLineage::default();
-        let manifest = mocks::manifest::default();
+        let manifest = Table::default();
 
         let storage = mocks::storage::MockStorage::default();
         let working_dir = storage.temp_dir.as_ref().join(PathBuf::from("foo/bar"));
