@@ -69,8 +69,7 @@ impl std::str::FromStr for S3Uri {
     }
 }
 
-// FIXME: goes to src/uri, FIXME: make it private?
-pub fn make_s3_url(bucket: &str, s3_key: &str, version_id: Option<&str>) -> Url {
+fn make_s3_url(bucket: &str, s3_key: &str, version_id: Option<&str>) -> Url {
     let mut remote_url = Url::parse("s3://").unwrap();
     remote_url
         .set_host(Some(bucket))

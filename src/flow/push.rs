@@ -18,8 +18,6 @@ use crate::quilt4::checksum::MULTIPART_THRESHOLD;
 use crate::uri::S3Uri;
 use crate::Error;
 
-use crate::uri::make_s3_url;
-
 pub async fn push_package(
     mut lineage: PackageLineage,
     manifest: &(impl manifest_handle::ReadableManifest + Sync),
@@ -81,11 +79,11 @@ pub async fn push_package(
         // Update the manifest with the sha2-256-chunked checksum.
         row.hash = Multihash::wrap(manifest::MULTIHASH_SHA256_CHUNKED, checksum.as_ref())?;
 
-        let remote_url = make_s3_url(
-            &remote_manifest_address.bucket,
-            &s3_key,
-            version_id.as_deref(),
-        );
+        let remote_url = S3Uri {
+            bucket: remote_manifest_address.bucket.clone(),
+            key: s3_key,
+            version: version_id,
+        };
         log::debug!("got remote url: {}", remote_url);
 
         // "Relax" the manifest by using those new remote keys

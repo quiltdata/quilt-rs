@@ -60,8 +60,6 @@ use crate::io::storage::fs;
 use crate::io::storage::Storage;
 use crate::uri::S3Uri;
 
-use crate::uri::make_s3_url;
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalDomain<S: Storage = fs::LocalStorage, R: Remote = RemoteS3> {
     paths: paths::DomainPaths,
@@ -211,12 +209,16 @@ impl LocalDomain {
             .await?
             {
                 let name = PathBuf::from(attrs.key[prefix_len..].to_string());
+                let record_url = S3Uri {
+                    bucket: uri.bucket.clone(),
+                    key: attrs.key,
+                    version: attrs.version_id,
+                };
                 records.insert(
                     name.clone(),
                     Row4 {
                         name,
-                        place: make_s3_url(&uri.bucket, &attrs.key, attrs.version_id.as_deref())
-                            .into(),
+                        place: record_url.to_string(),
                         // XXX: can we use `as u64` safely here?
                         size: attrs.size,
                         hash: attrs.hash,
