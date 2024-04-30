@@ -2,10 +2,10 @@ use std::path::PathBuf;
 
 use crate::flow::browse::cache_remote_manifest;
 use crate::flow::install_paths::install_paths;
-use crate::flow::status::InstalledPackageStatus;
 use crate::flow::uninstall_paths::uninstall_paths;
 use crate::io::remote::s3::RemoteS3;
 use crate::io::storage::Storage;
+use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageLineage;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
@@ -85,8 +85,8 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::flow::status::Change;
-    use crate::flow::status::DiscreteChange;
+    use crate::lineage::Change;
+    use crate::lineage::DiscreteChange;
     use crate::quilt::mocks;
     use crate::uri::ManifestUri;
 

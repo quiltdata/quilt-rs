@@ -8,6 +8,7 @@ use crate::io::remote::utils::bytestream_to_string;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::manifest::Manifest;
+use crate::manifest::Table;
 use crate::paths;
 use crate::uri::Namespace;
 use crate::uri::RevisionPointer;
@@ -15,7 +16,6 @@ use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
 use crate::uri::TagUri;
 use crate::Error;
-use crate::Table;
 
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManifestUri {

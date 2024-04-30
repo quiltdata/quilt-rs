@@ -1,6 +1,6 @@
 use crate::paths;
-use crate::uri::Namespace;
 use crate::uri::ManifestUri;
+use crate::uri::Namespace;
 use crate::uri::S3Uri;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

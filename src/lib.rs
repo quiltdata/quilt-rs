@@ -18,19 +18,9 @@ pub mod uri;
 /// Utilities for testing only
 mod utils; // FIXME: move to mocks and fixtures
 
-pub use manifest::Row;
-pub use manifest::Table;
-
-pub use flow::status::DiscreteChange;
-pub use flow::status::InstalledPackageStatus;
-pub use flow::status::PackageFileFingerprint;
-pub use flow::status::UpstreamDiscreteState; // FIXME: to lineage
 pub use manifest::Manifest;
 pub use quilt::InstalledPackage;
 pub use quilt::LocalDomain;
-pub use uri::ManifestUri;
-pub use uri::Namespace;
-pub use uri::S3PackageUri;
 
 /// The error type for this library
 #[derive(Error, Debug)]
@@ -85,10 +75,10 @@ pub enum Error {
     Utf8(#[from] Utf8Error),
 
     #[error("The package {0} is already installed")]
-    PackageAlreadyInstalled(Namespace),
+    PackageAlreadyInstalled(uri::Namespace),
 
     #[error("The given package is not installed: {0}")]
-    PackageNotInstalled(Namespace),
+    PackageNotInstalled(uri::Namespace),
 
     #[error("Failed to install path: {0}")]
     InstallPath(String),

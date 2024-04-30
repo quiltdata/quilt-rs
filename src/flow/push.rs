@@ -14,8 +14,8 @@ use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::paths;
 use crate::quilt::manifest_handle;
-use crate::uri::Namespace;
 use crate::uri::ManifestUri;
+use crate::uri::Namespace;
 use crate::uri::S3Uri;
 use crate::Error;
 
@@ -149,10 +149,10 @@ mod tests {
 
     use crate::lineage::CommitState;
     use crate::lineage::PackageLineage;
+    use crate::manifest::Row;
     use crate::quilt::mocks;
     use crate::uri::S3PackageUri;
     use crate::utils::local_uri_parquet_checksummed;
-    use crate::Row;
 
     #[tokio::test]
     async fn test_no_push_if_no_commit() -> Result<(), Error> {

@@ -23,7 +23,6 @@ use crate::flow::push::push_package;
 use crate::flow::reset_to_latest::reset_to_latest;
 use crate::flow::status::create_status;
 use crate::flow::status::refresh_latest_hash;
-use crate::flow::status::InstalledPackageStatus;
 use crate::flow::uninstall_package::uninstall_package;
 use crate::flow::uninstall_paths::uninstall_paths;
 use crate::io::remote::s3::RemoteS3;
@@ -35,10 +34,12 @@ use crate::io::storage::Storage;
 use crate::lineage;
 use crate::lineage::CommitState;
 use crate::lineage::DomainLineage;
+use crate::lineage::InstalledPackageStatus;
 use crate::lineage::LineagePaths;
 use crate::lineage::PackageLineage;
 use crate::manifest::JsonObject;
 use crate::manifest::Row;
+use crate::manifest::Table;
 use crate::manifest::HEADER_ROW;
 use crate::paths;
 use crate::uri::ManifestUri;
@@ -46,7 +47,6 @@ use crate::uri::Namespace;
 use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
 use crate::Error;
-use crate::Table;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalDomain<S: Storage = fs::LocalStorage, R: Remote = RemoteS3> {
@@ -418,11 +418,11 @@ mod tests {
     use crate::checksum::calculate_sha256_checksum;
     use crate::checksum::MULTIHASH_SHA256;
     use crate::flow::browse::cache_remote_manifest;
-    use crate::flow::status::Change;
-    use crate::flow::status::ChangeSet;
-    use crate::flow::status::DiscreteChange;
-    use crate::flow::status::PackageFileFingerprint;
-    use crate::flow::status::UpstreamState;
+    use crate::lineage::Change;
+    use crate::lineage::ChangeSet;
+    use crate::lineage::DiscreteChange;
+    use crate::lineage::PackageFileFingerprint;
+    use crate::lineage::UpstreamState;
     use crate::quilt::mocks;
     use crate::uri::RevisionPointer;
 

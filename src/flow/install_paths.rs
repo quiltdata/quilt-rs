@@ -130,8 +130,8 @@ mod tests {
     use std::path::PathBuf;
     use tempfile;
 
+    use crate::manifest::Row;
     use crate::quilt::mocks;
-    use crate::Row;
 
     #[tokio::test]
     async fn test_installing_one_cached_path() -> Result<(), Error> {

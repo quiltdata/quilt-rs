@@ -13,7 +13,7 @@ pub fn row_hash_sample1() -> multihash::Multihash<256> {
 pub mod status {
     use super::row_hash_sample1;
 
-    use crate::flow::status::PackageFileFingerprint;
+    use crate::lineage::PackageFileFingerprint;
 
     pub fn package_file_fingerprint() -> PackageFileFingerprint {
         PackageFileFingerprint {
@@ -30,10 +30,10 @@ pub mod manifest {
     use std::path::PathBuf;
 
     use crate::io::storage::Storage;
+    use crate::manifest::Row;
+    use crate::manifest::Table;
     use crate::quilt::manifest_handle::ReadableManifest;
     use crate::Error;
-    use crate::Row;
-    use crate::Table;
 
     pub fn row4_with_name(name: PathBuf) -> Row {
         Row {

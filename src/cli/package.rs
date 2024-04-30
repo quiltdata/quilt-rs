@@ -1,4 +1,4 @@
-use quilt_rs::ManifestUri;
+use quilt_rs::uri::ManifestUri;
 
 use crate::cli::model::Commands;
 use crate::cli::output::Std;

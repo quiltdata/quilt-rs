@@ -46,7 +46,7 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 
 async fn install_package(
     local_domain: &quilt_rs::LocalDomain,
-    uri: &quilt_rs::S3PackageUri,
+    uri: &quilt_rs::uri::S3PackageUri,
     namespace: Option<Namespace>,
 ) -> Result<quilt_rs::InstalledPackage, Error> {
     let remote = quilt_rs::io::remote::s3::RemoteS3::new();
@@ -55,7 +55,7 @@ async fn install_package(
         // FIXME: check the actual remote_manifest
         return Ok(installed_package);
     }
-    let manifest_uri = quilt_rs::ManifestUri::from_package_uri(&remote, uri).await?;
+    let manifest_uri = quilt_rs::uri::ManifestUri::from_package_uri(&remote, uri).await?;
     Ok(local_domain.install_package(&manifest_uri).await?)
 }
 
@@ -93,7 +93,7 @@ pub async fn model(
         uri,
     }: Input,
 ) -> Result<Output, Error> {
-    let uri: quilt_rs::S3PackageUri = uri.parse()?;
+    let uri: quilt_rs::uri::S3PackageUri = uri.parse()?;
     let installed_package = install_package(local_domain, &uri, namespace).await?;
     let package_dir = installed_package.working_folder();
     let paths = get_entries(&package_dir, uri.path, paths);

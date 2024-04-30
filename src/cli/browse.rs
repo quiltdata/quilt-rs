@@ -3,7 +3,7 @@ use crate::cli::output::Std;
 use crate::cli::Error;
 
 pub struct Output {
-    manifest: quilt_rs::Table,
+    manifest: quilt_rs::manifest::Table,
 }
 
 #[derive(Debug)]
@@ -58,8 +58,8 @@ pub async fn model(
     Input { uri }: Input,
 ) -> Result<Output, Error> {
     let remote = quilt_rs::io::remote::s3::RemoteS3::new();
-    let uri: quilt_rs::S3PackageUri = uri.parse()?;
-    let manifest_uri = quilt_rs::ManifestUri::from_package_uri(&remote, &uri).await?;
+    let uri: quilt_rs::uri::S3PackageUri = uri.parse()?;
+    let manifest_uri = quilt_rs::uri::ManifestUri::from_package_uri(&remote, &uri).await?;
     Ok(Output {
         manifest: local_domain.browse_remote_manifest(&manifest_uri).await?,
     })

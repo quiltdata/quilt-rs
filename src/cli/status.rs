@@ -1,7 +1,7 @@
+use quilt_rs::lineage::DiscreteChange;
+use quilt_rs::lineage::InstalledPackageStatus;
+use quilt_rs::lineage::UpstreamDiscreteState;
 use quilt_rs::uri::Namespace;
-use quilt_rs::DiscreteChange;
-use quilt_rs::InstalledPackageStatus;
-use quilt_rs::UpstreamDiscreteState;
 
 use crate::cli::model::Commands;
 use crate::cli::output::Std;

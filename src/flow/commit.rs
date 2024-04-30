@@ -6,14 +6,14 @@ use tracing::log;
 use url::Url;
 
 use crate::io::storage::Storage;
+use crate::manifest::Row;
 use crate::paths;
 use crate::Error;
-use crate::Row;
 
-use crate::flow::status::Change;
-use crate::flow::status::InstalledPackageStatus;
-use crate::flow::status::PackageFileFingerprint;
+use crate::lineage::Change;
 use crate::lineage::CommitState;
+use crate::lineage::InstalledPackageStatus;
+use crate::lineage::PackageFileFingerprint;
 use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
 use crate::manifest::JsonObject;
@@ -196,8 +196,8 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::flow::status::Change;
-    use crate::flow::status::DiscreteChange;
+    use crate::lineage::Change;
+    use crate::lineage::DiscreteChange;
     use crate::quilt::mocks;
 
     // NOTE: Tests use "/" path for working directory, because it then parsed with Url and have to be absolute path

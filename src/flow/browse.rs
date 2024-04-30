@@ -5,6 +5,7 @@ use tokio::io::AsyncReadExt;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::manifest::Manifest;
+use crate::manifest::Table;
 use crate::paths::get_manifest_key_legacy;
 use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
@@ -13,7 +14,6 @@ use crate::quilt::manifest_handle::ReadableManifest;
 use crate::uri::ManifestUri;
 use crate::uri::S3Uri;
 use crate::Error;
-use crate::Table;
 
 async fn is_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Result<bool, Error> {
     remote.exists(&S3Uri::from(manifest)).await

@@ -1,10 +1,8 @@
-use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
 use multihash::Multihash;
-use serde::Serialize;
 
 use tracing::log;
 
@@ -14,91 +12,14 @@ use crate::checksum::MULTIHASH_SHA256;
 use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
+use crate::lineage::Change;
+use crate::lineage::ChangeSet;
+use crate::lineage::DiscreteChange;
+use crate::lineage::InstalledPackageStatus;
+use crate::lineage::PackageFileFingerprint;
 use crate::lineage::PackageLineage;
 use crate::quilt::manifest_handle::ReadableManifest;
 use crate::Error;
-
-#[derive(Debug, PartialEq, Eq, Serialize)]
-pub enum DiscreteChange {
-    Pristine,
-    Modified,
-    Added,
-    Removed,
-}
-
-#[derive(Debug, PartialEq, Eq, Serialize)]
-pub struct Change<T> {
-    pub current: Option<T>,
-    pub previous: Option<T>,
-    pub state: DiscreteChange,
-}
-
-pub type ChangeSet<K, T> = BTreeMap<K, Change<T>>;
-
-#[derive(Debug, PartialEq, Eq, Default, Serialize)]
-pub struct UpstreamState {
-    commit_pending: bool, // whether there's a commit to be pushed
-    behind: bool,         // whether **base** and **latest** revisions differ
-    ahead: bool,          // whether **base** and **current** revisions differ
-}
-
-impl UpstreamState {
-    pub fn from_lineage(lineage: &PackageLineage) -> Self {
-        Self {
-            commit_pending: lineage.commit.is_some(),
-            behind: lineage.base_hash != lineage.latest_hash,
-            ahead: lineage.base_hash != lineage.current_hash(),
-        }
-    }
-}
-
-// XXX: do we  actually need this? two-flag (ahead-behind) logic seems simple enough
-#[derive(Debug, PartialEq, Eq, Default, Serialize)]
-pub enum UpstreamDiscreteState {
-    #[default]
-    UpToDate,
-    Behind,
-    Ahead,
-    Diverged,
-}
-
-impl From<&UpstreamState> for UpstreamDiscreteState {
-    fn from(upstream: &UpstreamState) -> Self {
-        match (upstream.ahead, upstream.behind) {
-            (false, false) => Self::UpToDate,
-            (false, true) => Self::Behind,
-            (true, false) => Self::Ahead,
-            (true, true) => Self::Diverged,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct PackageFileFingerprint {
-    pub size: u64,
-    pub hash: Multihash<256>,
-}
-
-#[derive(Debug, PartialEq, Default)]
-pub struct InstalledPackageStatus {
-    // current commit vs upstream state
-    pub upstream_state: UpstreamDiscreteState,
-    // file changes vs current commit
-    pub changes: ChangeSet<PathBuf, PackageFileFingerprint>,
-    // XXX: meta?
-}
-
-impl InstalledPackageStatus {
-    pub fn new(
-        upstream: UpstreamState,
-        changes: ChangeSet<PathBuf, PackageFileFingerprint>,
-    ) -> Self {
-        Self {
-            upstream_state: UpstreamDiscreteState::from(&upstream),
-            changes,
-        }
-    }
-}
 
 pub async fn refresh_latest_hash(
     mut lineage: PackageLineage,
@@ -227,7 +148,7 @@ pub async fn create_status(
         );
     }
 
-    let status = InstalledPackageStatus::new(UpstreamState::from_lineage(&lineage), changes);
+    let status = InstalledPackageStatus::new(lineage.clone().into(), changes);
     Ok((lineage, status))
 }
 
@@ -237,6 +158,7 @@ mod tests {
 
     use crate::checksum::ContentHash;
     use crate::lineage::CommitState;
+    use crate::lineage::UpstreamDiscreteState;
     use crate::quilt::mocks;
     use crate::utils::local_uri_parquet;
 
