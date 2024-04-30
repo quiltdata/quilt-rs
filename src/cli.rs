@@ -4,7 +4,7 @@ use clap::Parser;
 use clap::Subcommand;
 use tracing::log;
 
-use quilt_rs::quilt::uri::Namespace;
+use quilt_rs::quilt::Namespace;
 
 mod browse;
 mod commit;

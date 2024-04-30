@@ -9,11 +9,11 @@ use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::quilt::manifest::Manifest;
 use crate::quilt::paths;
-use crate::quilt::uri::Namespace;
-use crate::quilt::uri::RevisionPointer;
-use crate::quilt::uri::S3PackageUri;
 use crate::quilt::Error;
+use crate::quilt::Namespace;
+use crate::quilt::RevisionPointer;
 use crate::quilt::Table;
+use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
 
 pub fn tag_uri(bucket: &str, namespace: &Namespace, tag: &str) -> S3Uri {

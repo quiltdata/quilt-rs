@@ -7,7 +7,6 @@ use tracing::log;
 
 pub mod manifest;
 pub mod manifest_handle;
-pub mod uri;
 
 #[cfg(test)]
 pub mod mocks;
@@ -29,6 +28,9 @@ use crate::lineage::PackageLineage;
 pub use crate::flow::status::UpstreamDiscreteState;
 pub use crate::flow::status::UpstreamState;
 pub use crate::io::remote::Remote;
+pub use crate::uri::Namespace;
+pub use crate::uri::RevisionPointer;
+pub use crate::uri::S3PackageUri;
 pub use manifest::ContentHash;
 pub use manifest::Manifest;
 pub use manifest::ManifestHeader;
@@ -37,9 +39,6 @@ pub use manifest_handle::CachedManifest;
 pub use manifest_handle::InstalledManifest;
 pub use manifest_handle::ReadableManifest;
 pub use manifest_handle::RemoteManifest;
-pub use uri::Namespace;
-pub use uri::RevisionPointer;
-pub use uri::S3PackageUri;
 
 use crate::flow::browse::browse_remote_manifest;
 use crate::flow::browse::cache_manifest;

@@ -15,22 +15,20 @@ pub mod uri;
 
 #[cfg(test)]
 /// Utilities for testing only
-mod utils; // FIXME: move to mocks
+mod utils; // FIXME: move to mocks and fixtures
 
 pub use quilt4::manifest::Manifest4;
 pub use quilt4::row4::Row4;
 pub use quilt4::table::Table;
-pub use quilt4::uri::UriParser;
-pub use quilt4::uri::UriQuilt;
 
 pub use flow::status::DiscreteChange;
 pub use flow::status::InstalledPackageStatus;
 pub use flow::status::PackageFileFingerprint;
 pub use flow::status::UpstreamDiscreteState;
-pub use quilt::uri::Namespace;
 pub use quilt::InstalledPackage;
 pub use quilt::LocalDomain;
 pub use quilt::Manifest;
+pub use quilt::Namespace;
 pub use quilt::RemoteManifest;
 pub use quilt::S3PackageUri;
 

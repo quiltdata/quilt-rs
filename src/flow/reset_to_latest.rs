@@ -9,7 +9,7 @@ use crate::lineage::PackageLineage;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
 use crate::quilt::manifest_handle::ReadableManifest;
-use crate::quilt::uri::Namespace;
+use crate::quilt::Namespace;
 use crate::Error;
 
 pub async fn reset_to_latest(

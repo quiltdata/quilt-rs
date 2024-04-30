@@ -1,4 +1,4 @@
-use quilt_rs::quilt::uri::Namespace;
+use quilt_rs::quilt::Namespace;
 use quilt_rs::quilt::RemoteManifest;
 
 use crate::cli::model::Commands;

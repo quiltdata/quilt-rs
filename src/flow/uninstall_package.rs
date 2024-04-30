@@ -3,7 +3,7 @@ use tracing::log;
 use crate::io::storage::Storage;
 use crate::lineage::DomainLineage;
 use crate::paths;
-use crate::quilt::uri::Namespace;
+use crate::quilt::Namespace;
 use crate::Error;
 
 pub async fn uninstall_package(

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use quilt_rs::quilt::uri::Namespace;
+use quilt_rs::quilt::Namespace;
 
 use crate::cli::model::Commands;
 use crate::cli::output::Std;

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::io::storage::Storage;
-use crate::quilt::uri::Namespace;
+use crate::quilt::Namespace;
 use crate::Error;
 
 const MANIFEST_DIR: &str = ".quilt/packages";

@@ -13,7 +13,7 @@ use crate::lineage::PackageLineage;
 use crate::paths;
 use crate::quilt::manifest;
 use crate::quilt::manifest_handle;
-use crate::quilt::uri::Namespace;
+use crate::quilt::Namespace;
 use crate::quilt4::checksum::MULTIPART_THRESHOLD;
 use crate::uri::S3Uri;
 use crate::Error;

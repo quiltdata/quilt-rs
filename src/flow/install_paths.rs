@@ -11,7 +11,7 @@ use crate::lineage::PathState;
 use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
 use crate::quilt::manifest_handle::ReadableManifest;
-use crate::quilt::uri::Namespace;
+use crate::quilt::Namespace;
 use crate::uri::S3Uri;
 use crate::Error;
 

@@ -5,7 +5,7 @@ use super::{CommitState, LineagePaths, PackageLineage};
 use crate::lineage::PathState;
 use crate::quilt::manifest_handle::RemoteManifest;
 use crate::quilt::mocks;
-use crate::quilt::uri::S3PackageUri;
+use crate::quilt::S3PackageUri;
 use crate::Error;
 
 pub fn path_state() -> PathState {

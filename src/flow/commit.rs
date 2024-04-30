@@ -18,7 +18,7 @@ use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
 use crate::quilt::manifest::JsonObject;
 use crate::quilt::manifest_handle::ReadableManifest;
-use crate::quilt::uri::Namespace;
+use crate::quilt::Namespace;
 use crate::quilt4::table::Table;
 
 fn remove_entry(
