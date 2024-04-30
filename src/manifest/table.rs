@@ -311,7 +311,7 @@ impl TryFrom<Manifest> for Table {
 
 #[cfg(test)]
 mod tests {
-    use crate::quilt::mocks;
+    use crate::mocks;
     use crate::utils::local_uri_parquet;
 
     use super::*;

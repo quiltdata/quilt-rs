@@ -18,6 +18,9 @@ pub mod uri;
 /// Utilities for testing only
 mod utils; // FIXME: move to mocks and fixtures
 
+#[cfg(test)]
+pub mod mocks;
+
 pub use manifest::Manifest;
 pub use quilt::InstalledPackage;
 pub use quilt::LocalDomain;

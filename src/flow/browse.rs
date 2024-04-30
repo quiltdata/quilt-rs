@@ -100,7 +100,7 @@ pub async fn browse_remote_manifest(
 mod tests {
     use super::*;
 
-    use crate::quilt::mocks;
+    use crate::mocks;
     use crate::utils::local_uri_json;
 
     #[tokio::test]

@@ -273,7 +273,7 @@ impl PackageLineageIo {
 mod tests {
     use super::*;
 
-    use crate::quilt::mocks;
+    use crate::mocks;
 
     #[test]
     fn test_syntax_error() {

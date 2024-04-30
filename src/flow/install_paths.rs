@@ -131,7 +131,7 @@ mod tests {
     use tempfile;
 
     use crate::manifest::Row;
-    use crate::quilt::mocks;
+    use crate::mocks;
 
     #[tokio::test]
     async fn test_installing_one_cached_path() -> Result<(), Error> {

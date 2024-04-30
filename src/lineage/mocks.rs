@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use super::{CommitState, LineagePaths, PackageLineage};
 use crate::lineage::PathState;
-use crate::quilt::mocks;
+use crate::mocks;
 use crate::uri::ManifestUri;
 use crate::uri::S3PackageUri;
 use crate::Error;

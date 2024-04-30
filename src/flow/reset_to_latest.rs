@@ -68,7 +68,7 @@ mod tests {
     use super::*;
 
     use crate::lineage::PackageLineage;
-    use crate::quilt::mocks;
+    use crate::mocks;
     use crate::uri::ManifestUri;
     use crate::uri::S3Uri;
     use crate::utils::local_uri_json;

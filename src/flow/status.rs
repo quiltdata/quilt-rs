@@ -159,7 +159,7 @@ mod tests {
     use crate::checksum::ContentHash;
     use crate::lineage::CommitState;
     use crate::lineage::UpstreamDiscreteState;
-    use crate::quilt::mocks;
+    use crate::mocks;
     use crate::utils::local_uri_parquet;
 
     #[tokio::test]

@@ -87,7 +87,7 @@ mod tests {
 
     use crate::lineage::Change;
     use crate::lineage::DiscreteChange;
-    use crate::quilt::mocks;
+    use crate::mocks;
     use crate::uri::ManifestUri;
 
     #[tokio::test]

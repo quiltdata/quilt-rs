@@ -65,7 +65,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
-    use crate::quilt::mocks;
+    use crate::mocks;
     use crate::uri::S3Uri;
 
     #[tokio::test]

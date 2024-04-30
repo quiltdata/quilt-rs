@@ -9,9 +9,6 @@ pub mod manifest_handle;
 use manifest_handle::InstalledManifest;
 use manifest_handle::ReadableManifest;
 
-#[cfg(test)]
-pub mod mocks;
-
 use crate::flow::browse::browse_remote_manifest;
 use crate::flow::browse::cache_manifest;
 use crate::flow::certify_latest::certify_latest;
@@ -423,7 +420,7 @@ mod tests {
     use crate::lineage::DiscreteChange;
     use crate::lineage::PackageFileFingerprint;
     use crate::lineage::UpstreamState;
-    use crate::quilt::mocks;
+    use crate::mocks;
     use crate::uri::RevisionPointer;
 
     fn get_timestamp() -> String {

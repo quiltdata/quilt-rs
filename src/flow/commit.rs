@@ -198,7 +198,7 @@ mod tests {
 
     use crate::lineage::Change;
     use crate::lineage::DiscreteChange;
-    use crate::quilt::mocks;
+    use crate::mocks;
 
     // NOTE: Tests use "/" path for working directory, because it then parsed with Url and have to be absolute path
 

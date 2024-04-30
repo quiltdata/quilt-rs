@@ -150,7 +150,7 @@ mod tests {
     use crate::lineage::CommitState;
     use crate::lineage::PackageLineage;
     use crate::manifest::Row;
-    use crate::quilt::mocks;
+    use crate::mocks;
     use crate::uri::S3PackageUri;
     use crate::utils::local_uri_parquet_checksummed;
 

@@ -41,7 +41,7 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::quilt::mocks;
+    use crate::mocks;
 
     #[tokio::test]
     async fn uninstall_not_installed_path() -> Result<(), Error> {

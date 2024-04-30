@@ -121,7 +121,7 @@ impl From<&ManifestUri> for S3Uri {
 mod tests {
     use super::*;
 
-    use crate::quilt::mocks;
+    use crate::mocks;
 
     #[tokio::test]
     async fn test_resolve_existing_hash() -> Result<(), Error> {
