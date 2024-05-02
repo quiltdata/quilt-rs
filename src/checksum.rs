@@ -3,7 +3,6 @@ use base64::Engine;
 use multihash::Multihash;
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::digest::Output;
 use sha2::Digest;
 use sha2::Sha256;
 use tokio::io::AsyncReadExt;
@@ -79,7 +78,7 @@ pub fn get_checksum_chunksize_and_parts(file_size: u64) -> (u64, u64) {
 
 pub async fn calculate_sha256_checksum<F: io::AsyncRead + Unpin>(
     file: F,
-) -> io::Result<Output<Sha256>> {
+) -> Result<Multihash<256>, Error> {
     let mut sha256 = Sha256::new();
     let mut reader = BufReader::new(file);
     let mut buf = [0; 4096];
@@ -90,13 +89,13 @@ pub async fn calculate_sha256_checksum<F: io::AsyncRead + Unpin>(
         }
         sha256.update(&buf[0..n]);
     }
-    Ok(sha256.finalize())
+    Ok(Multihash::wrap(MULTIHASH_SHA256, &sha256.finalize())?)
 }
 
 pub async fn calculate_sha256_chunked_checksum<F: io::AsyncRead + Unpin>(
     file: F,
     length: u64,
-) -> io::Result<Output<Sha256>> {
+) -> Result<Multihash<256>, Error> {
     let (chunksize, num_parts) = get_checksum_chunksize_and_parts(length);
 
     let mut sha256 = Sha256::new();
@@ -105,10 +104,13 @@ pub async fn calculate_sha256_chunked_checksum<F: io::AsyncRead + Unpin>(
     for _ in 0..num_parts {
         chunk.set_limit(chunksize);
         let chunk_hash = calculate_sha256_checksum(&mut chunk).await?;
-        sha256.update(chunk_hash);
+        sha256.update(chunk_hash.digest());
     }
 
-    Ok(sha256.finalize())
+    Ok(Multihash::wrap(
+        MULTIHASH_SHA256_CHUNKED,
+        &sha256.finalize(),
+    )?)
 }
 
 #[cfg(test)]
@@ -124,7 +126,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            BASE64_STANDARD.encode(hash),
+            BASE64_STANDARD.encode(hash.digest()),
             "Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="
         );
     }
@@ -136,7 +138,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            BASE64_STANDARD.encode(hash),
+            BASE64_STANDARD.encode(hash.digest()),
             "7V3rZ3Q/AmAYax2wsQBZbc7N1EMIxlxRyMiMthGRdwg="
         );
     }
@@ -148,7 +150,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            BASE64_STANDARD.encode(hash),
+            BASE64_STANDARD.encode(hash.digest()),
             "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
         );
     }
@@ -160,7 +162,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            BASE64_STANDARD.encode(hash),
+            BASE64_STANDARD.encode(hash.digest()),
             "T+rt/HKRJOiAkEGXKvc+DhCwRcrZiDrFkjKonDT1zgs="
         );
     }

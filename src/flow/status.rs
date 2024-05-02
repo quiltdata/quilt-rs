@@ -2,13 +2,10 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
-use multihash::Multihash;
-
 use tracing::log;
 
 use crate::checksum::calculate_sha256_checksum;
 use crate::checksum::calculate_sha256_chunked_checksum;
-use crate::checksum::MULTIHASH_SHA256;
 use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use crate::io::manifest::resolve_latest;
 use crate::io::remote::Remote;
@@ -85,14 +82,9 @@ pub async fn create_status(
                 if let Some((orig_hash, orig_size)) = orig_paths.remove(relative_path) {
                     let file_hash = match orig_hash.code() {
                         MULTIHASH_SHA256_CHUNKED => {
-                            let hash = calculate_sha256_chunked_checksum(file, file_metadata.len())
-                                .await?;
-                            Multihash::wrap(MULTIHASH_SHA256_CHUNKED, hash.as_ref())?
+                            calculate_sha256_chunked_checksum(file, file_metadata.len()).await?
                         }
-                        _ => {
-                            let hash = calculate_sha256_checksum(file).await?;
-                            Multihash::wrap(MULTIHASH_SHA256, hash.as_ref())?
-                        }
+                        _ => calculate_sha256_checksum(file).await?,
                     };
 
                     if file_hash != orig_hash {
@@ -114,14 +106,12 @@ pub async fn create_status(
                 } else {
                     let sha256_hash =
                         calculate_sha256_chunked_checksum(file, file_metadata.len()).await?;
-                    let file_hash =
-                        Multihash::wrap(MULTIHASH_SHA256_CHUNKED, sha256_hash.as_ref())?;
                     changes.insert(
                         relative_path.to_path_buf(),
                         Change {
                             current: Some(PackageFileFingerprint {
                                 size: file_metadata.len(),
-                                hash: file_hash,
+                                hash: sha256_hash,
                             }),
                             previous: None,
                             state: DiscreteChange::Added,

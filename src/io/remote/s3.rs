@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::checksum::ContentHash;
 use crate::checksum::MULTIPART_THRESHOLD;
 use aws_sdk_s3::error::DisplayErrorContext;
 use aws_sdk_s3::error::SdkError;
@@ -8,8 +9,8 @@ use aws_sdk_s3::types::ChecksumAlgorithm;
 use aws_sdk_s3::types::CompletedMultipartUpload;
 use aws_sdk_s3::types::CompletedPart;
 use aws_smithy_types::byte_stream::Length;
-use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
+
+use multihash::Multihash;
 use tokio::io::AsyncRead;
 
 use crate::checksum::calculate_sha256_checksum;
@@ -45,7 +46,7 @@ async fn put_object_and_checksum(
     source_path: impl AsRef<Path>,
     dest_uri: &S3Uri,
     size: u64,
-) -> Result<(Option<String>, Vec<u8>), Error> {
+) -> Result<(Option<String>, Multihash<256>), Error> {
     let client = get_client_for_bucket(&dest_uri.bucket).await?;
     let response = client
         .put_object()
@@ -59,15 +60,15 @@ async fn put_object_and_checksum(
     let s3_checksum_b64 = response
         .checksum_sha256
         .ok_or(Error::Checksum("missing checksum".to_string()))?;
-    let s3_checksum = BASE64_STANDARD.decode(s3_checksum_b64)?;
+    // let s3_checksum = BASE64_STANDARD.decode(s3_checksum_b64)?;
+    let hash: Multihash<256> =
+        ContentHash::SHA256Chunked(s3_checksum_b64.to_string()).try_into()?;
     let checksum = if size == 0 {
         // Edge case: a 0-byte upload is treated as an empty list of chunks, rather than
         // a list of a 0-byte chunk. Its checksum is sha256(''), NOT sha256(sha256('')).
-        s3_checksum
+        hash
     } else {
-        calculate_sha256_checksum(s3_checksum.as_ref())
-            .await?
-            .to_vec()
+        calculate_sha256_checksum(hash.digest()).await?
     };
 
     Ok((response.version_id, checksum))
@@ -77,7 +78,7 @@ async fn multipart_upload_and_checksum(
     source_path: impl AsRef<Path>,
     dest_uri: &S3Uri,
     size: u64,
-) -> Result<(Option<String>, Vec<u8>), Error> {
+) -> Result<(Option<String>, Multihash<256>), Error> {
     let (chunksize, num_chunks) = get_checksum_chunksize_and_parts(size);
     let client = get_client_for_bucket(&dest_uri.bucket).await?;
     let upload_id = client
@@ -142,9 +143,11 @@ async fn multipart_upload_and_checksum(
     let (checksum_b64, _) = s3_checksum
         .split_once('-')
         .ok_or(Error::Checksum("unexpected checksum".to_string()))?;
-    let checksum = BASE64_STANDARD.decode(checksum_b64)?;
 
-    Ok((response.version_id, checksum))
+    Ok((
+        response.version_id,
+        ContentHash::SHA256Chunked(checksum_b64.to_string()).try_into()?,
+    ))
 }
 
 #[derive(Clone, Debug)]
@@ -205,12 +208,12 @@ impl Remote for RemoteS3 {
         Ok(())
     }
 
-    async fn put_object_and_checksum(
+    async fn upload_file(
         &self,
         source_path: impl AsRef<Path>,
         dest_uri: &S3Uri,
         size: u64,
-    ) -> Result<(Option<String>, Vec<u8>), Error> {
+    ) -> Result<(Option<String>, Multihash<256>), Error> {
         if size < MULTIPART_THRESHOLD {
             put_object_and_checksum(source_path, dest_uri, size).await
         } else {

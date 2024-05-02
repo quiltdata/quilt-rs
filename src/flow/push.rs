@@ -1,10 +1,8 @@
 use std::path::PathBuf;
 
-use multihash::Multihash;
 use tracing::log;
 use url::Url;
 
-use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use crate::flow::browse::browse_remote_manifest;
 use crate::flow::certify_latest::certify_latest;
 use crate::io::manifest::resolve_latest;
@@ -63,12 +61,10 @@ pub async fn push_package(
         };
         log::debug!("Uploading to S3: {}", s3_uri);
 
-        let (version_id, checksum) = remote
-            .put_object_and_checksum(&file_path, &s3_uri, row.size)
-            .await?;
+        let (version_id, checksum) = remote.upload_file(&file_path, &s3_uri, row.size).await?;
 
         // Update the manifest with the sha2-256-chunked checksum.
-        row.hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, checksum.as_ref())?;
+        row.hash = checksum;
 
         let remote_url = S3Uri {
             bucket: manifest_uri.bucket.clone(),
@@ -230,7 +226,10 @@ mod tests {
 
         let file_path = PathBuf::from("/b/a/r");
         let manifest_file = std::fs::read(mocks::manifest::parquet_checksummed())?;
-        remote.storage.write_file(&file_path, &manifest_file).await?;
+        remote
+            .storage
+            .write_file(&file_path, &manifest_file)
+            .await?;
         let mut manifest = mocks::manifest::with_rows(vec![Row {
             name: PathBuf::from("bar"),
             place: format!("file://{}", file_path.display()),

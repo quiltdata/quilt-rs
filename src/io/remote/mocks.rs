@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;
+use multihash::Multihash;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 use tracing::log;
@@ -72,15 +73,15 @@ impl Remote for MockRemote {
         self.storage.write_file(key, &contents_vec).await
     }
 
-    async fn put_object_and_checksum(
+    async fn upload_file(
         &self,
         source_path: impl AsRef<Path>,
         _dest_uri: &S3Uri,
         size: u64,
-    ) -> Result<(Option<String>, Vec<u8>), Error> {
+    ) -> Result<(Option<String>, Multihash<256>), Error> {
         let file = self.storage.open_file(source_path.as_ref()).await?;
         let hash = checksum::calculate_sha256_chunked_checksum(file, size).await?;
-        Ok((Some("version".to_string()), hash.to_vec()))
+        Ok((Some("version".to_string()), hash))
     }
 }
 

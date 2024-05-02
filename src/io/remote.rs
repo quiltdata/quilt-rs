@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;
+use multihash::Multihash;
 use tokio::io::AsyncRead;
 
 use crate::uri::S3Uri;
@@ -27,10 +28,10 @@ pub trait Remote {
         contents: impl Into<ByteStream>,
     ) -> Result<(), Error>;
 
-    async fn put_object_and_checksum(
+    async fn upload_file(
         &self,
         source_path: impl AsRef<Path>,
         dest_uri: &S3Uri,
         size: u64,
-    ) -> Result<(Option<String>, Vec<u8>), Error>;
+    ) -> Result<(Option<String>, Multihash<256>), Error>;
 }

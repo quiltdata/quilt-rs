@@ -374,14 +374,14 @@ impl InstalledPackage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use multihash::Multihash;
+
     use temp_testdir::TempDir;
     use tokio::io::AsyncWriteExt;
     use tokio_test::assert_err;
     use tokio_test::block_on;
 
     use crate::checksum::calculate_sha256_checksum;
-    use crate::checksum::MULTIHASH_SHA256;
+
     use crate::flow::browse::cache_remote_manifest;
     use crate::io::manifest::resolve_manifest_uri;
     use crate::lineage::Change;
@@ -498,17 +498,11 @@ mod tests {
                 Change {
                     current: Some(PackageFileFingerprint {
                         size: timestamp.len() as u64,
-                        hash: Multihash::wrap(
-                            MULTIHASH_SHA256,
-                            block_on(calculate_sha256_checksum(timestamp.as_bytes()))?.as_ref(),
-                        )?,
+                        hash: block_on(calculate_sha256_checksum(timestamp.as_bytes()))?,
                     }),
                     previous: Some(PackageFileFingerprint {
                         size: old_readme.len() as u64,
-                        hash: Multihash::wrap(
-                            MULTIHASH_SHA256,
-                            block_on(calculate_sha256_checksum(old_readme.as_bytes()))?.as_ref(),
-                        )?,
+                        hash: block_on(calculate_sha256_checksum(timestamp.as_bytes()))?,
                     }),
                     state: DiscreteChange::Modified,
                 },
