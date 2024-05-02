@@ -31,7 +31,12 @@ mod tests {
             )
             .await?;
         let source_lineage = mocks::lineage::with_remote("quilt+s3://b#package=f/a@LATEST_HASH")?;
-        let resolved_lineage = certify_latest(source_lineage.clone(), &remote, source_lineage.remote).await?;
+        let resolved_lineage = certify_latest(
+            source_lineage.clone(),
+            &remote,
+            source_lineage.remote.clone(),
+        )
+        .await?;
         assert_eq!(
             resolved_lineage,
             PackageLineage {

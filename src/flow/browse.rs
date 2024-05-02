@@ -34,6 +34,8 @@ async fn fetch_jsonl(remote: &impl Remote, manifest: &ManifestUri) -> Result<Tab
     Table::try_from(quilt3_manifest)
 }
 
+// TODO: cache S3PackageUri instead of ManifestUri
+//       resolve it here, and return actual hash
 pub async fn cache_remote_manifest(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
@@ -73,6 +75,8 @@ pub async fn browse_remote_manifest(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::path::PathBuf;
 
     use crate::mocks;
 

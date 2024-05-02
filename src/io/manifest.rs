@@ -72,8 +72,8 @@ pub async fn upload_manifest(
     let (cache_path, top_hash) = cache_manifest(paths, storage, &manifest, &bucket).await?;
 
     let manifest_uri = ManifestUri {
-        bucket: bucket,
-        namespace: namespace,
+        bucket,
+        namespace,
         hash: top_hash,
     };
 
