@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 
-use crate::quilt::storage::Storage;
-use crate::quilt::uri::Namespace;
+use crate::io::storage::Storage;
+use crate::uri::Namespace;
 use crate::Error;
 
 const MANIFEST_DIR: &str = ".quilt/packages";
 const TAGS_DIR: &str = ".quilt/named_packages";
+
 const OBJECTS_DIR: &str = ".quilt/objects";
 const LINEAGE_FILE: &str = ".quilt/data.json";
 const INSTALLED_DIR: &str = ".quilt/installed";

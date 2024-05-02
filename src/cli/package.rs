@@ -1,4 +1,4 @@
-use quilt_rs::RemoteManifest;
+use quilt_rs::uri::ManifestUri;
 
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
@@ -12,7 +12,7 @@ pub struct Input {
 
 #[derive(Debug)]
 pub struct Output {
-    remote_manifest: RemoteManifest,
+    manifest_uri: ManifestUri,
 }
 
 impl std::fmt::Display for Output {
@@ -20,7 +20,7 @@ impl std::fmt::Display for Output {
         write!(
             f,
             "Manifest {} created",
-            quilt_rs::quilt::storage::s3::S3Uri::from(&self.remote_manifest)
+            quilt_rs::uri::S3Uri::from(&self.manifest_uri)
         )
     }
 }
@@ -38,6 +38,6 @@ pub async fn model(
 ) -> Result<Output, Error> {
     let uri = uri.parse()?;
     let target_uri = target.parse()?;
-    let remote_manifest = local_domain.package_s3_prefix(&uri, target_uri).await?;
-    Ok(Output { remote_manifest })
+    let manifest_uri = local_domain.package_s3_prefix(&uri, target_uri).await?;
+    Ok(Output { manifest_uri })
 }
