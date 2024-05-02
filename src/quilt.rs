@@ -253,6 +253,10 @@ impl InstalledPackage {
         Table::read_from_path(&self.storage, &pathbuf).await
     }
 
+    pub async fn lineage(&self) -> Result<lineage::PackageLineage, Error> {
+        self.lineage.read(&self.storage).await
+    }
+
     pub fn working_folder(&self) -> PathBuf {
         self.paths.working_dir(&self.namespace)
     }
