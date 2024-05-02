@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use aws_sdk_s3::error::DisplayErrorContext;
-use multihash::Multihash;
 use tracing::log;
 
 use crate::flow::browse::browse_remote_manifest;
@@ -34,7 +33,6 @@ use crate::lineage::LineagePaths;
 use crate::manifest::JsonObject;
 use crate::manifest::Row;
 use crate::manifest::Table;
-use crate::manifest::HEADER_ROW;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
@@ -153,17 +151,7 @@ impl LocalDomain {
         let client = get_client_for_bucket(&uri.bucket).await?;
 
         // XXX: we need real API to build manifests
-        let header = Row {
-            name: HEADER_ROW.into(),
-            place: HEADER_ROW.into(),
-            size: 0,
-            hash: Multihash::default(),
-            info: serde_json::json!({
-                "message": serde_json::Value::Null, // TODO: commit message?
-                "version": "v0", // XXX: is this correct?
-            }),
-            meta: serde_json::Value::Null, // TODO: accept user meta?
-        };
+        let header = Row::default();
         let mut records: BTreeMap<PathBuf, Row> = BTreeMap::new();
 
         let prefix_len = uri.key.len();
@@ -386,6 +374,7 @@ impl InstalledPackage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use multihash::Multihash;
     use temp_testdir::TempDir;
     use tokio::io::AsyncWriteExt;
     use tokio_test::assert_err;
