@@ -29,15 +29,8 @@ pub trait Remote {
 
     async fn put_object_and_checksum(
         &self,
-        s3_uri: &S3Uri,
-        contents: impl Into<ByteStream>,
-        size: u64,
-    ) -> Result<(Option<String>, Vec<u8>), Error>;
-
-    async fn multipart_upload_and_checksum(
-        &self,
-        s3_uri: &S3Uri,
-        file_path: impl AsRef<Path>,
+        source_path: impl AsRef<Path>,
+        dest_uri: &S3Uri,
         size: u64,
     ) -> Result<(Option<String>, Vec<u8>), Error>;
 }

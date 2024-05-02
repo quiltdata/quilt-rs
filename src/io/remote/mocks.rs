@@ -74,26 +74,13 @@ impl Remote for MockRemote {
 
     async fn put_object_and_checksum(
         &self,
-        s3_uri: &S3Uri,
-        contents: impl Into<ByteStream>,
+        source_path: impl AsRef<Path>,
+        _dest_uri: &S3Uri,
         size: u64,
     ) -> Result<(Option<String>, Vec<u8>), Error> {
-        let key = s3_uri.to_string();
-        let contents_vec = contents.into().collect().await?.to_vec();
-        self.storage.write_file(&key, &contents_vec).await?;
-
-        let file = self.storage.open_file(&key).await?;
+        let file = self.storage.open_file(source_path.as_ref()).await?;
         let hash = checksum::calculate_sha256_chunked_checksum(file, size).await?;
         Ok((Some("version".to_string()), hash.to_vec()))
-    }
-
-    async fn multipart_upload_and_checksum(
-        &self,
-        _s3_uri: &S3Uri,
-        _file_path: impl AsRef<Path>,
-        _size: u64,
-    ) -> Result<(Option<String>, Vec<u8>), Error> {
-        Ok((None, Vec::new()))
     }
 }
 

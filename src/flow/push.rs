@@ -1,12 +1,10 @@
 use std::path::PathBuf;
 
-use aws_smithy_types::byte_stream::ByteStream;
 use multihash::Multihash;
 use tracing::log;
 use url::Url;
 
 use crate::checksum::MULTIHASH_SHA256_CHUNKED;
-use crate::checksum::MULTIPART_THRESHOLD;
 use crate::flow::browse::browse_remote_manifest;
 use crate::flow::certify_latest::certify_latest;
 use crate::io::manifest::resolve_latest;
@@ -48,7 +46,7 @@ pub async fn push_package(
     // ignore removed items, upload changed and new items
     for row in local_manifest.records.values_mut() {
         if let Some(remote_row) = remote_manifest.records.get(&row.name) {
-            if remote_row.eq(row) {
+            if remote_row == row {
                 row.place = remote_row.place.to_owned();
                 continue;
             }
@@ -65,18 +63,9 @@ pub async fn push_package(
         };
         log::debug!("Uploading to S3: {}", s3_uri);
 
-        // TODO: upload in parallel. use a stream?
-        let (version_id, checksum) = if row.size < MULTIPART_THRESHOLD {
-            let body = ByteStream::read_from().path(&file_path).build().await?;
-
-            remote
-                .put_object_and_checksum(&s3_uri, body, row.size)
-                .await?
-        } else {
-            remote
-                .multipart_upload_and_checksum(&s3_uri, file_path, row.size)
-                .await?
-        };
+        let (version_id, checksum) = remote
+            .put_object_and_checksum(&file_path, &s3_uri, row.size)
+            .await?;
 
         // Update the manifest with the sha2-256-chunked checksum.
         row.hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, checksum.as_ref())?;
@@ -219,7 +208,6 @@ mod tests {
             ..PackageLineage::default()
         };
         let jsonl = std::fs::read(mocks::manifest::parquet_checksummed())?;
-        let temp_dir = tempfile::tempdir()?;
         let manifest_key =
             ".quilt/packages/b/0f85671863dadacf3a0e62212f1b9151a11f72228e4c82ed86ff27d46ec31d87";
         let storage = mocks::storage::MockStorage::default();
@@ -240,9 +228,9 @@ mod tests {
             )
             .await?;
 
-        let file_path = temp_dir.into_path().join("bar");
-        tokio::fs::copy(mocks::manifest::parquet_checksummed(), &file_path).await?;
-
+        let file_path = PathBuf::from("/b/a/r");
+        let manifest_file = std::fs::read(mocks::manifest::parquet_checksummed())?;
+        remote.storage.write_file(&file_path, &manifest_file).await?;
         let mut manifest = mocks::manifest::with_rows(vec![Row {
             name: PathBuf::from("bar"),
             place: format!("file://{}", file_path.display()),
