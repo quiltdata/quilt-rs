@@ -2,7 +2,7 @@ use crate::cli::model::Commands;
 use crate::cli::output::Std;
 use crate::cli::Error;
 
-use quilt_rs::quilt::uri::Namespace;
+use quilt_rs::uri::Namespace;
 
 #[derive(Debug)]
 pub struct Input {

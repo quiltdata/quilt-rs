@@ -5,64 +5,43 @@ use aws_sdk_s3::error::DisplayErrorContext;
 use multihash::Multihash;
 use tracing::log;
 
-pub mod flow;
-pub mod lineage;
-pub mod manifest;
-pub mod manifest_handle;
-pub mod remote;
-pub mod storage;
-pub mod uri;
-
-#[cfg(test)]
-pub mod mocks;
-
+use crate::flow::browse::browse_remote_manifest;
+use crate::flow::browse::cache_manifest;
+use crate::flow::certify_latest::certify_latest;
+use crate::flow::commit::commit_package;
+use crate::flow::install_package::install_package;
+use crate::flow::install_paths::install_paths;
+use crate::flow::pull::pull_package;
+use crate::flow::push::push_package;
+use crate::flow::reset_to_latest::reset_to_latest;
+use crate::flow::status::create_status;
+use crate::flow::status::refresh_latest_hash;
+use crate::flow::uninstall_package::uninstall_package;
+use crate::flow::uninstall_paths::uninstall_paths;
+use crate::io::remote::s3::RemoteS3;
+use crate::io::remote::utils::get_attrs_for_key;
+use crate::io::remote::utils::get_client_for_bucket;
+use crate::io::remote::Remote;
+use crate::io::storage::fs;
+use crate::io::storage::Storage;
+use crate::lineage;
+use crate::lineage::CommitState;
+use crate::lineage::DomainLineage;
+use crate::lineage::InstalledPackageStatus;
+use crate::lineage::LineagePaths;
+use crate::manifest::JsonObject;
+use crate::manifest::Row;
+use crate::manifest::Table;
+use crate::manifest::HEADER_ROW;
 use crate::paths;
-use crate::quilt4::table::HEADER_ROW;
-use crate::s3_utils;
+use crate::uri::ManifestUri;
+use crate::uri::Namespace;
+use crate::uri::S3PackageUri;
+use crate::uri::S3Uri;
 use crate::Error;
-use crate::Row4;
-use crate::Table;
-
-pub use crate::quilt::remote::Remote;
-pub use flow::status::UpstreamDiscreteState;
-pub use flow::status::UpstreamState;
-pub use lineage::CommitState;
-pub use lineage::DomainLineage;
-pub use lineage::LineagePaths;
-pub use lineage::PackageLineage;
-pub use lineage::PathState;
-pub use manifest::ContentHash;
-pub use manifest::Manifest;
-pub use manifest::ManifestHeader;
-pub use manifest::ManifestRow;
-pub use manifest_handle::CachedManifest;
-pub use manifest_handle::InstalledManifest;
-pub use manifest_handle::ReadableManifest;
-pub use manifest_handle::RemoteManifest;
-pub use storage::fs;
-pub use storage::s3;
-pub use storage::Storage;
-pub use uri::Namespace;
-pub use uri::RevisionPointer;
-pub use uri::S3PackageUri;
-
-use flow::browse::browse_remote_manifest;
-use flow::browse::cache_manifest;
-use flow::certify_latest::certify_latest;
-use flow::commit::commit_package;
-use flow::install_package::install_package;
-use flow::install_paths::install_paths;
-use flow::pull::pull_package;
-use flow::push::push_package;
-use flow::reset_to_latest::reset_to_latest;
-use flow::status::create_status;
-use flow::status::refresh_latest_hash;
-use flow::status::InstalledPackageStatus;
-use flow::uninstall_package::uninstall_package;
-use flow::uninstall_paths::uninstall_paths;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LocalDomain<S: Storage = fs::LocalStorage, R: Remote = s3_utils::RemoteS3> {
+pub struct LocalDomain<S: Storage = fs::LocalStorage, R: Remote = RemoteS3> {
     paths: paths::DomainPaths,
     lineage: lineage::DomainLineageIo,
     storage: S,
@@ -74,7 +53,7 @@ impl LocalDomain {
         let paths = paths::DomainPaths::new(root_dir.clone());
         let lineage = lineage::DomainLineageIo::new(paths.lineage());
         let storage = fs::LocalStorage::new();
-        let remote = s3_utils::RemoteS3::new();
+        let remote = RemoteS3::new();
         Self {
             lineage,
             paths,
@@ -83,11 +62,8 @@ impl LocalDomain {
         }
     }
 
-    pub async fn browse_remote_manifest(
-        &self,
-        remote_manifest: &RemoteManifest,
-    ) -> Result<Table, Error> {
-        browse_remote_manifest(&self.paths, &self.storage, &self.remote, remote_manifest).await
+    pub async fn browse_remote_manifest(&self, manifest_uri: &ManifestUri) -> Result<Table, Error> {
+        browse_remote_manifest(&self.paths, &self.storage, &self.remote, manifest_uri).await
     }
 
     pub fn create_installed_package(&self, namespace: Namespace) -> InstalledPackage {
@@ -102,7 +78,7 @@ impl LocalDomain {
 
     pub async fn install_package(
         &self,
-        remote_manifest: &RemoteManifest,
+        manifest_uri: &ManifestUri,
     ) -> Result<InstalledPackage, Error> {
         // Read the lineage
         let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
@@ -111,12 +87,12 @@ impl LocalDomain {
             &self.paths,
             &self.storage,
             &self.remote,
-            remote_manifest,
+            manifest_uri,
         )
         .await?;
         let _fixme = self.lineage.write(&self.storage, lineage).await?;
 
-        Ok(self.create_installed_package(remote_manifest.namespace.clone()))
+        Ok(self.create_installed_package(manifest_uri.namespace.clone()))
     }
 
     pub async fn uninstall_package(&self, namespace: Namespace) -> Result<(), Error> {
@@ -163,19 +139,19 @@ impl LocalDomain {
 
     pub async fn package_s3_prefix(
         &self,
-        uri: &s3::S3Uri,
+        uri: &S3Uri,
         target_uri: S3PackageUri,
-    ) -> Result<RemoteManifest, Error> {
+    ) -> Result<ManifestUri, Error> {
         log::debug!("Source URI: {:?}, target URI: {:?}", uri, target_uri);
         // TODO: make get_object_attributes() calls concurrently across list_objects() pages
         // TODO: increase concurrency, to do that we need to figure out how to deal
         //       with fd limits on Mac by default it's 256
         // TODO: s3 uri key ends with / and has no version
         // FIXME: filter or fail on keys with `.` or `..` in path segments as quilt3 do
-        let client = crate::s3_utils::get_client_for_bucket(&uri.bucket).await?;
+        let client = get_client_for_bucket(&uri.bucket).await?;
 
         // XXX: we need real API to build manifests
-        let header = Row4 {
+        let header = Row {
             name: HEADER_ROW.into(),
             place: HEADER_ROW.into(),
             size: 0,
@@ -186,7 +162,7 @@ impl LocalDomain {
             }),
             meta: serde_json::Value::Null, // TODO: accept user meta?
         };
-        let mut records: BTreeMap<PathBuf, Row4> = BTreeMap::new();
+        let mut records: BTreeMap<PathBuf, Row> = BTreeMap::new();
 
         let prefix_len = uri.key.len();
         let mut p = client
@@ -201,7 +177,7 @@ impl LocalDomain {
             let page_contents_iter = page.contents.iter().flatten();
 
             for attrs in futures::future::try_join_all(page_contents_iter.map(|obj| {
-                s3_utils::get_attrs_for_key(
+                get_attrs_for_key(
                     client.clone(),
                     &uri.bucket,
                     obj.key.as_ref().expect("object key expected to be present"),
@@ -210,16 +186,16 @@ impl LocalDomain {
             .await?
             {
                 let name = PathBuf::from(attrs.key[prefix_len..].to_string());
+                let record_url = S3Uri {
+                    bucket: uri.bucket.clone(),
+                    key: attrs.key,
+                    version: attrs.version_id,
+                };
                 records.insert(
                     name.clone(),
-                    Row4 {
+                    Row {
                         name,
-                        place: s3::make_s3_url(
-                            &uri.bucket,
-                            &attrs.key,
-                            attrs.version_id.as_deref(),
-                        )
-                        .into(),
+                        place: record_url.to_string(),
                         // XXX: can we use `as u64` safely here?
                         size: attrs.size,
                         hash: attrs.hash,
@@ -231,7 +207,7 @@ impl LocalDomain {
         }
 
         let table = Table { header, records };
-        let new_remote = RemoteManifest {
+        let new_remote = ManifestUri {
             bucket: target_uri.bucket,
             namespace: target_uri.namespace,
             hash: table.top_hash(),
@@ -249,6 +225,7 @@ impl LocalDomain {
             .await?;
         new_remote.upload_legacy(&self.remote, &table).await?;
         let top_hash = table.top_hash();
+
         new_remote
             .put_timestamp_tag(&self.remote, chrono::Utc::now(), &top_hash)
             .await?;
@@ -259,10 +236,7 @@ impl LocalDomain {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct InstalledPackage<
-    S: Storage + Clone = fs::LocalStorage,
-    R: Remote + Clone = s3_utils::RemoteS3,
-> {
+pub struct InstalledPackage<S: Storage + Clone = fs::LocalStorage, R: Remote + Clone = RemoteS3> {
     lineage: lineage::PackageLineageIo,
     paths: paths::DomainPaths,
     remote: R,
@@ -271,34 +245,22 @@ pub struct InstalledPackage<
 }
 
 impl InstalledPackage {
-    async fn readable_manifest(&self) -> Result<impl ReadableManifest, Error> {
-        // read recorded hash
-        // get installed manifest
-        self.lineage.read(&self.storage).await.map(|l| {
-            InstalledManifest::new(
-                self.namespace.clone(),
-                l.current_hash().to_string(),
-                self.paths.clone(),
-            )
-        })
-    }
-
     pub async fn manifest(&self) -> Result<Table, Error> {
-        self.readable_manifest().await?.read(&self.storage).await
+        let lineage = self.lineage.read(&self.storage).await?;
+        let pathbuf = self
+            .paths
+            .installed_manifest(&self.namespace, lineage.current_hash());
+        Table::read_from_path(&self.storage, &pathbuf).await
     }
 
     pub fn working_folder(&self) -> PathBuf {
         self.paths.working_dir(&self.namespace)
     }
 
-    pub async fn lineage(&self) -> Result<PackageLineage, Error> {
-        self.lineage.read(&self.storage).await
-    }
-
     pub async fn status(&self) -> Result<InstalledPackageStatus, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
         let lineage = refresh_latest_hash(lineage, &self.remote).await?;
-        let manifest = self.readable_manifest().await?;
+        let manifest = self.manifest().await?;
         let (lineage, status) =
             create_status(lineage, &self.storage, &manifest, self.working_folder()).await?;
         self.lineage.write(&self.storage, lineage).await?;
@@ -310,10 +272,10 @@ impl InstalledPackage {
             return Ok(BTreeMap::new());
         }
         let lineage = self.lineage.read(&self.storage).await?;
-        let manifest = self.readable_manifest().await?;
+        let mut manifest = self.manifest().await?;
         let lineage = install_paths(
             lineage,
-            &manifest,
+            &mut manifest,
             &self.paths,
             self.working_folder(),
             self.namespace.clone(),
@@ -341,17 +303,17 @@ impl InstalledPackage {
     pub async fn commit(
         &self,
         message: String,
-        user_meta: Option<manifest::JsonObject>,
+        user_meta: Option<JsonObject>,
     ) -> Result<Option<CommitState>, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
-        let manifest = self.readable_manifest().await?;
+        let mut manifest = self.manifest().await?;
 
         let (lineage, status) =
             create_status(lineage, &self.storage, &manifest, self.working_folder()).await?;
 
         let lineage = commit_package(
             lineage,
-            &manifest,
+            &mut manifest,
             &self.paths,
             &self.storage,
             self.working_folder(),
@@ -365,12 +327,12 @@ impl InstalledPackage {
         Ok(lineage.commit)
     }
 
-    pub async fn push(&self) -> Result<RemoteManifest, Error> {
+    pub async fn push(&self) -> Result<ManifestUri, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
-        let manifest = self.readable_manifest().await?;
+        let mut manifest = self.manifest().await?;
         let lineage = push_package(
             lineage,
-            &manifest,
+            &mut manifest,
             &self.paths,
             &self.storage,
             &self.remote,
@@ -381,14 +343,14 @@ impl InstalledPackage {
         Ok(lineage.remote)
     }
 
-    pub async fn pull(&self) -> Result<RemoteManifest, Error> {
+    pub async fn pull(&self) -> Result<ManifestUri, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
-        let manifest = self.readable_manifest().await?;
+        let mut manifest = self.manifest().await?;
         let (lineage, status) =
             create_status(lineage, &self.storage, &manifest, self.working_folder()).await?;
         let lineage = pull_package(
             lineage,
-            &manifest,
+            &mut manifest,
             &self.paths,
             &self.storage,
             self.working_folder(),
@@ -400,19 +362,19 @@ impl InstalledPackage {
         Ok(lineage.remote)
     }
 
-    pub async fn certify_latest(&self) -> Result<RemoteManifest, Error> {
+    pub async fn certify_latest(&self) -> Result<ManifestUri, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
         let lineage = certify_latest(lineage, &self.remote).await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(lineage.remote)
     }
 
-    pub async fn reset_to_latest(&self) -> Result<RemoteManifest, Error> {
+    pub async fn reset_to_latest(&self) -> Result<ManifestUri, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
-        let manifest = self.readable_manifest().await?;
+        let mut manifest = self.manifest().await?;
         let lineage = reset_to_latest(
             lineage,
-            &manifest,
+            &mut manifest,
             &self.paths,
             &self.storage,
             &self.remote,
@@ -433,14 +395,16 @@ mod tests {
     use tokio_test::assert_err;
     use tokio_test::block_on;
 
-    use crate::quilt::flow::browse::cache_remote_manifest;
-    use crate::quilt::flow::status::Change;
-    use crate::quilt::flow::status::ChangeSet;
-    use crate::quilt::flow::status::DiscreteChange;
-    use crate::quilt::flow::status::PackageFileFingerprint;
-    use crate::quilt::manifest::MULTIHASH_SHA256;
-    use crate::quilt::storage::mock_storage::MockStorage;
-    use crate::quilt4::checksum::calculate_sha256_checksum;
+    use crate::checksum::calculate_sha256_checksum;
+    use crate::checksum::MULTIHASH_SHA256;
+    use crate::flow::browse::cache_remote_manifest;
+    use crate::lineage::Change;
+    use crate::lineage::ChangeSet;
+    use crate::lineage::DiscreteChange;
+    use crate::lineage::PackageFileFingerprint;
+    use crate::lineage::UpstreamState;
+    use crate::mocks;
+    use crate::uri::RevisionPointer;
 
     fn get_timestamp() -> String {
         std::time::SystemTime::now()
@@ -481,24 +445,21 @@ mod tests {
         let temp_dir = TempDir::default();
         let local_path = PathBuf::from(temp_dir.as_ref());
         let local_domain = LocalDomain::new(local_path);
-        let storage = MockStorage::default();
+        let storage = mocks::storage::MockStorage::default();
 
         // ## Pull the manifest
 
-        let remote = s3_utils::RemoteS3::new();
-        let remote_manifest = block_on(RemoteManifest::resolve(&remote, &test_uri))
+        let remote = RemoteS3::new();
+        let manifest_uri = block_on(ManifestUri::from_package_uri(&remote, &test_uri))
             .expect("Failed to resolve manifest");
 
-        let cached_manifest = block_on(cache_remote_manifest(
+        let manifest = block_on(cache_remote_manifest(
             &local_domain.paths,
             &storage,
             &remote,
-            &remote_manifest,
+            &manifest_uri,
         ))
         .expect("Failed to cache the manifest");
-
-        let manifest =
-            block_on(cached_manifest.read(&storage)).expect("Failed to parse the manifest");
 
         log::debug!("manifest: {manifest:?}");
         // TODO: assert manifest has the expected contents
@@ -510,7 +471,7 @@ mod tests {
         // creates install folder and Lineages it to remote_package_uri
 
         let paths = vec![test_uri.path.unwrap()];
-        let installed_package = block_on(local_domain.install_package(&remote_manifest))
+        let installed_package = block_on(local_domain.install_package(&manifest_uri))
             .expect("Failed to install package");
         block_on(installed_package.install_paths(&paths)).expect("Failed to install paths");
 

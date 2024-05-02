@@ -4,33 +4,22 @@ use aws_smithy_types::byte_stream;
 use reqwest::header::ToStrError;
 use thiserror::Error;
 
-mod paths;
-mod quilt4;
+mod flow;
 
+pub mod checksum;
+pub mod io;
+pub mod lineage;
+pub mod manifest;
+pub mod paths;
 pub mod quilt;
+pub mod uri;
 
 #[cfg(test)]
-/// Utilities for testing only
-mod utils;
+pub mod mocks;
 
-pub mod s3_utils;
-
-pub use quilt4::manifest::Manifest4;
-pub use quilt4::row4::Row4;
-pub use quilt4::table::Table;
-pub use quilt4::uri::UriParser;
-pub use quilt4::uri::UriQuilt;
-
-pub use quilt::flow::status::DiscreteChange;
-pub use quilt::flow::status::InstalledPackageStatus;
-pub use quilt::flow::status::PackageFileFingerprint;
-pub use quilt::flow::status::UpstreamDiscreteState;
-pub use quilt::uri::Namespace;
+pub use manifest::Manifest;
 pub use quilt::InstalledPackage;
 pub use quilt::LocalDomain;
-pub use quilt::Manifest;
-pub use quilt::RemoteManifest;
-pub use quilt::S3PackageUri;
 
 /// The error type for this library
 #[derive(Error, Debug)]
@@ -85,10 +74,10 @@ pub enum Error {
     Utf8(#[from] Utf8Error),
 
     #[error("The package {0} is already installed")]
-    PackageAlreadyInstalled(Namespace),
+    PackageAlreadyInstalled(uri::Namespace),
 
     #[error("The given package is not installed: {0}")]
-    PackageNotInstalled(Namespace),
+    PackageNotInstalled(uri::Namespace),
 
     #[error("Failed to install path: {0}")]
     InstallPath(String),
