@@ -8,13 +8,12 @@ use url::Url;
 use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use crate::checksum::MULTIPART_THRESHOLD;
 use crate::flow::browse::browse_remote_manifest;
-use crate::flow::browse::cache_manifest;
+use crate::io::manifest::upload_manifest;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::manifest::Table;
 use crate::paths;
-use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::uri::S3Uri;
 use crate::Error;
@@ -89,29 +88,15 @@ pub async fn push_package(
         row.place = remote_url.to_string();
     }
 
-    let top_hash = local_manifest.top_hash();
-    let new_remote = ManifestUri {
-        hash: top_hash.clone(),
-        ..manifest_uri.clone()
-    };
-
-    // Cache the relaxed manifest
-    let cache_path = cache_manifest(
-        paths,
+    let new_manifest_uri = upload_manifest(
         storage,
-        local_manifest,
-        &new_remote.bucket,
-        &new_remote.hash,
+        remote,
+        paths,
+        manifest_uri.bucket.clone(),
+        manifest_uri.namespace.clone(),
+        local_manifest.clone(),
     )
     .await?;
-
-    // Push the (cached) relaxed manifest to the remote, don't tag it yet
-    new_remote.upload_from(storage, remote, &cache_path).await?;
-
-    // Upload a quilt3 manifest for backward compatibility.
-    new_remote.upload_legacy(remote, local_manifest).await?;
-
-    log::debug!("uploaded remote manifest: {new_remote:?}");
 
     // Tag the new commit.
     // If {self.commit.tag} does not already exist at
@@ -119,13 +104,13 @@ pub async fn push_package(
     // create it with the value of {self.commit.hash}
     // TODO: Otherwise try again with the current timestamp as the tag
     // (e.g., try five times with exponential backoff, then Error)
-    new_remote
-        .put_timestamp_tag(remote, commit.timestamp, &new_remote.hash)
+    new_manifest_uri
+        .put_timestamp_tag(remote, commit.timestamp, &new_manifest_uri.hash)
         .await?;
 
     // Check the hash of remote's latest manifest
-    lineage.latest_hash = new_remote.resolve_latest(remote).await?;
-    lineage.remote = new_remote;
+    lineage.latest_hash = new_manifest_uri.resolve_latest(remote).await?;
+    lineage.remote = new_manifest_uri.clone();
 
     // Reset the commit state.
     lineage.commit = None;
@@ -134,9 +119,9 @@ pub async fn push_package(
     // Try certifying latest if tracking
     if lineage.base_hash == lineage.latest_hash {
         // remote latest has not been updated, certifying the new latest
-        lineage.remote.update_latest(remote, &top_hash).await?;
-        lineage.latest_hash = top_hash.clone();
-        lineage.base_hash = top_hash.clone();
+        lineage.remote.update_latest(remote, &new_manifest_uri.hash).await?;
+        lineage.latest_hash = new_manifest_uri.hash.clone();
+        lineage.base_hash = new_manifest_uri.hash.clone();
     }
 
     Ok(lineage)

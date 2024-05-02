@@ -6,7 +6,6 @@ use multihash::Multihash;
 use tracing::log;
 
 use crate::flow::browse::browse_remote_manifest;
-use crate::flow::browse::cache_manifest;
 use crate::flow::certify_latest::certify_latest;
 use crate::flow::commit::commit_package;
 use crate::flow::install_package::install_package;
@@ -18,6 +17,7 @@ use crate::flow::status::create_status;
 use crate::flow::status::refresh_latest_hash;
 use crate::flow::uninstall_package::uninstall_package;
 use crate::flow::uninstall_paths::uninstall_paths;
+use crate::io::manifest::upload_manifest;
 use crate::io::remote::s3::RemoteS3;
 use crate::io::remote::utils::get_attrs_for_key;
 use crate::io::remote::utils::get_client_for_bucket;
@@ -207,31 +207,24 @@ impl LocalDomain {
         }
 
         let table = Table { header, records };
-        let new_remote = ManifestUri {
-            bucket: target_uri.bucket,
-            namespace: target_uri.namespace,
-            hash: table.top_hash(),
-        };
-        let cache_path = cache_manifest(
-            &self.paths,
+        let manifest_uri = upload_manifest(
             &self.storage,
-            &table,
-            &new_remote.bucket,
-            &new_remote.hash,
+            &self.remote,
+            &self.paths,
+            target_uri.bucket,
+            target_uri.namespace,
+            table,
         )
         .await?;
-        new_remote
-            .upload_from(&self.storage, &self.remote, &cache_path)
-            .await?;
-        new_remote.upload_legacy(&self.remote, &table).await?;
-        let top_hash = table.top_hash();
 
-        new_remote
-            .put_timestamp_tag(&self.remote, chrono::Utc::now(), &top_hash)
+        manifest_uri
+            .put_timestamp_tag(&self.remote, chrono::Utc::now(), &manifest_uri.hash)
             .await?;
-        new_remote.update_latest(&self.remote, &top_hash).await?;
+        manifest_uri
+            .update_latest(&self.remote, &manifest_uri.hash)
+            .await?;
 
-        Ok(new_remote)
+        Ok(manifest_uri)
     }
 }
 

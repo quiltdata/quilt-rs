@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use tokio::io::AsyncReadExt;
 
 use crate::io::remote::Remote;
@@ -34,24 +32,6 @@ async fn fetch_jsonl(remote: &impl Remote, manifest: &ManifestUri) -> Result<Tab
     let contents = remote.get_object(&s3_uri).await?;
     let quilt3_manifest = Manifest::from_reader(contents).await?;
     Table::try_from(quilt3_manifest)
-}
-
-pub async fn cache_manifest(
-    paths: &DomainPaths,
-    storage: &impl Storage,
-    manifest: &Table,
-    bucket: &str,
-    hash: &str,
-) -> Result<PathBuf, Error> {
-    scaffold_paths(storage, paths.required_local_domain_paths()).await?;
-    let cache_path = paths.manifest_cache(bucket, hash);
-    storage
-        .create_dir_all(&cache_path.parent().unwrap())
-        .await?;
-    manifest
-        .write_to_path(storage, &cache_path)
-        .await
-        .map(|_| cache_path)
 }
 
 pub async fn cache_remote_manifest(
