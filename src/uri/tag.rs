@@ -1,6 +1,7 @@
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
+use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -25,11 +26,8 @@ impl TagUri {
         }
     }
 
-    pub fn latest(manifest_uri: &ManifestUri) -> Self {
-        let ManifestUri {
-            bucket, namespace, ..
-        } = manifest_uri;
-        TagUri::new(bucket.clone(), namespace.clone(), Tag::Latest)
+    pub fn latest(uri: &S3PackageUri) -> Self {
+        TagUri::new(uri.bucket.clone(), uri.namespace.clone(), Tag::Latest)
     }
 
     pub fn timestamp(manifest_uri: &ManifestUri, datetime: chrono::DateTime<chrono::Utc>) -> Self {

@@ -10,6 +10,7 @@ use crate::checksum::calculate_sha256_checksum;
 use crate::checksum::calculate_sha256_chunked_checksum;
 use crate::checksum::MULTIHASH_SHA256;
 use crate::checksum::MULTIHASH_SHA256_CHUNKED;
+use crate::io::manifest::resolve_latest;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::Change;
@@ -21,11 +22,12 @@ use crate::lineage::PackageLineage;
 use crate::manifest::Table;
 use crate::Error;
 
+// TODO: move to lineage
 pub async fn refresh_latest_hash(
     mut lineage: PackageLineage,
     remote: &impl Remote,
 ) -> Result<PackageLineage, Error> {
-    let latest_hash = lineage.remote.resolve_latest(remote).await?;
+    let latest_hash = resolve_latest(remote, lineage.remote.clone().into()).await?;
     if lineage.latest_hash == latest_hash {
         return Ok(lineage);
     }

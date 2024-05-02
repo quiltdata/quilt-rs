@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use tracing::log;
 
+use crate::io::remote::utils::bytestream_to_string;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::manifest::Manifest;
@@ -11,6 +12,8 @@ use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
+use crate::uri::RevisionPointer;
+use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
 use crate::uri::TagUri;
 use crate::Error;
@@ -106,8 +109,75 @@ pub async fn tag_timestamp(
 }
 
 pub async fn tag_latest(remote: &impl Remote, manifest_uri: &ManifestUri) -> Result<(), Error> {
-    let tag_uri = TagUri::latest(manifest_uri);
+    let tag_uri = TagUri::latest(&manifest_uri.into());
     remote
         .put_object(&tag_uri.into(), manifest_uri.hash.as_bytes().to_vec())
         .await
+}
+
+pub async fn resolve_top_hash(remote: &impl Remote, uri: S3PackageUri) -> Result<String, Error> {
+    match &uri.revision {
+        RevisionPointer::Hash(top_hash) => Ok(top_hash.clone()),
+        RevisionPointer::Tag(_) => {
+            let tag_uri = TagUri::latest(&uri);
+            let stream = remote.get_object_stream(&tag_uri.into()).await?;
+            bytestream_to_string(stream).await
+        }
+    }
+}
+
+pub async fn resolve_manifest_uri(
+    remote: &impl Remote,
+    uri: &S3PackageUri,
+) -> Result<ManifestUri, Error> {
+    let top_hash = match &uri.revision {
+        RevisionPointer::Hash(top_hash) => top_hash.clone(),
+        RevisionPointer::Tag(_) => {
+            let tag_uri = TagUri::latest(&uri.clone());
+            let stream = remote.get_object_stream(&tag_uri.into()).await?;
+            bytestream_to_string(stream).await?
+        }
+    };
+    Ok(ManifestUri {
+        bucket: uri.bucket.clone(),
+        namespace: uri.namespace.clone(),
+        hash: top_hash,
+    })
+}
+
+pub async fn resolve_latest(remote: &impl Remote, uri: S3PackageUri) -> Result<String, Error> {
+    let tag_uri = TagUri::latest(&uri);
+    let stream = remote.get_object_stream(&tag_uri.into()).await?;
+    bytestream_to_string(stream).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::mocks;
+
+    #[tokio::test]
+    async fn test_resolve_existing_hash() -> Result<(), Error> {
+        let uri = S3PackageUri::try_from("quilt+s3://b#package=foo/bar@hjknlmn")?;
+        let remote = mocks::remote::MockRemote::default();
+        let top_hash = resolve_top_hash(&remote, uri).await?;
+        assert_eq!(top_hash, "hjknlmn".to_string(),);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_resolve_remote_hash() -> Result<(), Error> {
+        let uri = S3PackageUri::try_from("quilt+s3://b#package=foo/bar")?;
+        let remote = mocks::remote::MockRemote::default();
+        remote
+            .put_object(
+                &S3Uri::try_from("s3://b/.quilt/named_packages/foo/bar/latest")?,
+                b"abcdef".to_vec(),
+            )
+            .await?;
+        let top_hash = resolve_top_hash(&remote, uri).await?;
+        assert_eq!(top_hash, "abcdef".to_string(),);
+        Ok(())
+    }
 }

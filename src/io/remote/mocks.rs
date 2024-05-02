@@ -37,7 +37,6 @@ impl Remote for MockRemote {
     }
 
     async fn get_object_stream(&self, s3_uri: &S3Uri) -> Result<ByteStream, Error> {
-        println!("get_object_stream {:?}", s3_uri);
         let key = s3_uri.to_string();
         log::debug!("Mocking {} get request", key);
 

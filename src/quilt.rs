@@ -64,8 +64,8 @@ impl LocalDomain {
         }
     }
 
-    pub async fn browse_remote_manifest(&self, manifest_uri: &ManifestUri) -> Result<Table, Error> {
-        browse_remote_manifest(&self.paths, &self.storage, &self.remote, manifest_uri).await
+    pub async fn browse_remote_manifest(&self, uri: &S3PackageUri) -> Result<Table, Error> {
+        browse_remote_manifest(&self.paths, &self.storage, &self.remote, uri).await
     }
 
     pub fn create_installed_package(&self, namespace: Namespace) -> InstalledPackage {
@@ -253,6 +253,7 @@ impl InstalledPackage {
 
     pub async fn status(&self) -> Result<InstalledPackageStatus, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
+        // TODO: lineage.refresh_latest?
         let lineage = refresh_latest_hash(lineage, &self.remote).await?;
         let manifest = self.manifest().await?;
         let (lineage, status) =
@@ -393,6 +394,7 @@ mod tests {
     use crate::checksum::calculate_sha256_checksum;
     use crate::checksum::MULTIHASH_SHA256;
     use crate::flow::browse::cache_remote_manifest;
+    use crate::io::manifest::resolve_manifest_uri;
     use crate::lineage::Change;
     use crate::lineage::ChangeSet;
     use crate::lineage::DiscreteChange;
@@ -445,14 +447,14 @@ mod tests {
         // ## Pull the manifest
 
         let remote = RemoteS3::new();
-        let manifest_uri = block_on(ManifestUri::from_package_uri(&remote, &test_uri))
-            .expect("Failed to resolve manifest");
+        let manifest_uri =
+            block_on(resolve_manifest_uri(&remote, &test_uri)).expect("Failed to resolve manifest");
 
         let manifest = block_on(cache_remote_manifest(
             &local_domain.paths,
             &storage,
             &remote,
-            &manifest_uri,
+            &manifest_uri.clone().into(),
         ))
         .expect("Failed to cache the manifest");
 

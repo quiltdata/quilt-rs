@@ -30,7 +30,11 @@ mod tests {
                 b"OUTDATED_HASH".to_vec(),
             )
             .await?;
-        let source_lineage = mocks::lineage::with_remote("quilt+s3://b#package=f/a@LATEST_HASH")?;
+        let source_lineage = mocks::lineage::with_remote(ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("f", "a").into(),
+            hash: "LATEST_HASH".to_string(),
+        });
         let resolved_lineage = certify_latest(
             source_lineage.clone(),
             &remote,

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use crate::flow::browse::cache_remote_manifest;
 use crate::flow::install_paths::install_paths;
 use crate::flow::uninstall_paths::uninstall_paths;
+use crate::io::manifest::resolve_latest;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
@@ -21,8 +22,8 @@ pub async fn reset_to_latest(
     working_dir: PathBuf,
     namespace: Namespace,
 ) -> Result<PackageLineage, Error> {
-    let new_latest = lineage.remote.resolve_latest(remote).await?;
-    if new_latest == lineage.remote.hash {
+    let latest_top_hash = resolve_latest(remote, lineage.remote.clone().into()).await?;
+    if latest_top_hash == lineage.remote.hash {
         // already at latest
         return Ok(lineage);
     }
@@ -31,17 +32,18 @@ pub async fn reset_to_latest(
     let mut lineage =
         uninstall_paths(lineage, working_dir.clone(), storage, &entries_paths).await?;
 
-    lineage.latest_hash = new_latest.clone();
-    lineage.remote.hash = new_latest.clone();
-    lineage.base_hash = new_latest;
+    // TODO: Should be a method of lineage
+    lineage.latest_hash = latest_top_hash.clone();
+    lineage.remote.hash = latest_top_hash.clone();
+    lineage.base_hash = latest_top_hash.clone();
 
-    cache_remote_manifest(paths, storage, remote, &lineage.remote).await?;
+    cache_remote_manifest(paths, storage, remote, &lineage.remote.clone().into()).await?;
     copy_cached_to_installed(
         paths,
         storage,
         &lineage.remote.bucket,
         &namespace,
-        &lineage.remote.hash,
+        &latest_top_hash,
     )
     .await?;
 
@@ -73,7 +75,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_if_already_latest() -> Result<(), Error> {
-        let source_lineage = mocks::lineage::with_remote("quilt+s3://b#package=f/a@foo")?;
+        let source_lineage = mocks::lineage::with_remote(ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("f", "a").into(),
+            hash: "foo".to_string(),
+        });
 
         let remote = mocks::remote::MockRemote::default();
         remote
@@ -99,7 +105,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_reseting_to_latest() -> Result<(), Error> {
-        let source_lineage = mocks::lineage::with_remote("quilt+s3://b#package=f/a@OUTDATED_HASH")?;
+        let source_lineage = mocks::lineage::with_remote(ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("f", "a").into(),
+            hash: "OUTDATED_HASH".to_string(),
+        });
 
         let jsonl = std::fs::read(mocks::manifest::jsonl())?;
         let remote = mocks::remote::MockRemote::default();

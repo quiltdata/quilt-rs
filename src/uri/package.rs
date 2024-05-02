@@ -204,22 +204,20 @@ impl std::str::FromStr for S3PackageUri {
     }
 }
 
-impl From<S3PackageUri> for ManifestUri {
-    fn from(uri: S3PackageUri) -> ManifestUri {
-        ManifestUri {
+impl From<ManifestUri> for S3PackageUri {
+    fn from(uri: ManifestUri) -> S3PackageUri {
+        S3PackageUri {
             bucket: uri.bucket,
             namespace: uri.namespace,
-            hash: match uri.revision {
-                RevisionPointer::Hash(h) => h,
-                RevisionPointer::Tag(h) => h,
-            },
+            revision: RevisionPointer::Hash(uri.hash),
+            path: None,
         }
     }
 }
 
-impl From<&S3PackageUri> for ManifestUri {
-    fn from(uri: &S3PackageUri) -> ManifestUri {
-        ManifestUri::from(uri.clone())
+impl From<&ManifestUri> for S3PackageUri {
+    fn from(uri: &ManifestUri) -> S3PackageUri {
+        S3PackageUri::from(uri.clone())
     }
 }
 

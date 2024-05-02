@@ -51,7 +51,7 @@ pub async fn pull_package(
 
     // FIXME: pass from outside
     let remote = RemoteS3::new();
-    cache_remote_manifest(paths, storage, &remote, &lineage.remote).await?;
+    cache_remote_manifest(paths, storage, &remote, &lineage.remote.clone().into()).await?;
     copy_cached_to_installed(
         paths,
         storage,

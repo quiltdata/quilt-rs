@@ -5,8 +5,6 @@ use super::{CommitState, LineagePaths, PackageLineage};
 use crate::lineage::PathState;
 use crate::mocks;
 use crate::uri::ManifestUri;
-use crate::uri::S3PackageUri;
-use crate::Error;
 
 pub fn path_state() -> PathState {
     PathState {
@@ -44,13 +42,11 @@ pub fn with_commit() -> PackageLineage {
     }
 }
 
-pub fn with_remote(uri_str: &str) -> Result<PackageLineage, Error> {
-    let uri = S3PackageUri::try_from(uri_str)?;
-    let mnifest_uri: ManifestUri = uri.into();
-    Ok(PackageLineage {
-        remote: mnifest_uri,
+pub fn with_remote(manifest_uri: ManifestUri) -> PackageLineage {
+    PackageLineage {
+        remote: manifest_uri,
         ..PackageLineage::default()
-    })
+    }
 }
 
 pub fn with_commit_hash(hash: &str) -> PackageLineage {
