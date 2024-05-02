@@ -17,6 +17,8 @@ use crate::flow::status::create_status;
 use crate::flow::status::refresh_latest_hash;
 use crate::flow::uninstall_package::uninstall_package;
 use crate::flow::uninstall_paths::uninstall_paths;
+use crate::io::manifest::tag_latest;
+use crate::io::manifest::tag_timestamp;
 use crate::io::manifest::upload_manifest;
 use crate::io::remote::s3::RemoteS3;
 use crate::io::remote::utils::get_attrs_for_key;
@@ -216,13 +218,8 @@ impl LocalDomain {
             table,
         )
         .await?;
-
-        manifest_uri
-            .put_timestamp_tag(&self.remote, chrono::Utc::now(), &manifest_uri.hash)
-            .await?;
-        manifest_uri
-            .update_latest(&self.remote, &manifest_uri.hash)
-            .await?;
+        tag_timestamp(&self.remote, &manifest_uri, chrono::Utc::now()).await?;
+        tag_latest(&self.remote, &manifest_uri).await?;
 
         Ok(manifest_uri)
     }
@@ -361,7 +358,8 @@ impl InstalledPackage {
 
     pub async fn certify_latest(&self) -> Result<ManifestUri, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
-        let lineage = certify_latest(lineage, &self.remote).await?;
+        let latest_manifest_uri = lineage.remote.clone();
+        let lineage = certify_latest(lineage, &self.remote, latest_manifest_uri).await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(lineage.remote)
     }

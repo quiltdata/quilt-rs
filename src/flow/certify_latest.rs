@@ -1,15 +1,16 @@
+use crate::io::manifest::tag_latest;
 use crate::io::remote::Remote;
 use crate::lineage::PackageLineage;
+use crate::uri::ManifestUri;
 use crate::Error;
 
 pub async fn certify_latest(
     mut lineage: PackageLineage,
     remote: &impl Remote,
+    manifest_uri: ManifestUri,
 ) -> Result<PackageLineage, Error> {
-    let new_latest = lineage.remote.hash.clone();
-    lineage.remote.update_latest(remote, &new_latest).await?;
-    lineage.latest_hash = new_latest.clone();
-    lineage.base_hash = new_latest;
+    tag_latest(remote, &manifest_uri).await?;
+    lineage.update_latest(manifest_uri.clone());
     Ok(lineage)
 }
 
@@ -30,7 +31,7 @@ mod tests {
             )
             .await?;
         let source_lineage = mocks::lineage::with_remote("quilt+s3://b#package=f/a@LATEST_HASH")?;
-        let resolved_lineage = certify_latest(source_lineage.clone(), &remote).await?;
+        let resolved_lineage = certify_latest(source_lineage.clone(), &remote, source_lineage.remote).await?;
         assert_eq!(
             resolved_lineage,
             PackageLineage {

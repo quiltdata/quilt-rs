@@ -162,6 +162,12 @@ impl PackageLineage {
     pub fn current_hash(&self) -> &str {
         self.commit.as_ref().map_or(&self.remote.hash, |c| &c.hash)
     }
+
+    pub fn update_latest(&mut self, manifest_uri: ManifestUri) {
+        let new_latest_hash = manifest_uri.hash;
+        self.latest_hash = new_latest_hash.clone();
+        self.base_hash = new_latest_hash.clone();
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]

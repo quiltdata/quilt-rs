@@ -8,6 +8,8 @@ use url::Url;
 use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use crate::checksum::MULTIPART_THRESHOLD;
 use crate::flow::browse::browse_remote_manifest;
+use crate::flow::certify_latest::certify_latest;
+use crate::io::manifest::tag_timestamp;
 use crate::io::manifest::upload_manifest;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
@@ -98,15 +100,7 @@ pub async fn push_package(
     )
     .await?;
 
-    // Tag the new commit.
-    // If {self.commit.tag} does not already exist at
-    // {self.remote}/.quilt/named_packages/{self.namespace},
-    // create it with the value of {self.commit.hash}
-    // TODO: Otherwise try again with the current timestamp as the tag
-    // (e.g., try five times with exponential backoff, then Error)
-    new_manifest_uri
-        .put_timestamp_tag(remote, commit.timestamp, &new_manifest_uri.hash)
-        .await?;
+    tag_timestamp(remote, &new_manifest_uri, commit.timestamp).await?;
 
     // Check the hash of remote's latest manifest
     lineage.latest_hash = new_manifest_uri.resolve_latest(remote).await?;
@@ -115,13 +109,10 @@ pub async fn push_package(
     // Reset the commit state.
     lineage.commit = None;
 
-    // FIXME: use flow::certify_latest
     // Try certifying latest if tracking
     if lineage.base_hash == lineage.latest_hash {
         // remote latest has not been updated, certifying the new latest
-        lineage.remote.update_latest(remote, &new_manifest_uri.hash).await?;
-        lineage.latest_hash = new_manifest_uri.hash.clone();
-        lineage.base_hash = new_manifest_uri.hash.clone();
+        return certify_latest(lineage, remote, new_manifest_uri).await;
     }
 
     Ok(lineage)
@@ -135,6 +126,7 @@ mod tests {
     use crate::lineage::PackageLineage;
     use crate::manifest::Row;
     use crate::mocks;
+    use crate::uri::ManifestUri;
     use crate::uri::S3PackageUri;
 
     #[tokio::test]

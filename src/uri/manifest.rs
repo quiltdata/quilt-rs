@@ -51,60 +51,6 @@ impl ManifestUri {
         let uri = TagUri::latest(self);
         resolve_top_hash(remote, uri).await
     }
-
-    async fn put_tag(
-        &self,
-        remote: &impl Remote,
-        tag_uri: TagUri,
-        hash: &str,
-    ) -> Result<(), Error> {
-        remote
-            .put_object(&tag_uri.into(), hash.as_bytes().to_vec())
-            .await
-    }
-
-    pub async fn put_timestamp_tag(
-        &self,
-        remote: &impl Remote,
-        timestamp: chrono::DateTime<chrono::Utc>,
-        hash: &str,
-    ) -> Result<(), Error> {
-        let uri = TagUri::timestamp(self, timestamp);
-        self.put_tag(remote, uri, hash).await
-    }
-
-    pub async fn update_latest(&self, remote: &impl Remote, hash: &str) -> Result<(), Error> {
-        let uri = TagUri::latest(self);
-        self.put_tag(remote, uri, hash).await
-    }
-
-    pub async fn upload_from(
-        &self,
-        storage: &impl Storage,
-        remote: &impl Remote,
-        manifest_path: &PathBuf,
-    ) -> Result<(), Error> {
-        // TODO: FAIL if the manifest with this hash already exists?
-        let body = storage.read_byte_stream(manifest_path).await?;
-        // let body = Manifest::from(&table).to_jsonlines().as_bytes().to_vec();
-        let s3uri = S3Uri::from(self);
-        log::info!("writing remote manifest to {}", s3uri.key);
-        remote.put_object(&s3uri, body).await
-    }
-
-    pub async fn upload_legacy(&self, remote: &impl Remote, table: &Table) -> Result<(), Error> {
-        let s3uri = S3Uri {
-            bucket: self.bucket.clone(),
-            key: paths::get_manifest_key_legacy(&self.hash),
-            version: None,
-        };
-        remote
-            .put_object(
-                &s3uri,
-                Manifest::from(table).to_jsonlines().as_bytes().to_vec(),
-            )
-            .await
-    }
 }
 
 impl From<&ManifestUri> for S3Uri {
