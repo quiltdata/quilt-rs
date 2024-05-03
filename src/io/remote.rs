@@ -7,8 +7,10 @@ use tokio::io::AsyncRead;
 use crate::uri::S3Uri;
 use crate::Error;
 
+mod client;
 pub mod s3;
-pub mod utils; // TODO: make it private after refactoring package_s3_folder
+
+pub use client::get_client_for_bucket;
 
 #[cfg(test)]
 pub mod mocks;

@@ -25,7 +25,7 @@ use crate::io::remote::Remote;
 use crate::uri::S3Uri;
 use crate::Error;
 
-use crate::io::remote::utils::get_client_for_bucket;
+use crate::io::remote::get_client_for_bucket;
 use crate::io::remote::S3Attributes;
 
 struct S3AttributesWrapper {

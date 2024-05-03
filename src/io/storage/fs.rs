@@ -109,7 +109,8 @@ impl Storage for LocalStorage {
         // log::debug!("Trying again with client {:?}", client);
         Err(Error::S3(format!(
             "Error getting attributes for {} in {}",
-            object_key.as_ref(), listing_uri,
+            object_key.as_ref(),
+            listing_uri,
         )))
     }
 }

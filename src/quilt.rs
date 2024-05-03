@@ -19,8 +19,8 @@ use crate::flow::uninstall_paths::uninstall_paths;
 use crate::io::manifest::tag_latest;
 use crate::io::manifest::tag_timestamp;
 use crate::io::manifest::upload_manifest;
+use crate::io::remote::get_client_for_bucket;
 use crate::io::remote::s3::RemoteS3;
-use crate::io::remote::utils::get_client_for_bucket;
 use crate::io::remote::Remote;
 use crate::io::storage::fs;
 use crate::io::storage::Storage;
@@ -173,9 +173,7 @@ impl LocalDomain {
                     Ok(attrs) => attrs,
                     Err(err) => {
                         log::warn!("Error getting attributes: {}", err);
-                        self.storage
-                            .get_object_attributes(uri, &object_key)
-                            .await?
+                        self.storage.get_object_attributes(uri, &object_key).await?
                     }
                 }
                 .into();

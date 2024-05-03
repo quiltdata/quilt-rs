@@ -157,11 +157,11 @@ pub fn get_compliant_chunked_checksum(attrs: &GetObjectAttributesOutput) -> Opti
 mod tests {
     use super::*;
 
-    use base64::prelude::BASE64_STANDARD;
-    use base64::Engine;
     use aws_sdk_s3::types::Checksum;
     use aws_sdk_s3::types::GetObjectAttributesParts;
     use aws_sdk_s3::types::ObjectPart;
+    use base64::prelude::BASE64_STANDARD;
+    use base64::Engine;
 
     #[tokio::test]
     async fn test_sha256() {
