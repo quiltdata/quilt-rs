@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use aws_sdk_s3::error::DisplayErrorContext;
 use tracing::log;
 
 use crate::flow::browse::browse_remote_manifest;
@@ -9,6 +8,7 @@ use crate::flow::certify_latest::certify_latest;
 use crate::flow::commit::commit_package;
 use crate::flow::install_package::install_package;
 use crate::flow::install_paths::install_paths;
+use crate::flow::package::package_s3_prefix;
 use crate::flow::pull::pull_package;
 use crate::flow::push::push_package;
 use crate::flow::reset_to_latest::reset_to_latest;
@@ -16,10 +16,6 @@ use crate::flow::status::create_status;
 use crate::flow::status::refresh_latest_hash;
 use crate::flow::uninstall_package::uninstall_package;
 use crate::flow::uninstall_paths::uninstall_paths;
-use crate::io::manifest::tag_latest;
-use crate::io::manifest::tag_timestamp;
-use crate::io::manifest::upload_manifest;
-use crate::io::remote::get_client_for_bucket;
 use crate::io::remote::s3::RemoteS3;
 use crate::io::remote::Remote;
 use crate::io::storage::fs;
@@ -30,7 +26,6 @@ use crate::lineage::DomainLineage;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::LineagePaths;
 use crate::manifest::JsonObject;
-use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::paths;
 use crate::uri::ManifestUri;
@@ -138,62 +133,17 @@ impl LocalDomain {
 
     pub async fn package_s3_prefix(
         &self,
-        uri: &S3Uri,
-        target_uri: S3PackageUri,
+        source_uri: &S3Uri,
+        dest_uri: S3PackageUri,
     ) -> Result<ManifestUri, Error> {
-        log::debug!("Source URI: {:?}, target URI: {:?}", uri, target_uri);
-        // TODO: make get_object_attributes() calls concurrently across list_objects() pages
-        // TODO: increase concurrency, to do that we need to figure out how to deal
-        //       with fd limits on Mac by default it's 256
-        // TODO: s3 uri key ends with / and has no version
-        // FIXME: filter or fail on keys with `.` or `..` in path segments as quilt3 do
-        let client = get_client_for_bucket(&uri.bucket).await?;
-
-        // XXX: we need real API to build manifests
-        let header = Row::default();
-        let mut records: BTreeMap<PathBuf, Row> = BTreeMap::new();
-
-        // FIXME: let mut table = Table?
-        // FIXME: table.insert_record?
-
-        let mut p = client
-            .list_objects_v2()
-            .bucket(&uri.bucket)
-            .prefix(&uri.key)
-            .into_paginator()
-            .page_size(100) // XXX: this is to limit concurrency
-            .send();
-        while let Some(page) = p.next().await {
-            let page = page.map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
-            let page_contents_iter = page.contents.iter().flatten();
-
-            for obj in page_contents_iter {
-                let object_key = obj.key.clone().expect("object key expected to be present");
-                let row: Row = match self.remote.get_object_attributes(uri, &object_key).await {
-                    Ok(attrs) => attrs,
-                    Err(err) => {
-                        log::warn!("Error getting attributes: {}", err);
-                        self.storage.get_object_attributes(uri, &object_key).await?
-                    }
-                }
-                .into();
-                records.insert(row.name.clone(), row);
-            }
-        }
-
-        let table = Table { header, records };
-        let manifest_uri = upload_manifest(
+        package_s3_prefix(
+            &self.paths,
             &self.storage,
             &self.remote,
-            &self.paths,
-            target_uri.into(),
-            table,
+            source_uri,
+            dest_uri,
         )
-        .await?;
-        tag_timestamp(&self.remote, &manifest_uri, chrono::Utc::now()).await?;
-        tag_latest(&self.remote, &manifest_uri).await?;
-
-        Ok(manifest_uri)
+        .await
     }
 }
 

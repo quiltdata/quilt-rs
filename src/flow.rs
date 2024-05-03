@@ -3,6 +3,7 @@ pub mod certify_latest;
 pub mod commit;
 pub mod install_package;
 pub mod install_paths;
+pub mod package;
 pub mod pull;
 pub mod push;
 pub mod reset_to_latest;
