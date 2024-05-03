@@ -55,8 +55,7 @@ pub async fn push_package(
         storage,
         remote,
         paths,
-        manifest_uri.bucket.clone(),
-        manifest_uri.namespace.clone(),
+        manifest_uri.clone().into(),
         local_manifest,
     )
     .await?;

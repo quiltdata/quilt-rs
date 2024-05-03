@@ -6,6 +6,8 @@ use chrono::DateTime;
 use chrono::Utc;
 use tokio::fs::{File, ReadDir};
 
+use crate::io::remote::S3Attributes;
+use crate::uri::S3Uri;
 use crate::Error;
 
 pub mod fs;
@@ -87,4 +89,10 @@ pub trait Storage {
         path: impl AsRef<Path> + Send + Sync,
         body: ByteStream,
     ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
+
+    fn get_object_attributes(
+        &self,
+        listing_uri: &S3Uri,
+        object_key: impl AsRef<str> + Send + Sync,
+    ) -> impl Future<Output = Result<S3Attributes, Error>> + Send + Sync;
 }

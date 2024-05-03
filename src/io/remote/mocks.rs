@@ -7,6 +7,7 @@ use tokio::io::AsyncReadExt;
 use tracing::log;
 
 use crate::checksum;
+use crate::io::remote::S3Attributes;
 use crate::io::storage::mocks::MockStorage;
 use crate::io::storage::Storage;
 use crate::uri::S3Uri;
@@ -88,6 +89,16 @@ impl Remote for MockRemote {
             },
             hash,
         ))
+    }
+
+    async fn get_object_attributes(
+        &self,
+        listing_uri: &S3Uri,
+        object_key: impl AsRef<str>,
+    ) -> Result<S3Attributes, Error> {
+        self.storage
+            .get_object_attributes(listing_uri, object_key.as_ref().to_string())
+            .await
     }
 }
 

@@ -20,7 +20,6 @@ use crate::io::manifest::tag_latest;
 use crate::io::manifest::tag_timestamp;
 use crate::io::manifest::upload_manifest;
 use crate::io::remote::s3::RemoteS3;
-use crate::io::remote::utils::get_attrs_for_key;
 use crate::io::remote::utils::get_client_for_bucket;
 use crate::io::remote::Remote;
 use crate::io::storage::fs;
@@ -154,7 +153,9 @@ impl LocalDomain {
         let header = Row::default();
         let mut records: BTreeMap<PathBuf, Row> = BTreeMap::new();
 
-        let prefix_len = uri.key.len();
+        // FIXME: let mut table = Table?
+        // FIXME: table.insert_record?
+
         let mut p = client
             .list_objects_v2()
             .bucket(&uri.bucket)
@@ -166,33 +167,19 @@ impl LocalDomain {
             let page = page.map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
             let page_contents_iter = page.contents.iter().flatten();
 
-            for attrs in futures::future::try_join_all(page_contents_iter.map(|obj| {
-                get_attrs_for_key(
-                    client.clone(),
-                    &uri.bucket,
-                    obj.key.as_ref().expect("object key expected to be present"),
-                )
-            }))
-            .await?
-            {
-                let name = PathBuf::from(attrs.key[prefix_len..].to_string());
-                let record_url = S3Uri {
-                    bucket: uri.bucket.clone(),
-                    key: attrs.key,
-                    version: attrs.version_id,
-                };
-                records.insert(
-                    name.clone(),
-                    Row {
-                        name,
-                        place: record_url.to_string(),
-                        // XXX: can we use `as u64` safely here?
-                        size: attrs.size,
-                        hash: attrs.hash,
-                        info: serde_json::Value::Null, // XXX: is this right?
-                        meta: serde_json::Value::Null, // XXX: is this right?
-                    },
-                );
+            for obj in page_contents_iter {
+                let object_key = obj.key.clone().expect("object key expected to be present");
+                let row: Row = match self.remote.get_object_attributes(uri, &object_key).await {
+                    Ok(attrs) => attrs,
+                    Err(err) => {
+                        log::warn!("Error getting attributes: {}", err);
+                        self.storage
+                            .get_object_attributes(uri, &object_key)
+                            .await?
+                    }
+                }
+                .into();
+                records.insert(row.name.clone(), row);
             }
         }
 
@@ -201,8 +188,7 @@ impl LocalDomain {
             &self.storage,
             &self.remote,
             &self.paths,
-            target_uri.bucket,
-            target_uri.namespace,
+            target_uri.into(),
             table,
         )
         .await?;

@@ -1,9 +1,10 @@
 use std::path::PathBuf;
 
+use aws_sdk_s3::primitives::ByteStream;
+use tokio::io::AsyncReadExt;
 use tracing::log;
 use url::Url;
 
-use crate::io::remote::utils::bytestream_to_string;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::manifest::Manifest;
@@ -13,13 +14,20 @@ use crate::paths::get_manifest_key_legacy;
 use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
-use crate::uri::Namespace;
 use crate::uri::ObjectUri;
 use crate::uri::RevisionPointer;
+use crate::uri::S3PackageHandle;
 use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
 use crate::uri::TagUri;
 use crate::Error;
+
+pub async fn bytestream_to_string(bytestream: ByteStream) -> Result<String, Error> {
+    let mut reader = bytestream.into_async_read();
+    let mut contents = Vec::new();
+    reader.read_to_end(&mut contents).await?;
+    String::from_utf8(contents).map_err(|err| Error::Utf8(err.utf8_error()))
+}
 
 async fn cache_manifest(
     paths: &DomainPaths,
@@ -71,10 +79,10 @@ pub async fn upload_manifest(
     storage: &impl Storage,
     remote: &impl Remote,
     paths: &DomainPaths,
-    bucket: String,
-    namespace: Namespace,
+    package_handle: S3PackageHandle,
     manifest: Table,
 ) -> Result<ManifestUri, Error> {
+    let S3PackageHandle { bucket, namespace } = package_handle;
     let (cache_path, top_hash) = cache_manifest(paths, storage, &manifest, &bucket).await?;
 
     let manifest_uri = ManifestUri {

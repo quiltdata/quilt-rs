@@ -13,6 +13,13 @@ pub mod utils; // TODO: make it private after refactoring package_s3_folder
 #[cfg(test)]
 pub mod mocks;
 
+pub struct S3Attributes {
+    pub listing_uri: S3Uri,
+    pub object_uri: S3Uri,
+    pub hash: Multihash<256>,
+    pub size: u64,
+}
+
 /// This trait encapsulates the S3 operations that Quilt needs to perform.
 #[allow(async_fn_in_trait)]
 pub trait Remote {
@@ -34,4 +41,10 @@ pub trait Remote {
         dest_uri: &S3Uri,
         size: u64,
     ) -> Result<(S3Uri, Multihash<256>), Error>;
+
+    async fn get_object_attributes(
+        &self,
+        listing_uri: &S3Uri,
+        object_key: impl AsRef<str>,
+    ) -> Result<S3Attributes, Error>;
 }

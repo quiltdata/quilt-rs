@@ -6,6 +6,8 @@ use chrono::Utc;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
+use crate::io::remote::S3Attributes;
+use crate::uri::S3Uri;
 use crate::Error;
 
 use super::Storage;
@@ -97,6 +99,18 @@ impl Storage for LocalStorage {
         file.flush().await?;
 
         Ok(())
+    }
+
+    async fn get_object_attributes(
+        &self,
+        listing_uri: &S3Uri,
+        object_key: impl AsRef<str> + Send + Sync,
+    ) -> Result<S3Attributes, Error> {
+        // log::debug!("Trying again with client {:?}", client);
+        Err(Error::S3(format!(
+            "Error getting attributes for {} in {}",
+            object_key.as_ref(), listing_uri,
+        )))
     }
 }
 
