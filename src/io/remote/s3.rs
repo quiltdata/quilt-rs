@@ -46,7 +46,7 @@ async fn put_object_and_checksum(
     source_path: impl AsRef<Path>,
     dest_uri: &S3Uri,
     size: u64,
-) -> Result<(Option<String>, Multihash<256>), Error> {
+) -> Result<(S3Uri, Multihash<256>), Error> {
     let client = get_client_for_bucket(&dest_uri.bucket).await?;
     let response = client
         .put_object()
@@ -71,14 +71,20 @@ async fn put_object_and_checksum(
         calculate_sha256_checksum(hash.digest()).await?
     };
 
-    Ok((response.version_id, checksum))
+    Ok((
+        S3Uri {
+            version: response.version_id,
+            ..dest_uri.clone()
+        },
+        checksum,
+    ))
 }
 
 async fn multipart_upload_and_checksum(
     source_path: impl AsRef<Path>,
     dest_uri: &S3Uri,
     size: u64,
-) -> Result<(Option<String>, Multihash<256>), Error> {
+) -> Result<(S3Uri, Multihash<256>), Error> {
     let (chunksize, num_chunks) = get_checksum_chunksize_and_parts(size);
     let client = get_client_for_bucket(&dest_uri.bucket).await?;
     let upload_id = client
@@ -145,7 +151,10 @@ async fn multipart_upload_and_checksum(
         .ok_or(Error::Checksum("unexpected checksum".to_string()))?;
 
     Ok((
-        response.version_id,
+        S3Uri {
+            version: response.version_id,
+            ..dest_uri.clone()
+        },
         ContentHash::SHA256Chunked(checksum_b64.to_string()).try_into()?,
     ))
 }
@@ -213,7 +222,7 @@ impl Remote for RemoteS3 {
         source_path: impl AsRef<Path>,
         dest_uri: &S3Uri,
         size: u64,
-    ) -> Result<(Option<String>, Multihash<256>), Error> {
+    ) -> Result<(S3Uri, Multihash<256>), Error> {
         if size < MULTIPART_THRESHOLD {
             put_object_and_checksum(source_path, dest_uri, size).await
         } else {

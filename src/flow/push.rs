@@ -1,39 +1,33 @@
-use std::path::PathBuf;
-
-use tracing::log;
-use url::Url;
-
 use crate::flow::browse::browse_remote_manifest;
 use crate::flow::certify_latest::certify_latest;
 use crate::io::manifest::resolve_latest;
 use crate::io::manifest::tag_timestamp;
 use crate::io::manifest::upload_manifest;
+use crate::io::manifest::upload_row;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::manifest::Table;
 use crate::paths;
+use crate::uri::ManifestUri;
 use crate::uri::Namespace;
-use crate::uri::S3Uri;
 use crate::Error;
 
 pub async fn push_package(
     mut lineage: PackageLineage,
-    local_manifest: &mut Table,
+    mut local_manifest: Table,
     paths: &paths::DomainPaths,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    namespace: Namespace,
+    namespace: Option<Namespace>,
 ) -> Result<PackageLineage, Error> {
     let commit = match lineage.commit {
         None => return Ok(lineage), // nothing to commit
         Some(commit) => commit,
     };
 
-    let manifest_uri = lineage.remote;
-
     let remote_manifest =
-        browse_remote_manifest(paths, storage, remote, &manifest_uri.clone().into()).await?;
+        browse_remote_manifest(paths, storage, remote, &lineage.remote.clone().into()).await?;
 
     // ## copy data
     // Copy each of the _modified_ paths from their local_key to remote_key,
@@ -41,40 +35,20 @@ pub async fn push_package(
     //
     // TODO: FAIL if the remote bucket does NOT support versioning (as it would be destructive)
 
+    let manifest_uri = ManifestUri {
+        namespace: namespace.unwrap_or(lineage.remote.namespace.clone()),
+        ..lineage.remote.clone()
+    };
     // ignore removed items, upload changed and new items
     for row in local_manifest.records.values_mut() {
-        if let Some(remote_row) = remote_manifest.records.get(&row.name) {
+        if let Some(remote_row) = remote_manifest.records.get(&row.name.clone()) {
             if remote_row == row {
                 row.place = remote_row.place.to_owned();
                 continue;
             }
         }
 
-        let local_url = Url::parse(&row.place)?;
-        let file_path: PathBuf = local_url.to_file_path().unwrap();
-
-        let s3_key = format!("{}/{}", namespace, row.name.display());
-        let s3_uri = S3Uri {
-            bucket: manifest_uri.bucket.to_string(),
-            key: format!("{}/{}", namespace, row.name.display()),
-            version: None,
-        };
-        log::debug!("Uploading to S3: {}", s3_uri);
-
-        let (version_id, checksum) = remote.upload_file(&file_path, &s3_uri, row.size).await?;
-
-        // Update the manifest with the sha2-256-chunked checksum.
-        row.hash = checksum;
-
-        let remote_url = S3Uri {
-            bucket: manifest_uri.bucket.clone(),
-            key: s3_key,
-            version: version_id,
-        };
-        log::debug!("got remote url: {}", remote_url);
-
-        // "Relax" the manifest by using those new remote keys
-        row.place = remote_url.to_string();
+        upload_row(remote, manifest_uri.clone(), row).await?;
     }
 
     let new_manifest_uri = upload_manifest(
@@ -83,7 +57,7 @@ pub async fn push_package(
         paths,
         manifest_uri.bucket.clone(),
         manifest_uri.namespace.clone(),
-        local_manifest.clone(),
+        local_manifest,
     )
     .await?;
 
@@ -109,6 +83,9 @@ pub async fn push_package(
 mod tests {
     use super::*;
 
+    use crate::uri::S3Uri;
+    use std::path::PathBuf;
+
     use crate::lineage::CommitState;
     use crate::lineage::PackageLineage;
     use crate::manifest::Row;
@@ -121,11 +98,11 @@ mod tests {
         let remote = mocks::remote::MockRemote::default();
         let lineage = push_package(
             PackageLineage::default(),
-            &mut Table::default(),
+            Table::default(),
             &paths::DomainPaths::default(),
             &storage,
             &remote,
-            Namespace::default(),
+            None,
         )
         .await?;
         assert_eq!(lineage, PackageLineage::default());
@@ -167,11 +144,11 @@ mod tests {
             .await?;
         let lineage = push_package(
             lineage,
-            &mut Table::default(),
+            Table::default(),
             &paths::DomainPaths::default(),
             &storage,
             &remote,
-            Namespace::default(),
+            None,
         )
         .await?;
         let manifest_uri = ManifestUri {
@@ -230,7 +207,7 @@ mod tests {
             .storage
             .write_file(&file_path, &manifest_file)
             .await?;
-        let mut manifest = mocks::manifest::with_rows(vec![Row {
+        let manifest = mocks::manifest::with_rows(vec![Row {
             name: PathBuf::from("bar"),
             place: format!("file://{}", file_path.display()),
             ..Row::default()
@@ -238,11 +215,11 @@ mod tests {
 
         let lineage = push_package(
             lineage,
-            &mut manifest,
+            manifest,
             &paths::DomainPaths::default(),
             &storage,
             &remote,
-            Namespace::default(),
+            None,
         )
         .await?;
         let manifest_uri = ManifestUri {

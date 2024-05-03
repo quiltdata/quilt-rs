@@ -76,12 +76,18 @@ impl Remote for MockRemote {
     async fn upload_file(
         &self,
         source_path: impl AsRef<Path>,
-        _dest_uri: &S3Uri,
+        dest_uri: &S3Uri,
         size: u64,
-    ) -> Result<(Option<String>, Multihash<256>), Error> {
+    ) -> Result<(S3Uri, Multihash<256>), Error> {
         let file = self.storage.open_file(source_path.as_ref()).await?;
         let hash = checksum::calculate_sha256_chunked_checksum(file, size).await?;
-        Ok((Some("version".to_string()), hash))
+        Ok((
+            S3Uri {
+                version: Some("version".to_string()),
+                ..dest_uri.clone()
+            },
+            hash,
+        ))
     }
 }
 

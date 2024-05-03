@@ -312,14 +312,14 @@ impl InstalledPackage {
 
     pub async fn push(&self) -> Result<ManifestUri, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
-        let mut manifest = self.manifest().await?;
+        let manifest = self.manifest().await?;
         let lineage = push_package(
             lineage,
-            &mut manifest,
+            manifest,
             &self.paths,
             &self.storage,
             &self.remote,
-            self.namespace.clone(),
+            Some(self.namespace.clone()),
         )
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;

@@ -33,5 +33,5 @@ pub trait Remote {
         source_path: impl AsRef<Path>,
         dest_uri: &S3Uri,
         size: u64,
-    ) -> Result<(Option<String>, Multihash<256>), Error>;
+    ) -> Result<(S3Uri, Multihash<256>), Error>;
 }

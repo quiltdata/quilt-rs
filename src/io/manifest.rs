@@ -1,17 +1,20 @@
 use std::path::PathBuf;
 
 use tracing::log;
+use url::Url;
 
 use crate::io::remote::utils::bytestream_to_string;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::manifest::Manifest;
+use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::paths::get_manifest_key_legacy;
 use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
+use crate::uri::ObjectUri;
 use crate::uri::RevisionPointer;
 use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
@@ -149,6 +152,38 @@ pub async fn resolve_latest(remote: &impl Remote, uri: S3PackageUri) -> Result<S
     let tag_uri = TagUri::latest(&uri);
     let stream = remote.get_object_stream(&tag_uri.into()).await?;
     bytestream_to_string(stream).await
+}
+
+pub async fn upload_row(
+    remote: &impl Remote,
+    manifest_uri: ManifestUri,
+    row: &mut Row,
+) -> Result<(), Error> {
+    let local_url = Url::parse(&row.place)?;
+    if local_url.scheme() != "file" {
+        return Err(Error::FileUri(local_url));
+    }
+    let file_path = local_url
+        .to_file_path()
+        .map_err(|_| Error::FileUri(local_url))?;
+
+    let s3_uri = ObjectUri {
+        bucket: manifest_uri.bucket.clone(),
+        namespace: manifest_uri.namespace.clone(),
+        path: row.name.clone(),
+        version: None,
+    };
+    log::debug!("Uploading to S3: {}", s3_uri);
+
+    let (remote_url, hash) = remote
+        .upload_file(&file_path, &s3_uri.into(), row.size)
+        .await?;
+
+    // Update the manifest with the sha2-256-chunked checksum
+    row.hash = hash;
+    // "Relax" the manifest by using those new remote keys
+    row.place = remote_url.to_string();
+    Ok(())
 }
 
 #[cfg(test)]
