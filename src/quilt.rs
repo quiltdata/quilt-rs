@@ -61,6 +61,7 @@ impl LocalDomain {
     }
 
     pub fn create_installed_package(&self, namespace: Namespace) -> InstalledPackage {
+        // TODO: seems like you can use PackageLineage as an argument instead of namespace
         InstalledPackage {
             lineage: self.lineage.create_package_lineage(namespace.clone()),
             namespace: namespace.clone(),
@@ -102,13 +103,7 @@ impl LocalDomain {
         namespaces.sort();
         let packages = namespaces
             .into_iter()
-            .map(|namespace| InstalledPackage {
-                lineage: self.lineage.create_package_lineage(namespace.clone()),
-                namespace,
-                paths: self.paths.clone(),
-                remote: self.remote.clone(),
-                storage: self.storage.clone(),
-            })
+            .map(|namespace| self.create_installed_package(namespace))
             .collect();
         Ok(packages)
     }
@@ -119,13 +114,7 @@ impl LocalDomain {
     ) -> Result<Option<InstalledPackage>, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
         if lineage.packages.contains_key(namespace) {
-            Ok(Some(InstalledPackage {
-                lineage: self.lineage.create_package_lineage(namespace.clone()),
-                namespace: namespace.clone(),
-                paths: self.paths.clone(),
-                remote: self.remote.clone(),
-                storage: self.storage.clone(),
-            }))
+            Ok(Some(self.create_installed_package(namespace.to_owned())))
         } else {
             Ok(None)
         }
