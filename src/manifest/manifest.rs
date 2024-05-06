@@ -202,8 +202,7 @@ impl From<&Table> for Manifest {
                 user_meta: table.header.meta.as_object().cloned(),
             },
             rows: table
-                .records
-                .values()
+                .records_values()
                 .map(|row| {
                     let mut meta = match row.info.as_object() {
                         Some(meta) => meta.clone(),
@@ -309,8 +308,8 @@ mod tests {
             serde_json::Value::String("test".to_string()),
         );
 
-        let table = Table {
-            header: Row {
+        let table = Table::new(
+            Row {
                 name: HEADER_ROW.into(),
                 place: HEADER_ROW.into(),
                 size: 0,
@@ -318,7 +317,7 @@ mod tests {
                 info: serde_json::Value::Object(info),
                 meta: serde_json::Value::Object(user_meta.clone()),
             },
-            records: BTreeMap::from([(
+            BTreeMap::from([(
                 PathBuf::from("foo/bar"),
                 Row {
                     name: PathBuf::from("foo/bar"),
@@ -329,7 +328,7 @@ mod tests {
                     meta: serde_json::Value::Object(meta.clone()),
                 },
             )]),
-        };
+        );
         let reference_manifest = Manifest {
             header: ManifestHeader {
                 version: "v0".to_string(),

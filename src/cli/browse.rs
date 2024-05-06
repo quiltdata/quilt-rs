@@ -34,7 +34,7 @@ impl std::fmt::Display for Output {
         header_table.with(tabled::settings::Panel::header("Remote manifest header"));
         output.push(header_table.to_string());
 
-        let entries = self.manifest.records.values().map(|e| RemoteManifestEntry {
+        let entries = self.manifest.records_values().map(|e| RemoteManifestEntry {
             name: e.name.display().to_string(),
             place: e.place.to_string(),
             size: e.size,
@@ -90,8 +90,8 @@ mod tests {
         assert_eq!(
             output
                 .manifest
-                .records
-                .get(&PathBuf::from("READ ME.md"))
+                .get_record(&PathBuf::from("READ ME.md"))
+                .await?
                 .unwrap()
                 .place,
             "s3://udp-spec/spec/quiltcore/READ%20ME.md?versionId=.l3tAGbfEBC4c.L2ywTpWbnweSpYLe8a"
@@ -99,8 +99,8 @@ mod tests {
         assert_eq!(
             output
                 .manifest
-                .records
-                .get(&PathBuf::from("timestamp.txt"))
+                .get_record(&PathBuf::from("timestamp.txt"))
+                .await?
                 .unwrap()
                 .place,
             "s3://udp-spec/spec/quiltcore/timestamp.txt?versionId=lifktjQgrgewg1FGXxls3UKtJSjl2shy"

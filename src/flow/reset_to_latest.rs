@@ -28,9 +28,9 @@ pub async fn reset_to_latest(
         return Ok(lineage);
     }
 
-    let entries_paths: Vec<PathBuf> = lineage.paths.clone().into_keys().collect();
+    let installed_paths: Vec<PathBuf> = lineage.paths.clone().into_keys().collect();
     let mut lineage =
-        uninstall_paths(lineage, working_dir.clone(), storage, &entries_paths).await?;
+        uninstall_paths(lineage, working_dir.clone(), storage, &installed_paths).await?;
 
     // TODO: Should be a method of lineage
     lineage.latest_hash = latest_top_hash.clone();
@@ -47,10 +47,12 @@ pub async fn reset_to_latest(
     )
     .await?;
 
-    let paths_to_install = entries_paths
-        .into_iter()
-        .filter(|x| manifest.records.contains_key(x))
-        .collect();
+    let mut paths_to_install = Vec::new();
+    for x in installed_paths {
+        if manifest.contains_record(&x).await {
+            paths_to_install.push(x)
+        }
+    }
     install_paths(
         lineage,
         manifest,

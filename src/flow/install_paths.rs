@@ -80,9 +80,9 @@ pub async fn install_paths(
 
     for path in entries_paths {
         // TODO: Consider using a hashmap or treemap for manifest.rows
-        let row = table
-            .records
-            .get_mut(path)
+        let mut row = table
+            .get_record(path)
+            .await?
             .ok_or(Error::Table(format!("path {:?} not found", path)))?;
 
         let object_dest = paths.object(row.hash.digest());
@@ -96,6 +96,7 @@ pub async fn install_paths(
                 Error::InstallPath(format!("Failed to create URL from {:?}", &object_dest))
             })?
             .to_string();
+        table.update_record(row.clone()).await?;
 
         let working_dest = working_dir.join(&row.name);
         let last_modified = create_mutable_copy(storage, &object_dest, &working_dest).await?;

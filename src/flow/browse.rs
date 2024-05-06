@@ -174,8 +174,8 @@ mod tests {
             cache_remote_manifest(&paths, &storage, &remote, &manifest.into()).await?;
         assert!(storage.exists(&PathBuf::from(".quilt/packages/a/c")).await);
         assert!(cached_manifest
-            .records
-            .get(&PathBuf::from("README.md"))
+            .get_record(&PathBuf::from("README.md"))
+            .await?
             .is_some());
         Ok(())
     }

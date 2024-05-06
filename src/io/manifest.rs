@@ -165,8 +165,8 @@ pub async fn resolve_latest(remote: &impl Remote, uri: S3PackageUri) -> Result<S
 pub async fn upload_row(
     remote: &impl Remote,
     manifest_uri: ManifestUri,
-    row: &mut Row,
-) -> Result<(), Error> {
+    row: Row,
+) -> Result<Row, Error> {
     let local_url = Url::parse(&row.place)?;
     if local_url.scheme() != "file" {
         return Err(Error::FileUri(local_url));
@@ -188,10 +188,9 @@ pub async fn upload_row(
         .await?;
 
     // Update the manifest with the sha2-256-chunked checksum
-    row.hash = hash;
     // "Relax" the manifest by using those new remote keys
-    row.place = remote_url.to_string();
-    Ok(())
+    let place = remote_url.to_string();
+    Ok(Row { hash, place, ..row })
 }
 
 #[cfg(test)]

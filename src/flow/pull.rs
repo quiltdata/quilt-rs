@@ -61,10 +61,12 @@ pub async fn pull_package(
     )
     .await?;
 
-    let paths_to_install = installed_paths
-        .into_iter()
-        .filter(|x| manifest.records.contains_key(x))
-        .collect();
+    let mut paths_to_install = Vec::new();
+    for x in installed_paths {
+        if manifest.contains_record(&x).await {
+            paths_to_install.push(x)
+        }
+    }
     install_paths(
         lineage,
         manifest,

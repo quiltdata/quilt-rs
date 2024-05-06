@@ -55,18 +55,15 @@ async fn modify_entry(
         .into();
 
     if table
-        .records
-        .insert(
-            logical_key.clone(),
-            Row {
-                name: logical_key.clone(),
-                place: new_physical_key,
-                size: current.size,
-                hash: current.hash,
-                info: serde_json::Value::default(),
-                meta: serde_json::Value::default(),
-            },
-        )
+        .insert_record(Row {
+            name: logical_key.clone(),
+            place: new_physical_key,
+            size: current.size,
+            hash: current.hash,
+            info: serde_json::Value::default(),
+            meta: serde_json::Value::default(),
+        })
+        .await?
         .is_some()
     {
         return Err(Error::Commit(format!("cannot overwrite {:?}", logical_key)));

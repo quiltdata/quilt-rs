@@ -4,6 +4,7 @@
 //! and provides methods to read/write (decode/encode) quilt3's JSONL format
 //!
 
+use std::collections::btree_map;
 use std::collections::BTreeMap;
 use std::fmt;
 // use std::io;
@@ -75,13 +76,31 @@ fn serialize_row_entry(row: &Row) -> serde_json::Value {
     })
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Table {
     pub header: Row,
-    pub records: BTreeMap<PathBuf, Row>,
+    records: BTreeMap<PathBuf, Row>, // TODO: use PathBuf and iterator of records
+    schema: Arc<Schema>,
 }
 
 impl Table {
+    // TODO: new creates empty records, from(header, records) creates full Table
+    pub fn new(header: Row, records: BTreeMap<PathBuf, Row>) -> Self {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("name", DataType::Utf8, false),
+            Field::new("place", DataType::Utf8, false),
+            Field::new("size", DataType::UInt64, false),
+            Field::new("multihash", DataType::Binary, false),
+            Field::new("meta.json", DataType::Utf8, false),
+            Field::new("info.json", DataType::Utf8, false),
+        ]));
+        Table {
+            header,
+            records,
+            schema,
+        }
+    }
+
     async fn read_rows_impl<T>(reader: T) -> Result<Self, Error>
     where
         T: AsyncSeek + AsyncRead + Unpin + Send + 'static,
@@ -158,10 +177,10 @@ impl Table {
             }
         }
 
-        Ok(Table {
-            header: header.ok_or(ArrowError::SchemaError("missing header row".into()))?,
+        Ok(Table::new(
+            header.ok_or(ArrowError::SchemaError("missing header row".into()))?,
             records,
-        })
+        ))
     }
 
     // Read quilt4's Parquet format
@@ -204,32 +223,53 @@ impl Table {
         Ok(())
     }
 
-    // Write quilt4's Parquet format
-    pub async fn write_to_path(&self, storage: &impl Storage, path: &PathBuf) -> Result<(), Error> {
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("name", DataType::Utf8, false),
-            Field::new("place", DataType::Utf8, false),
-            Field::new("size", DataType::UInt64, false),
-            Field::new("multihash", DataType::Binary, false),
-            Field::new("meta.json", DataType::Utf8, false),
-            Field::new("info.json", DataType::Utf8, false),
-        ]));
-
+    fn create_writer<T>(&self, file: T, schema: Arc<Schema>) -> Result<AsyncArrowWriter<T>, Error>
+    where
+        T: AsyncWrite + Unpin + Send,
+    {
         let props = WriterProperties::builder()
             .set_compression(Compression::SNAPPY)
             .build();
-
-        if let Some(parent) = path.parent() {
+        Ok(AsyncArrowWriter::try_new(file, schema, Some(props))?)
+    }
+    async fn create_writer_from_path(
+        &self,
+        storage: &impl Storage,
+        file_path: impl AsRef<Path>,
+        schema: Arc<Schema>,
+    ) -> Result<AsyncArrowWriter<tokio::fs::File>, Error> {
+        if let Some(parent) = file_path.as_ref().parent() {
             storage.create_dir_all(parent).await?;
         }
-        let file = storage.create_file(path).await?;
-        let mut writer = AsyncArrowWriter::try_new(file, schema.clone(), Some(props)).unwrap();
+        let file = storage.create_file(file_path).await?;
+        self.create_writer(file, schema)
+    }
 
-        Table::write_row_impl(&mut writer, schema.clone(), &self.header).await?;
+    // Write quilt4's Parquet format
+    pub async fn write_to_path(&self, storage: &impl Storage, path: &PathBuf) -> Result<(), Error> {
+        let mut writer = self
+            .create_writer_from_path(storage, path, self.schema.clone())
+            .await?;
+
+        Table::write_row_impl(&mut writer, self.schema.clone(), &self.header).await?;
         for row in self.records.values() {
-            Table::write_row_impl(&mut writer, schema.clone(), row).await?;
+            Table::write_row_impl(&mut writer, self.schema.clone(), row).await?;
         }
         writer.close().await?;
+
+        Ok(())
+    }
+
+    // Write quilt4's Parquet format
+    pub async fn insert_row<T>(
+        &self,
+        writer: &mut AsyncArrowWriter<T>,
+        row: Row,
+    ) -> Result<(), Error>
+    where
+        T: AsyncWrite + Unpin + Send,
+    {
+        Table::write_row_impl(writer, self.schema.clone(), &row).await?;
 
         Ok(())
     }
@@ -272,6 +312,37 @@ impl Table {
             .remove(path)
             .ok_or(Error::Table(format!("Cannot remove {:?}", path)))
     }
+
+    pub async fn records_len(&self) -> usize {
+        // TOdO: when records is unavailable, read first column and `column.values().len()`
+        self.records.len()
+    }
+
+    pub fn records_values(&self) -> btree_map::Values<'_, PathBuf, Row> {
+        // TODO: when records is unavailable, read first column and `column.values().len()`
+        self.records.values()
+    }
+
+    pub async fn insert_record(&mut self, row: Row) -> Result<Option<Row>, Error> {
+        Ok(self.records.insert(row.name.clone(), row))
+    }
+
+    pub async fn get_record(&self, path: &PathBuf) -> Result<Option<Row>, Error> {
+        Ok(self.records.get(path).cloned())
+    }
+
+    pub async fn update_record(&mut self, row: Row) -> Result<Option<Row>, Error> {
+        Ok(self.records.insert(row.name.clone(), row))
+    }
+
+    pub async fn contains_record(&self, path: &PathBuf) -> bool {
+        self.records.contains_key(path)
+    }
+
+    #[cfg(test)]
+    pub fn set_records(&mut self, records: BTreeMap<PathBuf, Row>) {
+        self.records = records;
+    }
 }
 
 impl fmt::Display for Table {
@@ -281,6 +352,11 @@ impl fmt::Display for Table {
             records.insert(name, record.to_string());
         }
         write!(f, "Table({:?})", records)
+    }
+}
+impl Default for Table {
+    fn default() -> Self {
+        Table::new(Row::default(), BTreeMap::default())
     }
 }
 
@@ -305,7 +381,7 @@ impl TryFrom<Manifest> for Table {
             );
         }
         let header = Row::from(quilt3_manifest);
-        Ok(Table { header, records })
+        Ok(Table::new(header, records))
     }
 }
 
@@ -327,7 +403,7 @@ mod tests {
         let table = Table::read_from_path(&storage, &mocks::manifest::parquet())
             .await
             .unwrap();
-        assert_eq!(table.records.len(), 2);
+        assert_eq!(table.records_len().await, 2);
 
         let header = table.get_header();
         assert_eq!(header.size, 0);
@@ -345,7 +421,7 @@ mod tests {
         let table1 = Table::read_from_path(&storage, &mocks::manifest::parquet())
             .await
             .unwrap();
-        assert_eq!(table1.records.len(), 2);
+        assert_eq!(table1.records_len().await, 2);
 
         let temp_dir = temp_testdir::TempDir::default();
         let temp_path = temp_dir.join("test.parquet");
@@ -354,14 +430,14 @@ mod tests {
 
         let table2 = Table::read_from_path(&storage, &temp_path).await.unwrap();
 
-        assert_eq!(table2.records.len(), 2);
+        assert_eq!(table2.records_len().await, 2);
         assert_eq!(table2.records, table1.records);
     }
 
     #[test]
     fn test_formatting_no_records() -> Result<(), multihash::Error> {
-        let table = Table {
-            header: Row {
+        let table = Table::new(
+            Row {
                 name: PathBuf::from("Foo"),
                 place: "Bar".to_string(),
                 size: 123,
@@ -369,16 +445,16 @@ mod tests {
                 info: serde_json::Value::Null,
                 meta: serde_json::Value::Null,
             },
-            records: BTreeMap::new(),
-        };
+            BTreeMap::new(),
+        );
         assert_eq!(table.to_string(), "Table({})".to_string());
         Ok(())
     }
 
     #[test]
     fn test_formatting_records() -> Result<(), multihash::Error> {
-        let table = Table {
-            header: Row {
+        let table = Table::new(
+            Row {
                 name: PathBuf::from("Foo"),
                 place: "Bar".to_string(),
                 size: 123,
@@ -386,7 +462,7 @@ mod tests {
                 info: serde_json::Value::Null,
                 meta: serde_json::Value::Null,
             },
-            records: BTreeMap::from([
+            BTreeMap::from([
                 (
                     PathBuf::from("one"),
                     Row {
@@ -410,15 +486,15 @@ mod tests {
                     },
                 ),
             ]),
-        };
+        );
         assert_eq!(table.to_string(), r##"Table({"one": "Row(AA)@AB^100#[65]$$Null$Null", "two": "Row(BA)@BB^200#[66]$$Null$Null"})"##.to_string());
         Ok(())
     }
 
     #[test]
     fn test_top_hash() -> Result<(), Error> {
-        let manifest = Table {
-            header: Row {
+        let manifest = Table::new(
+            Row {
                 meta: serde_json::json!({
                        "1234567890": "a",
                 }),
@@ -428,7 +504,7 @@ mod tests {
                 }),
                 ..Row::default()
             },
-            records: BTreeMap::from([(
+            BTreeMap::from([(
                 PathBuf::from("test.md"),
                 Row {
                     name: PathBuf::from("test.md"),
@@ -442,7 +518,7 @@ mod tests {
                     meta: serde_json::Value::Null,
                 },
             )]),
-        };
+        );
         assert_eq!(
             manifest.top_hash(),
             "83571a1d923f1ff9a965855030e85a5bac89b4b5af45d7f920b80e89343eca1f".to_string()

@@ -67,7 +67,7 @@ pub async fn package_s3_prefix(
         }
     }
 
-    let table = Table { header, records };
+    let table = Table::new(header, records);
     let manifest_uri = upload_manifest(storage, remote, paths, dest_uri.into(), table).await?;
     tag_timestamp(remote, &manifest_uri, chrono::Utc::now()).await?;
     tag_latest(remote, &manifest_uri).await?;

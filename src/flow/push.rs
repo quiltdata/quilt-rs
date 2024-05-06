@@ -7,6 +7,7 @@ use crate::io::manifest::upload_row;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
+use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::paths;
 use crate::uri::ManifestUri;
@@ -40,15 +41,22 @@ pub async fn push_package(
         ..lineage.remote.clone()
     };
     // ignore removed items, upload changed and new items
-    for row in local_manifest.records.values_mut() {
-        if let Some(remote_row) = remote_manifest.records.get(&row.name.clone()) {
+    let entries: Vec<Row> = local_manifest.records_values().cloned().collect();
+    for row in entries {
+        if let Some(remote_row) = remote_manifest.get_record(&row.name).await? {
             if remote_row == row {
-                row.place = remote_row.place.to_owned();
+                local_manifest
+                    .update_record(Row {
+                        place: remote_row.place.to_owned(),
+                        ..row.clone()
+                    })
+                    .await?;
                 continue;
             }
         }
 
-        upload_row(remote, manifest_uri.clone(), row).await?;
+        let uploaded_row = upload_row(remote, manifest_uri.clone(), row.clone()).await?;
+        local_manifest.update_record(uploaded_row).await?;
     }
 
     let new_manifest_uri = upload_manifest(
