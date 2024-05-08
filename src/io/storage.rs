@@ -30,7 +30,7 @@ pub trait Storage {
         to: impl AsRef<Path> + Send,
     ) -> impl Future<Output = Result<u64, Error>> + Send;
 
-    /// Copy a file from one location to another.
+    /// Rename/move a file from one location to another.
     fn rename(
         &self,
         from: impl AsRef<Path> + Send,

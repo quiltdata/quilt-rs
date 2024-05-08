@@ -115,7 +115,6 @@ pub async fn install_paths(
                 Error::InstallPath(format!("Failed to create URL from {:?}", &object_dest))
             })?
             .to_string();
-        // table.update_record(row.clone()).await?;
         entries.insert(
             row.name.clone(),
             Row {

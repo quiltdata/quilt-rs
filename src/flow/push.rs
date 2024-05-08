@@ -32,7 +32,6 @@ enum EitherRow {
 }
 
 fn check_and_return_remote_row((row, remote_row_opt): (Row, Option<Row>)) -> EitherRow {
-    // let (row, remote_row_opt) = rows_result?;
     if let Some(remote_row) = remote_row_opt {
         if remote_row == row {
             return EitherRow::Remote(Row {
