@@ -18,7 +18,6 @@ use crate::Error;
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub enum DiscreteChange {
-    Pristine,
     Modified,
     Added,
     Removed,
@@ -28,7 +27,7 @@ pub enum DiscreteChange {
 pub struct Change<T> {
     pub current: Option<T>,
     pub previous: Option<T>,
-    pub state: DiscreteChange,
+    pub state: DiscreteChange, // TODO: DiscreteChange<Row>
 }
 
 pub type ChangeSet<K, T> = BTreeMap<K, Change<T>>;
@@ -73,6 +72,7 @@ impl From<&UpstreamState> for UpstreamDiscreteState {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PackageFileFingerprint {
+    // FIXME: Just re-use Row
     pub size: u64,
     pub hash: Multihash<256>,
 }

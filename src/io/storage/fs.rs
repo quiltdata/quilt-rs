@@ -39,6 +39,10 @@ impl Storage for LocalStorage {
         Ok(fs::copy(from, to).await?)
     }
 
+    async fn rename(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), Error> {
+        Ok(fs::rename(from, to).await?)
+    }
+
     async fn create_dir_all(&self, path: impl AsRef<Path>) -> Result<(), Error> {
         Ok(fs::create_dir_all(path).await?)
     }

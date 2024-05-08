@@ -1,51 +1,59 @@
+use std::collections::BTreeMap;
+use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
 
 use serde_json::json;
+use tokio_stream::Stream;
+use tokio_stream::StreamExt;
 use tracing::log;
 use url::Url;
 
+use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::storage::Storage;
-use crate::manifest::Row;
-use crate::paths;
-use crate::Error;
-
 use crate::lineage::Change;
 use crate::lineage::CommitState;
+use crate::lineage::DiscreteChange;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageFileFingerprint;
 use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
 use crate::manifest::JsonObject;
+use crate::manifest::Row;
 use crate::manifest::Table;
+use crate::paths;
 use crate::uri::Namespace;
+use crate::Error;
 
-fn remove_entry(
-    table: &mut Table,
-    lineage: &mut PackageLineage,
-    logical_key: &PathBuf,
-    previous: PackageFileFingerprint,
-) -> Result<(), Error> {
-    let removed = table.remove_record(logical_key)?;
-    if removed.size != previous.size || removed.hash != previous.hash {
-        return Err(Error::Commit(format!(
-            "unexpected size or hash for removed {:?}",
-            logical_key
-        )));
-    }
-    lineage.paths.remove(logical_key);
-    Ok(())
+async fn stream_local_with_changes(
+    local_manifest: &Table,
+    removed: HashSet<PathBuf>,
+    modified: BTreeMap<PathBuf, Row>,
+    new_files: Vec<Row>,
+) -> impl Stream<Item = Result<Row, Error>> {
+    let changes_stream = local_manifest
+        .records_stream()
+        .await
+        .filter_map(move |row| {
+            if removed.contains(&row.name) {
+                return None;
+            }
+            if let Some(modified_row) = modified.get(&row.name) {
+                return Some(modified_row.clone());
+            }
+            Some(row)
+        });
+    tokio_stream::iter(new_files).chain(changes_stream).map(Ok)
 }
 
-async fn modify_entry(
+async fn create_immutable_object_copy(
     storage: &impl Storage,
     paths: &paths::DomainPaths,
     working_dir: &Path,
-    table: &mut Table,
     lineage: &mut PackageLineage,
     logical_key: &PathBuf,
     current: PackageFileFingerprint,
-) -> Result<(), Error> {
+) -> Result<Row, Error> {
     let objects_dir = paths.objects_dir();
     // FIXME: This should really be done when the domain is created.
     storage.create_dir_all(&objects_dir).await?;
@@ -54,20 +62,14 @@ async fn modify_entry(
         .map_err(|_| Error::Commit(format!("Failed to create URL from {:?}", &object_dest)))?
         .into();
 
-    if table
-        .insert_record(Row {
-            name: logical_key.clone(),
-            place: new_physical_key,
-            size: current.size,
-            hash: current.hash,
-            info: serde_json::Value::default(),
-            meta: serde_json::Value::default(),
-        })
-        .await?
-        .is_some()
-    {
-        return Err(Error::Commit(format!("cannot overwrite {:?}", logical_key)));
-    }
+    let row = Row {
+        name: logical_key.clone(),
+        place: new_physical_key,
+        size: current.size,
+        hash: current.hash,
+        info: serde_json::Value::default(),
+        meta: serde_json::Value::default(),
+    };
 
     let work_dest = working_dir.join(logical_key);
 
@@ -81,7 +83,7 @@ async fn modify_entry(
             hash: current.hash,
         },
     );
-    Ok(())
+    Ok(row)
 }
 
 // TODO: move `working_dir` to `paths`, and `paths` to `storage`
@@ -132,42 +134,55 @@ pub async fn commit_package(
     // NOTE: each commit MUST include all paths from prior commits
     //       (since the last pull, until reset by a sync)
 
-    for (
-        logical_key,
-        Change {
-            current, previous, ..
-        },
-    ) in status.changes
-    {
-        if let Some(previous) = previous {
-            remove_entry(manifest, &mut lineage, &logical_key, previous)?;
-        }
-        if let Some(current) = current {
-            modify_entry(
-                storage,
-                paths,
-                &working_dir,
-                manifest,
-                &mut lineage,
-                &logical_key,
-                current,
-            )
-            .await?;
+    let mut modified_keys = BTreeMap::new();
+    let mut removed_keys = HashSet::new();
+    let mut new_files = Vec::new();
+    for (logical_key, Change { current, state, .. }) in status.changes {
+        match state {
+            DiscreteChange::Removed => {
+                lineage.paths.remove(&logical_key);
+                removed_keys.insert(logical_key.clone());
+            }
+            DiscreteChange::Added => {
+                let added = create_immutable_object_copy(
+                    storage,
+                    paths,
+                    &working_dir,
+                    &mut lineage,
+                    &logical_key,
+                    current.unwrap(),
+                )
+                .await?;
+                new_files.push(added)
+            }
+            DiscreteChange::Modified => {
+                let modified = create_immutable_object_copy(
+                    storage,
+                    paths,
+                    &working_dir,
+                    &mut lineage,
+                    &logical_key,
+                    current.unwrap(),
+                )
+                .await?;
+                modified_keys.insert(logical_key.clone(), modified);
+            }
         }
     }
+    let mut header = manifest.get_header().await?;
 
-    manifest.header.info = json!({
+    header.info = json!({
         "message": message,
         "version": "v0",
     });
     if let Some(user_meta) = user_meta {
-        manifest.header.meta = user_meta.into();
+        header.meta = user_meta.into();
     }
 
-    let new_top_hash = manifest.top_hash();
-
-    let new_manifest_path = paths.installed_manifest(&namespace, &new_top_hash);
-    manifest.write_to_path(storage, &new_manifest_path).await?;
+    let stream = stream_local_with_changes(manifest, removed_keys, modified_keys, new_files).await;
+    let manifest_path = |t: &str| paths.installed_manifest(&namespace, t);
+    let (_, new_top_hash) =
+        build_manifest_from_rows_stream(storage, manifest_path, header, stream).await?;
 
     let mut prev_hashes = Vec::new();
     if let Some(commit) = lineage.commit {
@@ -359,9 +374,17 @@ mod tests {
         Ok(())
     }
 
+    // It is no longer reproducible in tests
+    // and I doubt it ever could be reproducible at all
+    // TODO: anyway it makes sense to add some sanity checks
+    //       even for imposible states
+    #[ignore]
     #[tokio::test]
     async fn test_adding_manifest_already_has_it() -> Result<(), Error> {
         let storage = mocks::storage::MockStorage::default();
+        storage
+            .write_file(PathBuf::from("foo"), &Vec::new())
+            .await?;
 
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(

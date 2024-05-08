@@ -48,7 +48,6 @@ impl std::fmt::Display for Output {
                         DiscreteChange::Modified => "Modified".to_string(),
                         DiscreteChange::Added => "Added".to_string(),
                         DiscreteChange::Removed => "Removed".to_string(),
-                        DiscreteChange::Pristine => "".to_string(),
                     },
                 });
             let mut entries_table = tabled::Table::new(entries);

@@ -102,7 +102,7 @@ mod tests {
                 Change {
                     previous: None,
                     current: None,
-                    state: DiscreteChange::Pristine,
+                    state: DiscreteChange::Added,
                 },
             )]),
             ..InstalledPackageStatus::default()

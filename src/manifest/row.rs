@@ -11,7 +11,9 @@ use multihash::Multihash;
 
 use crate::io::remote::S3Attributes;
 use crate::manifest::Manifest;
+use crate::manifest::ManifestRow;
 use crate::manifest::HEADER_ROW;
+use crate::Error;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
@@ -49,6 +51,24 @@ impl From<Manifest> for Row {
             },
             ..Row::default()
         }
+    }
+}
+
+impl TryFrom<ManifestRow> for Row {
+    type Error = Error;
+
+    fn try_from(manifest_row: ManifestRow) -> Result<Self, Self::Error> {
+        Ok(Row {
+            name: manifest_row.logical_key,
+            place: manifest_row.physical_key,
+            hash: manifest_row.hash.try_into()?,
+            size: manifest_row.size,
+            meta: match manifest_row.meta {
+                None => serde_json::Value::Null,
+                Some(json) => serde_json::Value::Object(json),
+            },
+            info: serde_json::Value::Null,
+        })
     }
 }
 

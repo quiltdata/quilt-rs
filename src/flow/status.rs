@@ -51,7 +51,8 @@ pub async fn create_status(
             "path {:?} not found in installed manifest",
             path
         )))?;
-        orig_paths.insert(PathBuf::from(path), (row.hash, row.size));
+        // TODO: use whole Row
+        orig_paths.insert(path, (row.hash, row.size));
     }
 
     let mut queue = VecDeque::new();
@@ -78,8 +79,11 @@ pub async fn create_status(
                 let file = storage.open_file(&file_path).await?;
                 let file_metadata = file.metadata().await?;
 
+                // TODO: add to error converter and use `?`
                 let relative_path = file_path.strip_prefix(&working_dir).unwrap();
-                if let Some((orig_hash, orig_size)) = orig_paths.remove(relative_path) {
+                if let Some((orig_hash, orig_size)) =
+                    orig_paths.remove(&relative_path.to_path_buf())
+                {
                     let file_hash = match orig_hash.code() {
                         MULTIHASH_SHA256_CHUNKED => {
                             calculate_sha256_chunked_checksum(file, file_metadata.len()).await?

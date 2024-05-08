@@ -1,5 +1,9 @@
+use tokio_stream::Stream;
+use tokio_stream::StreamExt;
+
 use crate::flow::browse::browse_remote_manifest;
 use crate::flow::certify_latest::certify_latest;
+use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::resolve_latest;
 use crate::io::manifest::tag_timestamp;
 use crate::io::manifest::upload_manifest;
@@ -12,11 +16,61 @@ use crate::manifest::Table;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
+use crate::uri::S3PackageHandle;
 use crate::Error;
+
+async fn get_local_and_remote_records(remote_manifest: &Table, row: Row) -> (Row, Option<Row>) {
+    match remote_manifest.get_record(&row.name).await {
+        Ok(remote_row) => (row, remote_row),
+        Err(_err) => (row, None),
+    }
+}
+
+enum EitherRow {
+    Local(Row),
+    Remote(Row),
+}
+
+fn check_and_return_remote_row((row, remote_row_opt): (Row, Option<Row>)) -> EitherRow {
+    // let (row, remote_row_opt) = rows_result?;
+    if let Some(remote_row) = remote_row_opt {
+        if remote_row == row {
+            return EitherRow::Remote(Row {
+                place: remote_row.place.to_owned(),
+                ..row.clone()
+            });
+        }
+    }
+    EitherRow::Local(row)
+}
+
+async fn use_existing_row_or_upload(
+    remote: &impl Remote,
+    package_handle: &S3PackageHandle,
+    row_opt: EitherRow,
+) -> Result<Row, Error> {
+    match row_opt {
+        EitherRow::Remote(row) => Ok(row),
+        EitherRow::Local(row) => upload_row(remote, package_handle.clone(), row).await,
+    }
+}
+
+async fn stream_uploaded_local_rows<'a>(
+    remote: &'a impl Remote,
+    local_manifest: &'a Table,
+    remote_manifest: &'a Table,
+    package_handle: &'a S3PackageHandle,
+) -> impl Stream<Item = Result<Row, Error>> + 'a {
+    let stream = local_manifest.records_stream().await;
+    stream
+        .then(move |row| get_local_and_remote_records(remote_manifest, row))
+        .map(check_and_return_remote_row)
+        .then(move |either_row| use_existing_row_or_upload(remote, package_handle, either_row))
+}
 
 pub async fn push_package(
     mut lineage: PackageLineage,
-    mut local_manifest: Table,
+    local_manifest: Table,
     paths: &paths::DomainPaths,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
@@ -40,33 +94,23 @@ pub async fn push_package(
         namespace: namespace.unwrap_or(lineage.remote.namespace.clone()),
         ..lineage.remote.clone()
     };
-    // ignore removed items, upload changed and new items
-    let entries: Vec<Row> = local_manifest.records_values().cloned().collect();
-    for row in entries {
-        if let Some(remote_row) = remote_manifest.get_record(&row.name).await? {
-            if remote_row == row {
-                local_manifest
-                    .update_record(Row {
-                        place: remote_row.place.to_owned(),
-                        ..row.clone()
-                    })
-                    .await?;
-                continue;
-            }
-        }
 
-        let uploaded_row = upload_row(remote, manifest_uri.clone(), row.clone()).await?;
-        local_manifest.update_record(uploaded_row).await?;
-    }
+    let header = local_manifest.get_header().await?;
+    let package_handle = S3PackageHandle::from(manifest_uri.clone());
+    let stream = Box::pin(
+        stream_uploaded_local_rows(remote, &local_manifest, &remote_manifest, &package_handle)
+            .await,
+    );
+    let manifest_path = |t: &str| paths.manifest_cache(&manifest_uri.bucket, t);
+    let (cache_path, top_hash) =
+        build_manifest_from_rows_stream(storage, manifest_path, header, stream).await?;
 
-    let new_manifest_uri = upload_manifest(
-        storage,
-        remote,
-        paths,
-        manifest_uri.clone().into(),
-        local_manifest,
-    )
-    .await?;
+    let new_manifest_uri = ManifestUri {
+        hash: top_hash,
+        ..manifest_uri.clone()
+    };
+
+    upload_manifest(storage, remote, &new_manifest_uri, &cache_path).await?;
 
     tag_timestamp(remote, &new_manifest_uri, commit.timestamp).await?;
 

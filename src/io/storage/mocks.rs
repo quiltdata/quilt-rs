@@ -57,6 +57,13 @@ impl Storage for MockStorage {
         Ok(fs::copy(from_path, to_path).await?)
     }
 
+    async fn rename(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), Error> {
+        let from_path = relative_to_temp_dir(&self.temp_dir, &from);
+        let to_path = relative_to_temp_dir(&self.temp_dir, &to);
+        create_parent(&to_path).await?;
+        Ok(fs::rename(from_path, to_path).await?)
+    }
+
     async fn create_dir_all(&self, path: impl AsRef<Path>) -> Result<(), Error> {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
         Ok(fs::create_dir_all(rel_path).await?)

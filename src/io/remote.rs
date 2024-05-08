@@ -1,8 +1,10 @@
 use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::types::Object;
 use multihash::Multihash;
 use tokio::io::AsyncRead;
+use tokio_stream::Stream;
 
 use crate::uri::S3Uri;
 use crate::Error;
@@ -49,4 +51,7 @@ pub trait Remote {
         listing_uri: &S3Uri,
         object_key: impl AsRef<str>,
     ) -> Result<S3Attributes, Error>;
+
+    // return Result<Row> as Item
+    async fn list_objects(&self, listing_uri: S3Uri) -> impl Stream<Item = Result<Object, Error>>;
 }

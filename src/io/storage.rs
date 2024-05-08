@@ -30,6 +30,13 @@ pub trait Storage {
         to: impl AsRef<Path> + Send,
     ) -> impl Future<Output = Result<u64, Error>> + Send;
 
+    /// Copy a file from one location to another.
+    fn rename(
+        &self,
+        from: impl AsRef<Path> + Send,
+        to: impl AsRef<Path> + Send,
+    ) -> impl Future<Output = Result<(), Error>> + Send;
+
     /// Recursively creates a directory and all of its parent components if they
     /// are missing.
     fn create_dir_all(

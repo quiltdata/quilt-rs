@@ -1,18 +1,21 @@
 use std::path::PathBuf;
 
 use aws_sdk_s3::primitives::ByteStream;
+use tokio::fs::File;
 use tokio::io::AsyncReadExt;
+use tokio_stream::Stream;
+use tokio_stream::StreamExt;
 use tracing::log;
 use url::Url;
 
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
+use crate::io::ParquetWriter;
 use crate::manifest::Manifest;
 use crate::manifest::Row;
 use crate::manifest::Table;
+use crate::manifest::TopHasher;
 use crate::paths::get_manifest_key_legacy;
-use crate::paths::scaffold_paths;
-use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::uri::ObjectUri;
 use crate::uri::RevisionPointer;
@@ -22,33 +25,19 @@ use crate::uri::S3Uri;
 use crate::uri::TagUri;
 use crate::Error;
 
-pub async fn bytestream_to_string(bytestream: ByteStream) -> Result<String, Error> {
+
+async fn bytestream_to_string(bytestream: ByteStream) -> Result<String, Error> {
     let mut reader = bytestream.into_async_read();
     let mut contents = Vec::new();
     reader.read_to_end(&mut contents).await?;
     String::from_utf8(contents).map_err(|err| Error::Utf8(err.utf8_error()))
 }
 
-async fn cache_manifest(
-    paths: &DomainPaths,
-    storage: &impl Storage,
-    manifest: &Table,
-    bucket: &str,
-) -> Result<(PathBuf, String), Error> {
-    scaffold_paths(storage, paths.required_local_domain_paths()).await?;
-    let top_hash = manifest.top_hash();
-    let cache_path = paths.manifest_cache(bucket, &top_hash);
-    storage
-        .create_dir_all(&cache_path.parent().unwrap())
-        .await?;
-    manifest.write_to_path(storage, &cache_path).await?;
-    Ok((cache_path, top_hash))
-}
-
 async fn upload_legacy(
+    storage: &impl Storage,
     remote: &impl Remote,
+    manifest_path: &PathBuf,
     manifest_uri: &ManifestUri,
-    table: &Table,
 ) -> Result<(), Error> {
     let s3uri = S3Uri {
         bucket: manifest_uri.bucket.clone(),
@@ -58,7 +47,10 @@ async fn upload_legacy(
     remote
         .put_object(
             &s3uri,
-            Manifest::from(table).to_jsonlines().as_bytes().to_vec(),
+            Manifest::from(&Table::read_from_path(storage, manifest_path).await?)
+                .to_jsonlines()
+                .as_bytes()
+                .to_vec(),
         )
         .await
 }
@@ -78,28 +70,18 @@ pub async fn upload_from(
 pub async fn upload_manifest(
     storage: &impl Storage,
     remote: &impl Remote,
-    paths: &DomainPaths,
-    package_handle: S3PackageHandle,
-    manifest: Table,
-) -> Result<ManifestUri, Error> {
-    let S3PackageHandle { bucket, namespace } = package_handle;
-    let (cache_path, top_hash) = cache_manifest(paths, storage, &manifest, &bucket).await?;
-
-    let manifest_uri = ManifestUri {
-        bucket,
-        namespace,
-        hash: top_hash,
-    };
-
+    manifest_uri: &ManifestUri,
+    cache_path: &PathBuf,
+) -> Result<(), Error> {
     // Push the (cached) relaxed manifest to the remote, don't tag it yet
 
-    upload_from(storage, remote, &cache_path, &manifest_uri).await?;
+    upload_from(storage, remote, cache_path, manifest_uri).await?;
 
     // Upload a quilt3 manifest for backward compatibility.
-    upload_legacy(remote, &manifest_uri, &manifest).await?;
+    upload_legacy(storage, remote, cache_path, manifest_uri).await?;
 
     log::debug!("Uploaded remote manifest: {:?}", manifest_uri);
-    Ok(manifest_uri)
+    Ok(())
 }
 
 pub async fn tag_timestamp(
@@ -164,7 +146,7 @@ pub async fn resolve_latest(remote: &impl Remote, uri: S3PackageUri) -> Result<S
 
 pub async fn upload_row(
     remote: &impl Remote,
-    manifest_uri: ManifestUri,
+    package_handle: S3PackageHandle,
     row: Row,
 ) -> Result<Row, Error> {
     let local_url = Url::parse(&row.place)?;
@@ -176,8 +158,8 @@ pub async fn upload_row(
         .map_err(|_| Error::FileUri(local_url))?;
 
     let s3_uri = ObjectUri {
-        bucket: manifest_uri.bucket.clone(),
-        namespace: manifest_uri.namespace.clone(),
+        bucket: package_handle.bucket,
+        namespace: package_handle.namespace,
         path: row.name.clone(),
         version: None,
     };
@@ -191,6 +173,84 @@ pub async fn upload_row(
     // "Relax" the manifest by using those new remote keys
     let place = remote_url.to_string();
     Ok(Row { hash, place, ..row })
+}
+
+pub enum ManifestTarget {
+    Table(Table),
+    File(File),
+}
+
+pub struct WritableManifest {
+    writer: ParquetWriter,
+}
+
+impl From<File> for ManifestTarget {
+    fn from(file: File) -> Self {
+        ManifestTarget::File(file)
+    }
+}
+
+impl From<Table> for ManifestTarget {
+    fn from(manifest: Table) -> Self {
+        ManifestTarget::Table(manifest)
+    }
+}
+
+impl TryFrom<File> for WritableManifest {
+    type Error = Error;
+
+    fn try_from(file: File) -> Result<Self, Self::Error> {
+        Ok(WritableManifest {
+            writer: file.try_into()?,
+        })
+    }
+}
+
+impl WritableManifest {
+    pub async fn try_new(storage: &impl Storage, target: ManifestTarget) -> Result<Self, Error> {
+        let file = match target {
+            ManifestTarget::Table(_) => storage.open_file(PathBuf::new()).await?, // FIXME
+            ManifestTarget::File(file) => file,
+        };
+        file.try_into()
+    }
+
+    pub async fn insert_record(&mut self, row: Row) -> Result<(), Error> {
+        self.writer.insert_row(row).await
+    }
+
+    pub async fn flush(self) -> Result<(), Error> {
+        self.writer.flush().await
+    }
+}
+
+pub async fn build_manifest_from_rows_stream(
+    storage: &impl Storage,
+    manifest_path: impl Fn(&str) -> PathBuf,
+    header: Row,
+    mut stream: impl Stream<Item = Result<Row, Error>> + std::marker::Unpin,
+) -> Result<(PathBuf, String), Error> {
+    let temp_dir = tempfile::tempdir()?;
+    let temp_path = temp_dir.path().join("manifest.pq");
+    let file = storage.create_file(&temp_path).await?;
+    let mut manifest = WritableManifest::try_new(storage, file.into()).await?;
+
+    let mut top_hasher = TopHasher::new();
+    top_hasher.append(&header)?;
+    manifest.insert_record(header).await?;
+
+    while let Some(Ok(row)) = stream.next().await {
+        top_hasher.append(&row)?;
+        manifest.insert_record(row).await?;
+    }
+    manifest.flush().await?;
+
+    let top_hash = top_hasher.finalize();
+    let dest_path = manifest_path(&top_hash);
+    storage.create_dir_all(&dest_path.parent().unwrap()).await?;
+    storage.rename(temp_path, &dest_path).await?;
+
+    Ok((dest_path, top_hash))
 }
 
 #[cfg(test)]

@@ -1,13 +1,18 @@
 use std::collections::hash_map::RandomState;
+use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+use tokio_stream::Stream;
+use tokio_stream::StreamExt;
 use url::Url;
 
+use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
+use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
@@ -36,6 +41,19 @@ async fn create_mutable_copy(
     }
     storage.copy(&immutable_source, &mutable_target).await?;
     storage.modified_timestamp(&mutable_target).await
+}
+
+async fn stream_remote_with_installed_rows(
+    remote_manifest: &Table,
+    local_entries: BTreeMap<PathBuf, Row>,
+) -> impl Stream<Item = Result<Row, Error>> {
+    remote_manifest
+        .records_stream()
+        .await
+        .map(move |row| match local_entries.get(&row.name) {
+            Some(row) => Ok(row.clone()),
+            None => Ok(row),
+        })
 }
 
 // TODO: move `working_dir` to `paths`, and `paths` to `storage`
@@ -77,10 +95,11 @@ pub async fn install_paths(
     // record installation into the lineage:
     //   add installed package entry:
     //     remote: RemoteManifest
+    let mut entries = BTreeMap::new();
 
     for path in entries_paths {
         // TODO: Consider using a hashmap or treemap for manifest.rows
-        let mut row = table
+        let row = table
             .get_record(path)
             .await?
             .ok_or(Error::Table(format!("path {:?} not found", path)))?;
@@ -91,12 +110,19 @@ pub async fn install_paths(
             cache_immutable_object(storage, remote, &object_dest, &row.place.parse()?).await?;
         }
 
-        row.place = Url::from_file_path(&object_dest)
+        let place = Url::from_file_path(&object_dest)
             .map_err(|_| {
                 Error::InstallPath(format!("Failed to create URL from {:?}", &object_dest))
             })?
             .to_string();
-        table.update_record(row.clone()).await?;
+        // table.update_record(row.clone()).await?;
+        entries.insert(
+            row.name.clone(),
+            Row {
+                place,
+                ..row.clone()
+            },
+        );
 
         let working_dest = working_dir.join(&row.name);
         let last_modified = create_mutable_copy(storage, &object_dest, &working_dest).await?;
@@ -110,13 +136,10 @@ pub async fn install_paths(
         );
     }
 
-    // save the manifest
-    // TODO: Write to a temporary file first.
-    let installed_manifest_path = paths.installed_manifest(&namespace, lineage.current_hash());
-
-    table
-        .write_to_path(storage, &installed_manifest_path)
-        .await?;
+    let header = table.get_header().await?;
+    let stream = stream_remote_with_installed_rows(table, entries).await;
+    let manifest_path = |t: &str| paths.installed_manifest(&namespace, t);
+    build_manifest_from_rows_stream(storage, manifest_path, header, stream).await?;
 
     Ok(lineage)
 }

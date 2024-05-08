@@ -16,7 +16,7 @@ use crate::Error;
 
 pub type JsonObject = serde_json::Map<String, serde_json::Value>;
 
-#[derive(Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Serialize, Clone)]
 pub struct ManifestHeader {
     pub version: String,
     pub message: Option<String>,
@@ -89,7 +89,7 @@ impl TryFrom<Quilt3ManifestRow> for ManifestRow {
     }
 }
 
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Debug, Deserialize, PartialEq, Serialize, Clone)]
 pub struct Manifest {
     pub header: ManifestHeader,
     pub rows: Vec<ManifestRow>,

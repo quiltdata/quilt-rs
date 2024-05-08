@@ -1,9 +1,11 @@
 use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::types::Object;
 use multihash::Multihash;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
+use tokio_stream::Stream;
 use tracing::log;
 
 use crate::checksum;
@@ -99,6 +101,10 @@ impl Remote for MockRemote {
         self.storage
             .get_object_attributes(listing_uri, object_key.as_ref().to_string())
             .await
+    }
+
+    async fn list_objects(&self, _listing_uri: S3Uri) -> impl Stream<Item = Result<Object, Error>> {
+        tokio_stream::iter(Vec::new())
     }
 }
 

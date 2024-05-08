@@ -1,6 +1,7 @@
 use std::path::Path;
 use tracing::log;
 
+use async_stream::try_stream;
 use aws_sdk_s3::error::DisplayErrorContext;
 use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput;
@@ -8,8 +9,10 @@ use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::ChecksumAlgorithm;
 use aws_sdk_s3::types::CompletedMultipartUpload;
 use aws_sdk_s3::types::CompletedPart;
+use aws_sdk_s3::types::Object;
 use aws_smithy_types::byte_stream::Length;
 use parquet::data_type::AsBytes;
+use tokio_stream::Stream;
 
 use multihash::Multihash;
 use tokio::io::AsyncRead;
@@ -301,5 +304,25 @@ impl Remote for RemoteS3 {
             hash,
             size,
         })
+    }
+
+    async fn list_objects(&self, listing_uri: S3Uri) -> impl Stream<Item = Result<Object, Error>> {
+        try_stream! {
+            let client = get_client_for_bucket(&listing_uri.bucket).await?;
+            let mut paginated_stream = client
+                .list_objects_v2()
+                .bucket(&listing_uri.bucket)
+                .prefix(&listing_uri.key)
+                .into_paginator()
+                .page_size(100) // XXX: this is to limit concurrency
+                .send();
+            while let Some(page) = paginated_stream.next().await {
+                let page = page.map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
+
+                while let Some(obj) = page.contents.iter().flatten().next() {
+                    yield obj.clone()
+                }
+            }
+        }
     }
 }
