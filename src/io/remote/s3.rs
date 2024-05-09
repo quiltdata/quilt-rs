@@ -194,6 +194,7 @@ async fn multipart_upload_and_checksum(
     ))
 }
 
+/// Implementation of the `Remote` trait for S3
 #[derive(Clone, Debug)]
 pub struct RemoteS3 {}
 

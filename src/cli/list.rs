@@ -40,7 +40,7 @@ mod tests {
 
     #[tokio::test]
     async fn list() -> Result<(), Error> {
-        let remote = quilt_rs::io::remote::s3::RemoteS3::new();
+        let remote = quilt_rs::io::remote::RemoteS3::new();
         let temp_dir = TempDir::default();
         let local_path = PathBuf::from(temp_dir.as_ref());
         let local_domain = quilt_rs::LocalDomain::new(local_path);

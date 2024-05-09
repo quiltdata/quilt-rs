@@ -22,8 +22,8 @@ pub async fn reset_to_latest(
     working_dir: PathBuf,
     namespace: Namespace,
 ) -> Result<PackageLineage, Error> {
-    let latest_top_hash = resolve_latest(remote, lineage.remote.clone().into()).await?;
-    if latest_top_hash == lineage.remote.hash {
+    let latest = resolve_latest(remote, lineage.remote.clone().into()).await?;
+    if latest.hash == lineage.remote.hash {
         // already at latest
         return Ok(lineage);
     }
@@ -33,19 +33,19 @@ pub async fn reset_to_latest(
         uninstall_paths(lineage, working_dir.clone(), storage, &installed_paths).await?;
 
     // TODO: Should be a method of lineage
-    lineage.latest_hash = latest_top_hash.clone();
-    lineage.remote.hash = latest_top_hash.clone();
-    lineage.base_hash = latest_top_hash.clone();
+    lineage.latest_hash = latest.hash.clone();
+    lineage.base_hash = latest.hash.clone();
 
-    cache_remote_manifest(paths, storage, remote, &lineage.remote.clone().into()).await?;
+    cache_remote_manifest(paths, storage, remote, &latest.clone()).await?;
     copy_cached_to_installed(
         paths,
         storage,
         &lineage.remote.bucket,
         &namespace,
-        &latest_top_hash,
+        &latest.hash,
     )
     .await?;
+    lineage.remote = latest;
 
     let mut paths_to_install = Vec::new();
     for x in installed_paths {

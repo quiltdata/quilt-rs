@@ -10,7 +10,9 @@ use crate::io::remote::S3Attributes;
 use crate::uri::S3Uri;
 use crate::Error;
 
-pub mod fs;
+mod local;
+
+pub use local::LocalStorage;
 
 // Mock storage is only available during testing.
 #[cfg(test)]

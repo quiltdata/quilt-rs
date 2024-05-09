@@ -45,6 +45,7 @@ async fn write_row(
     Ok(())
 }
 
+/// Don't use it. It will be private
 pub struct ParquetWriter {
     schema: Arc<Schema>,
     writer: AsyncArrowWriter<File>,

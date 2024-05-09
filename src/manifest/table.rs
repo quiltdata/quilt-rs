@@ -50,6 +50,7 @@ fn serialize_table_header(header: &Row) -> serde_json::Map<String, serde_json::V
     header_meta
 }
 
+/// Helper for creating `top_hash`
 #[derive(Debug)]
 pub struct TopHasher {
     pub hasher: Box<Sha256>,
@@ -68,6 +69,7 @@ impl TopHasher {
         }
     }
 
+    /// Append `Row` to the hasher
     pub fn append(&mut self, row: &Row) -> Result<(), Error> {
         let value_str = if row.name.display().to_string() == HEADER_ROW {
             let value = serialize_table_header(row);
@@ -80,6 +82,7 @@ impl TopHasher {
         Ok(())
     }
 
+    /// Consume `self` and return `top_hash`
     pub fn finalize(self) -> String {
         hex::encode(self.hasher.finalize())
     }
@@ -106,10 +109,12 @@ fn serialize_row_entry(row: &Row) -> serde_json::Value {
     })
 }
 
+/// Helper for reading Parquet manifest and get `Row`s
 #[derive(Clone, Debug, PartialEq)]
 pub struct Table {
     pub header: Row,
-    records: BTreeMap<PathBuf, Row>, // TODO: use PathBuf and iterator of records
+    records: BTreeMap<PathBuf, Row>, // TODO: use PathBuf and iterator of records, don't store
+                                     // records in memory
     schema: Arc<Schema>,
 }
 

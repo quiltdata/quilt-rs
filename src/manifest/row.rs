@@ -1,9 +1,3 @@
-//!
-//! # Row
-//!
-//! Row is the native entry format for quilt4.
-//! It provides methods to decode/encode quilt3's JSONL format
-//!
 use std::fmt;
 use std::path::PathBuf;
 
@@ -15,11 +9,11 @@ use crate::manifest::ManifestRow;
 use crate::manifest::HEADER_ROW;
 use crate::Error;
 
+/// Represents the row in Parquet manifest
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
     pub name: PathBuf,
-    // scheme: Enum<file,s3,https>
-    pub place: String,
+    pub place: String, // TODO: Should be Url
     pub size: u64,
     pub hash: Multihash<256>,
     pub info: serde_json::Value, // system metadata

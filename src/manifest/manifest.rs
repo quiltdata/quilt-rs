@@ -16,6 +16,7 @@ use crate::Error;
 
 pub type JsonObject = serde_json::Map<String, serde_json::Value>;
 
+/// Header (or first row) in JSONL manifest
 #[derive(Debug, Deserialize, PartialEq, Eq, Serialize, Clone)]
 pub struct ManifestHeader {
     pub version: String,
@@ -54,6 +55,7 @@ impl From<ManifestRow> for Quilt3ManifestRow {
     }
 }
 
+/// Represents the row in JSONL manifest
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ManifestRow {
     pub logical_key: PathBuf,
@@ -89,6 +91,7 @@ impl TryFrom<Quilt3ManifestRow> for ManifestRow {
     }
 }
 
+/// Legacy JSONL in-memory manifest
 #[derive(Debug, Deserialize, PartialEq, Serialize, Clone)]
 pub struct Manifest {
     pub header: ManifestHeader,

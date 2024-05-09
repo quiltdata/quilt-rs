@@ -19,16 +19,15 @@ use crate::lineage::PackageLineage;
 use crate::manifest::Table;
 use crate::Error;
 
-// TODO: move to lineage
 pub async fn refresh_latest_hash(
     mut lineage: PackageLineage,
     remote: &impl Remote,
 ) -> Result<PackageLineage, Error> {
-    let latest_hash = resolve_latest(remote, lineage.remote.clone().into()).await?;
-    if lineage.latest_hash == latest_hash {
+    let latest = resolve_latest(remote, lineage.remote.clone().into()).await?;
+    if lineage.latest_hash == latest.hash {
         return Ok(lineage);
     }
-    lineage.latest_hash = latest_hash;
+    lineage.latest_hash = latest.hash;
     Ok(lineage)
 }
 
@@ -152,7 +151,7 @@ mod tests {
 
     use crate::checksum::ContentHash;
     use crate::lineage::CommitState;
-    use crate::lineage::UpstreamDiscreteState;
+    use crate::lineage::UpstreamState;
     use crate::mocks;
 
     #[tokio::test]
@@ -183,7 +182,7 @@ mod tests {
             PathBuf::default(),
         )
         .await?;
-        assert_eq!(status.upstream_state, UpstreamDiscreteState::Behind);
+        assert_eq!(status.upstream_state, UpstreamState::Behind);
         Ok(())
     }
 
@@ -201,7 +200,7 @@ mod tests {
             PathBuf::default(),
         )
         .await?;
-        assert_eq!(status.upstream_state, UpstreamDiscreteState::Ahead);
+        assert_eq!(status.upstream_state, UpstreamState::Ahead);
         Ok(())
     }
 
@@ -224,7 +223,7 @@ mod tests {
             PathBuf::default(),
         )
         .await?;
-        assert_eq!(status.upstream_state, UpstreamDiscreteState::Diverged);
+        assert_eq!(status.upstream_state, UpstreamState::Diverged);
         Ok(())
     }
 

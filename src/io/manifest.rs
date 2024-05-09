@@ -32,6 +32,8 @@ async fn bytestream_to_string(bytestream: ByteStream) -> Result<String, Error> {
     String::from_utf8(contents).map_err(|err| Error::Utf8(err.utf8_error()))
 }
 
+/// Read Parquet file and upload manifest converted to JSONL.
+/// We don't care about checksum of the resulted file.
 async fn upload_legacy(
     storage: &impl Storage,
     remote: &impl Remote,
@@ -39,18 +41,16 @@ async fn upload_legacy(
     manifest_uri: &ManifestUri,
 ) -> Result<(), Error> {
     let s3_uri: S3Uri = ManifestUriLegacy::from(manifest_uri).into();
-    remote
-        .put_object(
-            &s3_uri,
-            Manifest::from(&Table::read_from_path(storage, manifest_path).await?)
-                .to_jsonlines()
-                .as_bytes()
-                .to_vec(),
-        )
-        .await
+    let jsonl = Manifest::from(&Table::read_from_path(storage, manifest_path).await?)
+        .to_jsonlines()
+        .as_bytes()
+        .to_vec();
+    remote.put_object(&s3_uri, jsonl).await
 }
 
-pub async fn upload_from(
+/// Upload manifest from the local path
+/// We don't care about checksum of the resulted file.
+async fn upload_from(
     storage: &impl Storage,
     remote: &impl Remote,
     manifest_path: &PathBuf,
@@ -62,26 +62,29 @@ pub async fn upload_from(
     remote.put_object(&manifest_uri.into(), body).await
 }
 
+/// Upload manifest with both formats JSONL and Parquet.
+/// We don't care about checksum of the resulted files.
 pub async fn upload_manifest(
     storage: &impl Storage,
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
-    cache_path: &PathBuf,
+    path: &PathBuf,
 ) -> Result<(), Error> {
     // Push the (cached) relaxed manifest to the remote, don't tag it yet
-
-    upload_from(storage, remote, cache_path, manifest_uri).await?;
+    upload_from(storage, remote, path, manifest_uri).await?;
 
     // Upload a quilt3 manifest for backward compatibility.
-    upload_legacy(storage, remote, cache_path, manifest_uri).await?;
+    upload_legacy(storage, remote, path, manifest_uri).await?;
 
     log::debug!("Uploaded remote manifest: {:?}", manifest_uri);
     Ok(())
 }
 
+/// Upload file containing hash of the manifest
+/// "tagged" by timestamp.
 pub async fn tag_timestamp(
     remote: &impl Remote,
-    manifest_uri: ManifestUri,
+    manifest_uri: &ManifestUri,
     timestamp: chrono::DateTime<chrono::Utc>,
 ) -> Result<(), Error> {
     // Tag the new commit.
@@ -90,29 +93,50 @@ pub async fn tag_timestamp(
     // create it with the value of {self.commit.hash}
     // TODO: Otherwise try again with the current timestamp as the tag
     // (e.g., try five times with exponential backoff, then Error)
-    let hash = manifest_uri.hash.as_bytes().to_vec();
-    let tag_uri = TagUri::timestamp(manifest_uri, timestamp);
-    remote.put_object(&tag_uri.into(), hash).await
+    let tag_timestamp = TagUri::timestamp(manifest_uri.clone(), timestamp);
+    upload_tag(remote, manifest_uri, tag_timestamp).await
 }
 
+/// Upload file containing hash of the manifest
+/// "tagged" as "".
 pub async fn tag_latest(remote: &impl Remote, manifest_uri: &ManifestUri) -> Result<(), Error> {
-    let tag_uri = TagUri::latest(manifest_uri.clone().into());
+    let tag_latest = TagUri::latest(manifest_uri.clone().into());
+    upload_tag(remote, manifest_uri, tag_latest).await
+}
+
+async fn upload_tag(
+    remote: &impl Remote,
+    manifest_uri: &ManifestUri,
+    tag_uri: TagUri,
+) -> Result<(), Error> {
     remote
         .put_object(&tag_uri.into(), manifest_uri.hash.as_bytes().to_vec())
         .await
 }
 
+/// Downloads the latest tagged package
+/// and returns its content: hash of the latest package revision
+pub async fn resolve_latest(
+    remote: &impl Remote,
+    uri: S3PackageHandle,
+) -> Result<ManifestUri, Error> {
+    let tag_uri = TagUri::latest(uri.clone());
+    let stream = remote.get_object_stream(&tag_uri.into()).await?;
+    let hash = bytestream_to_string(stream).await?;
+    Ok(ManifestUri {
+        hash,
+        bucket: uri.bucket,
+        namespace: uri.namespace,
+    })
+}
+
 /// `ManifestUri` should always have `hash`.
 /// But `S3PackageUri` can be just tagged as "latest".
 /// So, we need to dowload "latest" tag and find out what the `hash` is
-pub async fn resolve_top_hash(remote: &impl Remote, uri: &S3PackageUri) -> Result<String, Error> {
+async fn resolve_top_hash(remote: &impl Remote, uri: &S3PackageUri) -> Result<String, Error> {
     match &uri.revision {
         RevisionPointer::Hash(top_hash) => Ok(top_hash.clone()),
-        RevisionPointer::Tag(_) => {
-            let tag_uri = TagUri::latest(uri.into());
-            let stream = remote.get_object_stream(&tag_uri.into()).await?;
-            bytestream_to_string(stream).await
-        }
+        RevisionPointer::Tag(_) => Ok(resolve_latest(remote, uri.into()).await?.hash),
     }
 }
 
@@ -134,14 +158,10 @@ pub async fn resolve_manifest_uri(
     })
 }
 
-/// Downloads the latest tagged package
-/// and returns its content: hash of the latest package revision
-pub async fn resolve_latest(remote: &impl Remote, uri: S3PackageHandle) -> Result<String, Error> {
-    let tag_uri = TagUri::latest(uri);
-    let stream = remote.get_object_stream(&tag_uri.into()).await?;
-    bytestream_to_string(stream).await
-}
-
+/// Upload file associated with manifest's `Row`.
+/// After uploading we get new hash,
+/// though it should be the same as already calclulated during commit.
+/// Response with the new `Row` with `place` pointing to the place it was uploaded to.
 pub async fn upload_row(
     remote: &impl Remote,
     package_handle: S3PackageHandle,

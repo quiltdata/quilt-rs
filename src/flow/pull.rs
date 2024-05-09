@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use crate::flow::browse::cache_remote_manifest;
 use crate::flow::install_paths::install_paths;
 use crate::flow::uninstall_paths::uninstall_paths;
-use crate::io::remote::s3::RemoteS3;
+use crate::io::manifest::resolve_latest;
+use crate::io::remote::RemoteS3;
 use crate::io::storage::Storage;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageLineage;
@@ -51,7 +52,8 @@ pub async fn pull_package(
 
     // FIXME: pass from outside
     let remote = RemoteS3::new();
-    cache_remote_manifest(paths, storage, &remote, &lineage.remote.clone().into()).await?;
+    let manifest_uri = resolve_latest(&remote, lineage.remote.clone().into()).await?;
+    cache_remote_manifest(paths, storage, &remote, &manifest_uri).await?;
     copy_cached_to_installed(
         paths,
         storage,

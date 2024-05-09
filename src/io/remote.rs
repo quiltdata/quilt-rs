@@ -10,13 +10,16 @@ use crate::uri::S3Uri;
 use crate::Error;
 
 mod client;
-pub mod s3;
+mod s3;
 
 pub use client::get_client_for_bucket;
+pub use s3::RemoteS3;
 
 #[cfg(test)]
 pub mod mocks;
 
+/// We use it for getting hashes in files listings when we create new packages from S3 directory.
+/// Also, we re-use this struct for calculating hashes locally when S3-checksums are disabled.
 pub struct S3Attributes {
     pub listing_uri: S3Uri,
     pub object_uri: S3Uri,

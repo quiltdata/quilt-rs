@@ -16,6 +16,7 @@ use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::Error;
 
+/// Describes modified states of a file
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub enum DiscreteChange {
     Modified,
@@ -23,35 +24,20 @@ pub enum DiscreteChange {
     Removed,
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize)]
-pub struct Change<T> {
-    pub current: Option<T>,
-    pub previous: Option<T>,
+/// Describes what was changed in a file
+#[derive(Debug, PartialEq)]
+pub struct Change {
+    pub current: Option<PackageFileFingerprint>,
+    pub previous: Option<PackageFileFingerprint>,
     pub state: DiscreteChange, // TODO: DiscreteChange<Row>
 }
 
-pub type ChangeSet<K, T> = BTreeMap<K, Change<T>>;
+/// Map of all changed files
+pub type ChangeSet = BTreeMap<PathBuf, Change>;
 
+/// State of the local package relative to the remote package
 #[derive(Debug, PartialEq, Eq, Default, Serialize)]
-pub struct UpstreamState {
-    commit_pending: bool, // whether there's a commit to be pushed
-    behind: bool,         // whether **base** and **latest** revisions differ
-    ahead: bool,          // whether **base** and **current** revisions differ
-}
-
-impl From<PackageLineage> for UpstreamState {
-    fn from(lineage: PackageLineage) -> Self {
-        UpstreamState {
-            commit_pending: lineage.commit.is_some(),
-            behind: lineage.base_hash != lineage.latest_hash,
-            ahead: lineage.base_hash != lineage.current_hash(),
-        }
-    }
-}
-
-// XXX: do we  actually need this? two-flag (ahead-behind) logic seems simple enough
-#[derive(Debug, PartialEq, Eq, Default, Serialize)]
-pub enum UpstreamDiscreteState {
+pub enum UpstreamState {
     #[default]
     UpToDate,
     Behind,
@@ -59,9 +45,11 @@ pub enum UpstreamDiscreteState {
     Diverged,
 }
 
-impl From<&UpstreamState> for UpstreamDiscreteState {
-    fn from(upstream: &UpstreamState) -> Self {
-        match (upstream.ahead, upstream.behind) {
+impl From<PackageLineage> for UpstreamState {
+    fn from(lineage: PackageLineage) -> Self {
+        let behind = lineage.base_hash != lineage.latest_hash;
+        let ahead = lineage.base_hash != lineage.current_hash();
+        match (ahead, behind) {
             (false, false) => Self::UpToDate,
             (false, true) => Self::Behind,
             (true, false) => Self::Ahead,
@@ -70,45 +58,54 @@ impl From<&UpstreamState> for UpstreamDiscreteState {
     }
 }
 
+/// Some auxiliary struct that we use instead of `Row` when the file is not yet commited
 #[derive(Clone, Debug, PartialEq)]
 pub struct PackageFileFingerprint {
-    // FIXME: Just re-use Row
+    // FIXME: re-use Row
     pub size: u64,
     pub hash: Multihash<256>,
 }
 
+/// Status of the package and workding directory of the pakage
 #[derive(Debug, PartialEq, Default)]
 pub struct InstalledPackageStatus {
-    // current commit vs upstream state
-    pub upstream_state: UpstreamDiscreteState,
-    // file changes vs current commit
-    pub changes: ChangeSet<PathBuf, PackageFileFingerprint>,
+    /// Current commit vs upstream state
+    pub upstream_state: UpstreamState,
+    /// File changes vs current commit
+    pub changes: ChangeSet,
     // XXX: meta?
 }
 
 impl InstalledPackageStatus {
-    pub fn new(
-        upstream: UpstreamState,
-        changes: ChangeSet<PathBuf, PackageFileFingerprint>,
-    ) -> Self {
+    pub fn new(upstream_state: UpstreamState, changes: ChangeSet) -> Self {
         Self {
-            upstream_state: UpstreamDiscreteState::from(&upstream),
+            upstream_state,
             changes,
         }
     }
 }
 
+/// What is the latest commit and what are previous commits if present
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct CommitState {
+    /// When the last commit was done
     pub timestamp: chrono::DateTime<chrono::Utc>,
-    pub hash: String,
+    /// What is the hash of the latest commit
+    pub hash: String, // TODO: use multihash?
+    /// What are the previous comit hashes
     #[serde(default = "Vec::new")]
-    pub prev_hashes: Vec<String>,
+    pub prev_hashes: Vec<String>, // TODO: use multihashes?
 }
 
+/// State of the file tracked in lineage
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PathState {
+    /// Last "modified" date.
+    /// Last time it was installed or commited.
     pub timestamp: chrono::DateTime<chrono::Utc>,
+    /// Last tracked hash.
+    /// We don't track files modifications in real time.
+    /// We calculate hash when we commit or install file.
     #[serde(
         serialize_with = "multihash_to_str",
         deserialize_with = "str_to_multihash"
@@ -137,13 +134,19 @@ fn str_to_multihash<'de, D: Deserializer<'de>>(
 /// The key is the name of the path, and the value is the state of the path
 pub type LineagePaths = BTreeMap<PathBuf, PathState>;
 
+/// Stores lineage (installation/modification history) of the package read from lineage.json file
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct PackageLineage {
+    /// Local commits
     pub commit: Option<CommitState>,
+    /// Where we intsalled this package from
     pub remote: ManifestUri,
+    /// TODO: I understand yet how and why we use it
     pub base_hash: String,
+    /// Latest tracked hash. In other words, what was the remote hash when we last checked.
+    /// It can be different from the `remote.hash`, because we can install not the latest package.
     pub latest_hash: String,
-    // installed paths
+    /// Installed paths (or files in other words)
     #[serde(default = "BTreeMap::new")]
     pub paths: LineagePaths,
 }
@@ -170,6 +173,20 @@ impl PackageLineage {
     }
 }
 
+impl From<ManifestUri> for PackageLineage {
+    fn from(uri: ManifestUri) -> Self {
+        Self {
+            base_hash: uri.hash.clone(),
+            remote: uri.clone(),
+            latest_hash: uri.hash.clone(),
+            commit: None,
+            paths: BTreeMap::new(),
+        }
+    }
+}
+
+/// It's essentially just a map of `PackageLineage`.
+/// Represents the contents of `.quilt/lineage.json`
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct DomainLineage {
     #[serde(default = "BTreeMap::new")]
@@ -192,6 +209,7 @@ impl TryFrom<Vec<u8>> for DomainLineage {
     }
 }
 
+/// Wrapper for reading and writing `DomainLineage`
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DomainLineageIo {
     path: PathBuf,
@@ -237,6 +255,8 @@ impl DomainLineageIo {
     }
 }
 
+/// Wrapper for reading and writing `PackageLineage`
+/// It re-uses `DomainLineageIo`
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageLineageIo {
     domain_lineage: DomainLineageIo,

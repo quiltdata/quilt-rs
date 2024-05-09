@@ -3,7 +3,6 @@ use tokio_stream::Stream;
 use tokio_stream::StreamExt;
 
 use crate::io::manifest::build_manifest_from_rows_stream;
-use crate::io::manifest::resolve_manifest_uri;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::manifest::Manifest;
@@ -11,9 +10,8 @@ use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
-use crate::uri::ManifestUriLegacy;
 use crate::uri::ManifestUri;
-use crate::uri::S3PackageUri;
+use crate::uri::ManifestUriLegacy;
 use crate::uri::S3Uri;
 use crate::Error;
 
@@ -43,23 +41,23 @@ pub async fn cache_remote_manifest(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    uri: &S3PackageUri,
+    manifest_uri: &ManifestUri,
 ) -> Result<Table, Error> {
     scaffold_paths(storage, paths.required_local_domain_paths()).await?;
     // check if the manifest is already cached
     // if not, download and cache it
     // return cached manifest
 
-    let manifest_uri = resolve_manifest_uri(remote, uri).await?;
-    let cache_path = paths.manifest_cache(&uri.bucket, &manifest_uri.hash);
+    // let manifest_uri = resolve_manifest_uri(remote, uri).await?;
+    let cache_path = paths.manifest_cache(&manifest_uri.bucket, &manifest_uri.hash);
 
     if !storage.exists(&cache_path).await {
         // Does not exist yet
-        if is_parquet(remote, &manifest_uri).await? {
-            let manifest = fetch_parquet(remote, &manifest_uri).await?;
+        if is_parquet(remote, manifest_uri).await? {
+            let manifest = fetch_parquet(remote, manifest_uri).await?;
             storage.write_file(&cache_path, &manifest).await?;
         } else {
-            let manifest = fetch_jsonl(remote, &manifest_uri).await?;
+            let manifest = fetch_jsonl(remote, manifest_uri).await?;
             let header = Row::from(manifest.clone());
             let manifest_path = |_: &str| cache_path.clone();
             let stream = stream_jsonl_rows(manifest).await;
@@ -74,9 +72,9 @@ pub async fn browse_remote_manifest(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    uri: &S3PackageUri,
+    manifest_uri: &ManifestUri,
 ) -> Result<Table, Error> {
-    cache_remote_manifest(paths, storage, remote, uri).await
+    cache_remote_manifest(paths, storage, remote, manifest_uri).await
 }
 
 #[cfg(test)]
@@ -101,7 +99,7 @@ mod tests {
         storage.write_file(cache_path, &parquet).await?;
         let remote = mocks::remote::MockRemote::default();
         let cached_manifest =
-            cache_remote_manifest(&paths, &storage, &remote, &manifest.into()).await?;
+            cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
         assert_eq!(
             cached_manifest.header.info.get("message").unwrap(),
             "test_spec_write 2023-11-29T14:01:39.543975"
@@ -122,7 +120,7 @@ mod tests {
         storage.write_file(cache_path, &Vec::new()).await?;
         let remote = mocks::remote::MockRemote::default();
         let cached_manifest =
-            cache_remote_manifest(&paths, &storage, &remote, &manifest.into()).await;
+            cache_remote_manifest(&paths, &storage, &remote, &manifest).await;
         assert_eq!(
             cached_manifest.unwrap_err().to_string(),
             "Parquet error: External: Invalid argument (os error 22)"
@@ -148,7 +146,7 @@ mod tests {
             )
             .await?;
         let cached_manifest =
-            cache_remote_manifest(&paths, &storage, &remote, &manifest.into()).await?;
+            cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
         assert_eq!(
             storage
                 .read_file(&PathBuf::from(".quilt/packages/a/c"))
@@ -177,7 +175,7 @@ mod tests {
             .put_object(&S3Uri::try_from("s3://a/.quilt/packages/c")?, jsonl.clone())
             .await?;
         let cached_manifest =
-            cache_remote_manifest(&paths, &storage, &remote, &manifest.into()).await?;
+            cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
         assert!(storage.exists(&PathBuf::from(".quilt/packages/a/c")).await);
         assert!(cached_manifest
             .get_record(&PathBuf::from("README.md"))

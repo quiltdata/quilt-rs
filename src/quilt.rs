@@ -16,9 +16,9 @@ use crate::flow::status::create_status;
 use crate::flow::status::refresh_latest_hash;
 use crate::flow::uninstall_package::uninstall_package;
 use crate::flow::uninstall_paths::uninstall_paths;
-use crate::io::remote::s3::RemoteS3;
+use crate::io::remote::RemoteS3;
 use crate::io::remote::Remote;
-use crate::io::storage::fs;
+use crate::io::storage::LocalStorage;
 use crate::io::storage::Storage;
 use crate::lineage;
 use crate::lineage::CommitState;
@@ -37,7 +37,7 @@ use crate::Error;
 /// This is the entrypoint for the lib.
 /// All the work you can do with packages is done through calling `LocalDomain` methods.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LocalDomain<S: Storage = fs::LocalStorage, R: Remote = RemoteS3> {
+pub struct LocalDomain<S: Storage = LocalStorage, R: Remote = RemoteS3> {
     paths: paths::DomainPaths,
     lineage: lineage::DomainLineageIo,
     storage: S,
@@ -48,7 +48,7 @@ impl LocalDomain {
     pub fn new(root_dir: PathBuf) -> Self {
         let paths = paths::DomainPaths::new(root_dir.clone());
         let lineage = lineage::DomainLineageIo::new(paths.lineage());
-        let storage = fs::LocalStorage::new();
+        let storage = LocalStorage::new();
         let remote = RemoteS3::new();
         Self {
             lineage,
@@ -58,7 +58,7 @@ impl LocalDomain {
         }
     }
 
-    pub async fn browse_remote_manifest(&self, uri: &S3PackageUri) -> Result<Table, Error> {
+    pub async fn browse_remote_manifest(&self, uri: &ManifestUri) -> Result<Table, Error> {
         browse_remote_manifest(&self.paths, &self.storage, &self.remote, uri).await
     }
 
@@ -143,7 +143,7 @@ impl LocalDomain {
 /// But it only manages one particular installed package.
 /// It can be instantiated from `LocalDomain` by installing new or listing existing packages.
 #[derive(Clone, Debug, PartialEq)]
-pub struct InstalledPackage<S: Storage + Clone = fs::LocalStorage, R: Remote + Clone = RemoteS3> {
+pub struct InstalledPackage<S: Storage + Clone = LocalStorage, R: Remote + Clone = RemoteS3> {
     lineage: lineage::PackageLineageIo,
     paths: paths::DomainPaths,
     remote: R,
@@ -170,7 +170,6 @@ impl InstalledPackage {
 
     pub async fn status(&self) -> Result<InstalledPackageStatus, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
-        // TODO: lineage.refresh_latest?
         let lineage = refresh_latest_hash(lineage, &self.remote).await?;
         let manifest = self.manifest().await?;
         let (lineage, status) =

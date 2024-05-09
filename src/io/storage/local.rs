@@ -26,11 +26,12 @@ async fn write(path: impl AsRef<Path> + Send, bytes: &[u8]) -> Result<(), Error>
     Ok(())
 }
 
-pub async fn get_file_modified_ts(path: impl AsRef<Path>) -> Result<DateTime<Utc>, Error> {
+async fn get_file_modified_ts(path: impl AsRef<Path>) -> Result<DateTime<Utc>, Error> {
     let modified = fs::metadata(path).await.map(|m| m.modified())??;
     Ok(DateTime::<Utc>::from(modified))
 }
 
+/// Implementation of the `Storage` trait for the local filesystem
 #[derive(Clone, Debug)]
 pub struct LocalStorage {}
 

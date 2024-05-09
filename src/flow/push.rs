@@ -81,7 +81,7 @@ pub async fn push_package(
     };
 
     let remote_manifest =
-        browse_remote_manifest(paths, storage, remote, &lineage.remote.clone().into()).await?;
+        browse_remote_manifest(paths, storage, remote, &lineage.remote).await?;
 
     // ## copy data
     // Copy each of the _modified_ paths from their local_key to remote_key,
@@ -111,10 +111,10 @@ pub async fn push_package(
 
     upload_manifest(storage, remote, &new_manifest_uri, &cache_path).await?;
 
-    tag_timestamp(remote, new_manifest_uri.clone(), commit.timestamp).await?;
+    tag_timestamp(remote, &new_manifest_uri, commit.timestamp).await?;
 
     // Check the hash of remote's latest manifest
-    lineage.latest_hash = resolve_latest(remote, manifest_uri.into()).await?;
+    lineage.latest_hash = resolve_latest(remote, manifest_uri.into()).await?.hash;
     lineage.remote = new_manifest_uri.clone();
 
     // Reset the commit state.

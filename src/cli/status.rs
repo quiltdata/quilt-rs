@@ -1,6 +1,6 @@
 use quilt_rs::lineage::DiscreteChange;
 use quilt_rs::lineage::InstalledPackageStatus;
-use quilt_rs::lineage::UpstreamDiscreteState;
+use quilt_rs::lineage::UpstreamState;
 use quilt_rs::uri::Namespace;
 
 use crate::cli::model::Commands;
@@ -27,10 +27,10 @@ impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut output: Vec<String> = Vec::new();
         let discrete_state = match self.status.upstream_state {
-            UpstreamDiscreteState::UpToDate => "Installed package is up to date",
-            UpstreamDiscreteState::Behind => "Your commits are behind the remote",
-            UpstreamDiscreteState::Ahead => "Your commits are ahead of the remote",
-            UpstreamDiscreteState::Diverged => "Your commits are detached from the remote",
+            UpstreamState::UpToDate => "Installed package is up to date",
+            UpstreamState::Behind => "Your commits are behind the remote",
+            UpstreamState::Ahead => "Your commits are ahead of the remote",
+            UpstreamState::Diverged => "Your commits are detached from the remote",
         };
 
         output.push(discrete_state.to_string());
