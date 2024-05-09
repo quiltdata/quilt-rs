@@ -98,8 +98,7 @@ mod tests {
         let storage = mocks::storage::MockStorage::default();
         storage.write_file(cache_path, &parquet).await?;
         let remote = mocks::remote::MockRemote::default();
-        let cached_manifest =
-            cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
+        let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
         assert_eq!(
             cached_manifest.header.info.get("message").unwrap(),
             "test_spec_write 2023-11-29T14:01:39.543975"
@@ -119,8 +118,7 @@ mod tests {
         let storage = mocks::storage::MockStorage::default();
         storage.write_file(cache_path, &Vec::new()).await?;
         let remote = mocks::remote::MockRemote::default();
-        let cached_manifest =
-            cache_remote_manifest(&paths, &storage, &remote, &manifest).await;
+        let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await;
         assert_eq!(
             cached_manifest.unwrap_err().to_string(),
             "Parquet error: External: Invalid argument (os error 22)"
@@ -145,8 +143,7 @@ mod tests {
                 parquet.clone(),
             )
             .await?;
-        let cached_manifest =
-            cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
+        let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
         assert_eq!(
             storage
                 .read_file(&PathBuf::from(".quilt/packages/a/c"))
@@ -174,8 +171,7 @@ mod tests {
         remote
             .put_object(&S3Uri::try_from("s3://a/.quilt/packages/c")?, jsonl.clone())
             .await?;
-        let cached_manifest =
-            cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
+        let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
         assert!(storage.exists(&PathBuf::from(".quilt/packages/a/c")).await);
         assert!(cached_manifest
             .get_record(&PathBuf::from("README.md"))

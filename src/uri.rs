@@ -4,8 +4,8 @@ mod package;
 mod s3;
 mod tag;
 
-pub use manifest::ManifestUriLegacy;
 pub use manifest::ManifestUri;
+pub use manifest::ManifestUriLegacy;
 pub use object::ObjectUri;
 pub use package::Namespace;
 pub use package::RevisionPointer;

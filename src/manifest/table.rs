@@ -14,7 +14,6 @@ use tokio_stream::Stream;
 
 use crate::checksum::ContentHash;
 use crate::io::storage::Storage;
-use crate::manifest::Manifest;
 use arrow::array::GenericByteArray;
 use arrow::array::UInt64Array;
 use arrow::datatypes::BinaryType;
@@ -110,17 +109,19 @@ fn serialize_row_entry(row: &Row) -> serde_json::Value {
 }
 
 /// Helper for reading Parquet manifest and get `Row`s
+// TODO: use PathBuf and iterator of records,
+// don't store records in memory
 #[derive(Clone, Debug, PartialEq)]
 pub struct Table {
     pub header: Row,
-    records: BTreeMap<PathBuf, Row>, // TODO: use PathBuf and iterator of records, don't store
-                                     // records in memory
+    // path: PathBuf,
+    records: BTreeMap<PathBuf, Row>,
     schema: Arc<Schema>,
 }
 
 impl Table {
     // TODO: new creates empty records, from(header, records) creates full Table
-    pub fn new(header: Row, records: BTreeMap<PathBuf, Row>) -> Self {
+    fn new(header: Row, records: BTreeMap<PathBuf, Row>) -> Self {
         let schema = Arc::new(Schema::new(vec![
             Field::new("name", DataType::Utf8, false),
             Field::new("place", DataType::Utf8, false),
@@ -291,31 +292,6 @@ impl fmt::Display for Table {
 impl Default for Table {
     fn default() -> Self {
         Table::new(Row::default(), BTreeMap::default())
-    }
-}
-
-impl TryFrom<Manifest> for Table {
-    type Error = Error;
-
-    fn try_from(quilt3_manifest: Manifest) -> Result<Self, Self::Error> {
-        let mut records = BTreeMap::new();
-        for row in quilt3_manifest.rows.clone() {
-            let mut info = row.meta.unwrap_or_default();
-            let meta = info.remove("user_meta").unwrap_or_default();
-            records.insert(
-                row.logical_key.clone(),
-                Row {
-                    name: row.logical_key,
-                    place: row.physical_key,
-                    size: row.size,
-                    hash: row.hash.try_into()?,
-                    info: info.into(),
-                    meta,
-                },
-            );
-        }
-        let header = Row::from(quilt3_manifest);
-        Ok(Table::new(header, records))
     }
 }
 

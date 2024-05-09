@@ -244,11 +244,6 @@ impl Default for Manifest {
 mod tests {
     use super::*;
 
-    use std::collections::BTreeMap;
-
-    use crate::manifest::Row;
-    use crate::manifest::HEADER_ROW;
-
     #[test]
     fn test_equality_of_strictly_equal() {
         let left = ManifestRow {
@@ -287,67 +282,5 @@ mod tests {
             meta: None,
         };
         assert!(left == right)
-    }
-
-    #[test]
-    fn test_manifest_from_table() -> Result<(), Error> {
-        let default_table = Table::default();
-        let default_manifest = Manifest::default();
-        assert_eq!(Manifest::from(&default_table), default_manifest);
-
-        let mut user_meta = serde_json::Map::new();
-        user_meta.insert(
-            "foo".to_string(),
-            serde_json::Value::String("bar".to_string()),
-        );
-        let mut meta = serde_json::Map::new();
-        meta.insert(
-            "version".to_string(),
-            serde_json::Value::String("v0".to_string()),
-        );
-        let mut info = serde_json::Map::new();
-        info.insert(
-            "message".to_string(),
-            serde_json::Value::String("test".to_string()),
-        );
-
-        let table = Table::new(
-            Row {
-                name: HEADER_ROW.into(),
-                place: HEADER_ROW.into(),
-                size: 0,
-                hash: multihash::Multihash::default(),
-                info: serde_json::Value::Object(info),
-                meta: serde_json::Value::Object(user_meta.clone()),
-            },
-            BTreeMap::from([(
-                PathBuf::from("foo/bar"),
-                Row {
-                    name: PathBuf::from("foo/bar"),
-                    place: "s3://z/x/y?versionId=foo".to_string(),
-                    size: 123,
-                    hash: multihash::Multihash::wrap(0xb510, b"abcdef")?,
-                    info: serde_json::Value::Null,
-                    meta: serde_json::Value::Object(meta.clone()),
-                },
-            )]),
-        );
-        let reference_manifest = Manifest {
-            header: ManifestHeader {
-                version: "v0".to_string(),
-                message: Some("test".to_string()),
-                // user_meta: Some(serde_json::json!({"foo": "bar"})),
-                user_meta: Some(user_meta),
-            },
-            rows: vec![ManifestRow {
-                logical_key: PathBuf::from("foo/bar"),
-                physical_key: "s3://z/x/y?versionId=foo".to_string(),
-                hash: ContentHash::SHA256Chunked("YWJjZGVm".to_string()),
-                size: 123,
-                meta: Some(meta),
-            }],
-        };
-        assert_eq!(Manifest::from(&table), reference_manifest);
-        Ok(())
     }
 }

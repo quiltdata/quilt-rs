@@ -15,6 +15,7 @@ use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::Error;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn pull_package(
     lineage: PackageLineage,
     manifest: &mut Table,

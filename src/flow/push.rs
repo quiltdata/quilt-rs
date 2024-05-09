@@ -80,8 +80,7 @@ pub async fn push_package(
         Some(commit) => commit,
     };
 
-    let remote_manifest =
-        browse_remote_manifest(paths, storage, remote, &lineage.remote).await?;
+    let remote_manifest = browse_remote_manifest(paths, storage, remote, &lineage.remote).await?;
 
     // ## copy data
     // Copy each of the _modified_ paths from their local_key to remote_key,
