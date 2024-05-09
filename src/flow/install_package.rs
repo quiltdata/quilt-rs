@@ -31,14 +31,7 @@ pub async fn install_package(
     storage
         .create_dir_all(&installed_manifest_path.parent().unwrap())
         .await?;
-    paths::copy_cached_to_installed(
-        paths,
-        storage,
-        &manifest_uri.bucket,
-        &manifest_uri.namespace,
-        &manifest_uri.hash,
-    )
-    .await?;
+    paths::copy_cached_to_installed(paths, storage, manifest_uri).await?;
 
     // Create the identity cache dir.
     let objects_dir = paths.objects_dir();

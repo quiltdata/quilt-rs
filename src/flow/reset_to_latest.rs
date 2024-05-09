@@ -10,6 +10,7 @@ use crate::lineage::PackageLineage;
 use crate::manifest::Table;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
+use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::Error;
 
@@ -40,9 +41,10 @@ pub async fn reset_to_latest(
     copy_cached_to_installed(
         paths,
         storage,
-        &lineage.remote.bucket,
-        &namespace,
-        &latest.hash,
+        &ManifestUri {
+            namespace: namespace.clone(),
+            ..latest.clone()
+        },
     )
     .await?;
     lineage.remote = latest;
@@ -72,7 +74,6 @@ mod tests {
 
     use crate::lineage::PackageLineage;
     use crate::mocks;
-    use crate::uri::ManifestUri;
     use crate::uri::S3Uri;
 
     #[tokio::test]

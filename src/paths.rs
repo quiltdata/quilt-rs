@@ -1,10 +1,9 @@
 use std::path::PathBuf;
 
 use crate::io::storage::Storage;
+use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::Error;
-
-
 
 const MANIFEST_DIR: &str = ".quilt/packages";
 const TAGS_DIR: &str = ".quilt/named_packages";
@@ -22,12 +21,12 @@ fn parquet_manifest_filename(top_hash: &str) -> String {
     format!("1220{}.parquet", top_hash)
 }
 
-/// What is the path to the PARQUET manifest based on its `hash` 
+/// What is the path to the PARQUET manifest based on its `hash`
 pub fn get_manifest_key(hash: &str) -> String {
     format!("{}/{}", MANIFEST_DIR, parquet_manifest_filename(hash))
 }
 
-/// What is the path to the JSONL manifest based on its `hash` 
+/// What is the path to the JSONL manifest based on its `hash`
 pub fn get_manifest_key_legacy(hash: &str) -> String {
     format!("{}/{}", MANIFEST_DIR, hash)
 }
@@ -105,18 +104,15 @@ impl DomainPaths {
     }
 }
 
-// TODO: pass manifest_uri
 pub async fn copy_cached_to_installed(
     paths: &DomainPaths,
     storage: &impl Storage,
-    cached_manifest_bucket: &str,
-    installed_manifest_namespace: &Namespace,
-    hash: &str,
+    manifest_uri: &ManifestUri,
 ) -> Result<(), Error> {
     storage
         .copy(
-            paths.manifest_cache(cached_manifest_bucket, hash),
-            paths.installed_manifest(installed_manifest_namespace, hash),
+            paths.manifest_cache(&manifest_uri.bucket, &manifest_uri.hash),
+            paths.installed_manifest(&manifest_uri.namespace, &manifest_uri.hash),
         )
         .await?;
     Ok(())

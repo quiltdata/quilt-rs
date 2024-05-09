@@ -11,6 +11,7 @@ use crate::lineage::PackageLineage;
 use crate::manifest::Table;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
+use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::Error;
 
@@ -57,9 +58,10 @@ pub async fn pull_package(
     copy_cached_to_installed(
         paths,
         storage,
-        &lineage.remote.bucket,
-        &namespace,
-        &lineage.remote.hash,
+        &ManifestUri {
+            namespace: namespace.clone(),
+            ..lineage.remote.clone()
+        },
     )
     .await?;
 
@@ -91,7 +93,6 @@ mod tests {
     use crate::lineage::Change;
     use crate::lineage::DiscreteChange;
     use crate::mocks;
-    use crate::uri::ManifestUri;
 
     #[tokio::test]
     async fn test_no_pull_if_changes() -> Result<(), Error> {
