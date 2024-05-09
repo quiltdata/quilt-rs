@@ -111,7 +111,7 @@ pub async fn push_package(
 
     upload_manifest(storage, remote, &new_manifest_uri, &cache_path).await?;
 
-    tag_timestamp(remote, &new_manifest_uri, commit.timestamp).await?;
+    tag_timestamp(remote, new_manifest_uri.clone(), commit.timestamp).await?;
 
     // Check the hash of remote's latest manifest
     lineage.latest_hash = resolve_latest(remote, manifest_uri.into()).await?;

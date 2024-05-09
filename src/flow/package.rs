@@ -81,7 +81,7 @@ pub async fn package_s3_prefix(
         hash: top_hash,
     };
     upload_manifest(storage, remote, &manifest_uri, &cache_path).await?;
-    tag_timestamp(remote, &manifest_uri, chrono::Utc::now()).await?;
+    tag_timestamp(remote, manifest_uri.clone(), chrono::Utc::now()).await?;
     tag_latest(remote, &manifest_uri).await?;
 
     Ok(manifest_uri)

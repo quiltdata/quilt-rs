@@ -3,7 +3,7 @@ use std::fmt;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
-use crate::uri::S3PackageUri;
+use crate::uri::S3PackageHandle;
 use crate::uri::S3Uri;
 
 /// In theory tag can be any string
@@ -46,17 +46,15 @@ impl TagUri {
     }
 
     /// Creates TagURI for the latest revision of the package
-    pub fn latest(uri: &S3PackageUri) -> Self {
-        let uri = uri.clone();
+    pub fn latest(uri: S3PackageHandle) -> Self {
         TagUri::new(uri.bucket, uri.namespace, Tag::Latest)
     }
 
     /// Creates TagURI for the revision of the package
-    pub fn timestamp(manifest_uri: &ManifestUri, datetime: chrono::DateTime<chrono::Utc>) -> Self {
-        let uri = manifest_uri.clone();
+    pub fn timestamp(manifest_uri: ManifestUri, datetime: chrono::DateTime<chrono::Utc>) -> Self {
         TagUri {
-            bucket: uri.bucket,
-            namespace: uri.namespace,
+            bucket: manifest_uri.bucket,
+            namespace: manifest_uri.namespace,
             tag: Tag::Timestamp(datetime.timestamp()),
         }
     }

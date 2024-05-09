@@ -15,8 +15,8 @@ use crate::manifest::Manifest;
 use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::manifest::TopHasher;
-use crate::uri::ManifestUriLegacy;
 use crate::uri::ManifestUri;
+use crate::uri::ManifestUriLegacy;
 use crate::uri::ObjectUri;
 use crate::uri::RevisionPointer;
 use crate::uri::S3PackageHandle;
@@ -81,7 +81,7 @@ pub async fn upload_manifest(
 
 pub async fn tag_timestamp(
     remote: &impl Remote,
-    manifest_uri: &ManifestUri,
+    manifest_uri: ManifestUri,
     timestamp: chrono::DateTime<chrono::Utc>,
 ) -> Result<(), Error> {
     // Tag the new commit.
@@ -90,51 +90,54 @@ pub async fn tag_timestamp(
     // create it with the value of {self.commit.hash}
     // TODO: Otherwise try again with the current timestamp as the tag
     // (e.g., try five times with exponential backoff, then Error)
+    let hash = manifest_uri.hash.as_bytes().to_vec();
     let tag_uri = TagUri::timestamp(manifest_uri, timestamp);
-    remote
-        .put_object(&tag_uri.into(), manifest_uri.hash.as_bytes().to_vec())
-        .await
+    remote.put_object(&tag_uri.into(), hash).await
 }
 
 pub async fn tag_latest(remote: &impl Remote, manifest_uri: &ManifestUri) -> Result<(), Error> {
-    let tag_uri = TagUri::latest(&manifest_uri.into());
+    let tag_uri = TagUri::latest(manifest_uri.clone().into());
     remote
         .put_object(&tag_uri.into(), manifest_uri.hash.as_bytes().to_vec())
         .await
 }
 
-pub async fn resolve_top_hash(remote: &impl Remote, uri: S3PackageUri) -> Result<String, Error> {
+/// `ManifestUri` should always have `hash`.
+/// But `S3PackageUri` can be just tagged as "latest".
+/// So, we need to dowload "latest" tag and find out what the `hash` is
+pub async fn resolve_top_hash(remote: &impl Remote, uri: &S3PackageUri) -> Result<String, Error> {
     match &uri.revision {
         RevisionPointer::Hash(top_hash) => Ok(top_hash.clone()),
         RevisionPointer::Tag(_) => {
-            let tag_uri = TagUri::latest(&uri);
+            let tag_uri = TagUri::latest(uri.into());
             let stream = remote.get_object_stream(&tag_uri.into()).await?;
             bytestream_to_string(stream).await
         }
     }
 }
 
+/// Converts `S3PackageUri` to `ManifestUri`
+/// `ManifestUri` should always have `hash`.
+/// But `S3PackageUri` can be just tagged as "latest".
+/// So, we need to dowload "latest" tag and find out what the `hash` is
 pub async fn resolve_manifest_uri(
     remote: &impl Remote,
     uri: &S3PackageUri,
 ) -> Result<ManifestUri, Error> {
-    let top_hash = match &uri.revision {
-        RevisionPointer::Hash(top_hash) => top_hash.clone(),
-        RevisionPointer::Tag(_) => {
-            let tag_uri = TagUri::latest(&uri.clone());
-            let stream = remote.get_object_stream(&tag_uri.into()).await?;
-            bytestream_to_string(stream).await?
-        }
-    };
+    let bucket = uri.bucket.clone();
+    let namespace = uri.namespace.clone();
+    let hash = resolve_top_hash(remote, uri).await?;
     Ok(ManifestUri {
-        bucket: uri.bucket.clone(),
-        namespace: uri.namespace.clone(),
-        hash: top_hash,
+        bucket,
+        namespace,
+        hash,
     })
 }
 
-pub async fn resolve_latest(remote: &impl Remote, uri: S3PackageUri) -> Result<String, Error> {
-    let tag_uri = TagUri::latest(&uri);
+/// Downloads the latest tagged package
+/// and returns its content: hash of the latest package revision
+pub async fn resolve_latest(remote: &impl Remote, uri: S3PackageHandle) -> Result<String, Error> {
+    let tag_uri = TagUri::latest(uri);
     let stream = remote.get_object_stream(&tag_uri.into()).await?;
     bytestream_to_string(stream).await
 }
@@ -165,12 +168,13 @@ pub async fn upload_row(
     Ok(Row { hash, place, ..row })
 }
 
-pub enum ManifestTarget {
+enum ManifestTarget {
     Table(Table),
     File(File),
 }
 
-pub struct WritableManifest {
+// This is
+struct WritableManifest {
     writer: ParquetWriter,
 }
 
@@ -199,7 +203,7 @@ impl TryFrom<File> for WritableManifest {
 impl WritableManifest {
     pub async fn try_new(storage: &impl Storage, target: ManifestTarget) -> Result<Self, Error> {
         let file = match target {
-            ManifestTarget::Table(_) => storage.open_file(PathBuf::new()).await?, // FIXME
+            ManifestTarget::Table(_table) => storage.open_file(PathBuf::new()).await?, // FIXME
             ManifestTarget::File(file) => file,
         };
         file.try_into()
@@ -214,6 +218,9 @@ impl WritableManifest {
     }
 }
 
+/// Builds the manifest from `Stream<Result<Row>>`
+/// It writes the manifest to temporary file using Parquet.
+/// Then it calclutates top_hash and move the temporary file to the destination path.
 pub async fn build_manifest_from_rows_stream(
     storage: &impl Storage,
     manifest_path: impl Fn(&str) -> PathBuf,
@@ -253,7 +260,7 @@ mod tests {
     async fn test_resolve_existing_hash() -> Result<(), Error> {
         let uri = S3PackageUri::try_from("quilt+s3://b#package=foo/bar@hjknlmn")?;
         let remote = mocks::remote::MockRemote::default();
-        let top_hash = resolve_top_hash(&remote, uri).await?;
+        let top_hash = resolve_top_hash(&remote, &uri).await?;
         assert_eq!(top_hash, "hjknlmn".to_string(),);
         Ok(())
     }
@@ -268,7 +275,7 @@ mod tests {
                 b"abcdef".to_vec(),
             )
             .await?;
-        let top_hash = resolve_top_hash(&remote, uri).await?;
+        let top_hash = resolve_top_hash(&remote, &uri).await?;
         assert_eq!(top_hash, "abcdef".to_string(),);
         Ok(())
     }

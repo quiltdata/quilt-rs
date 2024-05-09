@@ -94,9 +94,10 @@ pub async fn model(
     }: Input,
 ) -> Result<Output, Error> {
     let uri: quilt_rs::uri::S3PackageUri = uri.parse()?;
+    let path = uri.path.clone();
     let installed_package = install_package(local_domain, &uri, namespace).await?;
     let package_dir = installed_package.working_folder();
-    let paths = get_entries(&package_dir, uri.path, paths);
+    let paths = get_entries(&package_dir, path, paths);
 
     if !paths.is_empty() {
         install_paths(&installed_package, &paths).await?;
