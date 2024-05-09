@@ -4,6 +4,7 @@ use url::Url;
 
 use crate::Error;
 
+/// struct representation of the generic `s3://url`
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct S3Uri {
     pub bucket: String,
@@ -53,11 +54,17 @@ impl TryFrom<&str> for S3Uri {
 
 impl fmt::Display for S3Uri {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            make_s3_url(&self.bucket, &self.key, self.version.as_deref())
-        )
+        let mut remote_url = Url::parse("s3://").unwrap();
+        remote_url
+            .set_host(Some(&self.bucket))
+            .expect("failed to set bucket");
+        remote_url.set_path(&self.key);
+        if let Some(version_id) = &self.version {
+            remote_url
+                .query_pairs_mut()
+                .append_pair("versionId", version_id);
+        };
+        write!(f, "{}", remote_url)
     }
 }
 
@@ -67,20 +74,6 @@ impl std::str::FromStr for S3Uri {
     fn from_str(input: &str) -> Result<Self, Self::Err> {
         S3Uri::try_from(input)
     }
-}
-
-fn make_s3_url(bucket: &str, s3_key: &str, version_id: Option<&str>) -> Url {
-    let mut remote_url = Url::parse("s3://").unwrap();
-    remote_url
-        .set_host(Some(bucket))
-        .expect("failed to set bucket");
-    remote_url.set_path(s3_key);
-    if let Some(version_id) = version_id {
-        remote_url
-            .query_pairs_mut()
-            .append_pair("versionId", version_id);
-    }
-    remote_url
 }
 
 #[cfg(test)]

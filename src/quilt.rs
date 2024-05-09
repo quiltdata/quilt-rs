@@ -34,6 +34,8 @@ use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
 use crate::Error;
 
+/// This is the entrypoint for the lib.
+/// All the work you can do with packages is done through calling `LocalDomain` methods.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalDomain<S: Storage = fs::LocalStorage, R: Remote = RemoteS3> {
     paths: paths::DomainPaths,
@@ -60,7 +62,7 @@ impl LocalDomain {
         browse_remote_manifest(&self.paths, &self.storage, &self.remote, uri).await
     }
 
-    pub fn create_installed_package(&self, namespace: Namespace) -> InstalledPackage {
+    fn create_installed_package(&self, namespace: Namespace) -> InstalledPackage {
         // TODO: seems like you can use PackageLineage as an argument instead of namespace
         InstalledPackage {
             lineage: self.lineage.create_package_lineage(namespace.clone()),
@@ -136,6 +138,10 @@ impl LocalDomain {
     }
 }
 
+/// Similar to `LocalDomain` because it has access to the same lineage file and remote/storage
+/// traits.
+/// But it only manages one particular installed package.
+/// It can be instantiated from `LocalDomain` by installing new or listing existing packages.
 #[derive(Clone, Debug, PartialEq)]
 pub struct InstalledPackage<S: Storage + Clone = fs::LocalStorage, R: Remote + Clone = RemoteS3> {
     lineage: lineage::PackageLineageIo,

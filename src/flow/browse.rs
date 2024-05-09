@@ -9,9 +9,9 @@ use crate::io::storage::Storage;
 use crate::manifest::Manifest;
 use crate::manifest::Row;
 use crate::manifest::Table;
-use crate::paths::get_manifest_key_legacy;
 use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
+use crate::uri::ManifestUriLegacy;
 use crate::uri::ManifestUri;
 use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
@@ -33,12 +33,8 @@ async fn fetch_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Result<V
     Ok(output)
 }
 
-async fn fetch_jsonl(remote: &impl Remote, manifest: &ManifestUri) -> Result<Manifest, Error> {
-    let s3_uri = S3Uri {
-        bucket: manifest.bucket.clone(),
-        key: get_manifest_key_legacy(&manifest.hash),
-        version: None,
-    };
+async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Result<Manifest, Error> {
+    let s3_uri: S3Uri = ManifestUriLegacy::from(manifest_uri).into();
     let contents = remote.get_object(&s3_uri).await?;
     Manifest::from_reader(contents).await
 }

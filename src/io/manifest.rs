@@ -15,7 +15,7 @@ use crate::manifest::Manifest;
 use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::manifest::TopHasher;
-use crate::paths::get_manifest_key_legacy;
+use crate::uri::ManifestUriLegacy;
 use crate::uri::ManifestUri;
 use crate::uri::ObjectUri;
 use crate::uri::RevisionPointer;
@@ -24,7 +24,6 @@ use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
 use crate::uri::TagUri;
 use crate::Error;
-
 
 async fn bytestream_to_string(bytestream: ByteStream) -> Result<String, Error> {
     let mut reader = bytestream.into_async_read();
@@ -39,14 +38,10 @@ async fn upload_legacy(
     manifest_path: &PathBuf,
     manifest_uri: &ManifestUri,
 ) -> Result<(), Error> {
-    let s3uri = S3Uri {
-        bucket: manifest_uri.bucket.clone(),
-        key: get_manifest_key_legacy(&manifest_uri.hash),
-        version: None,
-    };
+    let s3_uri: S3Uri = ManifestUriLegacy::from(manifest_uri).into();
     remote
         .put_object(
-            &s3uri,
+            &s3_uri,
             Manifest::from(&Table::read_from_path(storage, manifest_path).await?)
                 .to_jsonlines()
                 .as_bytes()
@@ -157,16 +152,11 @@ pub async fn upload_row(
         .to_file_path()
         .map_err(|_| Error::FileUri(local_url))?;
 
-    let s3_uri = ObjectUri {
-        bucket: package_handle.bucket,
-        namespace: package_handle.namespace,
-        path: row.name.clone(),
-        version: None,
-    };
-    log::debug!("Uploading to S3: {}", s3_uri);
+    let object_uri = ObjectUri::new(package_handle, row.name.clone());
+    log::debug!("Uploading to S3: {}", object_uri);
 
     let (remote_url, hash) = remote
-        .upload_file(&file_path, &s3_uri.into(), row.size)
+        .upload_file(&file_path, &object_uri.into(), row.size)
         .await?;
 
     // Update the manifest with the sha2-256-chunked checksum
