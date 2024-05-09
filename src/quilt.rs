@@ -264,6 +264,7 @@ impl InstalledPackage {
             &mut manifest,
             &self.paths,
             &self.storage,
+            &self.remote,
             self.working_folder(),
             status,
             self.namespace.clone(),
