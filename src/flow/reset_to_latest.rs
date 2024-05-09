@@ -34,8 +34,8 @@ pub async fn reset_to_latest(
         uninstall_paths(lineage, working_dir.clone(), storage, &installed_paths).await?;
 
     // TODO: Should be a method of lineage
-    lineage.latest_hash = latest.hash.clone();
-    lineage.base_hash = latest.hash.clone();
+    lineage.latest_hash.clone_from(&latest.hash);
+    lineage.base_hash.clone_from(&latest.hash);
 
     cache_remote_manifest(paths, storage, remote, &latest.clone()).await?;
     copy_cached_to_installed(

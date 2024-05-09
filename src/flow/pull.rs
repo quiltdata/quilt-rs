@@ -50,8 +50,8 @@ pub async fn pull_package(
 
     // TODO: uninstall_paths() just modified the lineage, so re-reading it here.
     // There needs to be a better way.
-    lineage.remote.hash = lineage.latest_hash.clone();
-    lineage.base_hash = lineage.latest_hash.clone();
+    lineage.remote.hash.clone_from(&lineage.latest_hash);
+    lineage.base_hash.clone_from(&lineage.latest_hash);
 
     let manifest_uri = resolve_latest(remote, lineage.remote.clone().into()).await?;
     cache_remote_manifest(paths, storage, remote, &manifest_uri).await?;

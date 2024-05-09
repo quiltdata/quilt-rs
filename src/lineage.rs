@@ -168,8 +168,8 @@ impl PackageLineage {
 
     pub fn update_latest(&mut self, manifest_uri: ManifestUri) {
         let new_latest_hash = manifest_uri.hash;
-        self.latest_hash = new_latest_hash.clone();
-        self.base_hash = new_latest_hash.clone();
+        self.latest_hash.clone_from(&new_latest_hash);
+        self.base_hash.clone_from(&new_latest_hash);
     }
 }
 
