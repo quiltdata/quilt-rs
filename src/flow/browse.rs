@@ -1,17 +1,23 @@
-use std::path::PathBuf;
-
 use tokio::io::AsyncReadExt;
+use tokio_stream::Stream;
+use tokio_stream::StreamExt;
 
+use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::manifest::Manifest;
+use crate::manifest::Row;
 use crate::manifest::Table;
-use crate::paths::get_manifest_key_legacy;
 use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
+use crate::uri::ManifestUriLegacy;
 use crate::uri::S3Uri;
 use crate::Error;
+
+async fn stream_jsonl_rows(jsonl: Manifest) -> impl Stream<Item = Result<Row, Error>> {
+    tokio_stream::iter(jsonl.rows).map(Row::try_from)
+}
 
 async fn is_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Result<bool, Error> {
     remote.exists(&S3Uri::from(manifest)).await
@@ -25,33 +31,10 @@ async fn fetch_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Result<V
     Ok(output)
 }
 
-async fn fetch_jsonl(remote: &impl Remote, manifest: &ManifestUri) -> Result<Table, Error> {
-    let s3_uri = S3Uri {
-        bucket: manifest.bucket.clone(),
-        key: get_manifest_key_legacy(&manifest.hash),
-        version: None,
-    };
+async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Result<Manifest, Error> {
+    let s3_uri: S3Uri = ManifestUriLegacy::from(manifest_uri).into();
     let contents = remote.get_object(&s3_uri).await?;
-    let quilt3_manifest = Manifest::from_reader(contents).await?;
-    Table::try_from(quilt3_manifest)
-}
-
-pub async fn cache_manifest(
-    paths: &DomainPaths,
-    storage: &impl Storage,
-    manifest: &Table,
-    bucket: &str,
-    hash: &str,
-) -> Result<PathBuf, Error> {
-    scaffold_paths(storage, paths.required_local_domain_paths()).await?;
-    let cache_path = paths.manifest_cache(bucket, hash);
-    storage
-        .create_dir_all(&cache_path.parent().unwrap())
-        .await?;
-    manifest
-        .write_to_path(storage, &cache_path)
-        .await
-        .map(|_| cache_path)
+    Manifest::from_reader(contents).await
 }
 
 pub async fn cache_remote_manifest(
@@ -65,6 +48,7 @@ pub async fn cache_remote_manifest(
     // if not, download and cache it
     // return cached manifest
 
+    // let manifest_uri = resolve_manifest_uri(remote, uri).await?;
     let cache_path = paths.manifest_cache(&manifest_uri.bucket, &manifest_uri.hash);
 
     if !storage.exists(&cache_path).await {
@@ -74,7 +58,10 @@ pub async fn cache_remote_manifest(
             storage.write_file(&cache_path, &manifest).await?;
         } else {
             let manifest = fetch_jsonl(remote, manifest_uri).await?;
-            manifest.write_to_path(storage, &cache_path).await?;
+            let header = Row::from(manifest.clone());
+            let manifest_path = |_: &str| cache_path.clone();
+            let stream = stream_jsonl_rows(manifest).await;
+            build_manifest_from_rows_stream(storage, manifest_path, header, stream).await?;
         };
     }
 
@@ -93,6 +80,8 @@ pub async fn browse_remote_manifest(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::path::PathBuf;
 
     use crate::mocks;
 
@@ -185,8 +174,8 @@ mod tests {
         let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
         assert!(storage.exists(&PathBuf::from(".quilt/packages/a/c")).await);
         assert!(cached_manifest
-            .records
-            .get(&PathBuf::from("README.md"))
+            .get_record(&PathBuf::from("README.md"))
+            .await?
             .is_some());
         Ok(())
     }

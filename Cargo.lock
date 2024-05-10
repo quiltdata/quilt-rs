@@ -2393,10 +2393,12 @@ version = "0.7.0"
 dependencies = [
  "arrow",
  "arrow-array",
+ "async-stream",
  "async-trait",
  "aws-config",
  "aws-credential-types",
  "aws-sdk-s3",
+ "aws-smithy-async",
  "aws-smithy-types",
  "aws-types",
  "base64 0.22.1",

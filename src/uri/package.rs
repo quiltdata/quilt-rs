@@ -19,6 +19,8 @@ use crate::Error;
 
 const LATEST_TAG: &str = "latest";
 
+/// This is the revision (or "hash") of the package.
+/// "Package" itself is a handle, but each package has revision.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "_tag", content = "value")]
 pub enum RevisionPointer {
@@ -32,6 +34,9 @@ impl Default for RevisionPointer {
     }
 }
 
+/// In theory namespace is just a string.
+/// But in practice we use "prefix/name".
+/// For ease of serializing/deserializing and for validation we put it to a struct.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Namespace {
     prefix: String,
@@ -133,6 +138,48 @@ impl<'de> Deserialize<'de> for Namespace {
     }
 }
 
+/// This is kinda URI for the package without revisions.
+/// You can use it when you don't know or don't care about revision of the package.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct S3PackageHandle {
+    pub bucket: String,
+    pub namespace: Namespace,
+}
+
+impl From<S3PackageUri> for S3PackageHandle {
+    fn from(uri: S3PackageUri) -> S3PackageHandle {
+        S3PackageHandle {
+            bucket: uri.bucket,
+            namespace: uri.namespace,
+        }
+    }
+}
+
+impl From<&S3PackageUri> for S3PackageHandle {
+    fn from(uri: &S3PackageUri) -> S3PackageHandle {
+        uri.clone().into()
+    }
+}
+
+impl From<ManifestUri> for S3PackageHandle {
+    fn from(uri: ManifestUri) -> S3PackageHandle {
+        S3PackageHandle {
+            bucket: uri.bucket,
+            namespace: uri.namespace,
+        }
+    }
+}
+
+impl From<&ManifestUri> for S3PackageHandle {
+    fn from(uri: &ManifestUri) -> S3PackageHandle {
+        uri.clone().into()
+    }
+}
+
+/// Struct representation of the general `quilt+s3://url`
+/// Package handle + revision is a package.
+/// Also, this URI has path, so you can use it as an URI for referencing files in package.
+/// You can use this URL for both packages and files in packages.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct S3PackageUri {
     pub bucket: String,
@@ -204,22 +251,20 @@ impl std::str::FromStr for S3PackageUri {
     }
 }
 
-impl From<S3PackageUri> for ManifestUri {
-    fn from(uri: S3PackageUri) -> ManifestUri {
-        ManifestUri {
+impl From<ManifestUri> for S3PackageUri {
+    fn from(uri: ManifestUri) -> S3PackageUri {
+        S3PackageUri {
             bucket: uri.bucket,
             namespace: uri.namespace,
-            hash: match uri.revision {
-                RevisionPointer::Hash(h) => h,
-                RevisionPointer::Tag(h) => h,
-            },
+            revision: RevisionPointer::Hash(uri.hash),
+            path: None,
         }
     }
 }
 
-impl From<&S3PackageUri> for ManifestUri {
-    fn from(uri: &S3PackageUri) -> ManifestUri {
-        ManifestUri::from(uri.clone())
+impl From<&ManifestUri> for S3PackageUri {
+    fn from(uri: &ManifestUri) -> S3PackageUri {
+        S3PackageUri::from(uri.clone())
     }
 }
 

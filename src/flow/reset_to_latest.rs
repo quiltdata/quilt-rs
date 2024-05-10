@@ -3,12 +3,14 @@ use std::path::PathBuf;
 use crate::flow::browse::cache_remote_manifest;
 use crate::flow::install_paths::install_paths;
 use crate::flow::uninstall_paths::uninstall_paths;
+use crate::io::manifest::resolve_latest;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::manifest::Table;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
+use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::Error;
 
@@ -21,34 +23,38 @@ pub async fn reset_to_latest(
     working_dir: PathBuf,
     namespace: Namespace,
 ) -> Result<PackageLineage, Error> {
-    let new_latest = lineage.remote.resolve_latest(remote).await?;
-    if new_latest == lineage.remote.hash {
+    let latest = resolve_latest(remote, lineage.remote.clone().into()).await?;
+    if latest.hash == lineage.remote.hash {
         // already at latest
         return Ok(lineage);
     }
 
-    let entries_paths: Vec<PathBuf> = lineage.paths.clone().into_keys().collect();
+    let installed_paths: Vec<PathBuf> = lineage.paths.clone().into_keys().collect();
     let mut lineage =
-        uninstall_paths(lineage, working_dir.clone(), storage, &entries_paths).await?;
+        uninstall_paths(lineage, working_dir.clone(), storage, &installed_paths).await?;
 
-    lineage.latest_hash = new_latest.clone();
-    lineage.remote.hash = new_latest.clone();
-    lineage.base_hash = new_latest;
+    // TODO: Should be a method of lineage
+    lineage.latest_hash.clone_from(&latest.hash);
+    lineage.base_hash.clone_from(&latest.hash);
 
-    cache_remote_manifest(paths, storage, remote, &lineage.remote).await?;
+    cache_remote_manifest(paths, storage, remote, &latest.clone()).await?;
     copy_cached_to_installed(
         paths,
         storage,
-        &lineage.remote.bucket,
-        &namespace,
-        &lineage.remote.hash,
+        &ManifestUri {
+            namespace: namespace.clone(),
+            ..latest.clone()
+        },
     )
     .await?;
+    lineage.remote = latest;
 
-    let paths_to_install = entries_paths
-        .into_iter()
-        .filter(|x| manifest.records.contains_key(x))
-        .collect();
+    let mut paths_to_install = Vec::new();
+    for x in installed_paths {
+        if manifest.contains_record(&x).await {
+            paths_to_install.push(x)
+        }
+    }
     install_paths(
         lineage,
         manifest,
@@ -68,12 +74,15 @@ mod tests {
 
     use crate::lineage::PackageLineage;
     use crate::mocks;
-    use crate::uri::ManifestUri;
     use crate::uri::S3Uri;
 
     #[tokio::test]
     async fn test_if_already_latest() -> Result<(), Error> {
-        let source_lineage = mocks::lineage::with_remote("quilt+s3://b#package=f/a@foo")?;
+        let source_lineage = mocks::lineage::with_remote(ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("f", "a").into(),
+            hash: "foo".to_string(),
+        });
 
         let remote = mocks::remote::MockRemote::default();
         remote
@@ -99,7 +108,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_reseting_to_latest() -> Result<(), Error> {
-        let source_lineage = mocks::lineage::with_remote("quilt+s3://b#package=f/a@OUTDATED_HASH")?;
+        let source_lineage = mocks::lineage::with_remote(ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("f", "a").into(),
+            hash: "OUTDATED_HASH".to_string(),
+        });
 
         let jsonl = std::fs::read(mocks::manifest::jsonl())?;
         let remote = mocks::remote::MockRemote::default();

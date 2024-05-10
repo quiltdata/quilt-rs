@@ -6,6 +6,8 @@ use chrono::Utc;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
+use crate::io::remote::S3Attributes;
+use crate::uri::S3Uri;
 use crate::Error;
 
 use super::Storage;
@@ -24,17 +26,22 @@ async fn write(path: impl AsRef<Path> + Send, bytes: &[u8]) -> Result<(), Error>
     Ok(())
 }
 
-pub async fn get_file_modified_ts(path: impl AsRef<Path>) -> Result<DateTime<Utc>, Error> {
+async fn get_file_modified_ts(path: impl AsRef<Path>) -> Result<DateTime<Utc>, Error> {
     let modified = fs::metadata(path).await.map(|m| m.modified())??;
     Ok(DateTime::<Utc>::from(modified))
 }
 
+/// Implementation of the `Storage` trait for the local filesystem
 #[derive(Clone, Debug)]
 pub struct LocalStorage {}
 
 impl Storage for LocalStorage {
     async fn copy(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<u64, Error> {
         Ok(fs::copy(from, to).await?)
+    }
+
+    async fn rename(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), Error> {
+        Ok(fs::rename(from, to).await?)
     }
 
     async fn create_dir_all(&self, path: impl AsRef<Path>) -> Result<(), Error> {
@@ -97,6 +104,19 @@ impl Storage for LocalStorage {
         file.flush().await?;
 
         Ok(())
+    }
+
+    async fn get_object_attributes(
+        &self,
+        listing_uri: &S3Uri,
+        object_key: impl AsRef<str> + Send + Sync,
+    ) -> Result<S3Attributes, Error> {
+        // log::debug!("Trying again with client {:?}", client);
+        Err(Error::S3(format!(
+            "Error getting attributes for {} in {}",
+            object_key.as_ref(),
+            listing_uri,
+        )))
     }
 }
 

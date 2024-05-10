@@ -1,40 +1,86 @@
-use std::path::PathBuf;
+use tokio_stream::Stream;
+use tokio_stream::StreamExt;
 
-use aws_smithy_types::byte_stream::ByteStream;
-use multihash::Multihash;
-use tracing::log;
-use url::Url;
-
-use crate::checksum::MULTIHASH_SHA256_CHUNKED;
-use crate::checksum::MULTIPART_THRESHOLD;
 use crate::flow::browse::browse_remote_manifest;
-use crate::flow::browse::cache_manifest;
+use crate::flow::certify_latest::certify_latest;
+use crate::io::manifest::build_manifest_from_rows_stream;
+use crate::io::manifest::resolve_latest;
+use crate::io::manifest::tag_timestamp;
+use crate::io::manifest::upload_manifest;
+use crate::io::manifest::upload_row;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
+use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
-use crate::uri::S3Uri;
+use crate::uri::S3PackageHandle;
 use crate::Error;
+
+async fn get_local_and_remote_records(remote_manifest: &Table, row: Row) -> (Row, Option<Row>) {
+    match remote_manifest.get_record(&row.name).await {
+        Ok(remote_row) => (row, remote_row),
+        Err(_err) => (row, None),
+    }
+}
+
+enum EitherRow {
+    Local(Row),
+    Remote(Row),
+}
+
+fn check_and_return_remote_row((row, remote_row_opt): (Row, Option<Row>)) -> EitherRow {
+    if let Some(remote_row) = remote_row_opt {
+        if remote_row == row {
+            return EitherRow::Remote(Row {
+                place: remote_row.place.to_owned(),
+                ..row.clone()
+            });
+        }
+    }
+    EitherRow::Local(row)
+}
+
+async fn use_existing_row_or_upload(
+    remote: &impl Remote,
+    package_handle: &S3PackageHandle,
+    row_opt: EitherRow,
+) -> Result<Row, Error> {
+    match row_opt {
+        EitherRow::Remote(row) => Ok(row),
+        EitherRow::Local(row) => upload_row(remote, package_handle.clone(), row).await,
+    }
+}
+
+async fn stream_uploaded_local_rows<'a>(
+    remote: &'a impl Remote,
+    local_manifest: &'a Table,
+    remote_manifest: &'a Table,
+    package_handle: &'a S3PackageHandle,
+) -> impl Stream<Item = Result<Row, Error>> + 'a {
+    let stream = local_manifest.records_stream().await;
+    stream
+        .then(move |row| get_local_and_remote_records(remote_manifest, row))
+        .map(check_and_return_remote_row)
+        .then(move |either_row| use_existing_row_or_upload(remote, package_handle, either_row))
+}
 
 pub async fn push_package(
     mut lineage: PackageLineage,
-    local_manifest: &mut Table,
+    local_manifest: Table,
     paths: &paths::DomainPaths,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    namespace: Namespace,
+    namespace: Option<Namespace>,
 ) -> Result<PackageLineage, Error> {
     let commit = match lineage.commit {
         None => return Ok(lineage), // nothing to commit
         Some(commit) => commit,
     };
 
-    let manifest_uri = &lineage.remote;
-
-    let remote_manifest = browse_remote_manifest(paths, storage, remote, manifest_uri).await?;
+    let remote_manifest = browse_remote_manifest(paths, storage, remote, &lineage.remote).await?;
 
     // ## copy data
     // Copy each of the _modified_ paths from their local_key to remote_key,
@@ -42,101 +88,41 @@ pub async fn push_package(
     //
     // TODO: FAIL if the remote bucket does NOT support versioning (as it would be destructive)
 
-    // ignore removed items, upload changed and new items
-    for row in local_manifest.records.values_mut() {
-        if let Some(remote_row) = remote_manifest.records.get(&row.name) {
-            if remote_row.eq(row) {
-                row.place = remote_row.place.to_owned();
-                continue;
-            }
-        }
+    let manifest_uri = ManifestUri {
+        namespace: namespace.unwrap_or(lineage.remote.namespace.clone()),
+        ..lineage.remote.clone()
+    };
 
-        let local_url = Url::parse(&row.place)?;
-        let file_path: PathBuf = local_url.to_file_path().unwrap();
+    let header = local_manifest.get_header().await?;
+    let package_handle = S3PackageHandle::from(manifest_uri.clone());
+    let stream = Box::pin(
+        stream_uploaded_local_rows(remote, &local_manifest, &remote_manifest, &package_handle)
+            .await,
+    );
+    let manifest_path = |t: &str| paths.manifest_cache(&manifest_uri.bucket, t);
+    let (cache_path, top_hash) =
+        build_manifest_from_rows_stream(storage, manifest_path, header, stream).await?;
 
-        let s3_key = format!("{}/{}", namespace, row.name.display());
-        let s3_uri = S3Uri {
-            bucket: manifest_uri.bucket.to_string(),
-            key: format!("{}/{}", namespace, row.name.display()),
-            version: None,
-        };
-        log::debug!("Uploading to S3: {}", s3_uri);
-
-        // TODO: upload in parallel. use a stream?
-        let (version_id, checksum) = if row.size < MULTIPART_THRESHOLD {
-            let body = ByteStream::read_from().path(&file_path).build().await?;
-
-            remote
-                .put_object_and_checksum(&s3_uri, body, row.size)
-                .await?
-        } else {
-            remote
-                .multipart_upload_and_checksum(&s3_uri, file_path, row.size)
-                .await?
-        };
-
-        // Update the manifest with the sha2-256-chunked checksum.
-        row.hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, checksum.as_ref())?;
-
-        let remote_url = S3Uri {
-            bucket: manifest_uri.bucket.clone(),
-            key: s3_key,
-            version: version_id,
-        };
-        log::debug!("got remote url: {}", remote_url);
-
-        // "Relax" the manifest by using those new remote keys
-        row.place = remote_url.to_string();
-    }
-
-    let top_hash = local_manifest.top_hash();
-    let new_remote = ManifestUri {
-        hash: top_hash.clone(),
+    let new_manifest_uri = ManifestUri {
+        hash: top_hash,
         ..manifest_uri.clone()
     };
 
-    // Cache the relaxed manifest
-    let cache_path = cache_manifest(
-        paths,
-        storage,
-        local_manifest,
-        &new_remote.bucket,
-        &new_remote.hash,
-    )
-    .await?;
+    upload_manifest(storage, remote, &new_manifest_uri, &cache_path).await?;
 
-    // Push the (cached) relaxed manifest to the remote, don't tag it yet
-    new_remote.upload_from(storage, remote, &cache_path).await?;
-
-    // Upload a quilt3 manifest for backward compatibility.
-    new_remote.upload_legacy(remote, local_manifest).await?;
-
-    log::debug!("uploaded remote manifest: {new_remote:?}");
-
-    // Tag the new commit.
-    // If {self.commit.tag} does not already exist at
-    // {self.remote}/.quilt/named_packages/{self.namespace},
-    // create it with the value of {self.commit.hash}
-    // TODO: Otherwise try again with the current timestamp as the tag
-    // (e.g., try five times with exponential backoff, then Error)
-    new_remote
-        .put_timestamp_tag(remote, commit.timestamp, &new_remote.hash)
-        .await?;
+    tag_timestamp(remote, &new_manifest_uri, commit.timestamp).await?;
 
     // Check the hash of remote's latest manifest
-    lineage.latest_hash = new_remote.resolve_latest(remote).await?;
-    lineage.remote = new_remote;
+    lineage.latest_hash = resolve_latest(remote, manifest_uri.into()).await?.hash;
+    lineage.remote = new_manifest_uri.clone();
 
     // Reset the commit state.
     lineage.commit = None;
 
-    // FIXME: use flow::certify_latest
     // Try certifying latest if tracking
     if lineage.base_hash == lineage.latest_hash {
         // remote latest has not been updated, certifying the new latest
-        lineage.remote.update_latest(remote, &top_hash).await?;
-        lineage.latest_hash = top_hash.clone();
-        lineage.base_hash = top_hash.clone();
+        return certify_latest(lineage, remote, new_manifest_uri).await;
     }
 
     Ok(lineage)
@@ -146,11 +132,14 @@ pub async fn push_package(
 mod tests {
     use super::*;
 
+    use crate::uri::S3Uri;
+    use std::path::PathBuf;
+
     use crate::lineage::CommitState;
     use crate::lineage::PackageLineage;
     use crate::manifest::Row;
     use crate::mocks;
-    use crate::uri::S3PackageUri;
+    use crate::uri::ManifestUri;
 
     #[tokio::test]
     async fn test_no_push_if_no_commit() -> Result<(), Error> {
@@ -158,11 +147,11 @@ mod tests {
         let remote = mocks::remote::MockRemote::default();
         let lineage = push_package(
             PackageLineage::default(),
-            &mut Table::default(),
+            Table::default(),
             &paths::DomainPaths::default(),
             &storage,
             &remote,
-            Namespace::default(),
+            None,
         )
         .await?;
         assert_eq!(lineage, PackageLineage::default());
@@ -171,8 +160,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_entries_push() -> Result<(), Error> {
-        let manifest_uri: ManifestUri =
-            S3PackageUri::try_from("quilt+s3://b#package=a/c@__FOO__")?.into();
+        let manifest_uri = ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("a", "c").into(),
+            hash: "__FOO__".to_string(),
+        };
         let lineage = PackageLineage {
             commit: Some(CommitState::default()),
             remote: manifest_uri,
@@ -201,14 +193,18 @@ mod tests {
             .await?;
         let lineage = push_package(
             lineage,
-            &mut Table::default(),
+            Table::default(),
             &paths::DomainPaths::default(),
             &storage,
             &remote,
-            Namespace::default(),
+            None,
         )
         .await?;
-        let manifest_uri: ManifestUri = S3PackageUri::try_from("quilt+s3://b#package=a/c@770459d4230273fd44b272c552d1204458175e7d7cb26fcd601c662cf5f72d05")?.into();
+        let manifest_uri = ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("a", "c").into(),
+            hash: "770459d4230273fd44b272c552d1204458175e7d7cb26fcd601c662cf5f72d05".to_string(),
+        };
         assert_eq!(
             lineage,
             PackageLineage {
@@ -223,15 +219,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_single_chunk_push() -> Result<(), Error> {
-        let manifest_uri: ManifestUri =
-            S3PackageUri::try_from("quilt+s3://b#package=f/a@__FOO__")?.into();
+        let manifest_uri = ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("f", "a").into(),
+            hash: "__FOO__".to_string(),
+        };
         let lineage = PackageLineage {
             commit: Some(CommitState::default()),
             remote: manifest_uri,
             ..PackageLineage::default()
         };
         let jsonl = std::fs::read(mocks::manifest::parquet_checksummed())?;
-        let temp_dir = tempfile::tempdir()?;
         let manifest_key =
             ".quilt/packages/b/0f85671863dadacf3a0e62212f1b9151a11f72228e4c82ed86ff27d46ec31d87";
         let storage = mocks::storage::MockStorage::default();
@@ -252,10 +250,13 @@ mod tests {
             )
             .await?;
 
-        let file_path = temp_dir.into_path().join("bar");
-        tokio::fs::copy(mocks::manifest::parquet_checksummed(), &file_path).await?;
-
-        let mut manifest = mocks::manifest::with_rows(vec![Row {
+        let file_path = PathBuf::from("/b/a/r");
+        let manifest_file = std::fs::read(mocks::manifest::parquet_checksummed())?;
+        remote
+            .storage
+            .write_file(&file_path, &manifest_file)
+            .await?;
+        let manifest = mocks::manifest::with_rows(vec![Row {
             name: PathBuf::from("bar"),
             place: format!("file://{}", file_path.display()),
             ..Row::default()
@@ -263,14 +264,18 @@ mod tests {
 
         let lineage = push_package(
             lineage,
-            &mut manifest,
+            manifest,
             &paths::DomainPaths::default(),
             &storage,
             &remote,
-            Namespace::default(),
+            None,
         )
         .await?;
-        let manifest_uri: ManifestUri = S3PackageUri::try_from("quilt+s3://b#package=f/a@0f85671863dadacf3a0e62212f1b9151a11f72228e4c82ed86ff27d46ec31d87")?.into();
+        let manifest_uri = ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("f", "a").into(),
+            hash: "0f85671863dadacf3a0e62212f1b9151a11f72228e4c82ed86ff27d46ec31d87".to_string(),
+        };
         assert_eq!(
             lineage,
             PackageLineage {

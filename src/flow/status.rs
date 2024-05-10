@@ -2,14 +2,12 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
-use multihash::Multihash;
-
 use tracing::log;
 
 use crate::checksum::calculate_sha256_checksum;
 use crate::checksum::calculate_sha256_chunked_checksum;
-use crate::checksum::MULTIHASH_SHA256;
 use crate::checksum::MULTIHASH_SHA256_CHUNKED;
+use crate::io::manifest::resolve_latest;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::Change;
@@ -25,11 +23,11 @@ pub async fn refresh_latest_hash(
     mut lineage: PackageLineage,
     remote: &impl Remote,
 ) -> Result<PackageLineage, Error> {
-    let latest_hash = lineage.remote.resolve_latest(remote).await?;
-    if lineage.latest_hash == latest_hash {
+    let latest = resolve_latest(remote, lineage.remote.clone().into()).await?;
+    if lineage.latest_hash == latest.hash {
         return Ok(lineage);
     }
-    lineage.latest_hash = latest_hash;
+    lineage.latest_hash = latest.hash;
     Ok(lineage)
 }
 
@@ -52,7 +50,8 @@ pub async fn create_status(
             "path {:?} not found in installed manifest",
             path
         )))?;
-        orig_paths.insert(PathBuf::from(path), (row.hash, row.size));
+        // TODO: use whole Row
+        orig_paths.insert(path, (row.hash, row.size));
     }
 
     let mut queue = VecDeque::new();
@@ -79,18 +78,16 @@ pub async fn create_status(
                 let file = storage.open_file(&file_path).await?;
                 let file_metadata = file.metadata().await?;
 
+                // TODO: add to error converter and use `?`
                 let relative_path = file_path.strip_prefix(&working_dir).unwrap();
-                if let Some((orig_hash, orig_size)) = orig_paths.remove(relative_path) {
+                if let Some((orig_hash, orig_size)) =
+                    orig_paths.remove(&relative_path.to_path_buf())
+                {
                     let file_hash = match orig_hash.code() {
                         MULTIHASH_SHA256_CHUNKED => {
-                            let hash = calculate_sha256_chunked_checksum(file, file_metadata.len())
-                                .await?;
-                            Multihash::wrap(MULTIHASH_SHA256_CHUNKED, hash.as_ref())?
+                            calculate_sha256_chunked_checksum(file, file_metadata.len()).await?
                         }
-                        _ => {
-                            let hash = calculate_sha256_checksum(file).await?;
-                            Multihash::wrap(MULTIHASH_SHA256, hash.as_ref())?
-                        }
+                        _ => calculate_sha256_checksum(file).await?,
                     };
 
                     if file_hash != orig_hash {
@@ -112,14 +109,12 @@ pub async fn create_status(
                 } else {
                     let sha256_hash =
                         calculate_sha256_chunked_checksum(file, file_metadata.len()).await?;
-                    let file_hash =
-                        Multihash::wrap(MULTIHASH_SHA256_CHUNKED, sha256_hash.as_ref())?;
                     changes.insert(
                         relative_path.to_path_buf(),
                         Change {
                             current: Some(PackageFileFingerprint {
                                 size: file_metadata.len(),
-                                hash: file_hash,
+                                hash: sha256_hash,
                             }),
                             previous: None,
                             state: DiscreteChange::Added,
@@ -156,7 +151,7 @@ mod tests {
 
     use crate::checksum::ContentHash;
     use crate::lineage::CommitState;
-    use crate::lineage::UpstreamDiscreteState;
+    use crate::lineage::UpstreamState;
     use crate::mocks;
 
     #[tokio::test]
@@ -187,7 +182,7 @@ mod tests {
             PathBuf::default(),
         )
         .await?;
-        assert_eq!(status.upstream_state, UpstreamDiscreteState::Behind);
+        assert_eq!(status.upstream_state, UpstreamState::Behind);
         Ok(())
     }
 
@@ -205,7 +200,7 @@ mod tests {
             PathBuf::default(),
         )
         .await?;
-        assert_eq!(status.upstream_state, UpstreamDiscreteState::Ahead);
+        assert_eq!(status.upstream_state, UpstreamState::Ahead);
         Ok(())
     }
 
@@ -228,7 +223,7 @@ mod tests {
             PathBuf::default(),
         )
         .await?;
-        assert_eq!(status.upstream_state, UpstreamDiscreteState::Diverged);
+        assert_eq!(status.upstream_state, UpstreamState::Diverged);
         Ok(())
     }
 

@@ -6,9 +6,13 @@ use chrono::DateTime;
 use chrono::Utc;
 use tokio::fs::{File, ReadDir};
 
+use crate::io::remote::S3Attributes;
+use crate::uri::S3Uri;
 use crate::Error;
 
-pub mod fs;
+mod local;
+
+pub use local::LocalStorage;
 
 // Mock storage is only available during testing.
 #[cfg(test)]
@@ -27,6 +31,13 @@ pub trait Storage {
         from: impl AsRef<Path> + Send,
         to: impl AsRef<Path> + Send,
     ) -> impl Future<Output = Result<u64, Error>> + Send;
+
+    /// Rename/move a file from one location to another.
+    fn rename(
+        &self,
+        from: impl AsRef<Path> + Send,
+        to: impl AsRef<Path> + Send,
+    ) -> impl Future<Output = Result<(), Error>> + Send;
 
     /// Recursively creates a directory and all of its parent components if they
     /// are missing.
@@ -87,4 +98,10 @@ pub trait Storage {
         path: impl AsRef<Path> + Send + Sync,
         body: ByteStream,
     ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
+
+    fn get_object_attributes(
+        &self,
+        listing_uri: &S3Uri,
+        object_key: impl AsRef<str> + Send + Sync,
+    ) -> impl Future<Output = Result<S3Attributes, Error>> + Send + Sync;
 }

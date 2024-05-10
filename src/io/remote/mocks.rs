@@ -1,11 +1,15 @@
 use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::types::Object;
+use multihash::Multihash;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
+use tokio_stream::Stream;
 use tracing::log;
 
 use crate::checksum;
+use crate::io::remote::S3Attributes;
 use crate::io::storage::mocks::MockStorage;
 use crate::io::storage::Storage;
 use crate::uri::S3Uri;
@@ -37,7 +41,6 @@ impl Remote for MockRemote {
     }
 
     async fn get_object_stream(&self, s3_uri: &S3Uri) -> Result<ByteStream, Error> {
-        println!("get_object_stream {:?}", s3_uri);
         let key = s3_uri.to_string();
         log::debug!("Mocking {} get request", key);
 
@@ -73,28 +76,35 @@ impl Remote for MockRemote {
         self.storage.write_file(key, &contents_vec).await
     }
 
-    async fn put_object_and_checksum(
+    async fn upload_file(
         &self,
-        s3_uri: &S3Uri,
-        contents: impl Into<ByteStream>,
+        source_path: impl AsRef<Path>,
+        dest_uri: &S3Uri,
         size: u64,
-    ) -> Result<(Option<String>, Vec<u8>), Error> {
-        let key = s3_uri.to_string();
-        let contents_vec = contents.into().collect().await?.to_vec();
-        self.storage.write_file(&key, &contents_vec).await?;
-
-        let file = self.storage.open_file(&key).await?;
+    ) -> Result<(S3Uri, Multihash<256>), Error> {
+        let file = self.storage.open_file(source_path.as_ref()).await?;
         let hash = checksum::calculate_sha256_chunked_checksum(file, size).await?;
-        Ok((Some("version".to_string()), hash.to_vec()))
+        Ok((
+            S3Uri {
+                version: Some("version".to_string()),
+                ..dest_uri.clone()
+            },
+            hash,
+        ))
     }
 
-    async fn multipart_upload_and_checksum(
+    async fn get_object_attributes(
         &self,
-        _s3_uri: &S3Uri,
-        _file_path: impl AsRef<Path>,
-        _size: u64,
-    ) -> Result<(Option<String>, Vec<u8>), Error> {
-        Ok((None, Vec::new()))
+        listing_uri: &S3Uri,
+        object_key: impl AsRef<str>,
+    ) -> Result<S3Attributes, Error> {
+        self.storage
+            .get_object_attributes(listing_uri, object_key.as_ref().to_string())
+            .await
+    }
+
+    async fn list_objects(&self, _listing_uri: S3Uri) -> impl Stream<Item = Result<Object, Error>> {
+        tokio_stream::iter(Vec::new())
     }
 }
 

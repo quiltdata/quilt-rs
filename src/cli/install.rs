@@ -49,13 +49,13 @@ async fn install_package(
     uri: &quilt_rs::uri::S3PackageUri,
     namespace: Option<Namespace>,
 ) -> Result<quilt_rs::InstalledPackage, Error> {
-    let remote = quilt_rs::io::remote::s3::RemoteS3::new();
+    let remote = quilt_rs::io::remote::RemoteS3::new();
     let namespace = namespace.unwrap_or(uri.namespace.clone());
     if let Some(installed_package) = local_domain.get_installed_package(&namespace).await? {
         // FIXME: check the actual remote_manifest
         return Ok(installed_package);
     }
-    let manifest_uri = quilt_rs::uri::ManifestUri::from_package_uri(&remote, uri).await?;
+    let manifest_uri = quilt_rs::io::manifest::resolve_manifest_uri(&remote, uri).await?;
     Ok(local_domain.install_package(&manifest_uri).await?)
 }
 
@@ -94,9 +94,10 @@ pub async fn model(
     }: Input,
 ) -> Result<Output, Error> {
     let uri: quilt_rs::uri::S3PackageUri = uri.parse()?;
+    let path = uri.path.clone();
     let installed_package = install_package(local_domain, &uri, namespace).await?;
     let package_dir = installed_package.working_folder();
-    let paths = get_entries(&package_dir, uri.path, paths);
+    let paths = get_entries(&package_dir, path, paths);
 
     if !paths.is_empty() {
         install_paths(&installed_package, &paths).await?;

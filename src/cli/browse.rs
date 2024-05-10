@@ -34,7 +34,7 @@ impl std::fmt::Display for Output {
         header_table.with(tabled::settings::Panel::header("Remote manifest header"));
         output.push(header_table.to_string());
 
-        let entries = self.manifest.records.values().map(|e| RemoteManifestEntry {
+        let entries = self.manifest.records_values().map(|e| RemoteManifestEntry {
             name: e.name.display().to_string(),
             place: e.place.to_string(),
             size: e.size,
@@ -57,9 +57,9 @@ pub async fn model(
     local_domain: &quilt_rs::LocalDomain,
     Input { uri }: Input,
 ) -> Result<Output, Error> {
-    let remote = quilt_rs::io::remote::s3::RemoteS3::new();
+    let remote = quilt_rs::io::remote::RemoteS3::new();
     let uri: quilt_rs::uri::S3PackageUri = uri.parse()?;
-    let manifest_uri = quilt_rs::uri::ManifestUri::from_package_uri(&remote, &uri).await?;
+    let manifest_uri = quilt_rs::io::manifest::resolve_manifest_uri(&remote, &uri).await?;
     Ok(Output {
         manifest: local_domain.browse_remote_manifest(&manifest_uri).await?,
     })
@@ -88,8 +88,8 @@ mod tests {
         assert_eq!(
             output
                 .manifest
-                .records
-                .get(&PathBuf::from("READ ME.md"))
+                .get_record(&PathBuf::from("READ ME.md"))
+                .await?
                 .unwrap()
                 .place,
             "s3://udp-spec/spec/quiltcore/READ%20ME.md?versionId=.l3tAGbfEBC4c.L2ywTpWbnweSpYLe8a"
@@ -97,8 +97,8 @@ mod tests {
         assert_eq!(
             output
                 .manifest
-                .records
-                .get(&PathBuf::from("timestamp.txt"))
+                .get_record(&PathBuf::from("timestamp.txt"))
+                .await?
                 .unwrap()
                 .place,
             "s3://udp-spec/spec/quiltcore/timestamp.txt?versionId=lifktjQgrgewg1FGXxls3UKtJSjl2shy"

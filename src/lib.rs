@@ -3,6 +3,7 @@ use std::str::Utf8Error;
 use aws_smithy_types::byte_stream;
 use reqwest::header::ToStrError;
 use thiserror::Error;
+use url::Url;
 
 mod flow;
 
@@ -93,6 +94,9 @@ pub enum Error {
 
     #[error("Invalid URI scheme: {0}")]
     InvalidScheme(String),
+
+    #[error("Invalid file:// URI: {0}")]
+    FileUri(Url),
 
     #[error("Invalid package URI: {0}")]
     PackageURI(String),

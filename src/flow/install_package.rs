@@ -1,4 +1,5 @@
 use crate::flow::browse::cache_remote_manifest;
+use crate::io::manifest::resolve_latest;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::DomainLineage;
@@ -22,7 +23,7 @@ pub async fn install_package(
         ));
     }
 
-    cache_remote_manifest(paths, storage, remote, manifest_uri).await?;
+    cache_remote_manifest(paths, storage, remote, &manifest_uri.clone()).await?;
 
     // Make an "installed" copy of the remote manifest.
     let installed_manifest_path =
@@ -30,14 +31,7 @@ pub async fn install_package(
     storage
         .create_dir_all(&installed_manifest_path.parent().unwrap())
         .await?;
-    paths::copy_cached_to_installed(
-        paths,
-        storage,
-        &manifest_uri.bucket,
-        &manifest_uri.namespace,
-        &manifest_uri.hash,
-    )
-    .await?;
+    paths::copy_cached_to_installed(paths, storage, manifest_uri).await?;
 
     // Create the identity cache dir.
     let objects_dir = paths.objects_dir();
@@ -48,12 +42,12 @@ pub async fn install_package(
     storage.create_dir_all(&working_dir).await?;
 
     // Resolve and record latest manifest hash
-    let latest_hash = manifest_uri.resolve_latest(remote).await?;
+    let latest = resolve_latest(remote, manifest_uri.into()).await?;
     // Update the lineage (with empty paths).
     let mut lineage = lineage;
     lineage.packages.insert(
         manifest_uri.namespace.clone(),
-        PackageLineage::from_remote(manifest_uri.to_owned(), latest_hash),
+        PackageLineage::from_remote(manifest_uri.clone(), latest.hash),
     );
     Ok(lineage)
 }

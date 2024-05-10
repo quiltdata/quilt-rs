@@ -1,22 +1,60 @@
 use std::path::Path;
+use tracing::log;
 
+use async_stream::try_stream;
 use aws_sdk_s3::error::DisplayErrorContext;
 use aws_sdk_s3::error::SdkError;
+use aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::ChecksumAlgorithm;
 use aws_sdk_s3::types::CompletedMultipartUpload;
 use aws_sdk_s3::types::CompletedPart;
+use aws_sdk_s3::types::Object;
 use aws_smithy_types::byte_stream::Length;
-use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
+use parquet::data_type::AsBytes;
+use tokio_stream::Stream;
+
+use multihash::Multihash;
 use tokio::io::AsyncRead;
 
-use crate::checksum;
+use crate::checksum::calculate_sha256_checksum;
+use crate::checksum::get_checksum_chunksize_and_parts;
+use crate::checksum::get_compliant_chunked_checksum;
+use crate::checksum::ContentHash;
+use crate::checksum::MPU_MAX_PARTS;
+use crate::checksum::MULTIHASH_SHA256_CHUNKED;
+use crate::checksum::MULTIPART_THRESHOLD;
 use crate::io::remote::Remote;
 use crate::uri::S3Uri;
 use crate::Error;
 
-use crate::io::remote::utils::get_client_for_bucket;
+use crate::io::remote::get_client_for_bucket;
+use crate::io::remote::S3Attributes;
+
+struct S3AttributesWrapper {
+    pub hash: Multihash<256>,
+    pub size: u64,
+    pub version: String,
+}
+
+impl TryFrom<GetObjectAttributesOutput> for S3AttributesWrapper {
+    type Error = Error;
+    fn try_from(attrs: GetObjectAttributesOutput) -> Result<Self, Self::Error> {
+        if attrs.delete_marker.is_some() {
+            // Can happen if object is removed after it was listed but before attributes retrieved.
+            return Err(Error::S3("Object is a delete marker".to_string()));
+        }
+
+        let checksum = get_compliant_chunked_checksum(&attrs).unwrap();
+        let hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, checksum.as_bytes())?;
+        let size = attrs.object_size.expect("ObjectSize must be requested") as u64;
+        Ok(S3AttributesWrapper {
+            version: attrs.version_id.expect("VersionId must be requested"),
+            hash,
+            size,
+        })
+    }
+}
 
 async fn get_object_stream(
     client: &aws_sdk_s3::Client,
@@ -39,6 +77,124 @@ async fn get_object(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Result<impl 
     Ok(get_object_stream(client, s3_uri).await?.into_async_read())
 }
 
+async fn put_object_and_checksum(
+    source_path: impl AsRef<Path>,
+    dest_uri: &S3Uri,
+    size: u64,
+) -> Result<(S3Uri, Multihash<256>), Error> {
+    let client = get_client_for_bucket(&dest_uri.bucket).await?;
+    let response = client
+        .put_object()
+        .bucket(&dest_uri.bucket)
+        .key(&dest_uri.key)
+        .body(ByteStream::from_path(source_path).await?)
+        .checksum_algorithm(ChecksumAlgorithm::Sha256)
+        .send()
+        .await
+        .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
+    let s3_checksum_b64 = response
+        .checksum_sha256
+        .ok_or(Error::Checksum("missing checksum".to_string()))?;
+    // let s3_checksum = BASE64_STANDARD.decode(s3_checksum_b64)?;
+    let hash: Multihash<256> =
+        ContentHash::SHA256Chunked(s3_checksum_b64.to_string()).try_into()?;
+    let checksum = if size == 0 {
+        // Edge case: a 0-byte upload is treated as an empty list of chunks, rather than
+        // a list of a 0-byte chunk. Its checksum is sha256(''), NOT sha256(sha256('')).
+        hash
+    } else {
+        calculate_sha256_checksum(hash.digest()).await?
+    };
+
+    Ok((
+        S3Uri {
+            version: response.version_id,
+            ..dest_uri.clone()
+        },
+        checksum,
+    ))
+}
+
+async fn multipart_upload_and_checksum(
+    source_path: impl AsRef<Path>,
+    dest_uri: &S3Uri,
+    size: u64,
+) -> Result<(S3Uri, Multihash<256>), Error> {
+    let (chunksize, num_chunks) = get_checksum_chunksize_and_parts(size);
+    let client = get_client_for_bucket(&dest_uri.bucket).await?;
+    let upload_id = client
+        .create_multipart_upload()
+        .bucket(&dest_uri.bucket)
+        .key(&dest_uri.key)
+        .checksum_algorithm(ChecksumAlgorithm::Sha256)
+        .send()
+        .await
+        .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?
+        .upload_id
+        .ok_or(Error::UploadId("failed to get an UploadId".to_string()))?;
+
+    let mut parts: Vec<CompletedPart> = Vec::new();
+    for chunk_idx in 0..num_chunks {
+        let part_number = chunk_idx as i32 + 1;
+        let offset = chunk_idx * chunksize;
+        let length = chunksize.min(size - offset);
+        let chunk_body = ByteStream::read_from()
+            .path(source_path.as_ref())
+            .offset(offset)
+            .length(Length::Exact(length)) // https://github.com/awslabs/aws-sdk-rust/issues/821
+            .build()
+            .await?;
+        let part_response = client
+            .upload_part()
+            .bucket(&dest_uri.bucket)
+            .key(&dest_uri.key)
+            .upload_id(&upload_id)
+            .part_number(part_number)
+            .checksum_algorithm(ChecksumAlgorithm::Sha256)
+            .body(chunk_body)
+            .send()
+            .await
+            .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
+        parts.push(
+            CompletedPart::builder()
+                .part_number(part_number)
+                .e_tag(part_response.e_tag.unwrap_or_default())
+                .checksum_sha256(part_response.checksum_sha256.unwrap_or_default())
+                .build(),
+        );
+    }
+
+    let response = client
+        .complete_multipart_upload()
+        .bucket(&dest_uri.bucket)
+        .key(&dest_uri.key)
+        .upload_id(&upload_id)
+        .multipart_upload(
+            CompletedMultipartUpload::builder()
+                .set_parts(Some(parts))
+                .build(),
+        )
+        .send()
+        .await
+        .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
+
+    let s3_checksum = response
+        .checksum_sha256
+        .ok_or(Error::Checksum("missing checksum".to_string()))?;
+    let (checksum_b64, _) = s3_checksum
+        .split_once('-')
+        .ok_or(Error::Checksum("unexpected checksum".to_string()))?;
+
+    Ok((
+        S3Uri {
+            version: response.version_id,
+            ..dest_uri.clone()
+        },
+        ContentHash::SHA256Chunked(checksum_b64.to_string()).try_into()?,
+    ))
+}
+
+/// Implementation of the `Remote` trait for S3
 #[derive(Clone, Debug)]
 pub struct RemoteS3 {}
 
@@ -97,112 +253,77 @@ impl Remote for RemoteS3 {
         Ok(())
     }
 
-    async fn put_object_and_checksum(
+    async fn upload_file(
         &self,
-        s3_uri: &S3Uri,
-        contents: impl Into<ByteStream>,
+        source_path: impl AsRef<Path>,
+        dest_uri: &S3Uri,
         size: u64,
-    ) -> Result<(Option<String>, Vec<u8>), Error> {
-        let client = get_client_for_bucket(&s3_uri.bucket).await?;
-        let response = client
-            .put_object()
-            .bucket(&s3_uri.bucket)
-            .key(&s3_uri.key)
-            .body(contents.into())
-            .checksum_algorithm(ChecksumAlgorithm::Sha256)
-            .send()
-            .await
-            .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
-        let s3_checksum_b64 = response
-            .checksum_sha256
-            .ok_or(Error::Checksum("missing checksum".to_string()))?;
-        let s3_checksum = BASE64_STANDARD.decode(s3_checksum_b64)?;
-        let checksum = if size == 0 {
-            // Edge case: a 0-byte upload is treated as an empty list of chunks, rather than
-            // a list of a 0-byte chunk. Its checksum is sha256(''), NOT sha256(sha256('')).
-            s3_checksum
+    ) -> Result<(S3Uri, Multihash<256>), Error> {
+        if size < MULTIPART_THRESHOLD {
+            put_object_and_checksum(source_path, dest_uri, size).await
         } else {
-            checksum::calculate_sha256_checksum(s3_checksum.as_ref())
-                .await?
-                .to_vec()
-        };
-
-        Ok((response.version_id, checksum))
+            multipart_upload_and_checksum(source_path, dest_uri, size).await
+        }
     }
 
-    async fn multipart_upload_and_checksum(
+    async fn get_object_attributes(
         &self,
-        s3_uri: &S3Uri,
-        file_path: impl AsRef<Path>,
-        size: u64,
-    ) -> Result<(Option<String>, Vec<u8>), Error> {
-        let (chunksize, num_chunks) = checksum::get_checksum_chunksize_and_parts(size);
-        let client = get_client_for_bucket(&s3_uri.bucket).await?;
-        let upload_id = client
-            .create_multipart_upload()
-            .bucket(&s3_uri.bucket)
-            .key(&s3_uri.key)
-            .checksum_algorithm(ChecksumAlgorithm::Sha256)
-            .send()
-            .await
-            .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?
-            .upload_id
-            .ok_or(Error::UploadId("failed to get an UploadId".to_string()))?;
-
-        let mut parts: Vec<CompletedPart> = Vec::new();
-        for chunk_idx in 0..num_chunks {
-            let part_number = chunk_idx as i32 + 1;
-            let offset = chunk_idx * chunksize;
-            let length = chunksize.min(size - offset);
-            let file = tokio::fs::File::open(&file_path).await?;
-            let chunk_body = ByteStream::read_from()
-                .file(file)
-                .offset(offset)
-                .length(Length::Exact(length)) // https://github.com/awslabs/aws-sdk-rust/issues/821
-                .build()
-                .await?;
-            let part_response = client
-                .upload_part()
-                .bucket(&s3_uri.bucket)
-                .key(&s3_uri.key)
-                .upload_id(&upload_id)
-                .part_number(part_number)
-                .checksum_algorithm(ChecksumAlgorithm::Sha256)
-                .body(chunk_body)
-                .send()
-                .await
-                .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
-            parts.push(
-                CompletedPart::builder()
-                    .part_number(part_number)
-                    .e_tag(part_response.e_tag.unwrap_or_default())
-                    .checksum_sha256(part_response.checksum_sha256.unwrap_or_default())
-                    .build(),
-            );
-        }
-
-        let response = client
-            .complete_multipart_upload()
-            .bucket(&s3_uri.bucket)
-            .key(&s3_uri.key)
-            .upload_id(&upload_id)
-            .multipart_upload(
-                CompletedMultipartUpload::builder()
-                    .set_parts(Some(parts))
-                    .build(),
-            )
+        listing_uri: &S3Uri,
+        object_key: impl AsRef<str>,
+    ) -> Result<S3Attributes, Error> {
+        let client = get_client_for_bucket(&listing_uri.bucket).await?;
+        let key = object_key.as_ref();
+        log::debug!(
+            "Getting attributes for bucket {} key {}",
+            &listing_uri.bucket,
+            key
+        );
+        let attrs = client
+            .get_object_attributes()
+            .bucket(&listing_uri.bucket)
+            .key(key)
+            .object_attributes(aws_sdk_s3::types::ObjectAttributes::Checksum)
+            .object_attributes(aws_sdk_s3::types::ObjectAttributes::ObjectParts)
+            .object_attributes(aws_sdk_s3::types::ObjectAttributes::ObjectSize)
+            .max_parts(MPU_MAX_PARTS as i32)
             .send()
             .await
             .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
 
-        let s3_checksum = response
-            .checksum_sha256
-            .ok_or(Error::Checksum("missing checksum".to_string()))?;
-        let (checksum_b64, _) = s3_checksum
-            .split_once('-')
-            .ok_or(Error::Checksum("unexpected checksum".to_string()))?;
-        let checksum = BASE64_STANDARD.decode(checksum_b64)?;
+        let S3AttributesWrapper {
+            size,
+            hash,
+            version,
+        } = attrs.try_into()?;
+        Ok(S3Attributes {
+            listing_uri: listing_uri.clone(),
+            object_uri: S3Uri {
+                bucket: listing_uri.bucket.clone(),
+                key: key.to_string(),
+                version: Some(version),
+            },
+            hash,
+            size,
+        })
+    }
 
-        Ok((response.version_id, checksum))
+    async fn list_objects(&self, listing_uri: S3Uri) -> impl Stream<Item = Result<Object, Error>> {
+        try_stream! {
+            let client = get_client_for_bucket(&listing_uri.bucket).await?;
+            let mut paginated_stream = client
+                .list_objects_v2()
+                .bucket(&listing_uri.bucket)
+                .prefix(&listing_uri.key)
+                .into_paginator()
+                .page_size(100) // XXX: this is to limit concurrency
+                .send();
+            while let Some(page) = paginated_stream.next().await {
+                let page = page.map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
+
+                while let Some(obj) = page.contents.iter().flatten().next() {
+                    yield obj.clone()
+                }
+            }
+        }
     }
 }

@@ -60,24 +60,22 @@ pub mod manifest {
     }
 
     pub fn with_record_keys(keys: Vec<PathBuf>) -> Table {
+        let mut table = Table::default();
         let mut records = BTreeMap::new();
         for key in &keys {
             records.insert(key.clone(), row_with_name(key.clone()));
         }
-        Table {
-            records,
-            ..Table::default()
-        }
+        table.set_records(records);
+        table
     }
 
     pub fn with_rows(rows: Vec<Row>) -> Table {
+        let mut table = Table::default();
         let mut records = BTreeMap::new();
         for row in &rows {
             records.insert(row.name.clone(), row.clone());
         }
-        Table {
-            records,
-            ..Table::default()
-        }
+        table.set_records(records);
+        table
     }
 }

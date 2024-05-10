@@ -3,21 +3,25 @@ use std::path::PathBuf;
 use crate::flow::browse::cache_remote_manifest;
 use crate::flow::install_paths::install_paths;
 use crate::flow::uninstall_paths::uninstall_paths;
-use crate::io::remote::s3::RemoteS3;
+use crate::io::manifest::resolve_latest;
+use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageLineage;
 use crate::manifest::Table;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
+use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::Error;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn pull_package(
     lineage: PackageLineage,
     manifest: &mut Table,
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
+    remote: &impl Remote,
     working_dir: PathBuf,
     status: InstalledPackageStatus,
     namespace: Namespace,
@@ -46,25 +50,27 @@ pub async fn pull_package(
 
     // TODO: uninstall_paths() just modified the lineage, so re-reading it here.
     // There needs to be a better way.
-    lineage.remote.hash = lineage.latest_hash.clone();
-    lineage.base_hash = lineage.latest_hash.clone();
+    lineage.remote.hash.clone_from(&lineage.latest_hash);
+    lineage.base_hash.clone_from(&lineage.latest_hash);
 
-    // FIXME: pass from outside
-    let remote = RemoteS3::new();
-    cache_remote_manifest(paths, storage, &remote, &lineage.remote).await?;
+    let manifest_uri = resolve_latest(remote, lineage.remote.clone().into()).await?;
+    cache_remote_manifest(paths, storage, remote, &manifest_uri).await?;
     copy_cached_to_installed(
         paths,
         storage,
-        &lineage.remote.bucket,
-        &namespace,
-        &lineage.remote.hash,
+        &ManifestUri {
+            namespace: namespace.clone(),
+            ..lineage.remote.clone()
+        },
     )
     .await?;
 
-    let paths_to_install = installed_paths
-        .into_iter()
-        .filter(|x| manifest.records.contains_key(x))
-        .collect();
+    let mut paths_to_install = Vec::new();
+    for x in installed_paths {
+        if manifest.contains_record(&x).await {
+            paths_to_install.push(x)
+        }
+    }
     install_paths(
         lineage,
         manifest,
@@ -72,7 +78,7 @@ pub async fn pull_package(
         working_dir,
         namespace,
         storage,
-        &remote,
+        remote,
         &paths_to_install,
     )
     .await
@@ -87,7 +93,6 @@ mod tests {
     use crate::lineage::Change;
     use crate::lineage::DiscreteChange;
     use crate::mocks;
-    use crate::uri::ManifestUri;
 
     #[tokio::test]
     async fn test_no_pull_if_changes() -> Result<(), Error> {
@@ -100,16 +105,18 @@ mod tests {
                 Change {
                     previous: None,
                     current: None,
-                    state: DiscreteChange::Pristine,
+                    state: DiscreteChange::Added,
                 },
             )]),
             ..InstalledPackageStatus::default()
         };
+        let remote = mocks::remote::MockRemote::default();
         let error = pull_package(
             lineage,
             &mut mocks::manifest::with_record_keys(vec![PathBuf::from("a/a")]),
             &DomainPaths::default(),
             &storage,
+            &remote,
             PathBuf::default(),
             status,
             Namespace::default(),
@@ -125,12 +132,14 @@ mod tests {
     #[tokio::test]
     async fn test_no_pull_if_commit() {
         let storage = mocks::storage::MockStorage::default();
+        let remote = mocks::remote::MockRemote::default();
         let lineage = mocks::lineage::with_commit();
         let error = pull_package(
             lineage,
             &mut Table::default(),
             &DomainPaths::default(),
             &storage,
+            &remote,
             PathBuf::default(),
             InstalledPackageStatus::default(),
             Namespace::default(),
@@ -145,6 +154,7 @@ mod tests {
     #[tokio::test]
     async fn test_no_pull_if_diverged() {
         let storage = mocks::storage::MockStorage::default();
+        let remote = mocks::remote::MockRemote::default();
         let lineage = PackageLineage {
             remote: ManifestUri {
                 hash: "a".to_string(),
@@ -158,6 +168,7 @@ mod tests {
             &mut Table::default(),
             &DomainPaths::default(),
             &storage,
+            &remote,
             PathBuf::default(),
             InstalledPackageStatus::default(),
             Namespace::default(),
@@ -172,6 +183,7 @@ mod tests {
     #[tokio::test]
     async fn test_no_pull_if_up_to_date() {
         let storage = mocks::storage::MockStorage::default();
+        let remote = mocks::remote::MockRemote::default();
         let lineage = PackageLineage {
             remote: ManifestUri {
                 hash: "a".to_string(),
@@ -186,6 +198,7 @@ mod tests {
             &mut Table::default(),
             &DomainPaths::default(),
             &storage,
+            &remote,
             PathBuf::default(),
             InstalledPackageStatus::default(),
             Namespace::default(),
