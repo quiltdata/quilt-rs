@@ -30,6 +30,7 @@ use url::Url;
 pub mod flow;
 
 pub mod checksum;
+mod installed_package;
 pub mod io;
 pub mod lineage;
 pub mod manifest;
@@ -40,7 +41,7 @@ pub mod uri;
 #[cfg(test)]
 pub mod mocks;
 
-pub use quilt::InstalledPackage;
+pub use installed_package::InstalledPackage;
 pub use quilt::LocalDomain;
 
 /// The error type for this library
