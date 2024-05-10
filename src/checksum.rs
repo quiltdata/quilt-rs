@@ -14,12 +14,18 @@ use tokio::io::{self};
 
 use crate::Error;
 
+// TODO: Introduce struct Chunksum {}, that
+//       * wraps `Multihash`
+//       * can be converted `Chunksum::from(GetObjectAttributesOutput)`
+
 /// Container for object's checksum
 /// You can convert it to or from `Multihash<256>`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", content = "value")]
 pub enum ContentHash {
+    /// Legacy checksum
     SHA256(String),
+    /// Chunked checksum
     #[serde(rename = "sha2-256-chunked")]
     SHA256Chunked(String),
 }
@@ -69,10 +75,18 @@ impl TryInto<Multihash<256>> for ContentHash {
 }
 
 /// Maximum number of parts for splitting the file to create chunksum
+/// This is a "hard requirement" for chunksums. We don't outstrip that number of chunks.
 pub const MPU_MAX_PARTS: u64 = 10_000;
-/// Size threshold when the next chunk cut
+/// Size threshold when the next chunk cut.
+/// This is a "soft requirement" for chunksum size. We can increase threshold if we can't fit into
+/// `MPU_MAX_PARTS`.
+/// Since it's a minimum size for chunksumed chunk, file less than this threshold is treated like
+/// single chunk.
 pub const MULTIPART_THRESHOLD: u64 = 8 * 1024 * 1024;
 
+/// Examines if chunksum size is suitable to split file and get less chunks then supported.
+/// If not, we tries to increas chunksum until it find chunk size that can split into reasonable
+/// number of chunks (`MPU_MAX_PARTS`).
 pub fn get_checksum_chunksize_and_parts(file_size: u64) -> (u64, u64) {
     let mut chunksize = MULTIPART_THRESHOLD;
     let mut num_parts = file_size.div_ceil(chunksize);
@@ -124,6 +138,7 @@ pub async fn calculate_sha256_chunked_checksum<F: io::AsyncRead + Unpin>(
     )?)
 }
 
+/// Takes checksum got from S3 and convert it to Chunksum.
 pub fn get_compliant_chunked_checksum(attrs: &GetObjectAttributesOutput) -> Option<Vec<u8>> {
     let checksum = attrs.checksum.as_ref()?;
     let checksum_sha256 = checksum.checksum_sha256.as_ref()?;

@@ -229,6 +229,7 @@ impl Table {
     }
 
     // Get a row from the table
+    // FIXME: use `self.get_record` instead
     pub fn get_row(&self, name: &PathBuf) -> Option<&Row> {
         self.records.get(name)
     }
@@ -237,6 +238,7 @@ impl Table {
         Ok(self.header.clone())
     }
 
+    // TODO: make async
     pub fn remove_record(&mut self, path: &PathBuf) -> Result<Row, Error> {
         self.records
             .remove(path)
@@ -248,12 +250,14 @@ impl Table {
         self.records.len()
     }
 
+    // FIXME: use `self.records_stream`
     pub fn records_values(&self) -> btree_map::Values<'_, PathBuf, Row> {
         // TODO: when records is unavailable, read first column and `column.values().len()`
         self.records.values()
     }
 
     pub async fn records_stream(&self) -> impl Stream<Item = Row> {
+        // FIXME: Item = Result<Row>
         let entries: Vec<Row> = self.records_values().cloned().collect();
         tokio_stream::iter(entries)
     }

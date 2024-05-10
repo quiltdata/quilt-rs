@@ -1,4 +1,4 @@
-//! Contains helpers and wrappers to work with IO. 
+//! Contains helpers and wrappers to work with IO.
 
 pub mod manifest;
 mod parquet;
