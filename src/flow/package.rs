@@ -52,6 +52,8 @@ async fn stream_objects<'a>(
         .map(|obj| obj.map(Row::from))
 }
 
+/// Lists the objects from S3 prefix as a stream and creates a package (manifest) from it.
+/// It creates manifest in temporary directory then uploads it to the remote.
 pub async fn package_s3_prefix(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),

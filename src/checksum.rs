@@ -1,3 +1,5 @@
+//! This module contains helpers and structs for creating and managing checkums.
+
 use aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput;
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
@@ -12,15 +14,25 @@ use tokio::io::{self};
 
 use crate::Error;
 
+// TODO: Introduce struct Chunksum {}, that
+//       * wraps `Multihash`
+//       * can be converted `Chunksum::from(GetObjectAttributesOutput)`
+
+/// Container for object's checksum
+/// You can convert it to or from `Multihash<256>`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", content = "value")]
 pub enum ContentHash {
+    /// Legacy checksum
     SHA256(String),
+    /// Chunked checksum
     #[serde(rename = "sha2-256-chunked")]
     SHA256Chunked(String),
 }
 
+/// Multihash code for legacy or single-chunked checksums
 pub const MULTIHASH_SHA256: u64 = 0x16;
+/// Multihash code for chunksums
 pub const MULTIHASH_SHA256_CHUNKED: u64 = 0xb510;
 
 impl TryFrom<Multihash<256>> for ContentHash {
@@ -62,9 +74,19 @@ impl TryInto<Multihash<256>> for ContentHash {
     }
 }
 
+/// Maximum number of parts for splitting the file to create chunksum
+/// This is a "hard requirement" for chunksums. We don't outstrip that number of chunks.
 pub const MPU_MAX_PARTS: u64 = 10_000;
+/// Size threshold when the next chunk cut.
+/// This is a "soft requirement" for chunksum size. We can increase threshold if we can't fit into
+/// `MPU_MAX_PARTS`.
+/// Since it's a minimum size for chunksumed chunk, file less than this threshold is treated like
+/// single chunk.
 pub const MULTIPART_THRESHOLD: u64 = 8 * 1024 * 1024;
 
+/// Examines if chunksum size is suitable to split file and get less chunks then supported.
+/// If not, we tries to increas chunksum until it find chunk size that can split into reasonable
+/// number of chunks (`MPU_MAX_PARTS`).
 pub fn get_checksum_chunksize_and_parts(file_size: u64) -> (u64, u64) {
     let mut chunksize = MULTIPART_THRESHOLD;
     let mut num_parts = file_size.div_ceil(chunksize);
@@ -77,6 +99,7 @@ pub fn get_checksum_chunksize_and_parts(file_size: u64) -> (u64, u64) {
     (chunksize, num_parts)
 }
 
+/// Caclulates legacy or single-chunk checksum from file or from single chunk
 pub async fn calculate_sha256_checksum<F: io::AsyncRead + Unpin>(
     file: F,
 ) -> Result<Multihash<256>, Error> {
@@ -93,6 +116,7 @@ pub async fn calculate_sha256_checksum<F: io::AsyncRead + Unpin>(
     Ok(Multihash::wrap(MULTIHASH_SHA256, &sha256.finalize())?)
 }
 
+/// Calculates chunksum from a file
 pub async fn calculate_sha256_chunked_checksum<F: io::AsyncRead + Unpin>(
     file: F,
     length: u64,
@@ -114,6 +138,7 @@ pub async fn calculate_sha256_chunked_checksum<F: io::AsyncRead + Unpin>(
     )?)
 }
 
+/// Takes checksum got from S3 and convert it to Chunksum.
 pub fn get_compliant_chunked_checksum(attrs: &GetObjectAttributesOutput) -> Option<Vec<u8>> {
     let checksum = attrs.checksum.as_ref()?;
     let checksum_sha256 = checksum.checksum_sha256.as_ref()?;

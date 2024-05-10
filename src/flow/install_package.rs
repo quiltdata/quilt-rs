@@ -1,4 +1,4 @@
-use crate::flow::browse::cache_remote_manifest;
+use crate::flow;
 use crate::io::manifest::resolve_latest;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
@@ -8,6 +8,10 @@ use crate::paths;
 use crate::uri::ManifestUri;
 use crate::Error;
 
+/// Installs the package.
+/// It fetches manifest and puts it into `installed_packages`.
+/// Also, start tracking this package in lineage.
+/// DOES NOT install any paths!
 pub async fn install_package(
     lineage: DomainLineage,
     paths: &paths::DomainPaths,
@@ -23,7 +27,7 @@ pub async fn install_package(
         ));
     }
 
-    cache_remote_manifest(paths, storage, remote, &manifest_uri.clone()).await?;
+    flow::cache_remote_manifest(paths, storage, remote, &manifest_uri.clone()).await?;
 
     // Make an "installed" copy of the remote manifest.
     let installed_manifest_path =

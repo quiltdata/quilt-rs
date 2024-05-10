@@ -37,6 +37,12 @@ async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Result
     Manifest::from_reader(contents).await
 }
 
+/// If remote manifest is already cached we return it.
+/// If it's not cached, downloads the remote manifest and put it into cached directory.
+/// If the manifest is in Parquet format we just put it as a file unchanged.
+/// If the manifest is in JSONL format we read it and convert into Parquet, then write.
+/// You must provide `ManifestUri` (package URI with `hash`).
+/// To resolve `latest` you can use `manifest.io.resolve_latest`.
 pub async fn cache_remote_manifest(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
@@ -68,6 +74,8 @@ pub async fn cache_remote_manifest(
     Table::read_from_path(storage, &cache_path).await
 }
 
+/// Alias for the `cache_remote_manifest`.
+/// So, when we "browse" remote manifest, we always cache it.
 pub async fn browse_remote_manifest(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),

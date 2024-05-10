@@ -1,3 +1,5 @@
+//! Contains utility functions to work with manifests.
+
 use std::path::PathBuf;
 
 use aws_sdk_s3::primitives::ByteStream;
@@ -98,7 +100,7 @@ pub async fn tag_timestamp(
 }
 
 /// Upload file containing hash of the manifest
-/// "tagged" as "".
+/// "tagged" as "latest".
 pub async fn tag_latest(remote: &impl Remote, manifest_uri: &ManifestUri) -> Result<(), Error> {
     let tag_latest = TagUri::latest(manifest_uri.clone().into());
     upload_tag(remote, manifest_uri, tag_latest).await
@@ -115,7 +117,8 @@ async fn upload_tag(
 }
 
 /// Downloads the latest tagged package
-/// and returns its content: hash of the latest package revision
+/// and returns its content: hash of the latest package revision.
+/// Then creates `ManifestUri`.
 pub async fn resolve_latest(
     remote: &impl Remote,
     uri: S3PackageHandle,

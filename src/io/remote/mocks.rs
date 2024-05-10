@@ -24,6 +24,12 @@ pub(crate) struct MockRemote {
 }
 
 impl Remote for MockRemote {
+    async fn exists(&self, s3_uri: &S3Uri) -> Result<bool, Error> {
+        let key = s3_uri.to_string();
+        log::debug!("Mocking {} exists request", key);
+        Ok(self.storage.exists(&key).await)
+    }
+
     async fn get_object(&self, s3_uri: &S3Uri) -> Result<impl AsyncRead + Send + Unpin, Error> {
         let key = s3_uri.to_string();
         log::debug!("Mocking {} get request", key);
@@ -38,6 +44,16 @@ impl Remote for MockRemote {
             }
             other => other,
         })
+    }
+
+    async fn get_object_attributes(
+        &self,
+        listing_uri: &S3Uri,
+        object_key: impl AsRef<str>,
+    ) -> Result<S3Attributes, Error> {
+        self.storage
+            .get_object_attributes(listing_uri, object_key.as_ref().to_string())
+            .await
     }
 
     async fn get_object_stream(&self, s3_uri: &S3Uri) -> Result<ByteStream, Error> {
@@ -59,10 +75,8 @@ impl Remote for MockRemote {
             })
     }
 
-    async fn exists(&self, s3_uri: &S3Uri) -> Result<bool, Error> {
-        let key = s3_uri.to_string();
-        log::debug!("Mocking {} exists request", key);
-        Ok(self.storage.exists(&key).await)
+    async fn list_objects(&self, _listing_uri: S3Uri) -> impl Stream<Item = Result<Object, Error>> {
+        tokio_stream::iter(Vec::new())
     }
 
     async fn put_object(
@@ -91,20 +105,6 @@ impl Remote for MockRemote {
             },
             hash,
         ))
-    }
-
-    async fn get_object_attributes(
-        &self,
-        listing_uri: &S3Uri,
-        object_key: impl AsRef<str>,
-    ) -> Result<S3Attributes, Error> {
-        self.storage
-            .get_object_attributes(listing_uri, object_key.as_ref().to_string())
-            .await
-    }
-
-    async fn list_objects(&self, _listing_uri: S3Uri) -> impl Stream<Item = Result<Object, Error>> {
-        tokio_stream::iter(Vec::new())
     }
 }
 

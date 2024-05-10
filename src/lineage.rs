@@ -1,3 +1,6 @@
+//!
+//! Module that contains various structs and helpers to work with `.quilt/lineage.json`.
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 

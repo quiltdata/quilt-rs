@@ -4,6 +4,8 @@ use crate::lineage::PackageLineage;
 use crate::uri::ManifestUri;
 use crate::Error;
 
+/// Tags the `manifest_uri` as "latest" remotely.
+/// And update localy in .quilt/lineage.json `base_hash` and `latest_hash` to that hash as well.
 pub async fn certify_latest(
     mut lineage: PackageLineage,
     remote: &impl Remote,

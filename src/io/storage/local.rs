@@ -26,11 +26,6 @@ async fn write(path: impl AsRef<Path> + Send, bytes: &[u8]) -> Result<(), Error>
     Ok(())
 }
 
-async fn get_file_modified_ts(path: impl AsRef<Path>) -> Result<DateTime<Utc>, Error> {
-    let modified = fs::metadata(path).await.map(|m| m.modified())??;
-    Ok(DateTime::<Utc>::from(modified))
-}
-
 /// Implementation of the `Storage` trait for the local filesystem
 #[derive(Clone, Debug)]
 pub struct LocalStorage {}
@@ -40,41 +35,45 @@ impl Storage for LocalStorage {
         Ok(fs::copy(from, to).await?)
     }
 
-    async fn rename(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), Error> {
-        Ok(fs::rename(from, to).await?)
-    }
-
     async fn create_dir_all(&self, path: impl AsRef<Path>) -> Result<(), Error> {
         Ok(fs::create_dir_all(path).await?)
     }
 
-    async fn remove_dir_all(&self, path: impl AsRef<Path>) -> Result<(), Error> {
-        Ok(fs::remove_dir_all(path).await?)
+    async fn create_file(&self, path: impl AsRef<Path>) -> Result<fs::File, Error> {
+        Ok(fs::File::create(path.as_ref()).await?)
     }
 
-    async fn remove_file(&self, path: impl AsRef<Path>) -> Result<(), std::io::Error> {
-        fs::remove_file(path).await
-    }
-
-    /// Check if a path exists in the filesystem.
     async fn exists(&self, path: impl AsRef<Path>) -> bool {
         fs::metadata(path).await.is_ok()
     }
 
-    async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Result<DateTime<Utc>, Error> {
-        get_file_modified_ts(path).await
+    async fn get_object_attributes(
+        &self,
+        listing_uri: &S3Uri,
+        object_key: impl AsRef<str> + Send + Sync,
+    ) -> Result<S3Attributes, Error> {
+        // log::debug!("Trying again with client {:?}", client);
+        Err(Error::S3(format!(
+            "Error getting attributes for {} in {}",
+            object_key.as_ref(),
+            listing_uri,
+        )))
     }
 
-    async fn write_file(&self, path: impl AsRef<Path> + Send, bytes: &[u8]) -> Result<(), Error> {
-        write(path, bytes).await
+    async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Result<DateTime<Utc>, Error> {
+        let modified = fs::metadata(path).await.map(|m| m.modified())??;
+        Ok(DateTime::<Utc>::from(modified))
     }
 
     async fn open_file(&self, path: impl AsRef<Path>) -> Result<fs::File, Error> {
         Ok(fs::File::open(path).await?)
     }
 
-    async fn create_file(&self, path: impl AsRef<Path>) -> Result<fs::File, Error> {
-        Ok(fs::File::create(path.as_ref()).await?)
+    async fn read_byte_stream(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+    ) -> Result<ByteStream, Error> {
+        Ok(ByteStream::from_path(path).await?)
     }
 
     async fn read_dir(&self, path: impl AsRef<Path>) -> Result<fs::ReadDir, Error> {
@@ -85,11 +84,16 @@ impl Storage for LocalStorage {
         Ok(fs::read(&path).await?)
     }
 
-    async fn read_byte_stream(
-        &self,
-        path: impl AsRef<Path> + Send + Sync,
-    ) -> Result<ByteStream, Error> {
-        Ok(ByteStream::from_path(path).await?)
+    async fn remove_dir_all(&self, path: impl AsRef<Path>) -> Result<(), Error> {
+        Ok(fs::remove_dir_all(path).await?)
+    }
+
+    async fn remove_file(&self, path: impl AsRef<Path>) -> Result<(), std::io::Error> {
+        fs::remove_file(path).await
+    }
+
+    async fn rename(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), Error> {
+        Ok(fs::rename(from, to).await?)
     }
 
     async fn write_byte_stream(
@@ -106,17 +110,8 @@ impl Storage for LocalStorage {
         Ok(())
     }
 
-    async fn get_object_attributes(
-        &self,
-        listing_uri: &S3Uri,
-        object_key: impl AsRef<str> + Send + Sync,
-    ) -> Result<S3Attributes, Error> {
-        // log::debug!("Trying again with client {:?}", client);
-        Err(Error::S3(format!(
-            "Error getting attributes for {} in {}",
-            object_key.as_ref(),
-            listing_uri,
-        )))
+    async fn write_file(&self, path: impl AsRef<Path> + Send, bytes: &[u8]) -> Result<(), Error> {
+        write(path, bytes).await
     }
 }
 
@@ -144,7 +139,8 @@ mod tests {
     #[tokio::test]
     #[ignore] // It doesn't work in CI. In CI file has `now` date
     async fn test_getting_file_modified_ts() -> Result<(), Error> {
-        let timestamp = get_file_modified_ts(mocks::manifest::jsonl()).await?;
+        let storage = LocalStorage::default();
+        let timestamp = storage.modified_timestamp(mocks::manifest::jsonl()).await?;
         assert_eq!(
             timestamp.to_string(),
             "2024-01-15 11:31:00.615186989 UTC".to_string()

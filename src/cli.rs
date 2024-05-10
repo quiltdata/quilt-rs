@@ -1,3 +1,6 @@
+//! Not a part of the library and meant to be an independent project.
+//! This is a CLI frontend for `quilt_rs`.
+
 use std::path::PathBuf;
 
 use clap::Parser;

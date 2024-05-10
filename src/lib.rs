@@ -1,3 +1,25 @@
+//! For all operations instantiate `LocalDomain` and then call some of its methods.
+//!
+//! For example, for installing package you can create path, where everything will be stored.
+//! There will be `.quilt` directory and working directory for each package.
+//! ```rs
+//! let path = PathBuf::from("/foo/bar");
+//! ```
+//! Instantiate `LocalDomain` for that path .
+//! ```rs
+//! let local_domain = quilt_rs::LocalDomain::new(path);
+//! ```
+//! Create `ManifestUri`.
+//! You can do this by creating "quilt+s3" URI and convert it.
+//! ```rs
+//! let package_uri = S3PackageUri::try_from("quilt+s3://lorem#package=ipsum@hash-is-required")?;
+//! let manifest_uri = ManifestUri::try_from(package_uri)?;
+//! ```
+//! Then call `install_package` method. You will get `InstalledPackage` as output.
+//! ```rs
+//! let installed_package = local_domain.install_package(&manifest_uri).await?;
+//! ```
+
 use std::str::Utf8Error;
 
 use aws_smithy_types::byte_stream;
@@ -5,22 +27,22 @@ use reqwest::header::ToStrError;
 use thiserror::Error;
 use url::Url;
 
-mod flow;
+pub mod flow;
 
 pub mod checksum;
+mod installed_package;
 pub mod io;
 pub mod lineage;
+mod local_domain;
 pub mod manifest;
 pub mod paths;
-pub mod quilt;
 pub mod uri;
 
 #[cfg(test)]
 pub mod mocks;
 
-pub use manifest::Manifest;
-pub use quilt::InstalledPackage;
-pub use quilt::LocalDomain;
+pub use installed_package::InstalledPackage;
+pub use local_domain::LocalDomain;
 
 /// The error type for this library
 #[derive(Error, Debug)]

@@ -1,3 +1,8 @@
+//!
+//! Wraps operations with remote storage. Primarily S3.
+//! It uses trait, so we can swap implementation for tests.
+
+use std::future::Future;
 use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;
@@ -28,33 +33,49 @@ pub struct S3Attributes {
 }
 
 /// This trait encapsulates the S3 operations that Quilt needs to perform.
-#[allow(async_fn_in_trait)]
 pub trait Remote {
-    async fn get_object(&self, s3_uri: &S3Uri) -> Result<impl AsyncRead + Send + Unpin, Error>;
+    /// Checks if object exists
+    fn exists(&self, s3_uri: &S3Uri) -> impl Future<Output = Result<bool, Error>> + Send;
 
-    async fn get_object_stream(&self, s3_uri: &S3Uri) -> Result<ByteStream, Error>;
+    /// Gets the objects contents as a `File`
+    // TODO: use `self.get_object_stream`. Under-the-hood it is a stream already
+    fn get_object(
+        &self,
+        s3_uri: &S3Uri,
+    ) -> impl Future<Output = Result<impl AsyncRead + Send + Unpin, Error>> + Send;
 
-    async fn exists(&self, s3_uri: &S3Uri) -> Result<bool, Error>;
+    /// Get object attributes: checksums, number of chunks, chunksize, version_id
+    fn get_object_attributes(
+        &self,
+        listing_uri: &S3Uri,
+        object_key: impl AsRef<str>,
+    ) -> impl Future<Output = Result<S3Attributes, Error>>;
 
-    async fn put_object(
+    /// Fetches the objects contents as a `ByteStream`
+    fn get_object_stream(
+        &self,
+        s3_uri: &S3Uri,
+    ) -> impl Future<Output = Result<ByteStream, Error>> + Send;
+
+    /// List objects list under S3 prefix using tokio Stream
+    // TODO: return Item = Result<Row, Error>
+    fn list_objects(
+        &self,
+        listing_uri: S3Uri,
+    ) -> impl Future<Output = impl Stream<Item = Result<Object, Error>>> + Send;
+
+    /// Upload file. Just that
+    fn put_object(
         &self,
         s3_uri: &S3Uri,
         contents: impl Into<ByteStream>,
-    ) -> Result<(), Error>;
+    ) -> impl Future<Output = Result<(), Error>>;
 
-    async fn upload_file(
+    /// Upload file and request checkum from S3
+    fn upload_file(
         &self,
         source_path: impl AsRef<Path>,
         dest_uri: &S3Uri,
         size: u64,
-    ) -> Result<(S3Uri, Multihash<256>), Error>;
-
-    async fn get_object_attributes(
-        &self,
-        listing_uri: &S3Uri,
-        object_key: impl AsRef<str>,
-    ) -> Result<S3Attributes, Error>;
-
-    // return Result<Row> as Item
-    async fn list_objects(&self, listing_uri: S3Uri) -> impl Stream<Item = Result<Object, Error>>;
+    ) -> impl Future<Output = Result<(S3Uri, Multihash<256>), Error>>;
 }

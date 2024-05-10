@@ -1,3 +1,6 @@
+//!
+//! Namespace contains helpers to work with manifest and its content (rows).
+
 #[allow(clippy::module_inception)]
 mod manifest;
 mod row;

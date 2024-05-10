@@ -1,8 +1,7 @@
 use tokio_stream::Stream;
 use tokio_stream::StreamExt;
 
-use crate::flow::browse::browse_remote_manifest;
-use crate::flow::certify_latest::certify_latest;
+use crate::flow;
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::resolve_latest;
 use crate::io::manifest::tag_timestamp;
@@ -67,6 +66,7 @@ async fn stream_uploaded_local_rows<'a>(
         .then(move |either_row| use_existing_row_or_upload(remote, package_handle, either_row))
 }
 
+/// Push the new package revision to the remote and tags it as "latest".
 pub async fn push_package(
     mut lineage: PackageLineage,
     local_manifest: Table,
@@ -80,7 +80,7 @@ pub async fn push_package(
         Some(commit) => commit,
     };
 
-    let remote_manifest = browse_remote_manifest(paths, storage, remote, &lineage.remote).await?;
+    let remote_manifest = flow::browse(paths, storage, remote, &lineage.remote).await?;
 
     // ## copy data
     // Copy each of the _modified_ paths from their local_key to remote_key,
@@ -122,7 +122,7 @@ pub async fn push_package(
     // Try certifying latest if tracking
     if lineage.base_hash == lineage.latest_hash {
         // remote latest has not been updated, certifying the new latest
-        return certify_latest(lineage, remote, new_manifest_uri).await;
+        return flow::certify_latest(lineage, remote, new_manifest_uri).await;
     }
 
     Ok(lineage)
