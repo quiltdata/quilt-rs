@@ -1,3 +1,5 @@
+//! This module contains helpers and structs for creating and managing checkums.
+
 use aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput;
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
@@ -12,6 +14,8 @@ use tokio::io::{self};
 
 use crate::Error;
 
+/// Container for object's checksum
+/// You can convert it to or from Multihash<256>.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", content = "value")]
 pub enum ContentHash {
@@ -20,7 +24,9 @@ pub enum ContentHash {
     SHA256Chunked(String),
 }
 
+/// Multihash code for legacy or single-chunked checksums
 pub const MULTIHASH_SHA256: u64 = 0x16;
+/// Multihash code for chunksums
 pub const MULTIHASH_SHA256_CHUNKED: u64 = 0xb510;
 
 impl TryFrom<Multihash<256>> for ContentHash {
@@ -62,7 +68,9 @@ impl TryInto<Multihash<256>> for ContentHash {
     }
 }
 
+/// Maximum number of parts for splitting the file to create chunksum
 pub const MPU_MAX_PARTS: u64 = 10_000;
+/// Size threshold when the next chunk cut
 pub const MULTIPART_THRESHOLD: u64 = 8 * 1024 * 1024;
 
 pub fn get_checksum_chunksize_and_parts(file_size: u64) -> (u64, u64) {
@@ -77,6 +85,7 @@ pub fn get_checksum_chunksize_and_parts(file_size: u64) -> (u64, u64) {
     (chunksize, num_parts)
 }
 
+/// Caclulates legacy or single-chunk checksum from file or from single chunk
 pub async fn calculate_sha256_checksum<F: io::AsyncRead + Unpin>(
     file: F,
 ) -> Result<Multihash<256>, Error> {
@@ -93,6 +102,7 @@ pub async fn calculate_sha256_checksum<F: io::AsyncRead + Unpin>(
     Ok(Multihash::wrap(MULTIHASH_SHA256, &sha256.finalize())?)
 }
 
+/// Calculates chunksum from a file
 pub async fn calculate_sha256_chunked_checksum<F: io::AsyncRead + Unpin>(
     file: F,
     length: u64,

@@ -1,8 +1,6 @@
 use std::path::PathBuf;
 
-use crate::flow::browse::cache_remote_manifest;
-use crate::flow::install_paths::install_paths;
-use crate::flow::uninstall_paths::uninstall_paths;
+use crate::flow;
 use crate::io::manifest::resolve_latest;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
@@ -31,13 +29,13 @@ pub async fn reset_to_latest(
 
     let installed_paths: Vec<PathBuf> = lineage.paths.clone().into_keys().collect();
     let mut lineage =
-        uninstall_paths(lineage, working_dir.clone(), storage, &installed_paths).await?;
+        flow::uninstall_paths(lineage, working_dir.clone(), storage, &installed_paths).await?;
 
     // TODO: Should be a method of lineage
     lineage.latest_hash.clone_from(&latest.hash);
     lineage.base_hash.clone_from(&latest.hash);
 
-    cache_remote_manifest(paths, storage, remote, &latest.clone()).await?;
+    flow::cache_remote_manifest(paths, storage, remote, &latest.clone()).await?;
     copy_cached_to_installed(
         paths,
         storage,
@@ -55,7 +53,7 @@ pub async fn reset_to_latest(
             paths_to_install.push(x)
         }
     }
-    install_paths(
+    flow::install_paths(
         lineage,
         manifest,
         paths,

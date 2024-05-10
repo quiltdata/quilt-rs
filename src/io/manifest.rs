@@ -1,3 +1,5 @@
+//! Contains utility functions to work with manifests.
+
 use std::path::PathBuf;
 
 use aws_sdk_s3::primitives::ByteStream;

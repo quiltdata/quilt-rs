@@ -1,8 +1,6 @@
 use std::path::PathBuf;
 
-use crate::flow::browse::cache_remote_manifest;
-use crate::flow::install_paths::install_paths;
-use crate::flow::uninstall_paths::uninstall_paths;
+use crate::flow;
 use crate::io::manifest::resolve_latest;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
@@ -46,7 +44,7 @@ pub async fn pull_package(
     // They may or may not exist in the updated package.
     let installed_paths: Vec<PathBuf> = lineage.paths.keys().cloned().collect();
     let mut lineage =
-        uninstall_paths(lineage, working_dir.clone(), storage, &installed_paths).await?;
+        flow::uninstall_paths(lineage, working_dir.clone(), storage, &installed_paths).await?;
 
     // TODO: uninstall_paths() just modified the lineage, so re-reading it here.
     // There needs to be a better way.
@@ -54,7 +52,7 @@ pub async fn pull_package(
     lineage.base_hash.clone_from(&lineage.latest_hash);
 
     let manifest_uri = resolve_latest(remote, lineage.remote.clone().into()).await?;
-    cache_remote_manifest(paths, storage, remote, &manifest_uri).await?;
+    flow::cache_remote_manifest(paths, storage, remote, &manifest_uri).await?;
     copy_cached_to_installed(
         paths,
         storage,
@@ -71,7 +69,7 @@ pub async fn pull_package(
             paths_to_install.push(x)
         }
     }
-    install_paths(
+    flow::install_paths(
         lineage,
         manifest,
         paths,

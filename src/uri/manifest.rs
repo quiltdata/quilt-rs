@@ -3,7 +3,10 @@ use serde::Serialize;
 
 use crate::paths;
 use crate::uri::Namespace;
+use crate::uri::RevisionPointer;
+use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
+use crate::Error;
 
 /// URI for manifest.
 /// Manifests are stored in immutable files.
@@ -30,6 +33,24 @@ impl From<ManifestUri> for S3Uri {
 impl From<&ManifestUri> for S3Uri {
     fn from(remote: &ManifestUri) -> S3Uri {
         remote.clone().into()
+    }
+}
+
+impl TryFrom<S3PackageUri> for ManifestUri {
+    type Error = Error;
+    fn try_from(uri: S3PackageUri) -> Result<Self, Self::Error> {
+        Ok(ManifestUri {
+            bucket: uri.bucket,
+            namespace: uri.namespace,
+            hash: match uri.revision {
+                RevisionPointer::Hash(top_hash) => top_hash,
+                RevisionPointer::Tag(_) => {
+                    return Err(Error::PackageURI(
+                        "Hash is required for that conversion".to_string(),
+                    ))
+                }
+            },
+        })
     }
 }
 

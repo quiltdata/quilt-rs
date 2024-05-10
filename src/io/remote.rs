@@ -1,3 +1,6 @@
+//!
+//! Wraps operations with remote storage. Primarily S3.
+
 use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;

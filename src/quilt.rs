@@ -3,19 +3,7 @@ use std::path::PathBuf;
 
 use tracing::log;
 
-use crate::flow::browse::browse_remote_manifest;
-use crate::flow::certify_latest::certify_latest;
-use crate::flow::commit::commit_package;
-use crate::flow::install_package::install_package;
-use crate::flow::install_paths::install_paths;
-use crate::flow::package::package_s3_prefix;
-use crate::flow::pull::pull_package;
-use crate::flow::push::push_package;
-use crate::flow::reset_to_latest::reset_to_latest;
-use crate::flow::status::create_status;
-use crate::flow::status::refresh_latest_hash;
-use crate::flow::uninstall_package::uninstall_package;
-use crate::flow::uninstall_paths::uninstall_paths;
+use crate::flow;
 use crate::io::remote::Remote;
 use crate::io::remote::RemoteS3;
 use crate::io::storage::LocalStorage;
@@ -59,7 +47,7 @@ impl LocalDomain {
     }
 
     pub async fn browse_remote_manifest(&self, uri: &ManifestUri) -> Result<Table, Error> {
-        browse_remote_manifest(&self.paths, &self.storage, &self.remote, uri).await
+        flow::browse(&self.paths, &self.storage, &self.remote, uri).await
     }
 
     fn create_installed_package(&self, namespace: Namespace) -> InstalledPackage {
@@ -79,7 +67,7 @@ impl LocalDomain {
     ) -> Result<InstalledPackage, Error> {
         // Read the lineage
         let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
-        let lineage = install_package(
+        let lineage = flow::install_package(
             lineage,
             &self.paths,
             &self.storage,
@@ -94,7 +82,7 @@ impl LocalDomain {
 
     pub async fn uninstall_package(&self, namespace: Namespace) -> Result<(), Error> {
         let lineage = self.lineage.read(&self.storage).await?;
-        let lineage = uninstall_package(lineage, &self.paths, &self.storage, namespace).await?;
+        let lineage = flow::uninstall_package(lineage, &self.paths, &self.storage, namespace).await?;
         let _fixme = self.lineage.write(&self.storage, lineage).await?;
         Ok(())
     }
@@ -127,7 +115,7 @@ impl LocalDomain {
         source_uri: &S3Uri,
         dest_uri: S3PackageUri,
     ) -> Result<ManifestUri, Error> {
-        package_s3_prefix(
+        flow::package_s3_prefix(
             &self.paths,
             &self.storage,
             &self.remote,
@@ -170,10 +158,10 @@ impl InstalledPackage {
 
     pub async fn status(&self) -> Result<InstalledPackageStatus, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
-        let lineage = refresh_latest_hash(lineage, &self.remote).await?;
+        let lineage = flow::refresh_latest_hash(lineage, &self.remote).await?;
         let manifest = self.manifest().await?;
         let (lineage, status) =
-            create_status(lineage, &self.storage, &manifest, self.working_folder()).await?;
+            flow::status(lineage, &self.storage, &manifest, self.working_folder()).await?;
         self.lineage.write(&self.storage, lineage).await?;
         Ok(status)
     }
@@ -184,7 +172,7 @@ impl InstalledPackage {
         }
         let lineage = self.lineage.read(&self.storage).await?;
         let mut manifest = self.manifest().await?;
-        let lineage = install_paths(
+        let lineage = flow::install_paths(
             lineage,
             &mut manifest,
             &self.paths,
@@ -201,7 +189,7 @@ impl InstalledPackage {
 
     pub async fn uninstall_paths(&self, paths: &Vec<PathBuf>) -> Result<LineagePaths, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
-        let lineage = uninstall_paths(lineage, self.working_folder(), &self.storage, paths).await?;
+        let lineage = flow::uninstall_paths(lineage, self.working_folder(), &self.storage, paths).await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(lineage.paths)
     }
@@ -220,9 +208,9 @@ impl InstalledPackage {
         let mut manifest = self.manifest().await?;
 
         let (lineage, status) =
-            create_status(lineage, &self.storage, &manifest, self.working_folder()).await?;
+            flow::status(lineage, &self.storage, &manifest, self.working_folder()).await?;
 
-        let lineage = commit_package(
+        let lineage = flow::commit(
             lineage,
             &mut manifest,
             &self.paths,
@@ -241,7 +229,7 @@ impl InstalledPackage {
     pub async fn push(&self) -> Result<ManifestUri, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
         let manifest = self.manifest().await?;
-        let lineage = push_package(
+        let lineage = flow::push(
             lineage,
             manifest,
             &self.paths,
@@ -258,8 +246,8 @@ impl InstalledPackage {
         let lineage = self.lineage.read(&self.storage).await?;
         let mut manifest = self.manifest().await?;
         let (lineage, status) =
-            create_status(lineage, &self.storage, &manifest, self.working_folder()).await?;
-        let lineage = pull_package(
+            flow::status(lineage, &self.storage, &manifest, self.working_folder()).await?;
+        let lineage = flow::pull(
             lineage,
             &mut manifest,
             &self.paths,
@@ -277,7 +265,7 @@ impl InstalledPackage {
     pub async fn certify_latest(&self) -> Result<ManifestUri, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
         let latest_manifest_uri = lineage.remote.clone();
-        let lineage = certify_latest(lineage, &self.remote, latest_manifest_uri).await?;
+        let lineage = flow::certify_latest(lineage, &self.remote, latest_manifest_uri).await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(lineage.remote)
     }
@@ -285,7 +273,7 @@ impl InstalledPackage {
     pub async fn reset_to_latest(&self) -> Result<ManifestUri, Error> {
         let lineage = self.lineage.read(&self.storage).await?;
         let mut manifest = self.manifest().await?;
-        let lineage = reset_to_latest(
+        let lineage = flow::reset_to_latest(
             lineage,
             &mut manifest,
             &self.paths,
