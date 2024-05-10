@@ -13,6 +13,9 @@ use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::Error;
 
+/// Pulls the latest package from remote.
+/// It also remove every local file in working directory and then re-installs it.
+/// Doesn't pull if there are uncommited changes in working directory.
 #[allow(clippy::too_many_arguments)]
 pub async fn pull_package(
     lineage: PackageLineage,

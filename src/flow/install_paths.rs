@@ -56,6 +56,8 @@ async fn stream_remote_with_installed_rows(
         })
 }
 
+/// Installs paths to already existing manifest (provided as an argument to this function).
+/// It also modifies manifest, because installed paths have `place` pointing to `file://location`
 // TODO: move `working_dir` to `paths`, and `paths` to `storage`
 #[allow(clippy::too_many_arguments)]
 pub async fn install_paths(

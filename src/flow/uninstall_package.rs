@@ -6,6 +6,8 @@ use crate::paths;
 use crate::uri::Namespace;
 use crate::Error;
 
+/// Uninstall package: remove files from working directory, manifest from `.quilt` and from
+/// `.quilt/lineage.json`.
 pub async fn uninstall_package(
     mut lineage: DomainLineage,
     paths: &paths::DomainPaths,

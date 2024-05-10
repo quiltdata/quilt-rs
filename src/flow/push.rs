@@ -66,6 +66,7 @@ async fn stream_uploaded_local_rows<'a>(
         .then(move |either_row| use_existing_row_or_upload(remote, package_handle, either_row))
 }
 
+/// Push the new package revision to the remote and tags it as "latest".
 pub async fn push_package(
     mut lineage: PackageLineage,
     local_manifest: Table,

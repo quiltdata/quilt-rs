@@ -19,6 +19,7 @@ use crate::lineage::PackageLineage;
 use crate::manifest::Table;
 use crate::Error;
 
+/// Refreshes the tracked `latest_hash` property in lineage.json
 pub async fn refresh_latest_hash(
     mut lineage: PackageLineage,
     remote: &impl Remote,
@@ -31,6 +32,8 @@ pub async fn refresh_latest_hash(
     Ok(lineage)
 }
 
+/// Creates the status of local modifications
+/// It is used for `flow::commit` and for showing the status in UI.
 pub async fn create_status(
     lineage: PackageLineage,
     storage: &(impl Storage + Sync),

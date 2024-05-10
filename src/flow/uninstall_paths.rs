@@ -11,6 +11,7 @@ fn not_found_error(path: &PathBuf) -> Error {
     Error::Uninstall(format!("path {:?} not found. Cannot uninstall.", path))
 }
 
+/// Uninstall paths: remote files from working directory and stop tracking in `.quilt/lineage.json`.
 pub async fn uninstall_paths(
     mut lineage: PackageLineage,
     working_dir: PathBuf,

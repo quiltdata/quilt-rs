@@ -8,6 +8,10 @@ use crate::paths;
 use crate::uri::ManifestUri;
 use crate::Error;
 
+/// Install the package 
+/// It fetches manifest and puts it into `installed_packages`.
+/// Also, start tracking this package in lineage.
+/// DOES NOT install any paths!
 pub async fn install_package(
     lineage: DomainLineage,
     paths: &paths::DomainPaths,
