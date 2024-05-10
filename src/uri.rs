@@ -1,3 +1,7 @@
+//!
+//! Namespace containing various URIs.
+//! Most of them you can convert one to another.
+
 mod manifest;
 mod object;
 mod package;

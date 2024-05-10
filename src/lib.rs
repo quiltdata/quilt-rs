@@ -33,16 +33,16 @@ pub mod checksum;
 mod installed_package;
 pub mod io;
 pub mod lineage;
+mod local_domain;
 pub mod manifest;
 pub mod paths;
-pub mod quilt;
 pub mod uri;
 
 #[cfg(test)]
 pub mod mocks;
 
 pub use installed_package::InstalledPackage;
-pub use quilt::LocalDomain;
+pub use local_domain::LocalDomain;
 
 /// The error type for this library
 #[derive(Error, Debug)]

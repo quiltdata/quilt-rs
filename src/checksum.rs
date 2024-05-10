@@ -15,7 +15,7 @@ use tokio::io::{self};
 use crate::Error;
 
 /// Container for object's checksum
-/// You can convert it to or from Multihash<256>.
+/// You can convert it to or from `Multihash<256>`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", content = "value")]
 pub enum ContentHash {

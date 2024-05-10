@@ -1,3 +1,6 @@
+//!
+//! Incapsulated knowlegde about directory structure of the files in `.quilt`, packages and working directories. 
+
 use std::path::PathBuf;
 
 use crate::io::storage::Storage;

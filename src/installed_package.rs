@@ -1,8 +1,3 @@
-//! Similar to `LocalDomain` because it has access to the same lineage file and remote/storage
-//! traits.
-//! But it only manages one particular installed package.
-//! It can be instantiated from `LocalDomain` by installing new or listing existing packages.
-
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -24,6 +19,10 @@ use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::Error;
 
+/// Similar to `LocalDomain` because it has access to the same lineage file and remote/storage
+/// traits.
+/// But it only manages one particular installed package.
+/// It can be instantiated from `LocalDomain` by installing new or listing existing packages.
 #[derive(Clone, Debug, PartialEq)]
 pub struct InstalledPackage<S: Storage + Clone = LocalStorage, R: Remote + Clone = RemoteS3> {
     pub lineage: lineage::PackageLineageIo,
