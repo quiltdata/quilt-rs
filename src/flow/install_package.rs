@@ -8,7 +8,7 @@ use crate::paths;
 use crate::uri::ManifestUri;
 use crate::Error;
 
-/// Install the package 
+/// Installs the package.
 /// It fetches manifest and puts it into `installed_packages`.
 /// Also, start tracking this package in lineage.
 /// DOES NOT install any paths!

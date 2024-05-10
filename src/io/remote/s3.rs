@@ -219,7 +219,7 @@ impl Remote for RemoteS3 {
             None => result,
         };
         match result.send().await {
-            Ok(a) => Ok(true),
+            Ok(_) => Ok(true),
             Err(SdkError::ServiceError(err)) if err.err().is_not_found() => Ok(false),
             Err(err) => Err(Error::S3(DisplayErrorContext(err).to_string())),
         }
