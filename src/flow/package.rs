@@ -1,4 +1,5 @@
 use aws_sdk_s3::types::Object;
+use std::time::Instant;
 use tokio_stream::Stream;
 use tokio_stream::StreamExt;
 use tracing::log;
@@ -68,6 +69,7 @@ pub async fn package_s3_prefix(
     // TODO: s3 uri key ends with / and has no version
     // FIXME: filter or fail on keys with `.` or `..` in path segments as quilt3 do
 
+    let now = Instant::now();
     let stream = Box::pin(stream_objects(storage, remote, source_uri.clone()).await);
     let manifest_path = |t: &str| paths.manifest_cache(&source_uri.bucket, t);
     let (cache_path, top_hash) =
@@ -82,9 +84,14 @@ pub async fn package_s3_prefix(
         namespace,
         hash: top_hash,
     };
+    let elapsed = now.elapsed();
+    log::info!("Created manifest {:?} for {:?}", manifest_uri, elapsed);
     upload_manifest(storage, remote, &manifest_uri, &cache_path).await?;
+    log::debug!("Manifest uploaded");
     tag_timestamp(remote, &manifest_uri, chrono::Utc::now()).await?;
+    log::debug!("Timestamp tag uploaded");
     tag_latest(remote, &manifest_uri).await?;
+    log::debug!("Latest uploaded");
 
     Ok(manifest_uri)
 }

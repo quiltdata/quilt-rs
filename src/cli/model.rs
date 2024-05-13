@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use temp_dir::TempDir;
 use tokio::sync;
 
+use crate::cli::benchmark;
 use crate::cli::browse;
 use crate::cli::commit;
 use crate::cli::install;
@@ -58,6 +59,11 @@ pub trait Commands {
     async fn status(&self, args: status::Input) -> Result<status::Output, Error> {
         let local_domain = &self.get_local_domain().lock().await;
         status::model(local_domain, args).await
+    }
+
+    async fn benchmark(&self, args: benchmark::Input) -> Result<benchmark::Output, Error> {
+        let local_domain = &self.get_local_domain().lock().await;
+        benchmark::model(local_domain, args).await
     }
 
     async fn uninstall(&self, args: uninstall::Input) -> Result<uninstall::Output, Error> {

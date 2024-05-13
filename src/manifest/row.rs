@@ -30,7 +30,7 @@ impl Row {
     }
 
     pub fn display_size(&self) -> u64 {
-        self.size.clone()
+        self.size
     }
 
     pub fn display_hash(&self) -> Vec<u8> {
