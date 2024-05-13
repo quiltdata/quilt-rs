@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## [0.8.0]
+
+* More docs, move `LocalDomain` and `InstalledPackage` to modules  https://github.com/quiltdata/quilt-rs/pull/176
+* Write manifests using Stream, de-couple read from write https://github.com/quiltdata/quilt-rs/pull/175
+* Folders reorganization https://github.com/quiltdata/quilt-rs/pull/167
+* Use `PathBuf` for paths where possible https://github.com/quiltdata/quilt-rs/pull/165
+* Use `Namespace` struct instead of `String` https://github.com/quiltdata/quilt-rs/pull/166
+* More tests: `install_paths` and `status`, cover more cases of `Storage`/`Remote` use https://github.com/quiltdata/quilt-rs/pull/164
+
 ## [0.7.0]
 
 * Fix order of JSON in manifest to make checksums constant
