@@ -9,7 +9,6 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
 use tokio_stream::Stream;
 
 use crate::checksum::ContentHash;
@@ -17,9 +16,6 @@ use crate::io::storage::Storage;
 use arrow::array::GenericByteArray;
 use arrow::array::UInt64Array;
 use arrow::datatypes::BinaryType;
-use arrow::datatypes::DataType;
-use arrow::datatypes::Field;
-use arrow::datatypes::Schema;
 use arrow::datatypes::Utf8Type;
 use arrow::error::ArrowError;
 use multihash::Multihash;
@@ -114,27 +110,14 @@ fn serialize_row_entry(row: &Row) -> serde_json::Value {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Table {
     pub header: Row,
-    // path: PathBuf,
+    // path: PathBuf, // TODO
     records: BTreeMap<PathBuf, Row>,
-    schema: Arc<Schema>,
 }
 
 impl Table {
     // TODO: new creates empty records, from(header, records) creates full Table
     fn new(header: Row, records: BTreeMap<PathBuf, Row>) -> Self {
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("name", DataType::Utf8, false),
-            Field::new("place", DataType::Utf8, false),
-            Field::new("size", DataType::UInt64, false),
-            Field::new("multihash", DataType::Binary, false),
-            Field::new("meta.json", DataType::Utf8, false),
-            Field::new("info.json", DataType::Utf8, false),
-        ]));
-        Table {
-            header,
-            records,
-            schema,
-        }
+        Table { header, records }
     }
 
     async fn read_rows_impl<T>(reader: T) -> Result<Self, Error>
