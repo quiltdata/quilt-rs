@@ -28,6 +28,8 @@ use crate::io::remote::Remote;
 use crate::uri::S3Uri;
 use crate::Error;
 
+const LIST_OBJECTS_V2_MAX_KEYS: i32 = 1_000;
+
 use crate::io::remote::get_client_for_bucket;
 use crate::io::remote::S3Attributes;
 
@@ -284,12 +286,14 @@ impl Remote for RemoteS3 {
                 .bucket(&listing_uri.bucket)
                 .prefix(&listing_uri.key)
                 .into_paginator()
-                .page_size(100) // XXX: this is to limit concurrency
+                .page_size(LIST_OBJECTS_V2_MAX_KEYS) // XXX: this is to limit concurrency
                 .send();
             while let Some(page) = paginated_stream.next().await {
                 let page = page.map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
 
-                while let Some(obj) = page.contents.iter().flatten().next() {
+                // TODO: yield Vec to increase performance
+                let page_list = page.contents.iter().flatten().collect::<Vec<_>>();
+                for obj in page_list {
                     yield obj.clone()
                 }
             }

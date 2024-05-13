@@ -20,6 +20,32 @@ pub struct Row {
     pub meta: serde_json::Value, // user metadata
 }
 
+impl Row {
+    pub fn display_name(&self) -> String {
+        self.name.display().to_string()
+    }
+
+    pub fn display_place(&self) -> String {
+        self.place.clone()
+    }
+
+    pub fn display_size(&self) -> u64 {
+        self.size.clone()
+    }
+
+    pub fn display_hash(&self) -> Vec<u8> {
+        self.hash.to_bytes()
+    }
+
+    pub fn display_meta(&self) -> Result<String, Error> {
+        Ok(serde_json::to_string(&self.meta)?)
+    }
+
+    pub fn display_info(&self) -> Result<String, Error> {
+        Ok(serde_json::to_string(&self.info)?)
+    }
+}
+
 impl fmt::Display for Row {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let result = format!("Row({})", self.name.display())

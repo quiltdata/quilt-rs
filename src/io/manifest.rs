@@ -1,5 +1,6 @@
 //! Contains utility functions to work with manifests.
 
+use std::marker::Unpin;
 use std::path::PathBuf;
 
 use aws_sdk_s3::primitives::ByteStream;
@@ -74,9 +75,11 @@ pub async fn upload_manifest(
 ) -> Result<(), Error> {
     // Push the (cached) relaxed manifest to the remote, don't tag it yet
     upload_from(storage, remote, path, manifest_uri).await?;
+    log::debug!("Parque file uploaded");
 
     // Upload a quilt3 manifest for backward compatibility.
     upload_legacy(storage, remote, path, manifest_uri).await?;
+    log::debug!("JSONL file uploaded");
 
     log::debug!("Uploaded remote manifest: {:?}", manifest_uri);
     Ok(())
@@ -232,10 +235,12 @@ impl WritableManifest {
         file.try_into()
     }
 
-    pub async fn insert_record(&mut self, row: Row) -> Result<(), Error> {
-        self.writer.insert_row(row).await
+    // TODO: add support for Vec<Row>
+    pub async fn insert(&mut self, row: Row) -> Result<(), Error> {
+        self.writer.insert(row).await
     }
 
+    /// Close and finalize the writer.
     pub async fn flush(self) -> Result<(), Error> {
         self.writer.flush().await
     }
@@ -248,20 +253,21 @@ pub async fn build_manifest_from_rows_stream(
     storage: &impl Storage,
     manifest_path: impl Fn(&str) -> PathBuf,
     header: Row,
-    mut stream: impl Stream<Item = Result<Row, Error>> + std::marker::Unpin,
+    mut stream: impl Stream<Item = Result<Row, Error>> + Unpin, // TODO: Item = Result<Vec<Row>
 ) -> Result<(PathBuf, String), Error> {
     let temp_dir = tempfile::tempdir()?;
     let temp_path = temp_dir.path().join("manifest.pq");
+    log::debug!("Temp path for creating manifest {:?}", temp_path);
     let file = storage.create_file(&temp_path).await?;
     let mut manifest = WritableManifest::try_new(storage, file.into()).await?;
 
     let mut top_hasher = TopHasher::new();
     top_hasher.append(&header)?;
-    manifest.insert_record(header).await?;
+    manifest.insert(header).await?;
 
     while let Some(Ok(row)) = stream.next().await {
         top_hasher.append(&row)?;
-        manifest.insert_record(row).await?;
+        manifest.insert(row).await?;
     }
     manifest.flush().await?;
 
