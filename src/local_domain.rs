@@ -44,7 +44,8 @@ impl LocalDomain {
         flow::browse(&self.paths, &self.storage, &self.remote, uri).await
     }
 
-    fn create_installed_package(&self, namespace: Namespace) -> InstalledPackage {
+    // TODO: make public only for tests
+    pub fn create_installed_package(&self, namespace: Namespace) -> InstalledPackage {
         // TODO: seems like you can use PackageLineage as an argument instead of namespace
         InstalledPackage {
             lineage: self.lineage.create_package_lineage(namespace.clone()),
