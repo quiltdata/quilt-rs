@@ -235,7 +235,7 @@ pub async fn init() -> Result<(), Error> {
             let (m, temp_dir) = Model::from_temp_dir()?;
             let args = benchmark::Input {
                 number,
-                dest: PathBuf::from("benchmarked.pq"),
+                dest: PathBuf::from("manifest.pq"),
             };
             log::info!(
                 "Benchmark manifest creation {:?}. Local domain in {:?}",
