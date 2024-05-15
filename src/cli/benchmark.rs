@@ -1,6 +1,4 @@
 use std::path::PathBuf;
-use std::time::Duration;
-use std::time::Instant;
 
 use async_stream::stream;
 use multihash::Multihash;
@@ -11,6 +9,7 @@ use quilt_rs::manifest::Row;
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
 use crate::cli::Error;
+use crate::perf::Measure;
 
 #[derive(Debug)]
 pub struct Input {
@@ -18,11 +17,10 @@ pub struct Input {
     pub number: i32,
 }
 
-#[derive(Debug)]
 pub struct Output {
     pub dest: PathBuf,
+    pub perf: Measure,
     pub top_hash: String,
-    pub elapsed: Duration,
 }
 
 impl std::fmt::Display for Output {
@@ -30,7 +28,7 @@ impl std::fmt::Display for Output {
         let mut output: Vec<String> = Vec::new();
         output.push(format!("Manifest written to {:?}", &self.dest));
         output.push(format!("With hash {}", &self.top_hash));
-        output.push(format!("And it took {:?}", &self.elapsed));
+        output.push(format!("And it took {}", &self.perf.elapsed()));
         write!(f, "{}", output.join("\n"))
     }
 }
@@ -83,12 +81,11 @@ pub async fn model(
     local_domain: &quilt_rs::LocalDomain,
     Input { dest, number }: Input,
 ) -> Result<Output, Error> {
-    let now = Instant::now();
+    let perf = Measure::start();
     let (dest, top_hash) = benchmark(local_domain, dest, number).await?;
-    let elapsed = now.elapsed();
     Ok(Output {
         dest,
+        perf,
         top_hash,
-        elapsed,
     })
 }

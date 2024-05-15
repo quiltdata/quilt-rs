@@ -126,9 +126,13 @@ enum Commands {
     },
     /// Test and benchmark creating manifest with large number of rows
     Benchmark {
-        /// How many rows? 1000000
+        /// How many rows in manifest?
+        /// Ex. 1000000
         #[arg(short, long)]
         number: i32,
+        /// Manifest destination path
+        #[arg(short, long)]
+        path: Option<PathBuf>,
     },
     /// Uninstall package from local domain
     Uninstall {
@@ -231,11 +235,11 @@ pub async fn init() -> Result<(), Error> {
             print(status::command(Model::from(domain), args).await);
             Ok(())
         }
-        Commands::Benchmark { number } => {
+        Commands::Benchmark { number, path } => {
             let (m, temp_dir) = Model::from_temp_dir()?;
             let args = benchmark::Input {
                 number,
-                dest: PathBuf::from("manifest.pq"),
+                dest: path.unwrap_or(PathBuf::from("manifest.pq")),
             };
             log::info!(
                 "Benchmark manifest creation {:?}. Local domain in {:?}",

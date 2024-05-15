@@ -1,6 +1,7 @@
 use tracing::log;
 
 mod cli;
+mod perf;
 
 #[tokio::main]
 async fn main() {

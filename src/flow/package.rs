@@ -1,6 +1,6 @@
 use aws_sdk_s3::types::Object;
+use chrono;
 use futures::future::try_join_all;
-use std::time::Instant;
 use tokio_stream::StreamExt;
 use tracing::log;
 
@@ -14,6 +14,7 @@ use crate::io::remote::S3Attributes;
 use crate::io::storage::Storage;
 use crate::manifest::Row;
 use crate::paths::DomainPaths;
+use crate::perf::Measure;
 use crate::uri::ManifestUri;
 use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
@@ -88,7 +89,7 @@ pub async fn package_s3_prefix(
     // TODO: s3 uri key ends with / and has no version
     // FIXME: filter or fail on keys with `.` or `..` in path segments as quilt3 do
 
-    let now = Instant::now();
+    let perf = Measure::start();
     let stream = Box::pin(stream_objects(storage, remote, source_uri.clone()).await);
     let manifest_path = |t: &str| paths.manifest_cache(&source_uri.bucket, t);
     let (cache_path, top_hash) =
@@ -103,10 +104,10 @@ pub async fn package_s3_prefix(
         namespace,
         hash: top_hash,
     };
-    let elapsed = now.elapsed();
-    log::info!("Created manifest {:?} for {:?}", manifest_uri, elapsed);
+    let perf = perf.elapsed();
+    log::info!("Created manifest {:?} for {}", manifest_uri, perf);
     upload_manifest(storage, remote, &manifest_uri, &cache_path).await?;
-    log::debug!("Manifest uploaded");
+    log::debug!("Manifest uploaded for {}", perf.elapsed());
     tag_timestamp(remote, &manifest_uri, chrono::Utc::now()).await?;
     log::debug!("Timestamp tag uploaded");
     tag_latest(remote, &manifest_uri).await?;
