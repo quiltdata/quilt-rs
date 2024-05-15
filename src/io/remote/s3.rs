@@ -294,7 +294,7 @@ impl Remote for RemoteS3 {
                     .into_iter()
                     .flatten()
                     .map(Ok)
-                    .collect()
+                    .collect::<Vec<_>>();
             }
         }
     }

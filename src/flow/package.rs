@@ -1,4 +1,5 @@
 use aws_sdk_s3::types::Object;
+use futures::future::try_join_all;
 use std::time::Instant;
 use tokio_stream::StreamExt;
 use tracing::log;
@@ -18,35 +19,40 @@ use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
 use crate::Error;
 
+async fn get_object_attributes_inner(
+    storage: &impl Storage,
+    remote: &impl Remote,
+    listing_uri: &S3Uri,
+    object: Result<Object, Error>,
+) -> Result<S3Attributes, Error> {
+    let object_key = object?
+        .key
+        .clone()
+        .expect("object key expected to be present");
+    match remote.get_object_attributes(listing_uri, &object_key).await {
+        Ok(attrs) => Ok(attrs),
+        Err(err) => {
+            log::warn!("Error getting attributes: {}", err);
+            storage
+                .get_object_attributes(listing_uri, &object_key)
+                .await
+        }
+    }
+}
+
 async fn get_object_attributes(
     storage: &impl Storage,
     remote: &impl Remote,
     listing_uri: S3Uri,
     objects: Result<Vec<Result<Object, Error>>, Error>,
 ) -> Result<Vec<S3Attributes>, Error> {
-    let mut output = Vec::new();
-    // FIXME: try_join_5
-    for object in objects? {
-        let object_key = object?
-            .key
-            .clone()
-            .expect("object key expected to be present");
-        match remote
-            .get_object_attributes(&listing_uri, &object_key)
-            .await
-        {
-            Ok(attrs) => output.push(attrs),
-            Err(err) => {
-                log::warn!("Error getting attributes: {}", err);
-                output.push(
-                    storage
-                        .get_object_attributes(&listing_uri, &object_key)
-                        .await?,
-                );
-            }
-        };
-    }
-    Ok(output)
+    try_join_all(
+        objects?
+            .into_iter()
+            .map(|object| get_object_attributes_inner(storage, remote, &listing_uri, object))
+            .collect::<Vec<_>>(),
+    )
+    .await
 }
 
 async fn stream_objects<'a>(
