@@ -1,8 +1,8 @@
 use tokio::io::AsyncReadExt;
-use tokio_stream::Stream;
 use tokio_stream::StreamExt;
 
 use crate::io::manifest::build_manifest_from_rows_stream;
+use crate::io::manifest::RowsStream;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::manifest::Manifest;
@@ -15,8 +15,10 @@ use crate::uri::ManifestUriLegacy;
 use crate::uri::S3Uri;
 use crate::Error;
 
-async fn stream_jsonl_rows(jsonl: Manifest) -> impl Stream<Item = Result<Row, Error>> {
-    tokio_stream::iter(jsonl.rows).map(Row::try_from)
+async fn stream_jsonl_rows(jsonl: Manifest) -> impl RowsStream {
+    tokio_stream::iter(jsonl.rows)
+        .map(Row::try_from)
+        .map(|rows| Ok(vec![rows]))
 }
 
 async fn is_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Result<bool, Error> {

@@ -9,6 +9,7 @@ use tracing::log;
 
 use quilt_rs::uri::Namespace;
 
+mod benchmark;
 mod browse;
 mod commit;
 mod install;
@@ -123,6 +124,16 @@ enum Commands {
         #[arg(short, long)]
         namespace: String,
     },
+    /// Test and benchmark creating manifest with large number of rows
+    Benchmark {
+        /// How many rows in manifest?
+        /// Ex. 1000000
+        #[arg(short, long)]
+        number: i32,
+        /// Manifest destination path
+        #[arg(short, long)]
+        path: Option<PathBuf>,
+    },
     /// Uninstall package from local domain
     Uninstall {
         /// Namespace of the package to uninstall.
@@ -222,6 +233,20 @@ pub async fn init() -> Result<(), Error> {
             };
             log::info!("Status {:?}", args);
             print(status::command(Model::from(domain), args).await);
+            Ok(())
+        }
+        Commands::Benchmark { number, path } => {
+            let (m, temp_dir) = Model::from_temp_dir()?;
+            let args = benchmark::Input {
+                number,
+                dest: path.unwrap_or(PathBuf::from("manifest.pq")),
+            };
+            log::info!(
+                "Benchmark manifest creation {:?}. Local domain in {:?}",
+                args,
+                temp_dir
+            );
+            print(benchmark::command(m, args).await);
             Ok(())
         }
         Commands::Uninstall { domain, namespace } => {

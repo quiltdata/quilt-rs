@@ -4,12 +4,12 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use serde_json::json;
-use tokio_stream::Stream;
 use tokio_stream::StreamExt;
 use tracing::log;
 use url::Url;
 
 use crate::io::manifest::build_manifest_from_rows_stream;
+use crate::io::manifest::RowsStream;
 use crate::io::storage::Storage;
 use crate::lineage::Change;
 use crate::lineage::CommitState;
@@ -30,20 +30,23 @@ async fn stream_local_with_changes(
     removed: HashSet<PathBuf>,
     modified: BTreeMap<PathBuf, Row>,
     new_files: Vec<Row>,
-) -> impl Stream<Item = Result<Row, Error>> {
-    let changes_stream = local_manifest
-        .records_stream()
-        .await
-        .filter_map(move |row| {
-            if removed.contains(&row.name) {
-                return None;
-            }
-            if let Some(modified_row) = modified.get(&row.name) {
-                return Some(modified_row.clone());
-            }
-            Some(row)
-        });
-    tokio_stream::iter(new_files).chain(changes_stream).map(Ok)
+) -> impl RowsStream {
+    let changes_stream = local_manifest.records_stream().await.map(move |rows| {
+        rows.iter()
+            .filter_map(|row| {
+                if removed.contains(&row.name) {
+                    return None;
+                }
+                if let Some(modified_row) = modified.get(&row.name) {
+                    return Some(Ok(modified_row.clone()));
+                }
+                Some(Ok(row.clone()))
+            })
+            .collect::<Vec<Result<Row, Error>>>()
+    });
+    tokio_stream::iter(vec![new_files.into_iter().map(Ok).collect()])
+        .chain(changes_stream)
+        .map(Ok)
 }
 
 async fn create_immutable_object_copy(

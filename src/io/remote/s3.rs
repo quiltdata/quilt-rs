@@ -9,10 +9,8 @@ use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::ChecksumAlgorithm;
 use aws_sdk_s3::types::CompletedMultipartUpload;
 use aws_sdk_s3::types::CompletedPart;
-use aws_sdk_s3::types::Object;
 use aws_smithy_types::byte_stream::Length;
 use parquet::data_type::AsBytes;
-use tokio_stream::Stream;
 
 use multihash::Multihash;
 use tokio::io::AsyncRead;
@@ -24,9 +22,12 @@ use crate::checksum::ContentHash;
 use crate::checksum::MPU_MAX_PARTS;
 use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use crate::checksum::MULTIPART_THRESHOLD;
+use crate::io::remote::ObjectsStream;
 use crate::io::remote::Remote;
 use crate::uri::S3Uri;
 use crate::Error;
+
+const LIST_OBJECTS_V2_MAX_KEYS: i32 = 1_00;
 
 use crate::io::remote::get_client_for_bucket;
 use crate::io::remote::S3Attributes;
@@ -276,7 +277,7 @@ impl Remote for RemoteS3 {
         get_object_stream(&client, s3_uri).await
     }
 
-    async fn list_objects(&self, listing_uri: S3Uri) -> impl Stream<Item = Result<Object, Error>> {
+    async fn list_objects(&self, listing_uri: S3Uri) -> impl ObjectsStream {
         try_stream! {
             let client = get_client_for_bucket(&listing_uri.bucket).await?;
             let mut paginated_stream = client
@@ -284,14 +285,16 @@ impl Remote for RemoteS3 {
                 .bucket(&listing_uri.bucket)
                 .prefix(&listing_uri.key)
                 .into_paginator()
-                .page_size(100) // XXX: this is to limit concurrency
+                .page_size(LIST_OBJECTS_V2_MAX_KEYS) // XXX: this is to limit concurrency
                 .send();
             while let Some(page) = paginated_stream.next().await {
-                let page = page.map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
-
-                while let Some(obj) = page.contents.iter().flatten().next() {
-                    yield obj.clone()
-                }
+                yield page
+                    .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?
+                    .contents
+                    .into_iter()
+                    .flatten()
+                    .map(Ok)
+                    .collect::<Vec<_>>();
             }
         }
     }

@@ -1,5 +1,6 @@
 //! Contains utility functions to work with manifests.
 
+use std::marker::Unpin;
 use std::path::PathBuf;
 
 use aws_sdk_s3::primitives::ByteStream;
@@ -74,11 +75,13 @@ pub async fn upload_manifest(
 ) -> Result<(), Error> {
     // Push the (cached) relaxed manifest to the remote, don't tag it yet
     upload_from(storage, remote, path, manifest_uri).await?;
+    log::info!("Parque file uploaded");
 
     // Upload a quilt3 manifest for backward compatibility.
     upload_legacy(storage, remote, path, manifest_uri).await?;
+    log::info!("JSONL file uploaded");
 
-    log::debug!("Uploaded remote manifest: {:?}", manifest_uri);
+    log::info!("Uploaded remote manifest: {:?}", manifest_uri);
     Ok(())
 }
 
@@ -179,7 +182,7 @@ pub async fn upload_row(
         .map_err(|_| Error::FileUri(local_url))?;
 
     let object_uri = ObjectUri::new(package_handle, row.name.clone());
-    log::debug!("Uploading to S3: {}", object_uri);
+    log::info!("Uploading to S3: {}", object_uri);
 
     let (remote_url, hash) = remote
         .upload_file(&file_path, &object_uri.into(), row.size)
@@ -232,13 +235,35 @@ impl WritableManifest {
         file.try_into()
     }
 
-    pub async fn insert_record(&mut self, row: Row) -> Result<(), Error> {
-        self.writer.insert_row(row).await
+    pub async fn insert_header(&mut self, header: Row) -> Result<(), Error> {
+        self.writer.insert(header).await
     }
 
+    // TODO: add support for Vec<Row>
+    pub async fn insert(&mut self, row: Vec<Row>) -> Result<(), Error> {
+        self.writer.insert_rows(row).await
+    }
+
+    /// Close and finalize the writer.
     pub async fn flush(self) -> Result<(), Error> {
         self.writer.flush().await
     }
+}
+
+pub type StreamRowsChunk = Vec<Result<Row, Error>>;
+
+pub type StreamItem = Result<StreamRowsChunk, Error>;
+
+pub trait RowsStream: Stream<Item = StreamItem> {}
+
+impl<T: Stream<Item = StreamItem>> RowsStream for T {}
+
+fn unwrap_rows(rows: StreamRowsChunk) -> Result<Vec<Row>, Error> {
+    let mut output = Vec::new();
+    for result in rows {
+        output.push(result?);
+    }
+    Ok(output)
 }
 
 /// Builds the manifest from `Stream<Result<Row>>`
@@ -248,20 +273,24 @@ pub async fn build_manifest_from_rows_stream(
     storage: &impl Storage,
     manifest_path: impl Fn(&str) -> PathBuf,
     header: Row,
-    mut stream: impl Stream<Item = Result<Row, Error>> + std::marker::Unpin,
+    mut stream: impl RowsStream + Unpin,
 ) -> Result<(PathBuf, String), Error> {
     let temp_dir = tempfile::tempdir()?;
     let temp_path = temp_dir.path().join("manifest.pq");
+    log::info!("Temp path for creating manifest {:?}", temp_path);
     let file = storage.create_file(&temp_path).await?;
     let mut manifest = WritableManifest::try_new(storage, file.into()).await?;
 
     let mut top_hasher = TopHasher::new();
     top_hasher.append(&header)?;
-    manifest.insert_record(header).await?;
+    manifest.insert_header(header).await?;
 
-    while let Some(Ok(row)) = stream.next().await {
-        top_hasher.append(&row)?;
-        manifest.insert_record(row).await?;
+    while let Some(Ok(rows)) = stream.next().await {
+        let rows = unwrap_rows(rows)?;
+        for row in &rows {
+            top_hasher.append(row)?;
+        }
+        manifest.insert(rows).await?;
     }
     manifest.flush().await?;
 

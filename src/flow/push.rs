@@ -1,4 +1,3 @@
-use tokio_stream::Stream;
 use tokio_stream::StreamExt;
 
 use crate::flow;
@@ -7,6 +6,8 @@ use crate::io::manifest::resolve_latest;
 use crate::io::manifest::tag_timestamp;
 use crate::io::manifest::upload_manifest;
 use crate::io::manifest::upload_row;
+use crate::io::manifest::RowsStream;
+use crate::io::manifest::StreamItem;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
@@ -18,11 +19,19 @@ use crate::uri::Namespace;
 use crate::uri::S3PackageHandle;
 use crate::Error;
 
-async fn get_local_and_remote_records(remote_manifest: &Table, row: Row) -> (Row, Option<Row>) {
-    match remote_manifest.get_record(&row.name).await {
-        Ok(remote_row) => (row, remote_row),
-        Err(_err) => (row, None),
+async fn get_local_and_remote_records(
+    remote_manifest: &Table,
+    rows: Vec<Row>,
+) -> Vec<(Row, Option<Row>)> {
+    let mut output = Vec::new();
+    for row in rows {
+        if let Ok(remote_row) = remote_manifest.get_record(&row.name).await {
+            output.push((row, remote_row))
+        } else {
+            output.push((row, None))
+        }
     }
+    output
 }
 
 enum EitherRow {
@@ -30,27 +39,38 @@ enum EitherRow {
     Remote(Row),
 }
 
-fn check_and_return_remote_row((row, remote_row_opt): (Row, Option<Row>)) -> EitherRow {
-    if let Some(remote_row) = remote_row_opt {
-        if remote_row == row {
-            return EitherRow::Remote(Row {
-                place: remote_row.place.to_owned(),
-                ..row.clone()
-            });
+fn check_and_return_remote_row(rows: Vec<(Row, Option<Row>)>) -> Vec<EitherRow> {
+    let mut output = Vec::new();
+    for row_tuple in rows {
+        let (row, remote_row_opt) = row_tuple;
+        if let Some(remote_row) = remote_row_opt {
+            if remote_row == row {
+                output.push(EitherRow::Remote(Row {
+                    place: remote_row.place.to_owned(),
+                    ..row.clone()
+                }));
+            }
         }
+        output.push(EitherRow::Local(row));
     }
-    EitherRow::Local(row)
+    output
 }
 
 async fn use_existing_row_or_upload(
     remote: &impl Remote,
     package_handle: &S3PackageHandle,
-    row_opt: EitherRow,
-) -> Result<Row, Error> {
-    match row_opt {
-        EitherRow::Remote(row) => Ok(row),
-        EitherRow::Local(row) => upload_row(remote, package_handle.clone(), row).await,
+    rows: Vec<EitherRow>,
+) -> StreamItem {
+    let mut output = Vec::new();
+    for either_row in rows {
+        match either_row {
+            EitherRow::Remote(row) => output.push(Ok(row)),
+            EitherRow::Local(row) => {
+                output.push(upload_row(remote, package_handle.clone(), row).await)
+            }
+        }
     }
+    Ok(output)
 }
 
 async fn stream_uploaded_local_rows<'a>(
@@ -58,10 +78,10 @@ async fn stream_uploaded_local_rows<'a>(
     local_manifest: &'a Table,
     remote_manifest: &'a Table,
     package_handle: &'a S3PackageHandle,
-) -> impl Stream<Item = Result<Row, Error>> + 'a {
+) -> impl RowsStream + 'a {
     let stream = local_manifest.records_stream().await;
     stream
-        .then(move |row| get_local_and_remote_records(remote_manifest, row))
+        .then(move |rows| get_local_and_remote_records(remote_manifest, rows))
         .map(check_and_return_remote_row)
         .then(move |either_row| use_existing_row_or_upload(remote, package_handle, either_row))
 }

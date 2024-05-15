@@ -1,13 +1,17 @@
+use std::marker::Unpin;
 use std::path::PathBuf;
 
 use crate::flow;
 use crate::installed_package::InstalledPackage;
+use crate::io::manifest::build_manifest_from_rows_stream;
+use crate::io::manifest::RowsStream;
 use crate::io::remote::Remote;
 use crate::io::remote::RemoteS3;
 use crate::io::storage::LocalStorage;
 use crate::io::storage::Storage;
 use crate::lineage;
 use crate::lineage::DomainLineage;
+use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::paths;
 use crate::uri::ManifestUri;
@@ -119,5 +123,14 @@ impl LocalDomain {
             dest_uri,
         )
         .await
+    }
+
+    pub async fn build_manifest(
+        &self,
+        dest_path: PathBuf,
+        stream: impl RowsStream + Unpin,
+    ) -> Result<(PathBuf, String), Error> {
+        let manifest_path = |_t: &str| dest_path.clone();
+        build_manifest_from_rows_stream(&self.storage, manifest_path, Row::default(), stream).await
     }
 }

@@ -9,7 +9,6 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
 use tokio_stream::Stream;
 
 use crate::checksum::ContentHash;
@@ -17,9 +16,6 @@ use crate::io::storage::Storage;
 use arrow::array::GenericByteArray;
 use arrow::array::UInt64Array;
 use arrow::datatypes::BinaryType;
-use arrow::datatypes::DataType;
-use arrow::datatypes::Field;
-use arrow::datatypes::Schema;
 use arrow::datatypes::Utf8Type;
 use arrow::error::ArrowError;
 use multihash::Multihash;
@@ -114,27 +110,14 @@ fn serialize_row_entry(row: &Row) -> serde_json::Value {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Table {
     pub header: Row,
-    // path: PathBuf,
+    // path: PathBuf, // TODO
     records: BTreeMap<PathBuf, Row>,
-    schema: Arc<Schema>,
 }
 
 impl Table {
     // TODO: new creates empty records, from(header, records) creates full Table
     fn new(header: Row, records: BTreeMap<PathBuf, Row>) -> Self {
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("name", DataType::Utf8, false),
-            Field::new("place", DataType::Utf8, false),
-            Field::new("size", DataType::UInt64, false),
-            Field::new("multihash", DataType::Binary, false),
-            Field::new("meta.json", DataType::Utf8, false),
-            Field::new("info.json", DataType::Utf8, false),
-        ]));
-        Table {
-            header,
-            records,
-            schema,
-        }
+        Table { header, records }
     }
 
     async fn read_rows_impl<T>(reader: T) -> Result<Self, Error>
@@ -256,10 +239,10 @@ impl Table {
         self.records.values()
     }
 
-    pub async fn records_stream(&self) -> impl Stream<Item = Row> {
-        // FIXME: Item = Result<Row>
+    pub async fn records_stream(&self) -> impl Stream<Item = Vec<Row>> {
+        // FIXME: Item = Vec<Result<Row>>
         let entries: Vec<Row> = self.records_values().cloned().collect();
-        tokio_stream::iter(entries)
+        tokio_stream::iter(vec![entries])
     }
 
     pub async fn insert_record(&mut self, row: Row) -> Result<Option<Row>, Error> {

@@ -32,6 +32,14 @@ pub struct S3Attributes {
     pub size: u64,
 }
 
+pub type StreamObjectChunk = Vec<Result<Object, Error>>;
+
+pub type StreamItem = Result<StreamObjectChunk, Error>;
+
+pub trait ObjectsStream: Stream<Item = StreamItem> {}
+
+impl<T: Stream<Item = StreamItem>> ObjectsStream for T {}
+
 /// This trait encapsulates the S3 operations that Quilt needs to perform.
 pub trait Remote {
     /// Checks if object exists
@@ -59,10 +67,7 @@ pub trait Remote {
 
     /// List objects list under S3 prefix using tokio Stream
     // TODO: return Item = Result<Row, Error>
-    fn list_objects(
-        &self,
-        listing_uri: S3Uri,
-    ) -> impl Future<Output = impl Stream<Item = Result<Object, Error>>> + Send;
+    fn list_objects(&self, listing_uri: S3Uri) -> impl Future<Output = impl ObjectsStream> + Send;
 
     /// Upload file. Just that
     fn put_object(

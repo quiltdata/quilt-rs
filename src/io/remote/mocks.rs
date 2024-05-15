@@ -1,14 +1,13 @@
 use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;
-use aws_sdk_s3::types::Object;
 use multihash::Multihash;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
-use tokio_stream::Stream;
 use tracing::log;
 
 use crate::checksum;
+use crate::io::remote::ObjectsStream;
 use crate::io::remote::S3Attributes;
 use crate::io::storage::mocks::MockStorage;
 use crate::io::storage::Storage;
@@ -75,7 +74,7 @@ impl Remote for MockRemote {
             })
     }
 
-    async fn list_objects(&self, _listing_uri: S3Uri) -> impl Stream<Item = Result<Object, Error>> {
+    async fn list_objects(&self, _listing_uri: S3Uri) -> impl ObjectsStream {
         tokio_stream::iter(Vec::new())
     }
 

@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
+use arrow::array::ArrayRef;
 use arrow::array::GenericByteArray;
 use arrow::array::UInt64Array;
 use arrow::datatypes;
+use arrow::datatypes::DataType;
+use arrow::datatypes::Field;
 use arrow::datatypes::Schema;
-use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::AsyncArrowWriter;
 use parquet::basic::Compression;
@@ -12,58 +14,77 @@ use parquet::file::properties::WriterProperties;
 use tokio::fs::File;
 
 use crate::manifest::Row;
-// use crate::manifest::Table;
 use crate::Error;
-
-async fn write_row(
-    writer: &mut AsyncArrowWriter<File>,
-    schema: Arc<Schema>,
-    row: &Row,
-) -> Result<(), ArrowError> {
-    let hash: &[u8] = &row.hash.to_bytes();
-    let batch = RecordBatch::try_new(
-        schema,
-        vec![
-            Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(vec![row
-                .name
-                .display()
-                .to_string()])),
-            Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(vec![row
-                .place
-                .as_str()])),
-            Arc::new(UInt64Array::from(vec![row.size])),
-            Arc::new(GenericByteArray::<datatypes::BinaryType>::from(vec![hash])),
-            Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(vec![
-                serde_json::to_string(&row.meta).unwrap(),
-            ])),
-            Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(vec![
-                serde_json::to_string(&row.info).unwrap(),
-            ])),
-        ],
-    )?;
-    writer.write(&batch).await?;
-    Ok(())
-}
 
 /// Don't use it. It will be private
 pub struct ParquetWriter {
     schema: Arc<Schema>,
     writer: AsyncArrowWriter<File>,
 }
-fn create_schema() -> Arc<Schema> {
-    Arc::new(Schema::new(vec![
-        datatypes::Field::new("name", datatypes::DataType::Utf8, false),
-        datatypes::Field::new("place", datatypes::DataType::Utf8, false),
-        datatypes::Field::new("size", datatypes::DataType::UInt64, false),
-        datatypes::Field::new("multihash", datatypes::DataType::Binary, false),
-        datatypes::Field::new("meta.json", datatypes::DataType::Utf8, false),
-        datatypes::Field::new("info.json", datatypes::DataType::Utf8, false),
-    ]))
+
+fn create_schema() -> Schema {
+    Schema::new(vec![
+        Field::new("name", DataType::Utf8, false),
+        Field::new("place", DataType::Utf8, false),
+        Field::new("size", DataType::UInt64, false),
+        Field::new("multihash", DataType::Binary, false),
+        Field::new("meta.json", DataType::Utf8, false),
+        Field::new("info.json", DataType::Utf8, false),
+    ])
+}
+
+fn create_columns_from_row(row: &Row) -> Result<Vec<ArrayRef>, Error> {
+    Ok(vec![
+        Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(vec![
+            row.display_name()
+        ])),
+        Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(vec![
+            row.display_place()
+        ])),
+        Arc::new(UInt64Array::from(vec![row.display_size()])),
+        Arc::new(GenericByteArray::<datatypes::BinaryType>::from(vec![row
+            .display_hash()
+            .as_slice()])),
+        Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(vec![
+            row.display_meta()?
+        ])),
+        Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(vec![
+            row.display_info()?
+        ])),
+    ])
+}
+
+fn create_columns(rows: Vec<Row>) -> Result<Vec<ArrayRef>, Error> {
+    let mut names = Vec::new();
+    let mut places = Vec::new();
+    let mut sizes = Vec::new();
+    let mut hashes = Vec::new();
+    let mut metas = Vec::new();
+    let mut infos = Vec::new();
+    for row in rows {
+        names.push(row.display_name());
+        places.push(row.display_place());
+        hashes.push(row.display_hash());
+        sizes.push(row.display_size());
+        metas.push(row.display_meta()?);
+        infos.push(row.display_info()?);
+    }
+    Ok(vec![
+        Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(names)),
+        Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(places)),
+        Arc::new(UInt64Array::from(sizes)),
+        Arc::new(GenericByteArray::<datatypes::BinaryType>::from(
+            hashes.iter().map(|h| h.as_slice()).collect::<Vec<_>>(),
+        )),
+        Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(metas)),
+        Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(infos)),
+    ])
 }
 
 fn create_writer(file: File, schema: Arc<Schema>) -> Result<AsyncArrowWriter<File>, Error> {
     let props = WriterProperties::builder()
         .set_compression(Compression::SNAPPY)
+        .set_max_row_group_size(1024)
         .build();
     Ok(AsyncArrowWriter::try_new(file, schema, Some(props))?)
 }
@@ -72,38 +93,29 @@ impl TryFrom<File> for ParquetWriter {
     type Error = Error;
 
     fn try_from(file: File) -> Result<Self, Self::Error> {
-        let schema = create_schema();
+        let schema = Arc::new(create_schema());
         let writer = create_writer(file, schema.clone())?;
         Ok(ParquetWriter { schema, writer })
     }
 }
 
 impl ParquetWriter {
-    // pub async fn write_to_path(&self, storage: &impl Storage, path: &PathBuf) -> Result<(), Error> {
-    //     let mut writer = self
-    //         .create_writer_from_path(storage, path, self.schema.clone())
-    //         .await?;
-
-    //     Self::write_row_impl(&mut writer, self.schema.clone(), &self.header).await?;
-    //     for row in self.records.values() {
-    //         Self::write_row_impl(&mut writer, self.schema.clone(), row).await?;
-    //     }
-    //     writer.close().await?;
-
-    //     Ok(())
-    // }
-    // pub async fn write_manifest(table: &Table) -> Result<(), Error> {
-    //     Ok(())
-    // }
-
+    /// Close and finalize the writer.
     pub async fn flush(self) -> Result<(), Error> {
         self.writer.close().await?;
         Ok(())
     }
 
-    pub async fn insert_row(&mut self, row: Row) -> Result<(), Error> {
-        write_row(&mut self.writer, self.schema.clone(), &row).await?;
+    // TODO: add support for Vec<Row>
+    pub async fn insert(&mut self, row: Row) -> Result<(), Error> {
+        let columns = create_columns_from_row(&row)?;
+        let batch = RecordBatch::try_new(self.schema.clone(), columns)?;
+        Ok(self.writer.write(&batch).await?)
+    }
 
-        Ok(())
+    pub async fn insert_rows(&mut self, rows: Vec<Row>) -> Result<(), Error> {
+        let columns = create_columns(rows)?;
+        let batch = RecordBatch::try_new(self.schema.clone(), columns)?;
+        Ok(self.writer.write(&batch).await?)
     }
 }
