@@ -73,7 +73,9 @@ fn create_columns(rows: Vec<Row>) -> Result<Vec<ArrayRef>, Error> {
         Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(names)),
         Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(places)),
         Arc::new(UInt64Array::from(sizes)),
-        Arc::new(GenericByteArray::<datatypes::BinaryType>::from(hashes.iter().map(|h|h.as_slice()).collect::<Vec<_>>())),
+        Arc::new(GenericByteArray::<datatypes::BinaryType>::from(
+            hashes.iter().map(|h| h.as_slice()).collect::<Vec<_>>(),
+        )),
         Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(metas)),
         Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(infos)),
     ])

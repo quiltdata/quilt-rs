@@ -1,11 +1,9 @@
 use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;
-use aws_sdk_s3::types::Object;
 use multihash::Multihash;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
-use tokio_stream::Stream;
 use tracing::log;
 
 use crate::checksum;

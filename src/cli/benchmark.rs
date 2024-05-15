@@ -59,10 +59,7 @@ async fn benchmark(
             });
             chunk.push(row);
 
-            if i > 0 && i % 100_000 == 0 {
-                yield(Ok(chunk));
-                chunk = vec![];
-            } else if i == number -1 {
+            if (i > 0 && i % 100_000 == 0) || (i == number -1) {
                 yield(Ok(chunk));
                 chunk = vec![];
             }
