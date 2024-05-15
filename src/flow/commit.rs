@@ -372,7 +372,7 @@ mod tests {
             lineage.commit.unwrap().hash,
             // NOTE: I copied this hash from the test result itself.
             //       I don't know what is the right hash
-            "cab702f67a810907dde744a637f4686c3b57f36852c438e15c2075d865b29738"
+            "5819856fad67101036f115a273d7444059f403e37d51a9e3e4afa92d7d12786f"
         );
 
         Ok(())

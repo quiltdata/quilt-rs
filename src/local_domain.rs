@@ -131,6 +131,7 @@ impl LocalDomain {
         stream: impl RowsStream + Unpin,
     ) -> Result<(PathBuf, String), Error> {
         let manifest_path = |_t: &str| dest_path.clone();
-        build_manifest_from_rows_stream(&self.storage, manifest_path, Row::default(), stream).await
+        build_manifest_from_rows_stream(&self.storage, manifest_path, Row::default_header(), stream)
+            .await
     }
 }

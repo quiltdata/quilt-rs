@@ -278,7 +278,7 @@ impl fmt::Display for Table {
 }
 impl Default for Table {
     fn default() -> Self {
-        Table::new(Row::default(), BTreeMap::default())
+        Table::new(Row::default_header(), BTreeMap::default())
     }
 }
 

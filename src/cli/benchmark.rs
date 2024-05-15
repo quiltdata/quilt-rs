@@ -53,7 +53,7 @@ async fn benchmark(
             let row= Ok(Row {
                 name,
                 hash: Multihash::wrap(0xb510, b"pedestrian").expect("Unexpected"),
-                ..Row::default()
+                ..Row::default_header()
             });
             chunk.push(row);
 
