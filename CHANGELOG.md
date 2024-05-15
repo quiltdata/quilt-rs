@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## [0.8.1]
+
+* Test creating manifest with a billion rows via `quilt_rs benchmark` and improve performance https://github.com/quiltdata/quilt-rs/pull/179
+* Use `Row::default_header()` instead of `Row::default()` https://github.com/quiltdata/quilt-rs/pull/182
+
 ## [0.8.0]
 
 * More docs, move `LocalDomain` and `InstalledPackage` to modules  https://github.com/quiltdata/quilt-rs/pull/176
