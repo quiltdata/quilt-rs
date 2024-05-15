@@ -10,7 +10,7 @@ use crate::manifest::HEADER_ROW;
 use crate::Error;
 
 /// Represents the row in Parquet manifest
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Row {
     pub name: PathBuf,
     pub place: String, // TODO: Should be Url
@@ -21,6 +21,21 @@ pub struct Row {
 }
 
 impl Row {
+    // TODO: use `struct Header`
+    pub fn default_header() -> Self {
+        Row {
+            name: HEADER_ROW.into(),
+            place: HEADER_ROW.into(),
+            size: 0,
+            hash: Multihash::default(),
+            info: serde_json::json!({
+                "message": String::default(),
+                "version": "v0",
+            }),
+            meta: serde_json::Value::Null,
+        }
+    }
+
     pub fn display_name(&self) -> String {
         self.name.display().to_string()
     }
@@ -58,8 +73,9 @@ impl fmt::Display for Row {
     }
 }
 
-impl From<Manifest> for Row {
-    fn from(quilt3_manifest: Manifest) -> Self {
+// TODO: use Header::from()
+impl From<&Manifest> for Row {
+    fn from(quilt3_manifest: &Manifest) -> Self {
         Row {
             info: serde_json::json!({
                 "message": quilt3_manifest.header.message,
@@ -69,7 +85,7 @@ impl From<Manifest> for Row {
                 Some(meta) => meta.into(),
                 None => serde_json::Value::Null,
             },
-            ..Row::default()
+            ..Row::default_header()
         }
     }
 }
@@ -89,22 +105,6 @@ impl TryFrom<ManifestRow> for Row {
             },
             info: serde_json::Value::Null,
         })
-    }
-}
-
-impl Default for Row {
-    fn default() -> Self {
-        Row {
-            name: HEADER_ROW.into(),
-            place: HEADER_ROW.into(),
-            size: 0,
-            hash: Multihash::default(),
-            info: serde_json::json!({
-                "message": String::default(),
-                "version": "v0",
-            }),
-            meta: serde_json::Value::Null,
-        }
     }
 }
 

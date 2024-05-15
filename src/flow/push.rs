@@ -294,7 +294,7 @@ mod tests {
         let manifest_uri = ManifestUri {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
-            hash: "0f85671863dadacf3a0e62212f1b9151a11f72228e4c82ed86ff27d46ec31d87".to_string(),
+            hash: "475af395ee2856548851913bfd803de4fcc7cdbb3d1d2c13bf0dc221ed6bc68b".to_string(),
         };
         assert_eq!(
             lineage,

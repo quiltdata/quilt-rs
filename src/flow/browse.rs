@@ -66,7 +66,7 @@ pub async fn cache_remote_manifest(
             storage.write_file(&cache_path, &manifest).await?;
         } else {
             let manifest = fetch_jsonl(remote, manifest_uri).await?;
-            let header = Row::from(manifest.clone());
+            let header = Row::from(&manifest);
             let manifest_path = |_: &str| cache_path.clone();
             let stream = stream_jsonl_rows(manifest).await;
             build_manifest_from_rows_stream(storage, manifest_path, header, stream).await?;
