@@ -49,24 +49,35 @@ async fn benchmark(
 ) -> Result<(PathBuf, String), Error> {
     let mut i = 0;
     let stream = stream! {
-    while i < number {
-        let name = PathBuf::from(format!("file://{}", i));
-        yield Ok(Row {
-            name,
-            hash: Multihash::wrap(0xb510, b"pedestrian").expect("Unexpected"),
-            ..Row::default()
-        });
-        if i > 0 && i % 10_000 == 0 && i < 100_000 {
-            log::debug!("Another 10k rows written, {}", i);
+        let mut chunk = Vec::new();
+        while i < number {
+            let name = PathBuf::from(format!("file://{}", i));
+            let row= Ok(Row {
+                name,
+                hash: Multihash::wrap(0xb510, b"pedestrian").expect("Unexpected"),
+                ..Row::default()
+            });
+            chunk.push(row);
+
+            if i > 0 && i % 100_000 == 0 {
+                yield(Ok(chunk));
+                chunk = vec![];
+            } else if i == number -1 {
+                yield(Ok(chunk));
+                chunk = vec![];
+            }
+
+            if i > 0 && i % 10_000 == 0 && i < 100_000 {
+                log::debug!("Another 10k rows written, {}", i);
+            }
+            if i > 0 && i % 100_000 == 0 && i < 1_000_000 {
+                log::debug!("Another 100k rows written, {}", i);
+            }
+            if i > 0 && i % 1_000_000 == 0 {
+                log::debug!("Another million rows written, {}", i);
+            }
+            i += 1;
         }
-        if i > 0 && i % 100_000 == 0 && i < 1_000_000 {
-            log::debug!("Another 100k rows written, {}", i);
-        }
-        if i > 0 && i % 1_000_000 == 0 {
-            log::debug!("Another million rows written, {}", i);
-        }
-        i += 1;
-    }
     };
     Ok(local_domain.build_manifest(dest, Box::pin(stream)).await?)
 }

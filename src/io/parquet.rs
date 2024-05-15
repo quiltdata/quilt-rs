@@ -33,7 +33,7 @@ fn create_schema() -> Schema {
     ])
 }
 
-fn create_columns(row: &Row) -> Result<Vec<ArrayRef>, Error> {
+fn create_columns_from_row(row: &Row) -> Result<Vec<ArrayRef>, Error> {
     Ok(vec![
         Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(vec![
             row.display_name()
@@ -51,6 +51,31 @@ fn create_columns(row: &Row) -> Result<Vec<ArrayRef>, Error> {
         Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(vec![
             row.display_info()?
         ])),
+    ])
+}
+
+fn create_columns(rows: Vec<Row>) -> Result<Vec<ArrayRef>, Error> {
+    let mut names = Vec::new();
+    let mut places = Vec::new();
+    let mut sizes = Vec::new();
+    let mut hashes = Vec::new();
+    let mut metas = Vec::new();
+    let mut infos = Vec::new();
+    for row in rows {
+        names.push(row.display_name());
+        places.push(row.display_place());
+        hashes.push(row.display_hash());
+        sizes.push(row.display_size());
+        metas.push(row.display_meta()?);
+        infos.push(row.display_info()?);
+    }
+    Ok(vec![
+        Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(names)),
+        Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(places)),
+        Arc::new(UInt64Array::from(sizes)),
+        Arc::new(GenericByteArray::<datatypes::BinaryType>::from(hashes.iter().map(|h|h.as_slice()).collect::<Vec<_>>())),
+        Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(metas)),
+        Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(infos)),
     ])
 }
 
@@ -81,7 +106,13 @@ impl ParquetWriter {
 
     // TODO: add support for Vec<Row>
     pub async fn insert(&mut self, row: Row) -> Result<(), Error> {
-        let columns = create_columns(&row)?;
+        let columns = create_columns_from_row(&row)?;
+        let batch = RecordBatch::try_new(self.schema.clone(), columns)?;
+        Ok(self.writer.write(&batch).await?)
+    }
+
+    pub async fn insert_rows(&mut self, rows: Vec<Row>) -> Result<(), Error> {
+        let columns = create_columns(rows)?;
         let batch = RecordBatch::try_new(self.schema.clone(), columns)?;
         Ok(self.writer.write(&batch).await?)
     }

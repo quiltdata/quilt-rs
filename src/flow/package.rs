@@ -1,6 +1,5 @@
 use aws_sdk_s3::types::Object;
 use std::time::Instant;
-use tokio_stream::Stream;
 use tokio_stream::StreamExt;
 use tracing::log;
 
@@ -8,6 +7,7 @@ use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::tag_latest;
 use crate::io::manifest::tag_timestamp;
 use crate::io::manifest::upload_manifest;
+use crate::io::manifest::RowsStream;
 use crate::io::remote::Remote;
 use crate::io::remote::S3Attributes;
 use crate::io::storage::Storage;
@@ -22,35 +22,48 @@ async fn get_object_attributes(
     storage: &impl Storage,
     remote: &impl Remote,
     listing_uri: S3Uri,
-    object: Result<Object, Error>,
-) -> Result<S3Attributes, Error> {
-    let object_key = object?
-        .key
-        .clone()
-        .expect("object key expected to be present");
-    match remote
-        .get_object_attributes(&listing_uri, &object_key)
-        .await
-    {
-        Ok(attrs) => Ok(attrs),
-        Err(err) => {
-            log::warn!("Error getting attributes: {}", err);
-            storage
-                .get_object_attributes(&listing_uri, &object_key)
-                .await
-        }
+    objects: Result<Vec<Result<Object, Error>>, Error>,
+) -> Result<Vec<S3Attributes>, Error> {
+    let mut output = Vec::new();
+    // FIXME: try_join_5
+    for object in objects? {
+        let object_key = object?
+            .key
+            .clone()
+            .expect("object key expected to be present");
+        match remote
+            .get_object_attributes(&listing_uri, &object_key)
+            .await
+        {
+            Ok(attrs) => output.push(attrs),
+            Err(err) => {
+                log::warn!("Error getting attributes: {}", err);
+                output.push(
+                    storage
+                        .get_object_attributes(&listing_uri, &object_key)
+                        .await?,
+                );
+            }
+        };
     }
+    Ok(output)
 }
 
 async fn stream_objects<'a>(
     storage: &'a impl Storage,
     remote: &'a impl Remote,
     listing_uri: S3Uri,
-) -> impl Stream<Item = Result<Row, Error>> + 'a {
+) -> impl RowsStream + 'a {
     let stream = remote.list_objects(listing_uri.clone()).await;
     stream
-        .then(move |obj| get_object_attributes(storage, remote, listing_uri.clone(), obj))
-        .map(|obj| obj.map(Row::from))
+        .then(move |objs| get_object_attributes(storage, remote, listing_uri.clone(), objs))
+        .map(|result| {
+            result.map(move |objs| {
+                objs.into_iter()
+                    .map(|obj| Ok(Row::from(obj)))
+                    .collect::<Vec<Result<Row, Error>>>()
+            })
+        })
 }
 
 /// Lists the objects from S3 prefix as a stream and creates a package (manifest) from it.

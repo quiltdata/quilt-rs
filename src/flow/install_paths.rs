@@ -3,11 +3,11 @@ use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use tokio_stream::Stream;
 use tokio_stream::StreamExt;
 use url::Url;
 
 use crate::io::manifest::build_manifest_from_rows_stream;
+use crate::io::manifest::RowsStream;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
@@ -46,14 +46,16 @@ async fn create_mutable_copy(
 async fn stream_remote_with_installed_rows(
     remote_manifest: &Table,
     local_entries: BTreeMap<PathBuf, Row>,
-) -> impl Stream<Item = Result<Row, Error>> {
-    remote_manifest
-        .records_stream()
-        .await
-        .map(move |row| match local_entries.get(&row.name) {
-            Some(row) => Ok(row.clone()),
-            None => Ok(row),
-        })
+) -> impl RowsStream {
+    remote_manifest.records_stream().await.map(move |rows| {
+        Ok(rows
+            .into_iter()
+            .map(|row| match local_entries.get(&row.name) {
+                Some(row) => Ok(row.clone()),
+                None => Ok(row),
+            })
+            .collect())
+    })
 }
 
 /// Installs paths to already existing manifest (provided as an argument to this function).

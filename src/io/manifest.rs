@@ -235,15 +235,35 @@ impl WritableManifest {
         file.try_into()
     }
 
+    pub async fn insert_header(&mut self, header: Row) -> Result<(), Error> {
+        self.writer.insert(header).await
+    }
+
     // TODO: add support for Vec<Row>
-    pub async fn insert(&mut self, row: Row) -> Result<(), Error> {
-        self.writer.insert(row).await
+    pub async fn insert(&mut self, row: Vec<Row>) -> Result<(), Error> {
+        self.writer.insert_rows(row).await
     }
 
     /// Close and finalize the writer.
     pub async fn flush(self) -> Result<(), Error> {
         self.writer.flush().await
     }
+}
+
+pub type StreamRowsChunk = Vec<Result<Row, Error>>;
+
+pub type StreamItem = Result<StreamRowsChunk, Error>;
+
+pub trait RowsStream: Stream<Item = StreamItem> {}
+
+impl<T: Stream<Item = StreamItem>> RowsStream for T {}
+
+fn unwrap_rows(rows: StreamRowsChunk) -> Result<Vec<Row>, Error> {
+    let mut output = Vec::new();
+    for result in rows {
+        output.push(result?);
+    }
+    Ok(output)
 }
 
 /// Builds the manifest from `Stream<Result<Row>>`
@@ -253,7 +273,7 @@ pub async fn build_manifest_from_rows_stream(
     storage: &impl Storage,
     manifest_path: impl Fn(&str) -> PathBuf,
     header: Row,
-    mut stream: impl Stream<Item = Result<Row, Error>> + Unpin, // TODO: Item = Result<Vec<Row>
+    mut stream: impl RowsStream + Unpin,
 ) -> Result<(PathBuf, String), Error> {
     let temp_dir = tempfile::tempdir()?;
     let temp_path = temp_dir.path().join("manifest.pq");
@@ -263,11 +283,14 @@ pub async fn build_manifest_from_rows_stream(
 
     let mut top_hasher = TopHasher::new();
     top_hasher.append(&header)?;
-    manifest.insert(header).await?;
+    manifest.insert_header(header).await?;
 
-    while let Some(Ok(row)) = stream.next().await {
-        top_hasher.append(&row)?;
-        manifest.insert(row).await?;
+    while let Some(Ok(rows)) = stream.next().await {
+        let rows = unwrap_rows(rows)?;
+        for row in &rows {
+            top_hasher.append(row)?;
+        }
+        manifest.insert(rows).await?;
     }
     manifest.flush().await?;
 

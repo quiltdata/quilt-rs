@@ -239,10 +239,10 @@ impl Table {
         self.records.values()
     }
 
-    pub async fn records_stream(&self) -> impl Stream<Item = Row> {
-        // FIXME: Item = Result<Row>
+    pub async fn records_stream(&self) -> impl Stream<Item = Vec<Row>> {
+        // FIXME: Item = Vec<Result<Row>>
         let entries: Vec<Row> = self.records_values().cloned().collect();
-        tokio_stream::iter(entries)
+        tokio_stream::iter(vec![entries])
     }
 
     pub async fn insert_record(&mut self, row: Row) -> Result<Option<Row>, Error> {
