@@ -75,13 +75,13 @@ pub async fn upload_manifest(
 ) -> Result<(), Error> {
     // Push the (cached) relaxed manifest to the remote, don't tag it yet
     upload_from(storage, remote, path, manifest_uri).await?;
-    log::debug!("Parque file uploaded");
+    log::info!("Parque file uploaded");
 
     // Upload a quilt3 manifest for backward compatibility.
     upload_legacy(storage, remote, path, manifest_uri).await?;
-    log::debug!("JSONL file uploaded");
+    log::info!("JSONL file uploaded");
 
-    log::debug!("Uploaded remote manifest: {:?}", manifest_uri);
+    log::info!("Uploaded remote manifest: {:?}", manifest_uri);
     Ok(())
 }
 
@@ -182,7 +182,7 @@ pub async fn upload_row(
         .map_err(|_| Error::FileUri(local_url))?;
 
     let object_uri = ObjectUri::new(package_handle, row.name.clone());
-    log::debug!("Uploading to S3: {}", object_uri);
+    log::info!("Uploading to S3: {}", object_uri);
 
     let (remote_url, hash) = remote
         .upload_file(&file_path, &object_uri.into(), row.size)
@@ -277,7 +277,7 @@ pub async fn build_manifest_from_rows_stream(
 ) -> Result<(PathBuf, String), Error> {
     let temp_dir = tempfile::tempdir()?;
     let temp_path = temp_dir.path().join("manifest.pq");
-    log::debug!("Temp path for creating manifest {:?}", temp_path);
+    log::info!("Temp path for creating manifest {:?}", temp_path);
     let file = storage.create_file(&temp_path).await?;
     let mut manifest = WritableManifest::try_new(storage, file.into()).await?;
 
