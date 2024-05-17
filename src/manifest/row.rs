@@ -11,9 +11,14 @@ use crate::Error;
 
 const HEADER_ROW: &str = ".";
 
+// enum PlaceValue {
+//   S3Uri(S3Uri),
+//   PathBuf(PathBuf),
+// }
+//
 // #[derive(Clone, Debug, PartialEq)]
 // pub struct Place {
-//     url: Url,
+//     value: PlaceValue,
 // }
 //
 // impl Default for Place {
