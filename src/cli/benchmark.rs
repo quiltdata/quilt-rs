@@ -50,12 +50,12 @@ async fn benchmark(
         let mut chunk = Vec::new();
         while i < number {
             let name = PathBuf::from(format!("file://{}", i));
-            let row= Ok(Row {
+            let row= Row {
                 name,
                 hash: Multihash::wrap(0xb510, b"pedestrian").expect("Unexpected"),
-                ..Row::default_header()
-            });
-            chunk.push(row);
+                ..Row::default()
+            };
+            chunk.push(Ok(row));
 
             if (i > 0 && i % 100_000 == 0) || (i == number -1) {
                 yield(Ok(chunk));

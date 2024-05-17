@@ -13,6 +13,7 @@ use crate::io::remote::Remote;
 use crate::io::remote::S3Attributes;
 use crate::io::storage::Storage;
 use crate::manifest::Row;
+use crate::manifest::Header;
 use crate::paths::DomainPaths;
 use crate::perf::Measure;
 use crate::uri::ManifestUri;
@@ -93,8 +94,7 @@ pub async fn package_s3_prefix(
     let stream = Box::pin(stream_objects(storage, remote, source_uri.clone()).await);
     let manifest_path = |t: &str| paths.manifest_cache(&source_uri.bucket, t);
     let (cache_path, top_hash) =
-        build_manifest_from_rows_stream(storage, manifest_path, Row::default_header(), stream)
-            .await?;
+        build_manifest_from_rows_stream(storage, manifest_path, Header::default(), stream).await?;
 
     let S3PackageUri {
         bucket, namespace, ..

@@ -26,12 +26,11 @@ use tokio::io::AsyncRead;
 use tokio::io::AsyncSeek;
 use tokio_stream::StreamExt;
 
+use crate::manifest::Header;
 use crate::manifest::Row;
 use crate::Error;
 
-pub const HEADER_ROW: &str = ".";
-
-fn serialize_table_header(header: &Row) -> serde_json::Map<String, serde_json::Value> {
+fn serialize_table_header(header: &Header) -> serde_json::Map<String, serde_json::Value> {
     let mut header_meta = serde_json::Map::new();
     if let Some(message) = header.info.get("message") {
         header_meta.insert("message".to_string(), message.clone());
@@ -64,15 +63,18 @@ impl TopHasher {
         }
     }
 
+    /// Append `Header` to the hasher
+    pub fn append_header(&mut self, header: &Header) -> Result<(), Error> {
+        let value = serialize_table_header(header);
+        let value_str = serde_json::to_string(&value)?;
+        self.hasher.update(value_str);
+        Ok(())
+    }
+
     /// Append `Row` to the hasher
     pub fn append(&mut self, row: &Row) -> Result<(), Error> {
-        let value_str = if row.name.display().to_string() == HEADER_ROW {
-            let value = serialize_table_header(row);
-            serde_json::to_string(&value)?
-        } else {
-            let value = serialize_row_entry(row);
-            serde_json::to_string(&value)?
-        };
+        let value = serialize_row_entry(row);
+        let value_str = serde_json::to_string(&value)?;
         self.hasher.update(value_str);
         Ok(())
     }
@@ -109,14 +111,14 @@ fn serialize_row_entry(row: &Row) -> serde_json::Value {
 // don't store records in memory
 #[derive(Clone, Debug, PartialEq)]
 pub struct Table {
-    pub header: Row,
+    pub header: Header,
     // path: PathBuf, // TODO
     records: BTreeMap<PathBuf, Row>,
 }
 
 impl Table {
     // TODO: new creates empty records, from(header, records) creates full Table
-    fn new(header: Row, records: BTreeMap<PathBuf, Row>) -> Self {
+    fn new(header: Header, records: BTreeMap<PathBuf, Row>) -> Self {
         Table { header, records }
     }
 
@@ -128,7 +130,7 @@ impl Table {
             .await?
             .build()?;
 
-        let mut header: Option<Row> = None;
+        let mut header: Option<Header> = None;
         let mut records = BTreeMap::new();
         while let Some(item) = stream.try_next().await? {
             let name_column = item
@@ -169,28 +171,29 @@ impl Table {
                 .ok_or(ArrowError::SchemaError("invalid 'meta.json'".into()))?;
 
             for idx in 0..item.num_rows() {
-                let name = name_column.value(idx);
-                let hash = if name == HEADER_ROW {
-                    Multihash::default()
+                if idx == 0 {
+                    header = Some(Header {
+                        info: serde_json::from_str(info_column.value(idx))
+                            .map_err(|err| ArrowError::SchemaError(err.to_string()))?,
+                        meta: serde_json::from_str(meta_column.value(idx))
+                            .map_err(|err| ArrowError::SchemaError(err.to_string()))?,
+                    });
                 } else {
-                    Multihash::from_bytes(multihash_column.value(idx))
-                        .map_err(|err| ArrowError::SchemaError(err.to_string()))?
-                };
+                    let name = name_column.value(idx);
+                    let hash = Multihash::from_bytes(multihash_column.value(idx))
+                        .map_err(|err| ArrowError::SchemaError(err.to_string()))?;
 
-                let row = Row {
-                    name: name.into(),
-                    place: place_column.value(idx).into(),
-                    size: size_column.value(idx),
-                    hash,
-                    info: serde_json::from_str(info_column.value(idx))
-                        .map_err(|err| ArrowError::SchemaError(err.to_string()))?,
-                    meta: serde_json::from_str(meta_column.value(idx))
-                        .map_err(|err| ArrowError::SchemaError(err.to_string()))?,
-                };
+                    let row = Row {
+                        name: name.into(),
+                        place: place_column.value(idx).into(),
+                        size: size_column.value(idx),
+                        hash,
+                        info: serde_json::from_str(info_column.value(idx))
+                            .map_err(|err| ArrowError::SchemaError(err.to_string()))?,
+                        meta: serde_json::from_str(meta_column.value(idx))
+                            .map_err(|err| ArrowError::SchemaError(err.to_string()))?,
+                    };
 
-                if name == HEADER_ROW {
-                    header = Some(row);
-                } else {
                     records.insert(name.into(), row);
                 }
             }
@@ -217,7 +220,7 @@ impl Table {
         self.records.get(name)
     }
 
-    pub async fn get_header(&self) -> Result<Row, Error> {
+    pub async fn get_header(&self) -> Result<Header, Error> {
         Ok(self.header.clone())
     }
 
@@ -276,9 +279,10 @@ impl fmt::Display for Table {
         write!(f, "Table({:?})", records)
     }
 }
+
 impl Default for Table {
     fn default() -> Self {
-        Table::new(Row::default_header(), BTreeMap::default())
+        Table::new(Header::default(), BTreeMap::default())
     }
 }
 
@@ -302,8 +306,8 @@ mod tests {
             .unwrap();
         assert_eq!(table.records_len().await, 2);
 
-        let header = table.get_header().await?;
-        assert_eq!(header.size, 0);
+        // let header = table.get_header().await?;
+        // assert_eq!(header.size, 0);
 
         let readme = table.get_row(&PathBuf::from("READ ME.md")).unwrap();
         assert_eq!(readme.size, 33);
@@ -333,17 +337,7 @@ mod tests {
 
     #[test]
     fn test_formatting_no_records() -> Result<(), multihash::Error> {
-        let table = Table::new(
-            Row {
-                name: PathBuf::from("Foo"),
-                place: "Bar".to_string(),
-                size: 123,
-                hash: Multihash::wrap(345, b"hello world")?,
-                info: serde_json::Value::Null,
-                meta: serde_json::Value::Null,
-            },
-            BTreeMap::new(),
-        );
+        let table = Table::new(Header::default(), BTreeMap::new());
         assert_eq!(table.to_string(), "Table({})".to_string());
         Ok(())
     }
@@ -351,14 +345,7 @@ mod tests {
     #[test]
     fn test_formatting_records() -> Result<(), multihash::Error> {
         let table = Table::new(
-            Row {
-                name: PathBuf::from("Foo"),
-                place: "Bar".to_string(),
-                size: 123,
-                hash: Multihash::wrap(345, b"hello world")?,
-                info: serde_json::Value::Null,
-                meta: serde_json::Value::Null,
-            },
+            Header::default(),
             BTreeMap::from([
                 (
                     PathBuf::from("one"),

@@ -14,6 +14,7 @@ use url::Url;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::io::ParquetWriter;
+use crate::manifest::Header;
 use crate::manifest::Manifest;
 use crate::manifest::Row;
 use crate::manifest::Table;
@@ -235,8 +236,8 @@ impl WritableManifest {
         file.try_into()
     }
 
-    pub async fn insert_header(&mut self, header: Row) -> Result<(), Error> {
-        self.writer.insert(header).await
+    pub async fn insert_header(&mut self, header: Header) -> Result<(), Error> {
+        self.writer.insert(header.into()).await
     }
 
     // TODO: add support for Vec<Row>
@@ -272,7 +273,7 @@ fn unwrap_rows(rows: StreamRowsChunk) -> Result<Vec<Row>, Error> {
 pub async fn build_manifest_from_rows_stream(
     storage: &impl Storage,
     manifest_path: impl Fn(&str) -> PathBuf,
-    header: Row,
+    header: Header,
     mut stream: impl RowsStream + Unpin,
 ) -> Result<(PathBuf, String), Error> {
     let temp_dir = tempfile::tempdir()?;
@@ -282,7 +283,7 @@ pub async fn build_manifest_from_rows_stream(
     let mut manifest = WritableManifest::try_new(storage, file.into()).await?;
 
     let mut top_hasher = TopHasher::new();
-    top_hasher.append(&header)?;
+    top_hasher.append_header(&header)?;
     manifest.insert_header(header).await?;
 
     while let Some(Ok(rows)) = stream.next().await {

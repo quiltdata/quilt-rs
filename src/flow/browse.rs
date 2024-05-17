@@ -5,6 +5,7 @@ use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::RowsStream;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
+use crate::manifest::Header;
 use crate::manifest::Manifest;
 use crate::manifest::Row;
 use crate::manifest::Table;
@@ -66,7 +67,7 @@ pub async fn cache_remote_manifest(
             storage.write_file(&cache_path, &manifest).await?;
         } else {
             let manifest = fetch_jsonl(remote, manifest_uri).await?;
-            let header = Row::from(&manifest);
+            let header = Header::from(&manifest);
             let manifest_path = |_: &str| cache_path.clone();
             let stream = stream_jsonl_rows(manifest).await;
             build_manifest_from_rows_stream(storage, manifest_path, header, stream).await?;
