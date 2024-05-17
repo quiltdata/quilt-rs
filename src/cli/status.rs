@@ -1,4 +1,4 @@
-use quilt_rs::lineage::DiscreteChange;
+use quilt_rs::lineage::Change;
 use quilt_rs::lineage::InstalledPackageStatus;
 use quilt_rs::lineage::UpstreamState;
 use quilt_rs::uri::Namespace;
@@ -44,10 +44,10 @@ impl std::fmt::Display for Output {
                 .iter()
                 .map(|(path, change)| StatusEntry {
                     path: path.display().to_string(),
-                    status: match change.state {
-                        DiscreteChange::Modified => "Modified".to_string(),
-                        DiscreteChange::Added => "Added".to_string(),
-                        DiscreteChange::Removed => "Removed".to_string(),
+                    status: match change {
+                        Change::Modified(_) => "Modified".to_string(),
+                        Change::Added(_) => "Added".to_string(),
+                        Change::Removed(_) => "Removed".to_string(),
                     },
                 });
             let mut entries_table = tabled::Table::new(entries);

@@ -20,19 +20,11 @@ use crate::uri::Namespace;
 use crate::Error;
 
 /// Describes modified states of a file
-#[derive(Debug, PartialEq, Eq, Serialize)]
-pub enum DiscreteChange {
-    Modified,
-    Added,
-    Removed,
-}
-
-/// Describes what was changed in a file
 #[derive(Debug, PartialEq)]
-pub struct Change {
-    pub current: Option<PackageFileFingerprint>,
-    pub previous: Option<PackageFileFingerprint>,
-    pub state: DiscreteChange, // TODO: DiscreteChange<Row>
+pub enum Change {
+    Modified(PackageFileFingerprint), // modified to what
+    Added(PackageFileFingerprint), // added what
+    Removed(PackageFileFingerprint), // removed what
 }
 
 /// Map of all changed files
@@ -62,7 +54,7 @@ impl From<PackageLineage> for UpstreamState {
 }
 
 /// Some auxiliary struct that we use instead of `Row` when the file is not yet commited
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct PackageFileFingerprint {
     // FIXME: re-use Row
     pub size: u64,

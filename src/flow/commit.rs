@@ -11,9 +11,8 @@ use url::Url;
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::RowsStream;
 use crate::io::storage::Storage;
-use crate::lineage::Change;
 use crate::lineage::CommitState;
-use crate::lineage::DiscreteChange;
+use crate::lineage::Change;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageFileFingerprint;
 use crate::lineage::PackageLineage;
@@ -141,32 +140,32 @@ pub async fn commit_package(
     let mut modified_keys = BTreeMap::new();
     let mut removed_keys = HashSet::new();
     let mut new_files = Vec::new();
-    for (logical_key, Change { current, state, .. }) in status.changes {
+    for (logical_key, state) in status.changes {
         match state {
-            DiscreteChange::Removed => {
+            Change::Removed(_) => {
                 lineage.paths.remove(&logical_key);
                 removed_keys.insert(logical_key.clone());
             }
-            DiscreteChange::Added => {
+            Change::Added(current) => {
                 let added = create_immutable_object_copy(
                     storage,
                     paths,
                     &working_dir,
                     &mut lineage,
                     &logical_key,
-                    current.unwrap(),
+                    current,
                 )
                 .await?;
                 new_files.push(added)
             }
-            DiscreteChange::Modified => {
+            Change::Modified(current) => {
                 let modified = create_immutable_object_copy(
                     storage,
                     paths,
                     &working_dir,
                     &mut lineage,
                     &logical_key,
-                    current.unwrap(),
+                    current,
                 )
                 .await?;
                 modified_keys.insert(logical_key.clone(), modified);
@@ -210,7 +209,6 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::lineage::Change;
-    use crate::lineage::DiscreteChange;
     use crate::mocks;
 
     // NOTE: Tests use "/" path for working directory, because it then parsed with Url and have to be absolute path
@@ -263,11 +261,7 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("foo"),
-                Change {
-                    previous: Some(mocks::status::package_file_fingerprint()),
-                    current: None,
-                    state: DiscreteChange::Removed,
-                },
+                Change::Removed(mocks::status::package_file_fingerprint()),
             )]),
             ..InstalledPackageStatus::default()
         };
@@ -323,11 +317,7 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("bar"),
-                Change {
-                    current: Some(mocks::status::package_file_fingerprint()),
-                    previous: None,
-                    state: DiscreteChange::Added,
-                },
+                Change::Added(mocks::status::package_file_fingerprint()),
             )]),
             ..InstalledPackageStatus::default()
         };
@@ -393,11 +383,7 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("foo"),
-                Change {
-                    current: Some(mocks::status::package_file_fingerprint()),
-                    previous: None,
-                    state: DiscreteChange::Added,
-                },
+                Change::Added(PackageFileFingerprint::default()),
             )]),
             ..InstalledPackageStatus::default()
         };
@@ -436,17 +422,10 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("bar"),
-                Change {
-                    previous: Some(PackageFileFingerprint {
-                        size: 0,
-                        hash: mocks::row_hash_sample1(),
-                    }),
-                    current: Some(PackageFileFingerprint {
-                        size: 0,
-                        hash: multihash::Multihash::wrap(0xb510, b"walker")?,
-                    }),
-                    state: DiscreteChange::Modified,
-                },
+                Change::Modified(PackageFileFingerprint {
+                    size: 0,
+                    hash: multihash::Multihash::wrap(0xb510, b"walker")?,
+                }),
             )]),
             ..InstalledPackageStatus::default()
         };

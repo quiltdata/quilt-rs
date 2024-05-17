@@ -92,7 +92,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::lineage::Change;
-    use crate::lineage::DiscreteChange;
+    use crate::lineage::PackageFileFingerprint;
     use crate::mocks;
 
     #[tokio::test]
@@ -103,11 +103,7 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("foo"),
-                Change {
-                    previous: None,
-                    current: None,
-                    state: DiscreteChange::Added,
-                },
+                Change::Added(PackageFileFingerprint::default()),
             )]),
             ..InstalledPackageStatus::default()
         };
