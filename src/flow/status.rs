@@ -10,8 +10,8 @@ use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use crate::io::manifest::resolve_latest;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
-use crate::lineage::ChangeSet;
 use crate::lineage::Change;
+use crate::lineage::ChangeSet;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageFileFingerprint;
 use crate::lineage::PackageLineage;
@@ -52,7 +52,7 @@ pub async fn create_status(
             "path {:?} not found in installed manifest",
             path
         )))?;
-        orig_paths.insert(path, row);
+        orig_paths.insert(path.clone(), row.clone());
     }
 
     let mut queue = VecDeque::new();
@@ -116,13 +116,7 @@ pub async fn create_status(
     }
 
     for (orig_path, orig_row) in orig_paths {
-        changes.insert(
-            orig_path.to_path_buf(),
-            Change::Removed(PackageFileFingerprint {
-                size: orig_row.size,
-                hash: orig_row.hash,
-            }),
-        );
+        changes.insert(orig_path.to_path_buf(), Change::Removed(orig_row));
     }
 
     let status = InstalledPackageStatus::new(lineage.clone().into(), changes);

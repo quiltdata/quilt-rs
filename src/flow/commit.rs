@@ -11,8 +11,8 @@ use url::Url;
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::RowsStream;
 use crate::io::storage::Storage;
-use crate::lineage::CommitState;
 use crate::lineage::Change;
+use crate::lineage::CommitState;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageFileFingerprint;
 use crate::lineage::PackageLineage;
@@ -142,9 +142,9 @@ pub async fn commit_package(
     let mut new_files = Vec::new();
     for (logical_key, state) in status.changes {
         match state {
-            Change::Removed(_) => {
-                lineage.paths.remove(&logical_key);
-                removed_keys.insert(logical_key.clone());
+            Change::Removed(row) => {
+                lineage.paths.remove(&row.name);
+                removed_keys.insert(row.name);
             }
             Change::Added(current) => {
                 let added = create_immutable_object_copy(
@@ -261,7 +261,10 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("foo"),
-                Change::Removed(mocks::status::package_file_fingerprint()),
+                Change::Removed(Row {
+                    name: PathBuf::from("foo"),
+                    ..Row::default()
+                }),
             )]),
             ..InstalledPackageStatus::default()
         };

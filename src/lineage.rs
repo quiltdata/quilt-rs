@@ -15,6 +15,7 @@ use serde::Serializer;
 pub mod mocks;
 
 use crate::io::storage::Storage;
+use crate::manifest::Row;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::Error;
@@ -22,9 +23,11 @@ use crate::Error;
 /// Describes modified states of a file
 #[derive(Debug, PartialEq)]
 pub enum Change {
+    // TODO: Use Row
     Modified(PackageFileFingerprint), // modified to what
-    Added(PackageFileFingerprint), // added what
-    Removed(PackageFileFingerprint), // removed what
+    // TODO: Use Row
+    Added(PackageFileFingerprint),    // added what
+    Removed(Row),                     // removed what
 }
 
 /// Map of all changed files
