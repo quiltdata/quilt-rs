@@ -79,11 +79,7 @@ impl Remote for MockRemote {
         tokio_stream::iter(Vec::new())
     }
 
-    async fn put_object(
-        &self,
-        s3_uri: &S3Uri,
-        contents: impl Into<ByteStream>,
-    ) -> Res {
+    async fn put_object(&self, s3_uri: &S3Uri, contents: impl Into<ByteStream>) -> Res {
         let key = s3_uri.to_string();
         log::debug!("Mocking {} put request", key);
         let contents_vec = contents.into().collect().await?.to_vec();

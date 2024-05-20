@@ -70,10 +70,7 @@ impl Storage for LocalStorage {
         Ok(fs::File::open(path).await?)
     }
 
-    async fn read_byte_stream(
-        &self,
-        path: impl AsRef<Path> + Send + Sync,
-    ) -> Res<ByteStream> {
+    async fn read_byte_stream(&self, path: impl AsRef<Path> + Send + Sync) -> Res<ByteStream> {
         Ok(ByteStream::from_path(path).await?)
     }
 

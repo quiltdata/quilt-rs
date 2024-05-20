@@ -58,10 +58,7 @@ impl TryFrom<GetObjectAttributesOutput> for S3AttributesWrapper {
     }
 }
 
-async fn get_object_stream(
-    client: &aws_sdk_s3::Client,
-    s3_uri: &S3Uri,
-) -> Res<ByteStream> {
+async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<ByteStream> {
     let result = client.get_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
     let result = match &s3_uri.version {
         Some(version) => result.version_id(version),
@@ -300,11 +297,7 @@ impl Remote for RemoteS3 {
         }
     }
 
-    async fn put_object(
-        &self,
-        s3_uri: &S3Uri,
-        contents: impl Into<ByteStream>,
-    ) -> Res {
+    async fn put_object(&self, s3_uri: &S3Uri, contents: impl Into<ByteStream>) -> Res {
         let client = get_client_for_bucket(&s3_uri.bucket).await?;
         client
             .put_object()

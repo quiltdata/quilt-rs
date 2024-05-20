@@ -35,10 +35,7 @@ pub trait Storage {
 
     /// Recursively creates a directory and all of its parent components if they
     /// are missing.
-    fn create_dir_all(
-        &self,
-        path: impl AsRef<Path> + Send,
-    ) -> impl Future<Output = Res> + Send;
+    fn create_dir_all(&self, path: impl AsRef<Path> + Send) -> impl Future<Output = Res> + Send;
 
     /// Creates file
     fn create_file(&self, path: impl AsRef<Path>) -> impl Future<Output = Res<File>>;
@@ -60,10 +57,7 @@ pub trait Storage {
     ) -> impl Future<Output = Res<DateTime<Utc>>>;
 
     /// Opens file (doesn't read contents)
-    fn open_file(
-        &self,
-        path: impl AsRef<Path> + Send,
-    ) -> impl Future<Output = Res<File>> + Send;
+    fn open_file(&self, path: impl AsRef<Path> + Send) -> impl Future<Output = Res<File>> + Send;
 
     /// Reads the entire contents of a file into a stream.
     fn read_byte_stream(
@@ -87,10 +81,7 @@ pub trait Storage {
     ) -> impl Future<Output = Res<Vec<u8>>> + Send + Sync;
 
     /// Removes a directory at this path, after removing all its contents.
-    fn remove_dir_all(
-        &self,
-        path: impl AsRef<Path> + Send,
-    ) -> impl Future<Output = Res> + Send;
+    fn remove_dir_all(&self, path: impl AsRef<Path> + Send) -> impl Future<Output = Res> + Send;
 
     /// Remove a file from the filesystem.
     fn remove_file(

@@ -272,7 +272,7 @@ impl From<&ManifestUri> for S3PackageUri {
 mod tests {
     use super::*;
 
-use crate::Res;
+    use crate::Res;
 
     #[test]
     fn test_implicit_str_parsing() -> Res {

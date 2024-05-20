@@ -126,10 +126,7 @@ impl Storage for MockStorage {
         Ok(fs::read(&rel_path).await?)
     }
 
-    async fn read_byte_stream(
-        &self,
-        path: impl AsRef<Path> + Send + Sync,
-    ) -> Res<ByteStream> {
+    async fn read_byte_stream(&self, path: impl AsRef<Path> + Send + Sync) -> Res<ByteStream> {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
         Ok(ByteStream::from_path(rel_path).await?)
     }

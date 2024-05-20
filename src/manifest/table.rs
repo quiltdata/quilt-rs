@@ -207,10 +207,7 @@ impl Table {
     }
 
     // Read quilt4's Parquet format
-    pub async fn read_from_path(
-        storage: &impl Storage,
-        path: impl AsRef<Path>,
-    ) -> Res<Self> {
+    pub async fn read_from_path(storage: &impl Storage, path: impl AsRef<Path>) -> Res<Self> {
         let file = storage.open_file(path.as_ref()).await?;
         Table::read_rows_impl(file).await
     }

@@ -101,9 +101,7 @@ pub fn get_checksum_chunksize_and_parts(file_size: u64) -> (u64, u64) {
 }
 
 /// Caclulates legacy or single-chunk checksum from file or from single chunk
-pub async fn calculate_sha256_checksum<F: io::AsyncRead + Unpin>(
-    file: F,
-) -> Res<Multihash<256>> {
+pub async fn calculate_sha256_checksum<F: io::AsyncRead + Unpin>(file: F) -> Res<Multihash<256>> {
     let mut sha256 = Sha256::new();
     let mut reader = BufReader::new(file);
     let mut buf = [0; 4096];

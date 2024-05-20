@@ -80,7 +80,7 @@ impl std::str::FromStr for S3Uri {
 mod tests {
     use super::*;
 
-use crate::Res;
+    use crate::Res;
 
     #[test]
     fn test_incorrect_scheme() -> Res {
