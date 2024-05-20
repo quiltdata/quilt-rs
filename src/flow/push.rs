@@ -17,57 +17,26 @@ use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::uri::S3PackageHandle;
-use crate::Error;
-
-async fn get_local_and_remote_records(
-    remote_manifest: &Table,
-    rows: Vec<Row>,
-) -> Vec<(Row, Option<Row>)> {
-    let mut output = Vec::new();
-    for row in rows {
-        if let Ok(remote_row) = remote_manifest.get_record(&row.name).await {
-            output.push((row, remote_row))
-        } else {
-            output.push((row, None))
-        }
-    }
-    output
-}
-
-enum EitherRow {
-    Local(Row),
-    Remote(Row),
-}
-
-fn check_and_return_remote_row(rows: Vec<(Row, Option<Row>)>) -> Vec<EitherRow> {
-    let mut output = Vec::new();
-    for row_tuple in rows {
-        let (row, remote_row_opt) = row_tuple;
-        if let Some(remote_row) = remote_row_opt {
-            if remote_row == row {
-                output.push(EitherRow::Remote(Row {
-                    place: remote_row.place.to_owned(),
-                    ..row.clone()
-                }));
-            }
-        }
-        output.push(EitherRow::Local(row));
-    }
-    output
-}
+use crate::Res;
 
 async fn use_existing_row_or_upload(
     remote: &impl Remote,
     package_handle: &S3PackageHandle,
-    rows: Vec<EitherRow>,
+    remote_manifest: &Table,
+    rows: StreamItem,
 ) -> StreamItem {
     let mut output = Vec::new();
-    for either_row in rows {
-        match either_row {
-            EitherRow::Remote(row) => output.push(Ok(row)),
-            EitherRow::Local(row) => {
-                output.push(upload_row(remote, package_handle.clone(), row).await)
+    for row in rows? {
+        let row = row?;
+        if let Ok(Some(remote_row)) = remote_manifest.get_record(&row.name).await {
+            if remote_row == row {
+                output.push(Ok(Row {
+                    place: remote_row.place.to_owned(),
+                    ..row.clone()
+                }));
             }
+        } else {
+            output.push(upload_row(remote, package_handle.clone(), row).await)
         }
     }
     Ok(output)
@@ -81,9 +50,7 @@ async fn stream_uploaded_local_rows<'a>(
 ) -> impl RowsStream + 'a {
     let stream = local_manifest.records_stream().await;
     stream
-        .then(move |rows| get_local_and_remote_records(remote_manifest, rows))
-        .map(check_and_return_remote_row)
-        .then(move |either_row| use_existing_row_or_upload(remote, package_handle, either_row))
+        .then(move |rows| use_existing_row_or_upload(remote, package_handle, remote_manifest, rows))
 }
 
 /// Push the new package revision to the remote and tags it as "latest".
@@ -94,7 +61,7 @@ pub async fn push_package(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     namespace: Option<Namespace>,
-) -> Result<PackageLineage, Error> {
+) -> Res<PackageLineage> {
     let commit = match lineage.commit {
         None => return Ok(lineage), // nothing to commit
         Some(commit) => commit,
@@ -162,7 +129,7 @@ mod tests {
     use crate::uri::ManifestUri;
 
     #[tokio::test]
-    async fn test_no_push_if_no_commit() -> Result<(), Error> {
+    async fn test_no_push_if_no_commit() -> Res {
         let storage = mocks::storage::MockStorage::default();
         let remote = mocks::remote::MockRemote::default();
         let lineage = push_package(
@@ -179,7 +146,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_no_entries_push() -> Result<(), Error> {
+    async fn test_no_entries_push() -> Res {
         let manifest_uri = ManifestUri {
             bucket: "b".to_string(),
             namespace: ("a", "c").into(),
@@ -238,7 +205,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_single_chunk_push() -> Result<(), Error> {
+    async fn test_single_chunk_push() -> Res {
         let manifest_uri = ManifestUri {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
@@ -310,7 +277,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore]
-    async fn test_multichunk_push() -> Result<(), Error> {
+    async fn test_multichunk_push() -> Res {
         // TODO
         Ok(())
     }

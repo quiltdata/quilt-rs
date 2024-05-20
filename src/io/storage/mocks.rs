@@ -11,6 +11,7 @@ use tempfile;
 use crate::io::remote::S3Attributes;
 use crate::uri::S3Uri;
 use crate::Error;
+use crate::Res;
 
 use super::Storage;
 
@@ -45,31 +46,31 @@ pub fn relative_to_temp_dir(
     temp_dir.as_ref().join(path_to_join)
 }
 
-async fn create_parent(path: impl AsRef<Path>) -> Result<(), Error> {
+async fn create_parent(path: impl AsRef<Path>) -> Res {
     Ok(fs::create_dir_all(path.as_ref().parent().unwrap()).await?)
 }
 
 impl Storage for MockStorage {
-    async fn copy(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<u64, Error> {
+    async fn copy(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Res<u64> {
         let from_path = relative_to_temp_dir(&self.temp_dir, &from);
         let to_path = relative_to_temp_dir(&self.temp_dir, &to);
         create_parent(&to_path).await?;
         Ok(fs::copy(from_path, to_path).await?)
     }
 
-    async fn rename(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), Error> {
+    async fn rename(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Res {
         let from_path = relative_to_temp_dir(&self.temp_dir, &from);
         let to_path = relative_to_temp_dir(&self.temp_dir, &to);
         create_parent(&to_path).await?;
         Ok(fs::rename(from_path, to_path).await?)
     }
 
-    async fn create_dir_all(&self, path: impl AsRef<Path>) -> Result<(), Error> {
+    async fn create_dir_all(&self, path: impl AsRef<Path>) -> Res {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
         Ok(fs::create_dir_all(rel_path).await?)
     }
 
-    async fn remove_dir_all(&self, path: impl AsRef<Path>) -> Result<(), Error> {
+    async fn remove_dir_all(&self, path: impl AsRef<Path>) -> Res {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
         Ok(fs::remove_dir_all(rel_path).await?)
     }
@@ -90,7 +91,7 @@ impl Storage for MockStorage {
     async fn modified_timestamp(
         &self,
         path: impl AsRef<Path>,
-    ) -> Result<chrono::DateTime<chrono::Utc>, Error> {
+    ) -> Res<chrono::DateTime<chrono::Utc>> {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
         create_parent(&rel_path).await?;
         let modified = fs::metadata(rel_path).await.map(|m| m.modified())??;
@@ -98,37 +99,34 @@ impl Storage for MockStorage {
     }
 
     /// Overwrite the `write` method
-    async fn write_file(&self, path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), Error> {
+    async fn write_file(&self, path: impl AsRef<Path>, bytes: &[u8]) -> Res {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
         create_parent(&rel_path).await?;
         Ok(fs::write(rel_path, bytes).await?)
     }
 
-    async fn open_file(&self, path: impl AsRef<Path>) -> Result<fs::File, Error> {
+    async fn open_file(&self, path: impl AsRef<Path>) -> Res<fs::File> {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
         Ok(fs::File::open(rel_path).await?)
     }
 
-    async fn create_file(&self, path: impl AsRef<Path>) -> Result<fs::File, Error> {
+    async fn create_file(&self, path: impl AsRef<Path>) -> Res<fs::File> {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
         create_parent(&rel_path).await?;
         Ok(fs::File::create(rel_path).await?)
     }
 
-    async fn read_dir(&self, path: impl AsRef<Path>) -> Result<fs::ReadDir, Error> {
+    async fn read_dir(&self, path: impl AsRef<Path>) -> Res<fs::ReadDir> {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
         Ok(fs::read_dir(&rel_path).await?)
     }
 
-    async fn read_file(&self, path: impl AsRef<Path>) -> Result<Vec<u8>, Error> {
+    async fn read_file(&self, path: impl AsRef<Path>) -> Res<Vec<u8>> {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
         Ok(fs::read(&rel_path).await?)
     }
 
-    async fn read_byte_stream(
-        &self,
-        path: impl AsRef<Path> + Send + Sync,
-    ) -> Result<ByteStream, Error> {
+    async fn read_byte_stream(&self, path: impl AsRef<Path> + Send + Sync) -> Res<ByteStream> {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
         Ok(ByteStream::from_path(rel_path).await?)
     }
@@ -137,7 +135,7 @@ impl Storage for MockStorage {
         &self,
         path: impl AsRef<Path> + Send + Sync,
         mut body: ByteStream,
-    ) -> Result<(), Error> {
+    ) -> Res {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
         let mut file = fs::File::create(&rel_path).await?;
         while let Some(bytes) = body.try_next().await? {
@@ -152,7 +150,7 @@ impl Storage for MockStorage {
         &self,
         _listing_uri: &S3Uri,
         _object_key: impl AsRef<str> + Send + Sync,
-    ) -> Result<S3Attributes, Error> {
+    ) -> Res<S3Attributes> {
         unimplemented!()
     }
 }

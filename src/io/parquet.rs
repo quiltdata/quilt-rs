@@ -13,8 +13,9 @@ use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
 use tokio::fs::File;
 
-use crate::manifest::Row;
+use crate::io::manifest::StreamRowsChunk;
 use crate::Error;
+use crate::Res;
 
 /// Don't use it. It will be private
 pub struct ParquetWriter {
@@ -33,35 +34,15 @@ fn create_schema() -> Schema {
     ])
 }
 
-fn create_columns_from_row(row: &Row) -> Result<Vec<ArrayRef>, Error> {
-    Ok(vec![
-        Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(vec![
-            row.display_name()
-        ])),
-        Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(vec![
-            row.display_place()
-        ])),
-        Arc::new(UInt64Array::from(vec![row.display_size()])),
-        Arc::new(GenericByteArray::<datatypes::BinaryType>::from(vec![row
-            .display_hash()
-            .as_slice()])),
-        Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(vec![
-            row.display_meta()?
-        ])),
-        Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(vec![
-            row.display_info()?
-        ])),
-    ])
-}
-
-fn create_columns(rows: Vec<Row>) -> Result<Vec<ArrayRef>, Error> {
+fn create_columns(chunk: StreamRowsChunk) -> Res<Vec<ArrayRef>> {
     let mut names = Vec::new();
     let mut places = Vec::new();
     let mut sizes = Vec::new();
     let mut hashes = Vec::new();
     let mut metas = Vec::new();
     let mut infos = Vec::new();
-    for row in rows {
+    for row_result in chunk {
+        let row = row_result?;
         names.push(row.display_name());
         places.push(row.display_place());
         hashes.push(row.display_hash());
@@ -69,19 +50,25 @@ fn create_columns(rows: Vec<Row>) -> Result<Vec<ArrayRef>, Error> {
         metas.push(row.display_meta()?);
         infos.push(row.display_info()?);
     }
+    let name = GenericByteArray::<datatypes::Utf8Type>::from(names);
+    let place = GenericByteArray::<datatypes::Utf8Type>::from(places);
+    let size = UInt64Array::from(sizes);
+    let hash = GenericByteArray::<datatypes::BinaryType>::from(
+        hashes.iter().map(|h| h.as_slice()).collect::<Vec<_>>(),
+    );
+    let meta = GenericByteArray::<datatypes::Utf8Type>::from(metas);
+    let info = GenericByteArray::<datatypes::Utf8Type>::from(infos);
     Ok(vec![
-        Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(names)),
-        Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(places)),
-        Arc::new(UInt64Array::from(sizes)),
-        Arc::new(GenericByteArray::<datatypes::BinaryType>::from(
-            hashes.iter().map(|h| h.as_slice()).collect::<Vec<_>>(),
-        )),
-        Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(metas)),
-        Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(infos)),
+        Arc::new(name),
+        Arc::new(place),
+        Arc::new(size),
+        Arc::new(hash),
+        Arc::new(meta),
+        Arc::new(info),
     ])
 }
 
-fn create_writer(file: File, schema: Arc<Schema>) -> Result<AsyncArrowWriter<File>, Error> {
+fn create_writer(file: File, schema: Arc<Schema>) -> Res<AsyncArrowWriter<File>> {
     let props = WriterProperties::builder()
         .set_compression(Compression::SNAPPY)
         .set_max_row_group_size(1024)
@@ -101,20 +88,14 @@ impl TryFrom<File> for ParquetWriter {
 
 impl ParquetWriter {
     /// Close and finalize the writer.
-    pub async fn flush(self) -> Result<(), Error> {
+    pub async fn flush(self) -> Res {
         self.writer.close().await?;
         Ok(())
     }
 
-    // TODO: add support for Vec<Row>
-    pub async fn insert(&mut self, row: Row) -> Result<(), Error> {
-        let columns = create_columns_from_row(&row)?;
-        let batch = RecordBatch::try_new(self.schema.clone(), columns)?;
-        Ok(self.writer.write(&batch).await?)
-    }
-
-    pub async fn insert_rows(&mut self, rows: Vec<Row>) -> Result<(), Error> {
-        let columns = create_columns(rows)?;
+    /// Insert rows chunk
+    pub async fn insert(&mut self, chunk: StreamRowsChunk) -> Res {
+        let columns = create_columns(chunk)?;
         let batch = RecordBatch::try_new(self.schema.clone(), columns)?;
         Ok(self.writer.write(&batch).await?)
     }

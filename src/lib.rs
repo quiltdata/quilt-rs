@@ -151,3 +151,5 @@ pub enum Error {
     #[error("Unimplemented")]
     Unimplemented,
 }
+
+pub type Res<T = ()> = std::result::Result<T, Error>;

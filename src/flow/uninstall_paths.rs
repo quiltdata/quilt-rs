@@ -6,6 +6,7 @@ use tracing::log;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::Error;
+use crate::Res;
 
 fn not_found_error(path: &PathBuf) -> Error {
     Error::Uninstall(format!("path {:?} not found. Cannot uninstall.", path))
@@ -17,7 +18,7 @@ pub async fn uninstall_paths(
     working_dir: PathBuf,
     storage: &impl Storage,
     paths: &Vec<PathBuf>,
-) -> Result<PackageLineage, Error> {
+) -> Res<PackageLineage> {
     log::debug!("Uninstalling paths {:?}", paths);
 
     for path in paths {
@@ -45,7 +46,7 @@ mod tests {
     use crate::mocks;
 
     #[tokio::test]
-    async fn uninstall_not_installed_path() -> Result<(), Error> {
+    async fn uninstall_not_installed_path() -> Res {
         let storage = mocks::storage::MockStorage::default();
         let lineage = PackageLineage::default();
         let paths = vec![PathBuf::from("test folde/r")];
@@ -59,7 +60,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn uninstall_single_path() -> Result<(), Error> {
+    async fn uninstall_single_path() -> Res {
         let installed_paths = vec![
             PathBuf::from("a/a"),
             PathBuf::from("test folde/r"),
@@ -98,7 +99,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn uninstall_multiple_paths() -> Result<(), Error> {
+    async fn uninstall_multiple_paths() -> Res {
         let lineage = mocks::lineage::with_paths(vec![PathBuf::from("a/a"), PathBuf::from("b/b")]);
         let paths = vec![PathBuf::from("b/b"), PathBuf::from("a/a")];
         let storage = mocks::storage::MockStorage::default();

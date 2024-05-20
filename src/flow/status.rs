@@ -12,18 +12,18 @@ use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::Change;
 use crate::lineage::ChangeSet;
-use crate::lineage::DiscreteChange;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageFileFingerprint;
 use crate::lineage::PackageLineage;
 use crate::manifest::Table;
 use crate::Error;
+use crate::Res;
 
 /// Refreshes the tracked `latest_hash` property in lineage.json
 pub async fn refresh_latest_hash(
     mut lineage: PackageLineage,
     remote: &impl Remote,
-) -> Result<PackageLineage, Error> {
+) -> Res<PackageLineage> {
     let latest = resolve_latest(remote, lineage.remote.clone().into()).await?;
     if lineage.latest_hash == latest.hash {
         return Ok(lineage);
@@ -39,7 +39,7 @@ pub async fn create_status(
     storage: &(impl Storage + Sync),
     manifest: &Table,
     working_dir: PathBuf,
-) -> Result<(PackageLineage, InstalledPackageStatus), Error> {
+) -> Res<(PackageLineage, InstalledPackageStatus)> {
     // compute the status based on the following sources:
     //   - the cached manifest
     //   - paths
@@ -49,12 +49,14 @@ pub async fn create_status(
 
     let mut orig_paths = HashMap::new();
     for path in lineage.paths.keys() {
-        let row = manifest.get_row(path).ok_or(Error::ManifestPath(format!(
-            "path {:?} not found in installed manifest",
-            path
-        )))?;
-        // TODO: use whole Row
-        orig_paths.insert(path, (row.hash, row.size));
+        let row = manifest
+            .get_record(path)
+            .await?
+            .ok_or(Error::ManifestPath(format!(
+                "path {:?} not found in installed manifest",
+                path
+            )))?;
+        orig_paths.insert(path.clone(), row);
     }
 
     let mut queue = VecDeque::new();
@@ -83,30 +85,21 @@ pub async fn create_status(
 
                 // TODO: add to error converter and use `?`
                 let relative_path = file_path.strip_prefix(&working_dir).unwrap();
-                if let Some((orig_hash, orig_size)) =
-                    orig_paths.remove(&relative_path.to_path_buf())
-                {
-                    let file_hash = match orig_hash.code() {
+                if let Some(orig_row) = orig_paths.remove(&relative_path.to_path_buf()) {
+                    let file_hash = match orig_row.hash.code() {
                         MULTIHASH_SHA256_CHUNKED => {
                             calculate_sha256_chunked_checksum(file, file_metadata.len()).await?
                         }
                         _ => calculate_sha256_checksum(file).await?,
                     };
 
-                    if file_hash != orig_hash {
+                    if file_hash != orig_row.hash {
                         changes.insert(
                             relative_path.to_path_buf(),
-                            Change {
-                                current: Some(PackageFileFingerprint {
-                                    size: file_metadata.len(),
-                                    hash: file_hash,
-                                }),
-                                previous: Some(PackageFileFingerprint {
-                                    size: orig_size,
-                                    hash: orig_hash,
-                                }),
-                                state: DiscreteChange::Modified,
-                            },
+                            Change::Modified(PackageFileFingerprint {
+                                size: file_metadata.len(),
+                                hash: file_hash,
+                            }),
                         );
                     }
                 } else {
@@ -114,14 +107,10 @@ pub async fn create_status(
                         calculate_sha256_chunked_checksum(file, file_metadata.len()).await?;
                     changes.insert(
                         relative_path.to_path_buf(),
-                        Change {
-                            current: Some(PackageFileFingerprint {
-                                size: file_metadata.len(),
-                                hash: sha256_hash,
-                            }),
-                            previous: None,
-                            state: DiscreteChange::Added,
-                        },
+                        Change::Added(PackageFileFingerprint {
+                            size: file_metadata.len(),
+                            hash: sha256_hash,
+                        }),
                     );
                 }
             } else {
@@ -130,18 +119,8 @@ pub async fn create_status(
         }
     }
 
-    for (orig_path, (orig_hash, orig_size)) in orig_paths {
-        changes.insert(
-            orig_path.to_path_buf(),
-            Change {
-                current: None,
-                previous: Some(PackageFileFingerprint {
-                    size: orig_size,
-                    hash: orig_hash,
-                }),
-                state: DiscreteChange::Removed,
-            },
-        );
+    for (orig_path, orig_row) in orig_paths {
+        changes.insert(orig_path.to_path_buf(), Change::Removed(orig_row));
     }
 
     let status = InstalledPackageStatus::new(lineage.clone().into(), changes);
@@ -154,11 +133,12 @@ mod tests {
 
     use crate::checksum::ContentHash;
     use crate::lineage::CommitState;
+    use crate::lineage::PackageFileFingerprint;
     use crate::lineage::UpstreamState;
     use crate::mocks;
 
     #[tokio::test]
-    async fn test_default_status() -> Result<(), Error> {
+    async fn test_default_status() -> Res {
         let storage = mocks::storage::MockStorage::default();
         let (_lineage, status) = create_status(
             PackageLineage::default(),
@@ -172,7 +152,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_behind() -> Result<(), Error> {
+    async fn test_behind() -> Res {
         let base_hash = "AAA";
         let latest_hash = "BBB";
         let commit_hash = "AAA";
@@ -190,7 +170,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ahead() -> Result<(), Error> {
+    async fn test_ahead() -> Res {
         let base_hash = "AAA";
         let latest_hash = "AAA";
         let commit_hash = "BBB";
@@ -208,7 +188,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_diverged() -> Result<(), Error> {
+    async fn test_diverged() -> Res {
         let lineage = PackageLineage {
             commit: Some(CommitState {
                 hash: "aaa".to_string(),
@@ -231,7 +211,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_removed_files() -> Result<(), Error> {
+    async fn test_removed_files() -> Res {
         let lineage = mocks::lineage::with_paths(vec![PathBuf::from("a/a")]);
         let manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("a/a")]);
         let (_, status) = create_status(
@@ -245,13 +225,12 @@ mod tests {
         // It's "removed", because it's present in lineage and manifest,
         // but absent from file system (FIXME)
         let removed_file = status.changes.get(&PathBuf::from("a/a")).unwrap();
-        assert!(removed_file.current.is_none());
-        assert!(removed_file.previous.is_some());
+        assert!(matches!(removed_file, Change::Removed(_)));
         Ok(())
     }
 
     #[tokio::test]
-    async fn test_added_files() -> Result<(), Error> {
+    async fn test_added_files() -> Res {
         let lineage = PackageLineage::default();
         let manifest = Table::default();
 
@@ -269,16 +248,16 @@ mod tests {
             create_status(lineage, &storage, &manifest, working_dir.to_path_buf()).await?;
 
         let added_file = status.changes.get(&file_path).unwrap();
-        assert!(added_file.previous.is_none());
-        if let Some(current) = &added_file.current {
-            assert_eq!(current.size, 5324);
-            let hash = current.hash;
-            let hash_str: ContentHash = hash.try_into()?;
+        if let Change::Added(fingerprint) = added_file {
             assert_eq!(
-                hash_str,
-                ContentHash::SHA256Chunked(
-                    "EfrtXWeClWPJ/IVKjQeAmMKhJV45/GcpjDm1IhvhJAY=".to_string()
-                )
+                *fingerprint,
+                PackageFileFingerprint {
+                    size: 5324,
+                    hash: ContentHash::SHA256Chunked(
+                        "EfrtXWeClWPJ/IVKjQeAmMKhJV45/GcpjDm1IhvhJAY=".to_string()
+                    )
+                    .try_into()?,
+                }
             );
             Ok(())
         } else {

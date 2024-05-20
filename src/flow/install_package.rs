@@ -7,6 +7,7 @@ use crate::lineage::PackageLineage;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::Error;
+use crate::Res;
 
 /// Installs the package.
 /// It fetches manifest and puts it into `installed_packages`.
@@ -18,7 +19,7 @@ pub async fn install_package(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
-) -> Result<DomainLineage, Error> {
+) -> Res<DomainLineage> {
     // bail if already installed
     // TODO: if compatible (same remote), just return the installed package
     if lineage.packages.contains_key(&manifest_uri.namespace) {
@@ -67,7 +68,7 @@ mod tests {
     use crate::uri::S3Uri;
 
     #[tokio::test]
-    async fn test_if_already_installed() -> Result<(), Error> {
+    async fn test_if_already_installed() -> Res {
         let namespace = ("foo", "bar");
         let lineage = DomainLineage {
             packages: BTreeMap::from([(namespace.into(), PackageLineage::default())]),
@@ -91,7 +92,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_installing() -> Result<(), Error> {
+    async fn test_installing() -> Res {
         let manifest_uri = ManifestUri {
             bucket: "a".to_string(),
             hash: "c".to_string(),

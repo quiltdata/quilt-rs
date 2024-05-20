@@ -13,6 +13,7 @@ use crate::io::storage::mocks::MockStorage;
 use crate::io::storage::Storage;
 use crate::uri::S3Uri;
 use crate::Error;
+use crate::Res;
 
 use super::Remote;
 
@@ -23,13 +24,13 @@ pub(crate) struct MockRemote {
 }
 
 impl Remote for MockRemote {
-    async fn exists(&self, s3_uri: &S3Uri) -> Result<bool, Error> {
+    async fn exists(&self, s3_uri: &S3Uri) -> Res<bool> {
         let key = s3_uri.to_string();
         log::debug!("Mocking {} exists request", key);
         Ok(self.storage.exists(&key).await)
     }
 
-    async fn get_object(&self, s3_uri: &S3Uri) -> Result<impl AsyncRead + Send + Unpin, Error> {
+    async fn get_object(&self, s3_uri: &S3Uri) -> Res<impl AsyncRead + Send + Unpin> {
         let key = s3_uri.to_string();
         log::debug!("Mocking {} get request", key);
 
@@ -49,13 +50,13 @@ impl Remote for MockRemote {
         &self,
         listing_uri: &S3Uri,
         object_key: impl AsRef<str>,
-    ) -> Result<S3Attributes, Error> {
+    ) -> Res<S3Attributes> {
         self.storage
             .get_object_attributes(listing_uri, object_key.as_ref().to_string())
             .await
     }
 
-    async fn get_object_stream(&self, s3_uri: &S3Uri) -> Result<ByteStream, Error> {
+    async fn get_object_stream(&self, s3_uri: &S3Uri) -> Res<ByteStream> {
         let key = s3_uri.to_string();
         log::debug!("Mocking {} get request", key);
 
@@ -78,11 +79,7 @@ impl Remote for MockRemote {
         tokio_stream::iter(Vec::new())
     }
 
-    async fn put_object(
-        &self,
-        s3_uri: &S3Uri,
-        contents: impl Into<ByteStream>,
-    ) -> Result<(), Error> {
+    async fn put_object(&self, s3_uri: &S3Uri, contents: impl Into<ByteStream>) -> Res {
         let key = s3_uri.to_string();
         log::debug!("Mocking {} put request", key);
         let contents_vec = contents.into().collect().await?.to_vec();
@@ -94,7 +91,7 @@ impl Remote for MockRemote {
         source_path: impl AsRef<Path>,
         dest_uri: &S3Uri,
         size: u64,
-    ) -> Result<(S3Uri, Multihash<256>), Error> {
+    ) -> Res<(S3Uri, Multihash<256>)> {
         let file = self.storage.open_file(source_path.as_ref()).await?;
         let hash = checksum::calculate_sha256_chunked_checksum(file, size).await?;
         Ok((
@@ -112,7 +109,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_get_object() -> Result<(), Error> {
+    async fn test_get_object() -> Res {
         let remote = MockRemote::default();
         remote
             .put_object(

@@ -10,10 +10,10 @@ use url::Url;
 
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::RowsStream;
+use crate::io::manifest::StreamRowsChunk;
 use crate::io::storage::Storage;
 use crate::lineage::Change;
 use crate::lineage::CommitState;
-use crate::lineage::DiscreteChange;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageFileFingerprint;
 use crate::lineage::PackageLineage;
@@ -24,29 +24,33 @@ use crate::manifest::Table;
 use crate::paths;
 use crate::uri::Namespace;
 use crate::Error;
+use crate::Res;
 
 async fn stream_local_with_changes(
     local_manifest: &Table,
     removed: HashSet<PathBuf>,
     modified: BTreeMap<PathBuf, Row>,
-    new_files: Vec<Row>,
+    new_files: StreamRowsChunk,
 ) -> impl RowsStream {
     let changes_stream = local_manifest.records_stream().await.map(move |rows| {
-        rows.iter()
-            .filter_map(|row| {
-                if removed.contains(&row.name) {
-                    return None;
-                }
-                if let Some(modified_row) = modified.get(&row.name) {
-                    return Some(Ok(modified_row.clone()));
-                }
-                Some(Ok(row.clone()))
-            })
-            .collect::<Vec<Result<Row, Error>>>()
+        rows.map(|rows| {
+            rows.iter()
+                .filter_map(|row_res| match row_res {
+                    Ok(row) => {
+                        if removed.contains(&row.name) {
+                            return None;
+                        }
+                        if let Some(modified_row) = modified.get(&row.name) {
+                            return Some(Ok(modified_row.clone()));
+                        }
+                        Some(Ok(row.clone()))
+                    }
+                    Err(err) => Some(Err(Error::Table(err.to_string()))),
+                })
+                .collect()
+        })
     });
-    tokio_stream::iter(vec![new_files.into_iter().map(Ok).collect()])
-        .chain(changes_stream)
-        .map(Ok)
+    tokio_stream::iter(vec![Ok(new_files)]).chain(changes_stream)
 }
 
 async fn create_immutable_object_copy(
@@ -56,7 +60,7 @@ async fn create_immutable_object_copy(
     lineage: &mut PackageLineage,
     logical_key: &PathBuf,
     current: PackageFileFingerprint,
-) -> Result<Row, Error> {
+) -> Res<Row> {
     let objects_dir = paths.objects_dir();
     // FIXME: This should really be done when the domain is created.
     storage.create_dir_all(&objects_dir).await?;
@@ -102,7 +106,7 @@ pub async fn commit_package(
     namespace: Namespace,
     message: String,
     user_meta: Option<JsonObject>,
-) -> Result<PackageLineage, Error> {
+) -> Res<PackageLineage> {
     log::debug!("commit: {message:?}, {user_meta:?}");
     // create a new manifest based on the stored version
 
@@ -141,32 +145,32 @@ pub async fn commit_package(
     let mut modified_keys = BTreeMap::new();
     let mut removed_keys = HashSet::new();
     let mut new_files = Vec::new();
-    for (logical_key, Change { current, state, .. }) in status.changes {
+    for (logical_key, state) in status.changes {
         match state {
-            DiscreteChange::Removed => {
-                lineage.paths.remove(&logical_key);
-                removed_keys.insert(logical_key.clone());
+            Change::Removed(row) => {
+                lineage.paths.remove(&row.name);
+                removed_keys.insert(row.name);
             }
-            DiscreteChange::Added => {
+            Change::Added(current) => {
                 let added = create_immutable_object_copy(
                     storage,
                     paths,
                     &working_dir,
                     &mut lineage,
                     &logical_key,
-                    current.unwrap(),
+                    current,
                 )
                 .await?;
-                new_files.push(added)
+                new_files.push(Ok(added))
             }
-            DiscreteChange::Modified => {
+            Change::Modified(current) => {
                 let modified = create_immutable_object_copy(
                     storage,
                     paths,
                     &working_dir,
                     &mut lineage,
                     &logical_key,
-                    current.unwrap(),
+                    current,
                 )
                 .await?;
                 modified_keys.insert(logical_key.clone(), modified);
@@ -210,13 +214,12 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::lineage::Change;
-    use crate::lineage::DiscreteChange;
     use crate::mocks;
 
     // NOTE: Tests use "/" path for working directory, because it then parsed with Url and have to be absolute path
 
     #[tokio::test]
-    async fn test_commit() -> Result<(), Error> {
+    async fn test_commit() -> Res {
         let storage = mocks::storage::MockStorage::default();
 
         let commit_message = "Lorem ipsum".to_string();
@@ -251,7 +254,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_removing_and_commit() -> Result<(), Error> {
+    async fn test_removing_and_commit() -> Res {
         let storage = mocks::storage::MockStorage::default();
 
         let commit_message = "Lorem ipsum".to_string();
@@ -263,11 +266,10 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("foo"),
-                Change {
-                    previous: Some(mocks::status::package_file_fingerprint()),
-                    current: None,
-                    state: DiscreteChange::Removed,
-                },
+                Change::Removed(Row {
+                    name: PathBuf::from("foo"),
+                    ..Row::default()
+                }),
             )]),
             ..InstalledPackageStatus::default()
         };
@@ -314,7 +316,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_adding_and_commit() -> Result<(), Error> {
+    async fn test_adding_and_commit() -> Res {
         let storage = mocks::storage::MockStorage::default();
         storage
             .write_file(PathBuf::from("/working-dir/bar"), &Vec::new())
@@ -323,11 +325,7 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("bar"),
-                Change {
-                    current: Some(mocks::status::package_file_fingerprint()),
-                    previous: None,
-                    state: DiscreteChange::Added,
-                },
+                Change::Added(mocks::status::package_file_fingerprint()),
             )]),
             ..InstalledPackageStatus::default()
         };
@@ -384,7 +382,7 @@ mod tests {
     //       even for imposible states
     #[ignore]
     #[tokio::test]
-    async fn test_adding_manifest_already_has_it() -> Result<(), Error> {
+    async fn test_adding_manifest_already_has_it() -> Res {
         let storage = mocks::storage::MockStorage::default();
         storage
             .write_file(PathBuf::from("foo"), &Vec::new())
@@ -393,11 +391,7 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("foo"),
-                Change {
-                    current: Some(mocks::status::package_file_fingerprint()),
-                    previous: None,
-                    state: DiscreteChange::Added,
-                },
+                Change::Added(PackageFileFingerprint::default()),
             )]),
             ..InstalledPackageStatus::default()
         };
@@ -427,7 +421,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_modifying_and_commit() -> Result<(), Error> {
+    async fn test_modifying_and_commit() -> Res {
         let storage = mocks::storage::MockStorage::default();
         storage
             .write_file(PathBuf::from("/working-dir/bar"), &Vec::new())
@@ -436,17 +430,10 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("bar"),
-                Change {
-                    previous: Some(PackageFileFingerprint {
-                        size: 0,
-                        hash: mocks::row_hash_sample1(),
-                    }),
-                    current: Some(PackageFileFingerprint {
-                        size: 0,
-                        hash: multihash::Multihash::wrap(0xb510, b"walker")?,
-                    }),
-                    state: DiscreteChange::Modified,
-                },
+                Change::Modified(PackageFileFingerprint {
+                    size: 0,
+                    hash: multihash::Multihash::wrap(0xb510, b"walker")?,
+                }),
             )]),
             ..InstalledPackageStatus::default()
         };

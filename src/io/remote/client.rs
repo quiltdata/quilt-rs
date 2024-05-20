@@ -7,8 +7,9 @@ use aws_types::region::Region;
 use lazy_static::lazy_static;
 
 use crate::Error;
+use crate::Res;
 
-async fn find_bucket_region(client: &reqwest::Client, bucket: &str) -> Result<String, Error> {
+async fn find_bucket_region(client: &reqwest::Client, bucket: &str) -> Res<String> {
     let response = client
         .head(format!("https://s3.amazonaws.com/{bucket}"))
         .send()
@@ -27,7 +28,7 @@ lazy_static! {
         RwLock::new(HashMap::new());
 }
 
-async fn get_region_for_bucket(bucket: &str) -> Result<Region, Error> {
+async fn get_region_for_bucket(bucket: &str) -> Res<Region> {
     {
         let map = BUCKET_REGIONS.read().unwrap();
         if let Some(region) = map.get(bucket) {
@@ -66,7 +67,7 @@ async fn get_client_for_region(region: aws_types::region::Region) -> aws_sdk_s3:
     }
 }
 
-pub async fn get_client_for_bucket(bucket: &str) -> Result<aws_sdk_s3::Client, Error> {
+pub async fn get_client_for_bucket(bucket: &str) -> Res<aws_sdk_s3::Client> {
     let region = get_region_for_bucket(bucket).await?.clone();
     Ok(get_client_for_region(region).await)
 }
