@@ -2,32 +2,51 @@ use std::fmt;
 use std::path::PathBuf;
 
 use multihash::Multihash;
+// use url::Url;
 
 use crate::io::remote::S3Attributes;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
-use crate::manifest::HEADER_ROW;
 use crate::Error;
+use crate::Res;
 
-/// Represents the row in Parquet manifest
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Row {
-    pub name: PathBuf,
-    pub place: String, // TODO: Should be Url
-    pub size: u64,
-    pub hash: Multihash<256>,
+const HEADER_ROW: &str = ".";
+
+// enum PlaceValue {
+//   S3Uri(S3Uri),
+//   PathBuf(PathBuf),
+// }
+//
+// #[derive(Clone, Debug, PartialEq)]
+// pub struct Place {
+//     value: PlaceValue,
+// }
+//
+// impl Default for Place {
+//     fn default() -> Self {
+//         Place {
+//             url: Url::from_file_path(PathBuf::default()).unwrap(),
+//         }
+//     }
+// }
+//
+// impl From<PathBuf> for Place {
+// }
+//
+// impl Into<PathBuf> for Place {
+// }
+
+/// Represents the header row in Parquet manifest
+#[derive(Clone, Debug, PartialEq)]
+pub struct Header {
+    // TODO: use `message` and `version` instead
     pub info: serde_json::Value, // system metadata
     pub meta: serde_json::Value, // user metadata
 }
 
-impl Row {
-    // TODO: use `struct Header`
-    pub fn default_header() -> Self {
-        Row {
-            name: HEADER_ROW.into(),
-            place: HEADER_ROW.into(),
-            size: 0,
-            hash: Multihash::default(),
+impl Default for Header {
+    fn default() -> Header {
+        Header {
             info: serde_json::json!({
                 "message": String::default(),
                 "version": "v0",
@@ -35,7 +54,33 @@ impl Row {
             meta: serde_json::Value::Null,
         }
     }
+}
 
+impl From<Header> for Row {
+    fn from(header: Header) -> Self {
+        Row {
+            name: HEADER_ROW.into(),
+            place: HEADER_ROW.into(),
+            size: 0,
+            hash: Multihash::default(),
+            info: header.info,
+            meta: header.meta,
+        }
+    }
+}
+
+/// Represents the row in Parquet manifest
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Row {
+    pub name: PathBuf,
+    pub place: String,
+    pub size: u64,
+    pub hash: Multihash<256>,
+    pub info: serde_json::Value, // system metadata
+    pub meta: serde_json::Value, // user metadata
+}
+
+impl Row {
     pub fn display_name(&self) -> String {
         self.name.display().to_string()
     }
@@ -52,11 +97,11 @@ impl Row {
         self.hash.to_bytes()
     }
 
-    pub fn display_meta(&self) -> Result<String, Error> {
+    pub fn display_meta(&self) -> Res<String> {
         Ok(serde_json::to_string(&self.meta)?)
     }
 
-    pub fn display_info(&self) -> Result<String, Error> {
+    pub fn display_info(&self) -> Res<String> {
         Ok(serde_json::to_string(&self.info)?)
     }
 }
@@ -73,10 +118,9 @@ impl fmt::Display for Row {
     }
 }
 
-// TODO: use Header::from()
-impl From<&Manifest> for Row {
+impl From<&Manifest> for Header {
     fn from(quilt3_manifest: &Manifest) -> Self {
-        Row {
+        Header {
             info: serde_json::json!({
                 "message": quilt3_manifest.header.message,
                 "version": quilt3_manifest.header.version,
@@ -85,7 +129,6 @@ impl From<&Manifest> for Row {
                 Some(meta) => meta.into(),
                 None => serde_json::Value::Null,
             },
-            ..Row::default_header()
         }
     }
 }
@@ -128,7 +171,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_formatting_without_path() -> Result<(), multihash::Error> {
+    fn test_formatting_without_path() -> Res {
         let row = Row {
             name: PathBuf::from("Foo"),
             place: "Bar".to_string(),

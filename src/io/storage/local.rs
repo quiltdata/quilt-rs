@@ -9,10 +9,11 @@ use tokio::io::AsyncWriteExt;
 use crate::io::remote::S3Attributes;
 use crate::uri::S3Uri;
 use crate::Error;
+use crate::Res;
 
 use super::Storage;
 
-async fn write(path: impl AsRef<Path> + Send, bytes: &[u8]) -> Result<(), Error> {
+async fn write(path: impl AsRef<Path> + Send, bytes: &[u8]) -> Res {
     let Some(parent) = path.as_ref().parent() else {
         return Err(Error::MissingParentPath(path.as_ref().to_owned()));
     };
@@ -31,15 +32,15 @@ async fn write(path: impl AsRef<Path> + Send, bytes: &[u8]) -> Result<(), Error>
 pub struct LocalStorage {}
 
 impl Storage for LocalStorage {
-    async fn copy(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<u64, Error> {
+    async fn copy(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Res<u64> {
         Ok(fs::copy(from, to).await?)
     }
 
-    async fn create_dir_all(&self, path: impl AsRef<Path>) -> Result<(), Error> {
+    async fn create_dir_all(&self, path: impl AsRef<Path>) -> Res {
         Ok(fs::create_dir_all(path).await?)
     }
 
-    async fn create_file(&self, path: impl AsRef<Path>) -> Result<fs::File, Error> {
+    async fn create_file(&self, path: impl AsRef<Path>) -> Res<fs::File> {
         Ok(fs::File::create(path.as_ref()).await?)
     }
 
@@ -51,7 +52,7 @@ impl Storage for LocalStorage {
         &self,
         listing_uri: &S3Uri,
         object_key: impl AsRef<str> + Send + Sync,
-    ) -> Result<S3Attributes, Error> {
+    ) -> Res<S3Attributes> {
         // log::debug!("Trying again with client {:?}", client);
         Err(Error::S3(format!(
             "Error getting attributes for {} in {}",
@@ -60,31 +61,28 @@ impl Storage for LocalStorage {
         )))
     }
 
-    async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Result<DateTime<Utc>, Error> {
+    async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Res<DateTime<Utc>> {
         let modified = fs::metadata(path).await.map(|m| m.modified())??;
         Ok(DateTime::<Utc>::from(modified))
     }
 
-    async fn open_file(&self, path: impl AsRef<Path>) -> Result<fs::File, Error> {
+    async fn open_file(&self, path: impl AsRef<Path>) -> Res<fs::File> {
         Ok(fs::File::open(path).await?)
     }
 
-    async fn read_byte_stream(
-        &self,
-        path: impl AsRef<Path> + Send + Sync,
-    ) -> Result<ByteStream, Error> {
+    async fn read_byte_stream(&self, path: impl AsRef<Path> + Send + Sync) -> Res<ByteStream> {
         Ok(ByteStream::from_path(path).await?)
     }
 
-    async fn read_dir(&self, path: impl AsRef<Path>) -> Result<fs::ReadDir, Error> {
+    async fn read_dir(&self, path: impl AsRef<Path>) -> Res<fs::ReadDir> {
         Ok(fs::read_dir(&path).await?)
     }
 
-    async fn read_file(&self, path: impl AsRef<Path>) -> Result<Vec<u8>, Error> {
+    async fn read_file(&self, path: impl AsRef<Path>) -> Res<Vec<u8>> {
         Ok(fs::read(&path).await?)
     }
 
-    async fn remove_dir_all(&self, path: impl AsRef<Path>) -> Result<(), Error> {
+    async fn remove_dir_all(&self, path: impl AsRef<Path>) -> Res {
         Ok(fs::remove_dir_all(path).await?)
     }
 
@@ -92,7 +90,7 @@ impl Storage for LocalStorage {
         fs::remove_file(path).await
     }
 
-    async fn rename(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), Error> {
+    async fn rename(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Res {
         Ok(fs::rename(from, to).await?)
     }
 
@@ -100,7 +98,7 @@ impl Storage for LocalStorage {
         &self,
         path: impl AsRef<Path> + Send + Sync,
         mut body: ByteStream,
-    ) -> Result<(), Error> {
+    ) -> Res {
         let mut file = fs::File::create(&path).await?;
         while let Some(bytes) = body.try_next().await? {
             file.write_all(&bytes).await?;
@@ -110,7 +108,7 @@ impl Storage for LocalStorage {
         Ok(())
     }
 
-    async fn write_file(&self, path: impl AsRef<Path> + Send, bytes: &[u8]) -> Result<(), Error> {
+    async fn write_file(&self, path: impl AsRef<Path> + Send, bytes: &[u8]) -> Res {
         write(path, bytes).await
     }
 }
@@ -138,7 +136,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore] // It doesn't work in CI. In CI file has `now` date
-    async fn test_getting_file_modified_ts() -> Result<(), Error> {
+    async fn test_getting_file_modified_ts() -> Res {
         let storage = LocalStorage::default();
         let timestamp = storage.modified_timestamp(mocks::manifest::jsonl()).await?;
         assert_eq!(
@@ -149,7 +147,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_copy() -> Result<(), Error> {
+    async fn test_copy() -> Res {
         let temp_dir = tempdir()?;
         let dest = temp_dir.path().join("foo");
 
@@ -163,7 +161,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_dirs() -> Result<(), Error> {
+    async fn test_dirs() -> Res {
         let temp_dir = tempdir()?;
         let dest = temp_dir.path().join("foo").join("bar");
 
@@ -179,7 +177,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_files() -> Result<(), Error> {
+    async fn test_files() -> Res {
         let temp_dir = tempdir()?;
         let dest = temp_dir.path().join("foo");
 

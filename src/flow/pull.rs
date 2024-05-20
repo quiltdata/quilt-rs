@@ -12,6 +12,7 @@ use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::Error;
+use crate::Res;
 
 /// Pulls the latest package from remote.
 /// It also remove every local file in working directory and then re-installs it.
@@ -26,7 +27,7 @@ pub async fn pull_package(
     working_dir: PathBuf,
     status: InstalledPackageStatus,
     namespace: Namespace,
-) -> Result<PackageLineage, Error> {
+) -> Res<PackageLineage> {
     if !status.changes.is_empty() {
         return Err(Error::Package("package has pending changes".to_string()));
     }
@@ -92,22 +93,18 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::lineage::Change;
-    use crate::lineage::DiscreteChange;
+    use crate::lineage::PackageFileFingerprint;
     use crate::mocks;
 
     #[tokio::test]
-    async fn test_no_pull_if_changes() -> Result<(), Error> {
+    async fn test_no_pull_if_changes() -> Res {
         let storage = mocks::storage::MockStorage::default();
         let lineage = mocks::lineage::with_paths(vec![PathBuf::from("a/a")]);
 
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("foo"),
-                Change {
-                    previous: None,
-                    current: None,
-                    state: DiscreteChange::Added,
-                },
+                Change::Added(PackageFileFingerprint::default()),
             )]),
             ..InstalledPackageStatus::default()
         };

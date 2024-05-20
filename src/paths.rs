@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use crate::io::storage::Storage;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
-use crate::Error;
+use crate::Res;
 
 const MANIFEST_DIR: &str = ".quilt/packages";
 const TAGS_DIR: &str = ".quilt/named_packages";
@@ -111,7 +111,7 @@ pub async fn copy_cached_to_installed(
     paths: &DomainPaths,
     storage: &impl Storage,
     manifest_uri: &ManifestUri,
-) -> Result<(), Error> {
+) -> Res {
     storage
         .copy(
             paths.manifest_cache(&manifest_uri.bucket, &manifest_uri.hash),
@@ -122,7 +122,7 @@ pub async fn copy_cached_to_installed(
 }
 
 /// Takes list of the required paths and create directories
-pub async fn scaffold_paths(storage: &impl Storage, paths: Vec<PathBuf>) -> Result<(), Error> {
+pub async fn scaffold_paths(storage: &impl Storage, paths: Vec<PathBuf>) -> Res {
     for path in paths {
         storage.create_dir_all(&path).await?
     }

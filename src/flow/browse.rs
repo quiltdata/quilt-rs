@@ -5,6 +5,7 @@ use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::RowsStream;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
+use crate::manifest::Header;
 use crate::manifest::Manifest;
 use crate::manifest::Row;
 use crate::manifest::Table;
@@ -13,7 +14,7 @@ use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::uri::ManifestUriLegacy;
 use crate::uri::S3Uri;
-use crate::Error;
+use crate::Res;
 
 async fn stream_jsonl_rows(jsonl: Manifest) -> impl RowsStream {
     tokio_stream::iter(jsonl.rows)
@@ -21,11 +22,11 @@ async fn stream_jsonl_rows(jsonl: Manifest) -> impl RowsStream {
         .map(|rows| Ok(vec![rows]))
 }
 
-async fn is_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Result<bool, Error> {
+async fn is_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Res<bool> {
     remote.exists(&S3Uri::from(manifest)).await
 }
 
-async fn fetch_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Result<Vec<u8>, Error> {
+async fn fetch_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Res<Vec<u8>> {
     let s3_uri = S3Uri::from(manifest);
     let mut contents = remote.get_object(&s3_uri).await?;
     let mut output = Vec::new();
@@ -33,7 +34,7 @@ async fn fetch_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Result<V
     Ok(output)
 }
 
-async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Result<Manifest, Error> {
+async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res<Manifest> {
     let s3_uri: S3Uri = ManifestUriLegacy::from(manifest_uri).into();
     let contents = remote.get_object(&s3_uri).await?;
     Manifest::from_reader(contents).await
@@ -50,7 +51,7 @@ pub async fn cache_remote_manifest(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
-) -> Result<Table, Error> {
+) -> Res<Table> {
     scaffold_paths(storage, paths.required_local_domain_paths()).await?;
     // check if the manifest is already cached
     // if not, download and cache it
@@ -66,7 +67,7 @@ pub async fn cache_remote_manifest(
             storage.write_file(&cache_path, &manifest).await?;
         } else {
             let manifest = fetch_jsonl(remote, manifest_uri).await?;
-            let header = Row::from(&manifest);
+            let header = Header::from(&manifest);
             let manifest_path = |_: &str| cache_path.clone();
             let stream = stream_jsonl_rows(manifest).await;
             build_manifest_from_rows_stream(storage, manifest_path, header, stream).await?;
@@ -83,7 +84,7 @@ pub async fn browse_remote_manifest(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
-) -> Result<Table, Error> {
+) -> Res<Table> {
     cache_remote_manifest(paths, storage, remote, manifest_uri).await
 }
 
@@ -96,7 +97,7 @@ mod tests {
     use crate::mocks;
 
     #[tokio::test]
-    async fn test_if_cached() -> Result<(), Error> {
+    async fn test_if_cached() -> Res {
         let paths = DomainPaths::default();
         let manifest = ManifestUri {
             bucket: "a".to_string(),
@@ -117,7 +118,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_if_cached_random_file() -> Result<(), Error> {
+    async fn test_if_cached_random_file() -> Res {
         let paths = DomainPaths::default();
         let manifest = ManifestUri {
             bucket: "a".to_string(),
@@ -137,7 +138,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_caching_parquet() -> Result<(), Error> {
+    async fn test_caching_parquet() -> Res {
         let storage = mocks::storage::MockStorage::default();
         let paths = DomainPaths::default();
         let manifest = ManifestUri {
@@ -168,7 +169,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_caching_jsonl() -> Result<(), Error> {
+    async fn test_caching_jsonl() -> Res {
         let storage = mocks::storage::MockStorage::default();
         let paths = DomainPaths::default();
         let manifest = ManifestUri {

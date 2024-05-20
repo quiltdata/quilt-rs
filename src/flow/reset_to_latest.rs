@@ -10,7 +10,7 @@ use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
-use crate::Error;
+use crate::Res;
 
 pub async fn reset_to_latest(
     lineage: PackageLineage,
@@ -20,7 +20,7 @@ pub async fn reset_to_latest(
     remote: &impl Remote,
     working_dir: PathBuf,
     namespace: Namespace,
-) -> Result<PackageLineage, Error> {
+) -> Res<PackageLineage> {
     let latest = resolve_latest(remote, lineage.remote.clone().into()).await?;
     if latest.hash == lineage.remote.hash {
         // already at latest
@@ -75,7 +75,7 @@ mod tests {
     use crate::uri::S3Uri;
 
     #[tokio::test]
-    async fn test_if_already_latest() -> Result<(), Error> {
+    async fn test_if_already_latest() -> Res {
         let source_lineage = mocks::lineage::with_remote(ManifestUri {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
@@ -105,7 +105,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_reseting_to_latest() -> Result<(), Error> {
+    async fn test_reseting_to_latest() -> Res {
         let source_lineage = mocks::lineage::with_remote(ManifestUri {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),

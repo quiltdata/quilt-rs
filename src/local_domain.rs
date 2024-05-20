@@ -11,14 +11,14 @@ use crate::io::storage::LocalStorage;
 use crate::io::storage::Storage;
 use crate::lineage;
 use crate::lineage::DomainLineage;
-use crate::manifest::Row;
+use crate::manifest::Header;
 use crate::manifest::Table;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
-use crate::Error;
+use crate::Res;
 
 /// This is the entrypoint for the lib.
 /// All the work you can do with packages is done through calling `LocalDomain` methods.
@@ -44,7 +44,7 @@ impl LocalDomain {
         }
     }
 
-    pub async fn browse_remote_manifest(&self, uri: &ManifestUri) -> Result<Table, Error> {
+    pub async fn browse_remote_manifest(&self, uri: &ManifestUri) -> Res<Table> {
         flow::browse(&self.paths, &self.storage, &self.remote, uri).await
     }
 
@@ -60,10 +60,7 @@ impl LocalDomain {
         }
     }
 
-    pub async fn install_package(
-        &self,
-        manifest_uri: &ManifestUri,
-    ) -> Result<InstalledPackage, Error> {
+    pub async fn install_package(&self, manifest_uri: &ManifestUri) -> Res<InstalledPackage> {
         // Read the lineage
         let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
         let lineage = flow::install_package(
@@ -79,7 +76,7 @@ impl LocalDomain {
         Ok(self.create_installed_package(manifest_uri.namespace.clone()))
     }
 
-    pub async fn uninstall_package(&self, namespace: Namespace) -> Result<(), Error> {
+    pub async fn uninstall_package(&self, namespace: Namespace) -> Res<()> {
         let lineage = self.lineage.read(&self.storage).await?;
         let lineage =
             flow::uninstall_package(lineage, &self.paths, &self.storage, namespace).await?;
@@ -87,7 +84,7 @@ impl LocalDomain {
         Ok(())
     }
 
-    pub async fn list_installed_packages(&self) -> Result<Vec<InstalledPackage>, Error> {
+    pub async fn list_installed_packages(&self) -> Res<Vec<InstalledPackage>> {
         let lineage = self.lineage.read(&self.storage).await?;
         let mut namespaces: Vec<Namespace> = lineage.packages.into_keys().collect();
         namespaces.sort();
@@ -101,7 +98,7 @@ impl LocalDomain {
     pub async fn get_installed_package(
         &self,
         namespace: &Namespace,
-    ) -> Result<Option<InstalledPackage>, Error> {
+    ) -> Res<Option<InstalledPackage>> {
         let lineage = self.lineage.read(&self.storage).await?;
         if lineage.packages.contains_key(namespace) {
             Ok(Some(self.create_installed_package(namespace.to_owned())))
@@ -114,7 +111,7 @@ impl LocalDomain {
         &self,
         source_uri: &S3Uri,
         dest_uri: S3PackageUri,
-    ) -> Result<ManifestUri, Error> {
+    ) -> Res<ManifestUri> {
         flow::package_s3_prefix(
             &self.paths,
             &self.storage,
@@ -129,9 +126,9 @@ impl LocalDomain {
         &self,
         dest_path: PathBuf,
         stream: impl RowsStream + Unpin,
-    ) -> Result<(PathBuf, String), Error> {
+    ) -> Res<(PathBuf, String)> {
         let manifest_path = |_t: &str| dest_path.clone();
-        build_manifest_from_rows_stream(&self.storage, manifest_path, Row::default_header(), stream)
+        build_manifest_from_rows_stream(&self.storage, manifest_path, Header::default(), stream)
             .await
     }
 }

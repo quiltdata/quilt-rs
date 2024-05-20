@@ -5,6 +5,7 @@ use crate::lineage::DomainLineage;
 use crate::paths;
 use crate::uri::Namespace;
 use crate::Error;
+use crate::Res;
 
 /// Uninstall package: remove files from working directory, manifest from `.quilt` and from
 /// `.quilt/lineage.json`.
@@ -13,7 +14,7 @@ pub async fn uninstall_package(
     paths: &paths::DomainPaths,
     storage: &impl Storage,
     namespace: Namespace,
-) -> Result<DomainLineage, Error> {
+) -> Res<DomainLineage> {
     log::debug!("Uninstalling package {}", namespace);
 
     lineage
@@ -56,7 +57,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_uninstall_package() -> Result<(), Error> {
+    async fn test_uninstall_package() -> Res {
         let lineage = DomainLineage {
             packages: BTreeMap::from([(("foo", "bar").into(), PackageLineage::default())]),
         };

@@ -272,8 +272,10 @@ impl From<&ManifestUri> for S3PackageUri {
 mod tests {
     use super::*;
 
+    use crate::Res;
+
     #[test]
-    fn test_implicit_str_parsing() -> Result<(), Error> {
+    fn test_implicit_str_parsing() -> Res {
         let uri: S3PackageUri = "quilt+s3://bucket#package=foo/bar@latest".parse()?;
         assert_eq!(
             uri,
@@ -288,7 +290,7 @@ mod tests {
     }
 
     #[test]
-    fn test_implicit_string_parsing() -> Result<(), Error> {
+    fn test_implicit_string_parsing() -> Res {
         let uri: S3PackageUri = "quilt+s3://bucket#package=foo/bar@latest"
             .to_string()
             .parse()?;
@@ -305,7 +307,7 @@ mod tests {
     }
 
     #[test]
-    fn test_incorrect_scheme() -> Result<(), Error> {
+    fn test_incorrect_scheme() -> Res {
         let uri = S3PackageUri::try_from("s3://bucket#packagefoo/bar");
         assert_eq!(
             uri.unwrap_err().to_string(),
@@ -315,7 +317,7 @@ mod tests {
     }
 
     #[test]
-    fn test_no_fragment() -> Result<(), Error> {
+    fn test_no_fragment() -> Res {
         let uri = S3PackageUri::try_from("quilt+s3://bucket");
         assert_eq!(
             uri.unwrap_err().to_string(),
@@ -326,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn test_no_package() -> Result<(), Error> {
+    fn test_no_package() -> Res {
         let uri = S3PackageUri::try_from("quilt+s3://bucket#foo=bar");
         assert_eq!(
             uri.unwrap_err().to_string(),
@@ -336,7 +338,7 @@ mod tests {
     }
 
     #[test]
-    fn test_unknown_paramter() -> Result<(), Error> {
+    fn test_unknown_paramter() -> Res {
         let uri = S3PackageUri::try_from("quilt+s3://bucket#package=a/b&foo=bar");
         assert_eq!(
             uri.unwrap_err().to_string(),
@@ -346,7 +348,7 @@ mod tests {
     }
 
     #[test]
-    fn test_no_bucket() -> Result<(), Error> {
+    fn test_no_bucket() -> Res {
         let uri = S3PackageUri::try_from("quilt+s3://#package=a/b");
         assert_eq!(
             uri.unwrap_err().to_string(),
@@ -356,7 +358,7 @@ mod tests {
     }
 
     #[test]
-    fn test_path() -> Result<(), Error> {
+    fn test_path() -> Res {
         let uri: S3PackageUri =
             "quilt+s3://bucket#package=foo/bar@latest&path=read/me.md".parse()?;
         assert_eq!(
@@ -372,7 +374,7 @@ mod tests {
     }
 
     #[test]
-    fn test_latest() -> Result<(), Error> {
+    fn test_latest() -> Res {
         let uri: S3PackageUri = "quilt+s3://bucket#package=foo/bar&path=read/me.md".parse()?;
         assert_eq!(
             uri,

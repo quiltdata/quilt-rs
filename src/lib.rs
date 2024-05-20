@@ -185,3 +185,5 @@ pub extern "system" fn Java_Quilt_install<'local>(
         .expect("Couldn't create java string!")
         .into_raw()
 }
+
+pub type Res<T = ()> = std::result::Result<T, Error>;

@@ -2,7 +2,7 @@ use crate::io::manifest::tag_latest;
 use crate::io::remote::Remote;
 use crate::lineage::PackageLineage;
 use crate::uri::ManifestUri;
-use crate::Error;
+use crate::Res;
 
 /// Tags the `manifest_uri` as "latest" remotely.
 /// And update localy in .quilt/lineage.json `base_hash` and `latest_hash` to that hash as well.
@@ -10,7 +10,7 @@ pub async fn certify_latest(
     mut lineage: PackageLineage,
     remote: &impl Remote,
     manifest_uri: ManifestUri,
-) -> Result<PackageLineage, Error> {
+) -> Res<PackageLineage> {
     tag_latest(remote, &manifest_uri).await?;
     lineage.update_latest(manifest_uri.clone());
     Ok(lineage)
@@ -24,7 +24,7 @@ mod tests {
     use crate::uri::S3Uri;
 
     #[tokio::test]
-    async fn test_certifying_latest() -> Result<(), Error> {
+    async fn test_certifying_latest() -> Res {
         let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(

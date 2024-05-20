@@ -11,21 +11,23 @@ use crate::io::manifest::upload_manifest;
 use crate::io::manifest::RowsStream;
 use crate::io::remote::Remote;
 use crate::io::remote::S3Attributes;
+use crate::io::remote::StreamItem;
 use crate::io::storage::Storage;
+use crate::manifest::Header;
 use crate::manifest::Row;
 use crate::paths::DomainPaths;
 use crate::perf::Measure;
 use crate::uri::ManifestUri;
 use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
-use crate::Error;
+use crate::Res;
 
 async fn get_object_attributes_inner(
     storage: &impl Storage,
     remote: &impl Remote,
     listing_uri: &S3Uri,
-    object: Result<Object, Error>,
-) -> Result<S3Attributes, Error> {
+    object: Res<Object>,
+) -> Res<S3Attributes> {
     let object_key = object?
         .key
         .clone()
@@ -45,8 +47,8 @@ async fn get_object_attributes(
     storage: &impl Storage,
     remote: &impl Remote,
     listing_uri: S3Uri,
-    objects: Result<Vec<Result<Object, Error>>, Error>,
-) -> Result<Vec<S3Attributes>, Error> {
+    objects: StreamItem,
+) -> Res<Vec<S3Attributes>> {
     try_join_all(
         objects?
             .into_iter()
@@ -65,11 +67,7 @@ async fn stream_objects<'a>(
     stream
         .then(move |objs| get_object_attributes(storage, remote, listing_uri.clone(), objs))
         .map(|result| {
-            result.map(move |objs| {
-                objs.into_iter()
-                    .map(|obj| Ok(Row::from(obj)))
-                    .collect::<Vec<Result<Row, Error>>>()
-            })
+            result.map(move |objs| objs.into_iter().map(|obj| Ok(Row::from(obj))).collect())
         })
 }
 
@@ -81,7 +79,7 @@ pub async fn package_s3_prefix(
     remote: &impl Remote,
     source_uri: &S3Uri,
     dest_uri: S3PackageUri,
-) -> Result<ManifestUri, Error> {
+) -> Res<ManifestUri> {
     log::debug!("Source URI: {:?}, target URI: {:?}", source_uri, dest_uri);
     // TODO: make get_object_attributes() calls concurrently across list_objects() pages
     // TODO: increase concurrency, to do that we need to figure out how to deal
@@ -93,8 +91,7 @@ pub async fn package_s3_prefix(
     let stream = Box::pin(stream_objects(storage, remote, source_uri.clone()).await);
     let manifest_path = |t: &str| paths.manifest_cache(&source_uri.bucket, t);
     let (cache_path, top_hash) =
-        build_manifest_from_rows_stream(storage, manifest_path, Row::default_header(), stream)
-            .await?;
+        build_manifest_from_rows_stream(storage, manifest_path, Header::default(), stream).await?;
 
     let S3PackageUri {
         bucket, namespace, ..
