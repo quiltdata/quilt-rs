@@ -229,11 +229,12 @@ impl WritableManifest {
     }
 
     pub async fn insert_header(&mut self, header: Header) -> Res {
-        self.writer.insert(Ok(header.into())).await
+        let header_chunk: StreamRowsChunk = vec![Ok(header.into())];
+        self.writer.insert(header_chunk).await
     }
 
-    pub async fn insert(&mut self, rows: Vec<Res<Row>>) -> Res {
-        self.writer.insert_rows(rows).await
+    pub async fn insert(&mut self, chunk: StreamRowsChunk) -> Res {
+        self.writer.insert(chunk).await
     }
 
     /// Close and finalize the writer.
