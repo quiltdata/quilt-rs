@@ -45,7 +45,8 @@ async fn upload_legacy(
     manifest_uri: &ManifestUri,
 ) -> Result<(), Error> {
     let s3_uri: S3Uri = ManifestUriLegacy::from(manifest_uri).into();
-    let jsonl = Manifest::from(&Table::read_from_path(storage, manifest_path).await?)
+    let jsonl = Manifest::from_table(&Table::read_from_path(storage, manifest_path).await?)
+        .await?
         .to_jsonlines()
         .as_bytes()
         .to_vec();

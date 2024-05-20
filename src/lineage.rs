@@ -26,8 +26,8 @@ pub enum Change {
     // TODO: Use Row
     Modified(PackageFileFingerprint), // modified to what
     // TODO: Use Row
-    Added(PackageFileFingerprint),    // added what
-    Removed(Row),                     // removed what
+    Added(PackageFileFingerprint), // added what
+    Removed(Row),                  // removed what
 }
 
 /// Map of all changed files

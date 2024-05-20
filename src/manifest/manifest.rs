@@ -9,6 +9,7 @@ use tokio::io::AsyncWrite;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
 use tokio::io::BufWriter;
+use tokio_stream::StreamExt;
 
 use crate::checksum::ContentHash;
 use crate::manifest::Table;
@@ -189,11 +190,29 @@ impl Manifest {
     //         .map(|row| (row.logical_key.clone(), row.to_owned()))
     //         .collect()
     // }
-}
 
-impl From<&Table> for Manifest {
-    fn from(table: &Table) -> Self {
-        Manifest {
+    pub async fn from_table(table: &Table) -> Result<Self, Error> {
+        let mut manifest_rows = Vec::new();
+        let mut stream = table.records_stream().await;
+        while let Some(rows) = stream.next().await {
+            for row in rows {
+                let mut meta = match row.info.as_object() {
+                    Some(meta) => meta.clone(),
+                    None => serde_json::Map::default(),
+                };
+                if row.meta.is_object() {
+                    meta.insert("user_meta".into(), row.meta.clone());
+                }
+                manifest_rows.push(ManifestRow {
+                    logical_key: row.name.clone(),
+                    physical_key: row.place.clone(),
+                    hash: row.hash.try_into().unwrap(),
+                    size: row.size,
+                    meta: Some(meta),
+                })
+            }
+        }
+        Ok(Manifest {
             header: ManifestHeader {
                 version: "v0".into(),
                 message: table
@@ -204,26 +223,8 @@ impl From<&Table> for Manifest {
                     .map(|s| s.to_string()),
                 user_meta: table.header.meta.as_object().cloned(),
             },
-            rows: table
-                .records_values()
-                .map(|row| {
-                    let mut meta = match row.info.as_object() {
-                        Some(meta) => meta.clone(),
-                        None => serde_json::Map::default(),
-                    };
-                    if row.meta.is_object() {
-                        meta.insert("user_meta".into(), row.meta.clone());
-                    }
-                    ManifestRow {
-                        logical_key: row.name.clone(),
-                        physical_key: row.place.clone(),
-                        hash: row.hash.try_into().unwrap(),
-                        size: row.size,
-                        meta: Some(meta),
-                    }
-                })
-                .collect(),
-        }
+            rows: manifest_rows,
+        })
     }
 }
 

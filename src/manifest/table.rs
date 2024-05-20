@@ -4,7 +4,6 @@
 //! and provides methods to read/write (decode/encode) quilt3's JSONL format
 //!
 
-use std::collections::btree_map;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
@@ -214,12 +213,6 @@ impl Table {
         Table::read_rows_impl(file).await
     }
 
-    // Get a row from the table
-    // FIXME: use `self.get_record` instead
-    pub fn get_row(&self, name: &PathBuf) -> Option<&Row> {
-        self.records.get(name)
-    }
-
     pub async fn get_header(&self) -> Result<Header, Error> {
         Ok(self.header.clone())
     }
@@ -236,15 +229,10 @@ impl Table {
         self.records.len()
     }
 
-    // FIXME: use `self.records_stream`
-    pub fn records_values(&self) -> btree_map::Values<'_, PathBuf, Row> {
-        // TODO: when records is unavailable, read first column and `column.values().len()`
-        self.records.values()
-    }
-
     pub async fn records_stream(&self) -> impl Stream<Item = Vec<Row>> {
+        // TODO: when records is unavailable, read first column and `column.values().len()`
         // FIXME: Item = Vec<Result<Row>>
-        let entries: Vec<Row> = self.records_values().cloned().collect();
+        let entries: Vec<Row> = self.records.values().cloned().collect();
         tokio_stream::iter(vec![entries])
     }
 
@@ -252,6 +240,7 @@ impl Table {
         Ok(self.records.insert(row.name.clone(), row))
     }
 
+    /// Get a row from the table
     pub async fn get_record(&self, path: &PathBuf) -> Result<Option<Row>, Error> {
         Ok(self.records.get(path).cloned())
     }
@@ -309,7 +298,10 @@ mod tests {
         // let header = table.get_header().await?;
         // assert_eq!(header.size, 0);
 
-        let readme = table.get_row(&PathBuf::from("READ ME.md")).unwrap();
+        let readme = table
+            .get_record(&PathBuf::from("READ ME.md"))
+            .await?
+            .unwrap();
         assert_eq!(readme.size, 33);
 
         Ok(())

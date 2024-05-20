@@ -6,8 +6,8 @@ mod manifest;
 mod row;
 mod table;
 
-pub use row::Row;
 pub use row::Header;
+pub use row::Row;
 pub use table::Table;
 pub use table::TopHasher;
 

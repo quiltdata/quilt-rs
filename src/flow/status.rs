@@ -48,11 +48,14 @@ pub async fn create_status(
 
     let mut orig_paths = HashMap::new();
     for path in lineage.paths.keys() {
-        let row = manifest.get_row(path).ok_or(Error::ManifestPath(format!(
-            "path {:?} not found in installed manifest",
-            path
-        )))?;
-        orig_paths.insert(path.clone(), row.clone());
+        let row = manifest
+            .get_record(path)
+            .await?
+            .ok_or(Error::ManifestPath(format!(
+                "path {:?} not found in installed manifest",
+                path
+            )))?;
+        orig_paths.insert(path.clone(), row);
     }
 
     let mut queue = VecDeque::new();

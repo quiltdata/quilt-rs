@@ -1,9 +1,14 @@
+use tokio_stream::StreamExt;
+
+use quilt_rs::manifest::Row;
+
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
 use crate::cli::Error;
 
 pub struct Output {
     manifest: quilt_rs::manifest::Table,
+    rows: Vec<Row>,
 }
 
 #[derive(Debug)]
@@ -34,7 +39,7 @@ impl std::fmt::Display for Output {
         header_table.with(tabled::settings::Panel::header("Remote manifest header"));
         output.push(header_table.to_string());
 
-        let entries = self.manifest.records_values().map(|e| RemoteManifestEntry {
+        let entries = self.rows.clone().into_iter().map(|e| RemoteManifestEntry {
             name: e.name.display().to_string(),
             place: e.place.to_string(),
             size: e.size,
@@ -60,9 +65,18 @@ pub async fn model(
     let remote = quilt_rs::io::remote::RemoteS3::new();
     let uri: quilt_rs::uri::S3PackageUri = uri.parse()?;
     let manifest_uri = quilt_rs::io::manifest::resolve_manifest_uri(&remote, &uri).await?;
-    Ok(Output {
-        manifest: local_domain.browse_remote_manifest(&manifest_uri).await?,
-    })
+
+    let manifest = local_domain.browse_remote_manifest(&manifest_uri).await?;
+
+    let mut rows = Vec::new();
+    let mut stream = manifest.records_stream().await;
+    while let Some(records) = stream.next().await {
+        for row in records {
+            rows.push(row)
+        }
+    }
+
+    Ok(Output { manifest, rows })
 }
 
 #[cfg(test)]
