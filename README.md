@@ -32,3 +32,9 @@ open tarpaulin-report.html
 cargo install cargo-upgrades
 cargo upgrades
 ```
+
+## JNI
+
+```sh
+cargo build && javac Quilt.java && java -Djava.library.path=./target/debug Quilt
+```
