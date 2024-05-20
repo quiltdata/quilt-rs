@@ -23,9 +23,14 @@
 use std::str::Utf8Error;
 
 use aws_smithy_types::byte_stream;
+use jni::objects::{JClass, JString};
+use jni::sys::jstring;
+use jni::JNIEnv;
 use reqwest::header::ToStrError;
 use thiserror::Error;
 use url::Url;
+
+use std::path::PathBuf;
 
 pub mod flow;
 
@@ -150,4 +155,33 @@ pub enum Error {
 
     #[error("Unimplemented")]
     Unimplemented,
+
+    #[error("JNI error: {0}")]
+    Jni(#[from] jni::errors::Error),
+}
+
+#[no_mangle]
+pub extern "system" fn Java_Quilt_install<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    domain: JString<'local>,
+    uri: JString<'local>,
+) -> jstring {
+    let runtime = tokio::runtime::Runtime::new();
+    let manifest_str: Result<String, Error> = runtime.unwrap().block_on(async {
+        let domain: String = env.get_string(&domain)?.into();
+        let uri: String = env.get_string(&uri)?.into();
+
+        let local_domain = LocalDomain::new(PathBuf::from(domain));
+        let remote = io::remote::RemoteS3::new();
+        let uri: uri::S3PackageUri = uri.parse().unwrap();
+        let manifest_uri = io::manifest::resolve_manifest_uri(&remote, &uri).await?;
+        let manifest = local_domain.install_package(&manifest_uri).await;
+        let manifest_str = format!("{:?}", manifest);
+        Ok(manifest_str)
+    });
+
+    env.new_string(manifest_str.expect("Failed to install"))
+        .expect("Couldn't create java string!")
+        .into_raw()
 }
