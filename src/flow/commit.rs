@@ -28,24 +28,27 @@ async fn stream_local_with_changes(
     local_manifest: &Table,
     removed: HashSet<PathBuf>,
     modified: BTreeMap<PathBuf, Row>,
-    new_files: Vec<Row>,
+    new_files: Vec<Result<Row, Error>>,
 ) -> impl RowsStream {
     let changes_stream = local_manifest.records_stream().await.map(move |rows| {
-        rows.iter()
-            .filter_map(|row| {
-                if removed.contains(&row.name) {
-                    return None;
-                }
-                if let Some(modified_row) = modified.get(&row.name) {
-                    return Some(Ok(modified_row.clone()));
-                }
-                Some(Ok(row.clone()))
-            })
-            .collect::<Vec<Result<Row, Error>>>()
+        rows.map(|rows| {
+            rows.iter()
+                .filter_map(|row_res| match row_res {
+                    Ok(row) => {
+                        if removed.contains(&row.name) {
+                            return None;
+                        }
+                        if let Some(modified_row) = modified.get(&row.name) {
+                            return Some(Ok(modified_row.clone()));
+                        }
+                        Some(Ok(row.clone()))
+                    }
+                    Err(err) => Some(Err(Error::Table(err.to_string()))),
+                })
+                .collect()
+        })
     });
-    tokio_stream::iter(vec![new_files.into_iter().map(Ok).collect()])
-        .chain(changes_stream)
-        .map(Ok)
+    tokio_stream::iter(vec![Ok(new_files)]).chain(changes_stream)
 }
 
 async fn create_immutable_object_copy(
@@ -156,7 +159,7 @@ pub async fn commit_package(
                     current,
                 )
                 .await?;
-                new_files.push(added)
+                new_files.push(Ok(added))
             }
             Change::Modified(current) => {
                 let modified = create_immutable_object_copy(

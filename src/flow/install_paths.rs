@@ -47,15 +47,21 @@ async fn stream_remote_with_installed_rows(
     remote_manifest: &Table,
     local_entries: BTreeMap<PathBuf, Row>,
 ) -> impl RowsStream {
-    remote_manifest.records_stream().await.map(move |rows| {
-        Ok(rows
-            .into_iter()
-            .map(|row| match local_entries.get(&row.name) {
-                Some(row) => Ok(row.clone()),
-                None => Ok(row),
+    remote_manifest
+        .records_stream()
+        .await
+        .map(move |rows_result| {
+            rows_result.map(|rows| {
+                rows.into_iter()
+                    .map(|row_result| {
+                        row_result.map(|row| match local_entries.get(&row.name) {
+                            Some(row) => row.clone(),
+                            None => row,
+                        })
+                    })
+                    .collect()
             })
-            .collect())
-    })
+        })
 }
 
 /// Installs paths to already existing manifest (provided as an argument to this function).

@@ -195,7 +195,8 @@ impl Manifest {
         let mut manifest_rows = Vec::new();
         let mut stream = table.records_stream().await;
         while let Some(rows) = stream.next().await {
-            for row in rows {
+            for row in rows? {
+                let row = row?;
                 let mut meta = match row.info.as_object() {
                     Some(meta) => meta.clone(),
                     None => serde_json::Map::default(),

@@ -71,8 +71,8 @@ pub async fn model(
     let mut rows = Vec::new();
     let mut stream = manifest.records_stream().await;
     while let Some(records) = stream.next().await {
-        for row in records {
-            rows.push(row)
+        for row in records? {
+            rows.push(row?)
         }
     }
 

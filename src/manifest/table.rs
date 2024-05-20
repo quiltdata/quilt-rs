@@ -8,7 +8,6 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 use std::path::PathBuf;
-use tokio_stream::Stream;
 
 use crate::checksum::ContentHash;
 use crate::io::storage::Storage;
@@ -25,6 +24,8 @@ use tokio::io::AsyncRead;
 use tokio::io::AsyncSeek;
 use tokio_stream::StreamExt;
 
+use crate::io::manifest::RowsStream;
+use crate::io::manifest::StreamRowsChunk;
 use crate::manifest::Header;
 use crate::manifest::Row;
 use crate::Error;
@@ -229,11 +230,9 @@ impl Table {
         self.records.len()
     }
 
-    pub async fn records_stream(&self) -> impl Stream<Item = Vec<Row>> {
-        // TODO: when records is unavailable, read first column and `column.values().len()`
-        // FIXME: Item = Vec<Result<Row>>
-        let entries: Vec<Row> = self.records.values().cloned().collect();
-        tokio_stream::iter(vec![entries])
+    pub async fn records_stream(&self) -> impl RowsStream {
+        let entries: StreamRowsChunk = self.records.values().cloned().map(Ok).collect();
+        tokio_stream::iter(vec![Ok(entries)])
     }
 
     pub async fn insert_record(&mut self, row: Row) -> Result<Option<Row>, Error> {

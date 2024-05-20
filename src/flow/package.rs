@@ -11,6 +11,7 @@ use crate::io::manifest::upload_manifest;
 use crate::io::manifest::RowsStream;
 use crate::io::remote::Remote;
 use crate::io::remote::S3Attributes;
+use crate::io::remote::StreamItem;
 use crate::io::storage::Storage;
 use crate::manifest::Header;
 use crate::manifest::Row;
@@ -46,7 +47,7 @@ async fn get_object_attributes(
     storage: &impl Storage,
     remote: &impl Remote,
     listing_uri: S3Uri,
-    objects: Result<Vec<Result<Object, Error>>, Error>,
+    objects: StreamItem,
 ) -> Result<Vec<S3Attributes>, Error> {
     try_join_all(
         objects?
@@ -66,11 +67,7 @@ async fn stream_objects<'a>(
     stream
         .then(move |objs| get_object_attributes(storage, remote, listing_uri.clone(), objs))
         .map(|result| {
-            result.map(move |objs| {
-                objs.into_iter()
-                    .map(|obj| Ok(Row::from(obj)))
-                    .collect::<Vec<Result<Row, Error>>>()
-            })
+            result.map(move |objs| objs.into_iter().map(|obj| Ok(Row::from(obj))).collect())
         })
 }
 
