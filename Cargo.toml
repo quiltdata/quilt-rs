@@ -11,6 +11,7 @@ repository = "https://github.com/quiltdata/quilt-rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
 path = "src/lib.rs"
+crate_type = ["lib", "cdylib"]
 
 [dependencies]
 arrow = "51.0.0"
@@ -30,6 +31,7 @@ figment = { version = "0.10.18", features = ["env", "yaml"] }
 futures = "0.3.30"
 futures-util = "0.3.30"
 hex = "0.4.3"
+jni = "0.21.1"
 lazy_static = "1.4.0"
 multihash = "0.19.1"
 parquet = { version = "51.0.0", features = ["async", "object_store"] }
