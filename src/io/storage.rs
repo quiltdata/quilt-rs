@@ -12,7 +12,7 @@ use tokio::fs::{File, ReadDir};
 
 use crate::io::remote::S3Attributes;
 use crate::uri::S3Uri;
-use crate::Error;
+use crate::Res;
 
 mod local;
 
@@ -31,17 +31,17 @@ pub trait Storage {
         &self,
         from: impl AsRef<Path> + Send,
         to: impl AsRef<Path> + Send,
-    ) -> impl Future<Output = Result<u64, Error>> + Send;
+    ) -> impl Future<Output = Res<u64>> + Send;
 
     /// Recursively creates a directory and all of its parent components if they
     /// are missing.
     fn create_dir_all(
         &self,
         path: impl AsRef<Path> + Send,
-    ) -> impl Future<Output = Result<(), Error>> + Send;
+    ) -> impl Future<Output = Res> + Send;
 
     /// Creates file
-    fn create_file(&self, path: impl AsRef<Path>) -> impl Future<Output = Result<File, Error>>;
+    fn create_file(&self, path: impl AsRef<Path>) -> impl Future<Output = Res<File>>;
 
     /// Check if a path exists in the filesystem.
     fn exists(&self, path: impl AsRef<Path>) -> impl Future<Output = bool>;
@@ -51,32 +51,32 @@ pub trait Storage {
         &self,
         listing_uri: &S3Uri,
         object_key: impl AsRef<str> + Send + Sync,
-    ) -> impl Future<Output = Result<S3Attributes, Error>> + Send + Sync;
+    ) -> impl Future<Output = Res<S3Attributes>> + Send + Sync;
 
     /// Get the timestamp of the last modification of a file.
     fn modified_timestamp(
         &self,
         path: impl AsRef<Path>,
-    ) -> impl Future<Output = Result<DateTime<Utc>, Error>>;
+    ) -> impl Future<Output = Res<DateTime<Utc>>>;
 
     /// Opens file (doesn't read contents)
     fn open_file(
         &self,
         path: impl AsRef<Path> + Send,
-    ) -> impl Future<Output = Result<File, Error>> + Send;
+    ) -> impl Future<Output = Res<File>> + Send;
 
     /// Reads the entire contents of a file into a stream.
     fn read_byte_stream(
         &self,
         path: impl AsRef<Path> + Send + Sync,
-    ) -> impl Future<Output = Result<ByteStream, Error>> + Send + Sync;
+    ) -> impl Future<Output = Res<ByteStream>> + Send + Sync;
 
     /// Returns a stream over the entries within a directory.
     /// Not recursive.
     fn read_dir(
         &self,
         path: impl AsRef<Path> + Send + Sync,
-    ) -> impl Future<Output = Result<ReadDir, Error>> + Send + Sync;
+    ) -> impl Future<Output = Res<ReadDir>> + Send + Sync;
 
     /// Reads the entire contents of a file into a bytes vector.
     /// Prefer using `read_byte_stream`.
@@ -84,13 +84,13 @@ pub trait Storage {
     fn read_file(
         &self,
         path: impl AsRef<Path> + Send + Sync,
-    ) -> impl Future<Output = Result<Vec<u8>, Error>> + Send + Sync;
+    ) -> impl Future<Output = Res<Vec<u8>>> + Send + Sync;
 
     /// Removes a directory at this path, after removing all its contents.
     fn remove_dir_all(
         &self,
         path: impl AsRef<Path> + Send,
-    ) -> impl Future<Output = Result<(), Error>> + Send;
+    ) -> impl Future<Output = Res> + Send;
 
     /// Remove a file from the filesystem.
     fn remove_file(
@@ -103,14 +103,14 @@ pub trait Storage {
         &self,
         from: impl AsRef<Path> + Send,
         to: impl AsRef<Path> + Send,
-    ) -> impl Future<Output = Result<(), Error>> + Send;
+    ) -> impl Future<Output = Res> + Send;
 
     /// Writes bytes srteam to a file
     fn write_byte_stream(
         &self,
         path: impl AsRef<Path> + Send + Sync,
         body: ByteStream,
-    ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
+    ) -> impl Future<Output = Res> + Send + Sync;
 
     /// Writes bytes to a file
     /// Prefer using `write_byte_stream`.
@@ -119,5 +119,5 @@ pub trait Storage {
         &self,
         path: impl AsRef<Path> + Send + Sync,
         bytes: &[u8],
-    ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
+    ) -> impl Future<Output = Res> + Send + Sync;
 }

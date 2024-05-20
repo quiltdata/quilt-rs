@@ -8,6 +8,7 @@ use crate::io::remote::S3Attributes;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
 use crate::Error;
+use crate::Res;
 
 const HEADER_ROW: &str = ".";
 
@@ -96,11 +97,11 @@ impl Row {
         self.hash.to_bytes()
     }
 
-    pub fn display_meta(&self) -> Result<String, Error> {
+    pub fn display_meta(&self) -> Res<String> {
         Ok(serde_json::to_string(&self.meta)?)
     }
 
-    pub fn display_info(&self) -> Result<String, Error> {
+    pub fn display_info(&self) -> Res<String> {
         Ok(serde_json::to_string(&self.info)?)
     }
 }
@@ -170,7 +171,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_formatting_without_path() -> Result<(), multihash::Error> {
+    fn test_formatting_without_path() -> Res {
         let row = Row {
             name: PathBuf::from("Foo"),
             place: "Bar".to_string(),

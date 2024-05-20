@@ -20,14 +20,14 @@ use crate::perf::Measure;
 use crate::uri::ManifestUri;
 use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
-use crate::Error;
+use crate::Res;
 
 async fn get_object_attributes_inner(
     storage: &impl Storage,
     remote: &impl Remote,
     listing_uri: &S3Uri,
-    object: Result<Object, Error>,
-) -> Result<S3Attributes, Error> {
+    object: Res<Object>,
+) -> Res<S3Attributes> {
     let object_key = object?
         .key
         .clone()
@@ -48,7 +48,7 @@ async fn get_object_attributes(
     remote: &impl Remote,
     listing_uri: S3Uri,
     objects: StreamItem,
-) -> Result<Vec<S3Attributes>, Error> {
+) -> Res<Vec<S3Attributes>> {
     try_join_all(
         objects?
             .into_iter()
@@ -79,7 +79,7 @@ pub async fn package_s3_prefix(
     remote: &impl Remote,
     source_uri: &S3Uri,
     dest_uri: S3PackageUri,
-) -> Result<ManifestUri, Error> {
+) -> Res<ManifestUri> {
     log::debug!("Source URI: {:?}, target URI: {:?}", source_uri, dest_uri);
     // TODO: make get_object_attributes() calls concurrently across list_objects() pages
     // TODO: increase concurrency, to do that we need to figure out how to deal

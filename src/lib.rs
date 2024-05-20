@@ -152,4 +152,4 @@ pub enum Error {
     Unimplemented,
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Res<T = ()> = std::result::Result<T, Error>;

@@ -26,6 +26,7 @@ use crate::io::remote::ObjectsStream;
 use crate::io::remote::Remote;
 use crate::uri::S3Uri;
 use crate::Error;
+use crate::Res;
 
 const LIST_OBJECTS_V2_MAX_KEYS: i32 = 1_00;
 
@@ -60,7 +61,7 @@ impl TryFrom<GetObjectAttributesOutput> for S3AttributesWrapper {
 async fn get_object_stream(
     client: &aws_sdk_s3::Client,
     s3_uri: &S3Uri,
-) -> Result<ByteStream, Error> {
+) -> Res<ByteStream> {
     let result = client.get_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
     let result = match &s3_uri.version {
         Some(version) => result.version_id(version),
@@ -74,7 +75,7 @@ async fn get_object_stream(
     Ok(result.body)
 }
 
-async fn get_object(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Result<impl AsyncRead, Error> {
+async fn get_object(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<impl AsyncRead> {
     Ok(get_object_stream(client, s3_uri).await?.into_async_read())
 }
 
@@ -82,7 +83,7 @@ async fn put_object_and_checksum(
     source_path: impl AsRef<Path>,
     dest_uri: &S3Uri,
     size: u64,
-) -> Result<(S3Uri, Multihash<256>), Error> {
+) -> Res<(S3Uri, Multihash<256>)> {
     let client = get_client_for_bucket(&dest_uri.bucket).await?;
     let response = client
         .put_object()
@@ -120,7 +121,7 @@ async fn multipart_upload_and_checksum(
     source_path: impl AsRef<Path>,
     dest_uri: &S3Uri,
     size: u64,
-) -> Result<(S3Uri, Multihash<256>), Error> {
+) -> Res<(S3Uri, Multihash<256>)> {
     let (chunksize, num_chunks) = get_checksum_chunksize_and_parts(size);
     let client = get_client_for_bucket(&dest_uri.bucket).await?;
     let upload_id = client
@@ -212,7 +213,7 @@ impl RemoteS3 {
 }
 
 impl Remote for RemoteS3 {
-    async fn exists(&self, s3_uri: &S3Uri) -> Result<bool, Error> {
+    async fn exists(&self, s3_uri: &S3Uri) -> Res<bool> {
         let client = get_client_for_bucket(&s3_uri.bucket).await?;
         let result = client.head_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
         let result = match &s3_uri.version {
@@ -226,7 +227,7 @@ impl Remote for RemoteS3 {
         }
     }
 
-    async fn get_object(&self, s3_uri: &S3Uri) -> Result<impl AsyncRead + Send + Unpin, Error> {
+    async fn get_object(&self, s3_uri: &S3Uri) -> Res<impl AsyncRead + Send + Unpin> {
         let client = get_client_for_bucket(&s3_uri.bucket).await?;
         get_object(&client, s3_uri).await
     }
@@ -235,7 +236,7 @@ impl Remote for RemoteS3 {
         &self,
         listing_uri: &S3Uri,
         object_key: impl AsRef<str>,
-    ) -> Result<S3Attributes, Error> {
+    ) -> Res<S3Attributes> {
         let client = get_client_for_bucket(&listing_uri.bucket).await?;
         let key = object_key.as_ref();
         log::debug!(
@@ -272,7 +273,7 @@ impl Remote for RemoteS3 {
         })
     }
 
-    async fn get_object_stream(&self, s3_uri: &S3Uri) -> Result<ByteStream, Error> {
+    async fn get_object_stream(&self, s3_uri: &S3Uri) -> Res<ByteStream> {
         let client = get_client_for_bucket(&s3_uri.bucket).await?;
         get_object_stream(&client, s3_uri).await
     }
@@ -303,7 +304,7 @@ impl Remote for RemoteS3 {
         &self,
         s3_uri: &S3Uri,
         contents: impl Into<ByteStream>,
-    ) -> Result<(), Error> {
+    ) -> Res {
         let client = get_client_for_bucket(&s3_uri.bucket).await?;
         client
             .put_object()
@@ -322,7 +323,7 @@ impl Remote for RemoteS3 {
         source_path: impl AsRef<Path>,
         dest_uri: &S3Uri,
         size: u64,
-    ) -> Result<(S3Uri, Multihash<256>), Error> {
+    ) -> Res<(S3Uri, Multihash<256>)> {
         if size < MULTIPART_THRESHOLD {
             put_object_and_checksum(source_path, dest_uri, size).await
         } else {

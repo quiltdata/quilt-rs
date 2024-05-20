@@ -10,6 +10,7 @@ use url::Url;
 
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::RowsStream;
+use crate::io::manifest::StreamRowsChunk;
 use crate::io::storage::Storage;
 use crate::lineage::Change;
 use crate::lineage::CommitState;
@@ -23,12 +24,13 @@ use crate::manifest::Table;
 use crate::paths;
 use crate::uri::Namespace;
 use crate::Error;
+use crate::Res;
 
 async fn stream_local_with_changes(
     local_manifest: &Table,
     removed: HashSet<PathBuf>,
     modified: BTreeMap<PathBuf, Row>,
-    new_files: Vec<Result<Row, Error>>,
+    new_files: StreamRowsChunk,
 ) -> impl RowsStream {
     let changes_stream = local_manifest.records_stream().await.map(move |rows| {
         rows.map(|rows| {
@@ -58,7 +60,7 @@ async fn create_immutable_object_copy(
     lineage: &mut PackageLineage,
     logical_key: &PathBuf,
     current: PackageFileFingerprint,
-) -> Result<Row, Error> {
+) -> Res<Row> {
     let objects_dir = paths.objects_dir();
     // FIXME: This should really be done when the domain is created.
     storage.create_dir_all(&objects_dir).await?;
@@ -104,7 +106,7 @@ pub async fn commit_package(
     namespace: Namespace,
     message: String,
     user_meta: Option<JsonObject>,
-) -> Result<PackageLineage, Error> {
+) -> Res<PackageLineage> {
     log::debug!("commit: {message:?}, {user_meta:?}");
     // create a new manifest based on the stored version
 
@@ -217,7 +219,7 @@ mod tests {
     // NOTE: Tests use "/" path for working directory, because it then parsed with Url and have to be absolute path
 
     #[tokio::test]
-    async fn test_commit() -> Result<(), Error> {
+    async fn test_commit() -> Res {
         let storage = mocks::storage::MockStorage::default();
 
         let commit_message = "Lorem ipsum".to_string();
@@ -252,7 +254,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_removing_and_commit() -> Result<(), Error> {
+    async fn test_removing_and_commit() -> Res {
         let storage = mocks::storage::MockStorage::default();
 
         let commit_message = "Lorem ipsum".to_string();
@@ -314,7 +316,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_adding_and_commit() -> Result<(), Error> {
+    async fn test_adding_and_commit() -> Res {
         let storage = mocks::storage::MockStorage::default();
         storage
             .write_file(PathBuf::from("/working-dir/bar"), &Vec::new())
@@ -380,7 +382,7 @@ mod tests {
     //       even for imposible states
     #[ignore]
     #[tokio::test]
-    async fn test_adding_manifest_already_has_it() -> Result<(), Error> {
+    async fn test_adding_manifest_already_has_it() -> Res {
         let storage = mocks::storage::MockStorage::default();
         storage
             .write_file(PathBuf::from("foo"), &Vec::new())
@@ -419,7 +421,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_modifying_and_commit() -> Result<(), Error> {
+    async fn test_modifying_and_commit() -> Res {
         let storage = mocks::storage::MockStorage::default();
         storage
             .write_file(PathBuf::from("/working-dir/bar"), &Vec::new())

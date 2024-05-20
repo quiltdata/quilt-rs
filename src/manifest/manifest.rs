@@ -14,6 +14,7 @@ use tokio_stream::StreamExt;
 use crate::checksum::ContentHash;
 use crate::manifest::Table;
 use crate::Error;
+use crate::Res;
 
 pub type JsonObject = serde_json::Map<String, serde_json::Value>;
 
@@ -101,7 +102,7 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    pub async fn from_reader<F: AsyncRead + Unpin + Send>(file: F) -> Result<Self, Error> {
+    pub async fn from_reader<F: AsyncRead + Unpin + Send>(file: F) -> Res<Self> {
         let reader = BufReader::new(file);
         let mut lines = reader.lines();
 
@@ -132,7 +133,7 @@ impl Manifest {
         Ok(Manifest { header, rows })
     }
 
-    pub async fn to_file<W: AsyncWrite + Unpin>(&self, file: W) -> Result<(), std::io::Error> {
+    pub async fn to_file<W: AsyncWrite + Unpin>(&self, file: W) -> Res {
         let mut writer = BufWriter::new(file);
         writer.write_all(self.to_jsonlines().as_bytes()).await?;
         writer.flush().await?;
@@ -191,7 +192,7 @@ impl Manifest {
     //         .collect()
     // }
 
-    pub async fn from_table(table: &Table) -> Result<Self, Error> {
+    pub async fn from_table(table: &Table) -> Res<Self> {
         let mut manifest_rows = Vec::new();
         let mut stream = table.records_stream().await;
         while let Some(rows) = stream.next().await {

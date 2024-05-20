@@ -80,8 +80,10 @@ impl std::str::FromStr for S3Uri {
 mod tests {
     use super::*;
 
+use crate::Res;
+
     #[test]
-    fn test_incorrect_scheme() -> Result<(), Error> {
+    fn test_incorrect_scheme() -> Res {
         let uri = S3Uri::try_from("https://bucket/foo/bar");
         assert_eq!(
             uri.unwrap_err().to_string(),
@@ -91,7 +93,7 @@ mod tests {
     }
 
     #[test]
-    fn test_no_bucket() -> Result<(), Error> {
+    fn test_no_bucket() -> Res {
         let uri = S3Uri::try_from("s3://");
         assert_eq!(
             uri.unwrap_err().to_string(),
@@ -101,7 +103,7 @@ mod tests {
     }
 
     #[test]
-    fn test_unversioned_uri() -> Result<(), Error> {
+    fn test_unversioned_uri() -> Res {
         let uri = S3Uri::try_from("s3://bucket/foo/bar")?;
         assert_eq!(
             uri,
@@ -115,7 +117,7 @@ mod tests {
     }
 
     #[test]
-    fn test_versioned() -> Result<(), Error> {
+    fn test_versioned() -> Res {
         let uri = S3Uri::try_from("s3://bucket/foo/bar?versionId=abc")?;
         assert_eq!(
             uri,
@@ -129,7 +131,7 @@ mod tests {
     }
 
     #[test]
-    fn test_incorrect_query() -> Result<(), Error> {
+    fn test_incorrect_query() -> Res {
         let uri = S3Uri::try_from("s3://bucket/foo/bar?another=query");
         assert_eq!(
             uri.unwrap_err().to_string(),
@@ -139,7 +141,7 @@ mod tests {
     }
 
     #[test]
-    fn test_spaces_in_path() -> Result<(), Error> {
+    fn test_spaces_in_path() -> Res {
         let uri = S3Uri::try_from("s3://bucket/foo  bar?versionId=abc")?;
         assert_eq!(
             uri,
@@ -153,7 +155,7 @@ mod tests {
     }
 
     #[test]
-    fn test_multiple_version_id() -> Result<(), Error> {
+    fn test_multiple_version_id() -> Res {
         let uri = S3Uri::try_from("s3://bucket/foo  bar?versionId=query&versionId=another");
         assert_eq!(
             uri.unwrap_err().to_string(),
@@ -164,7 +166,7 @@ mod tests {
     }
 
     #[test]
-    fn test_implicit_parsing() -> Result<(), Error> {
+    fn test_implicit_parsing() -> Res {
         let uri: S3Uri = "s3://bucket/foo/bar?versionId=abc".parse()?;
         assert_eq!(
             uri,

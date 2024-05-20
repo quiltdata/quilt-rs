@@ -17,12 +17,13 @@ use crate::lineage::PackageFileFingerprint;
 use crate::lineage::PackageLineage;
 use crate::manifest::Table;
 use crate::Error;
+use crate::Res;
 
 /// Refreshes the tracked `latest_hash` property in lineage.json
 pub async fn refresh_latest_hash(
     mut lineage: PackageLineage,
     remote: &impl Remote,
-) -> Result<PackageLineage, Error> {
+) -> Res<PackageLineage> {
     let latest = resolve_latest(remote, lineage.remote.clone().into()).await?;
     if lineage.latest_hash == latest.hash {
         return Ok(lineage);
@@ -38,7 +39,7 @@ pub async fn create_status(
     storage: &(impl Storage + Sync),
     manifest: &Table,
     working_dir: PathBuf,
-) -> Result<(PackageLineage, InstalledPackageStatus), Error> {
+) -> Res<(PackageLineage, InstalledPackageStatus)> {
     // compute the status based on the following sources:
     //   - the cached manifest
     //   - paths
@@ -137,7 +138,7 @@ mod tests {
     use crate::mocks;
 
     #[tokio::test]
-    async fn test_default_status() -> Result<(), Error> {
+    async fn test_default_status() -> Res {
         let storage = mocks::storage::MockStorage::default();
         let (_lineage, status) = create_status(
             PackageLineage::default(),
@@ -151,7 +152,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_behind() -> Result<(), Error> {
+    async fn test_behind() -> Res {
         let base_hash = "AAA";
         let latest_hash = "BBB";
         let commit_hash = "AAA";
@@ -169,7 +170,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ahead() -> Result<(), Error> {
+    async fn test_ahead() -> Res {
         let base_hash = "AAA";
         let latest_hash = "AAA";
         let commit_hash = "BBB";
@@ -187,7 +188,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_diverged() -> Result<(), Error> {
+    async fn test_diverged() -> Res {
         let lineage = PackageLineage {
             commit: Some(CommitState {
                 hash: "aaa".to_string(),
@@ -210,7 +211,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_removed_files() -> Result<(), Error> {
+    async fn test_removed_files() -> Res {
         let lineage = mocks::lineage::with_paths(vec![PathBuf::from("a/a")]);
         let manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("a/a")]);
         let (_, status) = create_status(
@@ -229,7 +230,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_added_files() -> Result<(), Error> {
+    async fn test_added_files() -> Res {
         let lineage = PackageLineage::default();
         let manifest = Table::default();
 

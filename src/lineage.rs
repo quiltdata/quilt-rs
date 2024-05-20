@@ -19,6 +19,7 @@ use crate::manifest::Row;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::Error;
+use crate::Res;
 
 /// Describes modified states of a file
 #[derive(Debug, PartialEq)]
@@ -218,7 +219,7 @@ impl DomainLineageIo {
         DomainLineageIo { path }
     }
 
-    pub async fn read(&self, storage: &impl Storage) -> Result<DomainLineage, Error> {
+    pub async fn read(&self, storage: &impl Storage) -> Res<DomainLineage> {
         let contents = storage
             .read_file(&self.path)
             .await
@@ -240,7 +241,7 @@ impl DomainLineageIo {
         &self,
         storage: &impl Storage,
         lineage: DomainLineage,
-    ) -> Result<DomainLineage, Error> {
+    ) -> Res<DomainLineage> {
         let contents = serde_json::to_string_pretty(&lineage)?;
         storage
             .write_file(self.path.clone(), contents.as_bytes())
@@ -269,7 +270,7 @@ impl PackageLineageIo {
         }
     }
 
-    pub async fn read(&self, storage: &impl Storage) -> Result<PackageLineage, Error> {
+    pub async fn read(&self, storage: &impl Storage) -> Res<PackageLineage> {
         let domain_lineage = self.domain_lineage.read(storage).await?;
         let namespace = domain_lineage.packages.get(&self.namespace);
 
@@ -283,7 +284,7 @@ impl PackageLineageIo {
         &self,
         storage: &impl Storage,
         lineage: PackageLineage,
-    ) -> Result<PackageLineage, Error> {
+    ) -> Res<PackageLineage> {
         let mut domain_lineage = self.domain_lineage.read(storage).await?;
         domain_lineage
             .packages
@@ -348,7 +349,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_domain_lineage_from_file() -> Result<(), Error> {
+    async fn test_domain_lineage_from_file() -> Res {
         let storage = mocks::storage::MockStorage::default();
         let file_path = PathBuf::from("foo");
         storage
@@ -360,7 +361,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_domain_lineage_from_nothing() -> Result<(), Error> {
+    async fn test_domain_lineage_from_nothing() -> Res {
         let storage = mocks::storage::MockStorage::default();
         let lineage = DomainLineageIo::new(PathBuf::from("does-not-exist"))
             .read(&storage)
@@ -370,7 +371,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_domain_lineage_write() -> Result<(), Error> {
+    async fn test_domain_lineage_write() -> Res {
         let storage = mocks::storage::MockStorage::default();
         let file_path = PathBuf::from("foo");
         assert!(!storage.exists(&file_path).await);
@@ -387,7 +388,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_domain_lineage_create_package_lineage() -> Result<(), Error> {
+    async fn test_domain_lineage_create_package_lineage() -> Res {
         let namespace = ("foo", "bar");
         let domain_lineage = DomainLineageIo::default();
         let lineage = domain_lineage.create_package_lineage(namespace.into());

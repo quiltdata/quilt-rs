@@ -13,6 +13,7 @@ use tokio::io::BufReader;
 use tokio::io::{self};
 
 use crate::Error;
+use crate::Res;
 
 // TODO: Introduce struct Chunksum {}, that
 //       * wraps `Multihash`
@@ -102,7 +103,7 @@ pub fn get_checksum_chunksize_and_parts(file_size: u64) -> (u64, u64) {
 /// Caclulates legacy or single-chunk checksum from file or from single chunk
 pub async fn calculate_sha256_checksum<F: io::AsyncRead + Unpin>(
     file: F,
-) -> Result<Multihash<256>, Error> {
+) -> Res<Multihash<256>> {
     let mut sha256 = Sha256::new();
     let mut reader = BufReader::new(file);
     let mut buf = [0; 4096];
@@ -120,7 +121,7 @@ pub async fn calculate_sha256_checksum<F: io::AsyncRead + Unpin>(
 pub async fn calculate_sha256_chunked_checksum<F: io::AsyncRead + Unpin>(
     file: F,
     length: u64,
-) -> Result<Multihash<256>, Error> {
+) -> Res<Multihash<256>> {
     let (chunksize, num_parts) = get_checksum_chunksize_and_parts(length);
 
     let mut sha256 = Sha256::new();

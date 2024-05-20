@@ -29,6 +29,7 @@ use crate::io::manifest::StreamRowsChunk;
 use crate::manifest::Header;
 use crate::manifest::Row;
 use crate::Error;
+use crate::Res;
 
 fn serialize_table_header(header: &Header) -> serde_json::Map<String, serde_json::Value> {
     let mut header_meta = serde_json::Map::new();
@@ -64,7 +65,7 @@ impl TopHasher {
     }
 
     /// Append `Header` to the hasher
-    pub fn append_header(&mut self, header: &Header) -> Result<(), Error> {
+    pub fn append_header(&mut self, header: &Header) -> Res {
         let value = serialize_table_header(header);
         let value_str = serde_json::to_string(&value)?;
         self.hasher.update(value_str);
@@ -72,7 +73,7 @@ impl TopHasher {
     }
 
     /// Append `Row` to the hasher
-    pub fn append(&mut self, row: &Row) -> Result<(), Error> {
+    pub fn append(&mut self, row: &Row) -> Res {
         let value = serialize_row_entry(row);
         let value_str = serde_json::to_string(&value)?;
         self.hasher.update(value_str);
@@ -122,7 +123,7 @@ impl Table {
         Table { header, records }
     }
 
-    async fn read_rows_impl<T>(reader: T) -> Result<Self, Error>
+    async fn read_rows_impl<T>(reader: T) -> Res<Self>
     where
         T: AsyncSeek + AsyncRead + Unpin + Send + 'static,
     {
@@ -209,17 +210,17 @@ impl Table {
     pub async fn read_from_path(
         storage: &impl Storage,
         path: impl AsRef<Path>,
-    ) -> Result<Self, Error> {
+    ) -> Res<Self> {
         let file = storage.open_file(path.as_ref()).await?;
         Table::read_rows_impl(file).await
     }
 
-    pub async fn get_header(&self) -> Result<Header, Error> {
+    pub async fn get_header(&self) -> Res<Header> {
         Ok(self.header.clone())
     }
 
     // TODO: make async
-    pub fn remove_record(&mut self, path: &PathBuf) -> Result<Row, Error> {
+    pub fn remove_record(&mut self, path: &PathBuf) -> Res<Row> {
         self.records
             .remove(path)
             .ok_or(Error::Table(format!("Cannot remove {:?}", path)))
@@ -235,16 +236,16 @@ impl Table {
         tokio_stream::iter(vec![Ok(entries)])
     }
 
-    pub async fn insert_record(&mut self, row: Row) -> Result<Option<Row>, Error> {
+    pub async fn insert_record(&mut self, row: Row) -> Res<Option<Row>> {
         Ok(self.records.insert(row.name.clone(), row))
     }
 
     /// Get a row from the table
-    pub async fn get_record(&self, path: &PathBuf) -> Result<Option<Row>, Error> {
+    pub async fn get_record(&self, path: &PathBuf) -> Res<Option<Row>> {
         Ok(self.records.get(path).cloned())
     }
 
-    pub async fn update_record(&mut self, row: Row) -> Result<Option<Row>, Error> {
+    pub async fn update_record(&mut self, row: Row) -> Res<Option<Row>> {
         Ok(self.records.insert(row.name.clone(), row))
     }
 
@@ -281,7 +282,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn read_existing_local() -> Result<(), Error> {
+    async fn read_existing_local() -> Res {
         let storage = mocks::storage::MockStorage::default();
         storage
             .write_file(
@@ -327,14 +328,14 @@ mod tests {
     // }
 
     #[test]
-    fn test_formatting_no_records() -> Result<(), multihash::Error> {
+    fn test_formatting_no_records() -> Res {
         let table = Table::new(Header::default(), BTreeMap::new());
         assert_eq!(table.to_string(), "Table({})".to_string());
         Ok(())
     }
 
     #[test]
-    fn test_formatting_records() -> Result<(), multihash::Error> {
+    fn test_formatting_records() -> Res {
         let table = Table::new(
             Header::default(),
             BTreeMap::from([
@@ -367,7 +368,7 @@ mod tests {
     }
 
     // #[test]
-    // fn test_top_hash() -> Result<(), Error> {
+    // fn test_top_hash() -> Res {
     //     let manifest = Table::new(
     //         Row {
     //             meta: serde_json::json!({

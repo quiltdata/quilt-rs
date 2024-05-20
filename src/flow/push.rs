@@ -17,7 +17,7 @@ use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::uri::S3PackageHandle;
-use crate::Error;
+use crate::Res;
 
 async fn use_existing_row_or_upload(
     remote: &impl Remote,
@@ -61,7 +61,7 @@ pub async fn push_package(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     namespace: Option<Namespace>,
-) -> Result<PackageLineage, Error> {
+) -> Res<PackageLineage> {
     let commit = match lineage.commit {
         None => return Ok(lineage), // nothing to commit
         Some(commit) => commit,
@@ -129,7 +129,7 @@ mod tests {
     use crate::uri::ManifestUri;
 
     #[tokio::test]
-    async fn test_no_push_if_no_commit() -> Result<(), Error> {
+    async fn test_no_push_if_no_commit() -> Res {
         let storage = mocks::storage::MockStorage::default();
         let remote = mocks::remote::MockRemote::default();
         let lineage = push_package(
@@ -146,7 +146,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_no_entries_push() -> Result<(), Error> {
+    async fn test_no_entries_push() -> Res {
         let manifest_uri = ManifestUri {
             bucket: "b".to_string(),
             namespace: ("a", "c").into(),
@@ -205,7 +205,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_single_chunk_push() -> Result<(), Error> {
+    async fn test_single_chunk_push() -> Res {
         let manifest_uri = ManifestUri {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
@@ -277,7 +277,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore]
-    async fn test_multichunk_push() -> Result<(), Error> {
+    async fn test_multichunk_push() -> Res {
         // TODO
         Ok(())
     }

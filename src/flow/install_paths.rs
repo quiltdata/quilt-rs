@@ -19,13 +19,14 @@ use crate::paths::DomainPaths;
 use crate::uri::Namespace;
 use crate::uri::S3Uri;
 use crate::Error;
+use crate::Res;
 
 async fn cache_immutable_object(
     storage: &impl Storage,
     remote: &impl Remote,
     object_dest: &PathBuf,
     uri: &S3Uri,
-) -> Result<(), Error> {
+) -> Res {
     let body = remote.get_object_stream(uri).await?;
     storage.write_byte_stream(object_dest, body).await
 }
@@ -34,7 +35,7 @@ async fn create_mutable_copy(
     storage: &impl Storage,
     immutable_source: &PathBuf,
     mutable_target: &PathBuf,
-) -> Result<chrono::DateTime<chrono::Utc>, Error> {
+) -> Res<chrono::DateTime<chrono::Utc>> {
     let parent_dir = mutable_target.parent();
     if let Some(parent) = parent_dir {
         storage.create_dir_all(parent).await?;
@@ -77,7 +78,7 @@ pub async fn install_paths(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     entries_paths: &Vec<PathBuf>,
-) -> Result<PackageLineage, Error> {
+) -> Res<PackageLineage> {
     if entries_paths.is_empty() {
         return Ok(lineage);
     }
@@ -164,7 +165,7 @@ mod tests {
     use crate::mocks;
 
     #[tokio::test]
-    async fn test_installing_one_cached_path() -> Result<(), Error> {
+    async fn test_installing_one_cached_path() -> Res {
         let working_dir = tempfile::tempdir()?;
 
         let domain_paths = &DomainPaths::new(working_dir.path().to_path_buf());
@@ -203,7 +204,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_installing_one_uncached_path() -> Result<(), Error> {
+    async fn test_installing_one_uncached_path() -> Res {
         let working_dir = tempfile::tempdir()?;
 
         let domain_paths = &DomainPaths::new(working_dir.path().to_path_buf());
@@ -247,7 +248,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_installing_path_that_doesnt_exists_in_manifest() -> Result<(), Error> {
+    async fn test_installing_path_that_doesnt_exists_in_manifest() -> Res {
         let lineage = mocks::lineage::with_commit_hash("fghijk");
         let remote = mocks::remote::MockRemote::default();
         let storage = mocks::storage::MockStorage::default();

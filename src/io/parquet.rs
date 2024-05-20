@@ -15,6 +15,7 @@ use tokio::fs::File;
 
 use crate::manifest::Row;
 use crate::Error;
+use crate::Res;
 
 /// Don't use it. It will be private
 pub struct ParquetWriter {
@@ -33,7 +34,7 @@ fn create_schema() -> Schema {
     ])
 }
 
-fn create_columns_from_row(row: &Row) -> Result<Vec<ArrayRef>, Error> {
+fn create_columns_from_row(row: &Row) -> Res<Vec<ArrayRef>> {
     Ok(vec![
         Arc::new(GenericByteArray::<datatypes::Utf8Type>::from(vec![
             row.display_name()
@@ -54,7 +55,7 @@ fn create_columns_from_row(row: &Row) -> Result<Vec<ArrayRef>, Error> {
     ])
 }
 
-fn create_columns(rows: Vec<Row>) -> Result<Vec<ArrayRef>, Error> {
+fn create_columns(rows: Vec<Res<Row>>) -> Res<Vec<ArrayRef>> {
     let mut names = Vec::new();
     let mut places = Vec::new();
     let mut sizes = Vec::new();
@@ -62,6 +63,7 @@ fn create_columns(rows: Vec<Row>) -> Result<Vec<ArrayRef>, Error> {
     let mut metas = Vec::new();
     let mut infos = Vec::new();
     for row in rows {
+        let row = row?;
         names.push(row.display_name());
         places.push(row.display_place());
         hashes.push(row.display_hash());
@@ -81,7 +83,7 @@ fn create_columns(rows: Vec<Row>) -> Result<Vec<ArrayRef>, Error> {
     ])
 }
 
-fn create_writer(file: File, schema: Arc<Schema>) -> Result<AsyncArrowWriter<File>, Error> {
+fn create_writer(file: File, schema: Arc<Schema>) -> Res<AsyncArrowWriter<File>> {
     let props = WriterProperties::builder()
         .set_compression(Compression::SNAPPY)
         .set_max_row_group_size(1024)
@@ -101,19 +103,19 @@ impl TryFrom<File> for ParquetWriter {
 
 impl ParquetWriter {
     /// Close and finalize the writer.
-    pub async fn flush(self) -> Result<(), Error> {
+    pub async fn flush(self) -> Res {
         self.writer.close().await?;
         Ok(())
     }
 
     // TODO: add support for Vec<Row>
-    pub async fn insert(&mut self, row: Row) -> Result<(), Error> {
-        let columns = create_columns_from_row(&row)?;
+    pub async fn insert(&mut self, row: Res<Row>) -> Res {
+        let columns = create_columns_from_row(&row?)?;
         let batch = RecordBatch::try_new(self.schema.clone(), columns)?;
         Ok(self.writer.write(&batch).await?)
     }
 
-    pub async fn insert_rows(&mut self, rows: Vec<Row>) -> Result<(), Error> {
+    pub async fn insert_rows(&mut self, rows: Vec<Res<Row>>) -> Res {
         let columns = create_columns(rows)?;
         let batch = RecordBatch::try_new(self.schema.clone(), columns)?;
         Ok(self.writer.write(&batch).await?)
