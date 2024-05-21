@@ -24,14 +24,13 @@ use jni::objects::{JClass, JString};
 use jni::sys::jstring;
 use jni::JNIEnv;
 
-use std::path::PathBuf;
-
 pub mod flow;
 
 pub mod checksum;
 mod error;
 mod installed_package;
 pub mod io;
+mod jni_bindings;
 pub mod lineage;
 mod local_domain;
 pub mod manifest;
@@ -47,27 +46,35 @@ pub use installed_package::InstalledPackage;
 pub use local_domain::LocalDomain;
 
 #[no_mangle]
+pub extern "system" fn Java_Quilt_commit<'local>(
+    env: JNIEnv<'local>,
+    class: JClass<'local>,
+    domain: JString<'local>,
+    namespace: JString<'local>,
+    message: JString<'local>,
+) -> jstring {
+    jni_bindings::commit(env, class, domain, namespace, message)
+}
+
+#[no_mangle]
 pub extern "system" fn Java_Quilt_install<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
+    env: JNIEnv<'local>,
+    class: JClass<'local>,
     domain: JString<'local>,
     uri: JString<'local>,
 ) -> jstring {
-    let runtime = tokio::runtime::Runtime::new();
-    let manifest_str: Result<String, Error> = runtime.unwrap().block_on(async {
-        let domain: String = env.get_string(&domain)?.into();
-        let uri: String = env.get_string(&uri)?.into();
+    jni_bindings::install(env, class, domain, uri)
+}
 
-        let local_domain = LocalDomain::new(PathBuf::from(domain));
-        let remote = io::remote::RemoteS3::new();
-        let uri: uri::S3PackageUri = uri.parse().unwrap();
-        let manifest_uri = io::manifest::resolve_manifest_uri(&remote, &uri).await?;
-        let manifest = local_domain.install_package(&manifest_uri).await;
-        let manifest_str = format!("{:?}", manifest);
-        Ok(manifest_str)
-    });
-
-    env.new_string(manifest_str.expect("Failed to install"))
+#[no_mangle]
+pub extern "system" fn Java_Quilt_push<'local>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    _domain: JString<'local>,
+    _namespace: JString<'local>,
+) -> jstring {
+    // jni_bindings::install_package(env, class, domain, uri)
+    env.new_string("Unimplemented")
         .expect("Couldn't create java string!")
         .into_raw()
 }

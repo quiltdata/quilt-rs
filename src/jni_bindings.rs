@@ -1,0 +1,63 @@
+use std::path::PathBuf;
+
+use jni::objects::{JClass, JString};
+use jni::sys::jstring;
+use jni::JNIEnv;
+
+use crate::local_domain;
+use crate::uri::Namespace;
+use crate::Error;
+use crate::Res;
+
+pub fn commit<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    domain: JString<'local>,
+    namespace: JString<'local>,
+    message: JString<'local>,
+) -> jstring {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let commit_hash: Res<String> = runtime.block_on(async {
+        let domain_path: String = env.get_string(&domain)?.into();
+        let namespace_str: String = env.get_string(&namespace)?.into();
+        let namespace = Namespace::try_from(namespace_str)?;
+        let message: String = env.get_string(&message)?.into();
+
+        let domain = local_domain::LocalDomain::new(PathBuf::from(domain_path));
+        local_domain::commit_package(&domain, namespace, message, None)
+            .await?
+            .map(|state| state.hash)
+            .ok_or(Error::Commit("Nothing to commit".to_string()))
+    });
+
+    env.new_string(commit_hash.expect("Failed to commit"))
+        .expect("Couldn't create java string!")
+        .into_raw()
+}
+
+pub fn install<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    domain: JString<'local>,
+    uri: JString<'local>,
+) -> jstring {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let manifest_path: Res<String> = runtime.block_on(async {
+        let domain_path: String = env.get_string(&domain)?.into();
+        let uri: String = env.get_string(&uri)?.into();
+
+        let domain = local_domain::LocalDomain::new(PathBuf::from(domain_path));
+        let installed_package = local_domain::install_package(&domain, &uri.parse()?, None).await?;
+        let manifest_path = installed_package
+            .manifest_path()
+            .await?
+            .display()
+            .to_string();
+
+        Ok(manifest_path)
+    });
+
+    env.new_string(manifest_path.expect("Failed to install"))
+        .expect("Couldn't create java string!")
+        .into_raw()
+}

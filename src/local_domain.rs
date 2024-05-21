@@ -4,20 +4,24 @@ use std::path::PathBuf;
 use crate::flow;
 use crate::installed_package::InstalledPackage;
 use crate::io::manifest::build_manifest_from_rows_stream;
+use crate::io::manifest::resolve_manifest_uri;
 use crate::io::manifest::RowsStream;
 use crate::io::remote::Remote;
 use crate::io::remote::RemoteS3;
 use crate::io::storage::LocalStorage;
 use crate::io::storage::Storage;
 use crate::lineage;
+use crate::lineage::CommitState;
 use crate::lineage::DomainLineage;
 use crate::manifest::Header;
+use crate::manifest::JsonObject;
 use crate::manifest::Table;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
+use crate::Error;
 use crate::Res;
 
 /// This is the entrypoint for the lib.
@@ -130,5 +134,39 @@ impl LocalDomain {
         let manifest_path = |_t: &str| dest_path.clone();
         build_manifest_from_rows_stream(&self.storage, manifest_path, Header::default(), stream)
             .await
+    }
+}
+
+pub async fn install_package(
+    local_domain: &LocalDomain,
+    uri: &S3PackageUri,
+    namespace: Option<Namespace>,
+) -> Res<InstalledPackage> {
+    let remote = RemoteS3::new();
+    let namespace = namespace.unwrap_or(uri.namespace.clone());
+    if let Some(installed_package) = local_domain.get_installed_package(&namespace).await? {
+        // FIXME: check the actual remote_manifest
+        return Ok(installed_package);
+    }
+    let uri = S3PackageUri {
+        namespace,
+        ..uri.clone()
+    };
+    let manifest_uri = resolve_manifest_uri(&remote, &uri).await?;
+    Ok(local_domain.install_package(&manifest_uri).await?)
+}
+
+pub async fn commit_package(
+    local_domain: &LocalDomain,
+    namespace: Namespace,
+    message: String,
+    user_meta: Option<JsonObject>,
+) -> Res<Option<CommitState>> {
+    match local_domain.get_installed_package(&namespace).await? {
+        Some(installed_package) => Ok(installed_package.commit(message, user_meta).await?),
+        None => Err(Error::Namespace(format!(
+            "Namespace not found: {}",
+            namespace
+        ))),
     }
 }

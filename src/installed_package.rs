@@ -33,11 +33,15 @@ pub struct InstalledPackage<S: Storage + Clone = LocalStorage, R: Remote + Clone
 }
 
 impl InstalledPackage {
-    pub async fn manifest(&self) -> Res<Table> {
+    pub async fn manifest_path(&self) -> Res<PathBuf> {
         let lineage = self.lineage.read(&self.storage).await?;
-        let pathbuf = self
+        Ok(self
             .paths
-            .installed_manifest(&self.namespace, lineage.current_hash());
+            .installed_manifest(&self.namespace, lineage.current_hash()))
+    }
+
+    pub async fn manifest(&self) -> Res<Table> {
+        let pathbuf = self.manifest_path().await?;
         Table::read_from_path(&self.storage, &pathbuf).await
     }
 
