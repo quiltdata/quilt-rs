@@ -1,6 +1,8 @@
 use std::marker::Unpin;
 use std::path::PathBuf;
 
+use tokio_stream::StreamExt;
+
 use crate::flow;
 use crate::installed_package::InstalledPackage;
 use crate::io::manifest::build_manifest_from_rows_stream;
@@ -137,7 +139,7 @@ impl LocalDomain {
     }
 }
 
-pub async fn install_package(
+pub async fn install_package_full(
     local_domain: &LocalDomain,
     uri: &S3PackageUri,
     namespace: Option<Namespace>,
@@ -153,7 +155,18 @@ pub async fn install_package(
         ..uri.clone()
     };
     let manifest_uri = resolve_manifest_uri(&remote, &uri).await?;
-    Ok(local_domain.install_package(&manifest_uri).await?)
+
+    let installed_package = local_domain.install_package(&manifest_uri).await?;
+    let manifest = installed_package.manifest().await?;
+    let mut chunk_stream = manifest.records_stream().await;
+    while let Some(chunk) = chunk_stream.next().await {
+        let paths = chunk?
+            .into_iter()
+            .map(|row| row.expect("Couldn't resolve row").name)
+            .collect::<Vec<_>>();
+        installed_package.install_paths(&paths).await?;
+    }
+    Ok(installed_package)
 }
 
 async fn get_installed_package(

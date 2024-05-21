@@ -12,11 +12,18 @@ class Quilt {
     }
 
     public static void main(String[] args) {
-        String domain_path = "./TEST";
+        // Must be absolute path, otherwise rust's URL::from doesn't work
+        String domain_path = "/home/fiskus/reps/quilt-rs/TEST";
         String uri = "quilt+s3://fiskus-us-east-1#package=scale/100u";
 
         String installed_package_path = Quilt.install(domain_path, uri);
         System.out.println(String.format("Package installed to %s", installed_package_path));
+
+        String top_hash = Quilt.commit(domain_path, "scale/100u", "Update package");
+        System.out.println(String.format("New top hash of the package is %s", top_hash));
+
+        String manifest_uri = Quilt.push(domain_path, "scale/100u");
+        System.out.println(String.format("Package pushed successfuly to %s", manifest_uri));
     }
 }
 

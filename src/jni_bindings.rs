@@ -17,7 +17,7 @@ pub fn commit<'local>(
     message: JString<'local>,
 ) -> jstring {
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    let commit_hash: Res<String> = runtime.block_on(async {
+    let result: Res<String> = runtime.block_on(async {
         let domain_path: String = env.get_string(&domain)?.into();
         let namespace_str: String = env.get_string(&namespace)?.into();
         let namespace = Namespace::try_from(namespace_str)?;
@@ -30,9 +30,13 @@ pub fn commit<'local>(
             .ok_or(Error::Commit("Nothing to commit".to_string()))
     });
 
-    env.new_string(commit_hash.expect("Failed to commit"))
-        .expect("Couldn't create java string!")
-        .into_raw()
+    match result {
+        Ok(commit_hash) => env
+            .new_string(commit_hash)
+            .expect("Couldn't create java string!")
+            .into_raw(),
+        Err(err) => panic!("{:?}", err),
+    }
 }
 
 pub fn install<'local>(
@@ -42,12 +46,13 @@ pub fn install<'local>(
     uri: JString<'local>,
 ) -> jstring {
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    let manifest_path: Res<String> = runtime.block_on(async {
+    let result: Res<String> = runtime.block_on(async {
         let domain_path: String = env.get_string(&domain)?.into();
         let uri: String = env.get_string(&uri)?.into();
 
         let domain = local_domain::LocalDomain::new(PathBuf::from(domain_path));
-        let installed_package = local_domain::install_package(&domain, &uri.parse()?, None).await?;
+        let installed_package =
+            local_domain::install_package_full(&domain, &uri.parse()?, None).await?;
         let manifest_path = installed_package
             .manifest_path()
             .await?
@@ -57,9 +62,13 @@ pub fn install<'local>(
         Ok(manifest_path)
     });
 
-    env.new_string(manifest_path.expect("Failed to install"))
-        .expect("Couldn't create java string!")
-        .into_raw()
+    match result {
+        Ok(manifest_path) => env
+            .new_string(manifest_path)
+            .expect("Couldn't create java string!")
+            .into_raw(),
+        Err(err) => panic!("{:?}", err),
+    }
 }
 
 pub fn push<'local>(
@@ -69,7 +78,7 @@ pub fn push<'local>(
     namespace: JString<'local>,
 ) -> jstring {
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    let manifest_path: Res<String> = runtime.block_on(async {
+    let result: Res<String> = runtime.block_on(async {
         let domain_path: String = env.get_string(&domain)?.into();
         let namespace_str: String = env.get_string(&namespace)?.into();
         let namespace = Namespace::try_from(namespace_str)?;
@@ -80,7 +89,11 @@ pub fn push<'local>(
         Ok(manifest_uri.to_string())
     });
 
-    env.new_string(manifest_path.expect("Failed to install"))
-        .expect("Couldn't create java string!")
-        .into_raw()
+    match result {
+        Ok(manifest_path) => env
+            .new_string(manifest_path)
+            .expect("Couldn't create java string!")
+            .into_raw(),
+        Err(err) => panic!("{:?}", err),
+    }
 }

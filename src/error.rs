@@ -115,4 +115,7 @@ pub enum Error {
 
     #[error("JNI error: {0}")]
     Jni(#[from] jni::errors::Error),
+
+    #[error("Strip path prefix error: {0}")]
+    StripPrefixError(#[from] std::path::StripPrefixError),
 }

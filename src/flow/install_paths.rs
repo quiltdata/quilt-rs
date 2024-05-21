@@ -134,7 +134,12 @@ pub async fn install_paths(
             },
         );
 
-        let working_dest = working_dir.join(&row.name);
+        let working_dest = working_dir.join(if row.name.starts_with("/") {
+            // FIXME: findout when the leading / was created. Most likely when package s3 folder.
+            row.name.strip_prefix("/")?
+        } else {
+            &row.name
+        });
         let last_modified = create_mutable_copy(storage, &object_dest, &working_dest).await?;
 
         lineage.paths.insert(
