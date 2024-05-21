@@ -69,14 +69,11 @@ pub extern "system" fn Java_Quilt_install<'local>(
 #[no_mangle]
 pub extern "system" fn Java_Quilt_push<'local>(
     env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    _domain: JString<'local>,
-    _namespace: JString<'local>,
+    class: JClass<'local>,
+    domain: JString<'local>,
+    namespace: JString<'local>,
 ) -> jstring {
-    // jni_bindings::install_package(env, class, domain, uri)
-    env.new_string("Unimplemented")
-        .expect("Couldn't create java string!")
-        .into_raw()
+    jni_bindings::push(env, class, domain, namespace)
 }
 
 pub type Res<T = ()> = std::result::Result<T, Error>;

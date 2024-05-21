@@ -61,3 +61,26 @@ pub fn install<'local>(
         .expect("Couldn't create java string!")
         .into_raw()
 }
+
+pub fn push<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    domain: JString<'local>,
+    namespace: JString<'local>,
+) -> jstring {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let manifest_path: Res<String> = runtime.block_on(async {
+        let domain_path: String = env.get_string(&domain)?.into();
+        let namespace_str: String = env.get_string(&namespace)?.into();
+        let namespace = Namespace::try_from(namespace_str)?;
+
+        let domain = local_domain::LocalDomain::new(PathBuf::from(domain_path));
+        let manifest_uri = local_domain::push_package(&domain, namespace).await?;
+
+        Ok(manifest_uri.to_string())
+    });
+
+    env.new_string(manifest_path.expect("Failed to install"))
+        .expect("Couldn't create java string!")
+        .into_raw()
+}

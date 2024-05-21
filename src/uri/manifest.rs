@@ -1,3 +1,5 @@
+use std::fmt;
+
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -33,6 +35,12 @@ impl From<ManifestUri> for S3Uri {
 impl From<&ManifestUri> for S3Uri {
     fn from(remote: &ManifestUri) -> S3Uri {
         remote.clone().into()
+    }
+}
+
+impl fmt::Display for ManifestUri {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", S3Uri::from(self))
     }
 }
 

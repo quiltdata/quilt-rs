@@ -156,17 +156,30 @@ pub async fn install_package(
     Ok(local_domain.install_package(&manifest_uri).await?)
 }
 
+async fn get_installed_package(
+    local_domain: &LocalDomain,
+    namespace: Namespace,
+) -> Res<InstalledPackage> {
+    local_domain
+        .get_installed_package(&namespace)
+        .await?
+        .ok_or(Error::Namespace(format!(
+            "Namespace not found: {}",
+            namespace
+        )))
+}
+
 pub async fn commit_package(
     local_domain: &LocalDomain,
     namespace: Namespace,
     message: String,
     user_meta: Option<JsonObject>,
 ) -> Res<Option<CommitState>> {
-    match local_domain.get_installed_package(&namespace).await? {
-        Some(installed_package) => Ok(installed_package.commit(message, user_meta).await?),
-        None => Err(Error::Namespace(format!(
-            "Namespace not found: {}",
-            namespace
-        ))),
-    }
+    let installed_package = get_installed_package(local_domain, namespace).await?;
+    installed_package.commit(message, user_meta).await
+}
+
+pub async fn push_package(local_domain: &LocalDomain, namespace: Namespace) -> Res<ManifestUri> {
+    let installed_package = get_installed_package(local_domain, namespace).await?;
+    installed_package.push().await
 }
