@@ -12,7 +12,7 @@ class Quilt {
     }
 
     public static void main(String[] args) {
-        // Must be absolute path, otherwise rust's URL::from doesn't work
+        // Must be absolute path, otherwise rust's `URL::from` doesn't work
         String domain_path = "/home/fiskus/reps/quilt-rs/TEST";
         String uri = "quilt+s3://fiskus-us-east-1#package=scale/100u";
 
