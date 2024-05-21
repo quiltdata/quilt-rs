@@ -93,7 +93,6 @@ impl Model {
 
 impl From<PathBuf> for Model {
     fn from(root: PathBuf) -> Self {
-        let local_domain = quilt_rs::LocalDomain::new(root);
-        Model::new(local_domain)
+        Model::new(root.into())
     }
 }

@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use jni::objects::{JClass, JString};
 use jni::sys::jstring;
 use jni::JNIEnv;
@@ -18,13 +16,12 @@ pub fn commit<'local>(
 ) -> jstring {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let result: Res<String> = runtime.block_on(async {
-        let domain_path: String = env.get_string(&domain)?.into();
+        let domain: String = env.get_string(&domain)?.into();
         let namespace_str: String = env.get_string(&namespace)?.into();
         let namespace = Namespace::try_from(namespace_str)?;
         let message: String = env.get_string(&message)?.into();
 
-        let domain = local_domain::LocalDomain::new(PathBuf::from(domain_path));
-        local_domain::commit_package(&domain, namespace, message, None)
+        local_domain::commit_package(&domain.into(), namespace, message, None)
             .await?
             .map(|state| state.hash)
             .ok_or(Error::Commit("Nothing to commit".to_string()))
@@ -47,12 +44,11 @@ pub fn install<'local>(
 ) -> jstring {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let result: Res<String> = runtime.block_on(async {
-        let domain_path: String = env.get_string(&domain)?.into();
+        let domain: String = env.get_string(&domain)?.into();
         let uri: String = env.get_string(&uri)?.into();
 
-        let domain = local_domain::LocalDomain::new(PathBuf::from(domain_path));
         let installed_package =
-            local_domain::install_package_full(&domain, &uri.parse()?, None).await?;
+            local_domain::install_package_full(&domain.into(), &uri.parse()?, None).await?;
         let manifest_path = installed_package
             .manifest_path()
             .await?
@@ -79,12 +75,11 @@ pub fn push<'local>(
 ) -> jstring {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let result: Res<String> = runtime.block_on(async {
-        let domain_path: String = env.get_string(&domain)?.into();
+        let domain: String = env.get_string(&domain)?.into();
         let namespace_str: String = env.get_string(&namespace)?.into();
         let namespace = Namespace::try_from(namespace_str)?;
 
-        let domain = local_domain::LocalDomain::new(PathBuf::from(domain_path));
-        let manifest_uri = local_domain::push_package(&domain, namespace).await?;
+        let manifest_uri = local_domain::push_package(&domain.into(), namespace).await?;
 
         Ok(manifest_uri.to_string())
     });

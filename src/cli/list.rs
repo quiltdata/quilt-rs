@@ -42,8 +42,7 @@ mod tests {
     async fn list() -> Result<(), Error> {
         let remote = quilt_rs::io::remote::RemoteS3::new();
         let temp_dir = TempDir::default();
-        let local_path = PathBuf::from(temp_dir.as_ref());
-        let local_domain = quilt_rs::LocalDomain::new(local_path);
+        let local_domain: quilt_rs::LocalDomain = PathBuf::from(temp_dir.as_ref()).into();
         let uri: quilt_rs::uri::S3PackageUri =
             "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md".parse()?;
         let manifest_uri = quilt_rs::io::manifest::resolve_manifest_uri(&remote, &uri).await?;

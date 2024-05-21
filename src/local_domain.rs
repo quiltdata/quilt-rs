@@ -139,6 +139,18 @@ impl LocalDomain {
     }
 }
 
+impl From<PathBuf> for LocalDomain {
+    fn from(path: PathBuf) -> Self {
+        LocalDomain::new(path)
+    }
+}
+
+impl From<String> for LocalDomain {
+    fn from(path: String) -> Self {
+        LocalDomain::new(path.into())
+    }
+}
+
 pub async fn install_package_full(
     local_domain: &LocalDomain,
     uri: &S3PackageUri,
