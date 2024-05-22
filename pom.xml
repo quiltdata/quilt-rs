@@ -32,6 +32,7 @@
 
     <name>QuiltCore</name>
     <description>Java implementation of the Quilt API on top of quilt-rs.</description>
+    <url>https://quiltdata.com</url>
 
     <properties>
         <maven.compiler.source>1.8</maven.compiler.source>
@@ -81,101 +82,9 @@
                             <goal>build</goal>
                         </goals>
                         <configuration>
-                            <!--
-                                Notes:
-                                  * All paths are relative to ${project.basedir}
-                                  * Spacing around double dashes to satisfy the XML parser.
-                            -->
-
-                            <!--
-                                If you need to, you can customize the path to the Cargo command
-                                Otherwise by default it will be searched for in the PATH.
-                            -->
-                            <!-- <cargoPath>/custom/path/to/rust/bin/cargo</cargoPath> -->
-
-                            <!--
-                                The path to the Rust crate we want to build (which will contain a Cargo.toml).
-                            -->
                             <path>./</path>
-
-                            <!--
-                                Passes `- - release` to `cargo build` to create a release build.
-
-                                The default is to just call `cargo build` producing a debug build.
-                                Many of the other `cargo build` options are also supported.
-                                E.g. ` - - features` and ` - - no-default-features`.
-                            -->
-                            <release>true</release>
-
-                            <!--
-                                Copy the generated binaries to the "classes" directory in the build target.
-                                We use this path because it will be bundled automatically into the final jar.
-                            -->
-                            <copyTo>${project.build.directory}/target/debug</copyTo>
-
-                            <!--
-                                Further nest copy into a child directory named through the target's platform.
-                                The directory name is computed by the `io.questdb.jar.jni.OsInfo.platform()` method.
-                            -->
+                            <copyTo>${project.build.directory}/classes/io/questdb/jni/quilt-rs/rust/libs</copyTo>
                             <copyWithPlatformDir>true</copyWithPlatformDir>
-
-                            <!--
-                                Additional environment variables used when calling `cargo build`.
-                            -->
-                            <environmentVariables>
-                            </environmentVariables>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <!-- The plugin can also be used to compile binaries. -->
-                        <id>quilt-rs-binary</id>
-                        <goals>
-                            <goal>build</goal>
-                        </goals>
-                        <configuration>
-                            <path>./</path>
-                            <release>true</release>
-                            <copyTo>${project.build.directory}/bin</copyTo>
-                            <features>
-                            </features>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>quilt-rs-test</id>
-
-                        <!--
-                            This execution will run the `cargo test` command on the crate.
-                            This is useful for running unit tests written in Rust.
-                        -->
-                        <goals>
-                            <goal>test</goal>
-                        </goals>
-
-                        <configuration>
-                            <!-- Relative path to the crate. -->
-                            <path>./</path>
-
-                            <!-- Specify `true` to test a release (rather than debug) build. -->
-                            <release>false</release>
-
-                            <verbosity>-v</verbosity>
-
-                            <environmentVariables>
-                            </environmentVariables>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <!-- 
-                            This is an example of how to skip an execution.
-                            You can use this to skip both "build" and "test" executions.
-                        -->
-                        <id>dummy</id>
-                        <goals>
-                            <goal>build</goal>
-                        </goals>
-                        <configuration>
-                            <skip>true</skip>
-                            <path>required, but not evaluated if skipped</path>
                         </configuration>
                     </execution>
                 </executions>
