@@ -41,6 +41,9 @@ cargo build && javac Quilt.java && java -Djava.library.path=./target/debug Quilt
 
 ### Create JAR file
 
+Requires `maven` and `JDK` to be installed.
+e.g., `brew install maven openjdk`
+
 ```sh
 mvn package
 ```
