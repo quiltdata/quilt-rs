@@ -1,3 +1,5 @@
+package nextflow.quilt.jep;
+
 public class Quilt {
     // TODO: message is optional
     // TODO: optional meta
