@@ -37,6 +37,7 @@ cargo upgrades
 
 ```sh
 cargo build && javac Quilt.java && java -Djava.library.path=./target/debug Quilt
+cp Quilt.class target/classes/
 ```
 
 ### Create and Install JAR file
