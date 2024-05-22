@@ -46,7 +46,7 @@ pub use installed_package::InstalledPackage;
 pub use local_domain::LocalDomain;
 
 #[no_mangle]
-pub extern "system" fn Java_Quilt_commit<'local>(
+pub extern "system" fn Java_nextflow_quilt_jep_Quilt_commit<'local>(
     env: JNIEnv<'local>,
     class: JClass<'local>,
     domain: JString<'local>,
@@ -57,7 +57,7 @@ pub extern "system" fn Java_Quilt_commit<'local>(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_Quilt_install<'local>(
+pub extern "system" fn Java_nextflow_quilt_jep_Quilt_install<'local>(
     env: JNIEnv<'local>,
     class: JClass<'local>,
     domain: JString<'local>,
@@ -67,7 +67,7 @@ pub extern "system" fn Java_Quilt_install<'local>(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_Quilt_push<'local>(
+pub extern "system" fn Java_nextflow_quilt_jep_Quilt_push<'local>(
     env: JNIEnv<'local>,
     class: JClass<'local>,
     domain: JString<'local>,
