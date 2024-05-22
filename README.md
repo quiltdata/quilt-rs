@@ -37,7 +37,9 @@ cargo upgrades
 
 ```sh
 cargo build && javac Quilt.java && java -Djava.library.path=./target/debug Quilt
-cp Quilt.class target/classes/
+mkdir -p target/classes/com/quiltdata/quiltcore
+cp Quilt.class target/classes/com/quiltdata/quiltcore/
+
 ```
 
 ### Create and Install JAR file
@@ -47,7 +49,8 @@ e.g., `brew install maven openjdk`
 
 ```sh
 mvn package
-mvn install:install-file -Dfile=target/quiltcore-0.2.0.jar -DpomFile=pom.xml
+mvn install:install-file -Dfile=target/quiltcore-0.2.1.jar -DpomFile=pom.xml
+jar tf target/quiltcore-0.2.1.jar
 ```
 
 This will install the jar in the [local Maven repository](https://maven.apache.org/guides/mini/guide-3rd-party-jars-local.html).

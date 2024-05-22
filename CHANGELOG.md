@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## [0.8.2]
+
+Add JNI Bindings for QuiltCore
+
 ## [0.8.1]
 
 * Test creating manifest with a billion rows via `quilt_rs benchmark` and improve performance https://github.com/quiltdata/quilt-rs/pull/179
