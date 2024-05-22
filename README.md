@@ -38,3 +38,17 @@ cargo upgrades
 ```sh
 cargo build && javac Quilt.java && java -Djava.library.path=./target/debug Quilt
 ```
+
+### Create and Install JAR file
+
+Requires `maven` and `JDK` to be installed.
+e.g., `brew install maven openjdk`
+
+```sh
+mvn package
+mvn install:install-file -Dfile=target/quiltcore-0.2.0.jar -DpomFile=pom.xml
+```
+
+This will install the jar in the [local Maven repository](https://maven.apache.org/guides/mini/guide-3rd-party-jars-local.html).
+
+

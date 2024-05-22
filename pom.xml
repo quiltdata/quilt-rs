@@ -1,0 +1,95 @@
+<!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  ~     ___                  _   ____  ____
+  ~    / _ \ _   _  ___  ___| |_|  _ \| __ )
+  ~   | | | | | | |/ _ \/ __| __| | | |  _ \
+  ~   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+  ~    \__\_\\__,_|\___||___/\__|____/|____/
+  ~
+  ~  Copyright (c) 2014-2019 Appsicle
+  ~  Copyright (c) 2019-2023 QuestDB
+  ~
+  ~  Licensed under the Apache License, Version 2.0 (the "License");
+  ~  you may not use this file except in compliance with the License.
+  ~  You may obtain a copy of the License at
+  ~
+  ~  http://www.apache.org/licenses/LICENSE-2.0
+  ~
+  ~  Unless required by applicable law or agreed to in writing, software
+  ~  distributed under the License is distributed on an "AS IS" BASIS,
+  ~  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  ~  See the License for the specific language governing permissions and
+  ~  limitations under the License.
+  ~
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.quiltdata</groupId>
+    <artifactId>quiltcore</artifactId>
+    <version>0.2.0</version>
+    <packaging>jar</packaging>
+
+    <name>QuiltCore</name>
+    <description>Java implementation of the Quilt API on top of quilt-rs.</description>
+    <url>https://quiltdata.com</url>
+
+    <properties>
+        <maven.compiler.source>1.8</maven.compiler.source>
+        <maven.compiler.target>1.8</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+        <maven.deploy.skip>true</maven.deploy.skip>
+        <maven.javadoc.skip>true</maven.javadoc.skip>
+    </properties>
+
+    <scm>
+        <url>https://github.com/quiltdata/quilt-rs</url>
+        <connection>scm:git:git://github.com/quiltdata/quilt-rs.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/quiltdata/quilt-rs.git</developerConnection>
+    </scm>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.questdb</groupId>
+            <artifactId>jar-jni</artifactId>
+            <version>1.2.0</version>
+        </dependency>
+        <dependency>
+			<groupId>junit</groupId>
+			<artifactId>junit</artifactId>
+			<version>4.13.2</version>
+			<scope>test</scope>
+		</dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+                The Rust Maven Plugin
+
+                Here it'll build the `quilt-rs` crate and place the so in the target's "classes" directory.
+                Placing it there will have Maven automatically bundle the compiled code in the Jar.
+            -->
+            <plugin>
+                <groupId>org.questdb</groupId>
+                <artifactId>rust-maven-plugin</artifactId>
+                <version>1.2.0</version>
+                <executions>
+                    <execution>
+                        <id>quilt-rs</id>
+                        <goals>
+                            <goal>build</goal>
+                        </goals>
+                        <configuration>
+                            <path>./</path>
+                            <copyTo>${project.build.directory}/classes/io/questdb/jni/quilt-rs/rust/libs</copyTo>
+                            <copyWithPlatformDir>true</copyWithPlatformDir>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>
