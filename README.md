@@ -38,3 +38,10 @@ cargo upgrades
 ```sh
 cargo build && javac Quilt.java && java -Djava.library.path=./target/debug Quilt
 ```
+
+### Create JAR file
+
+```sh
+mvn package
+```
+
