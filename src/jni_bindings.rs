@@ -67,6 +67,7 @@ pub fn install<'local>(
     }
 }
 
+/// Push a package from the local domain to the remote.
 pub fn push<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
