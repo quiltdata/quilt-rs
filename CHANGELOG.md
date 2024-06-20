@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## [0.8.2]
+
+* Chores: update dependencies
+
 ## [0.8.1]
 
 * Test creating manifest with a billion rows via `quilt_rs benchmark` and improve performance https://github.com/quiltdata/quilt-rs/pull/179
