@@ -9,10 +9,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install latest stable
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
             toolchain: stable
-            override: true
             components: rustfmt, clippy
       - name: Check formatting
         run: cargo fmt --check
