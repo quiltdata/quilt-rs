@@ -243,6 +243,23 @@ impl TryFrom<&str> for S3PackageUri {
     }
 }
 
+impl fmt::Display for S3PackageUri {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let hash = match &self.revision {
+            RevisionPointer::Tag(h) | RevisionPointer::Hash(h) => h,
+        };
+        let path_part = match &self.path {
+            Some(p) => format!("&path={}", p.display()),
+            None => "".to_string(),
+        };
+        write!(
+            f,
+            "quilt+s3://{}#package={}@{}{}",
+            self.bucket, self.namespace, hash, path_part
+        )
+    }
+}
+
 impl std::str::FromStr for S3PackageUri {
     type Err = Error;
 
