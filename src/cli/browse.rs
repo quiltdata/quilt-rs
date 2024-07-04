@@ -107,6 +107,7 @@ mod tests {
                 .unwrap()
                 .place,
             "s3://udp-spec/spec/quiltcore/READ%20ME.md?versionId=.l3tAGbfEBC4c.L2ywTpWbnweSpYLe8a"
+                .try_into()?
         );
         assert_eq!(
             output
@@ -116,6 +117,7 @@ mod tests {
                 .unwrap()
                 .place,
             "s3://udp-spec/spec/quiltcore/timestamp.txt?versionId=lifktjQgrgewg1FGXxls3UKtJSjl2shy"
+                .try_into()?
         );
         Ok(())
     }

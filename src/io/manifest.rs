@@ -9,13 +9,13 @@ use tokio::io::AsyncReadExt;
 use tokio_stream::Stream;
 use tokio_stream::StreamExt;
 use tracing::log;
-use url::Url;
 
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::io::ParquetWriter;
 use crate::manifest::Header;
 use crate::manifest::Manifest;
+use crate::manifest::PlaceValue;
 use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::manifest::TopHasher;
@@ -166,25 +166,29 @@ pub async fn upload_row(
     package_handle: S3PackageHandle,
     row: Row,
 ) -> Res<Row> {
-    let local_url = Url::parse(&row.place)?;
-    if local_url.scheme() != "file" {
-        return Err(Error::FileUri(local_url));
+    match row.place.value {
+        PlaceValue::S3Uri(uri) => Err(Error::FileUri(uri.to_string())),
+        PlaceValue::PathBuf(file_path) => {
+            let object_uri = ObjectUri::new(package_handle, row.name.clone());
+            log::info!("Uploading to S3: {}", object_uri);
+
+            let (remote_url, hash) = remote
+                .upload_file(&file_path, &object_uri.into(), row.size)
+                .await?;
+
+            // Update the manifest with the sha2-256-chunked checksum
+            // "Relax" the manifest by using those new remote keys
+            Ok(Row {
+                hash,
+                place: remote_url.into(),
+                ..row
+            })
+        }
+        PlaceValue::SharePoint(url) => Err(Error::FileUri(url.to_string())),
+        PlaceValue::Header => Err(Error::PlaceUsed(
+            "We shouldn't upload header as entry row".to_string(),
+        )),
     }
-    let file_path = local_url
-        .to_file_path()
-        .map_err(|_| Error::FileUri(local_url))?;
-
-    let object_uri = ObjectUri::new(package_handle, row.name.clone());
-    log::info!("Uploading to S3: {}", object_uri);
-
-    let (remote_url, hash) = remote
-        .upload_file(&file_path, &object_uri.into(), row.size)
-        .await?;
-
-    // Update the manifest with the sha2-256-chunked checksum
-    // "Relax" the manifest by using those new remote keys
-    let place = remote_url.to_string();
-    Ok(Row { hash, place, ..row })
 }
 
 enum ManifestTarget {

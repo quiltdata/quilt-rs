@@ -186,7 +186,7 @@ impl Table {
 
                     let row = Row {
                         name: name.into(),
-                        place: place_column.value(idx).into(),
+                        place: place_column.value(idx).try_into()?,
                         size: size_column.value(idx),
                         hash,
                         info: serde_json::from_str(info_column.value(idx))
@@ -340,7 +340,7 @@ mod tests {
                     PathBuf::from("one"),
                     Row {
                         name: PathBuf::from("AA"),
-                        place: "AB".to_string(),
+                        place: "file://A/B".try_into()?,
                         size: 100,
                         hash: Multihash::wrap(100, b"A")?,
                         info: serde_json::Value::Null,
@@ -351,7 +351,7 @@ mod tests {
                     PathBuf::from("two"),
                     Row {
                         name: PathBuf::from("BA"),
-                        place: "BB".to_string(),
+                        place: "file://B/B".try_into()?,
                         size: 200,
                         hash: Multihash::wrap(200, b"B")?,
                         info: serde_json::Value::Null,
@@ -360,7 +360,7 @@ mod tests {
                 ),
             ]),
         );
-        assert_eq!(table.to_string(), r##"Table({"one": "Row(AA)@AB^100#[65]$$Null$Null", "two": "Row(BA)@BB^200#[66]$$Null$Null"})"##.to_string());
+        assert_eq!(table.to_string(), r##"Table({"one": "Row(AA)@file://a/B^100#[65]$$Null$Null", "two": "Row(BA)@file://b/B^200#[66]$$Null$Null"})"##.to_string());
         Ok(())
     }
 

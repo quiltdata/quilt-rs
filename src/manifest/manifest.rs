@@ -207,7 +207,7 @@ impl Manifest {
                 }
                 manifest_rows.push(ManifestRow {
                     logical_key: row.name.clone(),
-                    physical_key: row.place.clone(),
+                    physical_key: row.place.to_string(),
                     hash: row.hash.try_into().unwrap(),
                     size: row.size,
                     meta: Some(meta),

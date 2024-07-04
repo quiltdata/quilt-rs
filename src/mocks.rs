@@ -27,6 +27,7 @@ pub mod manifest {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
+    use crate::manifest::Place;
     use crate::manifest::Row;
     use crate::manifest::Table;
 
@@ -53,7 +54,7 @@ pub mod manifest {
     pub fn row_with_name(name: PathBuf) -> Row {
         Row {
             name,
-            place: "file:///z/x/y".to_string(),
+            place: Place::from_path_buf("/z/x/y".into()),
             hash: row_hash_sample1(),
             ..Row::default()
         }

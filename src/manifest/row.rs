@@ -2,39 +2,137 @@ use std::fmt;
 use std::path::PathBuf;
 
 use multihash::Multihash;
-// use url::Url;
+use url::Url;
 
 use crate::io::remote::S3Attributes;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
+use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
 
 const HEADER_ROW: &str = ".";
 
-// enum PlaceValue {
-//   S3Uri(S3Uri),
-//   PathBuf(PathBuf),
-// }
-//
-// #[derive(Clone, Debug, PartialEq)]
-// pub struct Place {
-//     value: PlaceValue,
-// }
-//
-// impl Default for Place {
-//     fn default() -> Self {
-//         Place {
-//             url: Url::from_file_path(PathBuf::default()).unwrap(),
-//         }
-//     }
-// }
-//
-// impl From<PathBuf> for Place {
-// }
-//
-// impl Into<PathBuf> for Place {
-// }
+#[derive(Clone, Debug, PartialEq)]
+pub enum PlaceValue {
+    Header,
+    PathBuf(PathBuf),
+    S3Uri(S3Uri),
+    SharePoint(Url), // TODO: SharePointUri
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Place {
+    pub value: PlaceValue,
+}
+
+impl Place {
+    pub fn new(value: PlaceValue) -> Self {
+        Place { value }
+    }
+
+    pub fn from_path_buf(path: PathBuf) -> Self {
+        Place::new(PlaceValue::PathBuf(path))
+    }
+
+    pub fn from_s3_uri(s3_uri: S3Uri) -> Self {
+        Place::new(PlaceValue::S3Uri(s3_uri))
+    }
+
+    pub fn from_sharepoint_uri(url: Url) -> Self {
+        Place::new(PlaceValue::SharePoint(url))
+    }
+
+    pub fn header() -> Self {
+        Place {
+            value: PlaceValue::Header,
+        }
+    }
+}
+
+impl Default for Place {
+    fn default() -> Self {
+        Place {
+            value: PlaceValue::PathBuf(PathBuf::default()),
+        }
+    }
+}
+
+impl From<PathBuf> for Place {
+    fn from(path: PathBuf) -> Place {
+        Place {
+            value: PlaceValue::PathBuf(path),
+        }
+    }
+}
+
+impl From<Place> for PathBuf {
+    fn from(place: Place) -> Self {
+        match place.value {
+            PlaceValue::PathBuf(path) => path,
+            _ => panic!("Place is not a file://"),
+        }
+    }
+}
+
+impl From<S3Uri> for Place {
+    fn from(s3_uri: S3Uri) -> Place {
+        Place {
+            value: PlaceValue::S3Uri(s3_uri),
+        }
+    }
+}
+
+impl From<Place> for S3Uri {
+    fn from(place: Place) -> Self {
+        match place.value {
+            PlaceValue::S3Uri(s3_uri) => s3_uri,
+            _ => panic!("Place is not an S3 URI"),
+        }
+    }
+}
+
+impl TryFrom<&str> for Place {
+    type Error = Error;
+
+    fn try_from(input: &str) -> Result<Self, Self::Error> {
+        let s3_uri = S3Uri::try_from(input);
+        if s3_uri.is_ok() {
+            return s3_uri.map(Place::from);
+        }
+        let s3_uri = Url::try_from(input);
+        if s3_uri.is_ok() {
+            let s3_uri = s3_uri.unwrap();
+            if s3_uri.scheme() == "file" {
+                let path = match s3_uri.domain() {
+                    Some(domain) => format!("{}{}", domain, s3_uri.path()),
+                    None => s3_uri.path().to_string(),
+                };
+                return Ok(Place::from(PathBuf::from(path)));
+            }
+        }
+        Err(Self::Error::Place(input.to_string()))
+    }
+}
+
+impl TryFrom<String> for Place {
+    type Error = Error;
+
+    fn try_from(input: String) -> Result<Self, Self::Error> {
+        input.as_str().try_into()
+    }
+}
+
+impl fmt::Display for Place {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.value {
+            PlaceValue::Header => write!(f, "."),
+            PlaceValue::PathBuf(path) => write!(f, "file://{}", path.display()),
+            PlaceValue::S3Uri(uri) => write!(f, "{}", uri),
+            PlaceValue::SharePoint(url) => write!(f, "{}", url),
+        }
+    }
+}
 
 /// Represents the header row in Parquet manifest
 #[derive(Clone, Debug, PartialEq)]
@@ -60,7 +158,7 @@ impl From<Header> for Row {
     fn from(header: Header) -> Self {
         Row {
             name: HEADER_ROW.into(),
-            place: HEADER_ROW.into(),
+            place: Place::header(),
             size: 0,
             hash: Multihash::default(),
             info: header.info,
@@ -73,7 +171,7 @@ impl From<Header> for Row {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Row {
     pub name: PathBuf,
-    pub place: String,
+    pub place: Place,
     pub size: u64,
     pub hash: Multihash<256>,
     pub info: serde_json::Value, // system metadata
@@ -86,7 +184,7 @@ impl Row {
     }
 
     pub fn display_place(&self) -> String {
-        self.place.clone()
+        self.place.to_string()
     }
 
     pub fn display_size(&self) -> u64 {
@@ -139,7 +237,7 @@ impl TryFrom<ManifestRow> for Row {
     fn try_from(manifest_row: ManifestRow) -> Result<Self, Self::Error> {
         Ok(Row {
             name: manifest_row.logical_key,
-            place: manifest_row.physical_key,
+            place: manifest_row.physical_key.try_into()?,
             hash: manifest_row.hash.try_into()?,
             size: manifest_row.size,
             meta: match manifest_row.meta {
@@ -157,7 +255,7 @@ impl From<S3Attributes> for Row {
         let name = PathBuf::from(attrs.object_uri.key[prefix_len..].to_string());
         Row {
             name,
-            place: attrs.object_uri.to_string(),
+            place: attrs.object_uri.into(),
             // XXX: can we use `as u64` safely here?
             size: attrs.size,
             hash: attrs.hash,
@@ -171,16 +269,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_formatting_without_path() -> Res {
+    fn test_formatting() -> Res {
         let row = Row {
             name: PathBuf::from("Foo"),
-            place: "Bar".to_string(),
+            place: "file://B/Ar".try_into()?,
             size: 123,
             hash: Multihash::wrap(345, b"hello world")?,
             info: serde_json::Value::Bool(false),
             meta: serde_json::json!({"foo":"bar"}),
         };
-        assert_eq!(row.to_string(), r##"Row(Foo)@Bar^123#[104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100]$$Bool(false)$Object {"foo": String("bar")}"##.to_string());
+        assert_eq!(row.to_string(), r##"Row(Foo)@file://b/Ar^123#[104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100]$$Bool(false)$Object {"foo": String("bar")}"##.to_string());
         Ok(())
     }
 }

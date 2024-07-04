@@ -4,7 +4,6 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use tokio_stream::StreamExt;
-use url::Url;
 
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::RowsStream;
@@ -12,12 +11,13 @@ use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
+use crate::manifest::Place;
+use crate::manifest::PlaceValue;
 use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
 use crate::uri::Namespace;
-use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
 
@@ -25,9 +25,17 @@ async fn cache_immutable_object(
     storage: &impl Storage,
     remote: &impl Remote,
     object_dest: &PathBuf,
-    uri: &S3Uri,
+    uri: &Place,
 ) -> Res {
-    let body = remote.get_object_stream(uri).await?;
+    let body = match &uri.value {
+        PlaceValue::S3Uri(uri) => remote.get_object_stream(uri).await?,
+        PlaceValue::PathBuf(path) => storage.read_byte_stream(path).await?,
+        _ => {
+            return Err(Error::Unimplemented(
+                "SharePoint not supported yet".to_string(),
+            ))
+        }
+    };
     storage.write_byte_stream(object_dest, body).await
 }
 
@@ -118,18 +126,13 @@ pub async fn install_paths(
         let object_dest = paths.object(row.hash.digest());
 
         if !storage.exists(&object_dest).await {
-            cache_immutable_object(storage, remote, &object_dest, &row.place.parse()?).await?;
+            cache_immutable_object(storage, remote, &object_dest, &row.place).await?;
         }
 
-        let place = Url::from_file_path(&object_dest)
-            .map_err(|_| {
-                Error::InstallPath(format!("Failed to create URL from {:?}", &object_dest))
-            })?
-            .to_string();
         entries.insert(
             row.name.clone(),
             Row {
-                place,
+                place: object_dest.clone().into(),
                 ..row.clone()
             },
         );
@@ -163,6 +166,7 @@ mod tests {
 
     use crate::manifest::Row;
     use crate::mocks;
+    use crate::uri::S3Uri;
 
     #[tokio::test]
     async fn test_installing_one_cached_path() -> Res {
@@ -216,7 +220,7 @@ mod tests {
         let mut manifest = mocks::manifest::with_rows(vec![Row {
             name: PathBuf::from("a/a"),
             hash: mocks::row_hash_sample1(),
-            place: "s3://any/any/any/any/any.md".to_string(),
+            place: "s3://any/any/any/any/any.md".try_into()?,
             ..Row::default()
         }]);
         remote

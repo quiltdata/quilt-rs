@@ -245,7 +245,7 @@ mod tests {
             .await?;
         let manifest = mocks::manifest::with_rows(vec![Row {
             name: PathBuf::from("bar"),
-            place: format!("file://{}", file_path.display()),
+            place: file_path.into(),
             ..Row::default()
         }]);
 

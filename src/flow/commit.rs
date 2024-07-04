@@ -6,7 +6,6 @@ use std::path::PathBuf;
 use serde_json::json;
 use tokio_stream::StreamExt;
 use tracing::log;
-use url::Url;
 
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::RowsStream;
@@ -65,13 +64,10 @@ async fn create_immutable_object_copy(
     // FIXME: This should really be done when the domain is created.
     storage.create_dir_all(&objects_dir).await?;
     let object_dest = objects_dir.join(hex::encode(current.hash.digest()));
-    let new_physical_key = Url::from_file_path(&object_dest)
-        .map_err(|_| Error::Commit(format!("Failed to create URL from {:?}", &object_dest)))?
-        .into();
 
     let row = Row {
         name: logical_key.clone(),
-        place: new_physical_key,
+        place: object_dest.clone().into(),
         size: current.size,
         hash: current.hash,
         info: serde_json::Value::default(),
