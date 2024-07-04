@@ -23,7 +23,11 @@ impl TryFrom<&str> for S3Uri {
         let bucket = parsed_url
             .host_str()
             .ok_or(Error::S3Uri("missing bucket".to_string()))?;
-        let key = percent_encoding::percent_decode_str(&parsed_url.path()[1..]).decode_utf8()?;
+        let path = parsed_url.path();
+        if path.is_empty() {
+            return Err(Error::S3Uri("missing key".to_string()));
+        }
+        let key = percent_encoding::percent_decode_str(&path[1..]).decode_utf8()?;
         let queries = parsed_url.query_pairs().into_owned().collect::<Vec<_>>();
         if queries.len() > 1 {
             return Err(Error::S3Uri(

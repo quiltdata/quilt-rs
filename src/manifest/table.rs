@@ -340,7 +340,7 @@ mod tests {
                     PathBuf::from("one"),
                     Row {
                         name: PathBuf::from("AA"),
-                        place: "file://A/B".try_into()?,
+                        place: "file:///A/b".try_into()?,
                         size: 100,
                         hash: Multihash::wrap(100, b"A")?,
                         info: serde_json::Value::Null,
@@ -351,7 +351,7 @@ mod tests {
                     PathBuf::from("two"),
                     Row {
                         name: PathBuf::from("BA"),
-                        place: "file://B/B".try_into()?,
+                        place: "file:///B/b".try_into()?,
                         size: 200,
                         hash: Multihash::wrap(200, b"B")?,
                         info: serde_json::Value::Null,
@@ -360,7 +360,7 @@ mod tests {
                 ),
             ]),
         );
-        assert_eq!(table.to_string(), r##"Table({"one": "Row(AA)@file://a/B^100#[65]$$Null$Null", "two": "Row(BA)@file://b/B^200#[66]$$Null$Null"})"##.to_string());
+        assert_eq!(table.to_string(), r##"Table({"one": "Row(AA)@file:///A/b^100#[65]$$Null$Null", "two": "Row(BA)@file:///B/b^200#[66]$$Null$Null"})"##.to_string());
         Ok(())
     }
 

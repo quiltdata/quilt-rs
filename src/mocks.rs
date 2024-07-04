@@ -54,7 +54,7 @@ pub mod manifest {
     pub fn row_with_name(name: PathBuf) -> Row {
         Row {
             name,
-            place: Place::from_path_buf("/z/x/y".into()),
+            place: Place::from(PathBuf::from("/z/x/y")),
             hash: row_hash_sample1(),
             ..Row::default()
         }
