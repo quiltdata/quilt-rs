@@ -7,11 +7,22 @@ use crate::uri::S3Uri;
 use crate::Error;
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct SharePointUri {
+    value: Url,
+}
+
+impl fmt::Display for SharePointUri {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.value)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum PlaceValue {
     Header,
     PathBuf(PathBuf),
     S3Uri(S3Uri),
-    SharePoint(Url), // TODO: SharePointUri
+    SharePoint(SharePointUri),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -25,9 +36,7 @@ impl Place {
     }
 
     pub fn header() -> Self {
-        Place {
-            value: PlaceValue::Header,
-        }
+        Place::new(PlaceValue::Header)
     }
 }
 
