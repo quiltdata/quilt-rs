@@ -123,7 +123,7 @@ async fn upload_tag(remote: &impl Remote, manifest_uri: &ManifestUri, tag_uri: T
 /// Then creates `ManifestUri`.
 pub async fn resolve_latest(remote: &impl Remote, uri: S3PackageHandle) -> Res<ManifestUri> {
     let tag_uri = TagUri::latest(uri.clone());
-    let stream = remote.get_object_stream(&tag_uri.into()).await?;
+    let stream = remote.get_object_stream(&tag_uri.into()).await?.stream;
     let hash = bytestream_to_string(stream).await?;
     Ok(ManifestUri {
         hash,

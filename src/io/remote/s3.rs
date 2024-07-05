@@ -13,7 +13,6 @@ use aws_smithy_types::byte_stream::Length;
 use parquet::data_type::AsBytes;
 
 use multihash::Multihash;
-use tokio::io::AsyncRead;
 
 use crate::checksum::calculate_sha256_checksum;
 use crate::checksum::get_checksum_chunksize_and_parts;
@@ -22,6 +21,7 @@ use crate::checksum::ContentHash;
 use crate::checksum::MPU_MAX_PARTS;
 use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use crate::checksum::MULTIPART_THRESHOLD;
+use crate::io::remote::GetObject;
 use crate::io::remote::HeadObject;
 use crate::io::remote::ObjectsStream;
 use crate::io::remote::Remote;
@@ -59,7 +59,7 @@ impl TryFrom<GetObjectAttributesOutput> for S3AttributesWrapper {
     }
 }
 
-async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<ByteStream> {
+async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<GetObject> {
     let result = client.get_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
     let result = match &s3_uri.version {
         Some(version) => result.version_id(version),
@@ -70,12 +70,21 @@ async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<B
         .send()
         .await
         .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
-    // FIXME: Return `HeadObject` as well
-    Ok(result.body)
-}
 
-async fn get_object(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<impl AsyncRead> {
-    Ok(get_object_stream(client, s3_uri).await?.into_async_read())
+    let size = match u64::try_from(result.content_length.unwrap()) {
+        Err(_) => {
+            let msg = "Failed to convert content length to u64";
+            return Err(Error::S3HeadObject(msg.into()));
+        }
+        Ok(size) => size,
+    };
+    let version = result.version_id().map(|v| v.to_string());
+    let head = HeadObject { size, version };
+
+    Ok(GetObject {
+        head,
+        stream: result.body,
+    })
 }
 
 async fn put_object_and_checksum(
@@ -252,11 +261,6 @@ impl Remote for RemoteS3 {
         }
     }
 
-    async fn get_object(&self, s3_uri: &S3Uri) -> Res<impl AsyncRead + Send + Sync + Unpin> {
-        let client = get_client_for_bucket(&s3_uri.bucket).await?;
-        get_object(&client, s3_uri).await
-    }
-
     async fn get_object_attributes(
         &self,
         listing_uri: &S3Uri,
@@ -299,7 +303,7 @@ impl Remote for RemoteS3 {
         })
     }
 
-    async fn get_object_stream(&self, s3_uri: &S3Uri) -> Res<ByteStream> {
+    async fn get_object_stream(&self, s3_uri: &S3Uri) -> Res<GetObject> {
         let client = get_client_for_bucket(&s3_uri.bucket).await?;
         get_object_stream(&client, s3_uri).await
     }

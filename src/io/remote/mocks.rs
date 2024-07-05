@@ -2,11 +2,10 @@ use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;
 use multihash::Multihash;
-use tokio::io::AsyncRead;
-use tokio::io::AsyncReadExt;
 use tracing::log;
 
 use crate::checksum;
+use crate::io::remote::GetObject;
 use crate::io::remote::HeadObject;
 use crate::io::remote::ObjectsStream;
 use crate::io::remote::S3Attributes;
@@ -34,26 +33,24 @@ impl Remote for MockRemote {
     async fn head_object(&self, s3_uri: &S3Uri) -> Res<HeadObject> {
         let key = s3_uri.to_string();
         log::debug!("Mocking {} head request", key);
-        let size = self.storage.open_file(&key).await?.metadata().await?.len();
+        let file = self
+            .storage
+            .open_file(&key)
+            .await
+            .map_err(|err| match err {
+                Error::Io(inner_err) => {
+                    if inner_err.kind() == std::io::ErrorKind::NotFound {
+                        Error::S3("Key doesn't exists".to_string())
+                    } else {
+                        Error::Io(inner_err)
+                    }
+                }
+                other => other,
+            })?;
+        let size = file.metadata().await?.len();
         Ok(HeadObject {
             size,
             version: None,
-        })
-    }
-
-    async fn get_object(&self, s3_uri: &S3Uri) -> Res<impl AsyncRead + Send + Unpin> {
-        let key = s3_uri.to_string();
-        log::debug!("Mocking {} get request", key);
-
-        self.storage.open_file(&key).await.map_err(|err| match err {
-            Error::Io(inner_err) => {
-                if inner_err.kind() == std::io::ErrorKind::NotFound {
-                    Error::S3("Key doesn't exists".to_string())
-                } else {
-                    Error::Io(inner_err)
-                }
-            }
-            other => other,
         })
     }
 
@@ -73,18 +70,21 @@ impl Remote for MockRemote {
         };
         let key = object_uri.to_string();
         log::debug!("Mocking {} head request", key);
-        let size = self.storage.open_file(&key).await?.metadata().await?.len();
-        let file = self.get_object(&object_uri).await?;
+        let file = self.storage.open_file(&key).await?;
+        let size = file.metadata().await?.len();
         self.storage
             .get_object_attributes(file, size, listing_uri, object_key.as_ref().to_string())
             .await
     }
 
-    async fn get_object_stream(&self, s3_uri: &S3Uri) -> Res<ByteStream> {
+    async fn get_object_stream(&self, s3_uri: &S3Uri) -> Res<GetObject> {
         let key = s3_uri.to_string();
         log::debug!("Mocking {} get request", key);
 
-        self.storage
+        let head = self.head_object(s3_uri).await?;
+
+        let stream = self
+            .storage
             .read_byte_stream(&key)
             .await
             .map_err(|err| match err {
@@ -96,7 +96,8 @@ impl Remote for MockRemote {
                     }
                 }
                 other => other,
-            })
+            })?;
+        Ok(GetObject { head, stream })
     }
 
     async fn list_objects(&self, _listing_uri: S3Uri) -> impl ObjectsStream {
@@ -142,16 +143,20 @@ mod tests {
             )
             .await?;
         let s3_uri_not_found = S3Uri::try_from("s3://b/n?versionId=v")?;
-        let not_found = remote.get_object(&s3_uri_not_found).await;
+        let not_found = remote.get_object_stream(&s3_uri_not_found).await;
         match not_found {
             Err(err) => assert_eq!(err.to_string(), "S3 error: Key doesn't exists".to_string()),
             Ok(_) => panic!("shouldn't happen"),
         }
         let s3_uri_found = S3Uri::try_from("s3://found/n?versionId=v")?;
-        let mut found = remote.get_object(&s3_uri_found).await?;
-        let mut output = Vec::new();
-        found.read_to_end(&mut output).await?;
-        assert_eq!(output, b"Hello");
+        let found = remote
+            .get_object_stream(&s3_uri_found)
+            .await?
+            .stream
+            .collect()
+            .await?
+            .to_vec();
+        assert_eq!(found, b"Hello");
         Ok(())
     }
 }

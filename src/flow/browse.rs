@@ -1,4 +1,3 @@
-use tokio::io::AsyncReadExt;
 use tokio_stream::StreamExt;
 
 use crate::io::manifest::build_manifest_from_rows_stream;
@@ -28,15 +27,22 @@ async fn is_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Res<bool> {
 
 async fn fetch_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Res<Vec<u8>> {
     let s3_uri = S3Uri::from(manifest);
-    let mut contents = remote.get_object(&s3_uri).await?;
-    let mut output = Vec::new();
-    contents.read_to_end(&mut output).await?;
-    Ok(output)
+    Ok(remote
+        .get_object_stream(&s3_uri)
+        .await?
+        .stream
+        .collect()
+        .await?
+        .to_vec())
 }
 
 async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res<Manifest> {
     let s3_uri: S3Uri = ManifestUriLegacy::from(manifest_uri).into();
-    let contents = remote.get_object(&s3_uri).await?;
+    let contents = remote
+        .get_object_stream(&s3_uri)
+        .await?
+        .stream
+        .into_async_read();
     Manifest::from_reader(contents).await
 }
 

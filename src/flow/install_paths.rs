@@ -28,7 +28,7 @@ async fn cache_immutable_object(
     uri: &Place,
 ) -> Res {
     let body = match &uri.value {
-        PlaceValue::S3Uri(uri) => remote.get_object_stream(uri).await?,
+        PlaceValue::S3Uri(uri) => remote.get_object_stream(uri).await?.stream,
         PlaceValue::PathBuf(path) => storage.read_byte_stream(path).await?,
         _ => {
             return Err(Error::Unimplemented(

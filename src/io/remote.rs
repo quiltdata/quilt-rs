@@ -8,7 +8,6 @@ use std::path::Path;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::Object;
 use multihash::Multihash;
-use tokio::io::AsyncRead;
 use tokio_stream::Stream;
 
 use crate::uri::S3Uri;
@@ -37,6 +36,11 @@ pub struct HeadObject {
     pub size: u64,
 }
 
+pub struct GetObject {
+    pub head: HeadObject,
+    pub stream: ByteStream,
+}
+
 pub type StreamObjectChunk = Vec<Res<Object>>;
 
 pub type StreamItem = Res<StreamObjectChunk>;
@@ -52,13 +56,6 @@ pub trait Remote {
 
     fn head_object(&self, s3_uri: &S3Uri) -> impl Future<Output = Res<HeadObject>> + Send;
 
-    /// Gets the objects contents as a `File`
-    // TODO: use `self.get_object_stream`. Under-the-hood it is a stream already
-    fn get_object(
-        &self,
-        s3_uri: &S3Uri,
-    ) -> impl Future<Output = Res<impl AsyncRead + Send + Sync + Unpin>> + Send;
-
     /// Get object attributes: checksums, number of chunks, chunksize, version_id
     fn get_object_attributes(
         &self,
@@ -67,7 +64,7 @@ pub trait Remote {
     ) -> impl Future<Output = Res<S3Attributes>>;
 
     /// Fetches the objects contents as a `ByteStream`
-    fn get_object_stream(&self, s3_uri: &S3Uri) -> impl Future<Output = Res<ByteStream>> + Send;
+    fn get_object_stream(&self, s3_uri: &S3Uri) -> impl Future<Output = Res<GetObject>> + Send;
 
     /// List objects list under S3 prefix using tokio Stream
     // TODO: return Item = Res<Row>

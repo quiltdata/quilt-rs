@@ -43,7 +43,7 @@ async fn get_object_attributes_inner(
                 version: None, // FIXME: Where is version?
             };
             let head = remote.head_object(&uri).await?;
-            let object = remote.get_object(&uri).await?;
+            let object = remote.get_object_stream(&uri).await?.stream.into_async_read();
             storage
                 .get_object_attributes(object, head.size, listing_uri, &object_key)
                 .await
