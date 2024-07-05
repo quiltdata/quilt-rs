@@ -4,8 +4,10 @@ use aws_sdk_s3::primitives::ByteStream;
 use chrono::DateTime;
 use chrono::Utc;
 use tokio::fs;
+use tokio::io::AsyncRead;
 use tokio::io::AsyncWriteExt;
 
+use crate::checksum::calculate_sha256_chunked_checksum;
 use crate::io::remote::S3Attributes;
 use crate::uri::S3Uri;
 use crate::Error;
@@ -50,15 +52,23 @@ impl Storage for LocalStorage {
 
     async fn get_object_attributes(
         &self,
+        file: impl AsyncRead + Send + Unpin + Sync,
+        size: u64,
         listing_uri: &S3Uri,
-        object_key: impl AsRef<str> + Send + Sync,
+        object_key: impl AsRef<str>,
     ) -> Res<S3Attributes> {
-        // log::debug!("Trying again with client {:?}", client);
-        Err(Error::S3(format!(
-            "Error getting attributes for {} in {}",
-            object_key.as_ref(),
-            listing_uri,
-        )))
+        //let size = file.len();
+        let hash = calculate_sha256_chunked_checksum(file, size).await?;
+        Ok(S3Attributes {
+            listing_uri: listing_uri.clone(),
+            object_uri: S3Uri {
+                bucket: listing_uri.bucket.clone(),
+                key: object_key.as_ref().to_string(),
+                version: None, // FIXME: Where is version?
+            },
+            size,
+            hash,
+        })
     }
 
     async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Res<DateTime<Utc>> {

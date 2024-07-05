@@ -28,16 +28,24 @@ async fn get_object_attributes_inner(
     listing_uri: &S3Uri,
     object: Res<Object>,
 ) -> Res<S3Attributes> {
-    let object_key = object?
+    let object_key = object? // TODO: object.key()
         .key
         .clone()
         .expect("object key expected to be present");
     match remote.get_object_attributes(listing_uri, &object_key).await {
         Ok(attrs) => Ok(attrs),
         Err(err) => {
+            // TODO: Something is broken or Stack doesn't have GetObjectAttribute?
             log::warn!("Error getting attributes: {}", err);
+            let uri = S3Uri {
+                bucket: listing_uri.bucket.clone(),
+                key: object_key.clone(),
+                version: None, // FIXME: Where is version?
+            };
+            let head = remote.head_object(&uri).await?;
+            let object = remote.get_object(&uri).await?;
             storage
-                .get_object_attributes(listing_uri, &object_key)
+                .get_object_attributes(object, head.size, listing_uri, &object_key)
                 .await
         }
     }

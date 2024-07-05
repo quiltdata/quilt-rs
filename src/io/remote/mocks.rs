@@ -7,6 +7,7 @@ use tokio::io::AsyncReadExt;
 use tracing::log;
 
 use crate::checksum;
+use crate::io::remote::HeadObject;
 use crate::io::remote::ObjectsStream;
 use crate::io::remote::S3Attributes;
 use crate::io::storage::mocks::MockStorage;
@@ -30,6 +31,16 @@ impl Remote for MockRemote {
         Ok(self.storage.exists(&key).await)
     }
 
+    async fn head_object(&self, s3_uri: &S3Uri) -> Res<HeadObject> {
+        let key = s3_uri.to_string();
+        log::debug!("Mocking {} head request", key);
+        let size = self.storage.open_file(&key).await?.metadata().await?.len();
+        Ok(HeadObject {
+            size,
+            version: None,
+        })
+    }
+
     async fn get_object(&self, s3_uri: &S3Uri) -> Res<impl AsyncRead + Send + Unpin> {
         let key = s3_uri.to_string();
         log::debug!("Mocking {} get request", key);
@@ -51,8 +62,21 @@ impl Remote for MockRemote {
         listing_uri: &S3Uri,
         object_key: impl AsRef<str>,
     ) -> Res<S3Attributes> {
+        log::debug!(
+            "Mocking {} get object attributes request",
+            object_key.as_ref()
+        );
+        let object_uri = S3Uri {
+            bucket: listing_uri.bucket.clone(),
+            key: object_key.as_ref().to_string(),
+            version: None, // FIXME: Where is version?
+        };
+        let key = object_uri.to_string();
+        log::debug!("Mocking {} head request", key);
+        let size = self.storage.open_file(&key).await?.metadata().await?.len();
+        let file = self.get_object(&object_uri).await?;
         self.storage
-            .get_object_attributes(listing_uri, object_key.as_ref().to_string())
+            .get_object_attributes(file, size, listing_uri, object_key.as_ref().to_string())
             .await
     }
 

@@ -22,6 +22,7 @@ use crate::checksum::ContentHash;
 use crate::checksum::MPU_MAX_PARTS;
 use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use crate::checksum::MULTIPART_THRESHOLD;
+use crate::io::remote::HeadObject;
 use crate::io::remote::ObjectsStream;
 use crate::io::remote::Remote;
 use crate::uri::S3Uri;
@@ -69,6 +70,7 @@ async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<B
         .send()
         .await
         .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
+    // FIXME: Return `HeadObject` as well
     Ok(result.body)
 }
 
@@ -224,7 +226,33 @@ impl Remote for RemoteS3 {
         }
     }
 
-    async fn get_object(&self, s3_uri: &S3Uri) -> Res<impl AsyncRead + Send + Unpin> {
+    async fn head_object(&self, s3_uri: &S3Uri) -> Res<HeadObject> {
+        let client = get_client_for_bucket(&s3_uri.bucket).await?;
+        let result = client.head_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
+        let result = match &s3_uri.version {
+            Some(version) => result.version_id(version),
+            None => result,
+        };
+        match result.send().await {
+            Err(SdkError::ServiceError(err)) if err.err().is_not_found() => {
+                Err(Error::ObjectNotFound(s3_uri.clone()))
+            }
+            Err(err) => Err(Error::S3(DisplayErrorContext(err).to_string())),
+            Ok(head) => {
+                let size = match u64::try_from(head.content_length.unwrap()) {
+                    Err(_) => {
+                        let msg = "Failed to convert content length to u64";
+                        return Err(Error::S3HeadObject(msg.into()));
+                    }
+                    Ok(size) => size,
+                };
+                let version = head.version_id().map(|v| v.to_string());
+                Ok(HeadObject { size, version })
+            }
+        }
+    }
+
+    async fn get_object(&self, s3_uri: &S3Uri) -> Res<impl AsyncRead + Send + Sync + Unpin> {
         let client = get_client_for_bucket(&s3_uri.bucket).await?;
         get_object(&client, s3_uri).await
     }
@@ -252,6 +280,7 @@ impl Remote for RemoteS3 {
             .send()
             .await
             .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
+        // TODO: retry if error?
 
         let S3AttributesWrapper {
             size,

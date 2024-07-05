@@ -4,7 +4,8 @@ use aws_smithy_types::byte_stream;
 use reqwest::header::ToStrError;
 use thiserror::Error;
 
-use crate::uri;
+use crate::uri::Namespace;
+use crate::uri::S3Uri;
 
 /// The error type for this library
 #[derive(Error, Debug)]
@@ -59,10 +60,10 @@ pub enum Error {
     Utf8(#[from] Utf8Error),
 
     #[error("The package {0} is already installed")]
-    PackageAlreadyInstalled(uri::Namespace),
+    PackageAlreadyInstalled(Namespace),
 
     #[error("The given package is not installed: {0}")]
-    PackageNotInstalled(uri::Namespace),
+    PackageNotInstalled(Namespace),
 
     #[error("Failed to install path: {0}")]
     InstallPath(String),
@@ -115,6 +116,12 @@ pub enum Error {
     #[error("Invalid Place: {0}")]
     Place(String),
 
-    #[error("Invalid Place used: {0}")]
+    #[error("Invalid Place: {0}")]
     PlaceUsed(String),
+
+    #[error("Head error: {0}")]
+    S3HeadObject(String),
+
+    #[error("Head error: {0}")]
+    ObjectNotFound(S3Uri),
 }

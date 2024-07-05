@@ -32,6 +32,11 @@ pub struct S3Attributes {
     pub size: u64,
 }
 
+pub struct HeadObject {
+    pub version: Option<String>,
+    pub size: u64,
+}
+
 pub type StreamObjectChunk = Vec<Res<Object>>;
 
 pub type StreamItem = Res<StreamObjectChunk>;
@@ -45,12 +50,14 @@ pub trait Remote {
     /// Checks if object exists
     fn exists(&self, s3_uri: &S3Uri) -> impl Future<Output = Res<bool>> + Send;
 
+    fn head_object(&self, s3_uri: &S3Uri) -> impl Future<Output = Res<HeadObject>> + Send;
+
     /// Gets the objects contents as a `File`
     // TODO: use `self.get_object_stream`. Under-the-hood it is a stream already
     fn get_object(
         &self,
         s3_uri: &S3Uri,
-    ) -> impl Future<Output = Res<impl AsyncRead + Send + Unpin>> + Send;
+    ) -> impl Future<Output = Res<impl AsyncRead + Send + Sync + Unpin>> + Send;
 
     /// Get object attributes: checksums, number of chunks, chunksize, version_id
     fn get_object_attributes(

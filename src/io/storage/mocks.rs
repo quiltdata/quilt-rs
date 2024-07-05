@@ -4,6 +4,7 @@ use aws_sdk_s3::primitives::ByteStream;
 use chrono::DateTime;
 use chrono::Utc;
 use tokio::fs;
+use tokio::io::AsyncRead;
 use tokio::io::AsyncWriteExt;
 
 use tempfile;
@@ -147,6 +148,8 @@ impl Storage for MockStorage {
 
     async fn get_object_attributes(
         &self,
+        _file: impl AsyncRead + Send + Unpin + Sync,
+        _size: u64,
         _listing_uri: &S3Uri,
         _object_key: impl AsRef<str> + Send + Sync,
     ) -> Res<S3Attributes> {
