@@ -10,10 +10,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use tokio::fs::File;
 use tokio::fs::ReadDir;
-use tokio::io::AsyncRead;
 
-use crate::io::remote::S3Attributes;
-use crate::uri::S3Uri;
 use crate::Res;
 
 mod local;
@@ -44,15 +41,6 @@ pub trait Storage {
 
     /// Check if a path exists in the filesystem.
     fn exists(&self, path: impl AsRef<Path>) -> impl Future<Output = bool>;
-
-    /// Get the same attributes including checskum as from S3
-    fn get_object_attributes(
-        &self,
-        file: impl AsyncRead + Send + Unpin + Sync,
-        size: u64,
-        listing_uri: &S3Uri,
-        object_key: impl AsRef<str> + Send + Sync,
-    ) -> impl Future<Output = Res<S3Attributes>> + Send + Sync;
 
     /// Get the timestamp of the last modification of a file.
     fn modified_timestamp(

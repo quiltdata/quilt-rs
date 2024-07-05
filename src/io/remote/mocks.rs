@@ -4,11 +4,12 @@ use aws_sdk_s3::primitives::ByteStream;
 use multihash::Multihash;
 use tracing::log;
 
-use crate::checksum;
+use crate::checksum::calculate_sha256_chunked_checksum;
+use crate::io::remote::get_relative_name;
 use crate::io::remote::GetObject;
 use crate::io::remote::HeadObject;
 use crate::io::remote::ObjectsStream;
-use crate::io::remote::S3Attributes;
+use crate::io::remote::RowUnmaterialized;
 use crate::io::storage::mocks::MockStorage;
 use crate::io::storage::Storage;
 use crate::uri::S3Uri;
@@ -58,7 +59,7 @@ impl Remote for MockRemote {
         &self,
         listing_uri: &S3Uri,
         object_key: impl AsRef<str>,
-    ) -> Res<S3Attributes> {
+    ) -> Res<RowUnmaterialized> {
         log::debug!(
             "Mocking {} get object attributes request",
             object_key.as_ref()
@@ -68,13 +69,26 @@ impl Remote for MockRemote {
             key: object_key.as_ref().to_string(),
             version: None, // FIXME: Where is version?
         };
+        let name = get_relative_name(listing_uri, &object_uri);
         let key = object_uri.to_string();
         log::debug!("Mocking {} head request", key);
         let file = self.storage.open_file(&key).await?;
         let size = file.metadata().await?.len();
-        self.storage
-            .get_object_attributes(file, size, listing_uri, object_key.as_ref().to_string())
-            .await
+        let hash = calculate_sha256_chunked_checksum(file, size).await?;
+        Ok(RowUnmaterialized {
+            name,
+            place: object_uri.into(),
+            size,
+            hash,
+        })
+    }
+
+    async fn get_object_attributes_fallback(
+        &self,
+        listing_uri: &S3Uri,
+        object_key: impl AsRef<str>,
+    ) -> Res<RowUnmaterialized> {
+        self.get_object_attributes(listing_uri, object_key).await
     }
 
     async fn get_object_stream(&self, s3_uri: &S3Uri) -> Res<GetObject> {
@@ -118,7 +132,7 @@ impl Remote for MockRemote {
         size: u64,
     ) -> Res<(S3Uri, Multihash<256>)> {
         let file = self.storage.open_file(source_path.as_ref()).await?;
-        let hash = checksum::calculate_sha256_chunked_checksum(file, size).await?;
+        let hash = calculate_sha256_chunked_checksum(file, size).await?;
         Ok((
             S3Uri {
                 version: Some("version".to_string()),

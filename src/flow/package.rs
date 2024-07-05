@@ -10,11 +10,10 @@ use crate::io::manifest::tag_timestamp;
 use crate::io::manifest::upload_manifest;
 use crate::io::manifest::RowsStream;
 use crate::io::remote::Remote;
-use crate::io::remote::S3Attributes;
+use crate::io::remote::RowUnmaterialized;
 use crate::io::remote::StreamItem;
 use crate::io::storage::Storage;
 use crate::manifest::Header;
-use crate::manifest::Row;
 use crate::paths::DomainPaths;
 use crate::perf::Measure;
 use crate::uri::ManifestUri;
@@ -23,61 +22,46 @@ use crate::uri::S3Uri;
 use crate::Res;
 
 async fn get_object_attributes_inner(
-    storage: &impl Storage,
     remote: &impl Remote,
     listing_uri: &S3Uri,
     object: Res<Object>,
-) -> Res<S3Attributes> {
+) -> Res<RowUnmaterialized> {
     let object_key = object? // TODO: object.key()
         .key
         .clone()
         .expect("object key expected to be present");
     match remote.get_object_attributes(listing_uri, &object_key).await {
-        Ok(attrs) => Ok(attrs),
         Err(err) => {
             // TODO: Something is broken or Stack doesn't have GetObjectAttribute?
+            // TODO: Fallback only if error is: no GetObjectAttribute in stack
             log::warn!("Error getting attributes: {}", err);
-            let uri = S3Uri {
-                bucket: listing_uri.bucket.clone(),
-                key: object_key.clone(),
-                version: None, // FIXME: Where is version?
-            };
-            let object_stream = remote.get_object_stream(&uri).await?;
-            let size = object_stream.head.size;
-            let object = object_stream.stream.into_async_read();
-            storage
-                .get_object_attributes(object, size, listing_uri, &object_key)
+            remote
+                .get_object_attributes_fallback(listing_uri, &object_key)
                 .await
         }
+        other => other,
     }
 }
 
 async fn get_object_attributes(
-    storage: &impl Storage,
     remote: &impl Remote,
     listing_uri: S3Uri,
     objects: StreamItem,
-) -> Res<Vec<S3Attributes>> {
+) -> Res<Vec<RowUnmaterialized>> {
     try_join_all(
         objects?
             .into_iter()
-            .map(|object| get_object_attributes_inner(storage, remote, &listing_uri, object))
+            .map(|object| get_object_attributes_inner(remote, &listing_uri, object))
             .collect::<Vec<_>>(),
     )
     .await
 }
 
-async fn stream_objects<'a>(
-    storage: &'a impl Storage,
-    remote: &'a impl Remote,
-    listing_uri: S3Uri,
-) -> impl RowsStream + 'a {
+async fn stream_objects<'a>(remote: &'a impl Remote, listing_uri: S3Uri) -> impl RowsStream + 'a {
     let stream = remote.list_objects(listing_uri.clone()).await;
     stream
-        .then(move |objs| get_object_attributes(storage, remote, listing_uri.clone(), objs))
-        .map(|result| {
-            result.map(move |objs| objs.into_iter().map(|obj| Ok(Row::from(obj))).collect())
-        })
+        .then(move |objs| get_object_attributes(remote, listing_uri.clone(), objs))
+        .map(|result| result.map(move |objs| objs.into_iter().map(|obj| Ok(obj.into())).collect()))
 }
 
 /// Lists the objects from S3 prefix as a stream and creates a package (manifest) from it.
@@ -97,7 +81,7 @@ pub async fn package_s3_prefix(
     // FIXME: filter or fail on keys with `.` or `..` in path segments as quilt3 do
 
     let perf = Measure::start();
-    let stream = Box::pin(stream_objects(storage, remote, source_uri.clone()).await);
+    let stream = Box::pin(stream_objects(remote, source_uri.clone()).await);
     let manifest_path = |t: &str| paths.manifest_cache(&source_uri.bucket, t);
     let (cache_path, top_hash) =
         build_manifest_from_rows_stream(storage, manifest_path, Header::default(), stream).await?;

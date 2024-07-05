@@ -3,7 +3,6 @@ use std::path::PathBuf;
 
 use multihash::Multihash;
 
-use crate::io::remote::S3Attributes;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
 use crate::manifest::Place;
@@ -124,22 +123,6 @@ impl TryFrom<ManifestRow> for Row {
             },
             info: serde_json::Value::Null,
         })
-    }
-}
-
-impl From<S3Attributes> for Row {
-    fn from(attrs: S3Attributes) -> Row {
-        let prefix_len = attrs.listing_uri.key.len();
-        let name = PathBuf::from(attrs.object_uri.key[prefix_len..].to_string());
-        Row {
-            name,
-            place: attrs.object_uri.into(),
-            // XXX: can we use `as u64` safely here?
-            size: attrs.size,
-            hash: attrs.hash,
-            info: serde_json::Value::Null, // XXX: is this right?
-            meta: serde_json::Value::Null, // XXX: is this right?
-        }
     }
 }
 

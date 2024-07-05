@@ -4,27 +4,26 @@ use tracing::log;
 use async_stream::try_stream;
 use aws_sdk_s3::error::DisplayErrorContext;
 use aws_sdk_s3::error::SdkError;
-use aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::ChecksumAlgorithm;
 use aws_sdk_s3::types::CompletedMultipartUpload;
 use aws_sdk_s3::types::CompletedPart;
 use aws_smithy_types::byte_stream::Length;
-use parquet::data_type::AsBytes;
 
 use multihash::Multihash;
 
 use crate::checksum::calculate_sha256_checksum;
+use crate::checksum::calculate_sha256_chunked_checksum;
 use crate::checksum::get_checksum_chunksize_and_parts;
-use crate::checksum::get_compliant_chunked_checksum;
 use crate::checksum::ContentHash;
 use crate::checksum::MPU_MAX_PARTS;
-use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use crate::checksum::MULTIPART_THRESHOLD;
+use crate::io::remote::get_relative_name;
 use crate::io::remote::GetObject;
 use crate::io::remote::HeadObject;
 use crate::io::remote::ObjectsStream;
 use crate::io::remote::Remote;
+use crate::io::remote::RowUnmaterialized;
 use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
@@ -32,32 +31,6 @@ use crate::Res;
 const LIST_OBJECTS_V2_MAX_KEYS: i32 = 1_00;
 
 use crate::io::remote::get_client_for_bucket;
-use crate::io::remote::S3Attributes;
-
-struct S3AttributesWrapper {
-    pub hash: Multihash<256>,
-    pub size: u64,
-    pub version: String,
-}
-
-impl TryFrom<GetObjectAttributesOutput> for S3AttributesWrapper {
-    type Error = Error;
-    fn try_from(attrs: GetObjectAttributesOutput) -> Result<Self, Self::Error> {
-        if attrs.delete_marker.is_some() {
-            // Can happen if object is removed after it was listed but before attributes retrieved.
-            return Err(Error::S3("Object is a delete marker".to_string()));
-        }
-
-        let checksum = get_compliant_chunked_checksum(&attrs).unwrap();
-        let hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, checksum.as_bytes())?;
-        let size = attrs.object_size.expect("ObjectSize must be requested") as u64;
-        Ok(S3AttributesWrapper {
-            version: attrs.version_id.expect("VersionId must be requested"),
-            hash,
-            size,
-        })
-    }
-}
 
 async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<GetObject> {
     let result = client.get_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
@@ -259,7 +232,7 @@ impl Remote for RemoteS3 {
         &self,
         listing_uri: &S3Uri,
         object_key: impl AsRef<str>,
-    ) -> Res<S3Attributes> {
+    ) -> Res<RowUnmaterialized> {
         let client = get_client_for_bucket(&listing_uri.bucket).await?;
         let key = object_key.as_ref();
         log::debug!(
@@ -279,21 +252,30 @@ impl Remote for RemoteS3 {
             .await
             .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
         // TODO: retry if error?
+        RowUnmaterialized::from_get_object_attributes(listing_uri, object_key, attrs)
+    }
 
-        let S3AttributesWrapper {
+    async fn get_object_attributes_fallback(
+        &self,
+        listing_uri: &S3Uri,
+        object_key: impl AsRef<str>,
+    ) -> Res<RowUnmaterialized> {
+        let object_uri = S3Uri {
+            bucket: listing_uri.bucket.clone(),
+            key: object_key.as_ref().to_string(),
+            version: None, // FIXME: Where is version?
+        };
+        let object_stream = self.get_object_stream(&object_uri).await?;
+        let size = object_stream.head.size;
+        let object = object_stream.stream.into_async_read();
+        let name = get_relative_name(listing_uri, &object_uri);
+
+        let hash = calculate_sha256_chunked_checksum(object, size).await?;
+        Ok(RowUnmaterialized {
+            name,
+            place: object_uri.into(),
             size,
             hash,
-            version,
-        } = attrs.try_into()?;
-        Ok(S3Attributes {
-            listing_uri: listing_uri.clone(),
-            object_uri: S3Uri {
-                bucket: listing_uri.bucket.clone(),
-                key: key.to_string(),
-                version: Some(version),
-            },
-            hash,
-            size,
         })
     }
 

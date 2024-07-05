@@ -14,22 +14,16 @@ use crate::uri::S3Uri;
 use crate::Res;
 
 mod client;
+mod row;
 mod s3;
 
 pub use client::get_client_for_bucket;
+pub use row::get_relative_name;
+pub use row::RowUnmaterialized;
 pub use s3::RemoteS3;
 
 #[cfg(test)]
 pub mod mocks;
-
-/// We use it for getting hashes in files listings when we create new packages from S3 directory.
-/// Also, we re-use this struct for calculating hashes locally when S3-checksums are disabled.
-pub struct S3Attributes {
-    pub listing_uri: S3Uri,
-    pub object_uri: S3Uri,
-    pub hash: Multihash<256>,
-    pub size: u64,
-}
 
 pub struct HeadObject {
     pub version: Option<String>,
@@ -61,7 +55,13 @@ pub trait Remote {
         &self,
         listing_uri: &S3Uri,
         object_key: impl AsRef<str>,
-    ) -> impl Future<Output = Res<S3Attributes>>;
+    ) -> impl Future<Output = Res<RowUnmaterialized>>;
+
+    fn get_object_attributes_fallback(
+        &self,
+        listing_uri: &S3Uri,
+        object_key: impl AsRef<str>,
+    ) -> impl Future<Output = Res<RowUnmaterialized>>;
 
     /// Fetches the objects contents as a `ByteStream`
     fn get_object_stream(&self, s3_uri: &S3Uri) -> impl Future<Output = Res<GetObject>> + Send;

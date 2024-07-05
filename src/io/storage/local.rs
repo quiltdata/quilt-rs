@@ -4,12 +4,8 @@ use aws_sdk_s3::primitives::ByteStream;
 use chrono::DateTime;
 use chrono::Utc;
 use tokio::fs;
-use tokio::io::AsyncRead;
 use tokio::io::AsyncWriteExt;
 
-use crate::checksum::calculate_sha256_chunked_checksum;
-use crate::io::remote::S3Attributes;
-use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
 
@@ -48,27 +44,6 @@ impl Storage for LocalStorage {
 
     async fn exists(&self, path: impl AsRef<Path>) -> bool {
         fs::metadata(path).await.is_ok()
-    }
-
-    async fn get_object_attributes(
-        &self,
-        file: impl AsyncRead + Send + Unpin + Sync,
-        size: u64,
-        listing_uri: &S3Uri,
-        object_key: impl AsRef<str>,
-    ) -> Res<S3Attributes> {
-        //let size = file.len();
-        let hash = calculate_sha256_chunked_checksum(file, size).await?;
-        Ok(S3Attributes {
-            listing_uri: listing_uri.clone(),
-            object_uri: S3Uri {
-                bucket: listing_uri.bucket.clone(),
-                key: object_key.as_ref().to_string(),
-                version: None, // FIXME: Where is version?
-            },
-            size,
-            hash,
-        })
     }
 
     async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Res<DateTime<Utc>> {
