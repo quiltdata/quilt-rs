@@ -222,15 +222,9 @@ impl RemoteS3 {
 
 impl Remote for RemoteS3 {
     async fn exists(&self, s3_uri: &S3Uri) -> Res<bool> {
-        let client = get_client_for_bucket(&s3_uri.bucket).await?;
-        let result = client.head_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
-        let result = match &s3_uri.version {
-            Some(version) => result.version_id(version),
-            None => result,
-        };
-        match result.send().await {
+        match self.head_object(s3_uri).await {
             Ok(_) => Ok(true),
-            Err(SdkError::ServiceError(err)) if err.err().is_not_found() => Ok(false),
+            Err(Error::ObjectNotFound(_s3_uri)) => Ok(false),
             Err(err) => Err(Error::S3(DisplayErrorContext(err).to_string())),
         }
     }

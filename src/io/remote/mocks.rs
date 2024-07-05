@@ -78,11 +78,10 @@ impl Remote for MockRemote {
     }
 
     async fn get_object_stream(&self, s3_uri: &S3Uri) -> Res<GetObject> {
-        let key = s3_uri.to_string();
-        log::debug!("Mocking {} get request", key);
-
         let head = self.head_object(s3_uri).await?;
 
+        let key = s3_uri.to_string();
+        log::debug!("Mocking {} get request", key);
         let stream = self
             .storage
             .read_byte_stream(&key)
@@ -97,6 +96,7 @@ impl Remote for MockRemote {
                 }
                 other => other,
             })?;
+
         Ok(GetObject { head, stream })
     }
 
