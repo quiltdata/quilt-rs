@@ -10,16 +10,15 @@ use aws_sdk_s3::types::Object;
 use multihash::Multihash;
 use tokio_stream::Stream;
 
+use crate::io::get_relative_name;
+use crate::io::RowUnmaterialized;
 use crate::uri::S3Uri;
 use crate::Res;
 
 mod client;
-mod row;
 mod s3;
 
 pub use client::get_client_for_bucket;
-pub use row::get_relative_name;
-pub use row::RowUnmaterialized;
 pub use s3::RemoteS3;
 
 #[cfg(test)]

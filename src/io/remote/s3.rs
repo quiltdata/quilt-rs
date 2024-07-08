@@ -23,7 +23,7 @@ use crate::io::remote::GetObject;
 use crate::io::remote::HeadObject;
 use crate::io::remote::ObjectsStream;
 use crate::io::remote::Remote;
-use crate::io::remote::RowUnmaterialized;
+use crate::io::RowUnmaterialized;
 use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;

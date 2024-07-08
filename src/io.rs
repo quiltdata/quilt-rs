@@ -7,4 +7,7 @@ pub mod remote;
 /// It is public only for documentation and testing
 pub mod storage;
 
+mod entry;
+pub use entry::get_relative_name;
+pub use entry::RowUnmaterialized;
 pub use parquet::ParquetWriter;

@@ -14,7 +14,7 @@ use serde::Serializer;
 #[cfg(test)]
 pub mod mocks;
 
-use crate::io::remote::RowUnmaterialized;
+use crate::io::RowUnmaterialized;
 use crate::io::storage::Storage;
 use crate::manifest::Row;
 use crate::uri::ManifestUri;

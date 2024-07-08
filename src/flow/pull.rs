@@ -92,7 +92,7 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::io::remote::RowUnmaterialized;
+    use crate::io::RowUnmaterialized;
     use crate::lineage::Change;
     use crate::mocks;
 
