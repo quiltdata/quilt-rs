@@ -307,7 +307,7 @@ impl Remote for RemoteS3 {
             key: object_key.as_ref().to_string(),
             version: None, // FIXME: Where is version?
         };
-        let object_stream = self.get_object_stream(&object_uri).await?;
+        let object_stream = self.get_object(&object_uri).await?;
         let size = object_stream.head.size;
         let object = object_stream.stream.into_async_read();
         let name = get_relative_name(listing_uri, &object_uri);
@@ -321,7 +321,7 @@ impl Remote for RemoteS3 {
         })
     }
 
-    async fn get_object_stream(&self, s3_uri: &S3Uri) -> Res<GetObject> {
+    async fn get_object(&self, s3_uri: &S3Uri) -> Res<GetObject> {
         let client = get_client_for_bucket(&s3_uri.bucket).await?;
         get_object_stream(&client, s3_uri).await
     }

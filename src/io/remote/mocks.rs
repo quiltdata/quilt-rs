@@ -91,7 +91,7 @@ impl Remote for MockRemote {
         self.get_object_attributes(listing_uri, object_key).await
     }
 
-    async fn get_object_stream(&self, s3_uri: &S3Uri) -> Res<GetObject> {
+    async fn get_object(&self, s3_uri: &S3Uri) -> Res<GetObject> {
         let head = self.head_object(s3_uri).await?;
 
         let key = s3_uri.to_string();
@@ -157,14 +157,14 @@ mod tests {
             )
             .await?;
         let s3_uri_not_found = S3Uri::try_from("s3://b/n?versionId=v")?;
-        let not_found = remote.get_object_stream(&s3_uri_not_found).await;
+        let not_found = remote.get_object(&s3_uri_not_found).await;
         match not_found {
             Err(err) => assert_eq!(err.to_string(), "S3 error: Key doesn't exists".to_string()),
             Ok(_) => panic!("shouldn't happen"),
         }
         let s3_uri_found = S3Uri::try_from("s3://found/n?versionId=v")?;
         let found = remote
-            .get_object_stream(&s3_uri_found)
+            .get_object(&s3_uri_found)
             .await?
             .stream
             .collect()

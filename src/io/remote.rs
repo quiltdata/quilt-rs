@@ -43,10 +43,17 @@ impl<T: Stream<Item = StreamItem>> ObjectsStream for T {}
 
 /// This trait encapsulates the S3 operations that Quilt needs to perform.
 pub trait Remote {
-    /// Checks if object exists
-    fn exists(&self, s3_uri: &S3Uri) -> impl Future<Output = Res<bool>> + Send;
+    // Low-level operations
 
     fn head_object(&self, s3_uri: &S3Uri) -> impl Future<Output = Res<HeadObject>> + Send;
+
+    /// Upload file and request checkum from S3
+    fn upload_file(
+        &self,
+        source_path: impl AsRef<Path>,
+        dest_uri: &S3Uri,
+        size: u64,
+    ) -> impl Future<Output = Res<(S3Uri, Multihash<256>)>>;
 
     /// Get object attributes: checksums, number of chunks, chunksize, version_id
     fn get_object_attributes(
@@ -61,13 +68,6 @@ pub trait Remote {
         object_key: impl AsRef<str>,
     ) -> impl Future<Output = Res<Entry>>;
 
-    /// Fetches the objects contents as a `ByteStream`
-    fn get_object_stream(&self, s3_uri: &S3Uri) -> impl Future<Output = Res<GetObject>> + Send;
-
-    /// List objects list under S3 prefix using tokio Stream
-    // TODO: return Item = Res<Row>
-    fn list_objects(&self, listing_uri: S3Uri) -> impl Future<Output = impl ObjectsStream> + Send;
-
     /// Upload file. Just that
     fn put_object(
         &self,
@@ -75,11 +75,15 @@ pub trait Remote {
         contents: impl Into<ByteStream>,
     ) -> impl Future<Output = Res>;
 
-    /// Upload file and request checkum from S3
-    fn upload_file(
-        &self,
-        source_path: impl AsRef<Path>,
-        dest_uri: &S3Uri,
-        size: u64,
-    ) -> impl Future<Output = Res<(S3Uri, Multihash<256>)>>;
+    // Higher-level operations
+
+    /// Checks if object exists
+    fn exists(&self, s3_uri: &S3Uri) -> impl Future<Output = Res<bool>> + Send;
+
+    /// Fetches the objects contents as a `ByteStream`
+    fn get_object(&self, s3_uri: &S3Uri) -> impl Future<Output = Res<GetObject>> + Send;
+
+    /// List objects list under S3 prefix using tokio Stream
+    // TODO: return Item = Res<Row>
+    fn list_objects(&self, listing_uri: S3Uri) -> impl Future<Output = impl ObjectsStream> + Send;
 }
