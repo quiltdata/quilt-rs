@@ -5,19 +5,23 @@ use tracing::log;
 use async_stream::try_stream;
 use aws_sdk_s3::error::DisplayErrorContext;
 use aws_sdk_s3::error::SdkError;
+use aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::ChecksumAlgorithm;
 use aws_sdk_s3::types::CompletedMultipartUpload;
 use aws_sdk_s3::types::CompletedPart;
 use aws_smithy_types::byte_stream::Length;
+use parquet::data_type::AsBytes;
 
 use multihash::Multihash;
 
 use crate::checksum::calculate_sha256_checksum;
 use crate::checksum::calculate_sha256_chunked_checksum;
 use crate::checksum::get_checksum_chunksize_and_parts;
+use crate::checksum::get_compliant_chunked_checksum;
 use crate::checksum::ContentHash;
 use crate::checksum::MPU_MAX_PARTS;
+use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use crate::checksum::MULTIPART_THRESHOLD;
 use crate::io::remote::GetObject;
 use crate::io::remote::HeadObject;
@@ -31,6 +35,39 @@ use crate::Res;
 const LIST_OBJECTS_V2_MAX_KEYS: i32 = 1_00;
 
 use crate::io::remote::get_client_for_bucket;
+
+fn from_get_object_attributes(
+    listing_uri: &S3Uri,
+    object_key: impl AsRef<str>,
+    attrs: GetObjectAttributesOutput,
+) -> Res<Entry> {
+    if attrs.delete_marker.is_some() {
+        // Can happen if object is removed after it was listed but before attributes retrieved.
+        return Err(Error::S3("Object is a delete marker".to_string()));
+    }
+
+    let checksum = get_compliant_chunked_checksum(&attrs).unwrap();
+    let hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, checksum.as_bytes())?;
+
+    let size = attrs.object_size.expect("ObjectSize must be requested") as u64;
+
+    let version = attrs.version_id.expect("VersionId must be requested");
+
+    let object_uri = S3Uri {
+        bucket: listing_uri.bucket.clone(),
+        key: object_key.as_ref().to_string(),
+        version: Some(version),
+    };
+    let prefix_len = listing_uri.key.len();
+    let name = PathBuf::from(object_uri.key[prefix_len..].to_string());
+
+    Ok(Entry {
+        name,
+        place: object_uri.into(),
+        size,
+        hash,
+    })
+}
 
 pub fn get_relative_name(listing_uri: &S3Uri, object_uri: &S3Uri) -> PathBuf {
     let prefix_len = listing_uri.key.len();
@@ -257,7 +294,7 @@ impl Remote for RemoteS3 {
             .await
             .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
         // TODO: retry if error?
-        Entry::from_get_object_attributes(listing_uri, object_key, attrs)
+        from_get_object_attributes(listing_uri, object_key, attrs)
     }
 
     async fn get_object_attributes_fallback(

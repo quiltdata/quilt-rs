@@ -26,10 +26,7 @@ async fn get_object_attributes_inner(
     listing_uri: &S3Uri,
     object: Res<Object>,
 ) -> Res<Entry> {
-    let object_key = object? // TODO: object.key()
-        .key
-        .clone()
-        .expect("object key expected to be present");
+    let object_key = object?.key.expect("object key expected to be present");
     match remote.get_object_attributes(listing_uri, &object_key).await {
         Err(err) => {
             // TODO: Something is broken or Stack doesn't have GetObjectAttribute?
