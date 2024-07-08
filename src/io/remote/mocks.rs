@@ -5,13 +5,13 @@ use multihash::Multihash;
 use tracing::log;
 
 use crate::checksum::calculate_sha256_chunked_checksum;
-use crate::io::remote::get_relative_name;
+use crate::io::remote::s3::get_relative_name;
 use crate::io::remote::GetObject;
 use crate::io::remote::HeadObject;
 use crate::io::remote::ObjectsStream;
 use crate::io::storage::mocks::MockStorage;
 use crate::io::storage::Storage;
-use crate::io::RowUnmaterialized;
+use crate::io::Entry;
 use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
@@ -59,7 +59,7 @@ impl Remote for MockRemote {
         &self,
         listing_uri: &S3Uri,
         object_key: impl AsRef<str>,
-    ) -> Res<RowUnmaterialized> {
+    ) -> Res<Entry> {
         log::debug!(
             "Mocking {} get object attributes request",
             object_key.as_ref()
@@ -75,7 +75,7 @@ impl Remote for MockRemote {
         let file = self.storage.open_file(&key).await?;
         let size = file.metadata().await?.len();
         let hash = calculate_sha256_chunked_checksum(file, size).await?;
-        Ok(RowUnmaterialized {
+        Ok(Entry {
             name,
             place: object_uri.into(),
             size,
@@ -87,7 +87,7 @@ impl Remote for MockRemote {
         &self,
         listing_uri: &S3Uri,
         object_key: impl AsRef<str>,
-    ) -> Res<RowUnmaterialized> {
+    ) -> Res<Entry> {
         self.get_object_attributes(listing_uri, object_key).await
     }
 

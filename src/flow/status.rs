@@ -10,7 +10,7 @@ use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use crate::io::manifest::resolve_latest;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
-use crate::io::RowUnmaterialized;
+use crate::io::Entry;
 use crate::lineage::Change;
 use crate::lineage::ChangeSet;
 use crate::lineage::InstalledPackageStatus;
@@ -96,7 +96,7 @@ pub async fn create_status(
                     if file_hash != orig_row.hash {
                         changes.insert(
                             relative_path.to_path_buf(),
-                            Change::Modified(RowUnmaterialized {
+                            Change::Modified(Entry {
                                 name: relative_path.into(),
                                 place: file_path.into(),
                                 size: file_metadata.len(),
@@ -109,7 +109,7 @@ pub async fn create_status(
                         calculate_sha256_chunked_checksum(file, file_metadata.len()).await?;
                     changes.insert(
                         relative_path.to_path_buf(),
-                        Change::Added(RowUnmaterialized {
+                        Change::Added(Entry {
                             name: relative_path.into(),
                             place: file_path.into(),
                             size: file_metadata.len(),
@@ -252,7 +252,7 @@ mod tests {
         if let Change::Added(fingerprint) = added_file {
             assert_eq!(
                 *fingerprint,
-                RowUnmaterialized {
+                Entry {
                     name: file_path.clone(),
                     place: working_path.into(),
                     size: 5324,

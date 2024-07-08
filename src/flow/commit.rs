@@ -11,7 +11,7 @@ use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamRowsChunk;
 use crate::io::storage::Storage;
-use crate::io::RowUnmaterialized;
+use crate::io::Entry;
 use crate::lineage::Change;
 use crate::lineage::CommitState;
 use crate::lineage::InstalledPackageStatus;
@@ -57,14 +57,14 @@ async fn create_immutable_object_copy(
     paths: &paths::DomainPaths,
     working_dir: &Path,
     lineage: &mut PackageLineage,
-    current: RowUnmaterialized,
+    current: Entry,
 ) -> Res<Row> {
     let objects_dir = paths.objects_dir();
     // FIXME: This should really be done when the domain is created.
     storage.create_dir_all(&objects_dir).await?;
     let object_dest = objects_dir.join(hex::encode(current.hash.digest()));
 
-    let row = Row::from(RowUnmaterialized {
+    let row = Row::from(Entry {
         place: object_dest.clone().into(),
         ..current.clone()
     });
@@ -316,7 +316,7 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("bar"),
-                Change::Added(RowUnmaterialized {
+                Change::Added(Entry {
                     name: PathBuf::from("bar"),
                     place: Place::from(PathBuf::from("/working-dir/bar")),
                     size: 0,
@@ -387,7 +387,7 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("foo"),
-                Change::Added(RowUnmaterialized::default()),
+                Change::Added(Entry::default()),
             )]),
             ..InstalledPackageStatus::default()
         };
@@ -426,7 +426,7 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("bar"),
-                Change::Modified(RowUnmaterialized {
+                Change::Modified(Entry {
                     name: PathBuf::from("bar"),
                     place: PathBuf::from("/working-dir/bar").into(),
                     size: 0,

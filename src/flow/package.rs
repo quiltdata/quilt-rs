@@ -12,7 +12,7 @@ use crate::io::manifest::RowsStream;
 use crate::io::remote::Remote;
 use crate::io::remote::StreamItem;
 use crate::io::storage::Storage;
-use crate::io::RowUnmaterialized;
+use crate::io::Entry;
 use crate::manifest::Header;
 use crate::paths::DomainPaths;
 use crate::perf::Measure;
@@ -25,7 +25,7 @@ async fn get_object_attributes_inner(
     remote: &impl Remote,
     listing_uri: &S3Uri,
     object: Res<Object>,
-) -> Res<RowUnmaterialized> {
+) -> Res<Entry> {
     let object_key = object? // TODO: object.key()
         .key
         .clone()
@@ -47,7 +47,7 @@ async fn get_object_attributes(
     remote: &impl Remote,
     listing_uri: S3Uri,
     objects: StreamItem,
-) -> Res<Vec<RowUnmaterialized>> {
+) -> Res<Vec<Entry>> {
     try_join_all(
         objects?
             .into_iter()
@@ -57,7 +57,7 @@ async fn get_object_attributes(
     .await
 }
 
-async fn stream_objects<'a>(remote: &'a impl Remote, listing_uri: S3Uri) -> impl RowsStream + 'a {
+async fn stream_objects(remote: &impl Remote, listing_uri: S3Uri) -> impl RowsStream + '_ {
     let stream = remote.list_objects(listing_uri.clone()).await;
     stream
         .then(move |objs| get_object_attributes(remote, listing_uri.clone(), objs))

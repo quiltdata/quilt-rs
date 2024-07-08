@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::path::PathBuf;
 use tracing::log;
 
 use async_stream::try_stream;
@@ -18,12 +19,11 @@ use crate::checksum::get_checksum_chunksize_and_parts;
 use crate::checksum::ContentHash;
 use crate::checksum::MPU_MAX_PARTS;
 use crate::checksum::MULTIPART_THRESHOLD;
-use crate::io::remote::get_relative_name;
 use crate::io::remote::GetObject;
 use crate::io::remote::HeadObject;
 use crate::io::remote::ObjectsStream;
 use crate::io::remote::Remote;
-use crate::io::RowUnmaterialized;
+use crate::io::Entry;
 use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
@@ -31,6 +31,11 @@ use crate::Res;
 const LIST_OBJECTS_V2_MAX_KEYS: i32 = 1_00;
 
 use crate::io::remote::get_client_for_bucket;
+
+pub fn get_relative_name(listing_uri: &S3Uri, object_uri: &S3Uri) -> PathBuf {
+    let prefix_len = listing_uri.key.len();
+    PathBuf::from(object_uri.key[prefix_len..].to_string())
+}
 
 async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<GetObject> {
     let result = client.get_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
@@ -232,7 +237,7 @@ impl Remote for RemoteS3 {
         &self,
         listing_uri: &S3Uri,
         object_key: impl AsRef<str>,
-    ) -> Res<RowUnmaterialized> {
+    ) -> Res<Entry> {
         let client = get_client_for_bucket(&listing_uri.bucket).await?;
         let key = object_key.as_ref();
         log::debug!(
@@ -252,14 +257,14 @@ impl Remote for RemoteS3 {
             .await
             .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
         // TODO: retry if error?
-        RowUnmaterialized::from_get_object_attributes(listing_uri, object_key, attrs)
+        Entry::from_get_object_attributes(listing_uri, object_key, attrs)
     }
 
     async fn get_object_attributes_fallback(
         &self,
         listing_uri: &S3Uri,
         object_key: impl AsRef<str>,
-    ) -> Res<RowUnmaterialized> {
+    ) -> Res<Entry> {
         let object_uri = S3Uri {
             bucket: listing_uri.bucket.clone(),
             key: object_key.as_ref().to_string(),
@@ -271,7 +276,7 @@ impl Remote for RemoteS3 {
         let name = get_relative_name(listing_uri, &object_uri);
 
         let hash = calculate_sha256_chunked_checksum(object, size).await?;
-        Ok(RowUnmaterialized {
+        Ok(Entry {
             name,
             place: object_uri.into(),
             size,

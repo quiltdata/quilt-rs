@@ -14,7 +14,7 @@ use serde::Serializer;
 #[cfg(test)]
 pub mod mocks;
 
-use crate::io::RowUnmaterialized;
+use crate::io::Entry;
 use crate::io::storage::Storage;
 use crate::manifest::Row;
 use crate::uri::ManifestUri;
@@ -25,8 +25,8 @@ use crate::Res;
 /// Describes modified states of a file
 #[derive(Debug, PartialEq)]
 pub enum Change {
-    Modified(RowUnmaterialized), // modified to what
-    Added(RowUnmaterialized),    // added what
+    Modified(Entry), // modified to what
+    Added(Entry),    // added what
     Removed(Row),                // removed what
 }
 

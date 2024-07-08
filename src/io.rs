@@ -8,6 +8,5 @@ pub mod remote;
 pub mod storage;
 
 mod entry;
-pub use entry::get_relative_name;
-pub use entry::RowUnmaterialized;
+pub use entry::Entry;
 pub use parquet::ParquetWriter;

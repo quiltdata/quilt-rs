@@ -92,7 +92,7 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::io::RowUnmaterialized;
+    use crate::io::Entry;
     use crate::lineage::Change;
     use crate::mocks;
 
@@ -104,7 +104,7 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("foo"),
-                Change::Added(RowUnmaterialized::default()),
+                Change::Added(Entry::default()),
             )]),
             ..InstalledPackageStatus::default()
         };

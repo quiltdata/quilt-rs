@@ -15,15 +15,15 @@ use crate::Res;
 /// We use it for getting hashes in files listings when we create new packages from S3 directory.
 /// Also, we re-use this struct for calculating hashes locally when S3-checksums are disabled.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct RowUnmaterialized {
+pub struct Entry {
     pub name: PathBuf,
     pub place: Place,
     pub size: u64,
     pub hash: Multihash<256>,
 }
 
-impl From<RowUnmaterialized> for Row {
-    fn from(row: RowUnmaterialized) -> Self {
+impl From<Entry> for Row {
+    fn from(row: Entry) -> Self {
         Row {
             hash: row.hash,
             info: serde_json::Value::Null,
@@ -35,7 +35,7 @@ impl From<RowUnmaterialized> for Row {
     }
 }
 
-impl RowUnmaterialized {
+impl Entry {
     pub fn from_get_object_attributes(
         listing_uri: &S3Uri,
         object_key: impl AsRef<str>,
@@ -61,16 +61,11 @@ impl RowUnmaterialized {
         let prefix_len = listing_uri.key.len();
         let name = PathBuf::from(object_uri.key[prefix_len..].to_string());
 
-        Ok(RowUnmaterialized {
+        Ok(Entry {
             name,
             place: object_uri.into(),
             size,
             hash,
         })
     }
-}
-
-pub fn get_relative_name(listing_uri: &S3Uri, object_uri: &S3Uri) -> PathBuf {
-    let prefix_len = listing_uri.key.len();
-    PathBuf::from(object_uri.key[prefix_len..].to_string())
 }

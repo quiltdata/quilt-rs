@@ -10,8 +10,7 @@ use aws_sdk_s3::types::Object;
 use multihash::Multihash;
 use tokio_stream::Stream;
 
-use crate::io::get_relative_name;
-use crate::io::RowUnmaterialized;
+use crate::io::Entry;
 use crate::uri::S3Uri;
 use crate::Res;
 
@@ -54,13 +53,13 @@ pub trait Remote {
         &self,
         listing_uri: &S3Uri,
         object_key: impl AsRef<str>,
-    ) -> impl Future<Output = Res<RowUnmaterialized>>;
+    ) -> impl Future<Output = Res<Entry>>;
 
     fn get_object_attributes_fallback(
         &self,
         listing_uri: &S3Uri,
         object_key: impl AsRef<str>,
-    ) -> impl Future<Output = Res<RowUnmaterialized>>;
+    ) -> impl Future<Output = Res<Entry>>;
 
     /// Fetches the objects contents as a `ByteStream`
     fn get_object_stream(&self, s3_uri: &S3Uri) -> impl Future<Output = Res<GetObject>> + Send;
