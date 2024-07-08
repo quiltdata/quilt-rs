@@ -9,11 +9,11 @@ use crate::checksum::calculate_sha256_chunked_checksum;
 use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use crate::io::manifest::resolve_latest;
 use crate::io::remote::Remote;
+use crate::io::remote::RowUnmaterialized;
 use crate::io::storage::Storage;
 use crate::lineage::Change;
 use crate::lineage::ChangeSet;
 use crate::lineage::InstalledPackageStatus;
-use crate::lineage::PackageFileFingerprint;
 use crate::lineage::PackageLineage;
 use crate::manifest::Table;
 use crate::Error;
@@ -96,7 +96,9 @@ pub async fn create_status(
                     if file_hash != orig_row.hash {
                         changes.insert(
                             relative_path.to_path_buf(),
-                            Change::Modified(PackageFileFingerprint {
+                            Change::Modified(RowUnmaterialized {
+                                name: relative_path.into(),
+                                place: file_path.into(),
                                 size: file_metadata.len(),
                                 hash: file_hash,
                             }),
@@ -107,7 +109,9 @@ pub async fn create_status(
                         calculate_sha256_chunked_checksum(file, file_metadata.len()).await?;
                     changes.insert(
                         relative_path.to_path_buf(),
-                        Change::Added(PackageFileFingerprint {
+                        Change::Added(RowUnmaterialized {
+                            name: relative_path.into(),
+                            place: file_path.into(),
                             size: file_metadata.len(),
                             hash: sha256_hash,
                         }),
@@ -133,7 +137,6 @@ mod tests {
 
     use crate::checksum::ContentHash;
     use crate::lineage::CommitState;
-    use crate::lineage::PackageFileFingerprint;
     use crate::lineage::UpstreamState;
     use crate::mocks;
 
@@ -237,11 +240,9 @@ mod tests {
         let storage = mocks::storage::MockStorage::default();
         let working_dir = storage.temp_dir.as_ref().join(PathBuf::from("foo/bar"));
         let file_path = PathBuf::from("inside/package/file.pq");
+        let working_path = working_dir.join(&file_path);
         storage
-            .write_file(
-                working_dir.join(&file_path),
-                &std::fs::read(mocks::manifest::parquet())?,
-            )
+            .write_file(&working_path, &std::fs::read(mocks::manifest::parquet())?)
             .await?;
 
         let (_, status) =
@@ -251,7 +252,9 @@ mod tests {
         if let Change::Added(fingerprint) = added_file {
             assert_eq!(
                 *fingerprint,
-                PackageFileFingerprint {
+                RowUnmaterialized {
+                    name: file_path.clone(),
+                    place: working_path.into(),
                     size: 5324,
                     hash: ContentHash::SHA256Chunked(
                         "EfrtXWeClWPJ/IVKjQeAmMKhJV45/GcpjDm1IhvhJAY=".to_string()

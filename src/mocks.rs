@@ -8,19 +8,6 @@ pub fn row_hash_sample1() -> multihash::Multihash<256> {
     multihash::Multihash::wrap(0xb510, b"pedestrian").expect("Unexpected")
 }
 
-pub mod status {
-    use super::row_hash_sample1;
-
-    use crate::lineage::PackageFileFingerprint;
-
-    pub fn package_file_fingerprint() -> PackageFileFingerprint {
-        PackageFileFingerprint {
-            size: 0,
-            hash: row_hash_sample1(),
-        }
-    }
-}
-
 pub mod manifest {
     use super::row_hash_sample1;
 

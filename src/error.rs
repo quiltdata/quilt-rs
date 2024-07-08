@@ -124,4 +124,7 @@ pub enum Error {
 
     #[error("Head error: {0}")]
     ObjectNotFound(S3Uri),
+
+    #[error("Path error: {0}")]
+    PathStripPrefix(#[from] std::path::StripPrefixError),
 }

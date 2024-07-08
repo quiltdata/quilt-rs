@@ -25,9 +25,12 @@ pub struct RowUnmaterialized {
 impl From<RowUnmaterialized> for Row {
     fn from(row: RowUnmaterialized) -> Self {
         Row {
+            hash: row.hash,
             info: serde_json::Value::Null,
             meta: serde_json::Value::Null,
-            ..row.into()
+            name: row.name,
+            place: row.place,
+            size: row.size,
         }
     }
 }

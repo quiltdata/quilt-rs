@@ -10,11 +10,11 @@ use tracing::log;
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamRowsChunk;
+use crate::io::remote::RowUnmaterialized;
 use crate::io::storage::Storage;
 use crate::lineage::Change;
 use crate::lineage::CommitState;
 use crate::lineage::InstalledPackageStatus;
-use crate::lineage::PackageFileFingerprint;
 use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
 use crate::manifest::JsonObject;
@@ -57,30 +57,25 @@ async fn create_immutable_object_copy(
     paths: &paths::DomainPaths,
     working_dir: &Path,
     lineage: &mut PackageLineage,
-    logical_key: &PathBuf,
-    current: PackageFileFingerprint,
+    current: RowUnmaterialized,
 ) -> Res<Row> {
     let objects_dir = paths.objects_dir();
     // FIXME: This should really be done when the domain is created.
     storage.create_dir_all(&objects_dir).await?;
     let object_dest = objects_dir.join(hex::encode(current.hash.digest()));
 
-    let row = Row {
-        name: logical_key.clone(),
+    let row = Row::from(RowUnmaterialized {
         place: object_dest.clone().into(),
-        size: current.size,
-        hash: current.hash,
-        info: serde_json::Value::default(),
-        meta: serde_json::Value::default(),
-    };
+        ..current.clone()
+    });
 
-    let work_dest = working_dir.join(logical_key);
+    let work_dest = working_dir.join(current.name.clone());
 
     if !storage.exists(&object_dest).await {
         storage.copy(&work_dest, object_dest).await?;
     }
     lineage.paths.insert(
-        logical_key.clone(),
+        current.name.clone(),
         PathState {
             timestamp: storage.modified_timestamp(&work_dest).await?,
             hash: current.hash,
@@ -140,8 +135,8 @@ pub async fn commit_package(
 
     let mut modified_keys = BTreeMap::new();
     let mut removed_keys = HashSet::new();
-    let mut new_files = Vec::new();
-    for (logical_key, state) in status.changes {
+    let mut new_files: StreamRowsChunk = Vec::new();
+    for (_, state) in status.changes {
         match state {
             Change::Removed(row) => {
                 lineage.paths.remove(&row.name);
@@ -153,23 +148,22 @@ pub async fn commit_package(
                     paths,
                     &working_dir,
                     &mut lineage,
-                    &logical_key,
                     current,
                 )
                 .await?;
                 new_files.push(Ok(added))
             }
             Change::Modified(current) => {
+                let logical_key = current.name.clone();
                 let modified = create_immutable_object_copy(
                     storage,
                     paths,
                     &working_dir,
                     &mut lineage,
-                    &logical_key,
                     current,
                 )
                 .await?;
-                modified_keys.insert(logical_key.clone(), modified);
+                modified_keys.insert(logical_key, modified);
             }
         }
     }
@@ -207,6 +201,7 @@ pub async fn commit_package(
 mod tests {
     use super::*;
 
+    use crate::manifest::Place;
     use std::collections::BTreeMap;
 
     use crate::lineage::Change;
@@ -321,7 +316,12 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("bar"),
-                Change::Added(mocks::status::package_file_fingerprint()),
+                Change::Added(RowUnmaterialized {
+                    name: PathBuf::from("bar"),
+                    place: Place::from(PathBuf::from("/working-dir/bar")),
+                    size: 0,
+                    hash: mocks::row_hash_sample1(),
+                }),
             )]),
             ..InstalledPackageStatus::default()
         };
@@ -387,7 +387,7 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("foo"),
-                Change::Added(PackageFileFingerprint::default()),
+                Change::Added(RowUnmaterialized::default()),
             )]),
             ..InstalledPackageStatus::default()
         };
@@ -426,7 +426,9 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("bar"),
-                Change::Modified(PackageFileFingerprint {
+                Change::Modified(RowUnmaterialized {
+                    name: PathBuf::from("bar"),
+                    place: PathBuf::from("/working-dir/bar").into(),
                     size: 0,
                     hash: multihash::Multihash::wrap(0xb510, b"walker")?,
                 }),
