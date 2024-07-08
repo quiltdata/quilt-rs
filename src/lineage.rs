@@ -14,8 +14,8 @@ use serde::Serializer;
 #[cfg(test)]
 pub mod mocks;
 
-use crate::io::Entry;
 use crate::io::storage::Storage;
+use crate::io::Entry;
 use crate::manifest::Row;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
@@ -27,7 +27,7 @@ use crate::Res;
 pub enum Change {
     Modified(Entry), // modified to what
     Added(Entry),    // added what
-    Removed(Row),                // removed what
+    Removed(Row),    // removed what
 }
 
 /// Map of all changed files

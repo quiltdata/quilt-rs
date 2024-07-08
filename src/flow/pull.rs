@@ -102,10 +102,7 @@ mod tests {
         let lineage = mocks::lineage::with_paths(vec![PathBuf::from("a/a")]);
 
         let status = InstalledPackageStatus {
-            changes: BTreeMap::from([(
-                PathBuf::from("foo"),
-                Change::Added(Entry::default()),
-            )]),
+            changes: BTreeMap::from([(PathBuf::from("foo"), Change::Added(Entry::default()))]),
             ..InstalledPackageStatus::default()
         };
         let remote = mocks::remote::MockRemote::default();

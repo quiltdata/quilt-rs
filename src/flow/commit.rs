@@ -385,10 +385,7 @@ mod tests {
             .await?;
 
         let status = InstalledPackageStatus {
-            changes: BTreeMap::from([(
-                PathBuf::from("foo"),
-                Change::Added(Entry::default()),
-            )]),
+            changes: BTreeMap::from([(PathBuf::from("foo"), Change::Added(Entry::default()))]),
             ..InstalledPackageStatus::default()
         };
 
