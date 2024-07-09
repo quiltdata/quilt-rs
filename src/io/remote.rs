@@ -6,7 +6,6 @@ use std::future::Future;
 use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;
-use aws_sdk_s3::types::Object;
 use multihash::Multihash;
 use tokio_stream::Stream;
 
@@ -33,13 +32,13 @@ pub struct GetObject {
     pub stream: ByteStream,
 }
 
-pub type StreamObjectChunk = Vec<Res<Object>>;
+pub type StreamEntriesChunk = Vec<Res<Entry>>;
 
-pub type StreamItem = Res<StreamObjectChunk>;
+pub type EntriesStreamItem = Res<StreamEntriesChunk>;
 
-pub trait ObjectsStream: Stream<Item = StreamItem> {}
+pub trait EntriesStream: Stream<Item = EntriesStreamItem> {}
 
-impl<T: Stream<Item = StreamItem>> ObjectsStream for T {}
+impl<T: Stream<Item = EntriesStreamItem>> EntriesStream for T {}
 
 /// This trait encapsulates the S3 operations that Quilt needs to perform.
 pub trait Remote {
@@ -85,5 +84,5 @@ pub trait Remote {
 
     /// List objects list under S3 prefix using tokio Stream
     // TODO: return Item = Res<Row>
-    fn list_objects(&self, listing_uri: S3Uri) -> impl Future<Output = impl ObjectsStream> + Send;
+    fn list_objects(&self, listing_uri: S3Uri) -> impl Future<Output = impl EntriesStream> + Send;
 }

@@ -1,6 +1,4 @@
-use aws_sdk_s3::types::Object;
 use chrono;
-use futures::future::try_join_all;
 use tokio_stream::StreamExt;
 use tracing::log;
 
@@ -10,9 +8,7 @@ use crate::io::manifest::tag_timestamp;
 use crate::io::manifest::upload_manifest;
 use crate::io::manifest::RowsStream;
 use crate::io::remote::Remote;
-use crate::io::remote::StreamItem;
 use crate::io::storage::Storage;
-use crate::io::Entry;
 use crate::manifest::Header;
 use crate::paths::DomainPaths;
 use crate::perf::Measure;
@@ -21,44 +17,13 @@ use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
 use crate::Res;
 
-async fn get_object_attributes_inner(
-    remote: &impl Remote,
-    listing_uri: &S3Uri,
-    object: Res<Object>,
-) -> Res<Entry> {
-    let object_key = object?.key.expect("object key expected to be present");
-    match remote.get_object_attributes(listing_uri, &object_key).await {
-        Err(err) => {
-            // TODO: Something is broken or Stack doesn't have GetObjectAttribute?
-            // TODO: Fallback only if error is: no GetObjectAttribute in stack
-            log::warn!("Error getting attributes: {}", err);
-            remote
-                .get_object_attributes_fallback(listing_uri, &object_key)
-                .await
-        }
-        other => other,
-    }
-}
-
-async fn get_object_attributes(
-    remote: &impl Remote,
-    listing_uri: S3Uri,
-    objects: StreamItem,
-) -> Res<Vec<Entry>> {
-    try_join_all(
-        objects?
-            .into_iter()
-            .map(|object| get_object_attributes_inner(remote, &listing_uri, object))
-            .collect::<Vec<_>>(),
-    )
-    .await
-}
-
 async fn stream_objects(remote: &impl Remote, listing_uri: S3Uri) -> impl RowsStream + '_ {
-    let stream = remote.list_objects(listing_uri.clone()).await;
-    stream
-        .then(move |objs| get_object_attributes(remote, listing_uri.clone(), objs))
-        .map(|result| result.map(move |objs| objs.into_iter().map(|obj| Ok(obj.into())).collect()))
+    remote
+        .list_objects(listing_uri.clone())
+        .await
+        .map(|result| {
+            result.map(move |objs| objs.into_iter().map(|obj| obj.map(|o| o.into())).collect())
+        })
 }
 
 /// Lists the objects from S3 prefix as a stream and creates a package (manifest) from it.

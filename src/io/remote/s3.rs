@@ -1,6 +1,5 @@
 use std::path::Path;
 use std::path::PathBuf;
-use tracing::log;
 
 use async_stream::try_stream;
 use aws_sdk_s3::error::DisplayErrorContext;
@@ -10,10 +9,14 @@ use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::ChecksumAlgorithm;
 use aws_sdk_s3::types::CompletedMultipartUpload;
 use aws_sdk_s3::types::CompletedPart;
+use aws_sdk_s3::types::Object;
 use aws_smithy_types::byte_stream::Length;
-use parquet::data_type::AsBytes;
-
+use futures::future::try_join_all;
 use multihash::Multihash;
+use parquet::data_type::AsBytes;
+use tokio_stream::Stream;
+use tokio_stream::StreamExt;
+use tracing::log;
 
 use crate::checksum::calculate_sha256_checksum;
 use crate::checksum::calculate_sha256_chunked_checksum;
@@ -23,9 +26,9 @@ use crate::checksum::ContentHash;
 use crate::checksum::MPU_MAX_PARTS;
 use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use crate::checksum::MULTIPART_THRESHOLD;
+use crate::io::remote::EntriesStream;
 use crate::io::remote::GetObject;
 use crate::io::remote::HeadObject;
-use crate::io::remote::ObjectsStream;
 use crate::io::remote::Remote;
 use crate::io::Entry;
 use crate::uri::S3Uri;
@@ -35,6 +38,72 @@ use crate::Res;
 const LIST_OBJECTS_V2_MAX_KEYS: i32 = 1_00;
 
 use crate::io::remote::get_client_for_bucket;
+
+async fn get_object_attributes_inner(
+    remote: &impl Remote,
+    listing_uri: &S3Uri,
+    object: Res<Object>,
+) -> Res<Entry> {
+    let object_key = object?.key.expect("object key expected to be present");
+    match remote.get_object_attributes(listing_uri, &object_key).await {
+        Err(err) => {
+            // TODO: Something is broken or Stack doesn't have GetObjectAttribute?
+            // TODO: Fallback only if error is: no GetObjectAttribute in stack
+            log::warn!("Error getting attributes: {}", err);
+            remote
+                .get_object_attributes_fallback(listing_uri, &object_key)
+                .await
+        }
+        other => other,
+    }
+}
+
+async fn get_objects_chunk_attributes(
+    remote: &impl Remote,
+    listing_uri: S3Uri,
+    objects: StreamItem,
+) -> Res<Vec<Entry>> {
+    try_join_all(
+        objects?
+            .into_iter()
+            .map(|object| get_object_attributes_inner(remote, &listing_uri, object))
+            .collect::<Vec<_>>(),
+    )
+    .await
+}
+
+type StreamItem = Res<Vec<Res<Object>>>;
+trait ObjectsStream: Stream<Item = StreamItem> {}
+impl<T: Stream<Item = StreamItem>> ObjectsStream for T {}
+
+async fn list_objects(listing_uri: S3Uri) -> impl ObjectsStream {
+    try_stream! {
+        let client = get_client_for_bucket(&listing_uri.bucket).await?;
+        let mut paginated_stream = client
+            .list_objects_v2()
+            .bucket(&listing_uri.bucket)
+            .prefix(&listing_uri.key)
+            .into_paginator()
+            .page_size(LIST_OBJECTS_V2_MAX_KEYS) // XXX: this is to limit concurrency
+            .send();
+        while let Some(page) = paginated_stream.next().await {
+            yield page
+                .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?
+                .contents
+                .into_iter()
+                .flatten()
+                .map(Ok)
+                .collect::<Vec<_>>();
+        }
+    }
+}
+
+async fn stream_objects(remote: &impl Remote, listing_uri: S3Uri) -> impl EntriesStream + '_ {
+    let stream = list_objects(listing_uri.clone()).await;
+    stream
+        .then(move |objs| get_objects_chunk_attributes(remote, listing_uri.clone(), objs))
+        .map(|result| result.map(move |objs| objs.into_iter().map(Ok).collect()))
+}
 
 fn from_get_object_attributes(
     listing_uri: &S3Uri,
@@ -326,26 +395,8 @@ impl Remote for RemoteS3 {
         get_object_stream(&client, s3_uri).await
     }
 
-    async fn list_objects(&self, listing_uri: S3Uri) -> impl ObjectsStream {
-        try_stream! {
-            let client = get_client_for_bucket(&listing_uri.bucket).await?;
-            let mut paginated_stream = client
-                .list_objects_v2()
-                .bucket(&listing_uri.bucket)
-                .prefix(&listing_uri.key)
-                .into_paginator()
-                .page_size(LIST_OBJECTS_V2_MAX_KEYS) // XXX: this is to limit concurrency
-                .send();
-            while let Some(page) = paginated_stream.next().await {
-                yield page
-                    .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?
-                    .contents
-                    .into_iter()
-                    .flatten()
-                    .map(Ok)
-                    .collect::<Vec<_>>();
-            }
-        }
+    async fn list_objects(&self, listing_uri: S3Uri) -> impl EntriesStream {
+        stream_objects(self, listing_uri).await
     }
 
     async fn put_object(&self, s3_uri: &S3Uri, contents: impl Into<ByteStream>) -> Res {

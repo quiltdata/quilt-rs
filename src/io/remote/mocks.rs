@@ -6,9 +6,9 @@ use tracing::log;
 
 use crate::checksum::calculate_sha256_chunked_checksum;
 use crate::io::remote::s3::get_relative_name;
+use crate::io::remote::EntriesStream;
 use crate::io::remote::GetObject;
 use crate::io::remote::HeadObject;
-use crate::io::remote::ObjectsStream;
 use crate::io::storage::mocks::MockStorage;
 use crate::io::storage::Storage;
 use crate::io::Entry;
@@ -114,7 +114,7 @@ impl Remote for MockRemote {
         Ok(GetObject { head, stream })
     }
 
-    async fn list_objects(&self, _listing_uri: S3Uri) -> impl ObjectsStream {
+    async fn list_objects(&self, _listing_uri: S3Uri) -> impl EntriesStream {
         tokio_stream::iter(Vec::new())
     }
 
