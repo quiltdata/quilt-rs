@@ -19,7 +19,7 @@ use crate::Res;
 
 async fn stream_objects(remote: &impl Remote, listing_uri: S3Uri) -> impl RowsStream + '_ {
     remote
-        .list_objects(listing_uri.clone())
+        .list_entries(listing_uri.clone())
         .await
         .map(|result| {
             result.map(move |objs| objs.into_iter().map(|obj| obj.map(|o| o.into())).collect())

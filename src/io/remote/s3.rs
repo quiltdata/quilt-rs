@@ -395,7 +395,7 @@ impl Remote for RemoteS3 {
         get_object_stream(&client, s3_uri).await
     }
 
-    async fn list_objects(&self, listing_uri: S3Uri) -> impl EntriesStream {
+    async fn list_entries(&self, listing_uri: S3Uri) -> impl EntriesStream {
         stream_objects(self, listing_uri).await
     }
 

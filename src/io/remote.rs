@@ -83,6 +83,5 @@ pub trait Remote {
     fn get_object(&self, s3_uri: &S3Uri) -> impl Future<Output = Res<GetObject>> + Send;
 
     /// List objects list under S3 prefix using tokio Stream
-    // TODO: return Item = Res<Row>
-    fn list_objects(&self, listing_uri: S3Uri) -> impl Future<Output = impl EntriesStream> + Send;
+    fn list_entries(&self, listing_uri: S3Uri) -> impl Future<Output = impl EntriesStream> + Send;
 }

@@ -114,7 +114,7 @@ impl Remote for MockRemote {
         Ok(GetObject { head, stream })
     }
 
-    async fn list_objects(&self, _listing_uri: S3Uri) -> impl EntriesStream {
+    async fn list_entries(&self, _listing_uri: S3Uri) -> impl EntriesStream {
         tokio_stream::iter(Vec::new())
     }
 
