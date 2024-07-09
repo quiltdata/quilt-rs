@@ -40,4 +40,5 @@ pub use error::Error;
 pub use installed_package::InstalledPackage;
 pub use local_domain::LocalDomain;
 
+/// Result with `quilt_rs::Error` as error type.
 pub type Res<T = ()> = std::result::Result<T, Error>;

@@ -31,6 +31,9 @@ pub struct LocalDomain<S: Storage = LocalStorage, R: Remote = RemoteS3> {
 }
 
 impl LocalDomain {
+    /// Creates new `LocalDomain` instance.
+    /// Everything will be stored in `root_dir`: .quilt directory and working directories for each package.
+    /// Storage and Remote are set to default implementations: `LocalStorage` and `RemoteS3`.
     pub fn new(root_dir: PathBuf) -> Self {
         let paths = paths::DomainPaths::new(root_dir.clone());
         let lineage = lineage::DomainLineageIo::new(paths.lineage());
@@ -44,11 +47,14 @@ impl LocalDomain {
         }
     }
 
+    /// Calls the `flow::browse` with LocalDomain's propreties.
+    /// Note that when we "browse" remote manifest, we always cache it in .quilt directory.
     pub async fn browse_remote_manifest(&self, uri: &ManifestUri) -> Res<Table> {
         flow::browse(&self.paths, &self.storage, &self.remote, uri).await
     }
 
     // TODO: make public only for tests
+    /// It is public only for tests in QuiltSync. Please, try to not use it
     pub fn create_installed_package(&self, namespace: Namespace) -> InstalledPackage {
         // TODO: seems like you can use PackageLineage as an argument instead of namespace
         InstalledPackage {
@@ -60,8 +66,8 @@ impl LocalDomain {
         }
     }
 
+    /// Calls the `flow::install_package` and writes the package data to lineage
     pub async fn install_package(&self, manifest_uri: &ManifestUri) -> Res<InstalledPackage> {
-        // Read the lineage
         let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
         let lineage = flow::install_package(
             lineage,
@@ -71,19 +77,21 @@ impl LocalDomain {
             manifest_uri,
         )
         .await?;
-        let _fixme = self.lineage.write(&self.storage, lineage).await?;
+        self.lineage.write(&self.storage, lineage).await?;
 
         Ok(self.create_installed_package(manifest_uri.namespace.clone()))
     }
 
+    /// Calls the `flow::uninstall_package` and removes the package data from lineage
     pub async fn uninstall_package(&self, namespace: Namespace) -> Res<()> {
         let lineage = self.lineage.read(&self.storage).await?;
         let lineage =
             flow::uninstall_package(lineage, &self.paths, &self.storage, namespace).await?;
-        let _fixme = self.lineage.write(&self.storage, lineage).await?;
+        self.lineage.write(&self.storage, lineage).await?;
         Ok(())
     }
 
+    /// Gets list of namespaces from lineage, creates `InstalledPackage` for each namespace and returns them.
     pub async fn list_installed_packages(&self) -> Res<Vec<InstalledPackage>> {
         let lineage = self.lineage.read(&self.storage).await?;
         let mut namespaces: Vec<Namespace> = lineage.packages.into_keys().collect();
@@ -95,6 +103,7 @@ impl LocalDomain {
         Ok(packages)
     }
 
+    /// Returns `InstalledPackage`or `None` if lineage doesn't contain that package.
     pub async fn get_installed_package(
         &self,
         namespace: &Namespace,
@@ -107,6 +116,7 @@ impl LocalDomain {
         }
     }
 
+    /// Calls `flow::package_s3_prefix` with LocalDomain's properties.
     pub async fn package_s3_prefix(
         &self,
         source_uri: &S3Uri,
@@ -122,6 +132,7 @@ impl LocalDomain {
         .await
     }
 
+    /// Builds manifest from rows stream and writes it file in `dest_path`
     pub async fn build_manifest(
         &self,
         dest_path: PathBuf,
