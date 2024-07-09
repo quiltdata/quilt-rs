@@ -21,7 +21,7 @@ cargo publish
 ## Coverage
 
 ```bash
-cargo install taurpalin
+cargo install tarpaulin
 cargo tarpaulin --out html
 open tarpaulin-report.html
 ```

@@ -278,6 +278,52 @@ mod tests {
 
     use super::*;
 
+    use crate::checksum::MULTIHASH_SHA256;
+    use crate::manifest::Place;
+
+    #[test]
+    fn test_default() {
+        let hasher = TopHasher::default();
+        assert_eq!(
+            hasher.finalize(),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn test_hashing_header() -> Res {
+        let mut hasher = TopHasher::default();
+        let header = Header {
+            info: serde_json::from_str(r#"{"foo": "bar"}"#)?,
+            meta: serde_json::from_str(r#"{"foo": "bar"}"#)?,
+        };
+        hasher.append_header(&header)?;
+        assert_eq!(
+            hasher.finalize(),
+            "05a306d0b7cadee930fb477123d62488c0f6640f7fcce02181499f5e89ef0074"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_hashing_row() -> Res {
+        let mut hasher = TopHasher::default();
+        let header = Row {
+            name: PathBuf::from("foo/bar".to_string()),
+            place: Place::from(PathBuf::from("foo/bar".to_string())),
+            size: 12345,
+            hash: Multihash::wrap(MULTIHASH_SHA256, b"abcdef")?,
+            info: serde_json::from_str(r#"{"foo": "bar"}"#)?,
+            meta: serde_json::from_str(r#"{"foo": "bar"}"#)?,
+        };
+        hasher.append(&header)?;
+        assert_eq!(
+            hasher.finalize(),
+            "a3be2db2b27dd2e236366f5bd1a7e9d5d4c619726a318f94dd66e5135cb67b20"
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     async fn read_existing_local() -> Res {
         let storage = mocks::storage::MockStorage::default();
