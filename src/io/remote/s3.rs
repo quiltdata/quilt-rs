@@ -1,147 +1,29 @@
 use std::path::Path;
-use std::path::PathBuf;
 
-use async_stream::try_stream;
 use aws_sdk_s3::error::DisplayErrorContext;
 use aws_sdk_s3::error::SdkError;
-use aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::ChecksumAlgorithm;
 use aws_sdk_s3::types::CompletedMultipartUpload;
 use aws_sdk_s3::types::CompletedPart;
-use aws_sdk_s3::types::Object;
 use aws_smithy_types::byte_stream::Length;
-use futures::future::try_join_all;
 use multihash::Multihash;
-use parquet::data_type::AsBytes;
-use tokio_stream::Stream;
-use tokio_stream::StreamExt;
-use tracing::log;
 
 use crate::checksum::calculate_sha256_checksum;
-use crate::checksum::calculate_sha256_chunked_checksum;
 use crate::checksum::get_checksum_chunksize_and_parts;
-use crate::checksum::get_compliant_chunked_checksum;
 use crate::checksum::ContentHash;
-use crate::checksum::MPU_MAX_PARTS;
-use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use crate::checksum::MULTIPART_THRESHOLD;
+use crate::io::remote::get_client_for_bucket;
 use crate::io::remote::EntriesStream;
 use crate::io::remote::GetObject;
 use crate::io::remote::HeadObject;
 use crate::io::remote::Remote;
-use crate::io::Entry;
 use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
 
-const LIST_OBJECTS_V2_MAX_KEYS: i32 = 1_00;
-
-use crate::io::remote::get_client_for_bucket;
-
-async fn get_object_attributes_inner(
-    remote: &impl Remote,
-    listing_uri: &S3Uri,
-    object: Res<Object>,
-) -> Res<Entry> {
-    let object_key = object?.key.expect("object key expected to be present");
-    match remote.get_object_attributes(listing_uri, &object_key).await {
-        Err(err) => {
-            // TODO: Something is broken or Stack doesn't have GetObjectAttribute?
-            // TODO: Fallback only if error is: no GetObjectAttribute in stack
-            log::warn!("Error getting attributes: {}", err);
-            remote
-                .get_object_attributes_fallback(listing_uri, &object_key)
-                .await
-        }
-        other => other,
-    }
-}
-
-async fn get_objects_chunk_attributes(
-    remote: &impl Remote,
-    listing_uri: S3Uri,
-    objects: StreamItem,
-) -> Res<Vec<Entry>> {
-    try_join_all(
-        objects?
-            .into_iter()
-            .map(|object| get_object_attributes_inner(remote, &listing_uri, object))
-            .collect::<Vec<_>>(),
-    )
-    .await
-}
-
-type StreamItem = Res<Vec<Res<Object>>>;
-trait ObjectsStream: Stream<Item = StreamItem> {}
-impl<T: Stream<Item = StreamItem>> ObjectsStream for T {}
-
-async fn list_objects(listing_uri: S3Uri) -> impl ObjectsStream {
-    try_stream! {
-        let client = get_client_for_bucket(&listing_uri.bucket).await?;
-        let mut paginated_stream = client
-            .list_objects_v2()
-            .bucket(&listing_uri.bucket)
-            .prefix(&listing_uri.key)
-            .into_paginator()
-            .page_size(LIST_OBJECTS_V2_MAX_KEYS) // XXX: this is to limit concurrency
-            .send();
-        while let Some(page) = paginated_stream.next().await {
-            yield page
-                .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?
-                .contents
-                .into_iter()
-                .flatten()
-                .map(Ok)
-                .collect::<Vec<_>>();
-        }
-    }
-}
-
-async fn stream_objects(remote: &impl Remote, listing_uri: S3Uri) -> impl EntriesStream + '_ {
-    let stream = list_objects(listing_uri.clone()).await;
-    stream
-        .then(move |objs| get_objects_chunk_attributes(remote, listing_uri.clone(), objs))
-        .map(|result| result.map(move |objs| objs.into_iter().map(Ok).collect()))
-}
-
-fn from_get_object_attributes(
-    listing_uri: &S3Uri,
-    object_key: impl AsRef<str>,
-    attrs: GetObjectAttributesOutput,
-) -> Res<Entry> {
-    if attrs.delete_marker.is_some() {
-        // Can happen if object is removed after it was listed but before attributes retrieved.
-        return Err(Error::S3("Object is a delete marker".to_string()));
-    }
-
-    let checksum = get_compliant_chunked_checksum(&attrs).unwrap();
-    let hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, checksum.as_bytes())?;
-
-    let size = attrs.object_size.expect("ObjectSize must be requested") as u64;
-
-    let version = attrs.version_id.expect("VersionId must be requested");
-
-    let object_uri = S3Uri {
-        bucket: listing_uri.bucket.clone(),
-        key: object_key.as_ref().to_string(),
-        version: Some(version),
-    };
-    let prefix_len = listing_uri.key.len();
-    let name = PathBuf::from(object_uri.key[prefix_len..].to_string());
-
-    Ok(Entry {
-        name,
-        place: object_uri.into(),
-        size,
-        hash,
-    })
-}
-
-pub fn get_relative_name(listing_uri: &S3Uri, object_uri: &S3Uri) -> PathBuf {
-    let prefix_len = listing_uri.key.len();
-    PathBuf::from(object_uri.key[prefix_len..].to_string())
-}
+mod attributes;
+mod list;
 
 async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<GetObject> {
     let result = client.get_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
@@ -339,64 +221,13 @@ impl Remote for RemoteS3 {
         }
     }
 
-    async fn get_object_attributes(
-        &self,
-        listing_uri: &S3Uri,
-        object_key: impl AsRef<str>,
-    ) -> Res<Entry> {
-        let client = get_client_for_bucket(&listing_uri.bucket).await?;
-        let key = object_key.as_ref();
-        log::debug!(
-            "Getting attributes for bucket {} key {}",
-            &listing_uri.bucket,
-            key
-        );
-        let attrs = client
-            .get_object_attributes()
-            .bucket(&listing_uri.bucket)
-            .key(key)
-            .object_attributes(aws_sdk_s3::types::ObjectAttributes::Checksum)
-            .object_attributes(aws_sdk_s3::types::ObjectAttributes::ObjectParts)
-            .object_attributes(aws_sdk_s3::types::ObjectAttributes::ObjectSize)
-            .max_parts(MPU_MAX_PARTS as i32)
-            .send()
-            .await
-            .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
-        // TODO: retry if error?
-        from_get_object_attributes(listing_uri, object_key, attrs)
-    }
-
-    async fn get_object_attributes_fallback(
-        &self,
-        listing_uri: &S3Uri,
-        object_key: impl AsRef<str>,
-    ) -> Res<Entry> {
-        let object_uri = S3Uri {
-            bucket: listing_uri.bucket.clone(),
-            key: object_key.as_ref().to_string(),
-            version: None, // FIXME: Where is version?
-        };
-        let object_stream = self.get_object(&object_uri).await?;
-        let size = object_stream.head.size;
-        let object = object_stream.stream.into_async_read();
-        let name = get_relative_name(listing_uri, &object_uri);
-
-        let hash = calculate_sha256_chunked_checksum(object, size).await?;
-        Ok(Entry {
-            name,
-            place: object_uri.into(),
-            size,
-            hash,
-        })
-    }
-
     async fn get_object(&self, s3_uri: &S3Uri) -> Res<GetObject> {
         let client = get_client_for_bucket(&s3_uri.bucket).await?;
         get_object_stream(&client, s3_uri).await
     }
 
     async fn list_entries(&self, listing_uri: S3Uri) -> impl EntriesStream {
-        stream_objects(self, listing_uri).await
+        list::stream(self, listing_uri).await
     }
 
     async fn put_object(&self, s3_uri: &S3Uri, contents: impl Into<ByteStream>) -> Res {

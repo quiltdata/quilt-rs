@@ -42,8 +42,6 @@ impl<T: Stream<Item = EntriesStreamItem>> EntriesStream for T {}
 
 /// This trait encapsulates the S3 operations that Quilt needs to perform.
 pub trait Remote {
-    // Low-level operations
-
     fn head_object(&self, s3_uri: &S3Uri) -> impl Future<Output = Res<HeadObject>> + Send;
 
     /// Upload file and request checkum from S3
@@ -54,27 +52,12 @@ pub trait Remote {
         size: u64,
     ) -> impl Future<Output = Res<(S3Uri, Multihash<256>)>>;
 
-    /// Get object attributes: checksums, number of chunks, chunksize, version_id
-    fn get_object_attributes(
-        &self,
-        listing_uri: &S3Uri,
-        object_key: impl AsRef<str>,
-    ) -> impl Future<Output = Res<Entry>>;
-
-    fn get_object_attributes_fallback(
-        &self,
-        listing_uri: &S3Uri,
-        object_key: impl AsRef<str>,
-    ) -> impl Future<Output = Res<Entry>>;
-
     /// Upload file. Just that
     fn put_object(
         &self,
         s3_uri: &S3Uri,
         contents: impl Into<ByteStream>,
     ) -> impl Future<Output = Res>;
-
-    // Higher-level operations
 
     /// Checks if object exists
     fn exists(&self, s3_uri: &S3Uri) -> impl Future<Output = Res<bool>> + Send;

@@ -5,13 +5,11 @@ use multihash::Multihash;
 use tracing::log;
 
 use crate::checksum::calculate_sha256_chunked_checksum;
-use crate::io::remote::s3::get_relative_name;
 use crate::io::remote::EntriesStream;
 use crate::io::remote::GetObject;
 use crate::io::remote::HeadObject;
 use crate::io::storage::mocks::MockStorage;
 use crate::io::storage::Storage;
-use crate::io::Entry;
 use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
@@ -53,42 +51,6 @@ impl Remote for MockRemote {
             size,
             version: None,
         })
-    }
-
-    async fn get_object_attributes(
-        &self,
-        listing_uri: &S3Uri,
-        object_key: impl AsRef<str>,
-    ) -> Res<Entry> {
-        log::debug!(
-            "Mocking {} get object attributes request",
-            object_key.as_ref()
-        );
-        let object_uri = S3Uri {
-            bucket: listing_uri.bucket.clone(),
-            key: object_key.as_ref().to_string(),
-            version: None, // FIXME: Where is version?
-        };
-        let name = get_relative_name(listing_uri, &object_uri);
-        let key = object_uri.to_string();
-        log::debug!("Mocking {} head request", key);
-        let file = self.storage.open_file(&key).await?;
-        let size = file.metadata().await?.len();
-        let hash = calculate_sha256_chunked_checksum(file, size).await?;
-        Ok(Entry {
-            name,
-            place: object_uri.into(),
-            size,
-            hash,
-        })
-    }
-
-    async fn get_object_attributes_fallback(
-        &self,
-        listing_uri: &S3Uri,
-        object_key: impl AsRef<str>,
-    ) -> Res<Entry> {
-        self.get_object_attributes(listing_uri, object_key).await
     }
 
     async fn get_object(&self, s3_uri: &S3Uri) -> Res<GetObject> {
