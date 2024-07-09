@@ -25,14 +25,31 @@ use crate::Res;
 /// It can be instantiated from `LocalDomain` by installing new or listing existing packages.
 #[derive(Clone, Debug, PartialEq)]
 pub struct InstalledPackage<S: Storage + Clone = LocalStorage, R: Remote + Clone = RemoteS3> {
-    pub lineage: lineage::PackageLineageIo,
-    pub paths: paths::DomainPaths,
-    pub remote: R,
-    pub storage: S,
     pub namespace: Namespace,
+    lineage: lineage::PackageLineageIo,
+    paths: paths::DomainPaths,
+    remote: R,
+    storage: S,
 }
 
 impl InstalledPackage {
+    /// Returns a new instance of `InstalledPackage`.
+    pub fn new(
+        namespace: Namespace,
+        lineage: lineage::PackageLineageIo,
+        paths: paths::DomainPaths,
+        storage: LocalStorage,
+        remote: RemoteS3,
+    ) -> InstalledPackage {
+        InstalledPackage {
+            lineage,
+            namespace,
+            paths,
+            remote,
+            storage,
+        }
+    }
+
     /// Locate manifest based on hash in lineage.
     /// Reads manifest from storage *into memory* as a BTreeMap of records (subject to change)
     pub async fn manifest(&self) -> Res<Table> {

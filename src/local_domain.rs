@@ -53,17 +53,15 @@ impl LocalDomain {
         flow::browse(&self.paths, &self.storage, &self.remote, uri).await
     }
 
-    // TODO: make public only for tests
     /// It is public only for tests in QuiltSync. Please, try to not use it
     pub fn create_installed_package(&self, namespace: Namespace) -> InstalledPackage {
-        // TODO: seems like you can use PackageLineage as an argument instead of namespace
-        InstalledPackage {
-            lineage: self.lineage.create_package_lineage(namespace.clone()),
-            namespace: namespace.clone(),
-            paths: self.paths.clone(),
-            remote: self.remote.clone(),
-            storage: self.storage.clone(),
-        }
+        InstalledPackage::new(
+            namespace.clone(),
+            self.lineage.create_package_lineage(namespace.clone()),
+            self.paths.clone(),
+            self.storage.clone(),
+            self.remote.clone(),
+        )
     }
 
     /// Calls the `flow::install_package` and writes the package data to lineage
