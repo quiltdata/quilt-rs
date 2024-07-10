@@ -49,6 +49,7 @@ async fn get_client_for_region(region: aws_types::region::Region) -> aws_sdk_s3:
     {
         let map = REGION_CLIENTS.read().unwrap();
         if let Some(client) = map.get(&region) {
+            println!("REGION CLONED !!!!!!!!!!!!!!!!!!!!");
             return client.clone();
         }
     }

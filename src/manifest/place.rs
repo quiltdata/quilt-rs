@@ -17,6 +17,18 @@ impl fmt::Display for SharePointUri {
     }
 }
 
+impl TryFrom<&str> for SharePointUri {
+    type Error = Error;
+
+    fn try_from(input: &str) -> Result<Self, Self::Error> {
+        let url = Url::try_from(input)?;
+        if url.scheme() != "sharepoint" {
+            return Err(Error::Place(format!("Invalid SharePoint URI: {}", input)));
+        }
+        Ok(SharePointUri { value: url })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum PlaceValue {
     Header,
@@ -54,11 +66,13 @@ impl From<PathBuf> for Place {
     }
 }
 
-impl From<Place> for PathBuf {
-    fn from(place: Place) -> Self {
+impl TryFrom<Place> for PathBuf {
+    type Error = Error;
+
+    fn try_from(place: Place) -> Result<Self, Self::Error> {
         match place.value {
-            PlaceValue::PathBuf(path) => path,
-            _ => panic!("Place is not a file://"),
+            PlaceValue::PathBuf(path) => Ok(path),
+            _ => Err(Error::Place("Place is not file://".to_string())),
         }
     }
 }
@@ -71,11 +85,30 @@ impl From<S3Uri> for Place {
     }
 }
 
-impl From<Place> for S3Uri {
-    fn from(place: Place) -> Self {
+impl TryFrom<Place> for S3Uri {
+    type Error = Error;
+
+    fn try_from(place: Place) -> Result<Self, Self::Error> {
         match place.value {
-            PlaceValue::S3Uri(s3_uri) => s3_uri,
-            _ => panic!("Place is not an S3 URI"),
+            PlaceValue::S3Uri(s3_uri) => Ok(s3_uri),
+            _ => Err(Error::Place("Place is not s3://".to_string())),
+        }
+    }
+}
+
+impl From<SharePointUri> for Place {
+    fn from(uri: SharePointUri) -> Place {
+        Place::new(PlaceValue::SharePoint(uri))
+    }
+}
+
+impl TryFrom<Place> for SharePointUri {
+    type Error = Error;
+
+    fn try_from(place: Place) -> Result<Self, Self::Error> {
+        match place.value {
+            PlaceValue::SharePoint(uri) => Ok(uri),
+            _ => Err(Error::Place("Place is not sharepoint://".to_string())),
         }
     }
 }
@@ -102,6 +135,11 @@ impl TryFrom<&str> for Place {
                 }
                 Err(e) => Err(Error::Place(e.to_string())),
             };
+        }
+        if input.starts_with("sharepoint://") {
+            return SharePointUri::try_from(input)
+                .map(Place::from)
+                .map_err(|e| Error::Place(e.to_string()));
         }
         Err(Self::Error::Place(input.to_string()))
     }
@@ -141,10 +179,16 @@ mod tests {
     #[test]
     fn test_parsing_path_buf() -> Res {
         let place1 = Place::try_from("file:///tmp/foo/bar")?;
+        let path1 = PathBuf::from("/tmp/foo/bar");
+        assert_eq!(place1, Place::from(path1.clone()));
+        assert_eq!(PathBuf::try_from(place1)?, path1);
+
         let place2 = Place::try_from("file:///foo")?;
+        let path2 = PathBuf::from("/foo");
+        assert_eq!(place2, Place::from(path2.clone()));
+        assert_eq!(PathBuf::try_from(place2)?, path2);
+
         let place3 = Place::try_from("file://invalid");
-        assert_eq!(place1, Place::from(PathBuf::from("/tmp/foo/bar")));
-        assert_eq!(place2, Place::from(PathBuf::from("/foo")));
         match place3 {
             Err(err) => assert_eq!(
                 err.to_string(),
@@ -165,15 +209,15 @@ mod tests {
     #[test]
     fn test_parsing_s3_uri() -> Res {
         let place1 = Place::try_from("s3://bucket/foo/bar?versionId=abc")?;
+        let uri1 = S3Uri {
+            bucket: "bucket".to_string(),
+            key: "foo/bar".to_string(),
+            version: Some("abc".to_string()),
+        };
+        assert_eq!(place1, Place::from(uri1.clone()));
+        assert_eq!(S3Uri::try_from(place1)?, uri1);
+
         let place2 = Place::try_from("s3://invalid");
-        assert_eq!(
-            place1,
-            Place::from(S3Uri {
-                bucket: "bucket".to_string(),
-                key: "foo/bar".to_string(),
-                version: Some("abc".to_string())
-            })
-        );
         match place2 {
             Err(err) => assert_eq!(
                 err.to_string(),
@@ -197,5 +241,122 @@ mod tests {
             Err(err) => assert_eq!(err.to_string(), "Invalid Place: .".to_string()),
             Ok(_) => panic!("shouldn't happen"),
         }
+    }
+
+    #[test]
+    fn test_formatting_sharepoint() -> Res {
+        let place = Place::from(SharePointUri::try_from("sharepoint://foo/bar")?);
+        assert_eq!(place.to_string(), "sharepoint://foo/bar");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parsing_sharepoint() -> Res {
+        let place1 = Place::try_from("sharepoint://tmp/foo/bar")?;
+        let uri1 = SharePointUri::try_from("sharepoint://tmp/foo/bar")?;
+        assert_eq!(place1, Place::from(uri1.clone()));
+        assert_eq!(SharePointUri::try_from(place1)?, uri1);
+
+        let place2 = Place::try_from("sharepoint://foo")?;
+        let uri2 = SharePointUri::try_from("sharepoint://foo")?;
+        assert_eq!(place2, Place::from(uri2.clone()));
+        assert_eq!(SharePointUri::try_from(place2)?, uri2);
+
+        let place3 = Place::try_from("file://invalid");
+        match place3 {
+            Err(err) => assert_eq!(
+                err.to_string(),
+                "Invalid Place: Unsupported file://invalid".to_string()
+            ),
+            Ok(_) => panic!("shouldn't happen"),
+        }
+        let uri3 = SharePointUri::try_from("file://foo");
+        match uri3 {
+            Err(err) => assert_eq!(
+                err.to_string(),
+                "Invalid Place: Invalid SharePoint URI: file://foo".to_string()
+            ),
+            Ok(_) => panic!("shouldn't happen"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_invalid_assignments() -> Res {
+        let place1 = Place::from(PathBuf::from("/tmp/foo"));
+        let s3_uri1 = S3Uri::try_from(place1.clone());
+        match s3_uri1 {
+            Err(err) => assert_eq!(
+                err.to_string(),
+                "Invalid Place: Place is not s3://".to_string()
+            ),
+            Ok(_) => panic!("shouldn't happen"),
+        }
+        let sharepoint_uri1 = SharePointUri::try_from(place1);
+        match sharepoint_uri1 {
+            Err(err) => assert_eq!(
+                err.to_string(),
+                "Invalid Place: Place is not sharepoint://".to_string()
+            ),
+            Ok(_) => panic!("shouldn't happen"),
+        }
+
+        let place2 = Place::from(S3Uri::try_from("s3://bucket/foo/bar?versionId=abc")?);
+        let path_buf2 = PathBuf::try_from(place2.clone());
+        match path_buf2 {
+            Err(err) => assert_eq!(
+                err.to_string(),
+                "Invalid Place: Place is not file://".to_string()
+            ),
+            Ok(_) => panic!("shouldn't happen"),
+        }
+        let sharepoint_uri2 = SharePointUri::try_from(place2);
+        match sharepoint_uri2 {
+            Err(err) => assert_eq!(
+                err.to_string(),
+                "Invalid Place: Place is not sharepoint://".to_string()
+            ),
+            Ok(_) => panic!("shouldn't happen"),
+        }
+
+        let place3 = Place::from(SharePointUri::try_from("sharepoint://foo/bar")?);
+        let s3_uri3 = S3Uri::try_from(place3.clone());
+        match s3_uri3 {
+            Err(err) => assert_eq!(
+                err.to_string(),
+                "Invalid Place: Place is not s3://".to_string()
+            ),
+            Ok(_) => panic!("shouldn't happen"),
+        }
+        let path_buf3 = PathBuf::try_from(place3.clone());
+        match path_buf3 {
+            Err(err) => assert_eq!(
+                err.to_string(),
+                "Invalid Place: Place is not file://".to_string()
+            ),
+            Ok(_) => panic!("shouldn't happen"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_invalid_parsing() -> Res {
+        let place1 = Place::try_from("file://:");
+        match place1 {
+            Err(err) => assert_eq!(
+                err.to_string(),
+                Error::Place(url::ParseError::InvalidDomainCharacter.to_string()).to_string()
+            ),
+            Ok(_) => panic!("shouldn't happen"),
+        }
+        let place2 = Place::try_from("sharepoint://:");
+        match place2 {
+            Err(err) => assert_eq!(
+                err.to_string(),
+                Error::Place(Error::UrlParse(url::ParseError::EmptyHost).to_string()).to_string(),
+            ),
+            Ok(_) => panic!("shouldn't happen"),
+        }
+        Ok(())
     }
 }

@@ -47,7 +47,9 @@ mod tests {
         let uri: quilt_rs::uri::S3PackageUri =
             "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md".parse()?;
         let manifest_uri = quilt_rs::io::manifest::resolve_manifest_uri(&remote, &uri).await?;
-        let _ = local_domain.install_package(&manifest_uri).await?;
+        assert_eq!(manifest_uri.namespace, ("spec", "quiltcore").into());
+        let installed_package = local_domain.install_package(&manifest_uri).await?;
+        assert_eq!(installed_package.namespace, ("spec", "quiltcore").into());
         let output = model(&local_domain).await?;
         assert_eq!(
             output.installed_packages_list[0].namespace,
