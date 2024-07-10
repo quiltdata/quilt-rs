@@ -188,14 +188,11 @@ mod tests {
         assert_eq!(place2, Place::from(path2.clone()));
         assert_eq!(PathBuf::try_from(place2)?, path2);
 
-        let place3 = Place::try_from("file://invalid");
-        match place3 {
-            Err(err) => assert_eq!(
-                err.to_string(),
-                "Invalid Place: Unsupported file://invalid".to_string()
-            ),
-            Ok(_) => panic!("shouldn't happen"),
-        }
+        let place3_err = Place::try_from("file://invalid").unwrap_err();
+        assert_eq!(
+            place3_err.to_string(),
+            "Invalid Place: Unsupported file://invalid".to_string()
+        );
         Ok(())
     }
 
@@ -217,14 +214,11 @@ mod tests {
         assert_eq!(place1, Place::from(uri1.clone()));
         assert_eq!(S3Uri::try_from(place1)?, uri1);
 
-        let place2 = Place::try_from("s3://invalid");
-        match place2 {
-            Err(err) => assert_eq!(
-                err.to_string(),
-                "Invalid Place: Invalid S3 URI: missing key".to_string()
-            ),
-            Ok(_) => panic!("shouldn't happen"),
-        }
+        let place2_err = Place::try_from("s3://invalid").unwrap_err();
+        assert_eq!(
+            place2_err.to_string(),
+            "Invalid Place: Invalid S3 URI: missing key".to_string()
+        );
         Ok(())
     }
 
@@ -236,11 +230,8 @@ mod tests {
 
     #[test]
     fn test_parsing_header() {
-        let place = Place::try_from(".");
-        match place {
-            Err(err) => assert_eq!(err.to_string(), "Invalid Place: .".to_string()),
-            Ok(_) => panic!("shouldn't happen"),
-        }
+        let place_err = Place::try_from(".").unwrap_err();
+        assert_eq!(place_err.to_string(), "Invalid Place: .".to_string());
     }
 
     #[test]
@@ -262,62 +253,44 @@ mod tests {
         assert_eq!(place2, Place::from(uri2.clone()));
         assert_eq!(SharePointUri::try_from(place2)?, uri2);
 
-        let place3 = Place::try_from("file://invalid");
-        match place3 {
-            Err(err) => assert_eq!(
-                err.to_string(),
-                "Invalid Place: Unsupported file://invalid".to_string()
-            ),
-            Ok(_) => panic!("shouldn't happen"),
-        }
-        let uri3 = SharePointUri::try_from("file://foo");
-        match uri3 {
-            Err(err) => assert_eq!(
-                err.to_string(),
-                "Invalid Place: Invalid SharePoint URI: file://foo".to_string()
-            ),
-            Ok(_) => panic!("shouldn't happen"),
-        }
+        let place3_err = Place::try_from("file://invalid").unwrap_err();
+        assert_eq!(
+            place3_err.to_string(),
+            "Invalid Place: Unsupported file://invalid".to_string()
+        );
+        let uri3_err = SharePointUri::try_from("file://foo").unwrap_err();
+        assert_eq!(
+            uri3_err.to_string(),
+            "Invalid Place: Invalid SharePoint URI: file://foo".to_string()
+        );
         Ok(())
     }
 
     #[test]
     fn test_invalid_assignments() -> Res {
         let place1 = Place::from(PathBuf::from("/tmp/foo"));
-        let s3_uri1 = S3Uri::try_from(place1.clone());
-        match s3_uri1 {
-            Err(err) => assert_eq!(
-                err.to_string(),
-                "Invalid Place: Place is not s3://".to_string()
-            ),
-            Ok(_) => panic!("shouldn't happen"),
-        }
-        let sharepoint_uri1 = SharePointUri::try_from(place1);
-        match sharepoint_uri1 {
-            Err(err) => assert_eq!(
-                err.to_string(),
-                "Invalid Place: Place is not sharepoint://".to_string()
-            ),
-            Ok(_) => panic!("shouldn't happen"),
-        }
+        let s3_uri1_err = S3Uri::try_from(place1.clone()).unwrap_err();
+        assert_eq!(
+            s3_uri1_err.to_string(),
+            "Invalid Place: Place is not s3://".to_string()
+        );
+        let sharepoint_uri1_err = SharePointUri::try_from(place1).unwrap_err();
+        assert_eq!(
+            sharepoint_uri1_err.to_string(),
+            "Invalid Place: Place is not sharepoint://".to_string()
+        );
 
         let place2 = Place::from(S3Uri::try_from("s3://bucket/foo/bar?versionId=abc")?);
-        let path_buf2 = PathBuf::try_from(place2.clone());
-        match path_buf2 {
-            Err(err) => assert_eq!(
-                err.to_string(),
-                "Invalid Place: Place is not file://".to_string()
-            ),
-            Ok(_) => panic!("shouldn't happen"),
-        }
-        let sharepoint_uri2 = SharePointUri::try_from(place2);
-        match sharepoint_uri2 {
-            Err(err) => assert_eq!(
-                err.to_string(),
-                "Invalid Place: Place is not sharepoint://".to_string()
-            ),
-            Ok(_) => panic!("shouldn't happen"),
-        }
+        let path_buf2_err = PathBuf::try_from(place2.clone()).unwrap_err();
+        assert_eq!(
+            path_buf2_err.to_string(),
+            "Invalid Place: Place is not file://".to_string()
+        );
+        let sharepoint_uri2_err = SharePointUri::try_from(place2).unwrap_err();
+        assert_eq!(
+            sharepoint_uri2_err.to_string(),
+            "Invalid Place: Place is not sharepoint://".to_string()
+        );
 
         let place3 = Place::from(SharePointUri::try_from("sharepoint://foo/bar")?);
         let s3_uri3 = S3Uri::try_from(place3.clone());
@@ -328,14 +301,11 @@ mod tests {
             ),
             Ok(_) => panic!("shouldn't happen"),
         }
-        let path_buf3 = PathBuf::try_from(place3.clone());
-        match path_buf3 {
-            Err(err) => assert_eq!(
-                err.to_string(),
-                "Invalid Place: Place is not file://".to_string()
-            ),
-            Ok(_) => panic!("shouldn't happen"),
-        }
+        let path_buf3_err = PathBuf::try_from(place3.clone()).unwrap_err();
+        assert_eq!(
+            path_buf3_err.to_string(),
+            "Invalid Place: Place is not file://".to_string()
+        );
         Ok(())
     }
 
@@ -349,14 +319,11 @@ mod tests {
             ),
             Ok(_) => panic!("shouldn't happen"),
         }
-        let place2 = Place::try_from("sharepoint://:");
-        match place2 {
-            Err(err) => assert_eq!(
-                err.to_string(),
-                Error::Place(Error::UrlParse(url::ParseError::EmptyHost).to_string()).to_string(),
-            ),
-            Ok(_) => panic!("shouldn't happen"),
-        }
+        let place2_err = Place::try_from("sharepoint://:").unwrap_err();
+        assert_eq!(
+            place2_err.to_string(),
+            Error::Place(Error::UrlParse(url::ParseError::EmptyHost).to_string()).to_string(),
+        );
         Ok(())
     }
 }

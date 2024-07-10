@@ -404,4 +404,59 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn test_namespace_comparison() {
+        assert!(Namespace::from(("foo", "aaa")) < Namespace::from(("foo", "zzz")));
+        assert!(Namespace::from(("foo", "222")) > Namespace::from(("foo", "111")));
+        assert!(Namespace::from(("foo", "bar")) == Namespace::from(("foo", "bar")));
+        assert!(Namespace::from(("foa", "bar")) < Namespace::from(("fob", "bar")));
+        assert!(Namespace::from(("fo2", "bar")) > Namespace::from(("fo1", "bar")));
+    }
+
+    #[test]
+    fn test_formatting() {
+        let uri1 = S3PackageUri {
+            bucket: "bucket".to_string(),
+            namespace: ("foo", "bar").into(),
+            revision: RevisionPointer::Hash("abcdef".to_string()),
+            path: Some(PathBuf::from("read/me.md")),
+        };
+        assert_eq!(
+            uri1.to_string(),
+            "quilt+s3://bucket#package=foo/bar@abcdef&path=read/me.md"
+        );
+        let uri2 = S3PackageUri {
+            bucket: "bucket".to_string(),
+            namespace: ("foo", "bar").into(),
+            revision: RevisionPointer::Tag("latest".to_string()),
+            path: None,
+        };
+        assert_eq!(uri2.to_string(), "quilt+s3://bucket#package=foo/bar@latest");
+    }
+
+    #[test]
+    fn test_from_manifest_uri() {
+        let manifest_uri = ManifestUri {
+            bucket: "bucket".to_string(),
+            namespace: ("foo", "bar").into(),
+            hash: "abcdef".to_string(),
+        };
+        assert_eq!(
+            S3PackageUri::from(&manifest_uri),
+            S3PackageUri {
+                bucket: "bucket".to_string(),
+                namespace: ("foo", "bar").into(),
+                revision: RevisionPointer::Hash("abcdef".to_string()),
+                path: None,
+            }
+        );
+    }
+
+    #[test]
+    fn test_serializing() -> Res {
+        let namespace: String = serde_json::to_string(&Namespace::from(("foo", "bar")))?;
+        assert_eq!(namespace, r#""foo/bar""#);
+        Ok(())
+    }
 }

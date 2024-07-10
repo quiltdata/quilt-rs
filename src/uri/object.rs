@@ -50,3 +50,39 @@ impl fmt::Display for ObjectUri {
         write!(f, "{}", S3Uri::from(self))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::uri::S3PackageUri;
+    use crate::Res;
+
+    #[test]
+    fn test_formatting() -> Res {
+        let package_uri = S3PackageUri::try_from("quilt+s3://bucket#package=foo/bar")?;
+        let object_uri = ObjectUri::new(
+            S3PackageHandle::from(package_uri),
+            PathBuf::from("lorem/ipsum"),
+        );
+        assert_eq!(
+            object_uri.to_string(),
+            "s3://bucket/foo/bar/lorem/ipsum".to_string()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_converting_to_s3uri() -> Res {
+        let object_uri = ObjectUri::new(
+            S3PackageHandle {
+                bucket: "bucket".to_string(),
+                namespace: ("foo", "bar").into(),
+            },
+            PathBuf::from("lorem/ipsum"),
+        );
+        let s3_uri = S3Uri::from(&object_uri);
+        assert_eq!(s3_uri, S3Uri::try_from("s3://bucket/foo/bar/lorem/ipsum")?);
+        Ok(())
+    }
+}

@@ -39,6 +39,7 @@ mod tests {
     use temp_testdir::TempDir;
 
     #[tokio::test]
+    #[ignore]
     async fn list() -> Result<(), Error> {
         let remote = quilt_rs::io::remote::RemoteS3::new();
         let temp_dir = TempDir::default();
