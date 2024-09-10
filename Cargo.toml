@@ -32,7 +32,7 @@ futures-util = "0.3.30"
 hex = "0.4.3"
 lazy_static = "1.4.0"
 multihash = "0.19.1"
-parquet = { version = "52.0.0", features = ["async", "object_store"] }
+parquet = { version = "53.0.0", features = ["async", "object_store"] }
 percent-encoding = "2.3.1"
 reqwest = "0.12.5"
 serde = { version = "1.0.203", features = ["derive"] }
