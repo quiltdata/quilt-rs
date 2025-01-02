@@ -12,6 +12,7 @@ use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
 use url::form_urlencoded;
+use url::Host;
 use url::Url;
 
 use crate::uri::ManifestUri;
@@ -107,7 +108,7 @@ impl Serialize for Namespace {
 
 struct NamespaceVisitor;
 
-impl<'de> Visitor<'de> for NamespaceVisitor {
+impl Visitor<'_> for NamespaceVisitor {
     type Value = Namespace;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -186,6 +187,7 @@ pub struct S3PackageUri {
     pub namespace: Namespace,
     pub revision: RevisionPointer,
     pub path: Option<PathBuf>,
+    pub catalog: Option<Host>,
 }
 
 // TODO: consider using S3Uri
@@ -222,6 +224,8 @@ impl TryFrom<&str> for S3PackageUri {
 
         let path = params.remove("path").map(PathBuf::from);
 
+        let catalog = params.remove("catalog").map(Host::Domain);
+
         if !params.is_empty() {
             return Err(Error::PackageURI(format!(
                 "unexpected parameters in fragment: {:?}",
@@ -236,6 +240,7 @@ impl TryFrom<&str> for S3PackageUri {
 
         Ok(Self {
             bucket: bucket.to_string(),
+            catalog,
             namespace: namespace.try_into()?,
             path,
             revision,
@@ -272,9 +277,10 @@ impl From<ManifestUri> for S3PackageUri {
     fn from(uri: ManifestUri) -> S3PackageUri {
         S3PackageUri {
             bucket: uri.bucket,
+            catalog: None,
             namespace: uri.namespace,
-            revision: RevisionPointer::Hash(uri.hash),
             path: None,
+            revision: RevisionPointer::Hash(uri.hash),
         }
     }
 }
@@ -298,6 +304,7 @@ mod tests {
             uri,
             S3PackageUri {
                 bucket: "bucket".to_string(),
+                catalog: None,
                 namespace: ("foo", "bar").into(),
                 revision: RevisionPointer::Hash("latest".to_string()),
                 path: None,
@@ -315,6 +322,7 @@ mod tests {
             uri,
             S3PackageUri {
                 bucket: "bucket".to_string(),
+                catalog: None,
                 namespace: ("foo", "bar").into(),
                 revision: RevisionPointer::Hash("latest".to_string()),
                 path: None,
@@ -382,6 +390,7 @@ mod tests {
             uri,
             S3PackageUri {
                 bucket: "bucket".to_string(),
+                catalog: None,
                 namespace: ("foo", "bar").into(),
                 revision: RevisionPointer::Hash("latest".to_string()),
                 path: Some(PathBuf::from("read/me.md")),
@@ -397,6 +406,24 @@ mod tests {
             uri,
             S3PackageUri {
                 bucket: "bucket".to_string(),
+                catalog: None,
+                namespace: ("foo", "bar").into(),
+                revision: RevisionPointer::Tag("latest".to_string()),
+                path: Some(PathBuf::from("read/me.md")),
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_catalog() -> Res {
+        let uri: S3PackageUri =
+            "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=do.ma.in".parse()?;
+        assert_eq!(
+            uri,
+            S3PackageUri {
+                bucket: "bucket".to_string(),
+                catalog: Some(Host::Domain("do.ma.in".to_string())),
                 namespace: ("foo", "bar").into(),
                 revision: RevisionPointer::Tag("latest".to_string()),
                 path: Some(PathBuf::from("read/me.md")),

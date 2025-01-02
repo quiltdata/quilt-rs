@@ -2462,7 +2462,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-rs"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "arrow",
  "arrow-array 53.0.0",
@@ -3487,6 +3487,7 @@ dependencies = [
  "form_urlencoded",
  "idna",
  "percent-encoding",
+ "serde",
 ]
 
 [[package]]
