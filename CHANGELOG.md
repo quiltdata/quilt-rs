@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## [0.8.4]
+
+* Handle `&catalog` in `quilt+s3` URI's `.to_string()`
+
 ## [0.8.3]
 
 * Handle `&catalog` in `quilt+s3` URI

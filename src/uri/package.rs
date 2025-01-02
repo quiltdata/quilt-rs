@@ -251,16 +251,27 @@ impl TryFrom<&str> for S3PackageUri {
 impl fmt::Display for S3PackageUri {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let hash = match &self.revision {
-            RevisionPointer::Tag(h) | RevisionPointer::Hash(h) => h,
+            RevisionPointer::Tag(h) => {
+                if h == "latest" {
+                    "".to_string()
+                } else {
+                    format!("@{}", h)
+                }
+            }
+            RevisionPointer::Hash(h) => format!("@{}", h),
         };
         let path_part = match &self.path {
             Some(p) => format!("&path={}", p.display()),
             None => "".to_string(),
         };
+        let catalog_part = match &self.catalog {
+            Some(p) => format!("&catalog={}", p),
+            None => "".to_string(),
+        };
         write!(
             f,
-            "quilt+s3://{}#package={}@{}{}",
-            self.bucket, self.namespace, hash, path_part
+            "quilt+s3://{}#package={}{}{}{}",
+            self.bucket, self.namespace, hash, path_part, catalog_part
         )
     }
 }
@@ -428,6 +439,22 @@ mod tests {
                 revision: RevisionPointer::Tag("latest".to_string()),
                 path: Some(PathBuf::from("read/me.md")),
             }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_stringify() -> Res {
+        let uri = S3PackageUri {
+            bucket: "bucket".to_string(),
+            catalog: Some(Host::Domain("do.ma.in".to_string())),
+            namespace: ("foo", "bar").into(),
+            revision: RevisionPointer::Tag("latest".to_string()),
+            path: Some(PathBuf::from("read/me.md")),
+        };
+        assert_eq!(
+            uri.to_string(),
+            "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=do.ma.in"
         );
         Ok(())
     }

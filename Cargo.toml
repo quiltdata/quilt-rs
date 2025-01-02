@@ -1,6 +1,6 @@
 [package]
 name = "quilt-rs"
-version = "0.8.3"
+version = "0.8.4"
 edition = "2021"
 description = "Rust library for accessing Quilt data packages."
 documentation = "https://docs.quiltdata.com"
