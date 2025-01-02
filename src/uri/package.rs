@@ -417,7 +417,8 @@ mod tests {
 
     #[test]
     fn test_catalog() -> Res {
-        let uri: S3PackageUri = "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=do.ma.in".parse()?;
+        let uri: S3PackageUri =
+            "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=do.ma.in".parse()?;
         assert_eq!(
             uri,
             S3PackageUri {
