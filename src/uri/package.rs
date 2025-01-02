@@ -265,7 +265,7 @@ impl fmt::Display for S3PackageUri {
             None => "".to_string(),
         };
         let catalog_part = match &self.catalog {
-            Some(p) => format!("&catalog={}", p.to_string()),
+            Some(p) => format!("&catalog={}", p),
             None => "".to_string(),
         };
         write!(
