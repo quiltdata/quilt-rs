@@ -108,7 +108,7 @@ impl Serialize for Namespace {
 
 struct NamespaceVisitor;
 
-impl<'de> Visitor<'de> for NamespaceVisitor {
+impl Visitor<'_> for NamespaceVisitor {
     type Value = Namespace;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
