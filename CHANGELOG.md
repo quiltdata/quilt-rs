@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## [0.8.3]
+
+* Handle `&catalog` in `quilt+s3` URI
+
 ## [0.8.2]
 
 * Chores: update dependencies
