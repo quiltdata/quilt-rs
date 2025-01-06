@@ -19,9 +19,7 @@ use crate::checksum::calculate_sha256_checksum;
 use crate::checksum::get_checksum_chunksize_and_parts;
 use crate::checksum::get_compliant_chunked_checksum;
 use crate::checksum::ContentHash;
-use crate::checksum::MPU_MAX_PARTS;
-use crate::checksum::MULTIHASH_SHA256_CHUNKED;
-use crate::checksum::MULTIPART_THRESHOLD;
+use crate::checksum::{MPU_MAX_PARTS, MULTIHASH_SHA256_CHUNKED, MULTIHASH_MISSING, MULTIPART_THRESHOLD};
 use crate::io::remote::ObjectsStream;
 use crate::io::remote::Remote;
 use crate::uri::S3Uri;
@@ -47,9 +45,11 @@ impl TryFrom<GetObjectAttributesOutput> for S3AttributesWrapper {
             return Err(Error::S3("Object is a delete marker".to_string()));
         }
 
-        let checksum = get_compliant_chunked_checksum(&attrs)
-            .ok_or_else(|| Error::S3("Checksum not found".to_string()))?;
-        let hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, checksum.as_bytes())?;
+        let maybe_checksum = get_compliant_chunked_checksum(&attrs);
+        let hash = match maybe_checksum {
+            Some(checksum) => Multihash::wrap(MULTIHASH_SHA256_CHUNKED, checksum.as_bytes())?,
+            None => Multihash::wrap(MULTIHASH_MISSING, &[])?,
+        };
         let size = attrs.object_size.expect("ObjectSize must be requested") as u64;
         Ok(S3AttributesWrapper {
             version: attrs.version_id.expect("VersionId must be requested"),
@@ -259,6 +259,12 @@ impl Remote for RemoteS3 {
             hash,
             version,
         } = attrs.try_into()?;
+        if hash.code() == MULTIHASH_MISSING {
+            return Err(Error::Checksum(format!(
+                "missing checksum for key {} in bucket {}",
+                key, listing_uri.bucket
+            )));
+        }
         Ok(S3Attributes {
             listing_uri: listing_uri.clone(),
             object_uri: S3Uri {

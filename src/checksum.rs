@@ -36,6 +36,8 @@ pub const MULTIHASH_SHA256: u64 = 0x16;
 /// Multihash code for chunksums
 pub const MULTIHASH_SHA256_CHUNKED: u64 = 0xb510;
 
+pub const MULTIHASH_MISSING: u64 = 0;
+
 impl TryFrom<Multihash<256>> for ContentHash {
     type Error = Error;
 
