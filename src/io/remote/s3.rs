@@ -283,14 +283,11 @@ impl Remote for RemoteS3 {
 
         let S3AttributesWrapper {
             size,
-            hash,
+            mut hash,
             version,
         } = attrs.try_into()?;
         if hash.code() == MULTIHASH_MISSING {
-            return Err(Error::Checksum(format!(
-                "missing checksum for key {} in bucket {}",
-                key, listing_uri.bucket
-            )));
+            hash = self.calculate_object_checksum(listing_uri, object_key.as_ref()).await?;
         }
         Ok(S3Attributes {
             listing_uri: listing_uri.clone(),
