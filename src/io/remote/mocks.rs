@@ -108,6 +108,7 @@ impl Remote for MockRemote {
         &self,
         _listing_uri: &S3Uri,
         _object_key: impl AsRef<str>,
+        _version: &str,
     ) -> impl std::future::Future<Output = Res<Multihash<256>>> {
         let digest = vec![0; 32];
         let hash = Multihash::wrap(MULTIHASH_SHA256, &digest).unwrap();

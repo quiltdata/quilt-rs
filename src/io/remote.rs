@@ -57,6 +57,7 @@ pub trait Remote {
         &self,
         listing_uri: &S3Uri,
         object_key: impl AsRef<str>,
+        version: &str,
     ) -> impl Future<Output = Res<Multihash<256>>>;
 
     /// Get object attributes: checksums, number of chunks, chunksize, version_id

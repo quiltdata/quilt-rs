@@ -235,6 +235,7 @@ impl Remote for RemoteS3 {
         &self,
         listing_uri: &S3Uri,
         object_key: impl AsRef<str>,
+        version: &str,
     ) -> Res<Multihash<256>> {
         // uses calculate_sha256_checksum* to calculate the checksum of the object
         let client = get_client_for_bucket(&listing_uri.bucket).await?;
@@ -249,7 +250,7 @@ impl Remote for RemoteS3 {
             &S3Uri {
                 bucket: listing_uri.bucket.clone(),
                 key: key.to_string(),
-                version: None,
+                version: Some(version.to_string()),
             },
         )
         .await?;
@@ -281,13 +282,14 @@ impl Remote for RemoteS3 {
             .await
             .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
 
-        let S3AttributesWrapper {
-            size,
-            mut hash,
-            version,
-        } = attrs.try_into()?;
+        let attrs_wrapper: S3AttributesWrapper = attrs.try_into()?;
+        let size = attrs_wrapper.size;
+        let version = attrs_wrapper.version;
+        let mut hash = attrs_wrapper.hash;
         if hash.code() == MULTIHASH_MISSING {
-            hash = self.calculate_object_checksum(listing_uri, object_key.as_ref()).await?;
+            hash = self
+            .calculate_object_checksum(listing_uri, object_key.as_ref(), &version)
+            .await?;
         }
         Ok(S3Attributes {
             listing_uri: listing_uri.clone(),
