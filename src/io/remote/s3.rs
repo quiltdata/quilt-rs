@@ -288,8 +288,8 @@ impl Remote for RemoteS3 {
         let mut hash = attrs_wrapper.hash;
         if hash.code() == MULTIHASH_MISSING {
             hash = self
-            .calculate_object_checksum(listing_uri, object_key.as_ref(), &version)
-            .await?;
+                .calculate_object_checksum(listing_uri, object_key.as_ref(), &version)
+                .await?;
         }
         Ok(S3Attributes {
             listing_uri: listing_uri.clone(),
