@@ -52,6 +52,13 @@ pub trait Remote {
         s3_uri: &S3Uri,
     ) -> impl Future<Output = Res<impl AsyncRead + Send + Unpin>> + Send;
 
+    /// Calculate checksum of the object
+    fn calculate_object_checksum(
+        &self,
+        listing_uri: &S3Uri,
+        object_key: impl AsRef<str>,
+    ) -> impl Future<Output = Res<Multihash<256>>>;
+
     /// Get object attributes: checksums, number of chunks, chunksize, version_id
     fn get_object_attributes(
         &self,

@@ -10,7 +10,6 @@ use aws_sdk_s3::types::ChecksumAlgorithm;
 use aws_sdk_s3::types::CompletedMultipartUpload;
 use aws_sdk_s3::types::CompletedPart;
 use aws_smithy_types::byte_stream::Length;
-use parquet::data_type::AsBytes;
 
 use multihash::Multihash;
 use tokio::io::AsyncRead;
@@ -19,7 +18,9 @@ use crate::checksum::calculate_sha256_checksum;
 use crate::checksum::get_checksum_chunksize_and_parts;
 use crate::checksum::get_compliant_chunked_checksum;
 use crate::checksum::ContentHash;
-use crate::checksum::{MPU_MAX_PARTS, MULTIHASH_SHA256_CHUNKED, MULTIHASH_MISSING, MULTIPART_THRESHOLD};
+use crate::checksum::{
+    MPU_MAX_PARTS, MULTIHASH_MISSING, MULTIHASH_SHA256_CHUNKED, MULTIPART_THRESHOLD,
+};
 use crate::io::remote::ObjectsStream;
 use crate::io::remote::Remote;
 use crate::uri::S3Uri;
@@ -47,7 +48,7 @@ impl TryFrom<GetObjectAttributesOutput> for S3AttributesWrapper {
 
         let maybe_checksum = get_compliant_chunked_checksum(&attrs);
         let hash = match maybe_checksum {
-            Some(checksum) => Multihash::wrap(MULTIHASH_SHA256_CHUNKED, checksum.as_bytes())?,
+            Some(checksum) => Multihash::wrap(MULTIHASH_SHA256_CHUNKED, &checksum)?,
             None => Multihash::wrap(MULTIHASH_MISSING, &[])?,
         };
         let size = attrs.object_size.expect("ObjectSize must be requested") as u64;
@@ -228,6 +229,32 @@ impl Remote for RemoteS3 {
     async fn get_object(&self, s3_uri: &S3Uri) -> Res<impl AsyncRead + Send + Unpin> {
         let client = get_client_for_bucket(&s3_uri.bucket).await?;
         get_object(&client, s3_uri).await
+    }
+
+    async fn calculate_object_checksum(
+        &self,
+        listing_uri: &S3Uri,
+        object_key: impl AsRef<str>,
+    ) -> Res<Multihash<256>> {
+        // uses calculate_sha256_checksum* to calculate the checksum of the object
+        let client = get_client_for_bucket(&listing_uri.bucket).await?;
+        let key = object_key.as_ref();
+        log::debug!(
+            "Calculating checksum for bucket {} key {}",
+            &listing_uri.bucket,
+            key
+        );
+        let stream = get_object_stream(
+            &client,
+            &S3Uri {
+                bucket: listing_uri.bucket.clone(),
+                key: key.to_string(),
+                version: None,
+            },
+        )
+        .await?;
+        let reader = stream.into_async_read();
+        calculate_sha256_checksum(reader).await
     }
 
     async fn get_object_attributes(

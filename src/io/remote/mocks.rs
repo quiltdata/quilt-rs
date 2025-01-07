@@ -7,6 +7,7 @@ use tokio::io::AsyncReadExt;
 use tracing::log;
 
 use crate::checksum;
+use crate::checksum::MULTIHASH_SHA256;
 use crate::io::remote::ObjectsStream;
 use crate::io::remote::S3Attributes;
 use crate::io::storage::mocks::MockStorage;
@@ -101,6 +102,16 @@ impl Remote for MockRemote {
             },
             hash,
         ))
+    }
+
+    fn calculate_object_checksum(
+        &self,
+        _listing_uri: &S3Uri,
+        _object_key: impl AsRef<str>,
+    ) -> impl std::future::Future<Output = Res<Multihash<256>>> {
+        let digest = vec![0; 32];
+        let hash = Multihash::wrap(MULTIHASH_SHA256, &digest).unwrap();
+        async move { Ok(hash) }
     }
 }
 
