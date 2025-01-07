@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## [0.8.5]
+
+* `package_s3_prefix` will calculate checksum if missing
+
 ## [0.8.4]
 
 * Handle `&catalog` in `quilt+s3` URI's `.to_string()`
