@@ -23,7 +23,7 @@ use crate::uri::S3Uri;
 use crate::Res;
 
 async fn get_object_attributes_inner(
-    storage: &impl Storage,
+    _storage: &impl Storage,
     remote: &impl Remote,
     listing_uri: &S3Uri,
     object: Res<Object>,
@@ -35,10 +35,8 @@ async fn get_object_attributes_inner(
     match remote.get_object_attributes(listing_uri, &object_key).await {
         Ok(attrs) => Ok(attrs),
         Err(err) => {
-            log::warn!("Error getting attributes: {}", err);
-            storage
-                .get_object_attributes(listing_uri, &object_key)
-                .await
+            log::error!("Error getting attributes[{:?}]: {}", object_key, err);
+            Err(err)
         }
     }
 }
@@ -66,8 +64,9 @@ async fn stream_objects<'a>(
     let stream = remote.list_objects(listing_uri.clone()).await;
     stream
         .then(move |objs| get_object_attributes(storage, remote, listing_uri.clone(), objs))
-        .map(|result| {
-            result.map(move |objs| objs.into_iter().map(|obj| Ok(Row::from(obj))).collect())
+        .map(|result| match result {
+            Ok(objs) => Ok(objs.into_iter().map(|obj| Ok(Row::from(obj))).collect()),
+            Err(err) => Err(err),
         })
 }
 
