@@ -7,7 +7,7 @@ use chrono::Utc;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
-use crate::checksum::calculate_sha256_checksum;
+use crate::checksum::calculate_sha256_chunked_checksum;
 use crate::io::remote::RemoteObjectStream;
 use crate::io::remote::S3Attributes;
 use crate::uri::S3Uri;
@@ -58,12 +58,13 @@ impl Storage for LocalStorage {
         object: &Object,
     ) -> Res<S3Attributes> {
         let reader = stream.body.into_async_read();
-        let hash = calculate_sha256_checksum(reader).await?;
+        let size: u64 = object.size.unwrap_or(0).try_into()?;
+        let hash = calculate_sha256_chunked_checksum(reader, size).await?;
         Ok(S3Attributes {
             listing_uri: listing_uri.clone(),
             object_uri: stream.uri,
             hash,
-            size: object.size.unwrap_or(0).try_into()?,
+            size,
         })
     }
 
@@ -135,6 +136,8 @@ impl LocalStorage {
 mod tests {
     use super::*;
 
+    use base64::prelude::BASE64_STANDARD;
+    use base64::Engine;
     use tempfile::tempdir;
     use tokio::io::AsyncWriteExt;
 
@@ -193,6 +196,32 @@ mod tests {
         new_file.write_all(b"Hello").await?;
         let contents = fs::read(dest).await?;
         assert_eq!(contents, b"Hello");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_getting_object_attributes() -> Res {
+        let bytes = "0123456789abcdef".as_bytes();
+        let storage = LocalStorage::default();
+        // let body = storage
+        //     .read_byte_stream(mocks::manifest::parquet_checksummed())
+        //     .await?;
+        let body = ByteStream::from_static(bytes);
+        let stream = RemoteObjectStream {
+            body,
+            uri: S3Uri::try_from("s3://foo/bar/key")?,
+        };
+        let obj = Object::builder().set_size(Some(123)).build();
+
+        let attrs = storage
+            .get_object_attributes(stream, &S3Uri::try_from("s3://foo/bar")?, &obj)
+            .await?;
+        assert_eq!(attrs.size, 123);
+        assert_eq!(
+            BASE64_STANDARD.encode(attrs.hash.digest()),
+            "Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="
+        );
 
         Ok(())
     }
