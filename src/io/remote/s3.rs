@@ -49,7 +49,10 @@ impl TryFrom<GetObjectAttributesOutput> for S3AttributesWrapper {
             return Err(Error::S3("Object is a delete marker".to_string()));
         }
 
-        let checksum = get_compliant_chunked_checksum(&attrs).unwrap();
+        let checksum = match get_compliant_chunked_checksum(&attrs) {
+            Some(c) => c,
+            None => return Err(Error::Checksum("missing checksum".to_string())),
+        };
         let hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, checksum.as_bytes())?;
         let size = attrs.object_size.expect("ObjectSize must be requested") as u64;
         Ok(S3AttributesWrapper {

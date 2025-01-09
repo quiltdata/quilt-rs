@@ -92,6 +92,9 @@ pub enum Error {
     #[error("Checksum error: {0}")]
     Checksum(String),
 
+    #[error("Failed to get checksum from S3: {0}")]
+    NoS3Checksum(String),
+
     #[error("Error parsing URL: {0}")]
     UrlParse(#[from] url::ParseError),
 
