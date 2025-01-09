@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::types::Object;
 use multihash::Multihash;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
@@ -49,10 +50,20 @@ impl Remote for MockRemote {
     async fn get_object_attributes(
         &self,
         listing_uri: &S3Uri,
-        object_key: impl AsRef<str>,
+        object: &Object,
     ) -> Res<S3Attributes> {
+        let key = object
+            .key
+            .clone()
+            .expect("object key expected to be present");
+        let uri = S3Uri {
+            bucket: listing_uri.bucket.clone(),
+            key,
+            version: None,
+        };
+        let stream = self.get_object_stream(&uri).await?;
         self.storage
-            .get_object_attributes(listing_uri, object_key.as_ref().to_string())
+            .get_object_attributes(stream, listing_uri, object)
             .await
     }
 

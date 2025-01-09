@@ -112,4 +112,7 @@ pub enum Error {
 
     #[error("Unimplemented")]
     Unimplemented,
+
+    #[error("Integer conversion error: {0}")]
+    TryFromIntError(#[from] std::num::TryFromIntError),
 }

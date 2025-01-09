@@ -1,11 +1,13 @@
 use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::types::Object;
 use chrono::DateTime;
 use chrono::Utc;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
+use crate::checksum::calculate_sha256_checksum;
 use crate::io::remote::S3Attributes;
 use crate::uri::S3Uri;
 use crate::Error;
@@ -50,15 +52,27 @@ impl Storage for LocalStorage {
 
     async fn get_object_attributes(
         &self,
+        body: ByteStream,
         listing_uri: &S3Uri,
-        object_key: impl AsRef<str> + Send + Sync,
+        object: &Object,
     ) -> Res<S3Attributes> {
-        // log::debug!("Trying again with client {:?}", client);
-        Err(Error::S3(format!(
-            "Error getting attributes for {} in {}",
-            object_key.as_ref(),
-            listing_uri,
-        )))
+        let reader = body.into_async_read();
+        let hash = calculate_sha256_checksum(reader).await?;
+        let object_key = object
+            .key
+            .clone()
+            .expect("object key expected to be present");
+        let object_uri = S3Uri {
+            bucket: listing_uri.bucket.clone(),
+            key: object_key.clone(),
+            version: None, // FIXME
+        };
+        Ok(S3Attributes {
+            listing_uri: listing_uri.clone(),
+            object_uri,
+            hash,
+            size: object.size.unwrap_or(0).try_into()?,
+        })
     }
 
     async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Res<DateTime<Utc>> {

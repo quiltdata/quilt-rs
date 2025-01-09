@@ -9,6 +9,7 @@ use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::ChecksumAlgorithm;
 use aws_sdk_s3::types::CompletedMultipartUpload;
 use aws_sdk_s3::types::CompletedPart;
+use aws_sdk_s3::types::Object;
 use aws_smithy_types::byte_stream::Length;
 use parquet::data_type::AsBytes;
 
@@ -58,6 +59,7 @@ impl TryFrom<GetObjectAttributesOutput> for S3AttributesWrapper {
     }
 }
 
+// TODO: return version_id (probably the whole new S3Uri)
 async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<ByteStream> {
     let result = client.get_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
     let result = match &s3_uri.version {
@@ -232,10 +234,13 @@ impl Remote for RemoteS3 {
     async fn get_object_attributes(
         &self,
         listing_uri: &S3Uri,
-        object_key: impl AsRef<str>,
+        object: &Object,
     ) -> Res<S3Attributes> {
         let client = get_client_for_bucket(&listing_uri.bucket).await?;
-        let key = object_key.as_ref();
+        let key = object
+            .key
+            .clone()
+            .expect("object key expected to be present");
         log::debug!(
             "Getting attributes for bucket {} key {}",
             &listing_uri.bucket,
@@ -244,7 +249,7 @@ impl Remote for RemoteS3 {
         let attrs = client
             .get_object_attributes()
             .bucket(&listing_uri.bucket)
-            .key(key)
+            .key(key.clone())
             .object_attributes(aws_sdk_s3::types::ObjectAttributes::Checksum)
             .object_attributes(aws_sdk_s3::types::ObjectAttributes::ObjectParts)
             .object_attributes(aws_sdk_s3::types::ObjectAttributes::ObjectSize)

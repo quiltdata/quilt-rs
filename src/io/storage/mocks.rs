@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::types::Object;
 use chrono::DateTime;
 use chrono::Utc;
 use tokio::fs;
@@ -147,8 +148,9 @@ impl Storage for MockStorage {
 
     async fn get_object_attributes(
         &self,
+        _body: ByteStream,
         _listing_uri: &S3Uri,
-        _object_key: impl AsRef<str> + Send + Sync,
+        _object: &Object,
     ) -> Res<S3Attributes> {
         unimplemented!()
     }

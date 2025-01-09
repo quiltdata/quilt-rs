@@ -56,7 +56,7 @@ pub trait Remote {
     fn get_object_attributes(
         &self,
         listing_uri: &S3Uri,
-        object_key: impl AsRef<str>,
+        object: &Object,
     ) -> impl Future<Output = Res<S3Attributes>>;
 
     /// Fetches the objects contents as a `ByteStream`
