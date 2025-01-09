@@ -204,9 +204,6 @@ mod tests {
     async fn test_getting_object_attributes() -> Res {
         let bytes = "0123456789abcdef".as_bytes();
         let storage = LocalStorage::default();
-        // let body = storage
-        //     .read_byte_stream(mocks::manifest::parquet_checksummed())
-        //     .await?;
         let body = ByteStream::from_static(bytes);
         let stream = RemoteObjectStream {
             body,
