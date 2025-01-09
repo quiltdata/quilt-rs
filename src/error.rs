@@ -118,4 +118,7 @@ pub enum Error {
 
     #[error("Integer conversion error: {0}")]
     TryFromIntError(#[from] std::num::TryFromIntError),
+
+    #[error("Object key expected to be present")]
+    ObjectKey,
 }

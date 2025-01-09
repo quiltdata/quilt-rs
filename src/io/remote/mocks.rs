@@ -53,10 +53,7 @@ impl Remote for MockRemote {
         listing_uri: &S3Uri,
         object: &Object,
     ) -> Res<S3Attributes> {
-        let key = object
-            .key
-            .clone()
-            .expect("object key expected to be present");
+        let key = object.key.clone().ok_or(Error::ObjectKey)?;
         let uri = S3Uri {
             bucket: listing_uri.bucket.clone(),
             key,

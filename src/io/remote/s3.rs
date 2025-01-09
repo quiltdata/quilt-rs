@@ -250,10 +250,7 @@ impl Remote for RemoteS3 {
         object: &Object,
     ) -> Res<S3Attributes> {
         let client = get_client_for_bucket(&listing_uri.bucket).await?;
-        let key = object
-            .key
-            .clone()
-            .expect("object key expected to be present");
+        let key = object.key.clone().ok_or(Error::ObjectKey)?;
         log::debug!(
             "Getting attributes for bucket {} key {}",
             &listing_uri.bucket,

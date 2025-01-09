@@ -30,7 +30,7 @@ async fn get_object_attributes_inner(
     object: Res<Object>,
 ) -> Res<S3Attributes> {
     let obj = object?;
-    let object_key = obj.key.clone().expect("object key expected to be present");
+    let key = obj.key.clone().ok_or(Error::ObjectKey)?;
     match remote.get_object_attributes(listing_uri, &obj).await {
         Ok(attrs) => Ok(attrs),
         Err(Error::Checksum(msg)) => {
@@ -38,12 +38,12 @@ async fn get_object_attributes_inner(
             log::debug!(
                 "Calculating checksum for bucket {} key {}",
                 &listing_uri.bucket,
-                &object_key
+                &key
             );
             let stream = remote
                 .get_object_stream(&S3Uri {
                     bucket: listing_uri.bucket.clone(),
-                    key: object_key,
+                    key,
                     version: None,
                 })
                 .await?;
