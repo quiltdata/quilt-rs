@@ -9,6 +9,7 @@ use tracing::log;
 
 use crate::checksum;
 use crate::io::remote::ObjectsStream;
+use crate::io::remote::RemoteObjectStream;
 use crate::io::remote::S3Attributes;
 use crate::io::storage::mocks::MockStorage;
 use crate::io::storage::Storage;
@@ -67,11 +68,12 @@ impl Remote for MockRemote {
             .await
     }
 
-    async fn get_object_stream(&self, s3_uri: &S3Uri) -> Res<ByteStream> {
+    async fn get_object_stream(&self, s3_uri: &S3Uri) -> Res<RemoteObjectStream> {
         let key = s3_uri.to_string();
         log::debug!("Mocking {} get request", key);
 
-        self.storage
+        let body = self
+            .storage
             .read_byte_stream(&key)
             .await
             .map_err(|err| match err {
@@ -83,7 +85,11 @@ impl Remote for MockRemote {
                     }
                 }
                 other => other,
-            })
+            });
+        Ok(RemoteObjectStream {
+            body: body?,
+            uri: s3_uri.clone(),
+        })
     }
 
     async fn list_objects(&self, _listing_uri: S3Uri) -> impl ObjectsStream {

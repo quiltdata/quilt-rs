@@ -32,6 +32,11 @@ pub struct S3Attributes {
     pub size: u64,
 }
 
+pub struct RemoteObjectStream {
+    pub body: ByteStream,
+    pub uri: S3Uri,
+}
+
 pub type StreamObjectChunk = Vec<Res<Object>>;
 
 pub type StreamItem = Res<StreamObjectChunk>;
@@ -60,7 +65,10 @@ pub trait Remote {
     ) -> impl Future<Output = Res<S3Attributes>>;
 
     /// Fetches the objects contents as a `ByteStream`
-    fn get_object_stream(&self, s3_uri: &S3Uri) -> impl Future<Output = Res<ByteStream>> + Send;
+    fn get_object_stream(
+        &self,
+        s3_uri: &S3Uri,
+    ) -> impl Future<Output = Res<RemoteObjectStream>> + Send;
 
     /// List objects list under S3 prefix using tokio Stream
     // TODO: return Item = Res<Row>

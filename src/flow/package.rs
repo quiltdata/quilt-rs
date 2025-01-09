@@ -43,7 +43,7 @@ async fn get_object_attributes_inner(
                 .get_object_stream(&S3Uri {
                     bucket: listing_uri.bucket.clone(),
                     key: object_key,
-                    version: None, // FIXME
+                    version: None,
                 })
                 .await?;
             storage

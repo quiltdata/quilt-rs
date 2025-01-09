@@ -11,6 +11,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use tokio::fs::{File, ReadDir};
 
+use crate::io::remote::RemoteObjectStream;
 use crate::io::remote::S3Attributes;
 use crate::uri::S3Uri;
 use crate::Res;
@@ -47,7 +48,7 @@ pub trait Storage {
     /// Get the same attributes including checskum as from S3
     fn get_object_attributes(
         &self,
-        body: ByteStream,
+        stream: RemoteObjectStream,
         listing_uri: &S3Uri,
         object: &Object,
     ) -> impl Future<Output = Res<S3Attributes>> + Send + Sync;

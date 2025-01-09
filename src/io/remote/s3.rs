@@ -32,6 +32,7 @@ use crate::Res;
 const LIST_OBJECTS_V2_MAX_KEYS: i32 = 1_00;
 
 use crate::io::remote::get_client_for_bucket;
+use crate::io::remote::RemoteObjectStream;
 use crate::io::remote::S3Attributes;
 
 struct S3AttributesWrapper {
@@ -59,8 +60,7 @@ impl TryFrom<GetObjectAttributesOutput> for S3AttributesWrapper {
     }
 }
 
-// TODO: return version_id (probably the whole new S3Uri)
-async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<ByteStream> {
+async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<RemoteObjectStream> {
     let result = client.get_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
     let result = match &s3_uri.version {
         Some(version) => result.version_id(version),
@@ -71,11 +71,21 @@ async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<B
         .send()
         .await
         .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
-    Ok(result.body)
+    let uri_versioned = S3Uri {
+        version: result.version_id,
+        ..s3_uri.clone()
+    };
+    Ok(RemoteObjectStream {
+        body: result.body,
+        uri: uri_versioned,
+    })
 }
 
 async fn get_object(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<impl AsyncRead> {
-    Ok(get_object_stream(client, s3_uri).await?.into_async_read())
+    Ok(get_object_stream(client, s3_uri)
+        .await?
+        .body
+        .into_async_read())
 }
 
 async fn put_object_and_checksum(
@@ -275,7 +285,7 @@ impl Remote for RemoteS3 {
         })
     }
 
-    async fn get_object_stream(&self, s3_uri: &S3Uri) -> Res<ByteStream> {
+    async fn get_object_stream(&self, s3_uri: &S3Uri) -> Res<RemoteObjectStream> {
         let client = get_client_for_bucket(&s3_uri.bucket).await?;
         get_object_stream(&client, s3_uri).await
     }

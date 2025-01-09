@@ -9,6 +9,7 @@ use tokio::io::AsyncWriteExt;
 
 use tempfile;
 
+use crate::io::remote::RemoteObjectStream;
 use crate::io::remote::S3Attributes;
 use crate::uri::S3Uri;
 use crate::Res;
@@ -148,7 +149,7 @@ impl Storage for MockStorage {
 
     async fn get_object_attributes(
         &self,
-        _body: ByteStream,
+        _stream: RemoteObjectStream,
         _listing_uri: &S3Uri,
         _object: &Object,
     ) -> Res<S3Attributes> {

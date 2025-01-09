@@ -8,6 +8,7 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
 use crate::checksum::calculate_sha256_checksum;
+use crate::io::remote::RemoteObjectStream;
 use crate::io::remote::S3Attributes;
 use crate::uri::S3Uri;
 use crate::Error;
@@ -52,24 +53,15 @@ impl Storage for LocalStorage {
 
     async fn get_object_attributes(
         &self,
-        body: ByteStream,
+        stream: RemoteObjectStream,
         listing_uri: &S3Uri,
         object: &Object,
     ) -> Res<S3Attributes> {
-        let reader = body.into_async_read();
+        let reader = stream.body.into_async_read();
         let hash = calculate_sha256_checksum(reader).await?;
-        let object_key = object
-            .key
-            .clone()
-            .expect("object key expected to be present");
-        let object_uri = S3Uri {
-            bucket: listing_uri.bucket.clone(),
-            key: object_key.clone(),
-            version: None, // FIXME
-        };
         Ok(S3Attributes {
             listing_uri: listing_uri.clone(),
-            object_uri,
+            object_uri: stream.uri,
             hash,
             size: object.size.unwrap_or(0).try_into()?,
         })
