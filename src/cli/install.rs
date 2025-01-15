@@ -68,18 +68,17 @@ async fn install_paths(
 }
 
 fn get_entries(
-    root: &std::path::Path,
     uri_path: Option<PathBuf>,
     arg_paths: Option<Vec<PathBuf>>,
 ) -> Vec<std::path::PathBuf> {
     let mut paths = Vec::new();
     if let Some(logical_key) = uri_path {
-        paths.push(root.to_path_buf().join(logical_key));
+        paths.push(logical_key);
     }
     if arg_paths.is_some() {
         let logical_keys = arg_paths.unwrap();
         for logical_key in logical_keys {
-            paths.push(root.to_path_buf().join(logical_key));
+            paths.push(logical_key);
         }
     }
     paths
@@ -97,7 +96,7 @@ pub async fn model(
     let path = uri.path.clone();
     let installed_package = install_package(local_domain, &uri, namespace).await?;
     let package_dir = installed_package.working_folder();
-    let paths = get_entries(&package_dir, path, paths);
+    let paths = get_entries(path, paths);
 
     if !paths.is_empty() {
         install_paths(&installed_package, &paths).await?;

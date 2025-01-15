@@ -14,6 +14,7 @@ use crate::io::remote::S3Attributes;
 use crate::io::remote::StreamItem;
 use crate::io::storage::Storage;
 use crate::manifest::Header;
+use crate::manifest::JsonObject;
 use crate::manifest::Row;
 use crate::paths::DomainPaths;
 use crate::perf::Measure;
@@ -94,6 +95,8 @@ pub async fn package_s3_prefix(
     remote: &impl Remote,
     source_uri: &S3Uri,
     dest_uri: S3PackageUri,
+    message: Option<String>,
+    user_meta: Option<JsonObject>,
 ) -> Res<ManifestUri> {
     log::debug!("Source URI: {:?}, target URI: {:?}", source_uri, dest_uri);
     // TODO: make get_object_attributes() calls concurrently across list_objects() pages
@@ -105,8 +108,9 @@ pub async fn package_s3_prefix(
     let perf = Measure::start();
     let stream = Box::pin(stream_objects(storage, remote, source_uri.clone()).await);
     let manifest_path = |t: &str| paths.manifest_cache(&source_uri.bucket, t);
+    let header = Header::new(message, user_meta);
     let (cache_path, top_hash) =
-        build_manifest_from_rows_stream(storage, manifest_path, Header::default(), stream).await?;
+        build_manifest_from_rows_stream(storage, manifest_path, header, stream).await?;
 
     let S3PackageUri {
         bucket, namespace, ..

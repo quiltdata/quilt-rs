@@ -133,14 +133,14 @@ fn str_to_multihash<'de, D: Deserializer<'de>>(
 /// The key is the name of the path, and the value is the state of the path
 pub type LineagePaths = BTreeMap<PathBuf, PathState>;
 
-/// Stores lineage (installation/modification history) of the package read from lineage.json file
+/// Stores lineage (installation/modification history) of the package read from `data.json` file
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct PackageLineage {
     /// Local commits
     pub commit: Option<CommitState>,
     /// Where we intsalled this package from
     pub remote: ManifestUri,
-    /// TODO: I understand yet how and why we use it
+    // TODO: I don't understand yet how and why we use it
     pub base_hash: String,
     /// Latest tracked hash. In other words, what was the remote hash when we last checked.
     /// It can be different from the `remote.hash`, because we can install not the latest package.
@@ -185,7 +185,7 @@ impl From<ManifestUri> for PackageLineage {
 }
 
 /// It's essentially just a map of `PackageLineage`.
-/// Represents the contents of `.quilt/lineage.json`
+/// Represents the contents of `.quilt/data.json`
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct DomainLineage {
     #[serde(default = "BTreeMap::new")]
@@ -298,7 +298,10 @@ impl PackageLineageIo {
 mod tests {
     use super::*;
 
+    use crate::checksum::calculate_sha256_chunked_checksum;
     use crate::mocks;
+    use base64::prelude::BASE64_STANDARD;
+    use base64::Engine;
 
     #[test]
     fn test_syntax_error() {
@@ -375,15 +378,82 @@ mod tests {
         let storage = mocks::storage::MockStorage::default();
         let file_path = PathBuf::from("foo");
         assert!(!storage.exists(&file_path).await);
+        let bytes = "0123456789abcdef".as_bytes();
         DomainLineageIo::new(file_path.clone())
-            .write(&storage, DomainLineage::default())
+            .write(
+                &storage,
+                DomainLineage {
+                    packages: BTreeMap::from([(
+                        ("foo", "bar").into(),
+                        PackageLineage {
+                            commit: None,
+                            remote: ManifestUri {
+                                bucket: "bucket".to_string(),
+                                namespace: ("foo", "bar").into(),
+                                hash: "abcdef".to_string(),
+                            },
+                            base_hash: "abcdef".to_string(),
+                            latest_hash: "abcdef".to_string(),
+                            paths: BTreeMap::from([(
+                                PathBuf::from("foo"),
+                                PathState {
+                                    timestamp: chrono::DateTime::from_timestamp_millis(
+                                        1737031820534,
+                                    )
+                                    .unwrap(),
+                                    hash: calculate_sha256_chunked_checksum(
+                                        bytes,
+                                        bytes.len() as u64,
+                                    )
+                                    .await
+                                    .unwrap(),
+                                },
+                            )]),
+                        },
+                    )]),
+                },
+            )
             .await?;
         assert!(storage.exists(&file_path).await);
         let manifest = br###"{
-  "packages": {}
+  "packages": {
+    "foo/bar": {
+      "commit": null,
+      "remote": {
+        "bucket": "bucket",
+        "namespace": "foo/bar",
+        "hash": "abcdef"
+      },
+      "base_hash": "abcdef",
+      "latest_hash": "abcdef",
+      "paths": {
+        "foo": {
+          "timestamp": "2025-01-16T12:50:20.534Z",
+          "hash": "90ea02205dbd4f6e325e5a87f8cc3ef3b8773d3c8eec2e2cff6248f882986569912ddf10"
+        }
+      }
+    }
+  }
 }"###
             .to_vec();
-        assert_eq!(storage.read_file(&file_path).await?, manifest);
+        assert_eq!(
+            String::from_utf8(storage.read_file(&file_path).await?).unwrap(),
+            String::from_utf8(manifest.clone()).unwrap()
+        );
+        let lineage = DomainLineage::try_from(manifest)?;
+        let multihash_from_lineage = lineage
+            .packages
+            .get(&(("foo".to_string(), "bar".to_string()).into()))
+            .unwrap()
+            .paths
+            .get(&PathBuf::from("foo"))
+            .unwrap()
+            .hash;
+        let hash_from_lineage = BASE64_STANDARD.encode(multihash_from_lineage.digest());
+        assert_eq!(
+            hash_from_lineage,
+            "Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="
+        );
         Ok(())
     }
 
