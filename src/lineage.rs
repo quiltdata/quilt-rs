@@ -133,14 +133,14 @@ fn str_to_multihash<'de, D: Deserializer<'de>>(
 /// The key is the name of the path, and the value is the state of the path
 pub type LineagePaths = BTreeMap<PathBuf, PathState>;
 
-/// Stores lineage (installation/modification history) of the package read from lineage.json file
+/// Stores lineage (installation/modification history) of the package read from `data.json` file
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct PackageLineage {
     /// Local commits
     pub commit: Option<CommitState>,
     /// Where we intsalled this package from
     pub remote: ManifestUri,
-    /// TODO: I understand yet how and why we use it
+    // TODO: I don't understand yet how and why we use it
     pub base_hash: String,
     /// Latest tracked hash. In other words, what was the remote hash when we last checked.
     /// It can be different from the `remote.hash`, because we can install not the latest package.
@@ -185,7 +185,7 @@ impl From<ManifestUri> for PackageLineage {
 }
 
 /// It's essentially just a map of `PackageLineage`.
-/// Represents the contents of `.quilt/lineage.json`
+/// Represents the contents of `.quilt/data.json`
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct DomainLineage {
     #[serde(default = "BTreeMap::new")]
