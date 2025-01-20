@@ -12,6 +12,7 @@ use crate::io::storage::Storage;
 use crate::lineage;
 use crate::lineage::DomainLineage;
 use crate::manifest::Header;
+use crate::manifest::JsonObject;
 use crate::manifest::Table;
 use crate::paths;
 use crate::uri::ManifestUri;
@@ -111,6 +112,8 @@ impl LocalDomain {
         &self,
         source_uri: &S3Uri,
         dest_uri: S3PackageUri,
+        message: String,
+        user_meta: Option<JsonObject>,
     ) -> Res<ManifestUri> {
         flow::package_s3_prefix(
             &self.paths,
@@ -118,6 +121,8 @@ impl LocalDomain {
             &self.remote,
             source_uri,
             dest_uri,
+            message,
+            user_meta,
         )
         .await
     }

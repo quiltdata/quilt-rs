@@ -6,8 +6,10 @@ use crate::cli::Error;
 
 #[derive(Debug)]
 pub struct Input {
-    pub uri: String,
+    pub message: String,
     pub target: String,
+    pub uri: String,
+    pub user_meta: Option<quilt_rs::manifest::JsonObject>,
 }
 
 #[derive(Debug)]
@@ -34,10 +36,17 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 
 pub async fn model(
     local_domain: &quilt_rs::LocalDomain,
-    Input { target, uri }: Input,
+    Input {
+        message,
+        target,
+        uri,
+        user_meta,
+    }: Input,
 ) -> Result<Output, Error> {
     let uri = uri.parse()?;
     let target_uri = target.parse()?;
-    let manifest_uri = local_domain.package_s3_prefix(&uri, target_uri).await?;
+    let manifest_uri = local_domain
+        .package_s3_prefix(&uri, target_uri, message, user_meta)
+        .await?;
     Ok(Output { manifest_uri })
 }

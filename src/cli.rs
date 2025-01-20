@@ -87,6 +87,9 @@ enum Commands {
     },
     /// Create and install manifest to S3
     Package {
+        /// Commit message
+        #[arg(short, long)]
+        message: String,
         /// Source URI for the package.
         /// Ex. s3://bucket/s3/prefix
         #[arg(value_name = "S3_URI")]
@@ -94,6 +97,9 @@ enum Commands {
         /// quilt+s3 URI for new package
         #[arg(short, long, value_name = "PKG_URI")]
         target: String,
+        /// JSON string for user meta
+        #[arg(short, long)]
+        user_meta: Option<String>,
     },
     /// Pull
     Pull {
@@ -204,9 +210,28 @@ pub async fn init() -> Result<(), Error> {
             print(list::command(Model::from(domain)).await);
             Ok(())
         }
-        Commands::Package { uri, target } => {
+        Commands::Package {
+            message,
+            target,
+            uri,
+            user_meta,
+        } => {
+            let user_meta = match &user_meta {
+                Some(object) => match serde_json::from_str(object)? {
+                    serde_json::Value::Object(object) => Some(object),
+                    _ => {
+                        return Err(Error::CommitMetaInvalid(object.to_string()));
+                    }
+                },
+                None => None,
+            };
             let (m, temp_dir) = Model::from_temp_dir()?;
-            let args = package::Input { target, uri };
+            let args = package::Input {
+                message,
+                target,
+                uri,
+                user_meta,
+            };
             log::info!("Packaging {:?} using {:?}", args, temp_dir);
             print(package::command(m, args).await);
             Ok(())
