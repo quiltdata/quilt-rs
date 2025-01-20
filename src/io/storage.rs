@@ -6,10 +6,12 @@ use std::future::Future;
 use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::types::Object;
 use chrono::DateTime;
 use chrono::Utc;
 use tokio::fs::{File, ReadDir};
 
+use crate::io::remote::RemoteObjectStream;
 use crate::io::remote::S3Attributes;
 use crate::uri::S3Uri;
 use crate::Res;
@@ -46,8 +48,9 @@ pub trait Storage {
     /// Get the same attributes including checskum as from S3
     fn get_object_attributes(
         &self,
+        stream: RemoteObjectStream,
         listing_uri: &S3Uri,
-        object_key: impl AsRef<str> + Send + Sync,
+        object: &Object,
     ) -> impl Future<Output = Res<S3Attributes>> + Send + Sync;
 
     /// Get the timestamp of the last modification of a file.
