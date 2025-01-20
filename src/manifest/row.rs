@@ -5,6 +5,7 @@ use multihash::Multihash;
 // use url::Url;
 
 use crate::io::remote::S3Attributes;
+use crate::manifest::JsonObject;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
 use crate::Error;
@@ -42,6 +43,21 @@ pub struct Header {
     // TODO: use `message` and `version` instead
     pub info: serde_json::Value, // system metadata
     pub meta: serde_json::Value, // user metadata
+}
+
+impl Header {
+    pub fn new(message: Option<String>, user_meta: Option<JsonObject>) -> Header {
+        Header {
+            info: serde_json::json!({
+                "message": message.unwrap_or_default(),
+                "version": "v0",
+            }),
+            meta: match user_meta {
+                Some(meta) => meta.into(),
+                None => serde_json::Value::Null,
+            },
+        }
+    }
 }
 
 impl Default for Header {

@@ -108,6 +108,7 @@ pub async fn push_package(
 
     // Try certifying latest if tracking
     if lineage.base_hash == lineage.latest_hash {
+        paths::copy_cached_to_installed(paths, storage, &new_manifest_uri).await?;
         // remote latest has not been updated, certifying the new latest
         return flow::certify_latest(lineage, remote, new_manifest_uri).await;
     }
