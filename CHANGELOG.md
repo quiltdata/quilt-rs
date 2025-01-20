@@ -2,8 +2,8 @@
 
 ## [0.8.6]
 
-* Copy pacakge pushed to the remote to the local storage.
-  Locally commited package and remomte has different top, because local manifest has `file://` physical keys.
+* Copy package pushed to the remote to the local storage.
+  Locally commited package and remote have different `top_hash`, because local manifest has `file://` physical keys.
 * `package_s3_prefix` (CLI `package` command) accepts `--message` and `--user_meta` arguments similar to `commit` command
 
 ## [0.8.5]
