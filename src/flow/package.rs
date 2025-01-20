@@ -104,18 +104,11 @@ pub async fn package_s3_prefix(
     //       with fd limits on Mac by default it's 256
     // TODO: s3 uri key ends with / and has no version
     // FIXME: filter or fail on keys with `.` or `..` in path segments as quilt3 do
-    let mut header = Header::default();
-    header.info = serde_json::json!({
-        "message": message.unwrap_or(String::default()),
-        "version": "v0",
-    });
-    if let Some(user_meta) = user_meta {
-        header.meta = user_meta.into();
-    }
 
     let perf = Measure::start();
     let stream = Box::pin(stream_objects(storage, remote, source_uri.clone()).await);
     let manifest_path = |t: &str| paths.manifest_cache(&source_uri.bucket, t);
+    let header = Header::new(message, user_meta);
     let (cache_path, top_hash) =
         build_manifest_from_rows_stream(storage, manifest_path, header, stream).await?;
 
