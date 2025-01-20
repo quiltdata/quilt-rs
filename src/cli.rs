@@ -89,7 +89,7 @@ enum Commands {
     Package {
         /// Commit message
         #[arg(short, long)]
-        message: String,
+        message: Option<String>,
         /// Source URI for the package.
         /// Ex. s3://bucket/s3/prefix
         #[arg(value_name = "S3_URI")]

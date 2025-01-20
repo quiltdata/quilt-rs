@@ -95,7 +95,7 @@ pub async fn package_s3_prefix(
     remote: &impl Remote,
     source_uri: &S3Uri,
     dest_uri: S3PackageUri,
-    message: String,
+    message: Option<String>,
     user_meta: Option<JsonObject>,
 ) -> Res<ManifestUri> {
     log::debug!("Source URI: {:?}, target URI: {:?}", source_uri, dest_uri);
@@ -106,7 +106,7 @@ pub async fn package_s3_prefix(
     // FIXME: filter or fail on keys with `.` or `..` in path segments as quilt3 do
     let mut header = Header::default();
     header.info = serde_json::json!({
-        "message": message,
+        "message": message.unwrap_or(String::default()),
         "version": "v0",
     });
     if let Some(user_meta) = user_meta {

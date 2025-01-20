@@ -6,7 +6,7 @@ use crate::cli::Error;
 
 #[derive(Debug)]
 pub struct Input {
-    pub message: String,
+    pub message: Option<String>,
     pub target: String,
     pub uri: String,
     pub user_meta: Option<quilt_rs::manifest::JsonObject>,

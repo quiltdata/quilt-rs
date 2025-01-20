@@ -112,7 +112,7 @@ impl LocalDomain {
         &self,
         source_uri: &S3Uri,
         dest_uri: S3PackageUri,
-        message: String,
+        message: Option<String>,
         user_meta: Option<JsonObject>,
     ) -> Res<ManifestUri> {
         flow::package_s3_prefix(
