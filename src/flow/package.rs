@@ -21,6 +21,7 @@ use crate::perf::Measure;
 use crate::uri::ManifestUri;
 use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
+use crate::Error;
 use crate::Res;
 
 async fn get_object_attributes_inner(
@@ -29,17 +30,31 @@ async fn get_object_attributes_inner(
     listing_uri: &S3Uri,
     object: Res<Object>,
 ) -> Res<S3Attributes> {
-    let object_key = object?
-        .key
-        .clone()
-        .expect("object key expected to be present");
-    match remote.get_object_attributes(listing_uri, &object_key).await {
+    let obj = object?;
+    let key = obj.key.clone().ok_or(Error::ObjectKey)?;
+    match remote.get_object_attributes(listing_uri, &obj).await {
         Ok(attrs) => Ok(attrs),
+        Err(Error::Checksum(msg)) => {
+            log::debug!("{}", msg);
+            log::debug!(
+                "Calculating checksum for bucket {} key {}",
+                &listing_uri.bucket,
+                &key
+            );
+            let stream = remote
+                .get_object_stream(&S3Uri {
+                    bucket: listing_uri.bucket.clone(),
+                    key,
+                    version: None,
+                })
+                .await?;
+            storage
+                .get_object_attributes(stream, listing_uri, &obj)
+                .await
+        }
         Err(err) => {
             log::warn!("Error getting attributes: {}", err);
-            storage
-                .get_object_attributes(listing_uri, &object_key)
-                .await
+            Err(err)
         }
     }
 }

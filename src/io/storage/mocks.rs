@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::types::Object;
 use chrono::DateTime;
 use chrono::Utc;
 use tokio::fs;
@@ -8,6 +9,7 @@ use tokio::io::AsyncWriteExt;
 
 use tempfile;
 
+use crate::io::remote::RemoteObjectStream;
 use crate::io::remote::S3Attributes;
 use crate::uri::S3Uri;
 use crate::Res;
@@ -147,8 +149,9 @@ impl Storage for MockStorage {
 
     async fn get_object_attributes(
         &self,
+        _stream: RemoteObjectStream,
         _listing_uri: &S3Uri,
-        _object_key: impl AsRef<str> + Send + Sync,
+        _object: &Object,
     ) -> Res<S3Attributes> {
         unimplemented!()
     }

@@ -9,6 +9,7 @@ use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::ChecksumAlgorithm;
 use aws_sdk_s3::types::CompletedMultipartUpload;
 use aws_sdk_s3::types::CompletedPart;
+use aws_sdk_s3::types::Object;
 use aws_smithy_types::byte_stream::Length;
 use parquet::data_type::AsBytes;
 
@@ -31,6 +32,7 @@ use crate::Res;
 const LIST_OBJECTS_V2_MAX_KEYS: i32 = 1_00;
 
 use crate::io::remote::get_client_for_bucket;
+use crate::io::remote::RemoteObjectStream;
 use crate::io::remote::S3Attributes;
 
 struct S3AttributesWrapper {
@@ -47,7 +49,10 @@ impl TryFrom<GetObjectAttributesOutput> for S3AttributesWrapper {
             return Err(Error::S3("Object is a delete marker".to_string()));
         }
 
-        let checksum = get_compliant_chunked_checksum(&attrs).unwrap();
+        let checksum = match get_compliant_chunked_checksum(&attrs) {
+            Some(c) => c,
+            None => return Err(Error::Checksum("missing checksum".to_string())),
+        };
         let hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, checksum.as_bytes())?;
         let size = attrs.object_size.expect("ObjectSize must be requested") as u64;
         Ok(S3AttributesWrapper {
@@ -58,7 +63,7 @@ impl TryFrom<GetObjectAttributesOutput> for S3AttributesWrapper {
     }
 }
 
-async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<ByteStream> {
+async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<RemoteObjectStream> {
     let result = client.get_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
     let result = match &s3_uri.version {
         Some(version) => result.version_id(version),
@@ -69,11 +74,21 @@ async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<B
         .send()
         .await
         .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
-    Ok(result.body)
+    let uri_versioned = S3Uri {
+        version: result.version_id,
+        ..s3_uri.clone()
+    };
+    Ok(RemoteObjectStream {
+        body: result.body,
+        uri: uri_versioned,
+    })
 }
 
 async fn get_object(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<impl AsyncRead> {
-    Ok(get_object_stream(client, s3_uri).await?.into_async_read())
+    Ok(get_object_stream(client, s3_uri)
+        .await?
+        .body
+        .into_async_read())
 }
 
 async fn put_object_and_checksum(
@@ -232,10 +247,10 @@ impl Remote for RemoteS3 {
     async fn get_object_attributes(
         &self,
         listing_uri: &S3Uri,
-        object_key: impl AsRef<str>,
+        object: &Object,
     ) -> Res<S3Attributes> {
         let client = get_client_for_bucket(&listing_uri.bucket).await?;
-        let key = object_key.as_ref();
+        let key = object.key.clone().ok_or(Error::ObjectKey)?;
         log::debug!(
             "Getting attributes for bucket {} key {}",
             &listing_uri.bucket,
@@ -244,7 +259,7 @@ impl Remote for RemoteS3 {
         let attrs = client
             .get_object_attributes()
             .bucket(&listing_uri.bucket)
-            .key(key)
+            .key(key.clone())
             .object_attributes(aws_sdk_s3::types::ObjectAttributes::Checksum)
             .object_attributes(aws_sdk_s3::types::ObjectAttributes::ObjectParts)
             .object_attributes(aws_sdk_s3::types::ObjectAttributes::ObjectSize)
@@ -270,7 +285,7 @@ impl Remote for RemoteS3 {
         })
     }
 
-    async fn get_object_stream(&self, s3_uri: &S3Uri) -> Res<ByteStream> {
+    async fn get_object_stream(&self, s3_uri: &S3Uri) -> Res<RemoteObjectStream> {
         let client = get_client_for_bucket(&s3_uri.bucket).await?;
         get_object_stream(&client, s3_uri).await
     }

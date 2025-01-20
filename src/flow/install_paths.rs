@@ -27,8 +27,8 @@ async fn cache_immutable_object(
     object_dest: &PathBuf,
     uri: &S3Uri,
 ) -> Res {
-    let body = remote.get_object_stream(uri).await?;
-    storage.write_byte_stream(object_dest, body).await
+    let stream = remote.get_object_stream(uri).await?;
+    storage.write_byte_stream(object_dest, stream.body).await
 }
 
 async fn create_mutable_copy(

@@ -7,7 +7,7 @@ use crate::uri::S3Uri;
 
 /// Object URI is an URI for objects in packages.
 /// In packages they are stored as logical keys.
-/// Physically they can be stored anywhere, but they default place is this URI.
+/// Physically they can be stored anywhere, but their place is this URI.
 ///
 /// It knows where to put new objects and how to convert itself to S3URI.
 #[derive(Clone, Debug, PartialEq, Eq)]
