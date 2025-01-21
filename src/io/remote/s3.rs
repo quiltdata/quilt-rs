@@ -22,7 +22,6 @@ use crate::checksum::get_compliant_chunked_checksum;
 use crate::checksum::ContentHash;
 use crate::checksum::MPU_MAX_PARTS;
 use crate::checksum::MULTIHASH_SHA256_CHUNKED;
-use crate::checksum::MULTIPART_THRESHOLD;
 use crate::io::remote::ObjectsStream;
 use crate::io::remote::Remote;
 use crate::uri::S3Uri;
@@ -117,6 +116,9 @@ async fn put_object_and_checksum(
         // a list of a 0-byte chunk. Its checksum is sha256(''), NOT sha256(sha256('')).
         hash
     } else {
+        // NOTE: we're calculating checksum of checksums here,
+        //       not a checksum of the file
+        // NOTE: in the current design, we're not using this checksum
         calculate_sha256_checksum(hash.digest()).await?
     };
 
@@ -332,7 +334,7 @@ impl Remote for RemoteS3 {
         dest_uri: &S3Uri,
         size: u64,
     ) -> Res<(S3Uri, Multihash<256>)> {
-        if size < MULTIPART_THRESHOLD {
+        if size == 0 {
             put_object_and_checksum(source_path, dest_uri, size).await
         } else {
             multipart_upload_and_checksum(source_path, dest_uri, size).await

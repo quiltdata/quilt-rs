@@ -1,6 +1,8 @@
+use multihash::Multihash;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use tokio::fs::File;
 
 use tracing::log;
 
@@ -15,9 +17,26 @@ use crate::lineage::ChangeSet;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageFileFingerprint;
 use crate::lineage::PackageLineage;
+use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::Error;
 use crate::Res;
+
+async fn verify_hash(file: File, hash: Multihash<256>) -> Res<Option<(u64, Multihash<256>)>> {
+    let file_metadata = file.metadata().await?;
+    let size = file_metadata.len();
+    let calculated_hash = if hash.code() == MULTIHASH_SHA256_CHUNKED {
+        calculate_sha256_chunked_checksum(file, size).await?
+    } else {
+        calculate_sha256_checksum(file).await?
+    };
+
+    if calculated_hash == hash {
+        Ok(None)
+    } else {
+        Ok(Some((size, calculated_hash)))
+    }
+}
 
 /// Refreshes the tracked `latest_hash` property in lineage.json
 pub async fn refresh_latest_hash(
@@ -30,6 +49,108 @@ pub async fn refresh_latest_hash(
     }
     lineage.latest_hash = latest.hash;
     Ok(lineage)
+}
+
+enum WorkdirFile {
+    Tracked(File, Row),
+    NotTracked(File, Row),
+    New(File),
+    Removed(Row),
+    UnSupported,
+}
+
+async fn locate_files_in_working_dir(
+    storage: &(impl Storage + Sync),
+    manifest: &Table,
+    working_dir: PathBuf,
+    mut tracked_paths: HashMap<PathBuf, Row>,
+) -> Res<Vec<(PathBuf, WorkdirFile)>> {
+    let mut queue = VecDeque::new();
+    queue.push_back(working_dir.clone());
+
+    let mut files = Vec::new();
+
+    while let Some(dir) = queue.pop_front() {
+        let mut dir_entries = match storage.read_dir(&dir).await {
+            Ok(dir_entries) => dir_entries,
+            Err(err) => {
+                log::error!("Failed to read directory {:?}: {}", dir, err);
+                continue;
+            }
+        };
+
+        while let Some(dir_entry) = dir_entries.next_entry().await? {
+            let file_path = dir_entry.path();
+
+            let file_type = dir_entry.file_type().await?;
+            if !file_type.is_file() {
+                if file_type.is_dir() {
+                    queue.push_back(file_path);
+                } else {
+                    // TODO: handle symlinks
+                    files.push((file_path, WorkdirFile::UnSupported));
+                }
+                continue;
+            }
+
+            let file = storage.open_file(&file_path).await?;
+            let logical_key = file_path.strip_prefix(&working_dir)?.to_path_buf();
+            if let Some(row) = tracked_paths.remove(&logical_key) {
+                files.push((logical_key, WorkdirFile::Tracked(file, row)));
+            } else if let Some(row) = manifest.get_record(&logical_key).await? {
+                files.push((logical_key, WorkdirFile::NotTracked(file, row)));
+            } else {
+                files.push((logical_key, WorkdirFile::New(file)));
+            }
+        }
+    }
+
+    for (logical_key, row) in tracked_paths {
+        files.push((logical_key, WorkdirFile::Removed(row)));
+    }
+
+    Ok(files)
+}
+
+async fn fingerprint_files(files: Vec<(PathBuf, WorkdirFile)>) -> Res<ChangeSet> {
+    let mut changes = ChangeSet::new();
+    for (logical_key, location) in files {
+        match location {
+            WorkdirFile::Tracked(file, row) => {
+                if let Some((size, hash)) = verify_hash(file, row.hash).await? {
+                    let fingerprint = PackageFileFingerprint { size, hash };
+                    changes.insert(logical_key, Change::Modified(fingerprint));
+                } else {
+                    // the file is tracked (in lineage "paths") and has not been modified
+                }
+            }
+            WorkdirFile::NotTracked(file, row) => {
+                if let Some((size, hash)) = verify_hash(file, row.hash).await? {
+                    let fingerprint = PackageFileFingerprint { size, hash };
+                    changes.insert(logical_key, Change::Modified(fingerprint));
+                } else {
+                    // the file is not tracked,
+                    // but it is in the remote manifest,
+                    // however, it is not modified compared to remote.
+                }
+            }
+            WorkdirFile::New(file) => {
+                let size = file.metadata().await?.len();
+                let hash = calculate_sha256_chunked_checksum(file, size).await?;
+                let fingerprint = PackageFileFingerprint { size, hash };
+                changes.insert(logical_key, Change::Added(fingerprint));
+            }
+            WorkdirFile::Removed(row) => {
+                changes.insert(logical_key, Change::Removed(row));
+            }
+            WorkdirFile::UnSupported => {
+                // TODO: handle symlinks
+                // TODO: changes.insert(path, Change::Broken)
+                log::warn!("Unexpected file type: {:?}", logical_key);
+            }
+        }
+    }
+    Ok(changes)
 }
 
 /// Creates the status of local modifications
@@ -59,69 +180,8 @@ pub async fn create_status(
         orig_paths.insert(path.clone(), row);
     }
 
-    let mut queue = VecDeque::new();
-    queue.push_back(working_dir.clone());
-
-    let mut changes = ChangeSet::new();
-
-    while let Some(dir) = queue.pop_front() {
-        let mut dir_entries = match storage.read_dir(&dir).await {
-            Ok(dir_entries) => dir_entries,
-            Err(err) => {
-                log::error!("Failed to read directory {:?}: {}", dir, err);
-                continue;
-            }
-        };
-
-        while let Some(dir_entry) = dir_entries.next_entry().await? {
-            let file_path = dir_entry.path();
-            let file_type = dir_entry.file_type().await?;
-
-            if file_type.is_dir() {
-                queue.push_back(file_path);
-            } else if file_type.is_file() {
-                let file = storage.open_file(&file_path).await?;
-                let file_metadata = file.metadata().await?;
-
-                // TODO: add to error converter and use `?`
-                let relative_path = file_path.strip_prefix(&working_dir).unwrap();
-                if let Some(orig_row) = orig_paths.remove(&relative_path.to_path_buf()) {
-                    let file_hash = match orig_row.hash.code() {
-                        MULTIHASH_SHA256_CHUNKED => {
-                            calculate_sha256_chunked_checksum(file, file_metadata.len()).await?
-                        }
-                        _ => calculate_sha256_checksum(file).await?,
-                    };
-
-                    if file_hash != orig_row.hash {
-                        changes.insert(
-                            relative_path.to_path_buf(),
-                            Change::Modified(PackageFileFingerprint {
-                                size: file_metadata.len(),
-                                hash: file_hash,
-                            }),
-                        );
-                    }
-                } else {
-                    let sha256_hash =
-                        calculate_sha256_chunked_checksum(file, file_metadata.len()).await?;
-                    changes.insert(
-                        relative_path.to_path_buf(),
-                        Change::Added(PackageFileFingerprint {
-                            size: file_metadata.len(),
-                            hash: sha256_hash,
-                        }),
-                    );
-                }
-            } else {
-                log::warn!("Unexpected file type: {:?}", file_path);
-            }
-        }
-    }
-
-    for (orig_path, orig_row) in orig_paths {
-        changes.insert(orig_path.to_path_buf(), Change::Removed(orig_row));
-    }
+    let files = locate_files_in_working_dir(storage, manifest, working_dir, orig_paths).await?;
+    let changes = fingerprint_files(files).await?;
 
     let status = InstalledPackageStatus::new(lineage.clone().into(), changes);
     Ok((lineage, status))

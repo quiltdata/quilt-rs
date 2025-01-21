@@ -85,6 +85,12 @@ pub enum Error {
     #[error("Parquet error: {0}")]
     Parquet(#[from] parquet::errors::ParquetError),
 
+    #[error("Path prefix not found: {0}")]
+    PathPrefixNotFound(#[from] std::path::StripPrefixError),
+
+    #[error("Push error: {0}")]
+    Push(String),
+
     #[error("Reqwest error: {0}")]
     Reqwest(#[from] reqwest::Error),
 

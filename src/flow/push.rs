@@ -17,6 +17,7 @@ use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::uri::S3PackageHandle;
+use crate::Error;
 use crate::Res;
 
 async fn use_existing_row_or_upload(
@@ -106,9 +107,15 @@ pub async fn push_package(
     // Reset the commit state.
     lineage.commit = None;
 
+    if new_manifest_uri.hash != commit.hash {
+        paths::copy_cached_to_installed(paths, storage, &new_manifest_uri).await?;
+        Err(Error::Push(
+            "Latest local hash is not equal to pushed manifest commit".to_string(),
+        ))?
+    }
+
     // Try certifying latest if tracking
     if lineage.base_hash == lineage.latest_hash {
-        paths::copy_cached_to_installed(paths, storage, &new_manifest_uri).await?;
         // remote latest has not been updated, certifying the new latest
         return flow::certify_latest(lineage, remote, new_manifest_uri).await;
     }
@@ -154,7 +161,12 @@ mod tests {
             hash: "__FOO__".to_string(),
         };
         let lineage = PackageLineage {
-            commit: Some(CommitState::default()),
+            commit: Some(CommitState {
+                timestamp: chrono::Utc::now(),
+                hash: "770459d4230273fd44b272c552d1204458175e7d7cb26fcd601c662cf5f72d05"
+                    .to_string(),
+                prev_hashes: Vec::new(),
+            }),
             remote: manifest_uri,
             ..PackageLineage::default()
         };
@@ -213,13 +225,18 @@ mod tests {
             hash: "__FOO__".to_string(),
         };
         let lineage = PackageLineage {
-            commit: Some(CommitState::default()),
+            commit: Some(CommitState {
+                timestamp: chrono::Utc::now(),
+                hash: "475af395ee2856548851913bfd803de4fcc7cdbb3d1d2c13bf0dc221ed6bc68b"
+                    .to_string(),
+                prev_hashes: Vec::new(),
+            }),
             remote: manifest_uri,
             ..PackageLineage::default()
         };
         let jsonl = std::fs::read(mocks::manifest::parquet_checksummed())?;
         let manifest_key =
-            ".quilt/packages/b/0f85671863dadacf3a0e62212f1b9151a11f72228e4c82ed86ff27d46ec31d87";
+            ".quilt/packages/b/475af395ee2856548851913bfd803de4fcc7cdbb3d1d2c13bf0dc221ed6bc68b";
         let storage = mocks::storage::MockStorage::default();
         storage
             .write_file(PathBuf::from(manifest_key), &jsonl)
