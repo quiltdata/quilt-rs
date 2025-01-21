@@ -88,6 +88,9 @@ pub enum Error {
     #[error("Reqwest error: {0}")]
     Reqwest(#[from] reqwest::Error),
 
+    #[error("Path prefix not found: {0}")]
+    PathPrefixNotFound(#[from] std::path::StripPrefixError),
+
     /// An error from the AWS SDK
     ///
     /// Note that this uses a string for the underlying error type, because the AWS SDK
