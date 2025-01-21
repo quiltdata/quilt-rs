@@ -117,6 +117,8 @@ async fn put_object_and_checksum(
         // a list of a 0-byte chunk. Its checksum is sha256(''), NOT sha256(sha256('')).
         hash
     } else {
+        // NOTE: we're calculating checksum of checksums here,
+        //       not a checksum of the file
         calculate_sha256_checksum(hash.digest()).await?
     };
 

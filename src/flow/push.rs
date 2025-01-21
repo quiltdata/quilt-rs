@@ -17,6 +17,7 @@ use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::uri::S3PackageHandle;
+use crate::Error;
 use crate::Res;
 
 async fn use_existing_row_or_upload(
@@ -106,9 +107,15 @@ pub async fn push_package(
     // Reset the commit state.
     lineage.commit = None;
 
+    if lineage.latest_hash != commit.hash {
+        paths::copy_cached_to_installed(paths, storage, &new_manifest_uri).await?;
+        Err(Error::Push(
+            "Latest local hash is not equal to pushed manifest commit".to_string(),
+        ))?
+    }
+
     // Try certifying latest if tracking
     if lineage.base_hash == lineage.latest_hash {
-        paths::copy_cached_to_installed(paths, storage, &new_manifest_uri).await?;
         // remote latest has not been updated, certifying the new latest
         return flow::certify_latest(lineage, remote, new_manifest_uri).await;
     }
