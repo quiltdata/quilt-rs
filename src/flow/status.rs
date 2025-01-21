@@ -52,19 +52,19 @@ pub async fn refresh_latest_hash(
 }
 
 enum WorkdirFile {
-    Tracked((PathBuf, File, Row)),
-    NotTracked((PathBuf, File, Row)),
-    New((PathBuf, File)),
-    Removed((PathBuf, Row)),
-    UnSupported(PathBuf),
+    Tracked(File, Row),
+    NotTracked(File, Row),
+    New(File),
+    Removed(Row),
+    UnSupported,
 }
 
 async fn locate_files_in_working_dir(
     storage: &(impl Storage + Sync),
     manifest: &Table,
     working_dir: PathBuf,
-    mut orig_paths: HashMap<PathBuf, Row>,
-) -> Res<Vec<WorkdirFile>> {
+    mut tracked_paths: HashMap<PathBuf, Row>,
+) -> Res<Vec<(PathBuf, WorkdirFile)>> {
     let mut queue = VecDeque::new();
     queue.push_back(working_dir.clone());
 
@@ -88,37 +88,35 @@ async fn locate_files_in_working_dir(
                     queue.push_back(file_path);
                 } else {
                     // TODO: handle symlinks
-                    files.push(WorkdirFile::UnSupported(file_path));
+                    files.push((file_path, WorkdirFile::UnSupported));
                 }
                 continue;
             }
 
             let file = storage.open_file(&file_path).await?;
             let logical_key = file_path.strip_prefix(&working_dir)?.to_path_buf();
-            if let Some(row) = orig_paths.remove(&logical_key) {
-                files.push(WorkdirFile::Tracked((logical_key, file, row)));
+            if let Some(row) = tracked_paths.remove(&logical_key) {
+                files.push((logical_key, WorkdirFile::Tracked(file, row)));
+            } else if let Some(row) = manifest.get_record(&logical_key).await? {
+                files.push((logical_key, WorkdirFile::NotTracked(file, row)));
             } else {
-                if let Some(row) = manifest.get_record(&logical_key).await? {
-                    files.push(WorkdirFile::NotTracked((logical_key, file, row)));
-                } else {
-                    files.push(WorkdirFile::New((logical_key, file)));
-                }
+                files.push((logical_key, WorkdirFile::New(file)));
             }
         }
     }
 
-    for (path, row) in orig_paths {
-        files.push(WorkdirFile::Removed((path.to_path_buf(), row)));
+    for (logical_key, row) in tracked_paths {
+        files.push((logical_key, WorkdirFile::Removed(row)));
     }
 
     Ok(files)
 }
 
-async fn fingerprint_files(files: Vec<WorkdirFile>) -> Res<ChangeSet> {
+async fn fingerprint_files(files: Vec<(PathBuf, WorkdirFile)>) -> Res<ChangeSet> {
     let mut changes = ChangeSet::new();
-    for location in files {
+    for (logical_key, location) in files {
         match location {
-            WorkdirFile::Tracked((logical_key, file, row)) => {
+            WorkdirFile::Tracked(file, row) => {
                 if let Some((size, hash)) = verify_hash(file, row.hash).await? {
                     let fingerprint = PackageFileFingerprint { size, hash };
                     changes.insert(logical_key, Change::Modified(fingerprint));
@@ -126,7 +124,7 @@ async fn fingerprint_files(files: Vec<WorkdirFile>) -> Res<ChangeSet> {
                     // the file is tracked (in lineage "paths") and has not been modified
                 }
             }
-            WorkdirFile::NotTracked((logical_key, file, row)) => {
+            WorkdirFile::NotTracked(file, row) => {
                 if let Some((size, hash)) = verify_hash(file, row.hash).await? {
                     let fingerprint = PackageFileFingerprint { size, hash };
                     changes.insert(logical_key, Change::Modified(fingerprint));
@@ -136,19 +134,19 @@ async fn fingerprint_files(files: Vec<WorkdirFile>) -> Res<ChangeSet> {
                     // however, it is not modified compared to remote.
                 }
             }
-            WorkdirFile::New((logical_key, file)) => {
+            WorkdirFile::New(file) => {
                 let size = file.metadata().await?.len();
                 let hash = calculate_sha256_chunked_checksum(file, size).await?;
                 let fingerprint = PackageFileFingerprint { size, hash };
                 changes.insert(logical_key, Change::Added(fingerprint));
             }
-            WorkdirFile::Removed((logical_key, row)) => {
+            WorkdirFile::Removed(row) => {
                 changes.insert(logical_key, Change::Removed(row));
             }
-            WorkdirFile::UnSupported(p) => {
+            WorkdirFile::UnSupported => {
                 // TODO: handle symlinks
                 // TODO: changes.insert(path, Change::Broken)
-                log::warn!("Unexpected file type: {:?}", p);
+                log::warn!("Unexpected file type: {:?}", logical_key);
             }
         }
     }
