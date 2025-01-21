@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## [0.8.7]
+
+* Throw error if locally commited package and remote have different `top_hash`
+* Fix calculating hashes for files <8Mb
+* De-duplicate entries when user add files equal to the file that is not tracked and is already in a remote manifest
+
 ## [0.8.6]
 
 * Copy package pushed to the remote to the local storage.
