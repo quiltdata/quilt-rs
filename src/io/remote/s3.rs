@@ -118,6 +118,7 @@ async fn put_object_and_checksum(
     } else {
         // NOTE: we're calculating checksum of checksums here,
         //       not a checksum of the file
+        // NOTE: in the current design, we're not using this checksum
         calculate_sha256_checksum(hash.digest()).await?
     };
 
