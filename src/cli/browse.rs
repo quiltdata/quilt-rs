@@ -106,7 +106,7 @@ mod tests {
         let local_path = PathBuf::from(temp_dir.as_ref());
         let local_domain = quilt_rs::LocalDomain::new(local_path);
 
-        let output = model(&local_domain, Input { uri: uri }).await?;
+        let output = model(&local_domain, Input { uri }).await?;
 
         assert_eq!(output.manifest.header.info, manifest_content);
         assert_eq!(
@@ -139,9 +139,9 @@ mod tests {
         let local_path = PathBuf::from(temp_dir.as_ref());
         let local_domain = quilt_rs::LocalDomain::new(local_path);
 
-        let output = model(&local_domain, Input { uri: uri }).await;
+        let output = model(&local_domain, Input { uri }).await;
         // TODO: cpecify error?
-        assert_eq!(output.is_err(), true);
+        assert!(output.is_err());
 
         Ok(())
     }
