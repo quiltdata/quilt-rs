@@ -316,4 +316,8 @@ mod tests {
         );
         Ok(())
     }
+
+
+    // TODO: fail if path is already installed
+    // TODO: fail if manifest entry has invalid URL
 }
