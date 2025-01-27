@@ -28,6 +28,7 @@ async fn cache_immutable_object(
     uri: &S3Uri,
 ) -> Res {
     let stream = remote.get_object_stream(uri).await?;
+    println!("CACHE_IMMUTABLE_OBJECT, object_dest {:?}", object_dest);
     storage.write_byte_stream(object_dest, stream.body).await
 }
 
@@ -67,13 +68,14 @@ async fn stream_remote_with_installed_rows(
 
 /// Installs paths to already existing manifest (provided as an argument to this function).
 /// It also modifies manifest, because installed paths have `place` pointing to `file://location`
-// TODO: move `working_dir` to `paths`, and `paths` to `storage`
+// TODO: `working_dir` is in `paths` already, and we pass namespace anyway
+//       so we can remove working_dir from the arguments
 #[allow(clippy::too_many_arguments)]
 pub async fn install_paths(
     mut lineage: PackageLineage,
     table: &mut Table,
     paths: &DomainPaths,
-    working_dir: PathBuf,
+    working_dir: PathBuf, // This working dir is working dir of the package
     namespace: Namespace,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
@@ -116,8 +118,10 @@ pub async fn install_paths(
             .ok_or(Error::Table(format!("path {:?} not found", path)))?;
 
         let object_dest = paths.object(row.hash.digest());
+        println!("object_dest {:?}, HASH IS {:?}", object_dest, row.hash);
 
         if !storage.exists(&object_dest).await {
+            println!("DOES NOT EXIST WTF? {:?}", object_dest);
             cache_immutable_object(storage, remote, &object_dest, &row.place.parse()?).await?;
         }
 
@@ -159,103 +163,142 @@ mod tests {
     use super::*;
 
     use std::path::PathBuf;
+    use std::str::FromStr;
     use tempfile;
 
     use crate::manifest::Row;
     use crate::mocks;
 
+    // Verify installing the path that is already fetched to the `.quilt/objects`
+    // Practically it is useful when we try to install identical files. Then we can re-use cache (because files are located by hash).
+    // In other cases, it tests implementation details.
     #[tokio::test]
     async fn test_installing_one_cached_path() -> Res {
-        let working_dir = tempfile::tempdir()?;
+        let domain_working_dir = tempfile::tempdir()?;
+        let domain_paths = &DomainPaths::new(domain_working_dir.path().to_path_buf());
 
-        let domain_paths = &DomainPaths::new(working_dir.path().to_path_buf());
+        let namespace = ("foo", "bar");
+        let working_dir = domain_paths.working_dir(&namespace.into());
 
-        let remote = mocks::remote::MockRemote::default();
+        // Simulate the file is already exists in `.quilt/objects/HASH`
+        // We trust that the hash is correct, so we can skip the actual file content
         let storage = mocks::storage::MockStorage::default();
-        let object_path = domain_paths.object(mocks::row_hash_sample1().digest());
-        storage
-            .write_file(working_dir.path().join(object_path), &Vec::new())
-            .await?;
+        // The same hash is used in `mocks::manifest::with_record_keys`
+        // So, it's not completely random.
+        let hash = mocks::row_hash_sample1();
+        let object_path = domain_paths.object(hash.digest());
+        let absolute_path = domain_working_dir.path().join(object_path);
+        // Path is `.quilt/objects/HASH`
+        storage.write_file(absolute_path, &Vec::new()).await?;
 
-        let lineage = mocks::lineage::with_commit_hash("fghijk");
-        let entries_paths = vec![PathBuf::from("a/a")];
+        // Simulate the manifest with rows containing objects
+        let lineage = PackageLineage::default();
+        let single_object_path = PathBuf::from("a/a");
+        let entries_paths = vec![single_object_path.clone()];
         let mut manifest = mocks::manifest::with_record_keys(entries_paths.clone());
 
+        // Lineage does not track anything before the installation
         assert!(lineage.paths.is_empty());
+
+        // We deal with cached file, so remote is "empty" and doesn't make any HTTP calls,
+        // since it doesn't throw "key not found"
+        let remote = mocks::remote::MockRemote::default();
         let lineage = install_paths(
             lineage,
             &mut manifest,
             domain_paths,
-            working_dir.path().to_path_buf(),
-            ("foo", "bar").into(),
+            working_dir.clone(),
+            namespace.into(),
             &storage,
             &remote,
             &entries_paths,
         )
         .await?;
-        assert!(lineage.paths.contains_key(&PathBuf::from("a/a")));
-        assert!(
-            storage
-                .exists(&working_dir.path().join(PathBuf::from("a/a")))
-                .await
-        );
+
+        // Now lineage tracks the file in the working directory
+        assert!(lineage.paths.contains_key(&single_object_path));
+        // And working directory of the package contains the file
+        assert!(storage.exists(&working_dir.join(single_object_path)).await);
 
         Ok(())
     }
 
+    /// Verify installing a path that is not cached locally in `.quilt/objects`.
+    /// The path should be downloaded from the remote storage, cached locally, and then installed into the working directory.
     #[tokio::test]
     async fn test_installing_one_uncached_path() -> Res {
-        let working_dir = tempfile::tempdir()?;
+        let domain_working_dir = tempfile::tempdir()?;
+        let domain_paths = &DomainPaths::new(domain_working_dir.path().to_path_buf());
 
-        let domain_paths = &DomainPaths::new(working_dir.path().to_path_buf());
+        let namespace = ("foo", "bar");
+        let working_dir = domain_paths.working_dir(&namespace.into());
 
+        // Simulate the manifest with rows containing an object path
         let remote = mocks::remote::MockRemote::default();
         let storage = mocks::storage::MockStorage::default();
-        let lineage = mocks::lineage::with_commit_hash("fghijk");
-        let entries_paths = vec![PathBuf::from("a/a")];
+        let single_object_path = PathBuf::from("a/a");
+        let entries_paths = vec![single_object_path.clone()];
+
+        let remote_file_url = "s3://any/valid-url.md".to_string();
+
+        // Simulate the remote object
+        let remote_object_uri = S3Uri::from_str(&remote_file_url)?;
+        remote.put_object(&remote_object_uri, Vec::new()).await?;
+
+        // Create the manifest with a single remote row with a random hash
+        let hash: multihash::Multihash<256> = multihash::Multihash::wrap(0x16, b"anything")?;
         let mut manifest = mocks::manifest::with_rows(vec![Row {
-            name: PathBuf::from("a/a"),
-            hash: mocks::row_hash_sample1(),
-            place: "s3://any/any/any/any/any.md".to_string(),
+            name: single_object_path.clone(),
+            hash,
+            place: remote_file_url,
             ..Row::default()
         }]);
-        remote
-            .put_object(&S3Uri::try_from("s3://any/any/any/any/any.md")?, Vec::new())
-            .await?;
 
+        // Before installation, lineage does not track any paths
+        let lineage = PackageLineage::default();
         assert!(lineage.paths.is_empty());
+
+        // Perform the installation
         let lineage = install_paths(
             lineage,
             &mut manifest,
             domain_paths,
-            working_dir.path().to_path_buf(),
-            ("foo", "bar").into(),
+            working_dir.clone(),
+            namespace.into(),
             &storage,
             &remote,
             &entries_paths,
         )
         .await?;
-        assert!(lineage.paths.contains_key(&PathBuf::from("a/a")));
-        assert!(
-            storage
-                .exists(&working_dir.path().join(PathBuf::from("a/a")))
-                .await
-        );
-        let object_path = domain_paths.object(mocks::row_hash_sample1().digest());
+
+        // Verify the path is now tracked in lineage
+        assert!(lineage.paths.contains_key(&single_object_path));
+        // Verify the working directory contains the installed file
+        assert!(storage.exists(&working_dir.join(single_object_path)).await);
+        // Verify the object is cached locally in `.quilt/objects`
+        // Note, that we don't verify the hash and trust the manifest
+        let object_path = domain_paths.object(hash.digest());
         assert!(storage.exists(object_path).await);
 
         Ok(())
     }
 
+    // Verify that the installation fails when we try to install a path that doesn't exist in the
+    // manifest.
     #[tokio::test]
     async fn test_installing_path_that_doesnt_exists_in_manifest() -> Res {
-        let lineage = mocks::lineage::with_commit_hash("fghijk");
+        let lineage = PackageLineage::default();
         let remote = mocks::remote::MockRemote::default();
         let storage = mocks::storage::MockStorage::default();
+
+        // We want to install z/z
         let entries_paths = vec![PathBuf::from("z/z")];
+        // But manifest clearly doens't contain it. It contain different path
         let mut manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("a/a")]);
 
+        // Assert we don't track anything
         assert!(lineage.paths.is_empty());
+
         let lineage = install_paths(
             lineage,
             &mut manifest,
