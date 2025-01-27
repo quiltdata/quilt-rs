@@ -63,10 +63,13 @@ mod tests {
 
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+    use std::str::FromStr;
 
     use crate::mocks;
     use crate::uri::S3Uri;
 
+    /// Verify that attempting to install a package that is already installed results in an error.
+    /// A package is considered installed if it is present in the lineage.
     #[tokio::test]
     async fn test_if_already_installed() -> Res {
         let namespace = ("foo", "bar");
@@ -91,6 +94,9 @@ mod tests {
         Ok(())
     }
 
+    /// Verify that a manifest is fetched from the remote storage and installed locally.
+    /// This test focuses on the manifest itself, not on the package files.
+    /// Package files are installed separately using `install_paths`.
     #[tokio::test]
     async fn test_installing() -> Res {
         let manifest_uri = ManifestUri {
@@ -98,20 +104,18 @@ mod tests {
             hash: "c".to_string(),
             namespace: ("f", "b").into(),
         };
+
+        // Load the reference manifest from `./fixtures`
         let parquet = std::fs::read(mocks::manifest::parquet())?;
         let remote = mocks::remote::MockRemote::default();
-        remote
-            .put_object(
-                &S3Uri::try_from("s3://a/.quilt/packages/1220c.parquet")?,
-                parquet,
-            )
-            .await?;
-        remote
-            .put_object(
-                &S3Uri::try_from("s3://a/.quilt/named_packages/f/b/latest")?,
-                Vec::new(),
-            )
-            .await?;
+
+        // Simulate the remote storage containing the Parquet manifest
+        let remote_uri = S3Uri::from_str(&format!(
+            "s3://{}/.quilt/packages/1220{}.parquet",
+            manifest_uri.bucket, manifest_uri.hash
+        ))?;
+        remote.put_object(&remote_uri, parquet).await?;
+
         let storage = mocks::storage::MockStorage::default();
         let result = install_package(
             DomainLineage::default(),
@@ -121,16 +125,26 @@ mod tests {
             &manifest_uri,
         )
         .await?;
-        assert_eq!(
-            result.packages.get(&("f", "b").into()).unwrap().remote,
-            manifest_uri
-        );
-        assert!(
-            storage
-                .exists(&PathBuf::from(".quilt/installed/f/b/c"))
-                .await
-        );
-        assert!(storage.exists(&PathBuf::from(".quilt/packages/a/c")).await);
+
+        let installed_package = result.packages.get(&("f", "b").into()).unwrap();
+        let tracked = installed_package.remote.clone();
+
+        // Verify that the lineage records the installed package
+        assert_eq!(tracked, manifest_uri);
+
+        // Verify that the manifest is stored locally in the immutable manifest directory
+        let installed_manifest_path = PathBuf::from(format!(
+            ".quilt/installed/{}/{}",
+            tracked.namespace, tracked.hash
+        ));
+        assert!(storage.exists(&installed_manifest_path).await);
+
+        // Verify that the manifest is cached locally
+        let cached_manifest_path = PathBuf::from(format!(
+            ".quilt/packages/{}/{}",
+            tracked.bucket, tracked.hash
+        ));
+        assert!(storage.exists(&cached_manifest_path).await);
         Ok(())
     }
 }
