@@ -101,7 +101,7 @@ mod tests {
     async fn test_installing() -> Res {
         let manifest_uri = ManifestUri {
             bucket: "a".to_string(),
-            hash: "c".to_string(),
+            hash: "abcdef1234".to_string(),
             namespace: ("f", "b").into(),
         };
 
@@ -116,6 +116,15 @@ mod tests {
         ))?;
         remote.put_object(&remote_uri, parquet).await?;
 
+        // Simulate the remote storage containing the reference to the latest manifest
+        let latest_uri = S3Uri::from_str(&format!(
+            "s3://{}/.quilt/named_packages/{}/latest",
+            manifest_uri.bucket, manifest_uri.namespace
+        ))?;
+        remote
+            .put_object(&latest_uri, manifest_uri.hash.as_bytes().to_vec())
+            .await?;
+
         let storage = mocks::storage::MockStorage::default();
         let result = install_package(
             DomainLineage::default(),
@@ -128,6 +137,8 @@ mod tests {
 
         let installed_package = result.packages.get(&("f", "b").into()).unwrap();
         let tracked = installed_package.remote.clone();
+
+        assert_eq!(installed_package.latest_hash, "abcdef1234".to_string());
 
         // Verify that the lineage records the installed package
         assert_eq!(tracked, manifest_uri);
