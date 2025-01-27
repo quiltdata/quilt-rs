@@ -85,38 +85,64 @@ mod tests {
     use std::path::PathBuf;
     use temp_testdir::TempDir;
 
+    /// Verifies that the remote Quilt registry has the expected manifest.
+    /// Test actually fetch the manifest from Quilt, without mocks.
     #[tokio::test]
     async fn test_model() -> Result<(), Error> {
+        let uri = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md".to_string();
+        let manifest_content = serde_json::json!({
+            "message": "test_spec_write 1697916638",
+            "version":"v0"
+        });
+
+        let readme_logical_key = PathBuf::from("READ ME.md");
+        let readme_uri =
+            "s3://udp-spec/spec/quiltcore/READ%20ME.md?versionId=.l3tAGbfEBC4c.L2ywTpWbnweSpYLe8a";
+        let timestamp_logical_key = PathBuf::from("timestamp.txt");
+        let timestamp_uri =
+            "s3://udp-spec/spec/quiltcore/timestamp.txt?versionId=lifktjQgrgewg1FGXxls3UKtJSjl2shy";
+
         let temp_dir = TempDir::default();
         let local_path = PathBuf::from(temp_dir.as_ref());
         let local_domain = quilt_rs::LocalDomain::new(local_path);
-        let uri = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md".to_string();
-        let output = model(&local_domain, Input { uri }).await?;
+
+        let output = model(&local_domain, Input { uri: uri }).await?;
+
+        assert_eq!(output.manifest.header.info, manifest_content);
         assert_eq!(
-            output.manifest.header.info,
-            serde_json::json!({
-                "message": "test_spec_write 1697916638",
-                "version":"v0"
-            })
+            output
+                .manifest
+                .get_record(&readme_logical_key)
+                .await?
+                .unwrap()
+                .place,
+            readme_uri
         );
         assert_eq!(
             output
                 .manifest
-                .get_record(&PathBuf::from("READ ME.md"))
+                .get_record(&timestamp_logical_key)
                 .await?
                 .unwrap()
                 .place,
-            "s3://udp-spec/spec/quiltcore/READ%20ME.md?versionId=.l3tAGbfEBC4c.L2ywTpWbnweSpYLe8a"
+            timestamp_uri
         );
-        assert_eq!(
-            output
-                .manifest
-                .get_record(&PathBuf::from("timestamp.txt"))
-                .await?
-                .unwrap()
-                .place,
-            "s3://udp-spec/spec/quiltcore/timestamp.txt?versionId=lifktjQgrgewg1FGXxls3UKtJSjl2shy"
-        );
+        Ok(())
+    }
+
+    /// Verifies that CLI throws error if `quilt+s3` URI is invalid.
+    #[tokio::test]
+    async fn test_if_uri_is_invalid() -> Result<(), Error> {
+        let uri = "quilt+s3://some-nonsense".to_string();
+
+        let temp_dir = TempDir::default();
+        let local_path = PathBuf::from(temp_dir.as_ref());
+        let local_domain = quilt_rs::LocalDomain::new(local_path);
+
+        let output = model(&local_domain, Input { uri: uri }).await;
+        // TODO: cpecify error?
+        assert_eq!(output.is_err(), true);
+
         Ok(())
     }
 }
