@@ -335,7 +335,12 @@ mod tests {
         let remote_object_uri_4 = S3Uri::from_str(&row_4.place)?;
         remote.put_object(&remote_object_uri_4, Vec::new()).await?;
 
-        let entries_paths = vec![row_1.name.clone(), row_2.name.clone(), row_3.name.clone(), row_4.name.clone()];
+        let entries_paths = vec![
+            row_1.name.clone(),
+            row_2.name.clone(),
+            row_3.name.clone(),
+            row_4.name.clone(),
+        ];
 
         // Lineage does not track anything before the installation
         assert!(lineage.paths.is_empty());

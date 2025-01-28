@@ -26,7 +26,7 @@ impl TryFrom<&str> for S3Uri {
         let bucket = parsed_url
             .host_str()
             .ok_or(Error::S3Uri(format!("Missing bucket in {}", input)))?;
-        if parsed_url.path().len() == 0 {
+        if parsed_url.path().is_empty() {
             return Err(Error::S3Uri(format!("Path does not exist in {}", input)));
         }
         let key = percent_encoding::percent_decode_str(&parsed_url.path()[1..]).decode_utf8()?;
