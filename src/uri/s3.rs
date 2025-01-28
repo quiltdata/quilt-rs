@@ -95,7 +95,7 @@ mod tests {
         let uri = S3Uri::try_from("https://bucket/foo/bar");
         assert_eq!(
             uri.unwrap_err().to_string(),
-            "Invalid URI scheme: Expected s3:// scheme".to_string(),
+            "Invalid URI scheme: Expected s3:// scheme in https://bucket/foo/bar".to_string(),
         );
         Ok(())
     }
@@ -105,7 +105,7 @@ mod tests {
         let uri = S3Uri::try_from("s3://");
         assert_eq!(
             uri.unwrap_err().to_string(),
-            "Invalid S3 URI: missing bucket".to_string(),
+            "Invalid S3 URI: Missing bucket in s3://".to_string(),
         );
         Ok(())
     }
@@ -143,7 +143,7 @@ mod tests {
         let uri = S3Uri::try_from("s3://bucket/foo/bar?another=query");
         assert_eq!(
             uri.unwrap_err().to_string(),
-            "Invalid S3 URI: Unknown query parameter. Only single versionId is allowed".to_string(),
+            "Invalid S3 URI: Unknown query parameter in s3://bucket/foo/bar?another=query. Only single versionId is allowed".to_string(),
         );
         Ok(())
     }
@@ -167,7 +167,7 @@ mod tests {
         let uri = S3Uri::try_from("s3://bucket/foo  bar?versionId=query&versionId=another");
         assert_eq!(
             uri.unwrap_err().to_string(),
-            "Invalid S3 URI: Too many query parameters. Only single versionId is allowed"
+            "Invalid S3 URI: Too many query parameters in s3://bucket/foo  bar?versionId=query&versionId=another. Only single versionId is allowed"
                 .to_string(),
         );
         Ok(())
