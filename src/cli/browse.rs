@@ -90,10 +90,6 @@ mod tests {
     #[tokio::test]
     async fn test_model() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md".to_string();
-        let manifest_content = serde_json::json!({
-            "message": "test_spec_write 1697916638",
-            "version":"v0"
-        });
 
         let readme_logical_key = PathBuf::from("READ ME.md");
         let readme_uri =
@@ -108,7 +104,13 @@ mod tests {
 
         let output = model(&local_domain, Input { uri }).await?;
 
-        assert_eq!(output.manifest.header.info, manifest_content);
+        assert_eq!(
+            output.manifest.header.info,
+            serde_json::json!({
+                "message": "test_spec_write 1697916638",
+                "version":"v0"
+            })
+        );
         assert_eq!(
             output
                 .manifest
