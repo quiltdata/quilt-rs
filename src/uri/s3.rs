@@ -18,17 +18,24 @@ impl TryFrom<&str> for S3Uri {
     fn try_from(input: &str) -> Result<Self, Self::Error> {
         let parsed_url = Url::parse(input)?;
         if parsed_url.scheme() != "s3" {
-            return Err(Error::InvalidScheme("Expected s3:// scheme".to_string()));
+            return Err(Error::InvalidScheme(format!(
+                "Expected s3:// scheme in {}",
+                input
+            )));
         }
         let bucket = parsed_url
             .host_str()
-            .ok_or(Error::S3Uri("missing bucket".to_string()))?;
+            .ok_or(Error::S3Uri(format!("Missing bucket in {}", input)))?;
+        if parsed_url.path().len() == 0 {
+            return Err(Error::S3Uri(format!("Path does not exist in {}", input)));
+        }
         let key = percent_encoding::percent_decode_str(&parsed_url.path()[1..]).decode_utf8()?;
         let queries = parsed_url.query_pairs().into_owned().collect::<Vec<_>>();
         if queries.len() > 1 {
-            return Err(Error::S3Uri(
-                "Too many query parameters. Only single versionId is allowed".to_string(),
-            ));
+            return Err(Error::S3Uri(format!(
+                "Too many query parameters in {}. Only single versionId is allowed",
+                input
+            )));
         }
 
         let version = match queries.first() {
@@ -37,9 +44,10 @@ impl TryFrom<&str> for S3Uri {
                 if key == "versionId" {
                     Some(value.to_string())
                 } else {
-                    return Err(Error::S3Uri(
-                        "Unknown query parameter. Only single versionId is allowed".to_string(),
-                    ));
+                    return Err(Error::S3Uri(format!(
+                        "Unknown query parameter in {}. Only single versionId is allowed",
+                        input
+                    )));
                 }
             }
         };
