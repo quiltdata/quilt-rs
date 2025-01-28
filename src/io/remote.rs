@@ -14,7 +14,6 @@ use tokio_stream::Stream;
 use crate::uri::S3Uri;
 use crate::Res;
 
-mod client;
 mod s3;
 
 pub use s3::RemoteS3;
