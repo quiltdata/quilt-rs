@@ -1,7 +1,7 @@
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::RwLock;
 use tracing::log;
 
 use async_stream::try_stream;
@@ -232,16 +232,16 @@ async fn multipart_upload_and_checksum(
 #[derive(Debug)]
 pub struct RemoteS3 {
     http: reqwest::Client,
-    s3: Mutex<HashMap<Region, aws_sdk_s3::Client>>,
-    regions: Mutex<HashMap<String, Region>>,
+    s3: RwLock<HashMap<Region, aws_sdk_s3::Client>>,
+    regions: RwLock<HashMap<String, Region>>,
 }
 
 impl std::clone::Clone for RemoteS3 {
     fn clone(&self) -> Self {
         RemoteS3 {
             http: self.http.clone(),
-            s3: Mutex::new(self.s3.lock().unwrap().clone()),
-            regions: Mutex::new(self.regions.lock().unwrap().clone()),
+            s3: RwLock::new(self.s3.read().unwrap().clone()),
+            regions: RwLock::new(self.regions.read().unwrap().clone()),
         }
     }
 }
@@ -256,22 +256,21 @@ impl RemoteS3 {
     pub fn new() -> Self {
         RemoteS3 {
             http: reqwest::Client::new(),
-            s3: Mutex::new(HashMap::new()),
-            regions: Mutex::new(HashMap::new()),
+            s3: RwLock::new(HashMap::new()),
+            regions: RwLock::new(HashMap::new()),
         }
     }
 
     async fn get_region_for_bucket(&self, bucket: &str) -> Res<Region> {
         {
-            // let map = BUCKET_REGIONS.read().unwrap();
-            if let Some(region) = self.regions.lock().unwrap().get(bucket) {
+            if let Some(region) = self.regions.read().unwrap().get(bucket) {
                 return Ok(region.clone());
             }
         }
 
         let region = find_bucket_region(&self.http, bucket).await?;
 
-        let mut map = self.regions.lock().unwrap();
+        let mut map = self.regions.write().unwrap();
         match map.entry(bucket.to_owned()) {
             Entry::Occupied(entry) => Ok(entry.get().clone()),
             Entry::Vacant(entry) => Ok(entry.insert(Region::new(region)).clone()),
@@ -280,7 +279,7 @@ impl RemoteS3 {
 
     async fn get_client_for_region(&self, region: aws_types::region::Region) -> aws_sdk_s3::Client {
         {
-            let map = self.s3.lock().unwrap();
+            let map = self.s3.read().unwrap();
             if let Some(client) = map.get(&region) {
                 return client.clone();
             }
@@ -292,7 +291,7 @@ impl RemoteS3 {
             .await;
         let client = aws_sdk_s3::Client::new(&config);
 
-        let mut map = self.s3.lock().unwrap();
+        let mut map = self.s3.write().unwrap();
 
         match map.entry(region) {
             Entry::Occupied(entry) => entry.get().clone(),
