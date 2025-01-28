@@ -111,9 +111,99 @@ pub async fn model(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    use std::path::PathBuf;
+    use temp_testdir::TempDir;
+
+    use quilt_rs::io::storage::LocalStorage;
+    use quilt_rs::io::storage::Storage;
+
+    /// Verifies the installation process in CLI with valid data:
+    ///   * lineage is updated with the installed package and tracked paths
+    ///   * the working directory contains tracked mutable files
+    ///   * `.quilt/objects` contains immutable files from the package
+    ///   * `.quilt/installed` contains the installed manifest under the namespace directory
+    ///   * `.quilt/packages` contains the cached manifest under the bucket directory
+    /// Uses an actual manifest from Quilt without mocks.
     #[tokio::test]
-    #[ignore]
-    async fn install() -> Result<(), String> {
-        unreachable!()
+    async fn test_model() -> Result<(), Error> {
+        let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c&path=READ%20ME.md".to_string();
+
+        let readme_logical_key = PathBuf::from("READ ME.md");
+        let timestamp_logical_key = PathBuf::from("timestamp.txt");
+
+        let temp_dir = TempDir::default();
+        let local_path = PathBuf::from(temp_dir.as_ref());
+        let local_domain = quilt_rs::LocalDomain::new(local_path);
+
+        let output = model(
+            &local_domain,
+            Input {
+                namespace: None,
+                paths: Some(vec![timestamp_logical_key.clone()]),
+                uri,
+            },
+        )
+        .await?;
+
+        let installed_package = output.installed_package;
+        assert_eq!(installed_package.namespace, ("spec", "quiltcore").into());
+        assert!(installed_package
+            .lineage()
+            .await?
+            .paths
+            .contains_key(&readme_logical_key));
+
+        let working_dir = temp_dir.join("spec/quiltcore");
+        assert_eq!(
+            output.package_dir,
+            PathBuf::from(temp_dir.as_ref()).join("spec/quiltcore")
+        );
+        assert_eq!(
+            output.paths,
+            vec![readme_logical_key.clone(), timestamp_logical_key.clone()]
+        );
+
+        let storage = LocalStorage::new();
+        assert!(storage.exists(working_dir.join(readme_logical_key)).await);
+        assert!(
+            storage
+                .exists(working_dir.join(timestamp_logical_key))
+                .await
+        );
+
+        assert!(
+            storage
+                .exists(temp_dir.join(".quilt/installed/spec/quiltcore/44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c"))
+                .await
+        );
+
+        assert!(
+            storage
+                .exists(
+                    temp_dir.join(".quilt/packages/udp-spec/44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c")
+                )
+                .await
+        );
+
+        // README.md
+        assert!(
+            storage
+                .exists(
+                    temp_dir.join(".quilt/objects/e1181788c8a77224d98bb3a2de256bfea1d2f128019d5d378406522c03b5db07")
+                )
+                .await
+        );
+        // timestamp.txt
+        assert!(
+            storage
+                .exists(
+                    temp_dir.join(".quilt/objects/1f580d4f3e2545b95054993a6d66e802dc81140a9a42702c8aa088f00091cab2")
+                )
+                .await
+        );
+
+        Ok(())
     }
 }
