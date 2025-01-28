@@ -17,7 +17,6 @@ use crate::Res;
 mod client;
 mod s3;
 
-pub use client::get_client_for_bucket;
 pub use s3::RemoteS3;
 
 #[cfg(test)]

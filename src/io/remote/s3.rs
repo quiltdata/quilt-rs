@@ -1,7 +1,11 @@
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Mutex;
 use tracing::log;
 
 use async_stream::try_stream;
+use aws_config::BehaviorVersion;
 use aws_sdk_s3::error::DisplayErrorContext;
 use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput;
@@ -11,6 +15,7 @@ use aws_sdk_s3::types::CompletedMultipartUpload;
 use aws_sdk_s3::types::CompletedPart;
 use aws_sdk_s3::types::Object;
 use aws_smithy_types::byte_stream::Length;
+use aws_types::region::Region;
 use parquet::data_type::AsBytes;
 
 use multihash::Multihash;
@@ -30,7 +35,6 @@ use crate::Res;
 
 const LIST_OBJECTS_V2_MAX_KEYS: i32 = 1_00;
 
-use crate::io::remote::get_client_for_bucket;
 use crate::io::remote::RemoteObjectStream;
 use crate::io::remote::S3Attributes;
 
@@ -59,6 +63,18 @@ impl TryFrom<GetObjectAttributesOutput> for S3AttributesWrapper {
             hash,
             size,
         })
+    }
+}
+
+async fn find_bucket_region(client: &reqwest::Client, bucket: &str) -> Res<String> {
+    let response = client
+        .head(format!("https://s3.amazonaws.com/{bucket}"))
+        .send()
+        .await?;
+
+    match response.headers().get("x-amz-bucket-region") {
+        Some(location) => Ok(location.to_str()?.into()),
+        None => Err(Error::MissingHTTPHeader("x-amz-bucket-region".to_string())),
     }
 }
 
@@ -91,11 +107,12 @@ async fn get_object(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<impl Asy
 }
 
 async fn put_object_and_checksum(
+    client: aws_sdk_s3::Client,
     source_path: impl AsRef<Path>,
     dest_uri: &S3Uri,
     size: u64,
 ) -> Res<(S3Uri, Multihash<256>)> {
-    let client = get_client_for_bucket(&dest_uri.bucket).await?;
+    // let client = get_client_for_bucket(&dest_uri.bucket).await?;
     let response = client
         .put_object()
         .bucket(&dest_uri.bucket)
@@ -132,12 +149,13 @@ async fn put_object_and_checksum(
 }
 
 async fn multipart_upload_and_checksum(
+    client: aws_sdk_s3::Client,
     source_path: impl AsRef<Path>,
     dest_uri: &S3Uri,
     size: u64,
 ) -> Res<(S3Uri, Multihash<256>)> {
     let (chunksize, num_chunks) = get_checksum_chunksize_and_parts(size);
-    let client = get_client_for_bucket(&dest_uri.bucket).await?;
+    //let client = get_client_for_bucket(&dest_uri.bucket).await?;
     let upload_id = client
         .create_multipart_upload()
         .bucket(&dest_uri.bucket)
@@ -211,8 +229,22 @@ async fn multipart_upload_and_checksum(
 }
 
 /// Implementation of the `Remote` trait for S3
-#[derive(Clone, Debug)]
-pub struct RemoteS3 {}
+#[derive(Debug)]
+pub struct RemoteS3 {
+    http: reqwest::Client,
+    s3: Mutex<HashMap<Region, aws_sdk_s3::Client>>,
+    regions: Mutex<HashMap<String, Region>>,
+}
+
+impl std::clone::Clone for RemoteS3 {
+    fn clone(&self) -> Self {
+        RemoteS3 {
+            http: self.http.clone(),
+            s3: Mutex::new(self.s3.lock().unwrap().clone()),
+            regions: Mutex::new(self.regions.lock().unwrap().clone()),
+        }
+    }
+}
 
 impl Default for RemoteS3 {
     fn default() -> Self {
@@ -222,13 +254,61 @@ impl Default for RemoteS3 {
 
 impl RemoteS3 {
     pub fn new() -> Self {
-        RemoteS3 {}
+        RemoteS3 {
+            http: reqwest::Client::new(),
+            s3: Mutex::new(HashMap::new()),
+            regions: Mutex::new(HashMap::new()),
+        }
+    }
+
+    async fn get_region_for_bucket(&self, bucket: &str) -> Res<Region> {
+        {
+            // let map = BUCKET_REGIONS.read().unwrap();
+            if let Some(region) = self.regions.lock().unwrap().get(bucket) {
+                return Ok(region.clone());
+            }
+        }
+
+        let region = find_bucket_region(&self.http, bucket).await?;
+
+        let mut map = self.regions.lock().unwrap();
+        match map.entry(bucket.to_owned()) {
+            Entry::Occupied(entry) => Ok(entry.get().clone()),
+            Entry::Vacant(entry) => Ok(entry.insert(Region::new(region)).clone()),
+        }
+    }
+
+    async fn get_client_for_region(&self, region: aws_types::region::Region) -> aws_sdk_s3::Client {
+        {
+            let map = self.s3.lock().unwrap();
+            if let Some(client) = map.get(&region) {
+                return client.clone();
+            }
+        }
+
+        let config = aws_config::defaults(BehaviorVersion::latest())
+            .region(region.clone())
+            .load()
+            .await;
+        let client = aws_sdk_s3::Client::new(&config);
+
+        let mut map = self.s3.lock().unwrap();
+
+        match map.entry(region) {
+            Entry::Occupied(entry) => entry.get().clone(),
+            Entry::Vacant(entry) => entry.insert(client).clone(),
+        }
+    }
+
+    async fn get_client_for_bucket(&self, bucket: &str) -> Res<aws_sdk_s3::Client> {
+        let region = self.get_region_for_bucket(bucket).await?.clone();
+        Ok(self.get_client_for_region(region).await)
     }
 }
 
 impl Remote for RemoteS3 {
     async fn exists(&self, s3_uri: &S3Uri) -> Res<bool> {
-        let client = get_client_for_bucket(&s3_uri.bucket).await?;
+        let client = self.get_client_for_bucket(&s3_uri.bucket).await?;
         let result = client.head_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
         let result = match &s3_uri.version {
             Some(version) => result.version_id(version),
@@ -242,7 +322,7 @@ impl Remote for RemoteS3 {
     }
 
     async fn get_object(&self, s3_uri: &S3Uri) -> Res<impl AsyncRead + Send + Unpin> {
-        let client = get_client_for_bucket(&s3_uri.bucket).await?;
+        let client = self.get_client_for_bucket(&s3_uri.bucket).await?;
         get_object(&client, s3_uri).await
     }
 
@@ -251,7 +331,7 @@ impl Remote for RemoteS3 {
         listing_uri: &S3Uri,
         object: &Object,
     ) -> Res<S3Attributes> {
-        let client = get_client_for_bucket(&listing_uri.bucket).await?;
+        let client = self.get_client_for_bucket(&listing_uri.bucket).await?;
         let key = object.key.clone().ok_or(Error::ObjectKey)?;
         log::debug!(
             "Getting attributes for bucket {} key {}",
@@ -288,13 +368,13 @@ impl Remote for RemoteS3 {
     }
 
     async fn get_object_stream(&self, s3_uri: &S3Uri) -> Res<RemoteObjectStream> {
-        let client = get_client_for_bucket(&s3_uri.bucket).await?;
+        let client = self.get_client_for_bucket(&s3_uri.bucket).await?;
         get_object_stream(&client, s3_uri).await
     }
 
     async fn list_objects(&self, listing_uri: S3Uri) -> impl ObjectsStream {
         try_stream! {
-            let client = get_client_for_bucket(&listing_uri.bucket).await?;
+            let client = self.get_client_for_bucket(&listing_uri.bucket).await?;
             let mut paginated_stream = client
                 .list_objects_v2()
                 .bucket(&listing_uri.bucket)
@@ -315,7 +395,7 @@ impl Remote for RemoteS3 {
     }
 
     async fn put_object(&self, s3_uri: &S3Uri, contents: impl Into<ByteStream>) -> Res {
-        let client = get_client_for_bucket(&s3_uri.bucket).await?;
+        let client = self.get_client_for_bucket(&s3_uri.bucket).await?;
         client
             .put_object()
             .bucket(&s3_uri.bucket)
@@ -334,10 +414,11 @@ impl Remote for RemoteS3 {
         dest_uri: &S3Uri,
         size: u64,
     ) -> Res<(S3Uri, Multihash<256>)> {
+        let client = self.get_client_for_bucket(&dest_uri.bucket).await?;
         if size == 0 {
-            put_object_and_checksum(source_path, dest_uri, size).await
+            put_object_and_checksum(client, source_path, dest_uri, size).await
         } else {
-            multipart_upload_and_checksum(source_path, dest_uri, size).await
+            multipart_upload_and_checksum(client, source_path, dest_uri, size).await
         }
     }
 }

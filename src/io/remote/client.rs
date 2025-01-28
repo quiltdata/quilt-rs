@@ -67,7 +67,7 @@ async fn get_client_for_region(region: aws_types::region::Region) -> aws_sdk_s3:
     }
 }
 
-pub async fn get_client_for_bucket(bucket: &str) -> Res<aws_sdk_s3::Client> {
+async fn get_client_for_bucket(bucket: &str) -> Res<aws_sdk_s3::Client> {
     let region = get_region_for_bucket(bucket).await?.clone();
     Ok(get_client_for_region(region).await)
 }
