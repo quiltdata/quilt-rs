@@ -28,7 +28,6 @@ async fn cache_immutable_object(
     uri: &S3Uri,
 ) -> Res {
     let stream = remote.get_object_stream(uri).await?;
-    println!("CACHE_IMMUTABLE_OBJECT, object_dest {:?}", object_dest);
     storage.write_byte_stream(object_dest, stream.body).await
 }
 
@@ -118,10 +117,8 @@ pub async fn install_paths(
             .ok_or(Error::Table(format!("path {:?} not found", path)))?;
 
         let object_dest = paths.object(row.hash.digest());
-        println!("object_dest {:?}, HASH IS {:?}", object_dest, row.hash);
 
         if !storage.exists(&object_dest).await {
-            println!("DOES NOT EXIST WTF? {:?}", object_dest);
             cache_immutable_object(storage, remote, &object_dest, &row.place.parse()?).await?;
         }
 
@@ -180,7 +177,7 @@ mod tests {
         let namespace = ("foo", "bar");
         let working_dir = domain_paths.working_dir(&namespace.into());
 
-        // Simulate the file is already exists in `.quilt/objects/HASH`
+        // Simulate the file already exists in `.quilt/objects/HASH`
         // We trust that the hash is correct, so we can skip the actual file content
         let storage = mocks::storage::MockStorage::default();
         // The same hash is used in `mocks::manifest::with_record_keys`
@@ -283,6 +280,92 @@ mod tests {
         Ok(())
     }
 
+    // Nothing special, just a combination of two previous tests,
+    // so we're sure that single file is not a special case.
+    #[tokio::test]
+    async fn test_installing_multiple_paths() -> Res {
+        let domain_working_dir = tempfile::tempdir()?;
+        let domain_paths = &DomainPaths::new(domain_working_dir.path().to_path_buf());
+
+        let namespace = ("foo", "bar");
+        let working_dir = domain_paths.working_dir(&namespace.into());
+
+        // Simulate the manifest with rows containing objects
+        let lineage = PackageLineage::default();
+        let row_1 = Row {
+            name: PathBuf::from("a"),
+            place: "file:///ignored".to_string(),
+            hash: multihash::Multihash::wrap(0x16, b"one")?,
+            ..Row::default()
+        };
+        let row_2 = Row {
+            name: PathBuf::from("b/b"),
+            place: "s3://bucket/foo/bar".to_string(),
+            hash: multihash::Multihash::wrap(0x16, b"two")?,
+            ..Row::default()
+        };
+        let row_3 = Row {
+            name: PathBuf::from("c/c/c"),
+            place: "file:///ignored".to_string(),
+            hash: multihash::Multihash::wrap(0x16, b"three")?,
+            ..Row::default()
+        };
+        let row_4 = Row {
+            name: PathBuf::from("d/d/d/d"),
+            place: "s3://bucket/foo/baz".to_string(),
+            hash: multihash::Multihash::wrap(0x16, b"four")?,
+            ..Row::default()
+        };
+        let rows = vec![row_1.clone(), row_2.clone(), row_3.clone(), row_4.clone()];
+        let mut manifest = mocks::manifest::with_rows(rows);
+
+        // Simulate two of three files (1 and 3) are already exist in `.quilt/objects/HASH`
+        // We trust that the hash is correct, so we can skip the actual file content
+        let storage = mocks::storage::MockStorage::default();
+        let parent = domain_working_dir.path();
+        let object_path_1 = parent.join(domain_paths.object(row_1.hash.digest()));
+        storage.write_file(object_path_1, &Vec::new()).await?;
+        let object_path_3 = parent.join(domain_paths.object(row_3.hash.digest()));
+        storage.write_file(object_path_3, &Vec::new()).await?;
+
+        // Simulate the remote object
+        let remote = mocks::remote::MockRemote::default();
+        let remote_object_uri_2 = S3Uri::from_str(&row_2.place)?;
+        remote.put_object(&remote_object_uri_2, Vec::new()).await?;
+        let remote_object_uri_4 = S3Uri::from_str(&row_4.place)?;
+        remote.put_object(&remote_object_uri_4, Vec::new()).await?;
+
+        let entries_paths = vec![row_1.name.clone(), row_2.name.clone(), row_3.name.clone(), row_4.name.clone()];
+
+        // Lineage does not track anything before the installation
+        assert!(lineage.paths.is_empty());
+
+        let lineage = install_paths(
+            lineage,
+            &mut manifest,
+            domain_paths,
+            working_dir.clone(),
+            namespace.into(),
+            &storage,
+            &remote,
+            &entries_paths,
+        )
+        .await?;
+
+        // Now lineage tracks the files in the working directory
+        assert!(lineage.paths.contains_key(&row_1.name));
+        assert!(lineage.paths.contains_key(&row_2.name));
+        assert!(lineage.paths.contains_key(&row_3.name));
+        assert!(lineage.paths.contains_key(&row_4.name));
+        // And working directory of the package contains the files
+        assert!(storage.exists(&working_dir.join(row_1.name)).await);
+        assert!(storage.exists(&working_dir.join(row_2.name)).await);
+        assert!(storage.exists(&working_dir.join(row_3.name)).await);
+        assert!(storage.exists(&working_dir.join(row_4.name)).await);
+
+        Ok(())
+    }
+
     // Verify that the installation fails when we try to install a path that doesn't exist in the
     // manifest.
     #[tokio::test]
@@ -316,7 +399,6 @@ mod tests {
         );
         Ok(())
     }
-
 
     // TODO: fail if path is already installed
     // TODO: fail if manifest entry has invalid URL

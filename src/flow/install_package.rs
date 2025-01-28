@@ -65,6 +65,7 @@ mod tests {
     use std::path::PathBuf;
     use std::str::FromStr;
 
+    use crate::io::storage::LocalStorage;
     use crate::mocks;
     use crate::uri::S3Uri;
 
@@ -156,6 +157,44 @@ mod tests {
             tracked.bucket, tracked.hash
         ));
         assert!(storage.exists(&cached_manifest_path).await);
+        Ok(())
+    }
+
+    // Verify it throws correct error when no permissions
+    #[tokio::test]
+    async fn test_installing_when_no_permissions() -> Res {
+        let manifest_uri = ManifestUri {
+            bucket: "a".to_string(),
+            hash: "h".to_string(),
+            namespace: ("f", "b").into(),
+        };
+
+        // Load the reference manifest from `./fixtures`
+        let parquet = std::fs::read(mocks::manifest::parquet())?;
+        let remote = mocks::remote::MockRemote::default();
+
+        // Simulate the remote storage containing the Parquet manifest
+        let remote_uri = S3Uri::from_str(&format!(
+            "s3://{}/.quilt/packages/1220{}.parquet",
+            manifest_uri.bucket, manifest_uri.hash
+        ))?;
+        remote.put_object(&remote_uri, parquet).await?;
+
+        let storage = LocalStorage::new();
+        let result = install_package(
+            DomainLineage::default(),
+            &paths::DomainPaths::new(PathBuf::from("/")),
+            &storage,
+            &remote,
+            &manifest_uri,
+        )
+        .await;
+
+        let Error::Io(orig_err) = result.unwrap_err() else {
+            panic!("Unexpected error");
+        };
+        assert_eq!(orig_err.kind(), std::io::ErrorKind::PermissionDenied);
+
         Ok(())
     }
 }
