@@ -17,6 +17,7 @@ use crate::manifest::Table;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
+use crate::Error;
 use crate::Res;
 
 /// Similar to `LocalDomain` because it has access to the same lineage file and remote/storage
@@ -104,11 +105,7 @@ impl InstalledPackage {
         unimplemented!()
     }
 
-    pub async fn commit(
-        &self,
-        message: String,
-        user_meta: Option<JsonObject>,
-    ) -> Res<Option<CommitState>> {
+    pub async fn commit(&self, message: String, user_meta: Option<JsonObject>) -> Res<CommitState> {
         let lineage = self.lineage.read(&self.storage).await?;
         let mut manifest = self.manifest().await?;
 
@@ -128,7 +125,10 @@ impl InstalledPackage {
         )
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
-        Ok(lineage.commit)
+        match lineage.commit {
+            Some(commit) => Ok(commit),
+            None => Err(Error::Commit("Nothing committed".to_string())),
+        }
     }
 
     pub async fn push(&self) -> Res<ManifestUri> {
