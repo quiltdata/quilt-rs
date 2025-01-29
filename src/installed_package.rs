@@ -24,7 +24,7 @@ use crate::Res;
 /// But it only manages one particular installed package.
 /// It can be instantiated from `LocalDomain` by installing new or listing existing packages.
 #[derive(Clone, Debug, PartialEq)]
-pub struct InstalledPackage<S: Storage + Clone = LocalStorage, R: Remote + Clone = RemoteS3> {
+pub struct InstalledPackage<S: Storage = LocalStorage, R: Remote = RemoteS3> {
     pub lineage: lineage::PackageLineageIo,
     pub paths: paths::DomainPaths,
     pub remote: R,

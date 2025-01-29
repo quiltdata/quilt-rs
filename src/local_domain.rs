@@ -23,7 +23,7 @@ use crate::Res;
 
 /// This is the entrypoint for the lib.
 /// All the work you can do with packages is done through calling `LocalDomain` methods.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct LocalDomain<S: Storage = LocalStorage, R: Remote = RemoteS3> {
     paths: paths::DomainPaths,
     lineage: lineage::DomainLineageIo,

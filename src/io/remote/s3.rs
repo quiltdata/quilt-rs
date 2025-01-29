@@ -236,16 +236,6 @@ pub struct RemoteS3 {
     regions: RwLock<HashMap<String, Region>>,
 }
 
-impl std::clone::Clone for RemoteS3 {
-    fn clone(&self) -> Self {
-        RemoteS3 {
-            http: self.http.clone(),
-            s3: RwLock::new(self.s3.read().unwrap().clone()),
-            regions: RwLock::new(self.regions.read().unwrap().clone()),
-        }
-    }
-}
-
 impl Default for RemoteS3 {
     fn default() -> Self {
         Self::new()
