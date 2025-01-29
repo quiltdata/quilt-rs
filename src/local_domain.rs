@@ -50,7 +50,7 @@ impl LocalDomain {
     }
 
     // TODO: make public only for tests
-    pub fn create_installed_package(&self, namespace: Namespace) -> Res<InstalledPackage> {
+    pub(crate) fn create_installed_package(&self, namespace: Namespace) -> Res<InstalledPackage> {
         // TODO: seems like you can use PackageLineage as an argument instead of namespace
         Ok(InstalledPackage {
             lineage: self.lineage.create_package_lineage(namespace.clone()),
@@ -62,7 +62,6 @@ impl LocalDomain {
     }
 
     pub async fn install_package(&self, manifest_uri: &ManifestUri) -> Res<InstalledPackage> {
-        // Read the lineage
         let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
         let lineage = flow::install_package(
             lineage,
@@ -72,7 +71,7 @@ impl LocalDomain {
             manifest_uri,
         )
         .await?;
-        let _fixme = self.lineage.write(&self.storage, lineage).await?;
+        self.lineage.write(&self.storage, lineage).await?;
 
         self.create_installed_package(manifest_uri.namespace.clone())
     }
@@ -81,7 +80,7 @@ impl LocalDomain {
         let lineage = self.lineage.read(&self.storage).await?;
         let lineage =
             flow::uninstall_package(lineage, &self.paths, &self.storage, namespace).await?;
-        let _fixme = self.lineage.write(&self.storage, lineage).await?;
+        self.lineage.write(&self.storage, lineage).await?;
         Ok(())
     }
 
