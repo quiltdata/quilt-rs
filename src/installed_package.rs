@@ -32,6 +32,17 @@ pub struct InstalledPackage<S: Storage + Clone = LocalStorage, R: Remote + Clone
     pub namespace: Namespace,
 }
 
+impl std::fmt::Display for InstalledPackage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            r##"Installed package "{}" at {}"##,
+            self.namespace,
+            self.working_folder().display()
+        )
+    }
+}
+
 impl InstalledPackage {
     pub async fn manifest(&self) -> Res<Table> {
         let lineage = self.lineage.read(&self.storage).await?;

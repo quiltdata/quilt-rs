@@ -104,6 +104,11 @@ mod tests {
 
         let output = model(&local_domain, Input { uri }).await?;
 
+        let output_str = format!("{}", output);
+        assert!(output_str.contains("{\"message\":\"test_spec_write 1697916638\",\"version\":\"v0\"} | {\"Author\":\"Ernest\",\"Count\":1,\"Date\":\"2023-07-12\"}"));
+        assert!(output_str.contains("READ ME.md    | s3://udp-spec/spec/quiltcore/READ%20ME.md?versionId=.l3tAGbfEBC4c.L2ywTpWbnweSpYLe8a  | 33"));
+        assert!(output_str.contains("timestamp.txt | s3://udp-spec/spec/quiltcore/timestamp.txt?versionId=lifktjQgrgewg1FGXxls3UKtJSjl2shy | 10"));
+
         assert_eq!(
             output.manifest.header.info,
             serde_json::json!({

@@ -16,16 +16,12 @@ pub struct Input {
 #[derive(Debug)]
 pub struct Output {
     installed_package: quilt_rs::InstalledPackage,
-    package_dir: std::path::PathBuf,
     paths: Vec<std::path::PathBuf>,
 }
 
 impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut output = vec![format!(
-            "Package {:?} installed to {:?}",
-            self.installed_package, self.package_dir,
-        )];
+        let mut output = vec![format!("{}", self.installed_package)];
         if self.paths.is_empty() {
             output.push("No paths installed".to_string())
         } else {
@@ -95,7 +91,6 @@ pub async fn model(
     let uri: quilt_rs::uri::S3PackageUri = uri.parse()?;
     let path = uri.path.clone();
     let installed_package = install_package(local_domain, &uri, namespace).await?;
-    let package_dir = installed_package.working_folder();
     let paths = get_entries(path, paths);
 
     if !paths.is_empty() {
@@ -104,7 +99,6 @@ pub async fn model(
 
     Ok(Output {
         installed_package,
-        package_dir,
         paths,
     })
 }
@@ -147,6 +141,14 @@ mod tests {
         )
         .await?;
 
+        assert_eq!(
+            format!("{}", output),
+            format!(
+                "Installed package \"spec/quiltcore\" at {}/spec/quiltcore\nPath: \"READ ME.md\"\nPath: \"timestamp.txt\"",
+                temp_dir.display()
+            )
+        );
+
         let installed_package = output.installed_package;
         assert_eq!(installed_package.namespace, ("spec", "quiltcore").into());
         assert!(installed_package
@@ -157,7 +159,7 @@ mod tests {
 
         let working_dir = temp_dir.join("spec/quiltcore");
         assert_eq!(
-            output.package_dir,
+            installed_package.working_folder(),
             PathBuf::from(temp_dir.as_ref()).join("spec/quiltcore")
         );
         assert_eq!(
@@ -202,6 +204,37 @@ mod tests {
                     temp_dir.join(".quilt/objects/1f580d4f3e2545b95054993a6d66e802dc81140a9a42702c8aa088f00091cab2")
                 )
                 .await
+        );
+
+        let install_once_more = model(
+            &local_domain,
+            Input {
+                namespace: None,
+                paths: None,
+                uri: "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c".to_string(),
+            },
+        )
+        .await?;
+
+        // No paths installed during this call
+        assert_eq!(
+            format!("{}", install_once_more),
+            format!(
+                "Installed package \"spec/quiltcore\" at {}/spec/quiltcore\nNo paths installed",
+                temp_dir.display()
+            )
+        );
+
+        assert_eq!(
+            installed_package.namespace,
+            install_once_more.installed_package.namespace
+        );
+
+        // However paths are still tracked, because we didn't install a package anew,
+        // but re-use installed package from the previous call.
+        assert_eq!(
+            installed_package.lineage().await?.paths,
+            install_once_more.installed_package.lineage().await?.paths
         );
 
         Ok(())
