@@ -51,8 +51,7 @@ impl LocalDomain {
         flow::browse(&self.paths, &self.storage, &self.remote, uri).await
     }
 
-    // TODO: make public only for tests
-    pub(crate) fn create_installed_package(&self, namespace: Namespace) -> Res<InstalledPackage> {
+    pub fn create_installed_package(&self, namespace: Namespace) -> Res<InstalledPackage> {
         // TODO: seems like you can use PackageLineage as an argument instead of namespace
         Ok(InstalledPackage {
             lineage: Mutex::new(self.lineage.create_package_lineage(namespace.clone())),
