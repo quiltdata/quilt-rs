@@ -1,6 +1,8 @@
 use std::marker::Unpin;
 use std::path::PathBuf;
 
+use tokio::sync::Mutex;
+
 use crate::flow;
 use crate::installed_package::InstalledPackage;
 use crate::io::manifest::build_manifest_from_rows_stream;
@@ -53,7 +55,7 @@ impl LocalDomain {
     pub(crate) fn create_installed_package(&self, namespace: Namespace) -> Res<InstalledPackage> {
         // TODO: seems like you can use PackageLineage as an argument instead of namespace
         Ok(InstalledPackage {
-            lineage: self.lineage.create_package_lineage(namespace.clone()),
+            lineage: Mutex::new(self.lineage.create_package_lineage(namespace.clone())),
             namespace: namespace.clone(),
             paths: self.paths.clone(),
             remote: self.remote.try_clone()?,
