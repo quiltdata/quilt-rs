@@ -138,6 +138,18 @@ mod tests {
             ]
         );
 
+        let not_found = model(
+            &local_domain,
+            Input {
+                message: "Anything".to_string(),
+                namespace: ("a", "b").into(),
+                user_meta: None,
+            },
+        )
+        .await;
+
+        assert_eq!(not_found.unwrap_err().to_string(), "Package a/b not found");
+
         Ok(())
     }
 }
