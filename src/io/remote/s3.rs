@@ -261,6 +261,22 @@ impl RemoteS3 {
         }
     }
 
+    pub fn try_clone(&self) -> Res<Self> {
+        let s3 = match self.s3.read() {
+            Ok(s3) => s3.clone(),
+            Err(_) => return Err(Error::RemoteInit),
+        };
+        let regions = match self.regions.read() {
+            Ok(regions) => regions.clone(),
+            Err(_) => return Err(Error::RemoteInit),
+        };
+        Ok(RemoteS3 {
+            http: self.http.clone(),
+            s3: RwLock::new(s3),
+            regions: RwLock::new(regions),
+        })
+    }
+
     async fn get_region_for_bucket(&self, bucket: &str) -> Res<Region> {
         {
             if let Some(region) = self.regions.read().unwrap().get(bucket) {

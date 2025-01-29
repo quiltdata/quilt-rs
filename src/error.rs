@@ -91,6 +91,9 @@ pub enum Error {
     #[error("Push error: {0}")]
     Push(String),
 
+    #[error("Failed initialize S3 Remote")]
+    RemoteInit,
+
     #[error("Reqwest error: {0}")]
     Reqwest(#[from] reqwest::Error),
 

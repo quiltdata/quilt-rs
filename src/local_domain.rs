@@ -50,15 +50,15 @@ impl LocalDomain {
     }
 
     // TODO: make public only for tests
-    pub fn create_installed_package(&self, namespace: Namespace) -> InstalledPackage {
+    pub fn create_installed_package(&self, namespace: Namespace) -> Res<InstalledPackage> {
         // TODO: seems like you can use PackageLineage as an argument instead of namespace
-        InstalledPackage {
+        Ok(InstalledPackage {
             lineage: self.lineage.create_package_lineage(namespace.clone()),
             namespace: namespace.clone(),
             paths: self.paths.clone(),
-            remote: self.remote.clone(),
+            remote: self.remote.try_clone()?,
             storage: self.storage.clone(),
-        }
+        })
     }
 
     pub async fn install_package(&self, manifest_uri: &ManifestUri) -> Res<InstalledPackage> {
@@ -74,7 +74,7 @@ impl LocalDomain {
         .await?;
         let _fixme = self.lineage.write(&self.storage, lineage).await?;
 
-        Ok(self.create_installed_package(manifest_uri.namespace.clone()))
+        self.create_installed_package(manifest_uri.namespace.clone())
     }
 
     pub async fn uninstall_package(&self, namespace: Namespace) -> Res<()> {
@@ -89,10 +89,10 @@ impl LocalDomain {
         let lineage = self.lineage.read(&self.storage).await?;
         let mut namespaces: Vec<Namespace> = lineage.packages.into_keys().collect();
         namespaces.sort();
-        let packages = namespaces
-            .into_iter()
-            .map(|namespace| self.create_installed_package(namespace))
-            .collect();
+        let mut packages = Vec::new();
+        for namespace in namespaces {
+            packages.push(self.create_installed_package(namespace)?);
+        }
         Ok(packages)
     }
 
@@ -102,7 +102,7 @@ impl LocalDomain {
     ) -> Res<Option<InstalledPackage>> {
         let lineage = self.lineage.read(&self.storage).await?;
         if lineage.packages.contains_key(namespace) {
-            Ok(Some(self.create_installed_package(namespace.to_owned())))
+            Ok(Some(self.create_installed_package(namespace.to_owned())?))
         } else {
             Ok(None)
         }

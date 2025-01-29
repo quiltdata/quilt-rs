@@ -211,6 +211,7 @@ impl TryFrom<Vec<u8>> for DomainLineage {
 /// Wrapper for reading and writing `DomainLineage`
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DomainLineageIo {
+    // TODO: try using Mutex to prevent read/write simultaniously from different threads
     path: PathBuf,
 }
 
