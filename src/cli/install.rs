@@ -113,6 +113,8 @@ mod tests {
     use quilt_rs::io::storage::LocalStorage;
     use quilt_rs::io::storage::Storage;
 
+    use crate::cli::model::Model;
+
     /// Verifies the installation process in CLI with valid data:
     ///   * lineage is updated with the installed package and tracked paths
     ///   * the working directory contains tracked mutable files
@@ -236,6 +238,63 @@ mod tests {
             installed_package.lineage().await?.paths,
             install_once_more.installed_package.lineage().await?.paths
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_valid_command() -> Result<(), Error> {
+        let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c".to_string();
+
+        let (model, temp_dir) = Model::from_temp_dir()?;
+
+        if let Std::Out(output_str) = command(
+            model,
+            Input {
+                namespace: None,
+                paths: None,
+                uri,
+            },
+        )
+        .await
+        {
+            assert_eq!(
+                output_str,
+                format!(
+                    "Installed package \"spec/quiltcore\" at {}/spec/quiltcore\nNo paths installed",
+                    temp_dir.path().display()
+                )
+            );
+        } else {
+            return Err(Error::Test("Failed to install".to_string()));
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_invalid_command() -> Result<(), Error> {
+        let uri = "quilt+s3://some-nonsense".to_string();
+
+        let (model, _temp_dir) = Model::from_temp_dir()?;
+
+        if let Std::Err(error_str) = command(
+            model,
+            Input {
+                namespace: None,
+                paths: None,
+                uri,
+            },
+        )
+        .await
+        {
+            assert_eq!(
+                format!("{}", error_str),
+                "quilt_rs error: Invalid package URI: S3 package URI must contain a fragment: quilt+s3://some-nonsense".to_string()
+            );
+        } else {
+            return Err(Error::Test("Failed to fail".to_string()));
+        }
 
         Ok(())
     }
