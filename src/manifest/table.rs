@@ -28,19 +28,25 @@ use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamRowsChunk;
 use crate::manifest::Header;
 use crate::manifest::Row;
+use crate::manifest::RowDisplay;
 use crate::Error;
 use crate::Res;
 
 fn serialize_table_header(header: &Header) -> serde_json::Map<String, serde_json::Value> {
     let mut header_meta = serde_json::Map::new();
-    if let Some(message) = header.info.get("message") {
-        header_meta.insert("message".to_string(), message.clone());
+    if let Some(message) = header.get_message() {
+        header_meta.insert("message".to_string(), message);
     }
-    if header.meta.is_object() {
-        header_meta.insert("user_meta".into(), header.meta.clone());
+    if let Some(user_meta) = header.get_user_meta() {
+        header_meta.insert("user_meta".into(), serde_json::Value::Object(user_meta));
     }
-    if let Some(version) = header.info.get("version") {
-        header_meta.insert("version".to_string(), version.clone());
+    if let Some(version) = header.get_version() {
+        header_meta.insert("version".to_string(), version);
+    }
+    if let Some(workflow) = header.get_workflow() {
+        if workflow.is_object() {
+            header_meta.insert("workflow".to_string(), workflow);
+        }
     }
     header_meta
 }
@@ -88,14 +94,14 @@ impl TopHasher {
 
 // TODO: fix return type to Map<String, serde_json::Value>
 fn serialize_row_entry(row: &Row) -> serde_json::Value {
-    let mut row_meta = match row.info.as_object() {
-        Some(meta) => meta.clone(),
+    let row_meta = match row.info.as_object() {
+        Some(meta) => {
+            // TODO: if object is present but empty don't include it `user_meta`
+            // TODO: `meta.sort_keys()`?
+            serde_json::Map::from_iter([("user_meta".to_string(), meta.to_owned().into())])
+        }
         None => serde_json::Map::default(),
     };
-    // TODO: correct order (alphabetical, as it in header)
-    if row.meta.is_object() {
-        row_meta.insert("user_meta".into(), row.meta.clone());
-    }
 
     let content_hash: ContentHash = row.hash.try_into().unwrap();
 
@@ -258,11 +264,15 @@ impl Table {
 
 impl fmt::Display for Table {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut records = BTreeMap::new();
-        for (name, record) in &self.records {
-            records.insert(name, record.to_string());
+        if self.records.is_empty() {
+            return write!(f, "Table: empty");
         }
-        write!(f, "Table({:?})", records)
+
+        let mut records = Vec::new();
+        for (_name, record) in &self.records {
+            records.push(RowDisplay::from(record));
+        }
+        write!(f, "Table:\n{}", tabled::Table::new(records))
     }
 }
 
@@ -327,7 +337,7 @@ mod tests {
     #[test]
     fn test_formatting_no_records() -> Res {
         let table = Table::new(Header::default(), BTreeMap::new());
-        assert_eq!(table.to_string(), "Table({})".to_string());
+        assert_eq!(table.to_string(), "Table: empty".to_string());
         Ok(())
     }
 
@@ -360,7 +370,19 @@ mod tests {
                 ),
             ]),
         );
-        assert_eq!(table.to_string(), r##"Table({"one": "Row(AA)@AB^100#[65]$$Null$Null", "two": "Row(BA)@BB^200#[66]$$Null$Null"})"##.to_string());
+        assert_eq!(
+            table.to_string(),
+            r###"Table:
++------+-------+------+-------------+----------+------+------+
+| name | place | size | hash_base64 | hash_hex | info | meta |
++------+-------+------+-------------+----------+------+------+
+| AA   | AB    | 100  | QQ==        | 640141   | null | null |
++------+-------+------+-------------+----------+------+------+
+| BA   | BB    | 200  | Qg==        | c8010142 | null | null |
++------+-------+------+-------------+----------+------+------+"###
+        );
+
+        // assert_eq!(table.to_string(), r##"Table({"one": "Row(AA)@AB^100#[65]$$Null$Null", "two": "Row(BA)@BB^200#[66]$$Null$Null"})"##.to_string());
         Ok(())
     }
 

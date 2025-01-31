@@ -21,6 +21,7 @@ use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
+use crate::Error;
 use crate::Res;
 
 /// This is the entrypoint for the lib.
@@ -44,6 +45,33 @@ impl LocalDomain {
             paths,
             remote,
             storage,
+        }
+    }
+
+    pub async fn resolve_workflow_config(&self, namespace: Namespace) -> Res<Option<S3Uri>> {
+        let uri = match self
+            .lineage
+            .read(&self.storage)
+            .await?
+            .packages
+            .get(&namespace)
+        {
+            Some(package) => S3Uri {
+                key: ".quilt/workflows/config.yml".to_string(),
+                ..S3Uri::from(&package.remote)
+            },
+            None => return Err(Error::PackageNotInstalled(namespace)),
+        };
+        match self.remote.get_object_stream(&uri).await {
+            Ok(obj) => Ok(Some(obj.uri)),
+            Err(Error::S3(err_str)) => {
+                if err_str.contains("NoSuchKey: The specified key does not exist") {
+                    Ok(None)
+                } else {
+                    Err(Error::S3(err_str))
+                }
+            }
+            Err(err) => Err(err),
         }
     }
 

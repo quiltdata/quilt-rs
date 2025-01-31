@@ -12,11 +12,18 @@ use tokio::io::BufWriter;
 use tokio_stream::StreamExt;
 
 use crate::checksum::ContentHash;
+use crate::manifest::Header;
 use crate::manifest::Table;
 use crate::Error;
 use crate::Res;
 
 pub type JsonObject = serde_json::Map<String, serde_json::Value>;
+
+#[derive(Debug, Deserialize, PartialEq, Eq, Serialize, Clone)]
+pub struct Workflow {
+    pub config: String,
+    pub id: Option<String>,
+}
 
 /// Header (or first row) in JSONL manifest
 #[derive(Debug, Deserialize, PartialEq, Eq, Serialize, Clone)]
@@ -25,6 +32,18 @@ pub struct ManifestHeader {
     pub message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")] // Attempt to be quilt3-compatible.
     pub user_meta: Option<JsonObject>,
+    pub workflow: Option<Workflow>,
+}
+
+impl From<&Header> for ManifestHeader {
+    fn from(header: &Header) -> Self {
+        ManifestHeader {
+            version: "v0".into(),
+            message: header.display_message(),
+            user_meta: header.display_user_meta(),
+            workflow: header.display_workflow(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -215,16 +234,7 @@ impl Manifest {
             }
         }
         Ok(Manifest {
-            header: ManifestHeader {
-                version: "v0".into(),
-                message: table
-                    .header
-                    .info
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string()),
-                user_meta: table.header.meta.as_object().cloned(),
-            },
+            header: (&table.header).into(),
             rows: manifest_rows,
         })
     }
@@ -237,6 +247,7 @@ impl Default for Manifest {
                 version: "v0".to_string(),
                 message: Some("".to_string()),
                 user_meta: None,
+                workflow: None,
             },
             rows: Vec::new(),
         }

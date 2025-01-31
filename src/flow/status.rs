@@ -51,6 +51,7 @@ pub async fn refresh_latest_hash(
     Ok(lineage)
 }
 
+#[derive(Debug)]
 enum WorkdirFile {
     Tracked(File, Row),
     NotTracked(File, Row),
@@ -129,9 +130,10 @@ async fn fingerprint_files(files: Vec<(PathBuf, WorkdirFile)>) -> Res<ChangeSet>
                     let fingerprint = PackageFileFingerprint { size, hash };
                     changes.insert(logical_key, Change::Modified(fingerprint));
                 } else {
-                    // the file is not tracked,
-                    // but it is in the remote manifest,
-                    // however, it is not modified compared to remote.
+                    log::debug!(
+                        "File {} is not tracked and is not modified compared to remote manifest",
+                        logical_key.display()
+                    );
                 }
             }
             WorkdirFile::New(file) => {

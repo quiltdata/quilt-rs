@@ -61,6 +61,10 @@ enum Commands {
         /// Ex. foo/bar
         #[arg(short, long)]
         namespace: String,
+        /// Workflow ID
+        /// Ex. "my_workflow"
+        #[arg(short, long)]
+        workflow: Option<String>,
     },
     /// Install package locally
     Install {
@@ -168,6 +172,7 @@ pub async fn init() -> Result<(), Error> {
             namespace,
             message,
             user_meta,
+            workflow,
         } => {
             let user_meta = match &user_meta {
                 Some(object) => match serde_json::from_str(object)? {
@@ -182,6 +187,7 @@ pub async fn init() -> Result<(), Error> {
                 message,
                 namespace: namespace.try_into()?,
                 user_meta,
+                workflow,
             };
             log::info!("Committing {:?}", args);
             print(commit::command(Model::from(domain), args).await);
@@ -307,6 +313,13 @@ pub enum Error {
 
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
+
+    #[error("Workflow not found")]
+    Workflow,
+
+    #[cfg(test)]
+    #[error("Test failed: {0}")]
+    Test(String),
 }
 
 impl From<quilt_rs::Error> for Error {

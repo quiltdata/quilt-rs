@@ -15,6 +15,7 @@ use crate::lineage::InstalledPackageStatus;
 use crate::lineage::LineagePaths;
 use crate::manifest::JsonObject;
 use crate::manifest::Table;
+use crate::manifest::Workflow;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
@@ -120,7 +121,12 @@ impl InstalledPackage {
         unimplemented!()
     }
 
-    pub async fn commit(&self, message: String, user_meta: Option<JsonObject>) -> Res<CommitState> {
+    pub async fn commit(
+        &self,
+        message: String,
+        user_meta: Option<JsonObject>,
+        workflow: Option<Workflow>,
+    ) -> Res<CommitState> {
         let lineage = self.lineage.lock().await.read(&self.storage).await?;
         let mut manifest = self.manifest().await?;
 
@@ -137,6 +143,7 @@ impl InstalledPackage {
             self.namespace.clone(),
             message,
             user_meta,
+            workflow,
         )
         .await?;
         let lineage = self

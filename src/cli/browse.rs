@@ -18,8 +18,9 @@ pub struct Input {
 
 #[derive(tabled::Tabled)]
 struct RemoteManifestHeader {
-    info: String,
-    meta: String,
+    message: String,
+    user_meta: String,
+    workflow: String,
 }
 
 #[derive(tabled::Tabled)]
@@ -32,9 +33,18 @@ struct RemoteManifestEntry {
 impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut output: Vec<String> = Vec::new();
+        let header = self.manifest.header.clone();
+        let message = header.display_message().unwrap_or_else(String::default);
+        let user_meta = header.display_user_meta().map_or(String::default(), |v| {
+            serde_json::to_string(&v).expect("Failed to stringify user_meta")
+        });
+        let workflow = header.display_workflow().map_or(String::default(), |v| {
+            serde_json::to_string(&v).expect("Failed to stringify workflow")
+        });
         let mut header_table = tabled::Table::new(vec![RemoteManifestHeader {
-            info: self.manifest.header.info.to_string(),
-            meta: self.manifest.header.meta.to_string(),
+            message,
+            user_meta,
+            workflow,
         }]);
         header_table.with(tabled::settings::Panel::header("Remote manifest header"));
         output.push(header_table.to_string());
@@ -105,16 +115,13 @@ mod tests {
         let output = model(&local_domain, Input { uri }).await?;
 
         let output_str = format!("{}", output);
-        assert!(output_str.contains("{\"message\":\"test_spec_write 1697916638\",\"version\":\"v0\"} | {\"Author\":\"Ernest\",\"Count\":1,\"Date\":\"2023-07-12\"}"));
-        assert!(output_str.contains("READ ME.md    | s3://udp-spec/spec/quiltcore/READ%20ME.md?versionId=.l3tAGbfEBC4c.L2ywTpWbnweSpYLe8a  | 33"));
-        assert!(output_str.contains("timestamp.txt | s3://udp-spec/spec/quiltcore/timestamp.txt?versionId=lifktjQgrgewg1FGXxls3UKtJSjl2shy | 10"));
+        assert!(output_str.contains(r#"| test_spec_write 1697916638 | {"Author":"Ernest","Count":1,"Date":"2023-07-12"} |          |"#));
+        assert!(output_str.contains(r#"| READ ME.md    | s3://udp-spec/spec/quiltcore/READ%20ME.md?versionId=.l3tAGbfEBC4c.L2ywTpWbnweSpYLe8a  | 33   |"#));
+        assert!(output_str.contains(r#"| timestamp.txt | s3://udp-spec/spec/quiltcore/timestamp.txt?versionId=lifktjQgrgewg1FGXxls3UKtJSjl2shy | 10   |"#));
 
         assert_eq!(
-            output.manifest.header.info,
-            serde_json::json!({
-                "message": "test_spec_write 1697916638",
-                "version":"v0"
-            })
+            output.manifest.header.display_message().unwrap(),
+            "test_spec_write 1697916638",
         );
         assert_eq!(
             output
