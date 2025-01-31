@@ -269,7 +269,7 @@ impl fmt::Display for Table {
         }
 
         let mut records = Vec::new();
-        for (_name, record) in &self.records {
+        for record in self.records.values() {
             records.push(RowDisplay::from(record));
         }
         write!(f, "Table:\n{}", tabled::Table::new(records))

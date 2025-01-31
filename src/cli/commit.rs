@@ -175,10 +175,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(
-            output.unwrap_err().to_string(),
-            "Workflow not found"
-        );
+        assert_eq!(output.unwrap_err().to_string(), "Workflow not found");
 
         Ok(())
     }
@@ -291,7 +288,7 @@ mod tests {
                 message: "Anything".to_string(),
                 namespace: ("a", "b").into(),
                 user_meta: None,
-                workflow: None
+                workflow: None,
             },
         )
         .await;

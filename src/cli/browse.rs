@@ -34,7 +34,7 @@ impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut output: Vec<String> = Vec::new();
         let header = self.manifest.header.clone();
-        let message = header.display_message().unwrap_or_else(String::default);
+        let message = header.display_message().unwrap_or_default();
         let user_meta = header.display_user_meta().map_or(String::default(), |v| {
             serde_json::to_string(&v).expect("Failed to stringify user_meta")
         });

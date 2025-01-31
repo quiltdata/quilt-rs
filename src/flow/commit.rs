@@ -249,7 +249,7 @@ mod tests {
             ("foo", "bar").into(),
             commit_message,
             Some(user_meta),
-            None
+            None,
         )
         .await?;
         let hash = "56c329d2390c9c6efedb698f47b75f096112c89a7751d55a426507ec6c432897";
@@ -305,7 +305,7 @@ mod tests {
             ("foo", "bar").into(),
             commit_message,
             Some(user_meta),
-            None
+            None,
         )
         .await?;
 
