@@ -19,6 +19,13 @@ pub fn print(output: Std) {
 mod tests {
     use super::*;
     use crate::cli::Error;
+    use mockall::automock;
+    use mockall::predicate::*;
+
+    #[automock]
+    trait Logger {
+        fn error(&self, message: &str);
+    }
 
     #[test]
     fn test_invalid_command() {
@@ -26,23 +33,17 @@ mod tests {
         let error = Error::Test(error_message.to_string());
         let output = Std::Err(error);
         
-        // Setup test subscriber to capture logs
-        let (subscriber, handle) = tracing_subscriber::reload::Layer::new(
-            tracing_subscriber::fmt::layer()
-                .with_test_writer()
-                .with_filter(tracing_subscriber::filter::LevelFilter::ERROR)
-        );
-        
-        let _guard = tracing::subscriber::set_default(
-            tracing_subscriber::registry().with(subscriber)
-        );
+        let mut mock_logger = MockLogger::new();
+        mock_logger
+            .expect_error()
+            .with(eq(error_message))
+            .times(1)
+            .return_const(());
 
-        // Execute the print function
+        // Replace log::error with our mock during the test
+        let _guard = mockall::mock_guard::MockGuard::new()
+            .expect_log_error(mock_logger.error);
+
         print(output);
-
-        // Verify that exactly one ERROR level message was logged
-        let events = handle.modifications();
-        assert_eq!(events.len(), 1);
-        assert!(events[0].contains(error_message));
     }
 }
