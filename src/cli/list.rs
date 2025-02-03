@@ -89,7 +89,7 @@ mod tests {
         // Test with installed package via command
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
         let (_temp_dir, local_domain) = install_package(uri).await?;
-        let model = Model::new(local_domain);
+        let (model, _temp_dir2) = Model::from_temp_dir()?;
         
         if let Std::Out(output_str) = command(model).await {
             assert_eq!(output_str, "InstalledPackage<spec/quiltcore>");
