@@ -27,6 +27,30 @@ impl std::fmt::Display for Output {
     }
 }
 
+pub async fn command(m: impl Commands, args: Input) -> Std {
+    match m.package(args).await {
+        Ok(output) => Std::Out(output.to_string()),
+        Err(err) => Std::Err(err),
+    }
+}
+
+pub async fn model(
+    local_domain: &quilt_rs::LocalDomain,
+    Input {
+        message,
+        target,
+        uri,
+        user_meta,
+    }: Input,
+) -> Result<Output, Error> {
+    let uri = uri.parse()?;
+    let target_uri = target.parse()?;
+    let manifest_uri = local_domain
+        .package_s3_prefix(&uri, target_uri, message, user_meta)
+        .await?;
+    Ok(Output { manifest_uri })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -59,28 +83,4 @@ mod tests {
 
         Ok(())
     }
-}
-
-pub async fn command(m: impl Commands, args: Input) -> Std {
-    match m.package(args).await {
-        Ok(output) => Std::Out(output.to_string()),
-        Err(err) => Std::Err(err),
-    }
-}
-
-pub async fn model(
-    local_domain: &quilt_rs::LocalDomain,
-    Input {
-        message,
-        target,
-        uri,
-        user_meta,
-    }: Input,
-) -> Result<Output, Error> {
-    let uri = uri.parse()?;
-    let target_uri = target.parse()?;
-    let manifest_uri = local_domain
-        .package_s3_prefix(&uri, target_uri, message, user_meta)
-        .await?;
-    Ok(Output { manifest_uri })
 }
