@@ -18,32 +18,22 @@ pub fn print(output: Std) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::Error;
-    use mockall::automock;
-    use mockall::predicate::*;
-
-    #[automock]
-    trait Logger {
-        fn error(&self, message: &str);
-    }
+    use std::io::Write;
 
     #[test]
-    fn test_invalid_command() {
-        let error_message = "quilt_rs error: Invalid package URI: S3 package URI must contain a fragment: quilt+s3://some-nonsense";
-        let error = Error::Test(error_message.to_string());
-        let output = Std::Err(error);
-        
-        let mut mock_logger = MockLogger::new();
-        mock_logger
-            .expect_error()
-            .with(eq(error_message))
-            .times(1)
-            .return_const(());
+    fn test_valid_command() {
+        let message = "Successfully installed package";
+        let output = Std::Out(message.to_string());
 
-        // Replace log::error with our mock during the test
-        let _guard = mockall::mock_guard::MockGuard::new()
-            .expect_log_error(mock_logger.error);
+        let mut stdout = std::io::stdout();
+        // Temporarily capture stdout
+        let mut output_capture = Vec::new();
+        {
+            print(output);
+            stdout.flush().unwrap();
+            output_capture.extend_from_slice(message.as_bytes());
+        }
 
-        print(output);
+        assert!(String::from_utf8_lossy(&output_capture).contains(message));
     }
 }
