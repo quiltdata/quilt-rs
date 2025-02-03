@@ -232,7 +232,10 @@ mod tests {
         let local_domain = LocalDomain::new(local_path);
 
         let manifest_uri = ManifestUri::try_from(uri)?;
-        let installed_package = local_domain.install_package(&manifest_uri).await?;
+        let installed_package = local_domain
+            .install_package(&manifest_uri)
+            .await
+            .expect("Failed to install the package");
 
         let first_input = Input {
             message: "Test message".to_string(),
@@ -240,7 +243,9 @@ mod tests {
             user_meta: None,
             workflow: None,
         };
-        let output = model(&local_domain, first_input.clone()).await?;
+        let output = model(&local_domain, first_input.clone())
+            .await
+            .expect("Failed to commit");
 
         let hash_for_initial_test_commit =
             "d6e62c3c43ddd30447d99eede1c7280c017b15cc716037b74af7bb5230fbb61a";
@@ -250,7 +255,9 @@ mod tests {
             format!("New commit \"{}\" created", hash_for_initial_test_commit)
         );
 
-        let second_commit = model(&local_domain, first_input).await?;
+        let second_commit = model(&local_domain, first_input)
+            .await
+            .expect("Failed to commit second commit which is identical to the first one");
 
         assert_eq!(second_commit.commit.hash, hash_for_initial_test_commit);
         assert_eq!(
@@ -272,7 +279,8 @@ mod tests {
                 workflow: None,
             },
         )
-        .await?;
+        .await
+        .expect("Failed to commit third commit different from the first one");
 
         assert_eq!(
             third_commit.commit.hash,
@@ -300,10 +308,8 @@ mod tests {
         let storage = LocalStorage::new();
         storage
             .write_file(working_dir.join(timestamp_logical_key), b"1697916638")
-            .await?;
-        storage
-            .write_file(PathBuf::from("/home/fiskus/timestamp.txt"), b"1697916638")
-            .await?;
+            .await
+            .expect("Failed to write timestamp.txt to the installed package working directory");
         let commit_the_same_file = model(
             &local_domain,
             Input {
@@ -313,7 +319,8 @@ mod tests {
                 workflow: None,
             },
         )
-        .await?;
+        .await
+        .expect("Failed to commit the same file ensuring the commit hash will persist");
         assert_eq!(
             commit_the_same_file.commit.hash,
             hash_for_initial_test_commit
