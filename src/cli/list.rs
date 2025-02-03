@@ -43,10 +43,11 @@ mod tests {
 
     async fn install_package(
         uri_str: &str,
+        temp_dir: Option<TempDir>,
     ) -> Result<(TempDir, InstalledPackage, LocalDomain), Error> {
         let uri = S3PackageUri::try_from(uri_str)?;
 
-        let temp_dir = TempDir::default();
+        let temp_dir = temp_dir.unwrap_or_else(|| TempDir::default());
         let local_path = PathBuf::from(temp_dir.as_ref());
         let local_domain = LocalDomain::new(local_path);
 
@@ -72,7 +73,7 @@ mod tests {
 
         // Test with one installed package
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c&path=READ%20ME.md";
-        let (_temp_dir, _installed_package, _) = install_package(uri).await?;
+        let (_temp_dir, _installed_package, _) = install_package(uri, None).await?;
         let output = model(&local_domain).await?;
         
         assert_eq!(
@@ -106,10 +107,11 @@ mod tests {
     ///   * formats output according to display implementation
     #[tokio::test]
     async fn test_command_with_package() -> Result<(), Error> {
-        let (test_model, _temp_dir) = Model::from_temp_dir()?;
+        let (test_model, temp_dir) = Model::from_temp_dir()?;
         
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c&path=READ%20ME.md";
-        let (_temp_dir, _installed_package, _) = install_package(uri).await?;
+        let (_temp_dir, _installed_package, _) = install_package(uri, Some(temp_dir)).await?;
+        let test_model = Model::from(temp_dir.path().to_path_buf());
         
         if let Std::Out(output_str) = command(test_model).await {
             assert_eq!(output_str, "InstalledPackage<spec/quiltcore>");
