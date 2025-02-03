@@ -49,7 +49,7 @@ mod tests {
         assert_eq!(format!("{}", empty_output), "No installed packages");
 
         // Test with one installed package
-        let uri = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
+        let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c&path=READ%20ME.md";
         let manifest_uri = ManifestUri::try_from(S3PackageUri::try_from(uri)?)?;
         let _ = local_domain.install_package(&manifest_uri).await?;
         let output = super::model(&local_domain).await?;
@@ -85,7 +85,7 @@ mod tests {
         let (test_model, _temp_dir) = Model::from_temp_dir()?;
         
         // Install a package
-        let uri = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
+        let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c&path=READ%20ME.md";
         let manifest_uri = ManifestUri::try_from(S3PackageUri::try_from(uri)?)?;
         let local_domain = test_model.get_local_domain().lock().await;
         let _ = local_domain.install_package(&manifest_uri).await?;
