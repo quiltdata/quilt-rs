@@ -51,4 +51,3 @@ url = {version = "2.5.4", features = ["serde"]}
 [dev-dependencies]
 temp_testdir = "0.2.3"
 tokio-test = "0.4.4"
-mockall = "0.11.4"
