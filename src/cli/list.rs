@@ -120,8 +120,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalid_command() -> Result<(), Error> {
-        // Test `command` but create Model from root directory,
-        // user don't have permissions to root directory, so command shoulg fail
-        unimplemented!()
+        // Test command with root directory which we don't have permissions for
+        let test_model = Model::from(PathBuf::from("/"));
+
+        if let Std::Err(error_str) = command(test_model).await {
+            assert!(error_str.to_string().contains("Permission denied"));
+        } else {
+            return Err(Error::Test("Expected permission error".to_string()));
+        }
+
+        Ok(())
     }
 }
