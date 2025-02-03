@@ -80,15 +80,18 @@ mod tests {
         assert_eq!(output.namespace, ("spec", "quiltcore").into());
 
         // Try to uninstall again - should fail
-        let not_found = model(
+        if let Err(error_str) = model(
             &local_domain,
             Input {
                 namespace: ("spec", "quiltcore").into(),
             },
         )
-        .await;
-
-        assert_eq!(not_found.unwrap_err().to_string(), "Package spec/quiltcore not found");
+        .await
+        {
+            assert_eq!(error_str.to_string(), "Package spec/quiltcore not found");
+        } else {
+            return Err(Error::Test("Expected package not found error".to_string()));
+        }
 
         Ok(())
     }
