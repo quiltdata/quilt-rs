@@ -321,19 +321,56 @@ mod tests {
         Ok(())
     }
 
-    #[ignore]
     #[tokio::test]
     async fn test_valid_command() -> Result<(), Error> {
-        // Re-use `test_commit_package_with_message_and_null_workflow`
-        // But call `command` instead of `model`
-        unimplemented!()
+        let uri = "quilt+s3://udp-spec#package=reference/message-only@095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f";
+        let (_tempdir, _installed_package, local_domain) = install_package(uri).await?;
+        let test_model = Model::new(local_domain);
+
+        if let Std::Out(output_str) = command(
+            test_model,
+            Input {
+                message: "#Test message 1234!?#".to_string(),
+                namespace: ("reference", "message-only").into(),
+                user_meta: None,
+                workflow: None,
+            },
+        )
+        .await
+        {
+            assert_eq!(
+                output_str,
+                r#"New commit "095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f" created"#
+            );
+        } else {
+            return Err(Error::Test("Failed to commit".to_string()));
+        }
+
+        Ok(())
     }
 
-    #[ignore]
     #[tokio::test]
     async fn test_invalid_command() -> Result<(), Error> {
-        // Re-use `test_commit_package_with_message_and_null_workflow`
-        // But use wrong namespace "in/valid"
-        unimplemented!()
+        let uri = "quilt+s3://udp-spec#package=reference/message-only@095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f";
+        let (_tempdir, _installed_package, local_domain) = install_package(uri).await?;
+        let test_model = Model::new(local_domain);
+
+        if let Std::Err(error_str) = command(
+            test_model,
+            Input {
+                message: "Any message".to_string(),
+                namespace: ("in", "valid").into(),
+                user_meta: None,
+                workflow: None,
+            },
+        )
+        .await
+        {
+            assert_eq!(error_str.to_string(), "Package in/valid not found");
+        } else {
+            return Err(Error::Test("Expected package not found error".to_string()));
+        }
+
+        Ok(())
     }
 }
