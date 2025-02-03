@@ -63,7 +63,7 @@ mod tests {
     ///   * after installing a package, shows the package namespace
     #[tokio::test]
     async fn test_model() -> Result<(), Error> {
-        let (test_model, _temp_dir) = Model::from_temp_dir()?;
+        let (test_model, temp_dir) = Model::from_temp_dir()?;
         let local_domain = test_model.get_local_domain().lock().await;
 
         // Test empty list
@@ -73,7 +73,8 @@ mod tests {
 
         // Test with one installed package
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c&path=READ%20ME.md";
-        let (_temp_dir, _installed_package, _) = install_package(uri, None).await?;
+        let (_temp_dir, _installed_package, _) =
+            install_package(uri, Some(temp_dir.path().to_path_buf())).await?;
         let output = model(&local_domain).await?;
 
         assert_eq!(
@@ -104,11 +105,9 @@ mod tests {
     ///   * formats output according to display implementation
     #[tokio::test]
     async fn test_command_with_package() -> Result<(), Error> {
-        let (test_model, temp_dir) = Model::from_temp_dir()?;
-
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c&path=READ%20ME.md";
-        let (_temp_dir, _installed_package, _) = install_package(uri, Some(temp_dir.path().to_path_buf())).await?;
-        let test_model = Model::from(temp_dir.path().to_path_buf());
+        let (temp_dir, _installed_package, _) = install_package(uri, None).await?;
+        let test_model = Model::from(temp_dir.as_ref().to_path_buf());
 
         if let Std::Out(output_str) = command(test_model).await {
             assert_eq!(output_str, "InstalledPackage<spec/quiltcore>");
