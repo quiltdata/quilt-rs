@@ -120,11 +120,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalid_command() -> Result<(), Error> {
+        // Make a temp directory using rust with zero permissions
+        // Then reuse it in Model::from
+        
         // Test command with root directory which we don't have permissions for
-        let test_model = Model::from(PathBuf::from("/"));
+        let test_model = Model::from(PathBuf::from("/N/o/n/s/e/n/s/e"));
 
-        if let Std::Err(error_str) = command(test_model).await {
-            assert!(error_str.to_string().contains("Permission denied"));
+
+        if let Std::Err(Error::Quilt(quilt_rs::Error::Io(orig_err))) = command(test_model).await {
+            assert_eq!(orig_err.kind(), std::io::ErrorKind::PermissionDenied);
         } else {
             return Err(Error::Test("Expected permission error".to_string()));
         }
