@@ -78,9 +78,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_command() -> Result<(), Error> {
-        // Test empty list via command
         let (model, _temp_dir) = Model::from_temp_dir()?;
-        if let Std::Out(output_str) = command(model).await {
+        
+        // Test empty list via command
+        if let Std::Out(output_str) = command(model.clone()).await {
             assert_eq!(output_str, "No installed packages");
         } else {
             return Err(Error::Test("Failed to list packages".to_string()));
@@ -89,7 +90,6 @@ mod tests {
         // Test with installed package via command
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
         let (_temp_dir, local_domain) = install_package(uri).await?;
-        let (model, _temp_dir2) = Model::from_temp_dir()?;
         
         if let Std::Out(output_str) = command(model).await {
             assert_eq!(output_str, "InstalledPackage<spec/quiltcore>");
