@@ -88,7 +88,7 @@ mod tests {
         )
         .await
         {
-            assert_eq!(error_str.to_string(), "Package spec/quiltcore not found");
+            assert_eq!(error_str.to_string(), "quilt_rs error: The given package is not installed: spec/quiltcore");
         } else {
             return Err(Error::Test("Expected package not found error".to_string()));
         }
@@ -132,7 +132,7 @@ mod tests {
         )
         .await
         {
-            assert_eq!(error_str.to_string(), "Package in/valid not found");
+            assert_eq!(error_str.to_string(), "quilt_rs error: The given package is not installed: in/valid");
         } else {
             return Err(Error::Test("Expected package not found error".to_string()));
         }
