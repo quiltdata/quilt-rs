@@ -27,6 +27,40 @@ impl std::fmt::Display for Output {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::model::Model;
+
+    #[tokio::test]
+    async fn test_invalid_command() -> Result<(), Error> {
+        let uri = "quilt+s3://some-nonsense".to_string();
+
+        let (model, _temp_dir) = Model::from_temp_dir()?;
+
+        if let Std::Err(error_str) = command(
+            model,
+            Input {
+                message: None,
+                target: "target".to_string(),
+                uri,
+                user_meta: None,
+            },
+        )
+        .await
+        {
+            assert_eq!(
+                format!("{}", error_str),
+                "quilt_rs error: Invalid package URI: S3 package URI must contain a fragment: quilt+s3://some-nonsense".to_string()
+            );
+        } else {
+            return Err(Error::Test("Failed to fail".to_string()));
+        }
+
+        Ok(())
+    }
+}
+
 pub async fn command(m: impl Commands, args: Input) -> Std {
     match m.package(args).await {
         Ok(output) => Std::Out(output.to_string()),
