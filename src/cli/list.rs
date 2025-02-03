@@ -52,46 +52,51 @@ mod tests {
 
     #[tokio::test]
     async fn test_model() -> Result<(), Error> {
+        // Test empty list
+        let temp_dir = TempDir::default();
+        let empty_local_domain = quilt_rs::LocalDomain::new(PathBuf::from(temp_dir.as_ref()));
+        let empty_output = model(&empty_local_domain).await?;
+        assert!(empty_output.installed_packages_list.is_empty());
+        assert_eq!(format!("{}", empty_output), "No installed packages");
+
+        // Test with one installed package
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
         let (_temp_dir, local_domain) = install_package(uri).await?;
-        
         let output = model(&local_domain).await?;
+        
         assert_eq!(
             output.installed_packages_list[0].namespace,
             ("spec", "quiltcore").into()
         );
-        
-        // Test empty list
-        let empty_temp_dir = TempDir::default();
-        let empty_local_domain = quilt_rs::LocalDomain::new(PathBuf::from(empty_temp_dir.as_ref()));
-        let empty_output = model(&empty_local_domain).await?;
-        assert!(empty_output.installed_packages_list.is_empty());
-        
+        assert_eq!(
+            format!("{}", output),
+            "InstalledPackage<spec/quiltcore>"
+        );
+
         Ok(())
     }
 
     #[tokio::test]
     async fn test_command() -> Result<(), Error> {
+        // Test empty list via command
         let (model, _temp_dir) = Model::from_temp_dir()?;
-        
-        // Test empty list output
         if let Std::Out(output_str) = command(model).await {
             assert_eq!(output_str, "No installed packages");
         } else {
             return Err(Error::Test("Failed to list packages".to_string()));
         }
 
-        // Test with installed package
+        // Test with installed package via command
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
         let (_temp_dir, local_domain) = install_package(uri).await?;
         let model = Model::new(local_domain);
         
         if let Std::Out(output_str) = command(model).await {
-            assert!(output_str.contains("InstalledPackage<spec/quiltcore>"));
+            assert_eq!(output_str, "InstalledPackage<spec/quiltcore>");
         } else {
             return Err(Error::Test("Failed to list packages".to_string()));
         }
-        
+
         Ok(())
     }
 }
