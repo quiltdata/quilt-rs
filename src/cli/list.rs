@@ -121,19 +121,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalid_command() -> Result<(), Error> {
-        // Create temp dir with no permissions
+        // Create temp dir with write-only permissions
         let temp_dir = TempDir::default();
-        std::fs::set_permissions(
+        match std::fs::set_permissions(
             temp_dir.as_ref(),
-            std::fs::Permissions::from_mode(0o000),
-        )?;
+            std::fs::Permissions::from_mode(0o200),
+        ) {
+            Ok(_) => {
+                let test_model = Model::from(temp_dir.as_ref().to_path_buf());
 
-        let test_model = Model::from(temp_dir.as_ref().to_path_buf());
-
-        if let Std::Err(Error::Quilt(quilt_rs::Error::Io(orig_err))) = command(test_model).await {
-            assert_eq!(orig_err.kind(), std::io::ErrorKind::PermissionDenied);
-        } else {
-            return Err(Error::Test("Expected permission error".to_string()));
+                if let Std::Err(Error::Quilt(quilt_rs::Error::Io(orig_err))) = command(test_model).await {
+                    assert_eq!(orig_err.kind(), std::io::ErrorKind::PermissionDenied);
+                } else {
+                    return Err(Error::Test("Expected permission error".to_string()));
+                }
+            }
+            Err(e) => {
+                return Err(Error::Quilt(quilt_rs::Error::Io(e)));
+            }
         }
 
         Ok(())
