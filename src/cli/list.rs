@@ -44,7 +44,7 @@ mod tests {
         let local_domain = test_model.get_local_domain().lock().await;
         
         // Test empty list
-        let empty_output = super::model(&local_domain).await?;
+        let empty_output = model(&local_domain).await?;
         assert!(empty_output.installed_packages_list.is_empty());
         assert_eq!(format!("{}", empty_output), "No installed packages");
 
@@ -80,7 +80,7 @@ mod tests {
         // Test with installed package via command
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
         let manifest_uri = ManifestUri::try_from(S3PackageUri::try_from(uri)?)?;
-        let local_domain = model.get_local_domain().lock().await;
+        let local_domain = test_model.get_local_domain().lock().await;
         let _ = local_domain.install_package(&manifest_uri).await?;
         drop(local_domain); // Release the lock before calling command
         
