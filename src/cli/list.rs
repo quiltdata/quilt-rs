@@ -43,12 +43,12 @@ mod tests {
 
     async fn install_package(
         uri_str: &str,
-        temp_dir: Option<temp_testdir::TempDir>,
+        root_dir: Option<PathBuf>,
     ) -> Result<(TempDir, InstalledPackage, LocalDomain), Error> {
         let uri = S3PackageUri::try_from(uri_str)?;
 
-        let temp_dir = temp_dir.unwrap_or_default();
-        let local_path = PathBuf::from(temp_dir.as_ref());
+        let temp_dir = TempDir::default();
+        let local_path = root_dir.unwrap_or_else(|| PathBuf::from(temp_dir.as_ref()));
         let local_domain = LocalDomain::new(local_path);
 
         let manifest_uri = ManifestUri::try_from(uri)?;
