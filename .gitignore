@@ -13,3 +13,5 @@ target/
 .quilt
 .DS_Store
 tarpaulin-report.html
+.aider*
+.env

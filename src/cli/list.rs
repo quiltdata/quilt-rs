@@ -117,4 +117,11 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_invalid_command() -> Result<(), Error> {
+        // Test `command` but create Model from root directory,
+        // user don't have permissions to root directory, so command shoulg fail
+        unimplemented!()
+    }
 }

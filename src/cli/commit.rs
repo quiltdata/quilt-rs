@@ -320,4 +320,20 @@ mod tests {
 
         Ok(())
     }
+
+    #[ignore]
+    #[tokio::test]
+    async fn test_valid_command() -> Result<(), Error> {
+        // Re-use `test_commit_package_with_message_and_null_workflow`
+        // But call `command` instead of `model`
+        unimplemented!()
+    }
+
+    #[ignore]
+    #[tokio::test]
+    async fn test_invalid_command() -> Result<(), Error> {
+        // Re-use `test_commit_package_with_message_and_null_workflow`
+        // But use wrong namespace "in/valid"
+        unimplemented!()
+    }
 }
