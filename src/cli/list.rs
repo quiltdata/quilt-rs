@@ -35,9 +35,31 @@ pub async fn model(local_domain: &quilt_rs::LocalDomain) -> Result<Output, Error
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+    use temp_testdir::TempDir;
     use crate::cli::model::Model;
     use quilt_rs::uri::{S3PackageUri, ManifestUri};
+    use quilt_rs::{InstalledPackage, LocalDomain};
 
+    async fn install_package(
+        uri_str: &str,
+    ) -> Result<(TempDir, InstalledPackage, LocalDomain), Error> {
+        let uri = S3PackageUri::try_from(uri_str)?;
+
+        let temp_dir = TempDir::default();
+        let local_path = PathBuf::from(temp_dir.as_ref());
+        let local_domain = LocalDomain::new(local_path);
+
+        let manifest_uri = ManifestUri::try_from(uri)?;
+        let installed_package = local_domain.install_package(&manifest_uri).await?;
+
+        // We must return `temp_dir` because otherwise it will be dropped and removed
+        Ok((temp_dir, installed_package, local_domain))
+    }
+
+    /// Verifies that list model returns correct output for both empty and populated states:
+    ///   * empty list shows "No installed packages" message
+    ///   * after installing a package, shows the package namespace
     #[tokio::test]
     async fn test_model() -> Result<(), Error> {
         let (test_model, _temp_dir) = Model::from_temp_dir()?;
@@ -66,11 +88,11 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies that list command returns correct output when no packages are installed
     #[tokio::test]
     async fn test_command_empty() -> Result<(), Error> {
         let (test_model, _temp_dir) = Model::from_temp_dir()?;
         
-        // Test empty list via command
         if let Std::Out(output_str) = command(test_model).await {
             assert_eq!(output_str, "No installed packages");
         } else {
@@ -80,11 +102,13 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies that list command returns correct output after installing a package:
+    ///   * shows the installed package namespace
+    ///   * formats output according to display implementation
     #[tokio::test]
     async fn test_command_with_package() -> Result<(), Error> {
         let (test_model, _temp_dir) = Model::from_temp_dir()?;
         
-        // Install a package
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c&path=READ%20ME.md";
         let manifest_uri = ManifestUri::try_from(S3PackageUri::try_from(uri)?)?;
         let local_domain = test_model.get_local_domain().lock().await;
