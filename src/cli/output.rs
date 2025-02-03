@@ -26,14 +26,23 @@ mod tests {
         let error = Error::Test(error_message.to_string());
         let output = Std::Err(error);
         
-        // Capture log output and verify error is logged
-        let subscriber = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::ERROR)
-            .with_test_writer()
-            .compact()
-            .try_init();
+        // Setup test subscriber to capture logs
+        let (subscriber, handle) = tracing_subscriber::reload::Layer::new(
+            tracing_subscriber::fmt::layer()
+                .with_test_writer()
+                .with_filter(tracing_subscriber::filter::LevelFilter::ERROR)
+        );
         
-        assert!(subscriber.is_ok());
+        let _guard = tracing::subscriber::set_default(
+            tracing_subscriber::registry().with(subscriber)
+        );
+
+        // Execute the print function
         print(output);
+
+        // Verify that exactly one ERROR level message was logged
+        let events = handle.modifications();
+        assert_eq!(events.len(), 1);
+        assert!(events[0].contains(error_message));
     }
 }
