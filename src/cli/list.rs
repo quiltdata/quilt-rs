@@ -19,7 +19,7 @@ impl std::fmt::Display for Output {
     }
 }
 
-pub async fn command(m: impl Commands) -> Std {
+pub async fn command(m: &impl Commands) -> Std {
     match m.list().await {
         Ok(output) => Std::Out(output.to_string()),
         Err(err) => Std::Err(err),
@@ -35,18 +35,16 @@ pub async fn model(local_domain: &quilt_rs::LocalDomain) -> Result<Output, Error
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
-    use temp_testdir::TempDir;
     use crate::cli::model::Model;
     use quilt_rs::uri::{S3PackageUri, ManifestUri};
 
     #[tokio::test]
     async fn test_model() -> Result<(), Error> {
-        let (model, _temp_dir) = Model::from_temp_dir()?;
-        let local_domain = model.get_local_domain().lock().await;
+        let (test_model, _temp_dir) = Model::from_temp_dir()?;
+        let local_domain = test_model.get_local_domain().lock().await;
         
         // Test empty list
-        let empty_output = model(&local_domain).await?;
+        let empty_output = super::model(&local_domain).await?;
         assert!(empty_output.installed_packages_list.is_empty());
         assert_eq!(format!("{}", empty_output), "No installed packages");
 
@@ -54,7 +52,7 @@ mod tests {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md";
         let manifest_uri = ManifestUri::try_from(S3PackageUri::try_from(uri)?)?;
         let _ = local_domain.install_package(&manifest_uri).await?;
-        let output = model(&local_domain).await?;
+        let output = super::model(&local_domain).await?;
         
         assert_eq!(
             output.installed_packages_list[0].namespace,
@@ -70,10 +68,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_command() -> Result<(), Error> {
-        let (model, _temp_dir) = Model::from_temp_dir()?;
+        let (test_model, _temp_dir) = Model::from_temp_dir()?;
         
         // Test empty list via command
-        if let Std::Out(output_str) = command(model.clone()).await {
+        if let Std::Out(output_str) = command(&test_model).await {
             assert_eq!(output_str, "No installed packages");
         } else {
             return Err(Error::Test("Failed to list packages".to_string()));
@@ -86,7 +84,7 @@ mod tests {
         let _ = local_domain.install_package(&manifest_uri).await?;
         drop(local_domain); // Release the lock before calling command
         
-        if let Std::Out(output_str) = command(model).await {
+        if let Std::Out(output_str) = command(&test_model).await {
             assert_eq!(output_str, "InstalledPackage<spec/quiltcore>");
         } else {
             return Err(Error::Test("Failed to list packages".to_string()));
