@@ -51,11 +51,11 @@ pub async fn model(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::model::Model;
+    use quilt_rs::uri::{ManifestUri, S3PackageUri};
+    use quilt_rs::{InstalledPackage, LocalDomain};
     use std::path::PathBuf;
     use temp_testdir::TempDir;
-    use crate::cli::model::Model;
-    use quilt_rs::uri::{S3PackageUri, ManifestUri};
-    use quilt_rs::{InstalledPackage, LocalDomain};
 
     async fn install_package(
         uri_str: &str,

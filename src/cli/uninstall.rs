@@ -38,11 +38,11 @@ pub async fn model(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::model::Model;
+    use quilt_rs::uri::{ManifestUri, S3PackageUri};
+    use quilt_rs::{InstalledPackage, LocalDomain};
     use std::path::PathBuf;
     use temp_testdir::TempDir;
-    use crate::cli::model::Model;
-    use quilt_rs::uri::{S3PackageUri, ManifestUri};
-    use quilt_rs::{InstalledPackage, LocalDomain};
 
     async fn install_package(
         uri_str: &str,
@@ -88,7 +88,10 @@ mod tests {
         )
         .await
         {
-            assert_eq!(error_str.to_string(), "quilt_rs error: The given package is not installed: spec/quiltcore");
+            assert_eq!(
+                error_str.to_string(),
+                "quilt_rs error: The given package is not installed: spec/quiltcore"
+            );
         } else {
             return Err(Error::Test("Expected package not found error".to_string()));
         }
@@ -111,7 +114,10 @@ mod tests {
         )
         .await
         {
-            assert_eq!(output_str, "Package spec/quiltcore successfully uninstalled");
+            assert_eq!(
+                output_str,
+                "Package spec/quiltcore successfully uninstalled"
+            );
         } else {
             return Err(Error::Test("Failed to uninstall".to_string()));
         }
@@ -132,7 +138,10 @@ mod tests {
         )
         .await
         {
-            assert_eq!(error_str.to_string(), "quilt_rs error: The given package is not installed: in/valid");
+            assert_eq!(
+                error_str.to_string(),
+                "quilt_rs error: The given package is not installed: in/valid"
+            );
         } else {
             return Err(Error::Test("Expected package not found error".to_string()));
         }

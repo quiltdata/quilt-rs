@@ -123,14 +123,13 @@ mod tests {
     async fn test_invalid_command() -> Result<(), Error> {
         // Create temp dir with write-only permissions
         let temp_dir = TempDir::default();
-        match std::fs::set_permissions(
-            temp_dir.as_ref(),
-            std::fs::Permissions::from_mode(0o200),
-        ) {
+        match std::fs::set_permissions(temp_dir.as_ref(), std::fs::Permissions::from_mode(0o200)) {
             Ok(_) => {
                 let test_model = Model::from(temp_dir.as_ref().to_path_buf());
 
-                if let Std::Err(Error::Quilt(quilt_rs::Error::Io(orig_err))) = command(test_model).await {
+                if let Std::Err(Error::Quilt(quilt_rs::Error::Io(orig_err))) =
+                    command(test_model).await
+                {
                     assert_eq!(orig_err.kind(), std::io::ErrorKind::PermissionDenied);
                 } else {
                     return Err(Error::Test("Expected permission error".to_string()));
