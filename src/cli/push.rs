@@ -99,7 +99,7 @@ mod tests {
         let (_temp_dir, _installed_package, local_domain) = install_package(uri, None).await?;
 
         if let Std::Err(error_str) = command(
-            Model::new(local_domain),
+            Model::from(tempdir.as_ref().to_path_buf()),
             Input {
                 namespace: ("spec", "quiltcore").into(),
             },
