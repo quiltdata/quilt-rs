@@ -51,7 +51,7 @@ mod tests {
         {
             assert_eq!(
                 format!("{}", error_str),
-                "quilt_rs error: Invalid package URI: S3 package URI must contain a fragment: quilt+s3://some-nonsense".to_string()
+                "quilt_rs error: Invalid URI scheme: Expected s3:// scheme in quilt+s3://some-nonsense".to_string()
             );
         } else {
             return Err(Error::Test("Failed to fail".to_string()));
