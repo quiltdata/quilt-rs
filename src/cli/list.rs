@@ -110,7 +110,7 @@ mod tests {
         let (test_model, temp_dir) = Model::from_temp_dir()?;
         
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c&path=READ%20ME.md";
-        let (_temp_dir, _installed_package, _) = install_package(uri, Some(temp_dir)).await?;
+        let (_temp_dir, _installed_package, _) = install_package(uri, Some(temp_dir.clone())).await?;
         let test_model = Model::from(temp_dir.path().to_path_buf());
         
         if let Std::Out(output_str) = command(test_model).await {
