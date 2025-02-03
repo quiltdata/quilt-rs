@@ -38,6 +38,7 @@ mod tests {
     use crate::cli::model::Model;
     use quilt_rs::uri::{ManifestUri, S3PackageUri};
     use quilt_rs::{InstalledPackage, LocalDomain};
+    use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
     use temp_testdir::TempDir;
 
@@ -123,11 +124,11 @@ mod tests {
         // Create temp dir with no permissions
         let temp_dir = TempDir::default();
         std::fs::set_permissions(
-            temp_dir.path(),
+            temp_dir.as_ref(),
             std::fs::Permissions::from_mode(0o000),
         )?;
 
-        let test_model = Model::from(temp_dir.path().to_path_buf());
+        let test_model = Model::from(temp_dir.as_ref().to_path_buf());
 
         if let Std::Err(Error::Quilt(quilt_rs::Error::Io(orig_err))) = command(test_model).await {
             assert_eq!(orig_err.kind(), std::io::ErrorKind::PermissionDenied);
