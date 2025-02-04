@@ -57,6 +57,9 @@ mod tests {
 
     use crate::cli::model::Model;
 
+    /// Verifies that CLI throws error if `quilt+s3` URI is invalid:
+    ///   * attempts to package with an invalid URI
+    ///   * checks that the appropriate error is returned
     #[tokio::test]
     async fn test_invalid_command() -> Result<(), Error> {
         let uri = "quilt+s3://some-nonsense".to_string();
