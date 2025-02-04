@@ -112,7 +112,6 @@ async fn put_object_and_checksum(
     dest_uri: &S3Uri,
     size: u64,
 ) -> Res<(S3Uri, Multihash<256>)> {
-    // let client = get_client_for_bucket(&dest_uri.bucket).await?;
     let response = client
         .put_object()
         .bucket(&dest_uri.bucket)
@@ -155,7 +154,6 @@ async fn multipart_upload_and_checksum(
     size: u64,
 ) -> Res<(S3Uri, Multihash<256>)> {
     let (chunksize, num_chunks) = get_checksum_chunksize_and_parts(size);
-    //let client = get_client_for_bucket(&dest_uri.bucket).await?;
     let upload_id = client
         .create_multipart_upload()
         .bucket(&dest_uri.bucket)
