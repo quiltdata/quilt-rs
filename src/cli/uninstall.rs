@@ -42,14 +42,14 @@ mod tests {
     use quilt_rs::uri::{ManifestUri, S3PackageUri};
     use quilt_rs::{InstalledPackage, LocalDomain};
     use std::path::PathBuf;
-    use temp_testdir::TempDir;
+    use tempfile::TempDir;
 
     async fn install_package(
         uri_str: &str,
     ) -> Result<(TempDir, InstalledPackage, LocalDomain), Error> {
         let uri = S3PackageUri::try_from(uri_str)?;
 
-        let temp_dir = TempDir::default();
+        let temp_dir = TempDir::new().unwrap();
         let local_path = PathBuf::from(temp_dir.as_ref());
         let local_domain = LocalDomain::new(local_path);
 
@@ -128,7 +128,8 @@ mod tests {
     /// Verifies that uninstall command fails when package is not found
     #[tokio::test]
     async fn test_invalid_command() -> Result<(), Error> {
-        let (m, _) = Model::from_temp_dir()?;
+        let temp_dir = TempDir::new().unwrap();
+        let m = Model::from(temp_dir.path().to_path_buf());
 
         if let Std::Err(error_str) = command(
             m,
