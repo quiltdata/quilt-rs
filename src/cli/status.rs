@@ -88,7 +88,7 @@ mod tests {
     use super::*;
 
     use std::path::PathBuf;
-    use temp_testdir::TempDir;
+    use tempfile::TempDir;
 
     use quilt_rs::io::storage::LocalStorage;
     use quilt_rs::io::storage::Storage;
@@ -100,7 +100,7 @@ mod tests {
     async fn test_model() -> Result<(), Error> {
         let uri = S3PackageUri::try_from("quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c")?;
 
-        let temp_dir = TempDir::default();
+        let temp_dir = TempDir::new().unwrap();
         let local_path = PathBuf::from(temp_dir.as_ref());
         let local_domain = LocalDomain::new(local_path);
 

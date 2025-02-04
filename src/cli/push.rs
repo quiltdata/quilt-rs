@@ -55,7 +55,7 @@ mod tests {
     use quilt_rs::uri::{ManifestUri, S3PackageUri};
     use quilt_rs::{InstalledPackage, LocalDomain};
     use std::path::PathBuf;
-    use temp_testdir::TempDir;
+    use tempfile::TempDir;
 
     async fn install_package(
         uri_str: &str,
@@ -63,7 +63,7 @@ mod tests {
     ) -> Result<(TempDir, InstalledPackage, LocalDomain), Error> {
         let uri = S3PackageUri::try_from(uri_str)?;
 
-        let temp_dir = TempDir::default();
+        let temp_dir = TempDir::new().unwrap();
         let local_path = root_dir.unwrap_or_else(|| PathBuf::from(temp_dir.as_ref()));
         let local_domain = LocalDomain::new(local_path);
 
@@ -76,7 +76,8 @@ mod tests {
     /// Verifies that push command returns error when push a non-existent package
     #[tokio::test]
     async fn test_namespace_not_found() -> Result<(), Error> {
-        let (m, _) = Model::from_temp_dir()?;
+        let temp_dir = TempDir::new().unwrap();
+        let m = Model::from(temp_dir.path().to_path_buf());
 
         if let Std::Err(error_str) = command(
             m,

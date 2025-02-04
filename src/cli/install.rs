@@ -108,7 +108,7 @@ mod tests {
     use super::*;
 
     use std::path::PathBuf;
-    use temp_testdir::TempDir;
+    use tempfile::TempDir;
 
     use quilt_rs::io::storage::LocalStorage;
     use quilt_rs::io::storage::Storage;
