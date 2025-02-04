@@ -111,7 +111,7 @@ mod tests {
         let timestamp_uri =
             "s3://udp-spec/spec/quiltcore/timestamp.txt?versionId=lifktjQgrgewg1FGXxls3UKtJSjl2shy";
 
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new()?;
         let local_path = PathBuf::from(temp_dir.as_ref());
         let local_domain = quilt_rs::LocalDomain::new(local_path);
 

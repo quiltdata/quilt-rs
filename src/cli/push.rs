@@ -63,7 +63,7 @@ mod tests {
     ) -> Result<(TempDir, InstalledPackage, LocalDomain), Error> {
         let uri = S3PackageUri::try_from(uri_str)?;
 
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new()?;
         let local_path = root_dir.unwrap_or_else(|| PathBuf::from(temp_dir.as_ref()));
         let local_domain = LocalDomain::new(local_path);
 
