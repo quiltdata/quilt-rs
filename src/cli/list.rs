@@ -38,7 +38,7 @@ mod tests {
 
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
-    use temp_testdir::TempDir;
+    use tempfile::TempDir;
 
     use quilt_rs::uri::ManifestUri;
     use quilt_rs::uri::S3PackageUri;
@@ -54,7 +54,7 @@ mod tests {
     ) -> Result<(TempDir, InstalledPackage, LocalDomain), Error> {
         let uri = S3PackageUri::try_from(uri_str)?;
 
-        let temp_dir = TempDir::default();
+        let temp_dir = TempDir::new().unwrap();
         let local_path = root_dir.unwrap_or_else(|| PathBuf::from(temp_dir.as_ref()));
         let local_domain = LocalDomain::new(local_path);
 
@@ -70,7 +70,8 @@ mod tests {
     ///   * after installing a package, shows the package namespace
     #[tokio::test]
     async fn test_model() -> Result<(), Error> {
-        let (m, temp_dir) = Model::from_temp_dir()?;
+        let temp_dir = TempDir::new().unwrap();
+        let m = Model::from(temp_dir.path().to_path_buf());
         let local_domain = m.get_local_domain().lock().await;
 
         // Test empty list
@@ -96,7 +97,8 @@ mod tests {
     /// Verifies that list command returns correct output when no packages are installed
     #[tokio::test]
     async fn test_command_empty() -> Result<(), Error> {
-        let (m, _) = Model::from_temp_dir()?;
+        let temp_dir = TempDir::new().unwrap();
+        let m = Model::from(temp_dir.path().to_path_buf());
 
         if let Std::Out(output) = command(m).await {
             assert_eq!(output, "No installed packages");
@@ -131,7 +133,7 @@ mod tests {
     #[tokio::test]
     async fn test_invalid_command() -> Result<(), Error> {
         // Create temp dir with write-only permissions
-        let temp_dir = TempDir::default();
+        let temp_dir = TempDir::new().unwrap();
 
         if let Err(e) =
             std::fs::set_permissions(temp_dir.as_ref(), std::fs::Permissions::from_mode(0o200))
