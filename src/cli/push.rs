@@ -73,15 +73,13 @@ mod tests {
         Ok((temp_dir, installed_package, local_domain))
     }
 
-    /// Verifies that push command returns appropriate error when namespace is not found:
-    ///   * attempts to push a non-existent package
-    ///   * checks that the appropriate error message is returned
+    /// Verifies that push command returns error when push a non-existent package
     #[tokio::test]
     async fn test_namespace_not_found() -> Result<(), Error> {
-        let (test_model, _temp_dir) = Model::from_temp_dir()?;
+        let (m, _) = Model::from_temp_dir()?;
 
         if let Std::Err(error_str) = command(
-            test_model,
+            m,
             Input {
                 namespace: ("in", "valid").into(),
             },
@@ -96,14 +94,13 @@ mod tests {
         Ok(())
     }
 
-    /// Verifies that push command returns appropriate error when there are no commits:
+    /// Verifies that push command returns error when there are no commits:
     ///   * installs a package but makes no commits
     ///   * attempts to push without commits
-    ///   * checks that the appropriate error message is returned
     #[tokio::test]
     async fn test_no_commit() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c";
-        let (temp_dir, _installed_package, _) = install_package(uri, None)
+        let (temp_dir, _, _) = install_package(uri, None)
             .await
             .expect("Can't install package");
 

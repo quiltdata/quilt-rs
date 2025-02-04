@@ -329,14 +329,16 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies that valid command returns correct output after committing a new version
+    /// which is the same as the previous one because message and user_meta left the same.
     #[tokio::test]
     async fn test_valid_command() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=reference/message-only@095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f";
-        let (tempdir, _installed_package, _) = install_package(uri).await?;
-        let test_model = Model::from(tempdir.as_ref().to_path_buf());
+        let (tempdir, _, _) = install_package(uri).await?;
+        let model = Model::from(tempdir.as_ref().to_path_buf());
 
-        if let Std::Out(output_str) = command(
-            test_model,
+        if let Std::Out(output) = command(
+            model,
             Input {
                 message: "#Test message 1234!?#".to_string(),
                 namespace: ("reference", "message-only").into(),
@@ -347,7 +349,7 @@ mod tests {
         .await
         {
             assert_eq!(
-                output_str,
+                output,
                 r#"New commit "095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f" created"#
             );
         } else {
@@ -357,14 +359,15 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies that invalid command returns appropriate error when package is not installed
     #[tokio::test]
     async fn test_invalid_command() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=reference/message-only@095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f";
-        let (tempdir, _installed_package, _) = install_package(uri).await?;
-        let test_model = Model::from(tempdir.as_ref().to_path_buf());
+        let (tempdir, _, _) = install_package(uri).await?;
+        let model = Model::from(tempdir.as_ref().to_path_buf());
 
-        if let Std::Err(error_str) = command(
-            test_model,
+        if let Std::Err(error) = command(
+            model,
             Input {
                 message: "Any message".to_string(),
                 namespace: ("in", "valid").into(),
@@ -374,7 +377,7 @@ mod tests {
         )
         .await
         {
-            assert_eq!(error_str.to_string(), "Package in/valid not found");
+            assert_eq!(error.to_string(), "Package in/valid not found");
         } else {
             return Err(Error::Test("Expected package not found error".to_string()));
         }

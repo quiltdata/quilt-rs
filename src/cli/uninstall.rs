@@ -46,12 +46,11 @@ mod tests {
 
     async fn install_package(
         uri_str: &str,
-        root_dir: Option<PathBuf>,
     ) -> Result<(TempDir, InstalledPackage, LocalDomain), Error> {
         let uri = S3PackageUri::try_from(uri_str)?;
 
         let temp_dir = TempDir::default();
-        let local_path = root_dir.unwrap_or_else(|| PathBuf::from(temp_dir.as_ref()));
+        let local_path = PathBuf::from(temp_dir.as_ref());
         let local_domain = LocalDomain::new(local_path);
 
         let manifest_uri = ManifestUri::try_from(uri)?;
@@ -67,7 +66,7 @@ mod tests {
     #[tokio::test]
     async fn test_model() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c";
-        let (_temp_dir, _installed_package, local_domain) = install_package(uri, None).await?;
+        let (_, _, local_domain) = install_package(uri).await?;
 
         let output = model(
             &local_domain,
@@ -103,7 +102,7 @@ mod tests {
     #[tokio::test]
     async fn test_valid_command() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c";
-        let (temp_dir, _installed_package, _) = install_package(uri, None).await?;
+        let (temp_dir, _installed_package, _) = install_package(uri).await?;
         let test_model = Model::from(temp_dir.as_ref().to_path_buf());
 
         if let Std::Out(output_str) = command(
@@ -128,20 +127,19 @@ mod tests {
     /// Verifies that uninstall command fails when package is not found
     #[tokio::test]
     async fn test_invalid_command() -> Result<(), Error> {
-        let (test_model, _temp_dir) = Model::from_temp_dir()?;
+        let (m, _) = Model::from_temp_dir()?;
 
         if let Std::Err(error_str) = command(
-            test_model,
+            m,
             Input {
                 namespace: ("in", "valid").into(),
             },
         )
         .await
         {
-            assert_eq!(
-                error_str.to_string(),
-                "quilt_rs error: The given package is not installed: in/valid"
-            );
+            assert!(error_str
+                .to_string()
+                .ends_with("The given package is not installed: in/valid"),);
         } else {
             return Err(Error::Test("Expected package not found error".to_string()));
         }

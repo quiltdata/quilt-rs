@@ -35,13 +35,19 @@ pub async fn model(local_domain: &quilt_rs::LocalDomain) -> Result<Output, Error
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::model::Model;
-    use quilt_rs::uri::{ManifestUri, S3PackageUri};
-    use quilt_rs::{InstalledPackage, LocalDomain};
+
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
     use temp_testdir::TempDir;
 
+    use quilt_rs::uri::ManifestUri;
+    use quilt_rs::uri::S3PackageUri;
+    use quilt_rs::InstalledPackage;
+    use quilt_rs::LocalDomain;
+
+    use crate::cli::model::Model;
+
+    // TODO: move this to test utils module
     async fn install_package(
         uri_str: &str,
         root_dir: Option<PathBuf>,
@@ -64,8 +70,8 @@ mod tests {
     ///   * after installing a package, shows the package namespace
     #[tokio::test]
     async fn test_model() -> Result<(), Error> {
-        let (test_model, temp_dir) = Model::from_temp_dir()?;
-        let local_domain = test_model.get_local_domain().lock().await;
+        let (m, temp_dir) = Model::from_temp_dir()?;
+        let local_domain = m.get_local_domain().lock().await;
 
         // Test empty list
         let empty_output = model(&local_domain).await?;
@@ -90,10 +96,10 @@ mod tests {
     /// Verifies that list command returns correct output when no packages are installed
     #[tokio::test]
     async fn test_command_empty() -> Result<(), Error> {
-        let (test_model, _temp_dir) = Model::from_temp_dir()?;
+        let (m, _) = Model::from_temp_dir()?;
 
-        if let Std::Out(output_str) = command(test_model).await {
-            assert_eq!(output_str, "No installed packages");
+        if let Std::Out(output) = command(m).await {
+            assert_eq!(output, "No installed packages");
         } else {
             return Err(Error::Test("Failed to list packages".to_string()));
         }
@@ -104,14 +110,15 @@ mod tests {
     /// Verifies that list command returns correct output after installing a package:
     ///   * shows the installed package namespace
     ///   * formats output according to display implementation
+    // TODO: install and list multiple packages
     #[tokio::test]
     async fn test_command_with_package() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c&path=READ%20ME.md";
-        let (temp_dir, _installed_package, _) = install_package(uri, None).await?;
-        let test_model = Model::from(temp_dir.as_ref().to_path_buf());
+        let (temp_dir, _, _) = install_package(uri, None).await?;
+        let m = Model::from(temp_dir.as_ref().to_path_buf());
 
-        if let Std::Out(output_str) = command(test_model).await {
-            assert_eq!(output_str, "InstalledPackage<spec/quiltcore>");
+        if let Std::Out(output) = command(m).await {
+            assert_eq!(output, "InstalledPackage<spec/quiltcore>");
         } else {
             return Err(Error::Test("Failed to list packages".to_string()));
         }
@@ -119,28 +126,25 @@ mod tests {
         Ok(())
     }
 
-    /// Verifies that list command returns appropriate error when storage access fails:
-    ///   * creates a write-only directory to trigger permission error
-    ///   * checks that the error is properly propagated and formatted
+    /// Verifies that list command returns appropriate error when command fails
+    /// (no permissions to the domain directory):
     #[tokio::test]
     async fn test_invalid_command() -> Result<(), Error> {
         // Create temp dir with write-only permissions
         let temp_dir = TempDir::default();
-        match std::fs::set_permissions(temp_dir.as_ref(), std::fs::Permissions::from_mode(0o200)) {
-            Ok(_) => {
-                let test_model = Model::from(temp_dir.as_ref().to_path_buf());
 
-                if let Std::Err(Error::Quilt(quilt_rs::Error::Io(orig_err))) =
-                    command(test_model).await
-                {
-                    assert_eq!(orig_err.kind(), std::io::ErrorKind::PermissionDenied);
-                } else {
-                    return Err(Error::Test("Expected permission error".to_string()));
-                }
-            }
-            Err(e) => {
-                return Err(Error::Quilt(quilt_rs::Error::Io(e)));
-            }
+        if let Err(e) =
+            std::fs::set_permissions(temp_dir.as_ref(), std::fs::Permissions::from_mode(0o200))
+        {
+            return Err(Error::Quilt(quilt_rs::Error::Io(e)));
+        }
+
+        let m = Model::from(temp_dir.as_ref().to_path_buf());
+
+        if let Std::Err(Error::Quilt(quilt_rs::Error::Io(orig_err))) = command(m).await {
+            assert_eq!(orig_err.kind(), std::io::ErrorKind::PermissionDenied);
+        } else {
+            return Err(Error::Test("Expected permission error".to_string()));
         }
 
         Ok(())
