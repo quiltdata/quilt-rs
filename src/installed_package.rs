@@ -160,6 +160,11 @@ impl InstalledPackage {
 
     pub async fn push(&self) -> Res<ManifestUri> {
         let lineage = self.lineage.lock().await.read(&self.storage).await?;
+
+        if lineage.commit.is_none() {
+            return Err(Error::Push("No commits to push".to_string()));
+        }
+
         let manifest = self.manifest().await?;
         let lineage = flow::push(
             lineage,
