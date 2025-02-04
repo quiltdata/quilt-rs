@@ -62,6 +62,9 @@ mod tests {
     /// Verifies that list model returns correct output for both empty and populated states:
     ///   * empty list shows "No installed packages" message
     ///   * after installing a package, shows the package namespace
+    /// Verifies that list model returns correct output for both empty and populated states:
+    ///   * empty list shows "No installed packages" message
+    ///   * after installing a package, shows the package namespace
     #[tokio::test]
     async fn test_model() -> Result<(), Error> {
         let (test_model, temp_dir) = Model::from_temp_dir()?;
@@ -88,6 +91,7 @@ mod tests {
     }
 
     /// Verifies that list command returns correct output when no packages are installed
+    /// Verifies that list command returns correct output when no packages are installed
     #[tokio::test]
     async fn test_command_empty() -> Result<(), Error> {
         let (test_model, _temp_dir) = Model::from_temp_dir()?;
@@ -101,6 +105,9 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies that list command returns correct output after installing a package:
+    ///   * shows the installed package namespace
+    ///   * formats output according to display implementation
     /// Verifies that list command returns correct output after installing a package:
     ///   * shows the installed package namespace
     ///   * formats output according to display implementation
@@ -119,6 +126,9 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies that list command returns appropriate error when storage access fails:
+    ///   * creates a write-only directory to trigger permission error
+    ///   * checks that the error is properly propagated and formatted
     #[tokio::test]
     async fn test_invalid_command() -> Result<(), Error> {
         // Create temp dir with write-only permissions
