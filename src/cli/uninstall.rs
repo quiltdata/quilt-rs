@@ -66,7 +66,8 @@ mod tests {
     #[tokio::test]
     async fn test_model() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c";
-        let (_, _, local_domain) = install_package(uri).await?;
+        // Don't drop temp_dir, because it contains lineage
+        let (_temp_dir, _, local_domain) = install_package(uri).await?;
 
         let output = model(
             &local_domain,
