@@ -20,6 +20,10 @@ mod tests {
     use super::*;
     use std::io::Write;
 
+    /// Verifies that output printing works correctly:
+    ///   * captures stdout output
+    ///   * prints the message as expected
+    ///   * output contains the exact message string
     #[test]
     fn test_valid_command() {
         let message = "Successfully installed package";
