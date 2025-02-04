@@ -96,7 +96,9 @@ mod tests {
     #[tokio::test]
     async fn test_no_commit() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c";
-        let (temp_dir, _installed_package, local_domain) = install_package(uri, None).await?;
+        let (temp_dir, _installed_package, _) = install_package(uri, None)
+            .await
+            .expect("Can't install package");
 
         if let Std::Err(error_str) = command(
             Model::from(temp_dir.as_ref().to_path_buf()),
@@ -106,7 +108,10 @@ mod tests {
         )
         .await
         {
-            assert_eq!(error_str.to_string(), "No changes to push");
+            assert_eq!(
+                error_str.to_string(),
+                "quilt_rs error: Push error: No commits to push"
+            );
         } else {
             return Err(Error::Test("Expected no changes error".to_string()));
         }
