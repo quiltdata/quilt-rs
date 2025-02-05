@@ -188,6 +188,20 @@ mod tests {
     use base64::Engine;
 
     #[tokio::test]
+    async fn test_buffer_size() {
+        // Create test data larger than the 4096 buffer size
+        let data = vec![42u8; 8192]; // 8KB of data
+        let expected_hash = hex::encode(Sha256::digest(&data));
+        
+        // Calculate hash using our chunked function
+        let hash = calculate_sha256_checksum(&data[..])
+            .await
+            .unwrap();
+            
+        assert_eq!(hex::encode(hash.digest()), expected_hash);
+    }
+
+    #[tokio::test]
     async fn test_sha256() {
         let bytes = "0123456789abcdef".as_bytes();
         let hash = calculate_sha256_chunked_checksum(bytes, bytes.len() as u64)
