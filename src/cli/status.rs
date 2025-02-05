@@ -206,7 +206,7 @@ mod tests {
     async fn test_model_when_latest_is_outdated() -> Result<(), Error> {
         let uri = S3PackageUri::try_from("quilt+s3://udp-spec#package=spec/quiltcore@681f1900320a0bb1de2d6aadd5288c727182ecc32b71115b0b29edc25474e43e")?;
 
-        let temp_dir = TempDir::default();
+        let temp_dir = TempDir::new()?;
         let local_path = PathBuf::from(temp_dir.as_ref());
         let local_domain = LocalDomain::new(local_path);
 

@@ -322,6 +322,10 @@ pub enum Error {
     #[cfg(test)]
     #[error("Test failed: {0}")]
     Test(String),
+
+    #[cfg(test)]
+    #[error("Failed to write or read: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 impl From<quilt_rs::Error> for Error {

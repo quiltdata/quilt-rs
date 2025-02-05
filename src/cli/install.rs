@@ -129,7 +129,7 @@ mod tests {
         let readme_logical_key = PathBuf::from("READ ME.md");
         let timestamp_logical_key = PathBuf::from("timestamp.txt");
 
-        let temp_dir = TempDir::default();
+        let temp_dir = TempDir::new()?;
         let local_path = PathBuf::from(temp_dir.as_ref());
         let local_domain = quilt_rs::LocalDomain::new(local_path);
 
@@ -147,7 +147,7 @@ mod tests {
             format!("{}", output),
             format!(
                 "Installed package \"spec/quiltcore\" at {}/spec/quiltcore\nPath: \"READ ME.md\"\nPath: \"timestamp.txt\"",
-                temp_dir.display()
+                temp_dir.path().display()
             )
         );
 
@@ -159,7 +159,7 @@ mod tests {
             .paths
             .contains_key(&readme_logical_key));
 
-        let working_dir = temp_dir.join("spec/quiltcore");
+        let working_dir = temp_dir.path().join("spec/quiltcore");
         assert_eq!(
             installed_package.working_folder(),
             PathBuf::from(temp_dir.as_ref()).join("spec/quiltcore")
@@ -179,14 +179,14 @@ mod tests {
 
         assert!(
             storage
-                .exists(temp_dir.join(".quilt/installed/spec/quiltcore/44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c"))
+                .exists(temp_dir.path().join(".quilt/installed/spec/quiltcore/44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c"))
                 .await
         );
 
         assert!(
             storage
                 .exists(
-                    temp_dir.join(".quilt/packages/udp-spec/44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c")
+                    temp_dir.path().join(".quilt/packages/udp-spec/44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c")
                 )
                 .await
         );
@@ -195,7 +195,7 @@ mod tests {
         assert!(
             storage
                 .exists(
-                    temp_dir.join(".quilt/objects/e1181788c8a77224d98bb3a2de256bfea1d2f128019d5d378406522c03b5db07")
+                    temp_dir.path().join(".quilt/objects/e1181788c8a77224d98bb3a2de256bfea1d2f128019d5d378406522c03b5db07")
                 )
                 .await
         );
@@ -203,7 +203,7 @@ mod tests {
         assert!(
             storage
                 .exists(
-                    temp_dir.join(".quilt/objects/1f580d4f3e2545b95054993a6d66e802dc81140a9a42702c8aa088f00091cab2")
+                    temp_dir.path().join(".quilt/objects/1f580d4f3e2545b95054993a6d66e802dc81140a9a42702c8aa088f00091cab2")
                 )
                 .await
         );
@@ -223,7 +223,7 @@ mod tests {
             format!("{}", install_once_more),
             format!(
                 "Installed package \"spec/quiltcore\" at {}/spec/quiltcore\nNo paths installed",
-                temp_dir.display()
+                temp_dir.path().display()
             )
         );
 

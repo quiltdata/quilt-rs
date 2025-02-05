@@ -135,6 +135,7 @@ mod tests {
         // Create temp dir with write-only permissions
         let temp_dir = TempDir::new().unwrap();
 
+        // TODO: use tempfile::TempDir::create
         if let Err(e) =
             std::fs::set_permissions(temp_dir.as_ref(), std::fs::Permissions::from_mode(0o200))
         {
