@@ -93,3 +93,28 @@ impl From<&ManifestUri> for ManifestUriLegacy {
         manifest_uri.clone().into()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Res;
+
+    #[test]
+    fn test_manifest_uri_try_from_package_uri_with_tag() -> Res {
+        let package_uri = S3PackageUri {
+            bucket: "test-bucket".to_string(),
+            namespace: ("test", "package").into(),
+            revision: RevisionPointer::Tag("latest".to_string()),
+            path: None,
+            catalog: None,
+        };
+
+        let result = ManifestUri::try_from(package_uri);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid package URI: Hash is required for that conversion"
+        );
+        Ok(())
+    }
+}
