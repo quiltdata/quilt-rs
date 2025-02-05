@@ -147,6 +147,7 @@ mod tests {
             },
         )
         .await?;
+        drop(local_domain);
 
         assert_eq!(
             format!("{}", output),
@@ -213,6 +214,7 @@ mod tests {
                 .await
         );
 
+        let local_domain = m.get_local_domain().lock().await;
         let install_once_more = model(
             &local_domain,
             Input {

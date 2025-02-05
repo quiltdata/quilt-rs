@@ -116,6 +116,7 @@ mod tests {
             },
         )
         .await?;
+        drop(local_domain);
 
         assert_eq!(
             format!("{}", output),
@@ -136,6 +137,7 @@ mod tests {
             .write_file(working_dir.join(&readme_logical_key), &empty_content)
             .await?;
 
+        let local_domain = m.get_local_domain().lock().await;
         let status_new_files = model(
             &local_domain,
             Input {
@@ -143,6 +145,7 @@ mod tests {
             },
         )
         .await?;
+        drop(local_domain);
 
         let status_new_files_str = format!("{}", status_new_files);
         assert!(status_new_files_str.contains("Installed package is up to date"));
@@ -156,6 +159,7 @@ mod tests {
             return Err(Error::Test(format!("Failed to remove file: {}", e)));
         }
 
+        let local_domain = m.get_local_domain().lock().await;
         let status_file_removed = model(
             &local_domain,
             Input {
@@ -163,11 +167,13 @@ mod tests {
             },
         )
         .await?;
+        drop(local_domain);
         let file_removed_status_str = format!("{}", status_file_removed);
         assert!(file_removed_status_str.contains("Installed package is up to date"));
         assert!(file_removed_status_str.contains("foo/bar.md | Added"));
         assert!(file_removed_status_str.contains("READ ME.md | Removed"));
 
+        let local_domain = m.get_local_domain().lock().await;
         let not_found = model(
             &local_domain,
             Input {
@@ -175,11 +181,13 @@ mod tests {
             },
         )
         .await;
+        drop(local_domain);
         assert_eq!(not_found.unwrap_err().to_string(), "Package a/b not found");
 
         installed_package
             .commit("Anything".to_string(), None, None)
             .await?;
+        let local_domain = m.get_local_domain().lock().await;
         let status_ahead = model(
             &local_domain,
             Input {
@@ -187,6 +195,7 @@ mod tests {
             },
         )
         .await?;
+        drop(local_domain);
         assert_eq!(
             format!("{}", status_ahead),
             "Your commits are ahead of the remote\nNo changes"
@@ -200,8 +209,8 @@ mod tests {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@681f1900320a0bb1de2d6aadd5288c727182ecc32b71115b0b29edc25474e43e";
 
         let (m, installed_package, _temp_dir) = install_into_temp_dir(uri).await?;
-        let local_domain = m.get_local_domain().lock().await;
 
+        let local_domain = m.get_local_domain().lock().await;
         let output = model(
             &local_domain,
             Input {
@@ -209,6 +218,7 @@ mod tests {
             },
         )
         .await?;
+        drop(local_domain);
 
         assert_eq!(
             format!("{}", output),
@@ -219,6 +229,7 @@ mod tests {
             .commit("Anything".to_string(), None, None)
             .await?;
 
+        let local_domain = m.get_local_domain().lock().await;
         let output = model(
             &local_domain,
             Input {
