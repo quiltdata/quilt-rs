@@ -211,23 +211,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sha256_chunked_empty() {
+    async fn test_sha256_chunked_empty() -> Res {
         let bytes: &[u8] = &[];
-        let hash = calculate_sha256_chunked_checksum(bytes, bytes.len() as u64)
-            .await
-            .unwrap();
+        let hash = calculate_sha256_chunked_checksum(bytes, bytes.len() as u64).await?;
         assert_eq!(
             BASE64_STANDARD.encode(hash.digest()),
             "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_files_bigger_then_8mb() {
+    async fn test_files_bigger_then_8mb() -> Res {
         let bytes = "1234567890abcdefgh".as_bytes().repeat(1024 * 1024);
-        let hash = calculate_sha256_chunked_checksum(bytes.as_ref(), bytes.len() as u64)
-            .await
-            .unwrap();
+        let hash = calculate_sha256_chunked_checksum(bytes.as_ref(), bytes.len() as u64).await?;
         assert_eq!(
             BASE64_STANDARD.encode(hash.digest()),
             "T+rt/HKRJOiAkEGXKvc+DhCwRcrZiDrFkjKonDT1zgs="
@@ -312,8 +309,8 @@ mod tests {
 
     #[test]
     fn test_get_compliant_chunked_checksum() {
-        fn b64decode(data: &str) -> Vec<u8> {
-            BASE64_STANDARD.decode(data.as_bytes()).unwrap()
+        fn b64decode(data: &str) -> Result<Vec<u8>, Error> {
+            Ok(BASE64_STANDARD.decode(data.as_bytes())?)
         }
 
         fn sha256(data: Vec<u8>) -> Vec<u8> {
@@ -341,7 +338,7 @@ mod tests {
                     .object_size(1048576), // below the threshold
                 Some(sha256(b64decode(
                     "MOFJVevxNSJm3C/4Bn5oEEYH51CrudOzZYK4r5Cfy1g=",
-                ))),
+                )?)),
             ),
             (
                 builder()
@@ -362,7 +359,7 @@ mod tests {
                             .build(),
                     )
                     .object_size(5242880), // below the threshold
-                Some(b64decode("vWr41JZ9PL656FAGy906ysrYj/8ccoMUWHT0xEXRftA=")),
+                Some(b64decode("vWr41JZ9PL656FAGy906ysrYj/8ccoMUWHT0xEXRftA=")?),
             ),
             (
                 builder()
@@ -393,7 +390,7 @@ mod tests {
                             .build(),
                     )
                     .object_size(8388608), // above the threshold
-                Some(b64decode("MIsGKY+ykqN4CPj3gGGu4Gv03N7OWKWpsZqEf+OrGJs=")),
+                Some(b64decode("MIsGKY+ykqN4CPj3gGGu4Gv03N7OWKWpsZqEf+OrGJs=")?),
             ),
             (
                 builder()
@@ -447,7 +444,7 @@ mod tests {
                             .build(),
                     )
                     .object_size(13631488), // above the threshold
-                Some(b64decode("bGeobZC1xyakKeDkOLWP9khl+vuOditELvPQhrT/R9M=")),
+                Some(b64decode("bGeobZC1xyakKeDkOLWP9khl+vuOditELvPQhrT/R9M=")?),
             ),
         ];
 
