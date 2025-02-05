@@ -304,9 +304,6 @@ pub enum Error {
     #[error("quilt_rs error: {0}")]
     Quilt(quilt_rs::Error),
 
-    #[error("Failed to create temp dir: {0}")]
-    TempDir(String),
-
     #[error("Package {0} not found")]
     NamespaceNotFound(Namespace),
 
@@ -323,7 +320,6 @@ pub enum Error {
     #[error("Test failed: {0}")]
     Test(String),
 
-    #[cfg(test)]
     #[error("Failed to write or read: {0}")]
     Io(#[from] std::io::Error),
 }

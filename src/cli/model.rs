@@ -85,9 +85,8 @@ impl Model {
         }
     }
     pub fn from_temp_dir() -> Result<(Self, TempDir), Error> {
-        let temp_dir = TempDir::new()
-            .map_err(|err| Error::TempDir(err.to_string()))?;
-        Ok((Model::from(temp_dir.path().to_path_buf()), temp_dir))
+        let temp_dir = TempDir::new()?;
+        Ok((Model::from(&temp_dir), temp_dir))
     }
 }
 
@@ -95,5 +94,11 @@ impl From<PathBuf> for Model {
     fn from(root: PathBuf) -> Self {
         let local_domain = quilt_rs::LocalDomain::new(root);
         Model::new(local_domain)
+    }
+}
+
+impl From<&TempDir> for Model {
+    fn from(temp_dir: &TempDir) -> Self {
+        Model::from(temp_dir.path().to_path_buf())
     }
 }
