@@ -50,8 +50,8 @@ mod tests {
     async fn test_model() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c";
         let (m, _, _temp_dir) = install_into_temp_dir(uri).await?;
-        let local_domain = m.get_local_domain().lock().await;
 
+        let local_domain = m.get_local_domain().lock().await;
         let output = model(
             &local_domain,
             Input {
@@ -59,9 +59,11 @@ mod tests {
             },
         )
         .await?;
+        drop(local_domain);
 
         assert_eq!(output.namespace, ("spec", "quiltcore").into());
 
+        let local_domain = m.get_local_domain().lock().await;
         // Try to uninstall again - should fail
         if let Err(error_str) = model(
             &local_domain,
