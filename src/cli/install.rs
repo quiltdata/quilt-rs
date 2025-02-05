@@ -19,6 +19,12 @@ pub struct Output {
     paths: Vec<std::path::PathBuf>,
 }
 
+impl Output {
+    pub fn get_installed_package(self) -> quilt_rs::InstalledPackage {
+        self.installed_package
+    }
+}
+
 impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut output = vec![format!("{}", self.installed_package)];

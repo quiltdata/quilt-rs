@@ -102,3 +102,28 @@ impl From<&TempDir> for Model {
         Model::from(temp_dir.path().to_path_buf())
     }
 }
+
+#[cfg(test)]
+pub async fn install_into_temp_dir(
+    uri_str: &str,
+) -> Result<(Model, quilt_rs::InstalledPackage, TempDir), Error> {
+    let (model, temp_dir) = Model::from_temp_dir()?;
+
+    let output = model
+        .install(install::Input {
+            namespace: None,
+            paths: None,
+            uri: uri_str.to_string(),
+        })
+        .await?;
+
+    let installed_package = output.get_installed_package();
+
+    tracing::log::debug!(
+        "Installed package manifest: {:?}",
+        installed_package.manifest().await?
+    );
+
+    // We must return `temp_dir` because otherwise it will be dropped and removed
+    Ok((model, installed_package, temp_dir))
+}
