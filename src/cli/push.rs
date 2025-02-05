@@ -1,3 +1,4 @@
+use crate::cli::model::install_into_temp_dir;
 use quilt_rs::uri::ManifestUri;
 use quilt_rs::uri::Namespace;
 

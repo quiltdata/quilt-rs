@@ -1,4 +1,4 @@
-use crate::cli::model::Commands;
+use crate::cli::model::{install_into_temp_dir, Commands};
 use crate::cli::output::Std;
 use crate::cli::Error;
 
