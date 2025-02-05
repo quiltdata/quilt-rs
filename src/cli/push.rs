@@ -51,32 +51,14 @@ pub async fn model(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::cli::model::install_into_temp_dir;
     use crate::cli::model::Model;
-    use quilt_rs::uri::{ManifestUri, S3PackageUri};
-    use quilt_rs::{InstalledPackage, LocalDomain};
-    use std::path::PathBuf;
-    use temp_testdir::TempDir;
-
-    async fn install_package(
-        uri_str: &str,
-        root_dir: Option<PathBuf>,
-    ) -> Result<(TempDir, InstalledPackage, LocalDomain), Error> {
-        let uri = S3PackageUri::try_from(uri_str)?;
-
-        let temp_dir = TempDir::default();
-        let local_path = root_dir.unwrap_or_else(|| PathBuf::from(temp_dir.as_ref()));
-        let local_domain = LocalDomain::new(local_path);
-
-        let manifest_uri = ManifestUri::try_from(uri)?;
-        let installed_package = local_domain.install_package(&manifest_uri).await?;
-
-        Ok((temp_dir, installed_package, local_domain))
-    }
 
     /// Verifies that push command returns error when push a non-existent package
     #[tokio::test]
     async fn test_namespace_not_found() -> Result<(), Error> {
-        let (m, _) = Model::from_temp_dir()?;
+        let (m, _temp_dir) = Model::from_temp_dir()?;
 
         if let Std::Err(error_str) = command(
             m,
@@ -100,12 +82,10 @@ mod tests {
     #[tokio::test]
     async fn test_no_commit() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c";
-        let (temp_dir, _, _) = install_package(uri, None)
-            .await
-            .expect("Can't install package");
+        let (m, _, _temp_dir) = install_into_temp_dir(uri).await?;
 
         if let Std::Err(error_str) = command(
-            Model::from(temp_dir.as_ref().to_path_buf()),
+            m,
             Input {
                 namespace: ("spec", "quiltcore").into(),
             },

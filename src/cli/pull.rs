@@ -51,27 +51,9 @@ pub async fn model(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::cli::model::install_into_temp_dir;
     use crate::cli::model::Model;
-    use quilt_rs::uri::{ManifestUri, S3PackageUri};
-    use quilt_rs::{InstalledPackage, LocalDomain};
-    use std::path::PathBuf;
-    use temp_testdir::TempDir;
-
-    async fn install_package(
-        uri_str: &str,
-        root_dir: Option<PathBuf>,
-    ) -> Result<(TempDir, InstalledPackage, LocalDomain), Error> {
-        let uri = S3PackageUri::try_from(uri_str)?;
-
-        let temp_dir = TempDir::default();
-        let local_path = root_dir.unwrap_or_else(|| PathBuf::from(temp_dir.as_ref()));
-        let local_domain = LocalDomain::new(local_path);
-
-        let manifest_uri = ManifestUri::try_from(uri)?;
-        let installed_package = local_domain.install_package(&manifest_uri).await?;
-
-        Ok((temp_dir, installed_package, local_domain))
-    }
 
     /// Verifies that pull updates an outdated package to the latest version:
     ///   * installs an outdated package version
@@ -80,7 +62,8 @@ mod tests {
     #[tokio::test]
     async fn test_model() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@681f1900320a0bb1de2d6aadd5288c727182ecc32b71115b0b29edc25474e43e";
-        let (_temp_dir, _installed_package, local_domain) = install_package(uri, None).await?;
+        let (m, _, _temp_dir) = install_into_temp_dir(uri).await?;
+        let local_domain = m.get_local_domain().lock().await;
 
         let output = model(
             &local_domain,
@@ -102,11 +85,10 @@ mod tests {
     #[tokio::test]
     async fn test_valid_command() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@681f1900320a0bb1de2d6aadd5288c727182ecc32b71115b0b29edc25474e43e";
-        let (temp_dir, _installed_package, _) = install_package(uri, None).await?;
-        let test_model = Model::from(temp_dir.as_ref().to_path_buf());
+        let (m, _, _temp_dir) = install_into_temp_dir(uri).await?;
 
         if let Std::Out(output_str) = command(
-            test_model,
+            m,
             Input {
                 namespace: ("spec", "quiltcore").into(),
             },
@@ -127,10 +109,9 @@ mod tests {
     /// Verifies that pull command fails when package is not found
     #[tokio::test]
     async fn test_invalid_command() -> Result<(), Error> {
-        let (test_model, _temp_dir) = Model::from_temp_dir()?;
-
+        let (m, _temp_dir) = Model::from_temp_dir()?;
         if let Std::Err(error_str) = command(
-            test_model,
+            m,
             Input {
                 namespace: ("in", "valid").into(),
             },

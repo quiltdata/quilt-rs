@@ -88,24 +88,16 @@ mod tests {
     use super::*;
 
     use std::path::PathBuf;
-    use temp_testdir::TempDir;
 
+    use crate::cli::model::install_into_temp_dir;
     use quilt_rs::io::storage::LocalStorage;
     use quilt_rs::io::storage::Storage;
-    use quilt_rs::uri::ManifestUri;
-    use quilt_rs::uri::S3PackageUri;
-    use quilt_rs::LocalDomain;
 
     #[tokio::test]
     async fn test_model() -> Result<(), Error> {
-        let uri = S3PackageUri::try_from("quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c")?;
+        let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c";
 
-        let temp_dir = TempDir::default();
-        let local_path = PathBuf::from(temp_dir.as_ref());
-        let local_domain = LocalDomain::new(local_path);
-
-        let manifest_uri = ManifestUri::try_from(uri)?;
-        let installed_package = local_domain.install_package(&manifest_uri).await?;
+        let (m, installed_package, _temp_dir) = install_into_temp_dir(uri).await?;
 
         let readme_logical_key = PathBuf::from("READ ME.md");
         let timestamp_logical_key = PathBuf::from("timestamp.txt");
@@ -116,6 +108,7 @@ mod tests {
             ])
             .await?;
 
+        let local_domain = m.get_local_domain().lock().await;
         let output = model(
             &local_domain,
             Input {
@@ -123,6 +116,7 @@ mod tests {
             },
         )
         .await?;
+        drop(local_domain);
 
         assert_eq!(
             format!("{}", output),
@@ -143,6 +137,7 @@ mod tests {
             .write_file(working_dir.join(&readme_logical_key), &empty_content)
             .await?;
 
+        let local_domain = m.get_local_domain().lock().await;
         let status_new_files = model(
             &local_domain,
             Input {
@@ -150,6 +145,7 @@ mod tests {
             },
         )
         .await?;
+        drop(local_domain);
 
         let status_new_files_str = format!("{}", status_new_files);
         assert!(status_new_files_str.contains("Installed package is up to date"));
@@ -163,6 +159,7 @@ mod tests {
             return Err(Error::Test(format!("Failed to remove file: {}", e)));
         }
 
+        let local_domain = m.get_local_domain().lock().await;
         let status_file_removed = model(
             &local_domain,
             Input {
@@ -170,11 +167,13 @@ mod tests {
             },
         )
         .await?;
+        drop(local_domain);
         let file_removed_status_str = format!("{}", status_file_removed);
         assert!(file_removed_status_str.contains("Installed package is up to date"));
         assert!(file_removed_status_str.contains("foo/bar.md | Added"));
         assert!(file_removed_status_str.contains("READ ME.md | Removed"));
 
+        let local_domain = m.get_local_domain().lock().await;
         let not_found = model(
             &local_domain,
             Input {
@@ -182,11 +181,13 @@ mod tests {
             },
         )
         .await;
+        drop(local_domain);
         assert_eq!(not_found.unwrap_err().to_string(), "Package a/b not found");
 
         installed_package
             .commit("Anything".to_string(), None, None)
             .await?;
+        let local_domain = m.get_local_domain().lock().await;
         let status_ahead = model(
             &local_domain,
             Input {
@@ -194,6 +195,7 @@ mod tests {
             },
         )
         .await?;
+        drop(local_domain);
         assert_eq!(
             format!("{}", status_ahead),
             "Your commits are ahead of the remote\nNo changes"
@@ -204,15 +206,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_model_when_latest_is_outdated() -> Result<(), Error> {
-        let uri = S3PackageUri::try_from("quilt+s3://udp-spec#package=spec/quiltcore@681f1900320a0bb1de2d6aadd5288c727182ecc32b71115b0b29edc25474e43e")?;
+        let uri = "quilt+s3://udp-spec#package=spec/quiltcore@681f1900320a0bb1de2d6aadd5288c727182ecc32b71115b0b29edc25474e43e";
 
-        let temp_dir = TempDir::default();
-        let local_path = PathBuf::from(temp_dir.as_ref());
-        let local_domain = LocalDomain::new(local_path);
+        let (m, installed_package, _temp_dir) = install_into_temp_dir(uri).await?;
 
-        let manifest_uri = ManifestUri::try_from(uri)?;
-        let installed_package = local_domain.install_package(&manifest_uri).await?;
-
+        let local_domain = m.get_local_domain().lock().await;
         let output = model(
             &local_domain,
             Input {
@@ -220,6 +218,7 @@ mod tests {
             },
         )
         .await?;
+        drop(local_domain);
 
         assert_eq!(
             format!("{}", output),
@@ -230,6 +229,7 @@ mod tests {
             .commit("Anything".to_string(), None, None)
             .await?;
 
+        let local_domain = m.get_local_domain().lock().await;
         let output = model(
             &local_domain,
             Input {

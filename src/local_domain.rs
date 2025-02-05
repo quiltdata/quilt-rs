@@ -1,4 +1,5 @@
 use std::marker::Unpin;
+use std::path::Path;
 use std::path::PathBuf;
 
 use tokio::sync::Mutex;
@@ -35,8 +36,8 @@ pub struct LocalDomain<S: Storage = LocalStorage, R: Remote = RemoteS3> {
 }
 
 impl LocalDomain {
-    pub fn new(root_dir: PathBuf) -> Self {
-        let paths = paths::DomainPaths::new(root_dir.clone());
+    pub fn new(root_dir: impl AsRef<Path>) -> Self {
+        let paths = paths::DomainPaths::new(root_dir.as_ref().to_path_buf());
         let lineage = lineage::DomainLineageIo::new(paths.lineage());
         let storage = LocalStorage::new();
         let remote = RemoteS3::new();
