@@ -94,7 +94,6 @@ mod tests {
     use super::*;
 
     use std::path::PathBuf;
-    use tempfile::TempDir;
 
     use crate::cli::model::Model;
 
@@ -111,9 +110,8 @@ mod tests {
         let timestamp_uri =
             "s3://udp-spec/spec/quiltcore/timestamp.txt?versionId=lifktjQgrgewg1FGXxls3UKtJSjl2shy";
 
-        let temp_dir = TempDir::new()?;
-        let local_path = PathBuf::from(temp_dir.as_ref());
-        let local_domain = quilt_rs::LocalDomain::new(local_path);
+        let (m, _temp_dir) = Model::from_temp_dir()?;
+        let local_domain = m.get_local_domain().lock().await;
 
         let output = model(&local_domain, Input { uri }).await?;
 

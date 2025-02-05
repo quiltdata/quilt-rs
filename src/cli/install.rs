@@ -19,6 +19,7 @@ pub struct Output {
     paths: Vec<std::path::PathBuf>,
 }
 
+#[cfg(test)]
 impl Output {
     pub fn get_installed_package(self) -> quilt_rs::InstalledPackage {
         self.installed_package
@@ -114,7 +115,6 @@ mod tests {
     use super::*;
 
     use std::path::PathBuf;
-    use tempfile::TempDir;
 
     use quilt_rs::io::storage::LocalStorage;
     use quilt_rs::io::storage::Storage;
@@ -135,9 +135,8 @@ mod tests {
         let readme_logical_key = PathBuf::from("READ ME.md");
         let timestamp_logical_key = PathBuf::from("timestamp.txt");
 
-        let temp_dir = TempDir::new()?;
-        let local_path = PathBuf::from(temp_dir.as_ref());
-        let local_domain = quilt_rs::LocalDomain::new(local_path);
+        let (m, temp_dir) = Model::from_temp_dir()?;
+        let local_domain = m.get_local_domain().lock().await;
 
         let output = model(
             &local_domain,

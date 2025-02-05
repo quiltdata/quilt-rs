@@ -4,10 +4,9 @@ use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::Object;
 use chrono::DateTime;
 use chrono::Utc;
+use tempfile::TempDir;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
-
-use tempfile;
 
 use crate::io::remote::RemoteObjectStream;
 use crate::io::remote::S3Attributes;
@@ -18,13 +17,13 @@ use super::Storage;
 
 /// A mock implementation of the `Storage` trait.
 pub(crate) struct MockStorage {
-    pub(crate) temp_dir: tempfile::TempDir,
+    pub(crate) temp_dir: TempDir,
 }
 
 impl Default for MockStorage {
     fn default() -> Self {
         MockStorage {
-            temp_dir: tempfile::tempdir().expect("Failed to create temporrary directory"),
+            temp_dir: TempDir::new().expect("Failed to create temporrary directory"),
         }
     }
 }

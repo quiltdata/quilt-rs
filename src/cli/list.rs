@@ -36,8 +36,9 @@ pub async fn model(local_domain: &quilt_rs::LocalDomain) -> Result<Output, Error
 mod tests {
     use super::*;
 
+    use std::fs::Permissions;
     use std::os::unix::fs::PermissionsExt;
-    use tempfile::TempDir;
+    use tempfile::Builder;
 
     use crate::cli::model::install_into_temp_dir;
     use crate::cli::model::Model;
@@ -75,8 +76,7 @@ mod tests {
     /// Verifies that list command returns correct output when no packages are installed
     #[tokio::test]
     async fn test_command_empty() -> Result<(), Error> {
-        let temp_dir = TempDir::new().unwrap();
-        let m = Model::from(temp_dir.path().to_path_buf());
+        let (m, _temp_dir) = Model::from_temp_dir()?;
 
         if let Std::Out(output) = command(m).await {
             assert_eq!(output, "No installed packages");
@@ -109,17 +109,10 @@ mod tests {
     /// (no permissions to the domain directory):
     #[tokio::test]
     async fn test_invalid_command() -> Result<(), Error> {
-        // Create temp dir with write-only permissions
-        let temp_dir = TempDir::new().unwrap();
+        let write_only = Permissions::from_mode(0o200);
+        let temp_dir = Builder::new().permissions(write_only).tempdir()?;
 
-        // TODO: use tempfile::TempDir::create
-        if let Err(e) =
-            std::fs::set_permissions(temp_dir.as_ref(), std::fs::Permissions::from_mode(0o200))
-        {
-            return Err(Error::Quilt(quilt_rs::Error::Io(e)));
-        }
-
-        let m = Model::from(temp_dir.as_ref().to_path_buf());
+        let m = Model::from(&temp_dir);
 
         if let Std::Err(Error::Quilt(quilt_rs::Error::Io(orig_err))) = command(m).await {
             assert_eq!(orig_err.kind(), std::io::ErrorKind::PermissionDenied);

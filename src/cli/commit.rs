@@ -78,15 +78,11 @@ mod tests {
     use super::*;
 
     use std::path::PathBuf;
-    use tempfile::TempDir;
 
     use crate::cli::model::install_into_temp_dir;
 
     use quilt_rs::io::storage::LocalStorage;
     use quilt_rs::io::storage::Storage;
-    use quilt_rs::uri::ManifestUri;
-    use quilt_rs::uri::S3PackageUri;
-    use quilt_rs::LocalDomain;
 
     /// Verify the commit when there are no files to commit,
     /// and when a workflows config exists but workflow id is not set.
@@ -204,22 +200,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_model() -> Result<(), Error> {
-        let uri = S3PackageUri::try_from("quilt+s3://udp-spec#package=spec/quilt-rs@11c5f6dbd1bf1d8675c18aaaa963b2f0dced2f892c7406fa36c9cd17d3d31b73")?;
+        let uri = "quilt+s3://udp-spec#package=spec/quilt-rs@11c5f6dbd1bf1d8675c18aaaa963b2f0dced2f892c7406fa36c9cd17d3d31b73";
 
         // TODO: commit is not-modified when we commit the same file (timestamp.txt)
         // TODO: commit is modified when we modify a file (README.md)
         // let readme_logical_key = PathBuf::from("READ ME.md");
         let timestamp_logical_key = PathBuf::from("timestamp.txt");
 
-        let temp_dir = TempDir::new()?;
-        let local_path = PathBuf::from(temp_dir.as_ref());
-        let local_domain = LocalDomain::new(local_path);
-
-        let manifest_uri = ManifestUri::try_from(uri)?;
-        let installed_package = local_domain
-            .install_package(&manifest_uri)
-            .await
-            .expect("Failed to install the package");
+        let (m, installed_package, _temp_dir) = install_into_temp_dir(uri).await?;
+        let local_domain = m.get_local_domain().lock().await;
 
         let first_input = Input {
             message: "Test message".to_string(),
