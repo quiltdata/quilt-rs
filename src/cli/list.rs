@@ -1,4 +1,4 @@
-use crate::cli::model::{install_into_temp_dir, Commands};
+use crate::cli::model::Commands;
 use crate::cli::output::Std;
 use crate::cli::Error;
 
@@ -37,35 +37,30 @@ mod tests {
     use super::*;
 
     use std::os::unix::fs::PermissionsExt;
-    use std::path::PathBuf;
     use tempfile::TempDir;
 
-    use quilt_rs::uri::ManifestUri;
-    use quilt_rs::uri::S3PackageUri;
-    use quilt_rs::InstalledPackage;
-    use quilt_rs::LocalDomain;
-
+    use crate::cli::model::install_into_temp_dir;
     use crate::cli::model::Model;
 
-    // TODO: move this to test utils module
+    #[tokio::test]
+    async fn test_empty_list() -> Result<(), Error> {
+        let (m, _temp_dir) = Model::from_temp_dir()?;
+        let local_domain = m.get_local_domain().lock().await;
+        let empty_output = model(&local_domain).await?;
+        assert!(empty_output.installed_packages_list.is_empty());
+        assert_eq!(format!("{}", empty_output), "No installed packages");
+        Ok(())
+    }
 
     /// Verifies that list model returns correct output for both empty and populated states:
     ///   * empty list shows "No installed packages" message
     ///   * after installing a package, shows the package namespace
     #[tokio::test]
     async fn test_model() -> Result<(), Error> {
-        let temp_dir = TempDir::new().unwrap();
-        let m = Model::from(&temp_dir);
-        let local_domain = m.get_local_domain().lock().await;
-
-        // Test empty list
-        let empty_output = model(&local_domain).await?;
-        assert!(empty_output.installed_packages_list.is_empty());
-        assert_eq!(format!("{}", empty_output), "No installed packages");
-
         // Test with one installed package
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c&path=READ%20ME.md";
-        let (_, _, _) = install_into_temp_dir(uri).await?;
+        let (m, _, _temp_dir) = install_into_temp_dir(uri).await?;
+        let local_domain = m.get_local_domain().lock().await;
         let output = model(&local_domain).await?;
 
         assert_eq!(
@@ -99,8 +94,7 @@ mod tests {
     #[tokio::test]
     async fn test_command_with_package() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c&path=READ%20ME.md";
-        let (temp_dir, _, _) = install_package(uri, None).await?;
-        let m = Model::from(&temp_dir);
+        let (m, _, _temp_dir) = install_into_temp_dir(uri).await?;
 
         if let Std::Out(output) = command(m).await {
             assert_eq!(output, "InstalledPackage<spec/quiltcore>");

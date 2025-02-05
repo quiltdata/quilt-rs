@@ -81,6 +81,7 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::cli::model::install_into_temp_dir;
+
     use quilt_rs::io::storage::LocalStorage;
     use quilt_rs::io::storage::Storage;
     use quilt_rs::uri::ManifestUri;

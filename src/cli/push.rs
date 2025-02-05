@@ -1,4 +1,3 @@
-use crate::cli::model::install_into_temp_dir;
 use quilt_rs::uri::ManifestUri;
 use quilt_rs::uri::Namespace;
 
@@ -52,18 +51,14 @@ pub async fn model(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::model::Model;
-    use quilt_rs::uri::{ManifestUri, S3PackageUri};
-    use quilt_rs::{InstalledPackage, LocalDomain};
-    use std::path::PathBuf;
-    use tempfile::TempDir;
 
+    use crate::cli::model::install_into_temp_dir;
+    use crate::cli::model::Model;
 
     /// Verifies that push command returns error when push a non-existent package
     #[tokio::test]
     async fn test_namespace_not_found() -> Result<(), Error> {
-        let temp_dir = TempDir::new().unwrap();
-        let m = Model::from(temp_dir.path().to_path_buf());
+        let (m, _temp_dir) = Model::from_temp_dir()?;
 
         if let Std::Err(error_str) = command(
             m,

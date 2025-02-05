@@ -1,4 +1,4 @@
-use crate::cli::model::{install_into_temp_dir, Commands};
+use crate::cli::model::Commands;
 use crate::cli::output::Std;
 use crate::cli::Error;
 
@@ -38,8 +38,9 @@ pub async fn model(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::model::Model;
 
+    use crate::cli::model::install_into_temp_dir;
+    use crate::cli::model::Model;
 
     /// Verifies that uninstall removes an installed package:
     ///   * installs a package
@@ -48,8 +49,8 @@ mod tests {
     #[tokio::test]
     async fn test_model() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c";
-        // Don't drop temp_dir, because it contains lineage
-        let (_temp_dir, _, local_domain) = install_package(uri).await?;
+        let (m, _, _temp_dir) = install_into_temp_dir(uri).await?;
+        let local_domain = m.get_local_domain().lock().await;
 
         let output = model(
             &local_domain,
@@ -85,10 +86,10 @@ mod tests {
     #[tokio::test]
     async fn test_valid_command() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c";
-        let (temp_dir, _installed_package, _) = install_package(uri).await?;
+        let (m, _, _temp_dir) = install_into_temp_dir(uri).await?;
 
         if let Std::Out(output_str) = command(
-            Model::from(&temp_dir),
+            m,
             Input {
                 namespace: ("spec", "quiltcore").into(),
             },
@@ -109,10 +110,10 @@ mod tests {
     /// Verifies that uninstall command fails when package is not found
     #[tokio::test]
     async fn test_invalid_command() -> Result<(), Error> {
-        let temp_dir = TempDir::new().unwrap();
+        let (m, _temp_dir) = Model::from_temp_dir()?;
 
         if let Std::Err(error_str) = command(
-            Model::from(&temp_dir),
+            m,
             Input {
                 namespace: ("in", "valid").into(),
             },

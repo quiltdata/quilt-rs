@@ -1,4 +1,3 @@
-use crate::cli::model::install_into_temp_dir;
 use quilt_rs::uri::ManifestUri;
 use quilt_rs::uri::Namespace;
 
@@ -52,12 +51,9 @@ pub async fn model(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::model::Model;
-    use quilt_rs::uri::{ManifestUri, S3PackageUri};
-    use quilt_rs::{InstalledPackage, LocalDomain};
-    use std::path::PathBuf;
-    use tempfile::TempDir;
 
+    use crate::cli::model::install_into_temp_dir;
+    use crate::cli::model::Model;
 
     /// Verifies that pull updates an outdated package to the latest version:
     ///   * installs an outdated package version
@@ -66,7 +62,8 @@ mod tests {
     #[tokio::test]
     async fn test_model() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@681f1900320a0bb1de2d6aadd5288c727182ecc32b71115b0b29edc25474e43e";
-        let (_, _, local_domain) = install_into_temp_dir(uri).await?;
+        let (m, _, _temp_dir) = install_into_temp_dir(uri).await?;
+        let local_domain = m.get_local_domain().lock().await;
 
         let output = model(
             &local_domain,
@@ -112,11 +109,9 @@ mod tests {
     /// Verifies that pull command fails when package is not found
     #[tokio::test]
     async fn test_invalid_command() -> Result<(), Error> {
-        let temp_dir = TempDir::new().unwrap();
-        let test_model = Model::from(&temp_dir);
-
+        let (m, _temp_dir) = Model::from_temp_dir()?;
         if let Std::Err(error_str) = command(
-            test_model,
+            m,
             Input {
                 namespace: ("in", "valid").into(),
             },
