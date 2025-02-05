@@ -57,21 +57,6 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::TempDir;
 
-    async fn install_package(
-        uri_str: &str,
-        root_dir: Option<PathBuf>,
-    ) -> Result<(TempDir, InstalledPackage, LocalDomain), Error> {
-        let uri = S3PackageUri::try_from(uri_str)?;
-
-        let temp_dir = TempDir::new()?;
-        let local_path = root_dir.unwrap_or_else(|| PathBuf::from(temp_dir.as_ref()));
-        let local_domain = LocalDomain::new(local_path);
-
-        let manifest_uri = ManifestUri::try_from(uri)?;
-        let installed_package = local_domain.install_package(&manifest_uri).await?;
-
-        Ok((temp_dir, installed_package, local_domain))
-    }
 
     /// Verifies that push command returns error when push a non-existent package
     #[tokio::test]
@@ -101,7 +86,7 @@ mod tests {
     #[tokio::test]
     async fn test_no_commit() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c";
-        let (temp_dir, _, _) = install_package(uri, None).await?;
+        let (m, _, _temp_dir) = install_into_temp_dir(uri).await?;
 
         if let Std::Err(error_str) = command(
             Model::from(&temp_dir),

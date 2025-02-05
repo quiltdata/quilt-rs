@@ -44,20 +44,6 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::TempDir;
 
-    async fn install_package(
-        uri_str: &str,
-    ) -> Result<(TempDir, InstalledPackage, LocalDomain), Error> {
-        let uri = S3PackageUri::try_from(uri_str)?;
-
-        let temp_dir = TempDir::new()?;
-        let local_path = PathBuf::from(temp_dir.as_ref());
-        let local_domain = LocalDomain::new(local_path);
-
-        let manifest_uri = ManifestUri::try_from(uri)?;
-        let installed_package = local_domain.install_package(&manifest_uri).await?;
-
-        Ok((temp_dir, installed_package, local_domain))
-    }
 
     /// Verifies that uninstall removes an installed package:
     ///   * installs a package

@@ -48,22 +48,6 @@ mod tests {
     use crate::cli::model::Model;
 
     // TODO: move this to test utils module
-    async fn install_package(
-        uri_str: &str,
-        root_dir: Option<PathBuf>,
-    ) -> Result<(TempDir, InstalledPackage, LocalDomain), Error> {
-        let uri = S3PackageUri::try_from(uri_str)?;
-
-        let temp_dir = TempDir::new()?;
-        let local_path = root_dir.unwrap_or_else(|| PathBuf::from(temp_dir.as_ref()));
-        let local_domain = LocalDomain::new(local_path);
-
-        let manifest_uri = ManifestUri::try_from(uri)?;
-        let installed_package = local_domain.install_package(&manifest_uri).await?;
-
-        // We must return `temp_dir` because otherwise it will be dropped and removed
-        Ok((temp_dir, installed_package, local_domain))
-    }
 
     /// Verifies that list model returns correct output for both empty and populated states:
     ///   * empty list shows "No installed packages" message
@@ -81,8 +65,7 @@ mod tests {
 
         // Test with one installed package
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c&path=READ%20ME.md";
-        let (_temp_dir, _installed_package, _) =
-            install_package(uri, Some(temp_dir.path().to_path_buf())).await?;
+        let (_, _, _) = install_into_temp_dir(uri).await?;
         let output = model(&local_domain).await?;
 
         assert_eq!(
