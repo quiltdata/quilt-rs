@@ -78,8 +78,7 @@ fn get_entries(
     if let Some(logical_key) = uri_path {
         paths.push(logical_key);
     }
-    if arg_paths.is_some() {
-        let logical_keys = arg_paths.unwrap();
+    if let Some(logical_keys) = arg_paths {
         for logical_key in logical_keys {
             paths.push(logical_key);
         }
