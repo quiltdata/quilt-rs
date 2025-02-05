@@ -475,4 +475,31 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_namespace_partial_ordering() -> Res {
+        let ns1 = Namespace::from(("a", "b"));
+        let ns2 = Namespace::from(("a", "b"));
+        let ns3 = Namespace::from(("c", "d"));
+
+        // Test equality
+        assert!(!(ns1 < ns2));
+        assert!(!(ns1 > ns2));
+        assert!(ns1 <= ns2);
+        assert!(ns1 >= ns2);
+
+        // Test less than
+        assert!(ns1 < ns3);
+        assert!(ns1 <= ns3);
+        assert!(!(ns1 > ns3));
+        assert!(!(ns1 >= ns3));
+
+        // Test greater than
+        assert!(ns3 > ns1);
+        assert!(ns3 >= ns1);
+        assert!(!(ns3 < ns1));
+        assert!(!(ns3 <= ns1));
+
+        Ok(())
+    }
 }

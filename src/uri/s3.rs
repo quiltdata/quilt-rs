@@ -148,7 +148,6 @@ mod tests {
         Ok(())
     }
 
-
     #[test]
     fn test_incorrect_query() -> Res {
         let uri = S3Uri::try_from("s3://bucket/foo/bar?another=query");
