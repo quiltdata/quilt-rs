@@ -124,7 +124,6 @@ enum Commands {
         /// Ex. foo/bar
         #[arg(short, long)]
         namespace: String,
-
         // FIXME: add workflow?
     },
     /// Status of the package: modified, up-to-date, outdated
