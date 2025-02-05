@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use temp_dir::TempDir;
+use tempfile::TempDir;
 use tokio::sync;
 
 use crate::cli::benchmark;
@@ -85,8 +85,8 @@ impl Model {
         }
     }
     pub fn from_temp_dir() -> Result<(Self, TempDir), Error> {
-        let temp_dir =
-            TempDir::with_prefix("quilt-rs").map_err(|err| Error::TempDir(err.to_string()))?;
+        let temp_dir = TempDir::new()
+            .map_err(|err| Error::TempDir(err.to_string()))?;
         Ok((Model::from(temp_dir.path().to_path_buf()), temp_dir))
     }
 }
