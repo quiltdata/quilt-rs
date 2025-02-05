@@ -111,6 +111,16 @@ mod tests {
     }
 
     #[test]
+    fn test_no_path() -> Res {
+        let uri = S3Uri::try_from("s3://bucket");
+        assert_eq!(
+            uri.unwrap_err().to_string(),
+            "Invalid S3 URI: Path does not exist in s3://bucket".to_string(),
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_unversioned_uri() -> Res {
         let uri = S3Uri::try_from("s3://bucket/foo/bar")?;
         assert_eq!(
