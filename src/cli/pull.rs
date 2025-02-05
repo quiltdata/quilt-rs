@@ -88,10 +88,10 @@ mod tests {
     #[tokio::test]
     async fn test_valid_command() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@681f1900320a0bb1de2d6aadd5288c727182ecc32b71115b0b29edc25474e43e";
-        let (test_model, _, _temp_dir) = install_into_temp_dir(uri).await?;
+        let (m, _, _temp_dir) = install_into_temp_dir(uri).await?;
 
         if let Std::Out(output_str) = command(
-            test_model,
+            m,
             Input {
                 namespace: ("spec", "quiltcore").into(),
             },

@@ -1,4 +1,4 @@
-use crate::cli::model::Commands;
+use crate::cli::model::{install_into_temp_dir, Commands};
 use crate::cli::output::Std;
 use crate::cli::Error;
 
@@ -39,10 +39,6 @@ pub async fn model(
 mod tests {
     use super::*;
     use crate::cli::model::Model;
-    use quilt_rs::uri::{ManifestUri, S3PackageUri};
-    use quilt_rs::{InstalledPackage, LocalDomain};
-    use std::path::PathBuf;
-    use tempfile::TempDir;
 
 
     /// Verifies that uninstall removes an installed package:

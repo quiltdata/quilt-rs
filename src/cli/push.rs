@@ -90,7 +90,7 @@ mod tests {
         let (m, _, _temp_dir) = install_into_temp_dir(uri).await?;
 
         if let Std::Err(error_str) = command(
-            Model::from(&temp_dir),
+            m,
             Input {
                 namespace: ("spec", "quiltcore").into(),
             },
