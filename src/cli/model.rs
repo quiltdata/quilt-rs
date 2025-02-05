@@ -104,7 +104,7 @@ impl From<&TempDir> for Model {
 }
 
 #[cfg(test)]
-pub async fn install_into_temp_dir(
+pub async fn install_package_into_temp_dir(
     uri_str: &str,
 ) -> Result<(Model, quilt_rs::InstalledPackage, TempDir), Error> {
     let (model, temp_dir) = Model::from_temp_dir()?;

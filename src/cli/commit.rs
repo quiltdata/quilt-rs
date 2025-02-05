@@ -79,7 +79,7 @@ mod tests {
 
     use std::path::PathBuf;
 
-    use crate::cli::model::install_into_temp_dir;
+    use crate::cli::model::install_package_into_temp_dir;
 
     use quilt_rs::io::storage::LocalStorage;
     use quilt_rs::io::storage::Storage;
@@ -89,7 +89,7 @@ mod tests {
     #[tokio::test]
     async fn test_commit_package_with_message_and_null_workflow() -> Result<(), Error> {
         let uri= "quilt+s3://udp-spec#package=reference/message-only@095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f";
-        let (m, _installed_package, _tempdir) = install_into_temp_dir(uri).await?;
+        let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
         let local_domain = m.get_local_domain().lock().await;
 
         let output = model(
@@ -116,7 +116,7 @@ mod tests {
     #[tokio::test]
     async fn test_commit_package_with_message_only() -> Result<(), Error> {
         let uri= "quilt+s3://data-yaml-spec-tests#package=reference/message-only@ce2ca6a39eb02725b24e3ccf158022dc80c2ab96b066e5660d87abafdbaee768";
-        let (m, _installed_package, _tempdir) = install_into_temp_dir(uri).await?;
+        let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
         let local_domain = m.get_local_domain().lock().await;
 
         let output = model(
@@ -141,7 +141,7 @@ mod tests {
     #[tokio::test]
     async fn test_throwing_error_when_workflow_set_but_no_workflows_config() -> Result<(), Error> {
         let uri= "quilt+s3://data-yaml-spec-tests#package=reference/message-only@ce2ca6a39eb02725b24e3ccf158022dc80c2ab96b066e5660d87abafdbaee768";
-        let (m, _installed_package, _tempdir) = install_into_temp_dir(uri).await?;
+        let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
         let local_domain = m.get_local_domain().lock().await;
 
         let output = model(
@@ -163,7 +163,7 @@ mod tests {
     #[tokio::test]
     async fn test_commit_package_with_meta_only() -> Result<(), Error> {
         let uri= "quilt+s3://data-yaml-spec-tests#package=reference/meta@a0e161c9a281f38382007f4775e7d6ecbb50f929a197ba3e84443ec911ab6388";
-        let (m, _installed_package, _tempdir) = install_into_temp_dir(uri).await?;
+        let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
         let local_domain = m.get_local_domain().lock().await;
 
         let output = model(
@@ -207,7 +207,7 @@ mod tests {
         // let readme_logical_key = PathBuf::from("READ ME.md");
         let timestamp_logical_key = PathBuf::from("timestamp.txt");
 
-        let (m, installed_package, _temp_dir) = install_into_temp_dir(uri).await?;
+        let (m, installed_package, _temp_dir) = install_package_into_temp_dir(uri).await?;
         let local_domain = m.get_local_domain().lock().await;
 
         let first_input = Input {
@@ -307,7 +307,7 @@ mod tests {
     #[tokio::test]
     async fn test_valid_command() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=reference/message-only@095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f";
-        let (m, _, _temp_dir) = install_into_temp_dir(uri).await?;
+        let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
 
         if let Std::Out(output) = command(
             m,
@@ -335,7 +335,7 @@ mod tests {
     #[tokio::test]
     async fn test_invalid_command() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=reference/message-only@095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f";
-        let (m, _, _) = install_into_temp_dir(uri).await?;
+        let (m, _, _) = install_package_into_temp_dir(uri).await?;
 
         if let Std::Err(error) = command(
             m,

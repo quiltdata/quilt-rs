@@ -52,7 +52,7 @@ pub async fn model(
 mod tests {
     use super::*;
 
-    use crate::cli::model::install_into_temp_dir;
+    use crate::cli::model::install_package_into_temp_dir;
     use crate::cli::model::Model;
 
     /// Verifies that push command returns error when push a non-existent package
@@ -82,7 +82,7 @@ mod tests {
     #[tokio::test]
     async fn test_no_commit() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c";
-        let (m, _, _temp_dir) = install_into_temp_dir(uri).await?;
+        let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
 
         if let Std::Err(error_str) = command(
             m,

@@ -52,7 +52,7 @@ pub async fn model(
 mod tests {
     use super::*;
 
-    use crate::cli::model::install_into_temp_dir;
+    use crate::cli::model::install_package_into_temp_dir;
     use crate::cli::model::Model;
 
     /// Verifies that pull updates an outdated package to the latest version:
@@ -62,7 +62,7 @@ mod tests {
     #[tokio::test]
     async fn test_model() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@681f1900320a0bb1de2d6aadd5288c727182ecc32b71115b0b29edc25474e43e";
-        let (m, _, _temp_dir) = install_into_temp_dir(uri).await?;
+        let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
         let local_domain = m.get_local_domain().lock().await;
 
         let output = model(
@@ -85,7 +85,7 @@ mod tests {
     #[tokio::test]
     async fn test_valid_command() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@681f1900320a0bb1de2d6aadd5288c727182ecc32b71115b0b29edc25474e43e";
-        let (m, _, _temp_dir) = install_into_temp_dir(uri).await?;
+        let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
 
         if let Std::Out(output_str) = command(
             m,

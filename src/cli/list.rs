@@ -40,7 +40,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use tempfile::Builder;
 
-    use crate::cli::model::install_into_temp_dir;
+    use crate::cli::model::install_package_into_temp_dir;
     use crate::cli::model::Model;
 
     #[tokio::test]
@@ -60,7 +60,7 @@ mod tests {
     async fn test_model() -> Result<(), Error> {
         // Test with one installed package
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c&path=READ%20ME.md";
-        let (m, _, _temp_dir) = install_into_temp_dir(uri).await?;
+        let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
         let local_domain = m.get_local_domain().lock().await;
         let output = model(&local_domain).await?;
 
@@ -94,7 +94,7 @@ mod tests {
     #[tokio::test]
     async fn test_command_with_package() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c&path=READ%20ME.md";
-        let (m, _, _temp_dir) = install_into_temp_dir(uri).await?;
+        let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
 
         if let Std::Out(output) = command(m).await {
             assert_eq!(output, "InstalledPackage<spec/quiltcore>");
