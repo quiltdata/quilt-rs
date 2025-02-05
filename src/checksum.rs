@@ -53,11 +53,11 @@ impl TryFrom<Multihash<256>> for ContentHash {
     }
 }
 
-impl TryInto<Multihash<256>> for ContentHash {
+impl TryFrom<ContentHash> for Multihash<256> {
     type Error = Error;
 
-    fn try_into(self) -> Result<Multihash<256>, Self::Error> {
-        match self {
+    fn try_from(content_hash: ContentHash) -> Result<Self, Self::Error> {
+        match content_hash {
             ContentHash::SHA256(hash) => {
                 let hash_bytes =
                     hex::decode(hash).map_err(|err| Error::InvalidMultihash(err.to_string()))?;
@@ -264,31 +264,52 @@ mod tests {
     }
 
     #[test]
-    fn test_content_hash_try_into_multihash_oversized() {
-        // Create a hash that's too large (>32 bytes)
-        let oversized_hash = "a".repeat(65); // 65 hex chars = 32.5 bytes
-        let content_hash = ContentHash::SHA256(oversized_hash);
-
-        let result: Result<Multihash<256>, Error> = content_hash.try_into();
+    fn test_content_hash_try_into_hex_decode_error() {
+        let result: Result<Multihash<256>, Error> = ContentHash::SHA256("a".repeat(45)).try_into();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid multihash"));
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid multihash: Odd number of digits"
+        );
     }
 
     #[test]
-    fn test_content_hash_chunked_try_into_multihash_oversized() {
-        // Create a base64 string that decodes to >32 bytes
-        let oversized_hash = "a".repeat(45); // 45 base64 chars = 33.75 bytes when decoded
-        let content_hash = ContentHash::SHA256Chunked(oversized_hash);
+    fn test_content_hash_chunked_try_into_hex_decode_error() {
+        let result: Result<Multihash<256>, Error> =
+            ContentHash::SHA256Chunked("a".repeat(45)).try_into();
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid multihash: Invalid input length: 45"
+        );
+    }
+
+    #[test]
+    fn test_content_hash_try_into_multihash_oversized() {
+        // Create a hash that's too large (>32 bytes)
+        let oversized_hash = "a".repeat(600); // 65 hex chars = 32.5 bytes
+        let content_hash = ContentHash::SHA256(oversized_hash);
 
         let result: Result<Multihash<256>, Error> = content_hash.try_into();
+        println!("result: {:?}", result);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid multihash"));
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid multihash: Invalid multihash size 300."
+        );
+    }
+
+    #[test]
+    fn test_content_hash_chunked_try_into_multihash_oversized() -> Res {
+        let oversized_hash = "a".repeat(600);
+        let content_hash = ContentHash::SHA256Chunked(oversized_hash);
+        let result = Multihash::<256>::try_from(content_hash);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid multihash: Invalid multihash size 450."
+        );
+        Ok(())
     }
 
     #[test]
@@ -300,10 +321,10 @@ mod tests {
 
         let result = ContentHash::try_from(multihash);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Unexpected code: 0x0042"));
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid multihash: Unexpected code: 0x0042"
+        );
 
         Ok(())
     }
