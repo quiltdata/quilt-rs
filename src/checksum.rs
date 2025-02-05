@@ -193,6 +193,7 @@ mod tests {
         let hash = calculate_sha256_chunked_checksum(bytes, bytes.len() as u64)
             .await
             .unwrap();
+        assert_eq!(hash.code(), MULTIHASH_SHA256_CHUNKED);
         assert_eq!(
             BASE64_STANDARD.encode(hash.digest()),
             "Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="
