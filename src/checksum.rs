@@ -290,6 +290,18 @@ mod tests {
     }
 
     #[test]
+    fn test_content_hash_try_from_multihash_invalid_code() {
+        // Create a multihash with an unsupported code
+        let digest = [0u8; 32];
+        let invalid_code = 0x42; // Some random code that's not SHA256 or SHA256_CHUNKED
+        let multihash = Multihash::wrap(invalid_code, &digest).unwrap();
+        
+        let result = ContentHash::try_from(multihash);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Unexpected code: 0x0042"));
+    }
+
+    #[test]
     fn test_get_compliant_chunked_checksum() {
         fn b64decode(data: &str) -> Vec<u8> {
             BASE64_STANDARD.decode(data.as_bytes()).unwrap()
