@@ -335,7 +335,7 @@ mod tests {
     async fn test_valid_command() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=reference/message-only@095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f";
         let (tempdir, _, _) = install_package(uri).await?;
-        let model = Model::from(tempdir.as_ref().to_path_buf());
+        let model = Model::from(&tempdir);
 
         if let Std::Out(output) = command(
             model,

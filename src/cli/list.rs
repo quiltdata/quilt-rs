@@ -71,7 +71,7 @@ mod tests {
     #[tokio::test]
     async fn test_model() -> Result<(), Error> {
         let temp_dir = TempDir::new().unwrap();
-        let m = Model::from(temp_dir.path().to_path_buf());
+        let m = Model::from(&temp_dir);
         let local_domain = m.get_local_domain().lock().await;
 
         // Test empty list
@@ -117,7 +117,7 @@ mod tests {
     async fn test_command_with_package() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c&path=READ%20ME.md";
         let (temp_dir, _, _) = install_package(uri, None).await?;
-        let m = Model::from(temp_dir.as_ref().to_path_buf());
+        let m = Model::from(&temp_dir);
 
         if let Std::Out(output) = command(m).await {
             assert_eq!(output, "InstalledPackage<spec/quiltcore>");

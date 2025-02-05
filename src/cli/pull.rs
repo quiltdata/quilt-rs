@@ -103,7 +103,7 @@ mod tests {
     async fn test_valid_command() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@681f1900320a0bb1de2d6aadd5288c727182ecc32b71115b0b29edc25474e43e";
         let (temp_dir, _installed_package, _) = install_package(uri, None).await?;
-        let test_model = Model::from(temp_dir.as_ref().to_path_buf());
+        let test_model = Model::from(&temp_dir);
 
         if let Std::Out(output_str) = command(
             test_model,
@@ -128,7 +128,7 @@ mod tests {
     #[tokio::test]
     async fn test_invalid_command() -> Result<(), Error> {
         let temp_dir = TempDir::new().unwrap();
-        let test_model = Model::from(temp_dir.path().to_path_buf());
+        let test_model = Model::from(&temp_dir);
 
         if let Std::Err(error_str) = command(
             test_model,
