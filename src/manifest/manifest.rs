@@ -152,13 +152,6 @@ impl Manifest {
         Ok(Manifest { header, rows })
     }
 
-    pub async fn to_file<W: AsyncWrite + Unpin>(&self, file: W) -> Res {
-        let mut writer = BufWriter::new(file);
-        writer.write_all(self.to_jsonlines().as_bytes()).await?;
-        writer.flush().await?;
-        Ok(())
-    }
-
     pub fn to_jsonlines(&self) -> String {
         // TODO: This is slightly inefficient.
         // We could use some kind of async iterator / stream idk
