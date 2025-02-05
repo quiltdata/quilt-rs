@@ -23,7 +23,7 @@ pub(crate) struct MockStorage {
 impl Default for MockStorage {
     fn default() -> Self {
         MockStorage {
-            temp_dir: TempDir::new().expect("Failed to create temporrary directory"),
+            temp_dir: TempDir::new().expect("Failed to create temporary directory"),
         }
     }
 }
