@@ -188,28 +188,26 @@ mod tests {
     use base64::Engine;
 
     #[tokio::test]
-    async fn test_files_less_8mb() {
+    async fn test_files_less_8mb() -> Res {
         let bytes = "0123456789abcdef".as_bytes();
-        let hash = calculate_sha256_chunked_checksum(bytes, bytes.len() as u64)
-            .await
-            .unwrap();
+        let hash = calculate_sha256_chunked_checksum(bytes, bytes.len() as u64).await?;
         assert_eq!(hash.code(), MULTIHASH_SHA256_CHUNKED);
         assert_eq!(
             BASE64_STANDARD.encode(hash.digest()),
             "Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_files_equal_to_8mb() {
+    async fn test_files_equal_to_8mb() -> Res {
         let bytes = "12345678".as_bytes().repeat(1024 * 1024);
-        let hash = calculate_sha256_chunked_checksum(bytes.as_ref(), bytes.len() as u64)
-            .await
-            .unwrap();
+        let hash = calculate_sha256_chunked_checksum(bytes.as_ref(), bytes.len() as u64).await?;
         assert_eq!(
             BASE64_STANDARD.encode(hash.digest()),
             "7V3rZ3Q/AmAYax2wsQBZbc7N1EMIxlxRyMiMthGRdwg="
         );
+        Ok(())
     }
 
     #[tokio::test]
@@ -272,10 +270,13 @@ mod tests {
         // Create a hash that's too large (>32 bytes)
         let oversized_hash = "a".repeat(65); // 65 hex chars = 32.5 bytes
         let content_hash = ContentHash::SHA256(oversized_hash);
-        
+
         let result: Result<Multihash<256>, Error> = content_hash.try_into();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Invalid multihash"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid multihash"));
     }
 
     #[test]
@@ -283,22 +284,30 @@ mod tests {
         // Create a base64 string that decodes to >32 bytes
         let oversized_hash = "a".repeat(45); // 45 base64 chars = 33.75 bytes when decoded
         let content_hash = ContentHash::SHA256Chunked(oversized_hash);
-        
+
         let result: Result<Multihash<256>, Error> = content_hash.try_into();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Invalid multihash"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid multihash"));
     }
 
     #[test]
-    fn test_content_hash_try_from_multihash_invalid_code() {
+    fn test_content_hash_try_from_multihash_invalid_code() -> Res {
         // Create a multihash with an unsupported code
         let digest = [0u8; 32];
         let invalid_code = 0x42; // Some random code that's not SHA256 or SHA256_CHUNKED
-        let multihash = Multihash::wrap(invalid_code, &digest).unwrap();
-        
+        let multihash = Multihash::wrap(invalid_code, &digest)?;
+
         let result = ContentHash::try_from(multihash);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Unexpected code: 0x0042"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Unexpected code: 0x0042"));
+
+        Ok(())
     }
 
     #[test]
