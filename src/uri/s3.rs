@@ -149,6 +149,23 @@ mod tests {
     }
 
     #[test]
+    fn test_namespace_ordering_greater() -> Res {
+        let ns1 = Namespace::from(("z", "a"));
+        let ns2 = Namespace::from(("a", "b"));
+        
+        assert!(ns1 > ns2);
+        assert_eq!(ns1.cmp(&ns2), Ordering::Greater);
+        
+        let ns3 = Namespace::from(("same", "z"));
+        let ns4 = Namespace::from(("same", "a")); 
+        
+        assert!(ns3 > ns4);
+        assert_eq!(ns3.cmp(&ns4), Ordering::Greater);
+        
+        Ok(())
+    }
+
+    #[test]
     fn test_incorrect_query() -> Res {
         let uri = S3Uri::try_from("s3://bucket/foo/bar?another=query");
         assert_eq!(
