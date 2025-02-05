@@ -258,7 +258,7 @@ mod tests {
         let file_size = MULTIPART_THRESHOLD * (MPU_MAX_PARTS + 1);
         let (chunksize, parts) = get_checksum_chunksize_and_parts(file_size);
         assert_eq!(chunksize, MULTIPART_THRESHOLD * 2);
-        assert_eq!(parts, (MPU_MAX_PARTS + 1) / 2);
+        assert_eq!(parts, (MPU_MAX_PARTS / 2) + 1);
 
         // Test very large file requiring multiple chunk size doublings
         let file_size = MULTIPART_THRESHOLD * MPU_MAX_PARTS * 8;
