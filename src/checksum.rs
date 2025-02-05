@@ -268,6 +268,17 @@ mod tests {
     }
 
     #[test]
+    fn test_content_hash_try_into_multihash_oversized() {
+        // Create a hash that's too large (>32 bytes)
+        let oversized_hash = "a".repeat(65); // 65 hex chars = 32.5 bytes
+        let content_hash = ContentHash::SHA256(oversized_hash);
+        
+        let result: Result<Multihash<256>, Error> = content_hash.try_into();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid multihash"));
+    }
+
+    #[test]
     fn test_get_compliant_chunked_checksum() {
         fn b64decode(data: &str) -> Vec<u8> {
             BASE64_STANDARD.decode(data.as_bytes()).unwrap()
