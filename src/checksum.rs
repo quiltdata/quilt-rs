@@ -229,6 +229,7 @@ mod tests {
             BASE64_STANDARD.encode(hash.digest()),
             "T+rt/HKRJOiAkEGXKvc+DhCwRcrZiDrFkjKonDT1zgs="
         );
+        Ok(())
     }
 
     #[test]
@@ -308,7 +309,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_compliant_chunked_checksum() {
+    fn test_get_compliant_chunked_checksum() -> Res {
         fn b64decode(data: &str) -> Result<Vec<u8>, Error> {
             Ok(BASE64_STANDARD.decode(data.as_bytes())?)
         }
@@ -451,5 +452,6 @@ mod tests {
         for (attrs, expected) in test_data {
             assert_eq!(get_compliant_chunked_checksum(&attrs.build()), expected);
         }
+        Ok(())
     }
 }
