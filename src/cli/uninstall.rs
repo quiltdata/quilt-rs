@@ -51,34 +51,37 @@ mod tests {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c";
         let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
 
-        let local_domain = m.get_local_domain().lock().await;
-        let output = model(
-            &local_domain,
-            Input {
-                namespace: ("spec", "quiltcore").into(),
-            },
-        )
-        .await?;
-        drop(local_domain);
-
-        assert_eq!(output.namespace, ("spec", "quiltcore").into());
-
-        let local_domain = m.get_local_domain().lock().await;
-        // Try to uninstall again - should fail
-        if let Err(error_str) = model(
-            &local_domain,
-            Input {
-                namespace: ("spec", "quiltcore").into(),
-            },
-        )
-        .await
         {
-            assert_eq!(
-                error_str.to_string(),
-                "quilt_rs error: The given package is not installed: spec/quiltcore"
-            );
-        } else {
-            return Err(Error::Test("Expected package not found error".to_string()));
+            let local_domain = m.get_local_domain().lock().await;
+            let output = model(
+                &local_domain,
+                Input {
+                    namespace: ("spec", "quiltcore").into(),
+                },
+            )
+            .await?;
+
+            assert_eq!(output.namespace, ("spec", "quiltcore").into());
+        }
+
+        {
+            let local_domain = m.get_local_domain().lock().await;
+            // Try to uninstall again - should fail
+            if let Err(error_str) = model(
+                &local_domain,
+                Input {
+                    namespace: ("spec", "quiltcore").into(),
+                },
+            )
+            .await
+            {
+                assert_eq!(
+                    error_str.to_string(),
+                    "quilt_rs error: The given package is not installed: spec/quiltcore"
+                );
+            } else {
+                return Err(Error::Test("Expected package not found error".to_string()));
+            }
         }
 
         Ok(())

@@ -46,10 +46,12 @@ mod tests {
     #[tokio::test]
     async fn test_empty_list() -> Result<(), Error> {
         let (m, _temp_dir) = Model::from_temp_dir()?;
-        let local_domain = m.get_local_domain().lock().await;
-        let empty_output = model(&local_domain).await?;
-        assert!(empty_output.installed_packages_list.is_empty());
-        assert_eq!(format!("{}", empty_output), "No installed packages");
+        {
+            let local_domain = m.get_local_domain().lock().await;
+            let empty_output = model(&local_domain).await?;
+            assert!(empty_output.installed_packages_list.is_empty());
+            assert_eq!(format!("{}", empty_output), "No installed packages");
+        }
         Ok(())
     }
 
@@ -61,14 +63,16 @@ mod tests {
         // Test with one installed package
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c&path=READ%20ME.md";
         let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
-        let local_domain = m.get_local_domain().lock().await;
-        let output = model(&local_domain).await?;
+        {
+            let local_domain = m.get_local_domain().lock().await;
+            let output = model(&local_domain).await?;
 
-        assert_eq!(
-            output.installed_packages_list[0].namespace,
-            ("spec", "quiltcore").into()
-        );
-        assert_eq!(format!("{}", output), "InstalledPackage<spec/quiltcore>");
+            assert_eq!(
+                output.installed_packages_list[0].namespace,
+                ("spec", "quiltcore").into()
+            );
+            assert_eq!(format!("{}", output), "InstalledPackage<spec/quiltcore>");
+        }
 
         Ok(())
     }

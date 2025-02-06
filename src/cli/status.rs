@@ -108,20 +108,21 @@ mod tests {
             ])
             .await?;
 
-        let local_domain = m.get_local_domain().lock().await;
-        let output = model(
-            &local_domain,
-            Input {
-                namespace: ("spec", "quiltcore").into(),
-            },
-        )
-        .await?;
-        drop(local_domain);
+        {
+            let local_domain = m.get_local_domain().lock().await;
+            let output = model(
+                &local_domain,
+                Input {
+                    namespace: ("spec", "quiltcore").into(),
+                },
+            )
+            .await?;
 
-        assert_eq!(
-            format!("{}", output),
-            "Installed package is up to date\nNo changes"
-        );
+            assert_eq!(
+                format!("{}", output),
+                "Installed package is up to date\nNo changes"
+            );
+        }
 
         let new_key = PathBuf::from("foo/bar.md");
 
@@ -137,20 +138,21 @@ mod tests {
             .write_file(working_dir.join(&readme_logical_key), &empty_content)
             .await?;
 
-        let local_domain = m.get_local_domain().lock().await;
-        let status_new_files = model(
-            &local_domain,
-            Input {
-                namespace: ("spec", "quiltcore").into(),
-            },
-        )
-        .await?;
-        drop(local_domain);
+        {
+            let local_domain = m.get_local_domain().lock().await;
+            let status_new_files = model(
+                &local_domain,
+                Input {
+                    namespace: ("spec", "quiltcore").into(),
+                },
+            )
+            .await?;
 
-        let status_new_files_str = format!("{}", status_new_files);
-        assert!(status_new_files_str.contains("Installed package is up to date"));
-        assert!(status_new_files_str.contains("foo/bar.md | Added"));
-        assert!(status_new_files_str.contains("READ ME.md | Modified"));
+            let status_new_files_str = format!("{}", status_new_files);
+            assert!(status_new_files_str.contains("Installed package is up to date"));
+            assert!(status_new_files_str.contains("foo/bar.md | Added"));
+            assert!(status_new_files_str.contains("READ ME.md | Modified"));
+        }
 
         if let Err(e) = storage
             .remove_file(working_dir.join(readme_logical_key))
@@ -159,47 +161,52 @@ mod tests {
             return Err(Error::Test(format!("Failed to remove file: {}", e)));
         }
 
-        let local_domain = m.get_local_domain().lock().await;
-        let status_file_removed = model(
-            &local_domain,
-            Input {
-                namespace: ("spec", "quiltcore").into(),
-            },
-        )
-        .await?;
-        drop(local_domain);
-        let file_removed_status_str = format!("{}", status_file_removed);
-        assert!(file_removed_status_str.contains("Installed package is up to date"));
-        assert!(file_removed_status_str.contains("foo/bar.md | Added"));
-        assert!(file_removed_status_str.contains("READ ME.md | Removed"));
+        {
+            let local_domain = m.get_local_domain().lock().await;
+            let status_file_removed = model(
+                &local_domain,
+                Input {
+                    namespace: ("spec", "quiltcore").into(),
+                },
+            )
+            .await?;
 
-        let local_domain = m.get_local_domain().lock().await;
-        let not_found = model(
-            &local_domain,
-            Input {
-                namespace: ("a", "b").into(),
-            },
-        )
-        .await;
-        drop(local_domain);
-        assert_eq!(not_found.unwrap_err().to_string(), "Package a/b not found");
+            let file_removed_status_str = format!("{}", status_file_removed);
+            assert!(file_removed_status_str.contains("Installed package is up to date"));
+            assert!(file_removed_status_str.contains("foo/bar.md | Added"));
+            assert!(file_removed_status_str.contains("READ ME.md | Removed"));
+        }
+
+        {
+            let local_domain = m.get_local_domain().lock().await;
+            let not_found = model(
+                &local_domain,
+                Input {
+                    namespace: ("a", "b").into(),
+                },
+            )
+            .await;
+
+            assert_eq!(not_found.unwrap_err().to_string(), "Package a/b not found");
+        }
 
         installed_package
             .commit("Anything".to_string(), None, None)
             .await?;
-        let local_domain = m.get_local_domain().lock().await;
-        let status_ahead = model(
-            &local_domain,
-            Input {
-                namespace: ("spec", "quiltcore").into(),
-            },
-        )
-        .await?;
-        drop(local_domain);
-        assert_eq!(
-            format!("{}", status_ahead),
-            "Your commits are ahead of the remote\nNo changes"
-        );
+        {
+            let local_domain = m.get_local_domain().lock().await;
+            let status_ahead = model(
+                &local_domain,
+                Input {
+                    namespace: ("spec", "quiltcore").into(),
+                },
+            )
+            .await?;
+            assert_eq!(
+                format!("{}", status_ahead),
+                "Your commits are ahead of the remote\nNo changes"
+            );
+        }
 
         Ok(())
     }
@@ -210,38 +217,41 @@ mod tests {
 
         let (m, installed_package, _temp_dir) = install_package_into_temp_dir(uri).await?;
 
-        let local_domain = m.get_local_domain().lock().await;
-        let output = model(
-            &local_domain,
-            Input {
-                namespace: ("spec", "quiltcore").into(),
-            },
-        )
-        .await?;
-        drop(local_domain);
+        {
+            let local_domain = m.get_local_domain().lock().await;
+            let output = model(
+                &local_domain,
+                Input {
+                    namespace: ("spec", "quiltcore").into(),
+                },
+            )
+            .await?;
 
-        assert_eq!(
-            format!("{}", output),
-            "Your commits are behind the remote\nNo changes"
-        );
+            assert_eq!(
+                format!("{}", output),
+                "Your commits are behind the remote\nNo changes"
+            );
+        }
 
         installed_package
             .commit("Anything".to_string(), None, None)
             .await?;
 
-        let local_domain = m.get_local_domain().lock().await;
-        let output = model(
-            &local_domain,
-            Input {
-                namespace: ("spec", "quiltcore").into(),
-            },
-        )
-        .await?;
+        {
+            let local_domain = m.get_local_domain().lock().await;
+            let output = model(
+                &local_domain,
+                Input {
+                    namespace: ("spec", "quiltcore").into(),
+                },
+            )
+            .await?;
 
-        assert_eq!(
-            format!("{}", output),
-            "Your commits are detached from the remote\nNo changes"
-        );
+            assert_eq!(
+                format!("{}", output),
+                "Your commits are detached from the remote\nNo changes"
+            );
+        }
 
         Ok(())
     }

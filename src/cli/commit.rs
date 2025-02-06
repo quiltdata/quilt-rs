@@ -100,23 +100,25 @@ mod tests {
     async fn test_commit_package_with_message_and_null_workflow() -> Result<(), Error> {
         let uri= "quilt+s3://udp-spec#package=reference/message-only@095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f";
         let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
-        let local_domain = m.get_local_domain().lock().await;
+        {
+            let local_domain = m.get_local_domain().lock().await;
 
-        let output = model(
-            &local_domain,
-            Input {
-                message: "#Test message 1234!?#".to_string(),
-                namespace: ("reference", "message-only").into(),
-                user_meta: None,
-                workflow: None,
-            },
-        )
-        .await?;
+            let output = model(
+                &local_domain,
+                Input {
+                    message: "#Test message 1234!?#".to_string(),
+                    namespace: ("reference", "message-only").into(),
+                    user_meta: None,
+                    workflow: None,
+                },
+            )
+            .await?;
 
-        assert_eq!(
-            output.commit.hash,
-            "095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f"
-        );
+            assert_eq!(
+                output.commit.hash,
+                "095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f"
+            );
+        }
 
         Ok(())
     }
@@ -129,23 +131,25 @@ mod tests {
     async fn test_commit_package_with_message_only() -> Result<(), Error> {
         let uri= "quilt+s3://data-yaml-spec-tests#package=reference/message-only@ce2ca6a39eb02725b24e3ccf158022dc80c2ab96b066e5660d87abafdbaee768";
         let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
-        let local_domain = m.get_local_domain().lock().await;
+        {
+            let local_domain = m.get_local_domain().lock().await;
 
-        let output = model(
-            &local_domain,
-            Input {
-                message: "#Test message 1234!?#".to_string(),
-                namespace: ("reference", "message-only").into(),
-                user_meta: None,
-                workflow: None,
-            },
-        )
-        .await?;
+            let output = model(
+                &local_domain,
+                Input {
+                    message: "#Test message 1234!?#".to_string(),
+                    namespace: ("reference", "message-only").into(),
+                    user_meta: None,
+                    workflow: None,
+                },
+            )
+            .await?;
 
-        assert_eq!(
-            output.commit.hash,
-            "ce2ca6a39eb02725b24e3ccf158022dc80c2ab96b066e5660d87abafdbaee768"
-        );
+            assert_eq!(
+                output.commit.hash,
+                "ce2ca6a39eb02725b24e3ccf158022dc80c2ab96b066e5660d87abafdbaee768"
+            );
+        }
 
         Ok(())
     }
@@ -154,23 +158,25 @@ mod tests {
     async fn test_throwing_error_when_workflow_set_but_no_workflows_config() -> Result<(), Error> {
         let uri= "quilt+s3://data-yaml-spec-tests#package=reference/message-only@ce2ca6a39eb02725b24e3ccf158022dc80c2ab96b066e5660d87abafdbaee768";
         let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
-        let local_domain = m.get_local_domain().lock().await;
+        {
+            let local_domain = m.get_local_domain().lock().await;
 
-        let output = model(
-            &local_domain,
-            Input {
-                message: "#Test message 1234!?#".to_string(),
-                namespace: ("reference", "message-only").into(),
-                user_meta: None,
-                workflow: Some("Anything".to_string()),
-            },
-        )
-        .await;
+            let output = model(
+                &local_domain,
+                Input {
+                    message: "#Test message 1234!?#".to_string(),
+                    namespace: ("reference", "message-only").into(),
+                    user_meta: None,
+                    workflow: Some("Anything".to_string()),
+                },
+            )
+            .await;
 
-        assert_eq!(
-            output.unwrap_err().to_string(),
-            "Workflow 'Anything' not found in the workflows/config.yml"
-        );
+            assert_eq!(
+                output.unwrap_err().to_string(),
+                "Workflow 'Anything' not found in the workflows/config.yml"
+            );
+        }
 
         Ok(())
     }
@@ -179,36 +185,38 @@ mod tests {
     async fn test_commit_package_with_meta_only() -> Result<(), Error> {
         let uri= "quilt+s3://data-yaml-spec-tests#package=reference/meta@a0e161c9a281f38382007f4775e7d6ecbb50f929a197ba3e84443ec911ab6388";
         let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
-        let local_domain = m.get_local_domain().lock().await;
+        {
+            let local_domain = m.get_local_domain().lock().await;
 
-        let output = model(
-            &local_domain,
-            Input {
-                message: "Initial".to_string(),
-                namespace: ("reference", "meta").into(),
-                user_meta: Some(
-                    serde_json::json!({
-                        // NOTE: will be sorted
-                        "C": "D",
-                        "c": "d",
-                        "a": "b",
-                        "A": "B",
-                        "e": 123,
-                        "f": null
-                    })
-                    .as_object()
-                    .unwrap()
-                    .clone(),
-                ),
-                workflow: None,
-            },
-        )
-        .await?;
+            let output = model(
+                &local_domain,
+                Input {
+                    message: "Initial".to_string(),
+                    namespace: ("reference", "meta").into(),
+                    user_meta: Some(
+                        serde_json::json!({
+                            // NOTE: will be sorted
+                            "C": "D",
+                            "c": "d",
+                            "a": "b",
+                            "A": "B",
+                            "e": 123,
+                            "f": null
+                        })
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                    ),
+                    workflow: None,
+                },
+            )
+            .await?;
 
-        assert_eq!(
-            output.commit.hash,
-            "a0e161c9a281f38382007f4775e7d6ecbb50f929a197ba3e84443ec911ab6388"
-        );
+            assert_eq!(
+                output.commit.hash,
+                "a0e161c9a281f38382007f4775e7d6ecbb50f929a197ba3e84443ec911ab6388"
+            );
+        }
 
         Ok(())
     }
@@ -223,7 +231,6 @@ mod tests {
         let timestamp_logical_key = PathBuf::from("timestamp.txt");
 
         let (m, installed_package, _temp_dir) = install_package_into_temp_dir(uri).await?;
-        let local_domain = m.get_local_domain().lock().await;
 
         let first_input = Input {
             message: "Test message".to_string(),
@@ -231,66 +238,79 @@ mod tests {
             user_meta: None,
             workflow: None,
         };
-        let output = model(&local_domain, first_input.clone())
-            .await
-            .expect("Failed to commit");
-
         let hash_for_initial_test_commit =
             "d6e62c3c43ddd30447d99eede1c7280c017b15cc716037b74af7bb5230fbb61a";
 
-        assert_eq!(
-            format!("{}", output),
-            format!("New commit \"{}\" created", hash_for_initial_test_commit)
-        );
+        {
+            let local_domain = m.get_local_domain().lock().await;
 
-        let second_commit = model(&local_domain, first_input)
+            let output = model(&local_domain, first_input.clone())
+                .await
+                .expect("Failed to commit");
+
+            assert_eq!(
+                format!("{}", output),
+                format!("New commit \"{}\" created", hash_for_initial_test_commit)
+            );
+        }
+
+        {
+            let local_domain = m.get_local_domain().lock().await;
+            let second_commit = model(&local_domain, first_input)
+                .await
+                .expect("Failed to commit second commit which is identical to the first one");
+
+            assert_eq!(second_commit.commit.hash, hash_for_initial_test_commit);
+            assert_eq!(
+                second_commit.commit.prev_hashes,
+                vec![hash_for_initial_test_commit]
+            );
+        }
+
+        {
+            let local_domain = m.get_local_domain().lock().await;
+            let third_commit = model(
+                &local_domain,
+                Input {
+                    message: "New commit message".to_string(),
+                    namespace: ("spec", "quilt-rs").into(),
+                    user_meta: Some(
+                        serde_json::json!({"key": "value"})
+                            .as_object()
+                            .unwrap()
+                            .clone(),
+                    ),
+                    workflow: None,
+                },
+            )
             .await
-            .expect("Failed to commit second commit which is identical to the first one");
+            .expect("Failed to commit third commit different from the first one");
 
-        assert_eq!(second_commit.commit.hash, hash_for_initial_test_commit);
-        assert_eq!(
-            second_commit.commit.prev_hashes,
-            vec![hash_for_initial_test_commit]
-        );
+            assert_eq!(
+                third_commit.commit.hash,
+                "e2a86408670c7a33f78758d72166333e4a96b6aadbb3b03d25fd6e209dc6e0b3"
+            );
+            assert_eq!(
+                third_commit.commit.prev_hashes,
+                vec![hash_for_initial_test_commit, hash_for_initial_test_commit]
+            );
+        }
 
-        let third_commit = model(
-            &local_domain,
-            Input {
-                message: "New commit message".to_string(),
-                namespace: ("spec", "quilt-rs").into(),
-                user_meta: Some(
-                    serde_json::json!({"key": "value"})
-                        .as_object()
-                        .unwrap()
-                        .clone(),
-                ),
-                workflow: None,
-            },
-        )
-        .await
-        .expect("Failed to commit third commit different from the first one");
+        {
+            let local_domain = m.get_local_domain().lock().await;
+            let not_found = model(
+                &local_domain,
+                Input {
+                    message: "Anything".to_string(),
+                    namespace: ("a", "b").into(),
+                    user_meta: None,
+                    workflow: None,
+                },
+            )
+            .await;
 
-        assert_eq!(
-            third_commit.commit.hash,
-            "e2a86408670c7a33f78758d72166333e4a96b6aadbb3b03d25fd6e209dc6e0b3"
-        );
-        assert_eq!(
-            third_commit.commit.prev_hashes,
-            vec![hash_for_initial_test_commit, hash_for_initial_test_commit]
-        );
-
-        let not_found = model(
-            &local_domain,
-            Input {
-                message: "Anything".to_string(),
-                namespace: ("a", "b").into(),
-                user_meta: None,
-                workflow: None,
-            },
-        )
-        .await;
-
-        assert_eq!(not_found.unwrap_err().to_string(), "Package a/b not found");
+            assert_eq!(not_found.unwrap_err().to_string(), "Package a/b not found");
+        }
 
         let working_dir = installed_package.working_folder();
         let storage = LocalStorage::new();
@@ -298,21 +318,24 @@ mod tests {
             .write_file(working_dir.join(timestamp_logical_key), b"1697916638")
             .await
             .expect("Failed to write timestamp.txt to the installed package working directory");
-        let commit_the_same_file = model(
-            &local_domain,
-            Input {
-                message: "Test message".to_string(),
-                namespace: ("spec", "quilt-rs").into(),
-                user_meta: None,
-                workflow: None,
-            },
-        )
-        .await
-        .expect("Failed to commit the same file ensuring the commit hash will persist");
-        assert_eq!(
-            commit_the_same_file.commit.hash,
-            hash_for_initial_test_commit
-        );
+        {
+            let local_domain = m.get_local_domain().lock().await;
+            let commit_the_same_file = model(
+                &local_domain,
+                Input {
+                    message: "Test message".to_string(),
+                    namespace: ("spec", "quilt-rs").into(),
+                    user_meta: None,
+                    workflow: None,
+                },
+            )
+            .await
+            .expect("Failed to commit the same file ensuring the commit hash will persist");
+            assert_eq!(
+                commit_the_same_file.commit.hash,
+                hash_for_initial_test_commit
+            );
+        }
 
         Ok(())
     }

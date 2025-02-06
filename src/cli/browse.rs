@@ -140,35 +140,37 @@ mod tests {
             "s3://udp-spec/spec/quiltcore/timestamp.txt?versionId=lifktjQgrgewg1FGXxls3UKtJSjl2shy";
 
         let (m, _temp_dir) = Model::from_temp_dir()?;
-        let local_domain = m.get_local_domain().lock().await;
+        {
+            let local_domain = m.get_local_domain().lock().await;
 
-        let output = model(&local_domain, Input { uri }).await?;
+            let output = model(&local_domain, Input { uri }).await?;
 
-        let output_str = format!("{}", output);
-        assert_eq!(output_str, BROWSE_OUTPUT);
+            let output_str = format!("{}", output);
+            assert_eq!(output_str, BROWSE_OUTPUT);
 
-        assert_eq!(
-            output.manifest.header.display_message().unwrap(),
-            "test_spec_write 1697916638",
-        );
-        assert_eq!(
-            output
-                .manifest
-                .get_record(&readme_logical_key)
-                .await?
-                .unwrap()
-                .place,
-            readme_uri
-        );
-        assert_eq!(
-            output
-                .manifest
-                .get_record(&timestamp_logical_key)
-                .await?
-                .unwrap()
-                .place,
-            timestamp_uri
-        );
+            assert_eq!(
+                output.manifest.header.display_message().unwrap(),
+                "test_spec_write 1697916638",
+            );
+            assert_eq!(
+                output
+                    .manifest
+                    .get_record(&readme_logical_key)
+                    .await?
+                    .unwrap()
+                    .place,
+                readme_uri
+            );
+            assert_eq!(
+                output
+                    .manifest
+                    .get_record(&timestamp_logical_key)
+                    .await?
+                    .unwrap()
+                    .place,
+                timestamp_uri
+            );
+        }
         Ok(())
     }
 

@@ -135,20 +135,21 @@ mod tests {
         let timestamp_logical_key = PathBuf::from("timestamp.txt");
 
         let (m, temp_dir) = Model::from_temp_dir()?;
-        let local_domain = m.get_local_domain().lock().await;
+        let working_dir = temp_dir.path().join("spec/quiltcore");
+        {
+            let local_domain = m.get_local_domain().lock().await;
 
-        let output = model(
-            &local_domain,
-            Input {
-                namespace: None,
-                paths: Some(vec![timestamp_logical_key.clone()]),
-                uri,
-            },
-        )
-        .await?;
-        drop(local_domain);
+            let output = model(
+                &local_domain,
+                Input {
+                    namespace: None,
+                    paths: Some(vec![timestamp_logical_key.clone()]),
+                    uri,
+                },
+            )
+            .await?;
 
-        assert_eq!(
+            assert_eq!(
             format!("{}", output),
             format!(
                 "Installed package \"spec/quiltcore\" at {}/spec/quiltcore\nPath: \"READ ME.md\"\nPath: \"timestamp.txt\"",
@@ -156,29 +157,29 @@ mod tests {
             )
         );
 
-        let installed_package = output.installed_package;
-        assert_eq!(installed_package.namespace, ("spec", "quiltcore").into());
-        assert!(installed_package
-            .lineage()
-            .await?
-            .paths
-            .contains_key(&readme_logical_key));
+            let installed_package = output.installed_package;
+            assert_eq!(installed_package.namespace, ("spec", "quiltcore").into());
+            assert!(installed_package
+                .lineage()
+                .await?
+                .paths
+                .contains_key(&readme_logical_key));
 
-        let working_dir = temp_dir.path().join("spec/quiltcore");
-        assert_eq!(
-            installed_package.working_folder(),
-            PathBuf::from(temp_dir.as_ref()).join("spec/quiltcore")
-        );
-        assert_eq!(
-            output.paths,
-            vec![readme_logical_key.clone(), timestamp_logical_key.clone()]
-        );
+            assert_eq!(
+                installed_package.working_folder(),
+                PathBuf::from(temp_dir.as_ref()).join("spec/quiltcore")
+            );
+            assert_eq!(
+                output.paths,
+                vec![readme_logical_key.clone(), timestamp_logical_key.clone()]
+            );
+        }
 
         let storage = LocalStorage::new();
-        assert!(storage.exists(working_dir.join(readme_logical_key)).await);
+        assert!(storage.exists(working_dir.join(&readme_logical_key)).await);
         assert!(
             storage
-                .exists(working_dir.join(timestamp_logical_key))
+                .exists(working_dir.join(&timestamp_logical_key))
                 .await
         );
 
@@ -213,8 +214,9 @@ mod tests {
                 .await
         );
 
-        let local_domain = m.get_local_domain().lock().await;
-        let install_once_more = model(
+        {
+            let local_domain = m.get_local_domain().lock().await;
+            let install_once_more = model(
             &local_domain,
             Input {
                 namespace: None,
@@ -224,26 +226,26 @@ mod tests {
         )
         .await?;
 
-        // No paths installed during this call
-        assert_eq!(
-            format!("{}", install_once_more),
-            format!(
-                "Installed package \"spec/quiltcore\" at {}/spec/quiltcore\nNo paths installed",
-                temp_dir.path().display()
-            )
-        );
+            // No paths installed during this call
+            assert_eq!(
+                format!("{}", install_once_more),
+                format!(
+                    "Installed package \"spec/quiltcore\" at {}/spec/quiltcore\nNo paths installed",
+                    temp_dir.path().display()
+                )
+            );
 
-        assert_eq!(
-            installed_package.namespace,
-            install_once_more.installed_package.namespace
-        );
+            assert_eq!(
+                install_once_more.installed_package.namespace,
+                ("spec", "quiltcore").into(),
+            );
 
-        // However paths are still tracked, because we didn't install a package anew,
-        // but re-use installed package from the previous call.
-        assert_eq!(
-            installed_package.lineage().await?.paths,
-            install_once_more.installed_package.lineage().await?.paths
-        );
+            // However paths are still tracked, because we didn't install a package anew,
+            // but re-use installed package from the previous call.
+            let paths = install_once_more.installed_package.lineage().await?.paths;
+            assert!(paths.contains_key(&readme_logical_key));
+            assert!(paths.contains_key(&timestamp_logical_key));
+        }
 
         Ok(())
     }

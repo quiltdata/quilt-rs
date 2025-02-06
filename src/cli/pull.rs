@@ -63,20 +63,22 @@ mod tests {
     async fn test_model() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore@681f1900320a0bb1de2d6aadd5288c727182ecc32b71115b0b29edc25474e43e";
         let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
-        let local_domain = m.get_local_domain().lock().await;
+        {
+            let local_domain = m.get_local_domain().lock().await;
 
-        let output = model(
-            &local_domain,
-            Input {
-                namespace: ("spec", "quiltcore").into(),
-            },
-        )
-        .await?;
+            let output = model(
+                &local_domain,
+                Input {
+                    namespace: ("spec", "quiltcore").into(),
+                },
+            )
+            .await?;
 
-        assert_eq!(
-            output.hash,
-            "44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c"
-        );
+            assert_eq!(
+                output.hash,
+                "44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c"
+            );
+        }
 
         Ok(())
     }
