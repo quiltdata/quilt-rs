@@ -41,39 +41,6 @@ impl From<&Header> for ManifestHeader {
             workflow: header.display_workflow(),
         }
     }
-
-    #[tokio::test]
-    async fn test_manifest_from_reader_invalid() -> Res {
-        let storage = MockStorage::default();
-        let invalid_content = r#"{"invalid": "json"}"#;
-        let path = PathBuf::from("invalid_manifest.jsonl");
-        storage.write_file(&path, invalid_content.as_bytes()).await?;
-        let file = storage.open_file(&path).await?;
-        
-        let result = Manifest::from_reader(file).await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Failed to read the manifest header"));
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_manifest_from_reader_valid() -> Res {
-        let storage = MockStorage::default();
-        let path = PathBuf::from("fixtures/manifest.jsonl");
-        let file = storage.open_file(&path).await?;
-        
-        let manifest = Manifest::from_reader(file).await?;
-        assert_eq!(manifest.header.version, "v0");
-        assert_eq!(manifest.header.message, None);
-        assert_eq!(manifest.header.user_meta, None);
-        assert_eq!(manifest.rows.len(), 1);
-        
-        let row = &manifest.rows[0];
-        assert_eq!(row.logical_key, PathBuf::from("README.md"));
-        assert_eq!(row.physical_key, "s3://udp-spec/test_run/test_push/README.md?versionId=Rv.GfYdUWkLfeTT73Rodm3aBUrTIcC1X");
-        assert_eq!(row.size, 26);
-        Ok(())
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -323,5 +290,46 @@ mod tests {
             meta: None,
         };
         assert!(left == right)
+    }
+
+    #[tokio::test]
+    async fn test_manifest_from_reader_invalid() -> Res {
+        let storage = MockStorage::default();
+        let invalid_content = r#"{"invalid": "json"}"#;
+        let path = PathBuf::from("invalid_manifest.jsonl");
+        storage
+            .write_file(&path, invalid_content.as_bytes())
+            .await?;
+        let file = storage.open_file(&path).await?;
+
+        let result = Manifest::from_reader(file).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Failed to read the manifest header"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_manifest_from_reader_valid() -> Res {
+        let storage = MockStorage::default();
+        let path = PathBuf::from("fixtures/manifest.jsonl");
+        let file = storage.open_file(&path).await?;
+
+        let manifest = Manifest::from_reader(file).await?;
+        assert_eq!(manifest.header.version, "v0");
+        assert_eq!(manifest.header.message, None);
+        assert_eq!(manifest.header.user_meta, None);
+        assert_eq!(manifest.rows.len(), 1);
+
+        let row = &manifest.rows[0];
+        assert_eq!(row.logical_key, PathBuf::from("README.md"));
+        assert_eq!(
+            row.physical_key,
+            "s3://udp-spec/test_run/test_push/README.md?versionId=Rv.GfYdUWkLfeTT73Rodm3aBUrTIcC1X"
+        );
+        assert_eq!(row.size, 26);
+        Ok(())
     }
 }
