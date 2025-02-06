@@ -84,8 +84,10 @@ mod tests {
     use quilt_rs::io::storage::LocalStorage;
     use quilt_rs::io::storage::Storage;
 
-    /// Verify the commit when there are no files to commit,
-    /// and when a workflows config exists but workflow id is not set.
+    /// Verify the commit of that package:
+    ///  * workflow/config.yml exists
+    ///  * workflow id is not set
+    ///  * no files to commit,
     #[tokio::test]
     async fn test_commit_package_with_message_and_null_workflow() -> Result<(), Error> {
         let uri= "quilt+s3://udp-spec#package=reference/message-only@095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f";
@@ -111,8 +113,10 @@ mod tests {
         Ok(())
     }
 
-    /// Verify the commit when there are no files to commit,
-    /// and when a workflows config exists but workflow id is not set.
+    /// Verify the commit of that package:
+    ///  * workflow/config.yml DOESN'T exists
+    ///  * workflow id is not set
+    ///  * no files to commit,
     #[tokio::test]
     async fn test_commit_package_with_message_only() -> Result<(), Error> {
         let uri= "quilt+s3://data-yaml-spec-tests#package=reference/message-only@ce2ca6a39eb02725b24e3ccf158022dc80c2ab96b066e5660d87abafdbaee768";
