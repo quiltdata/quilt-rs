@@ -73,12 +73,6 @@ impl From<ManifestUriLegacy> for S3Uri {
     }
 }
 
-impl From<&ManifestUriLegacy> for S3Uri {
-    fn from(remote: &ManifestUriLegacy) -> S3Uri {
-        remote.clone().into()
-    }
-}
-
 impl From<ManifestUri> for ManifestUriLegacy {
     fn from(manifest_uri: ManifestUri) -> Self {
         ManifestUriLegacy {
