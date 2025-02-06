@@ -468,10 +468,7 @@ mod tests {
             revision: RevisionPointer::Hash("abc123".to_string()),
             path: None,
         };
-        assert_eq!(
-            uri.to_string(),
-            "quilt+s3://bucket#package=foo/bar@abc123"
-        );
+        assert_eq!(uri.to_string(), "quilt+s3://bucket#package=foo/bar@abc123");
         Ok(())
     }
 
@@ -484,9 +481,27 @@ mod tests {
             revision: RevisionPointer::Tag("foobar".to_string()),
             path: None,
         };
+        assert_eq!(uri.to_string(), "quilt+s3://bucket#package=foo/bar@foobar");
+        Ok(())
+    }
+
+    #[test]
+    fn test_from_manifest_uri() -> Res {
+        let manifest_uri = ManifestUri {
+            bucket: "test-bucket".to_string(),
+            namespace: ("foo", "bar").into(),
+            hash: "abc123".to_string(),
+        };
+
         assert_eq!(
-            uri.to_string(),
-            "quilt+s3://bucket#package=foo/bar@foobar"
+            S3PackageUri::from(manifest_uri),
+            S3PackageUri {
+                bucket: "test-bucket".to_string(),
+                catalog: None,
+                namespace: ("foo", "bar").into(),
+                path: None,
+                revision: RevisionPointer::Hash("abc123".to_string()),
+            }
         );
         Ok(())
     }
