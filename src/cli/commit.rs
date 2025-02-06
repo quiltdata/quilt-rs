@@ -32,6 +32,23 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
     }
 }
 
+async fn resolve_workflow(
+    local_domain: &quilt_rs::LocalDomain,
+    namespace: Namespace,
+    workflow_id: Option<String>,
+) -> Result<Option<Workflow>, Error> {
+    match local_domain.resolve_workflow_config(namespace).await? {
+        Some(config) => Ok(Some(Workflow {
+            id: workflow_id,
+            config: config.to_string(),
+        })),
+        None => match workflow_id {
+            Some(id) => Err(Error::Workflow(id)),
+            None => Ok(None),
+        },
+    }
+}
+
 async fn commit_package(
     local_domain: &quilt_rs::LocalDomain,
     namespace: Namespace,
@@ -41,16 +58,7 @@ async fn commit_package(
 ) -> Result<CommitState, Error> {
     match local_domain.get_installed_package(&namespace).await? {
         Some(installed_package) => {
-            let workflow = match local_domain.resolve_workflow_config(namespace).await? {
-                Some(config) => Some(Workflow {
-                    id: workflow_id,
-                    config: config.to_string(),
-                }),
-                None => match workflow_id {
-                    Some(id) => return Err(Error::Workflow(id)),
-                    None => None,
-                },
-            };
+            let workflow = resolve_workflow(local_domain, namespace, workflow_id).await?;
             Ok(installed_package
                 .commit(message, user_meta, workflow)
                 .await?)
