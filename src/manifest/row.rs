@@ -376,4 +376,15 @@ mod tests {
         assert_eq!(header.display_workflow(), Some(workflow));
         Ok(())
     }
+
+    #[test]
+    fn test_display_workflow_no_id() -> Res {
+        let workflow = Workflow {
+            id: None,
+            config: "test-config".to_string(),
+        };
+        let header = Header::new(None, None, Some(workflow.clone()));
+        assert_eq!(header.display_workflow(), Some(workflow));
+        Ok(())
+    }
 }
