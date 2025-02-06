@@ -291,7 +291,6 @@ mod tests {
         let content_hash = ContentHash::SHA256(oversized_hash);
 
         let result: Result<Multihash<256>, Error> = content_hash.try_into();
-        println!("result: {:?}", result);
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),
