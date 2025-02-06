@@ -38,7 +38,10 @@ impl std::fmt::Display for Output {
         let user_meta = match header.display_user_meta() {
             Some(meta) => match serde_json::to_string(&meta) {
                 Ok(s) => s,
-                Err(_) => return write!(f, "Failed to stringify user_meta of the returned manifest"),
+                Err(e) => {
+                    tracing::error!("Failed to stringify user_meta: {}", e);
+                    String::default()
+                },
             },
             None => String::default(),
         };
