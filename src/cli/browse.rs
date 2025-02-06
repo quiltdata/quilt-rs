@@ -35,7 +35,8 @@ impl std::fmt::Display for Output {
         let mut output: Vec<String> = Vec::new();
         let header = self.manifest.header.clone();
         let message = header.display_message().unwrap_or_default();
-        let user_meta = header.display_user_meta()
+        let user_meta = header
+            .display_user_meta()
             .map_or(String::default(), |meta| {
                 serde_json::to_string(&meta)
                     .map_err(|e| {
@@ -44,15 +45,14 @@ impl std::fmt::Display for Output {
                     })
                     .unwrap_or_default()
             });
-        let workflow = header.display_workflow()
-            .map_or(String::default(), |v| {
-                serde_json::to_string(&v)
-                    .map_err(|e| {
-                        tracing::error!("Failed to stringify workflow: {}", e);
-                        e
-                    })
-                    .unwrap_or_default()
-            });
+        let workflow = header.display_workflow().map_or(String::default(), |v| {
+            serde_json::to_string(&v)
+                .map_err(|e| {
+                    tracing::error!("Failed to stringify workflow: {}", e);
+                    e
+                })
+                .unwrap_or_default()
+        });
         let mut header_table = tabled::Table::new(vec![RemoteManifestHeader {
             message,
             user_meta,
