@@ -35,9 +35,13 @@ impl std::fmt::Display for Output {
         let mut output: Vec<String> = Vec::new();
         let header = self.manifest.header.clone();
         let message = header.display_message().unwrap_or_default();
-        let user_meta = header.display_user_meta().map_or(String::default(), |v| {
-            serde_json::to_string(&v).expect("Failed to stringify user_meta")
-        });
+        let user_meta = match header.display_user_meta() {
+            Some(meta) => match serde_json::to_string(&meta) {
+                Ok(s) => s,
+                Err(_) => return write!(f, "Failed to stringify user_meta of the returned manifest"),
+            },
+            None => String::default(),
+        };
         let workflow = header.display_workflow().map_or(String::default(), |v| {
             serde_json::to_string(&v).expect("Failed to stringify workflow")
         });
