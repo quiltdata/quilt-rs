@@ -380,6 +380,33 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_serialize_row_entry_with_info() -> Res {
+        use crate::manifest::Row;
+        use multihash::Multihash;
+
+        let row = Row {
+            name: PathBuf::from("test.txt"),
+            place: "s3://test-bucket/test.txt".to_string(),
+            size: 42,
+            hash: Multihash::wrap(0, b"test")?,
+            info: serde_json::json!({"foo": "bar"}),
+            meta: serde_json::Value::Null,
+        };
+
+        let serialized = serialize_row_entry(&row);
+        assert_eq!(
+            serialized,
+            serde_json::json!({
+                "hash": {"type": "SHA256", "value": "test"},
+                "logical_key": "test.txt",
+                "meta": {"user_meta": {"foo": "bar"}},
+                "size": 42,
+            })
+        );
+        Ok(())
+    }
+
     // #[test]
     // fn test_top_hash() -> Res {
     //     let manifest = Table::new(
