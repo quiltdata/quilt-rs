@@ -61,8 +61,8 @@ mod tests {
             bucket: "test-bucket".to_string(),
             namespace: ("foo", "bar").into(),
             path: PathBuf::from("data/file.txt"),
-            version: None,
+            version: Some("final".to_string()),
         };
-        assert_eq!(uri.to_string(), "s3://test-bucket/foo/bar/data/file.txt");
+        assert_eq!(uri.to_string(), "s3://test-bucket/foo/bar/data/file.txt?versionId=final");
     }
 }
