@@ -55,6 +55,7 @@ impl TryFrom<S3PackageUri> for ManifestUri {
 }
 
 /// The same as `ManifestUri` but for legacy JSONL format
+/// They have the same struct-ure, but different impl-ementations, especially, for key `property`.
 #[derive(Clone, Debug)]
 pub struct ManifestUriLegacy {
     pub bucket: String,
@@ -120,18 +121,20 @@ mod tests {
 
     #[test]
     fn test_manifest_uri_try_from_package_uri_with_hash() -> Res {
-        let package_uri = S3PackageUri {
-            bucket: "test-bucket".to_string(),
-            namespace: ("test", "package").into(),
-            revision: RevisionPointer::Hash("abc123".to_string()),
-            path: None,
-            catalog: None,
-        };
-
-        let manifest_uri = ManifestUri::try_from(package_uri)?;
-        assert_eq!(manifest_uri.bucket, "test-bucket");
-        assert_eq!(manifest_uri.namespace, ("test", "package").into());
-        assert_eq!(manifest_uri.hash, "abc123");
+        assert_eq!(
+            ManifestUri::try_from(S3PackageUri {
+                bucket: "test-bucket".to_string(),
+                namespace: ("test", "package").into(),
+                revision: RevisionPointer::Hash("abc123".to_string()),
+                path: None,
+                catalog: None,
+            })?,
+            ManifestUri {
+                bucket: "test-bucket".to_string(),
+                namespace: ("test", "package").into(),
+                hash: "abc123".to_string(),
+            }
+        );
         Ok(())
     }
 }
