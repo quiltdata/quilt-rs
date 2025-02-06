@@ -275,7 +275,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_formatting_without_path() -> Res {
+    fn test_formatting() -> Res {
         let row = Row {
             name: PathBuf::from("Foo"),
             place: "Bar".to_string(),
