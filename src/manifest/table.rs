@@ -409,6 +409,43 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn test_table_record_operations() -> Res {
+        let mut table = Table::default();
+        let path = PathBuf::from("foo/bar");
+        
+        // 1. Check empty table doesn't contain record
+        assert!(!table.contains_record(&path).await);
+
+        // 2. Insert record and verify it exists
+        let row = Row {
+            name: path.clone(),
+            place: "s3://test-bucket/foo/bar".to_string(),
+            size: 42,
+            hash: Multihash::wrap(0, b"test")?,
+            info: serde_json::Value::Null,
+            meta: serde_json::Value::Null,
+        };
+        table.insert_record(row.clone()).await?;
+        assert!(table.contains_record(&path).await);
+
+        // 3. Update record
+        let updated_row = Row {
+            size: 84,
+            ..row.clone()
+        };
+        let old_row = table.update_record(updated_row.clone()).await?;
+        assert_eq!(old_row, Some(row));
+
+        // 4. Remove record and verify state
+        let removed_row = table.remove_record(&path)?;
+        assert_eq!(removed_row, updated_row);
+        assert!(!table.contains_record(&path).await);
+        assert_eq!(table.records_len().await, 0);
+        
+        Ok(())
+    }
+
     // #[test]
     // fn test_top_hash() -> Res {
     //     let manifest = Table::new(
