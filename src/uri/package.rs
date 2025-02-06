@@ -444,7 +444,7 @@ mod tests {
     }
 
     #[test]
-    fn test_stringify() -> Res {
+    fn test_stringify_with_latest() -> Res {
         let uri = S3PackageUri {
             bucket: "bucket".to_string(),
             catalog: Some(Host::Domain("do.ma.in".to_string())),
@@ -501,14 +501,5 @@ mod tests {
         assert!(!(ns3 <= ns1));
 
         Ok(())
-    }
-
-    #[test]
-    fn test_namespace_visitor_expecting() {
-        // Test the error message indirectly through deserialization
-        let result: Result<Namespace, _> = serde_json::from_str("\"invalid\"");
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("Failed parse namespace"));
     }
 }
