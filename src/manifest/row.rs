@@ -294,4 +294,37 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn test_from_s3_attributes() -> Res {
+        use crate::uri::S3Uri;
+        
+        let listing_uri = S3Uri {
+            bucket: "test-bucket".to_string(),
+            key: "prefix/".to_string(),
+            version: None,
+        };
+
+        let object_uri = S3Uri {
+            bucket: "test-bucket".to_string(),
+            key: "prefix/data/file.txt".to_string(),
+            version: Some("v1".to_string()),
+        };
+
+        let attrs = S3Attributes {
+            listing_uri,
+            object_uri,
+            size: 42,
+            hash: Multihash::wrap(345, b"test hash")?,
+        };
+
+        let row = Row::from(attrs);
+        assert_eq!(row.name, PathBuf::from("data/file.txt"));
+        assert_eq!(row.place, "s3://test-bucket/prefix/data/file.txt?versionId=v1");
+        assert_eq!(row.size, 42);
+        assert_eq!(row.hash, Multihash::wrap(345, b"test hash")?);
+        assert_eq!(row.info, serde_json::Value::Null);
+        assert_eq!(row.meta, serde_json::Value::Null);
+        Ok(())
+    }
 }
