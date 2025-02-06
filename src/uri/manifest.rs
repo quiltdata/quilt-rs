@@ -137,4 +137,32 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn test_manifest_uri_to_s3uri() {
+        let manifest_uri = ManifestUri {
+            bucket: "test-bucket".to_string(),
+            namespace: ("test", "package").into(),
+            hash: "abc123".to_string(),
+        };
+
+        let s3_uri: S3Uri = manifest_uri.into();
+        assert_eq!(s3_uri.bucket, "test-bucket");
+        assert_eq!(s3_uri.key, ".quilt/packages/1220abc123.parquet");
+        assert_eq!(s3_uri.version, None);
+    }
+
+    #[test]
+    fn test_manifest_uri_legacy_to_s3uri() {
+        let manifest_uri = ManifestUriLegacy {
+            bucket: "test-bucket".to_string(),
+            namespace: ("test", "package").into(),
+            hash: "abc123".to_string(),
+        };
+
+        let s3_uri: S3Uri = manifest_uri.into();
+        assert_eq!(s3_uri.bucket, "test-bucket");
+        assert_eq!(s3_uri.key, ".quilt/packages/abc123");
+        assert_eq!(s3_uri.version, None);
+    }
 }
