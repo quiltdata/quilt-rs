@@ -323,7 +323,7 @@ mod tests {
 
         let result = Manifest::from_reader(file).await;
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().to_string(), "Empty manifest");
+        assert_eq!(result.unwrap_err().to_string(), "Manifest header: Empty manifest");
         Ok(())
     }
 
@@ -358,7 +358,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Unsupported manifest version: v1"
+            "Manifest header: Unsupported manifest version: v1"
         );
         Ok(())
     }
@@ -387,7 +387,7 @@ mod tests {
     async fn test_manifest_from_reader_empty_physical_keys() -> Res {
         let storage = MockStorage::default();
         let invalid_content = r#"{"version": "v0"}
-{"logical_key": "test.txt", "physical_keys": [], "size": 0, "hash": {"type": "SHA256", "value": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}, "meta": {}}"#;
+{"logical_key": "test.txt", "physical_keys": [], "size": 0, "hash": {"type": "SHA256", "value": "abc123"}, "meta": {}}"#;
         let path = PathBuf::from("empty_physical_keys_manifest.jsonl");
         storage
             .write_file(&path, invalid_content.as_bytes())
@@ -398,7 +398,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Failed to read the manifest header: Physical key is missing"
+            "Manifest header: Physical key is missing"
         );
         Ok(())
     }
