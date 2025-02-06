@@ -331,4 +331,47 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn test_display_workflow_none() {
+        let header = Header::new(None, None, None);
+        assert_eq!(header.display_workflow(), None);
+    }
+
+    #[test]
+    fn test_display_workflow_null() {
+        let header = Header {
+            meta: serde_json::Value::Null,
+            info: serde_json::json!({
+                "message": "",
+                "version": "v0",
+                "workflow": null,
+            }),
+        };
+        assert_eq!(header.display_workflow(), None);
+    }
+
+    #[test]
+    fn test_display_workflow_invalid() {
+        let header = Header {
+            meta: serde_json::Value::Null,
+            info: serde_json::json!({
+                "message": "",
+                "version": "v0",
+                "workflow": "invalid",
+            }),
+        };
+        assert_eq!(header.display_workflow(), None);
+    }
+
+    #[test]
+    fn test_display_workflow_valid() -> Res {
+        let workflow = Workflow {
+            id: Some("test-id".to_string()),
+            config: "test-config".to_string(),
+        };
+        let header = Header::new(None, None, Some(workflow.clone()));
+        assert_eq!(header.display_workflow(), Some(workflow));
+        Ok(())
+    }
 }
