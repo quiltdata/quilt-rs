@@ -47,7 +47,7 @@ async fn commit_package(
                     config: config.to_string(),
                 }),
                 None => match workflow_id {
-                    Some(_) => return Err(Error::Workflow),
+                    Some(id) => return Err(Error::Workflow(id)),
                     None => None,
                 },
             };
@@ -155,7 +155,10 @@ mod tests {
         )
         .await;
 
-        assert_eq!(output.unwrap_err().to_string(), "Workflow not found");
+        assert_eq!(
+            output.unwrap_err().to_string(),
+            "Workflow 'Anything' not found in the workflows/config.yml"
+        );
 
         Ok(())
     }

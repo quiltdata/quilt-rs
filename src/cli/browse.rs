@@ -109,6 +109,23 @@ mod tests {
 
     use crate::cli::model::Model;
 
+    const BROWSE_OUTPUT: &str = r#"+----------------------------+---------------------------------------------------+----------+
+| Remote manifest header                                                                    |
++----------------------------+---------------------------------------------------+----------+
+| message                    | user_meta                                         | workflow |
++----------------------------+---------------------------------------------------+----------+
+| test_spec_write 1697916638 | {"Author":"Ernest","Count":1,"Date":"2023-07-12"} |          |
++----------------------------+---------------------------------------------------+----------+
++---------------+---------------------------------------------------------------------------------------+------+
+| Remote manifest entries                                                                                      |
++---------------+---------------------------------------------------------------------------------------+------+
+| name          | place                                                                                 | size |
++---------------+---------------------------------------------------------------------------------------+------+
+| READ ME.md    | s3://udp-spec/spec/quiltcore/READ%20ME.md?versionId=.l3tAGbfEBC4c.L2ywTpWbnweSpYLe8a  | 33   |
++---------------+---------------------------------------------------------------------------------------+------+
+| timestamp.txt | s3://udp-spec/spec/quiltcore/timestamp.txt?versionId=lifktjQgrgewg1FGXxls3UKtJSjl2shy | 10   |
++---------------+---------------------------------------------------------------------------------------+------+"#;
+
     /// Verifies that the remote Quilt registry has the expected manifest.
     /// Test actually fetch the manifest from Quilt, without mocks.
     #[tokio::test]
@@ -128,9 +145,7 @@ mod tests {
         let output = model(&local_domain, Input { uri }).await?;
 
         let output_str = format!("{}", output);
-        assert!(output_str.contains(r#"| test_spec_write 1697916638 | {"Author":"Ernest","Count":1,"Date":"2023-07-12"} |          |"#));
-        assert!(output_str.contains(r#"| READ ME.md    | s3://udp-spec/spec/quiltcore/READ%20ME.md?versionId=.l3tAGbfEBC4c.L2ywTpWbnweSpYLe8a  | 33   |"#));
-        assert!(output_str.contains(r#"| timestamp.txt | s3://udp-spec/spec/quiltcore/timestamp.txt?versionId=lifktjQgrgewg1FGXxls3UKtJSjl2shy | 10   |"#));
+        assert_eq!(output_str, BROWSE_OUTPUT);
 
         assert_eq!(
             output.manifest.header.display_message().unwrap(),
@@ -183,9 +198,7 @@ mod tests {
         let (model, _temp_dir) = Model::from_temp_dir()?;
 
         if let Std::Out(output_str) = command(model, Input { uri }).await {
-            assert!(output_str.contains(r#"| test_spec_write 1697916638 | {"Author":"Ernest","Count":1,"Date":"2023-07-12"} |          |"#));
-            assert!(output_str.contains(r#"| READ ME.md    | s3://udp-spec/spec/quiltcore/READ%20ME.md?versionId=.l3tAGbfEBC4c.L2ywTpWbnweSpYLe8a  | 33   |"#));
-            assert!(output_str.contains(r#"| timestamp.txt | s3://udp-spec/spec/quiltcore/timestamp.txt?versionId=lifktjQgrgewg1FGXxls3UKtJSjl2shy | 10   |"#));
+            assert_eq!(output_str, BROWSE_OUTPUT);
         } else {
             return Err(Error::Test("Failed to browse".to_string()));
         }
