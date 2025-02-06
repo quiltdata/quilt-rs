@@ -154,12 +154,10 @@ mod tests {
             assert!(status_new_files_str.contains("READ ME.md | Modified"));
         }
 
-        if let Err(e) = storage
+        storage
             .remove_file(working_dir.join(readme_logical_key))
             .await
-        {
-            return Err(Error::Test(format!("Failed to remove file: {}", e)));
-        }
+            .map_err(|e| Error::Test(format!("Failed to remove file: {}", e)))?;
 
         {
             let local_domain = m.get_local_domain().lock().await;

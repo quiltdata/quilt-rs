@@ -190,10 +190,11 @@ mod tests {
         )
         .await;
 
-        if let Error::Io(orig_err) = result.unwrap_err() {
+        let err = result.unwrap_err();
+        if let Error::Io(orig_err) = err {
             assert_eq!(orig_err.kind(), std::io::ErrorKind::PermissionDenied);
         } else {
-            panic!("Unexpected error");
+            panic!("Expected IO error, got: {:?}", err);
         }
 
         Ok(())

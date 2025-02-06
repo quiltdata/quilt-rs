@@ -84,6 +84,7 @@ impl Model {
             local_domain: sync::Mutex::new(local_domain),
         }
     }
+
     pub fn from_temp_dir() -> Result<(Self, TempDir), Error> {
         let temp_dir = TempDir::new()?;
         Ok((Model::from(&temp_dir), temp_dir))
