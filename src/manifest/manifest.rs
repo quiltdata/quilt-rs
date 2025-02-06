@@ -315,6 +315,95 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_manifest_from_reader_empty() -> Res {
+        let storage = MockStorage::default();
+        let path = PathBuf::from("empty_manifest.jsonl");
+        storage.write_file(&path, b"").await?;
+        let file = storage.open_file(&path).await?;
+
+        let result = Manifest::from_reader(file).await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "Empty manifest");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_manifest_from_reader_invalid_utf8() -> Res {
+        let storage = MockStorage::default();
+        let invalid_content = b"\xFF\xFF\xFF\xFF";  // Invalid UTF-8 bytes
+        let path = PathBuf::from("invalid_utf8_manifest.jsonl");
+        storage.write_file(&path, invalid_content).await?;
+        let file = storage.open_file(&path).await?;
+
+        let result = Manifest::from_reader(file).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Failed to read the manifest header"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_manifest_from_reader_unsupported_version() -> Res {
+        let storage = MockStorage::default();
+        let invalid_content = r#"{"version": "v1"}"#;
+        let path = PathBuf::from("unsupported_version_manifest.jsonl");
+        storage
+            .write_file(&path, invalid_content.as_bytes())
+            .await?;
+        let file = storage.open_file(&path).await?;
+
+        let result = Manifest::from_reader(file).await;
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Unsupported manifest version: v1"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_manifest_from_reader_invalid_row() -> Res {
+        let storage = MockStorage::default();
+        let invalid_content = r#"{"version": "v0"}
+{"invalid": "row"}"#;
+        let path = PathBuf::from("invalid_row_manifest.jsonl");
+        storage
+            .write_file(&path, invalid_content.as_bytes())
+            .await?;
+        let file = storage.open_file(&path).await?;
+
+        let result = Manifest::from_reader(file).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("missing field `logical_key`"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_manifest_from_reader_empty_physical_keys() -> Res {
+        let storage = MockStorage::default();
+        let invalid_content = r#"{"version": "v0"}
+{"logical_key": "test.txt", "physical_keys": [], "size": 0, "hash": {"type": "SHA256", "value": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}, "meta": {}}"#;
+        let path = PathBuf::from("empty_physical_keys_manifest.jsonl");
+        storage
+            .write_file(&path, invalid_content.as_bytes())
+            .await?;
+        let file = storage.open_file(&path).await?;
+
+        let result = Manifest::from_reader(file).await;
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Failed to read the manifest header: Physical key is missing"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_manifest_from_reader_valid() -> Res {
         let storage = LocalStorage::default();
         let file = storage.open_file(mocks::manifest::jsonl()).await?;
