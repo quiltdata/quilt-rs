@@ -477,4 +477,36 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn test_manifest_header_from_header() {
+        let header = Header {
+            info: serde_json::json!({
+                "message": "test message",
+                "version": "v0",
+            }),
+            meta: serde_json::json!({"user": "meta"}),
+        };
+
+        assert_eq!(
+            ManifestHeader::from(header),
+            ManifestHeader {
+                version: "v0".to_string(),
+                message: Some("test message".to_string()),
+                user_meta: Some(serde_json::Map::from_iter(vec![
+                    ("user".to_string(), serde_json::json!("meta")),
+                ])),
+                workflow: None,
+            }
+        );
+    }
+
+    #[test]
+    fn test_manifest_header_default() {
+        let header = ManifestHeader::default();
+        assert_eq!(header.version, "v0");
+        assert_eq!(header.message, Some("".to_string()));
+        assert_eq!(header.user_meta, None);
+        assert_eq!(header.workflow, None);
+    }
 }
