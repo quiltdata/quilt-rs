@@ -32,6 +32,12 @@ pub struct ManifestHeader {
     pub workflow: Option<Workflow>,
 }
 
+impl Default for ManifestHeader {
+    fn default() -> Self {
+        Header::default().into()
+    }
+}
+
 impl From<&Header> for ManifestHeader {
     fn from(header: &Header) -> Self {
         ManifestHeader {
@@ -40,6 +46,12 @@ impl From<&Header> for ManifestHeader {
             user_meta: header.display_user_meta(),
             workflow: header.display_workflow(),
         }
+    }
+}
+
+impl From<Header> for ManifestHeader {
+    fn from(header: Header) -> Self {
+        ManifestHeader::from(&header)
     }
 }
 
@@ -230,29 +242,20 @@ impl Manifest {
     }
 }
 
-impl Default for Manifest {
-    fn default() -> Self {
-        Manifest {
-            header: ManifestHeader {
-                version: "v0".to_string(),
-                message: Some("".to_string()),
-                user_meta: None,
-                workflow: None,
-            },
-            rows: Vec::new(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use multihash::Multihash;
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
+    use crate::checksum::MULTIHASH_SHA256;
     use crate::io::storage::mocks::MockStorage;
     use crate::io::storage::LocalStorage;
     use crate::io::storage::Storage;
+    use crate::manifest::Row;
+    use crate::manifest::Table;
     use crate::mocks;
 
     #[test]
@@ -323,14 +326,17 @@ mod tests {
 
         let result = Manifest::from_reader(file).await;
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().to_string(), "Manifest header: Empty manifest");
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Manifest header: Empty manifest"
+        );
         Ok(())
     }
 
     #[tokio::test]
     async fn test_manifest_from_reader_invalid_utf8() -> Res {
         let storage = MockStorage::default();
-        let invalid_content = b"\xFF\xFF\xFF\xFF";  // Invalid UTF-8 bytes
+        let invalid_content = b"\xFF\xFF\xFF\xFF"; // Invalid UTF-8 bytes
         let path = PathBuf::from("invalid_utf8_manifest.jsonl");
         storage.write_file(&path, invalid_content).await?;
         let file = storage.open_file(&path).await?;
@@ -433,25 +439,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_manifest_from_table_with_metadata() -> Res {
-        use std::collections::BTreeMap;
-        use crate::manifest::Row;
-        use crate::manifest::Header;
-        use crate::manifest::Table;
-
-        let mut records = BTreeMap::new();
-        records.insert(
+        let hash = Multihash::<256>::wrap(MULTIHASH_SHA256, b"test")?;
+        let mut table = Table::default();
+        table.set_records(BTreeMap::from([(
             PathBuf::from("test.txt"),
             Row {
                 name: PathBuf::from("test.txt"),
                 place: "s3://test-bucket/test.txt".to_string(),
                 size: 42,
-                hash: Multihash::wrap(0, b"test")?,
+                hash,
                 info: serde_json::json!({"foo": "bar"}),
                 meta: serde_json::json!({"baz": "qux"}),
             },
-        );
-
-        let table = Table::new(Header::default(), records);
+        )]));
         let manifest = Manifest::from_table(&table).await?;
 
         assert_eq!(
@@ -459,22 +459,20 @@ mod tests {
             Manifest {
                 header: ManifestHeader {
                     version: "v0".to_string(),
-                    message: None,
+                    message: Some("".to_string()),
                     user_meta: None,
                     workflow: None,
                 },
-                rows: vec![
-                    ManifestRow {
-                        logical_key: PathBuf::from("test.txt"),
-                        physical_key: "s3://test-bucket/test.txt".to_string(),
-                        size: 42,
-                        hash: ContentHash::SHA256("test".to_string()),
-                        meta: Some(serde_json::Map::from_iter(vec![
-                            ("user_meta".to_string(), serde_json::json!({"baz": "qux"})),
-                            ("foo".to_string(), serde_json::json!("bar")),
-                        ])),
-                    }
-                ],
+                rows: vec![ManifestRow {
+                    logical_key: PathBuf::from("test.txt"),
+                    physical_key: "s3://test-bucket/test.txt".to_string(),
+                    size: 42,
+                    hash: ContentHash::try_from(hash)?,
+                    meta: Some(serde_json::Map::from_iter(vec![
+                        ("user_meta".to_string(), serde_json::json!({"baz": "qux"})),
+                        ("foo".to_string(), serde_json::json!("bar")),
+                    ])),
+                }],
             }
         );
         Ok(())
