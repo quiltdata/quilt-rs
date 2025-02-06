@@ -460,6 +460,38 @@ mod tests {
     }
 
     #[test]
+    fn test_stringify_with_hash() -> Res {
+        let uri = S3PackageUri {
+            bucket: "bucket".to_string(),
+            catalog: None,
+            namespace: ("foo", "bar").into(),
+            revision: RevisionPointer::Hash("abc123".to_string()),
+            path: None,
+        };
+        assert_eq!(
+            uri.to_string(),
+            "quilt+s3://bucket#package=foo/bar@abc123"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_stringify_with_tag() -> Res {
+        let uri = S3PackageUri {
+            bucket: "bucket".to_string(),
+            catalog: None,
+            namespace: ("foo", "bar").into(),
+            revision: RevisionPointer::Tag("foobar".to_string()),
+            path: None,
+        };
+        assert_eq!(
+            uri.to_string(),
+            "quilt+s3://bucket#package=foo/bar@foobar"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_namespace_ordering_greater() -> Res {
         let ns1 = Namespace::from(("z", "a"));
         let ns2 = Namespace::from(("a", "b"));
