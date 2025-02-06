@@ -222,4 +222,31 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_read_byte_stream() -> Res {
+        use crate::mocks;
+        
+        let storage = LocalStorage::default();
+        let stream = storage.read_byte_stream(mocks::manifest::jsonl()).await?;
+        let bytes = stream.collect().await?.to_vec();
+        
+        // Verify we can read the known test file
+        assert!(!bytes.is_empty());
+        assert_eq!(bytes, fs::read(mocks::manifest::jsonl()).await?);
+        
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_write_no_parent() -> Res {
+        let storage = LocalStorage::default();
+        let result = write("foo", b"test").await;
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Missing parent path: foo"
+        );
+        Ok(())
+    }
 }
