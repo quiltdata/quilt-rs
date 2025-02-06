@@ -313,23 +313,32 @@ mod tests {
 
     #[tokio::test]
     async fn test_manifest_from_reader_valid() -> Res {
-        let storage = MockStorage::default();
-        let path = PathBuf::from("fixtures/manifest.jsonl");
-        let file = storage.open_file(&path).await?;
+        use crate::io::storage::local::LocalStorage;
+        use crate::mocks;
 
-        let manifest = Manifest::from_reader(file).await?;
-        assert_eq!(manifest.header.version, "v0");
-        assert_eq!(manifest.header.message, None);
-        assert_eq!(manifest.header.user_meta, None);
-        assert_eq!(manifest.rows.len(), 1);
-
-        let row = &manifest.rows[0];
-        assert_eq!(row.logical_key, PathBuf::from("README.md"));
+        let storage = LocalStorage::default();
+        let file = storage.open_file(mocks::manifest::jsonl()).await?;
+        
         assert_eq!(
-            row.physical_key,
-            "s3://udp-spec/test_run/test_push/README.md?versionId=Rv.GfYdUWkLfeTT73Rodm3aBUrTIcC1X"
+            Manifest::from_reader(file).await?,
+            Manifest {
+                header: ManifestHeader {
+                    version: "v0".to_string(),
+                    message: None,
+                    user_meta: None,
+                    workflow: None,
+                },
+                rows: vec![
+                    ManifestRow {
+                        logical_key: PathBuf::from("README.md"),
+                        physical_key: "s3://udp-spec/test_run/test_push/README.md?versionId=Rv.GfYdUWkLfeTT73Rodm3aBUrTIcC1X".to_string(),
+                        size: 26,
+                        hash: ContentHash::SHA256("bc2f10e72e751ea6cc1e0b9bdbbb531d437ccbba684b9fef90e1cc228318e112".to_string()),
+                        meta: Some(serde_json::Map::new()),
+                    }
+                ],
+            }
         );
-        assert_eq!(row.size, 26);
         Ok(())
     }
 }
