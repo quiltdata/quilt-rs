@@ -247,10 +247,13 @@ impl Default for Manifest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::storage::mocks::MockStorage;
-    use crate::io::storage::Storage;
+
     use std::path::PathBuf;
-    use tokio;
+
+    use crate::io::storage::mocks::MockStorage;
+    use crate::io::storage::LocalStorage;
+    use crate::io::storage::Storage;
+    use crate::mocks;
 
     #[test]
     fn test_equality_of_strictly_equal() {
@@ -307,18 +310,15 @@ mod tests {
         assert!(result
             .unwrap_err()
             .to_string()
-            .contains("Failed to read the manifest header"));
+            .contains("missing field `version`"));
         Ok(())
     }
 
     #[tokio::test]
     async fn test_manifest_from_reader_valid() -> Res {
-        use crate::io::storage::local::LocalStorage;
-        use crate::mocks;
-
         let storage = LocalStorage::default();
         let file = storage.open_file(mocks::manifest::jsonl()).await?;
-        
+
         assert_eq!(
             Manifest::from_reader(file).await?,
             Manifest {
