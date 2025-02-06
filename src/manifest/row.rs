@@ -93,6 +93,8 @@ impl Header {
                         config: workflow
                             .get("config")
                             .expect("Workflow URL is empty")
+                            .as_str()
+                            .expect("Workflow config must be a string")
                             .to_string(),
                     }),
                     serde_json::Value::Null => None,
