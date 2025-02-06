@@ -505,14 +505,10 @@ mod tests {
 
     #[test]
     fn test_namespace_visitor_expecting() {
-        use std::fmt::Write;
-        
-        let mut output = String::new();
-        let visitor = NamespaceVisitor;
-        // Create a formatter that writes to our string
-        let mut formatter = fmt::Formatter::new(&mut output);
-        // Call expecting() and verify it succeeds
-        let result = visitor.expecting(&mut formatter);
-        assert!(result.is_ok());
+        // Test the error message indirectly through deserialization
+        let result: Result<Namespace, _> = serde_json::from_str("\"invalid\"");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Failed parse namespace"));
     }
 }
