@@ -50,3 +50,19 @@ impl fmt::Display for ObjectUri {
         write!(f, "{}", S3Uri::from(self))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_object_uri_display() {
+        let uri = ObjectUri {
+            bucket: "test-bucket".to_string(),
+            namespace: ("foo", "bar").into(),
+            path: PathBuf::from("data/file.txt"),
+            version: None,
+        };
+        assert_eq!(uri.to_string(), "s3://test-bucket/foo/bar/data/file.txt");
+    }
+}
