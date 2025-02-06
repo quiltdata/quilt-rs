@@ -318,13 +318,17 @@ mod tests {
             hash: Multihash::wrap(345, b"test hash")?,
         };
 
-        let row = Row::from(attrs);
-        assert_eq!(row.name, PathBuf::from("data/file.txt"));
-        assert_eq!(row.place, "s3://test-bucket/prefix/data/file.txt?versionId=v1");
-        assert_eq!(row.size, 42);
-        assert_eq!(row.hash, Multihash::wrap(345, b"test hash")?);
-        assert_eq!(row.info, serde_json::Value::Null);
-        assert_eq!(row.meta, serde_json::Value::Null);
+        assert_eq!(
+            Row::from(attrs),
+            Row {
+                name: PathBuf::from("data/file.txt"),
+                place: "s3://test-bucket/prefix/data/file.txt?versionId=v1".to_string(),
+                size: 42,
+                hash: Multihash::wrap(345, b"test hash")?,
+                info: serde_json::Value::Null,
+                meta: serde_json::Value::Null,
+            }
+        );
         Ok(())
     }
 }
