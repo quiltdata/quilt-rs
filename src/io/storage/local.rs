@@ -243,7 +243,10 @@ mod tests {
         let storage = LocalStorage::default();
         let result = storage.write_file("", b"test").await;
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().to_string(), "Missing parent path error: ");
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Missing parent path error: "
+        );
         Ok(())
     }
 }

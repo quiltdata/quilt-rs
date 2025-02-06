@@ -57,6 +57,9 @@ mod tests {
             path: PathBuf::from("data/file.txt"),
             version: Some("final".to_string()),
         };
-        assert_eq!(uri.to_string(), "s3://test-bucket/foo/bar/data/file.txt?versionId=final");
+        assert_eq!(
+            uri.to_string(),
+            "s3://test-bucket/foo/bar/data/file.txt?versionId=final"
+        );
     }
 }

@@ -300,7 +300,7 @@ mod tests {
     #[test]
     fn test_from_s3_attributes() -> Res {
         use crate::uri::S3Uri;
-        
+
         let listing_uri = S3Uri {
             bucket: "test-bucket".to_string(),
             key: "prefix/".to_string(),

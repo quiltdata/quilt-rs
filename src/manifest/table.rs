@@ -57,6 +57,12 @@ pub struct TopHasher {
     pub hasher: Box<Sha256>,
 }
 
+impl Default for TopHasher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TopHasher {
     pub fn new() -> Self {
         TopHasher {
@@ -413,7 +419,7 @@ mod tests {
     async fn test_table_record_operations() -> Res {
         let mut table = Table::default();
         let path = PathBuf::from("foo/bar");
-        
+
         // 1. Check empty table doesn't contain record
         assert!(!table.contains_record(&path).await);
 
@@ -442,7 +448,7 @@ mod tests {
         assert_eq!(removed_row, updated_row);
         assert!(!table.contains_record(&path).await);
         assert_eq!(table.records_len().await, 0);
-        
+
         Ok(())
     }
 

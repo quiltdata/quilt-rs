@@ -493,9 +493,10 @@ mod tests {
             ManifestHeader {
                 version: "v0".to_string(),
                 message: Some("test message".to_string()),
-                user_meta: Some(serde_json::Map::from_iter(vec![
-                    ("user".to_string(), serde_json::json!("meta")),
-                ])),
+                user_meta: Some(serde_json::Map::from_iter(vec![(
+                    "user".to_string(),
+                    serde_json::json!("meta")
+                ),])),
                 workflow: None,
             }
         );
