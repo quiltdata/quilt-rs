@@ -430,4 +430,53 @@ mod tests {
         );
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_manifest_from_table_with_metadata() -> Res {
+        use std::collections::BTreeMap;
+        use crate::manifest::Row;
+        use crate::manifest::Header;
+        use crate::manifest::Table;
+
+        let mut records = BTreeMap::new();
+        records.insert(
+            PathBuf::from("test.txt"),
+            Row {
+                name: PathBuf::from("test.txt"),
+                place: "s3://test-bucket/test.txt".to_string(),
+                size: 42,
+                hash: Multihash::wrap(0, b"test")?,
+                info: serde_json::json!({"foo": "bar"}),
+                meta: serde_json::json!({"baz": "qux"}),
+            },
+        );
+
+        let table = Table::new(Header::default(), records);
+        let manifest = Manifest::from_table(&table).await?;
+
+        assert_eq!(
+            manifest,
+            Manifest {
+                header: ManifestHeader {
+                    version: "v0".to_string(),
+                    message: None,
+                    user_meta: None,
+                    workflow: None,
+                },
+                rows: vec![
+                    ManifestRow {
+                        logical_key: PathBuf::from("test.txt"),
+                        physical_key: "s3://test-bucket/test.txt".to_string(),
+                        size: 42,
+                        hash: ContentHash::SHA256("test".to_string()),
+                        meta: Some(serde_json::Map::from_iter(vec![
+                            ("user_meta".to_string(), serde_json::json!({"baz": "qux"})),
+                            ("foo".to_string(), serde_json::json!("bar")),
+                        ])),
+                    }
+                ],
+            }
+        );
+        Ok(())
+    }
 }
