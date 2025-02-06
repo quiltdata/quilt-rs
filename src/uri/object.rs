@@ -39,15 +39,9 @@ impl From<ObjectUri> for S3Uri {
     }
 }
 
-impl From<&ObjectUri> for S3Uri {
-    fn from(uri: &ObjectUri) -> S3Uri {
-        S3Uri::from(uri.clone())
-    }
-}
-
 impl fmt::Display for ObjectUri {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", S3Uri::from(self))
+        write!(f, "{}", S3Uri::from(self.to_owned()))
     }
 }
 
