@@ -267,14 +267,22 @@ impl RemoteS3 {
 
     async fn get_region_for_bucket(&self, bucket: &str) -> Res<Region> {
         {
-            if let Some(region) = self.regions.read().unwrap().get(bucket) {
+            if let Some(region) = self
+                .regions
+                .read()
+                .map_err(|e| Error::PoisonLock(e.to_string()))?
+                .get(bucket)
+            {
                 return Ok(region.clone());
             }
         }
 
         let region = find_bucket_region(&self.http, bucket).await?;
 
-        let mut map = self.regions.write().unwrap();
+        let mut map = self
+            .regions
+            .write()
+            .map_err(|e| Error::PoisonLock(e.to_string()))?;
         match map.entry(bucket.to_owned()) {
             Entry::Occupied(entry) => Ok(entry.get().clone()),
             Entry::Vacant(entry) => Ok(entry.insert(Region::new(region)).clone()),

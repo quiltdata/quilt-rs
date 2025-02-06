@@ -88,6 +88,9 @@ pub enum Error {
     #[error("Path prefix not found: {0}")]
     PathPrefixNotFound(#[from] std::path::StripPrefixError),
 
+    #[error("Failed to read RwLock: {0}")]
+    PoisonLock(String),
+
     #[error("Push error: {0}")]
     Push(String),
 
