@@ -215,7 +215,7 @@ mod tests {
         );
 
         {
-            let local_domain = m.get_local_domain().lock().await;
+            let local_domain = m.get_local_domain();
             let install_once_more = model(
             &local_domain,
             Input {

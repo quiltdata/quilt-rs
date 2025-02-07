@@ -31,7 +31,7 @@ pub trait Commands {
     }
 
     async fn install(&self, args: install::Input) -> Result<install::Output, Error> {
-        let local_domain = &self.get_local_domain().lock().await;
+        let local_domain = self.get_local_domain();
         install::model(local_domain, args).await
     }
 

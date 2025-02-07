@@ -160,7 +160,7 @@ mod tests {
             .map_err(|e| Error::Test(format!("Failed to remove file: {}", e)))?;
 
         {
-            let local_domain = m.get_local_domain().lock().await;
+            let local_domain = m.get_local_domain();
             let status_file_removed = model(
                 &local_domain,
                 Input {

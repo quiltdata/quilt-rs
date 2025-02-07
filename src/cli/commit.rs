@@ -159,7 +159,7 @@ mod tests {
         let uri= "quilt+s3://data-yaml-spec-tests#package=reference/message-only@ce2ca6a39eb02725b24e3ccf158022dc80c2ab96b066e5660d87abafdbaee768";
         let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
         {
-            let local_domain = m.get_local_domain().lock().await;
+            let local_domain = m.get_local_domain();
 
             let output = model(
                 &local_domain,
