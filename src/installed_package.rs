@@ -218,6 +218,12 @@ mod tests {
         let remote = RemoteS3::new();
         let namespace: Namespace = ("test", "history").into();
 
+        // Initialize domain lineage file
+        storage.write_file(
+            temp_file.path().to_path_buf(),
+            br#"{"packages": {"test/history": {}}}"#,
+        ).await?;
+
         // Create test package
         let domain_lineage = lineage::DomainLineageIo::new(temp_file.path().to_path_buf());
         let package_lineage = domain_lineage.create_package_lineage(namespace.clone());
