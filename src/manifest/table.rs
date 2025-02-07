@@ -464,7 +464,6 @@ mod tests {
                        "message": "Second revision",
                        "version": "v0",
                 }),
-                ..Header::default()
             },
             BTreeMap::from([(
                 PathBuf::from("test.md"),

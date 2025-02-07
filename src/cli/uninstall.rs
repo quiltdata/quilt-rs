@@ -54,7 +54,7 @@ mod tests {
         {
             let local_domain = m.get_local_domain();
             let output = model(
-                &local_domain,
+                local_domain,
                 Input {
                     namespace: ("spec", "quiltcore").into(),
                 },
@@ -68,7 +68,7 @@ mod tests {
             let local_domain = m.get_local_domain();
             // Try to uninstall again - should fail
             if let Err(error_str) = model(
-                &local_domain,
+                local_domain,
                 Input {
                     namespace: ("spec", "quiltcore").into(),
                 },

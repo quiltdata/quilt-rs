@@ -143,7 +143,7 @@ mod tests {
         {
             let local_domain = m.get_local_domain();
 
-            let output = model(&local_domain, Input { uri }).await?;
+            let output = model(local_domain, Input { uri }).await?;
 
             let output_str = format!("{}", output);
             assert_eq!(output_str, BROWSE_OUTPUT);

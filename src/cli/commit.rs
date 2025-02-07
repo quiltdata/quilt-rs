@@ -104,7 +104,7 @@ mod tests {
             let local_domain = m.get_local_domain();
 
             let output = model(
-                &local_domain,
+                local_domain,
                 Input {
                     message: "#Test message 1234!?#".to_string(),
                     namespace: ("reference", "message-only").into(),
@@ -135,7 +135,7 @@ mod tests {
             let local_domain = m.get_local_domain();
 
             let output = model(
-                &local_domain,
+                local_domain,
                 Input {
                     message: "#Test message 1234!?#".to_string(),
                     namespace: ("reference", "message-only").into(),
@@ -162,7 +162,7 @@ mod tests {
             let local_domain = m.get_local_domain();
 
             let output = model(
-                &local_domain,
+                local_domain,
                 Input {
                     message: "#Test message 1234!?#".to_string(),
                     namespace: ("reference", "message-only").into(),
@@ -186,10 +186,10 @@ mod tests {
         let uri= "quilt+s3://data-yaml-spec-tests#package=reference/meta@a0e161c9a281f38382007f4775e7d6ecbb50f929a197ba3e84443ec911ab6388";
         let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
         {
-            let local_domain = m.get_local_domain().lock().await;
+            let local_domain = m.get_local_domain();
 
             let output = model(
-                &local_domain,
+                local_domain,
                 Input {
                     message: "Initial".to_string(),
                     namespace: ("reference", "meta").into(),
@@ -242,9 +242,9 @@ mod tests {
             "d6e62c3c43ddd30447d99eede1c7280c017b15cc716037b74af7bb5230fbb61a";
 
         {
-            let local_domain = m.get_local_domain().lock().await;
+            let local_domain = m.get_local_domain();
 
-            let output = model(&local_domain, first_input.clone())
+            let output = model(local_domain, first_input.clone())
                 .await
                 .expect("Failed to commit");
 
@@ -255,8 +255,8 @@ mod tests {
         }
 
         {
-            let local_domain = m.get_local_domain().lock().await;
-            let second_commit = model(&local_domain, first_input)
+            let local_domain = m.get_local_domain();
+            let second_commit = model(local_domain, first_input)
                 .await
                 .expect("Failed to commit second commit which is identical to the first one");
 
@@ -268,9 +268,9 @@ mod tests {
         }
 
         {
-            let local_domain = m.get_local_domain().lock().await;
+            let local_domain = m.get_local_domain();
             let third_commit = model(
-                &local_domain,
+                local_domain,
                 Input {
                     message: "New commit message".to_string(),
                     namespace: ("spec", "quilt-rs").into(),
@@ -297,9 +297,9 @@ mod tests {
         }
 
         {
-            let local_domain = m.get_local_domain().lock().await;
+            let local_domain = m.get_local_domain();
             let not_found = model(
-                &local_domain,
+                local_domain,
                 Input {
                     message: "Anything".to_string(),
                     namespace: ("a", "b").into(),
@@ -319,9 +319,9 @@ mod tests {
             .await
             .expect("Failed to write timestamp.txt to the installed package working directory");
         {
-            let local_domain = m.get_local_domain().lock().await;
+            let local_domain = m.get_local_domain();
             let commit_the_same_file = model(
-                &local_domain,
+                local_domain,
                 Input {
                     message: "Test message".to_string(),
                     namespace: ("spec", "quilt-rs").into(),

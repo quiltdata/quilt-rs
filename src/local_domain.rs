@@ -2,8 +2,6 @@ use std::marker::Unpin;
 use std::path::Path;
 use std::path::PathBuf;
 
-use tokio::sync::Mutex;
-
 use crate::flow;
 use crate::installed_package::InstalledPackage;
 use crate::io::manifest::build_manifest_from_rows_stream;

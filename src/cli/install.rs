@@ -140,7 +140,7 @@ mod tests {
             let local_domain = m.get_local_domain();
 
             let output = model(
-                &local_domain,
+                local_domain,
                 Input {
                     namespace: None,
                     paths: Some(vec![timestamp_logical_key.clone()]),
@@ -217,7 +217,7 @@ mod tests {
         {
             let local_domain = m.get_local_domain();
             let install_once_more = model(
-            &local_domain,
+            local_domain,
             Input {
                 namespace: None,
                 paths: None,
