@@ -138,7 +138,7 @@ impl InstalledPackage {
         }
     }
 
-    pub async fn push(&self) -> Res<ManifestUri> {
+    pub async fn push(&self, workflow: Option<Workflow>) -> Res<ManifestUri> {
         let lineage = self.lineage.read(&self.storage).await?;
 
         if lineage.commit.is_none() {
@@ -153,6 +153,7 @@ impl InstalledPackage {
             &self.storage,
             &self.remote,
             Some(self.namespace.clone()),
+            workflow,
         )
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;

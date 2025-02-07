@@ -32,7 +32,7 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
     }
 }
 
-async fn resolve_workflow(
+pub async fn resolve_workflow(
     local_domain: &quilt_rs::LocalDomain,
     namespace: Namespace,
     workflow_id: Option<String>,

@@ -131,6 +131,14 @@ impl Header {
     pub fn get_workflow(&self) -> Option<serde_json::Value> {
         self.info.get("workflow").cloned()
     }
+
+    pub fn set_workflow(&mut self, workflow: Workflow) {
+        if let Some(obj) = self.info.as_object_mut() {
+            obj.insert("workflow".to_string(), serde_json::json!(workflow));
+        } else {
+            panic!("Header info is not an object");
+        }
+    }
 }
 
 impl Default for Header {

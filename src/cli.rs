@@ -124,7 +124,10 @@ enum Commands {
         /// Ex. foo/bar
         #[arg(short, long)]
         namespace: String,
-        // FIXME: add workflow?
+        /// Workflow ID
+        /// Ex. "my_workflow"
+        #[arg(short, long)]
+        workflow: Option<String>,
     },
     /// Status of the package: modified, up-to-date, outdated
     Status {
@@ -251,9 +254,14 @@ pub async fn init() -> Result<(), Error> {
             print(pull::command(Model::from(domain), args).await);
             Ok(())
         }
-        Commands::Push { domain, namespace } => {
+        Commands::Push {
+            domain,
+            namespace,
+            workflow,
+        } => {
             let args = push::Input {
                 namespace: namespace.try_into()?,
+                workflow,
             };
             log::info!("Pushing {:?}", args);
             print(push::command(Model::from(domain), args).await);

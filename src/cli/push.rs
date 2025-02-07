@@ -1,6 +1,7 @@
 use quilt_rs::uri::ManifestUri;
 use quilt_rs::uri::Namespace;
 
+use crate::cli::commit::resolve_workflow;
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
 use crate::cli::Error;
@@ -8,6 +9,7 @@ use crate::cli::Error;
 #[derive(Debug)]
 pub struct Input {
     pub namespace: Namespace,
+    pub workflow: Option<String>,
 }
 
 #[derive(Debug)]
@@ -31,18 +33,32 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 async fn push_package(
     local_domain: &quilt_rs::LocalDomain,
     namespace: Namespace,
+    workflow_id: Option<String>,
 ) -> Result<ManifestUri, Error> {
     match local_domain.get_installed_package(&namespace).await? {
-        Some(installed_package) => Ok(installed_package.push().await?),
+        Some(installed_package) => {
+            // FIXME: we can't push without workflow, if there is workflows config
+            let workflow = match workflow_id {
+                None => {
+                    let table = installed_package.manifest().await?;
+                    table.header.display_workflow()
+                }
+                Some(id) => resolve_workflow(local_domain, namespace, Some(id)).await?,
+            };
+            Ok(installed_package.push(workflow).await?)
+        }
         None => Err(Error::NamespaceNotFound(namespace)),
     }
 }
 
 pub async fn model(
     local_domain: &quilt_rs::LocalDomain,
-    Input { namespace }: Input,
+    Input {
+        namespace,
+        workflow,
+    }: Input,
 ) -> Result<Output, Error> {
-    let manifest_uri = push_package(local_domain, namespace).await?;
+    let manifest_uri = push_package(local_domain, namespace, workflow).await?;
     Ok(Output {
         hash: manifest_uri.hash,
     })
@@ -64,6 +80,7 @@ mod tests {
             m,
             Input {
                 namespace: ("in", "valid").into(),
+                workflow: None,
             },
         )
         .await
@@ -88,6 +105,7 @@ mod tests {
             m,
             Input {
                 namespace: ("spec", "quiltcore").into(),
+                workflow: None,
             },
         )
         .await

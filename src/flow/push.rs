@@ -13,6 +13,7 @@ use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::manifest::Row;
 use crate::manifest::Table;
+use crate::manifest::Workflow;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
@@ -62,6 +63,7 @@ pub async fn push_package(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     namespace: Option<Namespace>,
+    workflow: Option<Workflow>,
 ) -> Res<PackageLineage> {
     let commit = match lineage.commit {
         None => return Ok(lineage), // nothing to commit
@@ -81,7 +83,10 @@ pub async fn push_package(
         ..lineage.remote.clone()
     };
 
-    let header = local_manifest.get_header().await?;
+    let mut header = local_manifest.get_header().await?;
+    if let Some(w) = workflow {
+        header.set_workflow(w);
+    }
     let package_handle = S3PackageHandle::from(manifest_uri.clone());
     let stream = Box::pin(
         stream_uploaded_local_rows(remote, &local_manifest, &remote_manifest, &package_handle)
@@ -147,6 +152,7 @@ mod tests {
             &storage,
             &remote,
             None,
+            None,
         )
         .await?;
         assert_eq!(lineage, PackageLineage::default());
@@ -197,6 +203,7 @@ mod tests {
             &paths::DomainPaths::default(),
             &storage,
             &remote,
+            None,
             None,
         )
         .await?;
@@ -273,6 +280,7 @@ mod tests {
             &paths::DomainPaths::default(),
             &storage,
             &remote,
+            None,
             None,
         )
         .await?;
