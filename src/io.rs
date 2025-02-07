@@ -16,10 +16,16 @@ mod tests {
     #[tokio::test]
     async fn test_multiple_read_descriptors() {
         // Open two separate file descriptors for reading the same file
-        let fd1 = File::open("fixtures/manifest.jsonl").await.unwrap();
-        let fd2 = File::open("fixtures/manifest.jsonl").await.unwrap();
+        let mut fd1 = File::open("fixtures/manifest.jsonl").await.unwrap();
+        let mut fd2 = File::open("fixtures/manifest.jsonl").await.unwrap();
 
-        // If we got here without errors, the test passes
-        // The descriptors will be automatically closed when dropped
+        // Read contents from both descriptors
+        let mut contents1 = Vec::new();
+        let mut contents2 = Vec::new();
+        tokio::io::AsyncReadExt::read_to_end(&mut fd1, &mut contents1).await.unwrap();
+        tokio::io::AsyncReadExt::read_to_end(&mut fd2, &mut contents2).await.unwrap();
+
+        // Assert contents match
+        assert_eq!(contents1, contents2);
     }
 }
