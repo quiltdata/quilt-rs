@@ -1,8 +1,37 @@
 use std::fmt;
+use std::str::Chars;
 
 use url::Url;
 
 use crate::Error;
+
+fn head_str<'a>(mut chars: Chars<'a>) -> (Option<char>, &'a str) {
+    let leading_char = chars.next();
+    let rest = chars.as_str();
+    (leading_char, rest)
+}
+
+fn extract_path_relative_to_bucket(path: &str) -> Result<&str, Error> {
+    let (leading_char, rest) = head_str(path.chars());
+
+    match leading_char {
+        None => {
+            return Err(Error::S3Uri("Path does not exist".to_string()));
+        }
+        Some('/') => (),
+        Some(_) => {
+            return Err(Error::S3Uri(
+                "Expected path starting with slash".to_string(),
+            ));
+        }
+    }
+
+    if rest.is_empty() {
+        return Err(Error::S3Uri("Path does not exist".to_string()));
+    }
+
+    Ok(rest)
+}
 
 /// struct representation of the generic `s3://url`
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -26,10 +55,16 @@ impl TryFrom<&str> for S3Uri {
         let bucket = parsed_url
             .host_str()
             .ok_or(Error::S3Uri(format!("Missing bucket in {}", input)))?;
-        if parsed_url.path().is_empty() {
-            return Err(Error::S3Uri(format!("Path does not exist in {}", input)));
-        }
-        let key = percent_encoding::percent_decode_str(&parsed_url.path()[1..]).decode_utf8()?;
+
+        let path = extract_path_relative_to_bucket(parsed_url.path()).map_err(|err| {
+            if let Error::S3Uri(msg) = err {
+                Error::S3Uri(format!("{} in {}", msg, input))
+            } else {
+                err
+            }
+        })?;
+
+        let key = percent_encoding::percent_decode_str(&path).decode_utf8()?;
         let queries = parsed_url.query_pairs().into_owned().collect::<Vec<_>>();
         if queries.len() > 1 {
             return Err(Error::S3Uri(format!(
@@ -116,6 +151,16 @@ mod tests {
         assert_eq!(
             uri.unwrap_err().to_string(),
             "Invalid S3 URI: Path does not exist in s3://bucket".to_string(),
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_no_path_trailing_slash() -> Res {
+        let uri = S3Uri::try_from("s3://bucket/");
+        assert_eq!(
+            uri.unwrap_err().to_string(),
+            "Invalid S3 URI: Path does not exist in s3://bucket/".to_string(),
         );
         Ok(())
     }
