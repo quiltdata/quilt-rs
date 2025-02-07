@@ -45,6 +45,7 @@ fn serialize_table_header(header: &Header) -> serde_json::Map<String, serde_json
     }
     if let Some(workflow) = header.get_workflow() {
         if workflow.is_object() {
+            // TODO: validate workflow. It should be `{ id: string, config: string }`
             header_meta.insert("workflow".to_string(), workflow);
         }
     }

@@ -5,7 +5,7 @@ use url::Url;
 
 use crate::Error;
 
-fn head_str<'a>(mut chars: Chars<'a>) -> (Option<char>, &'a str) {
+fn head_str(mut chars: Chars<'_>) -> (Option<char>, &str) {
     let leading_char = chars.next();
     let rest = chars.as_str();
     (leading_char, rest)
@@ -64,7 +64,7 @@ impl TryFrom<&str> for S3Uri {
             }
         })?;
 
-        let key = percent_encoding::percent_decode_str(&path).decode_utf8()?;
+        let key = percent_encoding::percent_decode_str(path).decode_utf8()?;
         let queries = parsed_url.query_pairs().into_owned().collect::<Vec<_>>();
         if queries.len() > 1 {
             return Err(Error::S3Uri(format!(

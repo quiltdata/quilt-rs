@@ -47,6 +47,10 @@ pub struct Header {
     pub(crate) meta: serde_json::Value, // user metadata
 }
 
+// There is some confusion between `display_*` and `get_*` methods :(
+// TODO: Probably, it makes sense to create structs
+//       for `message`, `user_meta` and `workflow`
+//       and implement `From` converters for them
 impl Header {
     pub fn new(
         message: Option<String>,
