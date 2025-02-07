@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use tokio::sync::Mutex;
 use tracing::log;
 
 use crate::flow;
@@ -28,7 +27,7 @@ use crate::Res;
 /// It can be instantiated from `LocalDomain` by installing new or listing existing packages.
 #[derive(Debug)]
 pub struct InstalledPackage<S: Storage = LocalStorage, R: Remote = RemoteS3> {
-    pub lineage: Mutex<lineage::PackageLineageIo>,
+    pub lineage: lineage::PackageLineageIo,
     pub paths: paths::DomainPaths,
     pub remote: R,
     pub storage: S,
