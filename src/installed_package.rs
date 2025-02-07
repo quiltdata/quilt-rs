@@ -188,7 +188,7 @@ impl InstalledPackage {
     }
 
     pub async fn reset_to_latest(&self) -> Res<ManifestUri> {
-        let lineage = self.lineage.lock().await.read(&self.storage).await?;
+        let lineage = self.lineage.read(&self.storage).await?;
         let mut manifest = self.manifest().await?;
         let lineage = flow::reset_to_latest(
             lineage,

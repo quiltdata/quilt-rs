@@ -83,7 +83,7 @@ impl LocalDomain {
     pub fn create_installed_package(&self, namespace: Namespace) -> Res<InstalledPackage> {
         // TODO: seems like you can use PackageLineage as an argument instead of namespace
         Ok(InstalledPackage {
-            lineage: Mutex::new(self.lineage.create_package_lineage(namespace.clone())),
+            lineage: self.lineage.create_package_lineage(namespace.clone()),
             namespace,
             paths: self.paths.clone(),
             remote: self.remote.try_clone()?,
