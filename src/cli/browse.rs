@@ -141,7 +141,7 @@ mod tests {
 
         let (m, _temp_dir) = Model::from_temp_dir()?;
         {
-            let local_domain = m.get_local_domain().lock().await;
+            let local_domain = m.get_local_domain();
 
             let output = model(&local_domain, Input { uri }).await?;
 

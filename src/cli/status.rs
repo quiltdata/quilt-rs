@@ -109,7 +109,7 @@ mod tests {
             .await?;
 
         {
-            let local_domain = m.get_local_domain().lock().await;
+            let local_domain = m.get_local_domain();
             let output = model(
                 &local_domain,
                 Input {

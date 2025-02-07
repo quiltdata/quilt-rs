@@ -101,7 +101,7 @@ mod tests {
         let uri= "quilt+s3://udp-spec#package=reference/message-only@095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f";
         let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
         {
-            let local_domain = m.get_local_domain().lock().await;
+            let local_domain = m.get_local_domain();
 
             let output = model(
                 &local_domain,

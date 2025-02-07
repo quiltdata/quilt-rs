@@ -52,7 +52,7 @@ mod tests {
         let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
 
         {
-            let local_domain = m.get_local_domain().lock().await;
+            let local_domain = m.get_local_domain();
             let output = model(
                 &local_domain,
                 Input {
