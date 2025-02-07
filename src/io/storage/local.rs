@@ -26,6 +26,7 @@ async fn write(path: impl AsRef<Path> + Send, bytes: &[u8]) -> Res {
     let mut file = fs::File::create(&path).await?;
 
     file.write_all(bytes).await?;
+    file.flush().await?;
 
     Ok(())
 }
