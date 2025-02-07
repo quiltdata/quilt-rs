@@ -306,7 +306,9 @@ mod tests {
     #[test]
     fn test_syntax_error() {
         assert_eq!(
-            DomainLineage::try_from(b"err".to_vec()).unwrap_err().to_string(),
+            DomainLineage::try_from(b"err".to_vec())
+                .unwrap_err()
+                .to_string(),
             "Failed to parse lineage file: expected value at line 1 column 1".to_string()
         );
     }
