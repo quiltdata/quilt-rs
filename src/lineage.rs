@@ -193,17 +193,6 @@ pub struct DomainLineage {
     pub packages: BTreeMap<Namespace, PackageLineage>,
 }
 
-impl TryFrom<&str> for DomainLineage {
-    type Error = Error;
-
-    fn try_from(input: &str) -> Result<Self, Self::Error> {
-        serde_json::from_str(input).map_err(|err| {
-            log::error!("Failed to parse `&str` for `DomainLineage` in `{}`", input);
-            Error::LineageParse(err)
-        })
-    }
-}
-
 impl TryFrom<Vec<u8>> for DomainLineage {
     type Error = Error;
 
@@ -317,7 +306,7 @@ mod tests {
     #[test]
     fn test_syntax_error() {
         assert_eq!(
-            DomainLineage::try_from("err").unwrap_err().to_string(),
+            DomainLineage::try_from(b"err".to_vec()).unwrap_err().to_string(),
             "Failed to parse lineage file: expected value at line 1 column 1".to_string()
         );
     }
@@ -327,7 +316,7 @@ mod tests {
         // NOTE: @fiskus I don't think this is developer friendly
         //       I'd like to remove serde(default), so this test fails
         assert_eq!(
-            DomainLineage::try_from(r#"{"notkey": 123}"#).unwrap(),
+            DomainLineage::try_from(br#"{"notkey": 123}"#.to_vec()).unwrap(),
             DomainLineage {
                 packages: BTreeMap::new(),
             }
@@ -336,7 +325,7 @@ mod tests {
 
     #[test]
     fn test_wrong_value() {
-        assert!(DomainLineage::try_from(r#"{"packages": 123}"#)
+        assert!(DomainLineage::try_from(br#"{"packages": 123}"#.to_vec())
             .unwrap_err()
             .to_string()
             .starts_with("Failed to parse lineage file: invalid type:"));
@@ -345,7 +334,7 @@ mod tests {
     #[test]
     fn test_parsing_json_ok() {
         assert_eq!(
-            DomainLineage::try_from(r###"{"packages":{}}"###).unwrap(),
+            DomainLineage::try_from(br###"{"packages":{}}"###.to_vec()).unwrap(),
             DomainLineage {
                 packages: BTreeMap::new(),
             }
