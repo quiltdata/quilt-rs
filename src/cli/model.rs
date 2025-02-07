@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 use tempfile::TempDir;
-use tokio::sync;
 
 use crate::cli::benchmark;
 use crate::cli::browse;
@@ -15,14 +14,14 @@ use crate::cli::uninstall;
 use crate::cli::Error;
 
 pub struct Model {
-    local_domain: sync::Mutex<quilt_rs::LocalDomain>,
+    local_domain: quilt_rs::LocalDomain,
 }
 
 pub trait Commands {
-    fn get_local_domain(&self) -> &sync::Mutex<quilt_rs::LocalDomain>;
+    fn get_local_domain(&self) -> &quilt_rs::LocalDomain;
 
     async fn browse(&self, args: browse::Input) -> Result<browse::Output, Error> {
-        let local_domain = &self.get_local_domain().lock().await;
+        let local_domain = self.get_local_domain();
         browse::model(local_domain, args).await
     }
 
@@ -73,7 +72,7 @@ pub trait Commands {
 }
 
 impl Commands for Model {
-    fn get_local_domain(&self) -> &sync::Mutex<quilt_rs::LocalDomain> {
+    fn get_local_domain(&self) -> &quilt_rs::LocalDomain {
         &self.local_domain
     }
 }
@@ -81,7 +80,7 @@ impl Commands for Model {
 impl Model {
     fn new(local_domain: quilt_rs::LocalDomain) -> Self {
         Model {
-            local_domain: sync::Mutex::new(local_domain),
+            local_domain,
         }
     }
 
