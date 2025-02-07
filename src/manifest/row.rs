@@ -210,8 +210,12 @@ impl From<&Row> for RowDisplay {
             size: row.size,
             hash_base64: BASE64_STANDARD.encode(row.hash.digest()),
             hash_hex: hex::encode(row.hash.to_bytes()),
-            info: row.display_info().unwrap(),
-            meta: row.display_meta().unwrap(),
+            info: row
+                .display_info()
+                .unwrap_or(serde_json::Value::default().to_string()),
+            meta: row
+                .display_meta()
+                .unwrap_or(serde_json::Value::default().to_string()),
         }
     }
 }
