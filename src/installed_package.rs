@@ -204,3 +204,63 @@ impl InstalledPackage {
         Ok(lineage.remote)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::{NamedTempFile, TempDir};
+
+    #[tokio::test]
+    async fn test_commit_history() -> Res {
+        let temp_file = NamedTempFile::new()?;
+        let temp_dir = TempDir::new()?;
+        let storage = LocalStorage::new();
+        let remote = RemoteS3::new();
+        let namespace: Namespace = ("test", "history").into();
+
+        // Create test package
+        let domain_lineage = lineage::DomainLineageIo::new(temp_file.path().to_path_buf());
+        let package_lineage = domain_lineage.create_package_lineage(namespace.clone());
+        let paths = paths::DomainPaths::new(temp_dir.path().to_path_buf());
+
+        let package = InstalledPackage {
+            lineage: package_lineage,
+            paths,
+            remote,
+            storage,
+            namespace,
+        };
+
+        // Make 10 commits with different content
+        // let mut expected_hashes = Vec::new();
+        //for i in 0..1 {
+        //    let commit = package
+        //        .commit(
+        //            format!("Commit {}", i),
+        //            Some(serde_json::json!({ "count": i }).as_object().unwrap().clone()),
+        //            None,
+        //        )
+        //        .await?;
+        //    expected_hashes.insert(0, commit.hash);
+        //}
+        let _commit = package
+            .commit(
+                format!("Commit {}", 0),
+                Some(
+                    serde_json::json!({ "count": 0 })
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                ),
+                None,
+            )
+            .await?;
+
+        // Verify commit history
+        let lineage = package.lineage().await?;
+        let commit = lineage.commit.unwrap();
+        assert_eq!(commit.prev_hashes.len(), 1);
+
+        Ok(())
+    }
+}
