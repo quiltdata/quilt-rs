@@ -29,6 +29,7 @@ pub struct ManifestHeader {
     pub message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")] // Attempt to be quilt3-compatible.
     pub user_meta: Option<JsonObject>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub workflow: Option<Workflow>,
 }
 
