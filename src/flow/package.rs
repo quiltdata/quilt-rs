@@ -108,7 +108,7 @@ pub async fn package_s3_prefix(
     let perf = Measure::start();
     let stream = Box::pin(stream_objects(storage, remote, source_uri.clone()).await);
     let manifest_path = |t: &str| paths.manifest_cache(&source_uri.bucket, t);
-    let header = Header::new(message, user_meta);
+    let header = Header::new(message, user_meta, None);
     let (cache_path, top_hash) =
         build_manifest_from_rows_stream(storage, manifest_path, header, stream).await?;
 

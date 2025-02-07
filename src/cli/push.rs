@@ -47,3 +47,59 @@ pub async fn model(
         hash: manifest_uri.hash,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::cli::model::install_package_into_temp_dir;
+    use crate::cli::model::Model;
+
+    /// Verifies that push command returns error when push a non-existent package
+    #[tokio::test]
+    async fn test_namespace_not_found() -> Result<(), Error> {
+        let (m, _temp_dir) = Model::from_temp_dir()?;
+
+        if let Std::Err(error_str) = command(
+            m,
+            Input {
+                namespace: ("in", "valid").into(),
+            },
+        )
+        .await
+        {
+            assert_eq!(error_str.to_string(), "Package in/valid not found");
+        } else {
+            return Err(Error::Test("Expected package not found error".to_string()));
+        }
+
+        Ok(())
+    }
+
+    /// Verifies that push command returns error when there are no commits:
+    ///   * installs a package but makes no commits
+    ///   * attempts to push without commits
+    #[tokio::test]
+    async fn test_no_commit() -> Result<(), Error> {
+        let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c";
+        let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
+
+        if let Std::Err(error_str) = command(
+            m,
+            Input {
+                namespace: ("spec", "quiltcore").into(),
+            },
+        )
+        .await
+        {
+            assert_eq!(
+                error_str.to_string(),
+                "quilt_rs error: Push error: No commits to push"
+            );
+        } else {
+            return Err(Error::Test("Expected no changes error".to_string()));
+        }
+
+        Ok(())
+    }
+}

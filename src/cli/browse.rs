@@ -18,8 +18,9 @@ pub struct Input {
 
 #[derive(tabled::Tabled)]
 struct RemoteManifestHeader {
-    info: String,
-    meta: String,
+    message: String,
+    user_meta: String,
+    workflow: String,
 }
 
 #[derive(tabled::Tabled)]
@@ -32,9 +33,30 @@ struct RemoteManifestEntry {
 impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut output: Vec<String> = Vec::new();
+        let header = self.manifest.header.clone();
+        let message = header.display_message().unwrap_or_default();
+        let user_meta = header
+            .display_user_meta()
+            .map_or(String::default(), |meta| {
+                serde_json::to_string(&meta)
+                    .map_err(|e| {
+                        tracing::error!("Failed to stringify user_meta: {}", e);
+                        e
+                    })
+                    .unwrap_or_default()
+            });
+        let workflow = header.display_workflow().map_or(String::default(), |v| {
+            serde_json::to_string(&v)
+                .map_err(|e| {
+                    tracing::error!("Failed to stringify workflow: {}", e);
+                    e
+                })
+                .unwrap_or_default()
+        });
         let mut header_table = tabled::Table::new(vec![RemoteManifestHeader {
-            info: self.manifest.header.info.to_string(),
-            meta: self.manifest.header.meta.to_string(),
+            message,
+            user_meta,
+            workflow,
         }]);
         header_table.with(tabled::settings::Panel::header("Remote manifest header"));
         output.push(header_table.to_string());
@@ -82,41 +104,106 @@ pub async fn model(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
-    use temp_testdir::TempDir;
 
+    use std::path::PathBuf;
+
+    use crate::cli::model::Model;
+
+    const BROWSE_OUTPUT: &str = r#"+----------------------------+---------------------------------------------------+----------+
+| Remote manifest header                                                                    |
++----------------------------+---------------------------------------------------+----------+
+| message                    | user_meta                                         | workflow |
++----------------------------+---------------------------------------------------+----------+
+| test_spec_write 1697916638 | {"Author":"Ernest","Count":1,"Date":"2023-07-12"} |          |
++----------------------------+---------------------------------------------------+----------+
++---------------+---------------------------------------------------------------------------------------+------+
+| Remote manifest entries                                                                                      |
++---------------+---------------------------------------------------------------------------------------+------+
+| name          | place                                                                                 | size |
++---------------+---------------------------------------------------------------------------------------+------+
+| READ ME.md    | s3://udp-spec/spec/quiltcore/READ%20ME.md?versionId=.l3tAGbfEBC4c.L2ywTpWbnweSpYLe8a  | 33   |
++---------------+---------------------------------------------------------------------------------------+------+
+| timestamp.txt | s3://udp-spec/spec/quiltcore/timestamp.txt?versionId=lifktjQgrgewg1FGXxls3UKtJSjl2shy | 10   |
++---------------+---------------------------------------------------------------------------------------+------+"#;
+
+    /// Verifies that the remote Quilt registry has the expected manifest.
+    /// Test actually fetch the manifest from Quilt, without mocks.
     #[tokio::test]
     async fn test_model() -> Result<(), Error> {
-        let temp_dir = TempDir::default();
-        let local_path = PathBuf::from(temp_dir.as_ref());
-        let local_domain = quilt_rs::LocalDomain::new(local_path);
         let uri = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md".to_string();
-        let output = model(&local_domain, Input { uri }).await?;
-        assert_eq!(
-            output.manifest.header.info,
-            serde_json::json!({
-                "message": "test_spec_write 1697916638",
-                "version":"v0"
-            })
-        );
-        assert_eq!(
-            output
-                .manifest
-                .get_record(&PathBuf::from("READ ME.md"))
-                .await?
-                .unwrap()
-                .place,
-            "s3://udp-spec/spec/quiltcore/READ%20ME.md?versionId=.l3tAGbfEBC4c.L2ywTpWbnweSpYLe8a"
-        );
-        assert_eq!(
-            output
-                .manifest
-                .get_record(&PathBuf::from("timestamp.txt"))
-                .await?
-                .unwrap()
-                .place,
-            "s3://udp-spec/spec/quiltcore/timestamp.txt?versionId=lifktjQgrgewg1FGXxls3UKtJSjl2shy"
-        );
+
+        let readme_logical_key = PathBuf::from("READ ME.md");
+        let readme_uri =
+            "s3://udp-spec/spec/quiltcore/READ%20ME.md?versionId=.l3tAGbfEBC4c.L2ywTpWbnweSpYLe8a";
+        let timestamp_logical_key = PathBuf::from("timestamp.txt");
+        let timestamp_uri =
+            "s3://udp-spec/spec/quiltcore/timestamp.txt?versionId=lifktjQgrgewg1FGXxls3UKtJSjl2shy";
+
+        let (m, _temp_dir) = Model::from_temp_dir()?;
+        {
+            let local_domain = m.get_local_domain().lock().await;
+
+            let output = model(&local_domain, Input { uri }).await?;
+
+            let output_str = format!("{}", output);
+            assert_eq!(output_str, BROWSE_OUTPUT);
+
+            assert_eq!(
+                output.manifest.header.display_message().unwrap(),
+                "test_spec_write 1697916638",
+            );
+            assert_eq!(
+                output
+                    .manifest
+                    .get_record(&readme_logical_key)
+                    .await?
+                    .unwrap()
+                    .place,
+                readme_uri
+            );
+            assert_eq!(
+                output
+                    .manifest
+                    .get_record(&timestamp_logical_key)
+                    .await?
+                    .unwrap()
+                    .place,
+                timestamp_uri
+            );
+        }
+        Ok(())
+    }
+
+    /// Verifies that CLI throws error if `quilt+s3` URI is invalid.
+    #[tokio::test]
+    async fn test_if_uri_is_invalid() -> Result<(), Error> {
+        let uri = "quilt+s3://some-nonsense".to_string();
+
+        let (model, _temp_dir) = Model::from_temp_dir()?;
+
+        if let Std::Err(error_str) = command(model, Input { uri }).await {
+            assert_eq!(
+                format!("{}", error_str),
+                "quilt_rs error: Invalid package URI: S3 package URI must contain a fragment: quilt+s3://some-nonsense".to_string()
+            );
+        } else {
+            return Err(Error::Test("Failed to fail".to_string()));
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_command() -> Result<(), Error> {
+        let uri = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md".to_string();
+
+        let (model, _temp_dir) = Model::from_temp_dir()?;
+
+        if let Std::Out(output_str) = command(model, Input { uri }).await {
+            assert_eq!(output_str, BROWSE_OUTPUT);
+        } else {
+            return Err(Error::Test("Failed to browse".to_string()));
+        }
         Ok(())
     }
 }

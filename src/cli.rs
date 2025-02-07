@@ -61,6 +61,10 @@ enum Commands {
         /// Ex. foo/bar
         #[arg(short, long)]
         namespace: String,
+        /// Workflow ID
+        /// Ex. "my_workflow"
+        #[arg(short, long)]
+        workflow: Option<String>,
     },
     /// Install package locally
     Install {
@@ -120,6 +124,7 @@ enum Commands {
         /// Ex. foo/bar
         #[arg(short, long)]
         namespace: String,
+        // FIXME: add workflow?
     },
     /// Status of the package: modified, up-to-date, outdated
     Status {
@@ -168,6 +173,7 @@ pub async fn init() -> Result<(), Error> {
             namespace,
             message,
             user_meta,
+            workflow,
         } => {
             let user_meta = match &user_meta {
                 Some(object) => match serde_json::from_str(object)? {
@@ -182,6 +188,7 @@ pub async fn init() -> Result<(), Error> {
                 message,
                 namespace: namespace.try_into()?,
                 user_meta,
+                workflow,
             };
             log::info!("Committing {:?}", args);
             print(commit::command(Model::from(domain), args).await);
@@ -296,9 +303,6 @@ pub enum Error {
     #[error("quilt_rs error: {0}")]
     Quilt(quilt_rs::Error),
 
-    #[error("Failed to create temp dir: {0}")]
-    TempDir(String),
-
     #[error("Package {0} not found")]
     NamespaceNotFound(Namespace),
 
@@ -307,6 +311,16 @@ pub enum Error {
 
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
+
+    #[error("Workflow '{0}' not found in the workflows/config.yml")]
+    Workflow(String),
+
+    #[cfg(test)]
+    #[error("Test failed: {0}")]
+    Test(String),
+
+    #[error("Failed to write or read: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 impl From<quilt_rs::Error> for Error {

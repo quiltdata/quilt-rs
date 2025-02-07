@@ -1,5 +1,8 @@
 use std::marker::Unpin;
+use std::path::Path;
 use std::path::PathBuf;
+
+use tokio::sync::Mutex;
 
 use crate::flow;
 use crate::installed_package::InstalledPackage;
@@ -19,11 +22,12 @@ use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
+use crate::Error;
 use crate::Res;
 
 /// This is the entrypoint for the lib.
 /// All the work you can do with packages is done through calling `LocalDomain` methods.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct LocalDomain<S: Storage = LocalStorage, R: Remote = RemoteS3> {
     paths: paths::DomainPaths,
     lineage: lineage::DomainLineageIo,
@@ -32,8 +36,8 @@ pub struct LocalDomain<S: Storage = LocalStorage, R: Remote = RemoteS3> {
 }
 
 impl LocalDomain {
-    pub fn new(root_dir: PathBuf) -> Self {
-        let paths = paths::DomainPaths::new(root_dir.clone());
+    pub fn new(root_dir: impl AsRef<Path>) -> Self {
+        let paths = paths::DomainPaths::new(root_dir.as_ref().to_path_buf());
         let lineage = lineage::DomainLineageIo::new(paths.lineage());
         let storage = LocalStorage::new();
         let remote = RemoteS3::new();
@@ -45,24 +49,49 @@ impl LocalDomain {
         }
     }
 
+    pub async fn resolve_workflow_config(&self, namespace: Namespace) -> Res<Option<S3Uri>> {
+        let uri = match self
+            .lineage
+            .read(&self.storage)
+            .await?
+            .packages
+            .get(&namespace)
+        {
+            Some(package) => S3Uri {
+                key: ".quilt/workflows/config.yml".to_string(),
+                ..S3Uri::from(&package.remote)
+            },
+            None => return Err(Error::PackageNotInstalled(namespace)),
+        };
+        match self.remote.get_object_stream(&uri).await {
+            Ok(obj) => Ok(Some(obj.uri)),
+            Err(Error::S3(err_str)) => {
+                if err_str.contains("NoSuchKey: The specified key does not exist") {
+                    Ok(None)
+                } else {
+                    Err(Error::S3(err_str))
+                }
+            }
+            Err(err) => Err(err),
+        }
+    }
+
     pub async fn browse_remote_manifest(&self, uri: &ManifestUri) -> Res<Table> {
         flow::browse(&self.paths, &self.storage, &self.remote, uri).await
     }
 
-    // TODO: make public only for tests
-    pub fn create_installed_package(&self, namespace: Namespace) -> InstalledPackage {
+    pub fn create_installed_package(&self, namespace: Namespace) -> Res<InstalledPackage> {
         // TODO: seems like you can use PackageLineage as an argument instead of namespace
-        InstalledPackage {
-            lineage: self.lineage.create_package_lineage(namespace.clone()),
-            namespace: namespace.clone(),
+        Ok(InstalledPackage {
+            lineage: Mutex::new(self.lineage.create_package_lineage(namespace.clone())),
+            namespace,
             paths: self.paths.clone(),
-            remote: self.remote.clone(),
+            remote: self.remote.try_clone()?,
             storage: self.storage.clone(),
-        }
+        })
     }
 
     pub async fn install_package(&self, manifest_uri: &ManifestUri) -> Res<InstalledPackage> {
-        // Read the lineage
         let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
         let lineage = flow::install_package(
             lineage,
@@ -72,16 +101,16 @@ impl LocalDomain {
             manifest_uri,
         )
         .await?;
-        let _fixme = self.lineage.write(&self.storage, lineage).await?;
+        self.lineage.write(&self.storage, lineage).await?;
 
-        Ok(self.create_installed_package(manifest_uri.namespace.clone()))
+        self.create_installed_package(manifest_uri.namespace.clone())
     }
 
     pub async fn uninstall_package(&self, namespace: Namespace) -> Res<()> {
         let lineage = self.lineage.read(&self.storage).await?;
         let lineage =
             flow::uninstall_package(lineage, &self.paths, &self.storage, namespace).await?;
-        let _fixme = self.lineage.write(&self.storage, lineage).await?;
+        self.lineage.write(&self.storage, lineage).await?;
         Ok(())
     }
 
@@ -89,10 +118,10 @@ impl LocalDomain {
         let lineage = self.lineage.read(&self.storage).await?;
         let mut namespaces: Vec<Namespace> = lineage.packages.into_keys().collect();
         namespaces.sort();
-        let packages = namespaces
-            .into_iter()
-            .map(|namespace| self.create_installed_package(namespace))
-            .collect();
+        let mut packages = Vec::new();
+        for namespace in namespaces {
+            packages.push(self.create_installed_package(namespace)?);
+        }
         Ok(packages)
     }
 
@@ -102,7 +131,7 @@ impl LocalDomain {
     ) -> Res<Option<InstalledPackage>> {
         let lineage = self.lineage.read(&self.storage).await?;
         if lineage.packages.contains_key(namespace) {
-            Ok(Some(self.create_installed_package(namespace.to_owned())))
+            Ok(Some(self.create_installed_package(namespace.to_owned())?))
         } else {
             Ok(None)
         }

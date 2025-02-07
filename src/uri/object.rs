@@ -39,14 +39,27 @@ impl From<ObjectUri> for S3Uri {
     }
 }
 
-impl From<&ObjectUri> for S3Uri {
-    fn from(uri: &ObjectUri) -> S3Uri {
-        S3Uri::from(uri.clone())
+impl fmt::Display for ObjectUri {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", S3Uri::from(self.to_owned()))
     }
 }
 
-impl fmt::Display for ObjectUri {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", S3Uri::from(self))
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_object_uri_display() {
+        let uri = ObjectUri {
+            bucket: "test-bucket".to_string(),
+            namespace: ("foo", "bar").into(),
+            path: PathBuf::from("data/file.txt"),
+            version: Some("final".to_string()),
+        };
+        assert_eq!(
+            uri.to_string(),
+            "s3://test-bucket/foo/bar/data/file.txt?versionId=final"
+        );
     }
 }

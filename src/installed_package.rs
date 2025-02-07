@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use tokio::sync::Mutex;
 use tracing::log;
 
 use crate::flow;
@@ -14,27 +15,40 @@ use crate::lineage::InstalledPackageStatus;
 use crate::lineage::LineagePaths;
 use crate::manifest::JsonObject;
 use crate::manifest::Table;
+use crate::manifest::Workflow;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
+use crate::Error;
 use crate::Res;
 
 /// Similar to `LocalDomain` because it has access to the same lineage file and remote/storage
 /// traits.
 /// But it only manages one particular installed package.
 /// It can be instantiated from `LocalDomain` by installing new or listing existing packages.
-#[derive(Clone, Debug, PartialEq)]
-pub struct InstalledPackage<S: Storage + Clone = LocalStorage, R: Remote + Clone = RemoteS3> {
-    pub lineage: lineage::PackageLineageIo,
+#[derive(Debug)]
+pub struct InstalledPackage<S: Storage = LocalStorage, R: Remote = RemoteS3> {
+    pub lineage: Mutex<lineage::PackageLineageIo>,
     pub paths: paths::DomainPaths,
     pub remote: R,
     pub storage: S,
     pub namespace: Namespace,
 }
 
+impl std::fmt::Display for InstalledPackage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            r##"Installed package "{}" at {}"##,
+            self.namespace,
+            self.working_folder().display()
+        )
+    }
+}
+
 impl InstalledPackage {
     pub async fn manifest(&self) -> Res<Table> {
-        let lineage = self.lineage.read(&self.storage).await?;
+        let lineage = self.lineage.lock().await.read(&self.storage).await?;
         let pathbuf = self
             .paths
             .installed_manifest(&self.namespace, lineage.current_hash());
@@ -42,7 +56,7 @@ impl InstalledPackage {
     }
 
     pub async fn lineage(&self) -> Res<lineage::PackageLineage> {
-        self.lineage.read(&self.storage).await
+        self.lineage.lock().await.read(&self.storage).await
     }
 
     pub fn working_folder(&self) -> PathBuf {
@@ -50,12 +64,16 @@ impl InstalledPackage {
     }
 
     pub async fn status(&self) -> Res<InstalledPackageStatus> {
-        let lineage = self.lineage.read(&self.storage).await?;
+        let lineage = self.lineage.lock().await.read(&self.storage).await?;
         let lineage = flow::refresh_latest_hash(lineage, &self.remote).await?;
         let manifest = self.manifest().await?;
         let (lineage, status) =
             flow::status(lineage, &self.storage, &manifest, self.working_folder()).await?;
-        self.lineage.write(&self.storage, lineage).await?;
+        self.lineage
+            .lock()
+            .await
+            .write(&self.storage, lineage)
+            .await?;
         Ok(status)
     }
 
@@ -63,7 +81,7 @@ impl InstalledPackage {
         if paths.is_empty() {
             return Ok(BTreeMap::new());
         }
-        let lineage = self.lineage.read(&self.storage).await?;
+        let lineage = self.lineage.lock().await.read(&self.storage).await?;
         let mut manifest = self.manifest().await?;
         let lineage = flow::install_paths(
             lineage,
@@ -76,15 +94,25 @@ impl InstalledPackage {
             paths,
         )
         .await?;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
+        let lineage = self
+            .lineage
+            .lock()
+            .await
+            .write(&self.storage, lineage)
+            .await?;
         Ok(lineage.paths)
     }
 
     pub async fn uninstall_paths(&self, paths: &Vec<PathBuf>) -> Res<LineagePaths> {
-        let lineage = self.lineage.read(&self.storage).await?;
+        let lineage = self.lineage.lock().await.read(&self.storage).await?;
         let lineage =
             flow::uninstall_paths(lineage, self.working_folder(), &self.storage, paths).await?;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
+        let lineage = self
+            .lineage
+            .lock()
+            .await
+            .write(&self.storage, lineage)
+            .await?;
         Ok(lineage.paths)
     }
 
@@ -97,8 +125,9 @@ impl InstalledPackage {
         &self,
         message: String,
         user_meta: Option<JsonObject>,
-    ) -> Res<Option<CommitState>> {
-        let lineage = self.lineage.read(&self.storage).await?;
+        workflow: Option<Workflow>,
+    ) -> Res<CommitState> {
+        let lineage = self.lineage.lock().await.read(&self.storage).await?;
         let mut manifest = self.manifest().await?;
 
         let (lineage, status) =
@@ -114,14 +143,28 @@ impl InstalledPackage {
             self.namespace.clone(),
             message,
             user_meta,
+            workflow,
         )
         .await?;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
-        Ok(lineage.commit)
+        let lineage = self
+            .lineage
+            .lock()
+            .await
+            .write(&self.storage, lineage)
+            .await?;
+        match lineage.commit {
+            Some(commit) => Ok(commit),
+            None => Err(Error::Commit("Nothing committed".to_string())),
+        }
     }
 
     pub async fn push(&self) -> Res<ManifestUri> {
-        let lineage = self.lineage.read(&self.storage).await?;
+        let lineage = self.lineage.lock().await.read(&self.storage).await?;
+
+        if lineage.commit.is_none() {
+            return Err(Error::Push("No commits to push".to_string()));
+        }
+
         let manifest = self.manifest().await?;
         let lineage = flow::push(
             lineage,
@@ -132,12 +175,17 @@ impl InstalledPackage {
             Some(self.namespace.clone()),
         )
         .await?;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
+        let lineage = self
+            .lineage
+            .lock()
+            .await
+            .write(&self.storage, lineage)
+            .await?;
         Ok(lineage.remote)
     }
 
     pub async fn pull(&self) -> Res<ManifestUri> {
-        let lineage = self.lineage.read(&self.storage).await?;
+        let lineage = self.lineage.lock().await.read(&self.storage).await?;
         let mut manifest = self.manifest().await?;
         let (lineage, status) =
             flow::status(lineage, &self.storage, &manifest, self.working_folder()).await?;
@@ -152,20 +200,30 @@ impl InstalledPackage {
             self.namespace.clone(),
         )
         .await?;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
+        let lineage = self
+            .lineage
+            .lock()
+            .await
+            .write(&self.storage, lineage)
+            .await?;
         Ok(lineage.remote)
     }
 
     pub async fn certify_latest(&self) -> Res<ManifestUri> {
-        let lineage = self.lineage.read(&self.storage).await?;
+        let lineage = self.lineage.lock().await.read(&self.storage).await?;
         let latest_manifest_uri = lineage.remote.clone();
         let lineage = flow::certify_latest(lineage, &self.remote, latest_manifest_uri).await?;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
+        let lineage = self
+            .lineage
+            .lock()
+            .await
+            .write(&self.storage, lineage)
+            .await?;
         Ok(lineage.remote)
     }
 
     pub async fn reset_to_latest(&self) -> Res<ManifestUri> {
-        let lineage = self.lineage.read(&self.storage).await?;
+        let lineage = self.lineage.lock().await.read(&self.storage).await?;
         let mut manifest = self.manifest().await?;
         let lineage = flow::reset_to_latest(
             lineage,
@@ -177,7 +235,12 @@ impl InstalledPackage {
             self.namespace.clone(),
         )
         .await?;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
+        let lineage = self
+            .lineage
+            .lock()
+            .await
+            .write(&self.storage, lineage)
+            .await?;
         Ok(lineage.remote)
     }
 }

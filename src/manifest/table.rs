@@ -28,19 +28,26 @@ use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamRowsChunk;
 use crate::manifest::Header;
 use crate::manifest::Row;
+use crate::manifest::RowDisplay;
 use crate::Error;
 use crate::Res;
 
 fn serialize_table_header(header: &Header) -> serde_json::Map<String, serde_json::Value> {
     let mut header_meta = serde_json::Map::new();
-    if let Some(message) = header.info.get("message") {
-        header_meta.insert("message".to_string(), message.clone());
+    if let Some(message) = header.get_message() {
+        header_meta.insert("message".to_string(), message);
     }
-    if header.meta.is_object() {
-        header_meta.insert("user_meta".into(), header.meta.clone());
+    if let Some(user_meta) = header.get_user_meta() {
+        header_meta.insert("user_meta".into(), serde_json::Value::Object(user_meta));
     }
-    if let Some(version) = header.info.get("version") {
-        header_meta.insert("version".to_string(), version.clone());
+    if let Some(version) = header.get_version() {
+        header_meta.insert("version".to_string(), version);
+    }
+    if let Some(workflow) = header.get_workflow() {
+        if workflow.is_object() {
+            // TODO: validate workflow. It should be `{ id: string, config: string }`
+            header_meta.insert("workflow".to_string(), workflow);
+        }
     }
     header_meta
 }
@@ -88,14 +95,14 @@ impl TopHasher {
 
 // TODO: fix return type to Map<String, serde_json::Value>
 fn serialize_row_entry(row: &Row) -> serde_json::Value {
-    let mut row_meta = match row.info.as_object() {
-        Some(meta) => meta.clone(),
+    let row_meta = match row.info.as_object() {
+        Some(meta) => {
+            // TODO: if object is present but empty don't include it `user_meta`
+            // TODO: `meta.sort_keys()`?
+            serde_json::Map::from_iter([("user_meta".to_string(), meta.to_owned().into())])
+        }
         None => serde_json::Map::default(),
     };
-    // TODO: correct order (alphabetical, as it in header)
-    if row.meta.is_object() {
-        row_meta.insert("user_meta".into(), row.meta.clone());
-    }
 
     let content_hash: ContentHash = row.hash.try_into().unwrap();
 
@@ -258,11 +265,15 @@ impl Table {
 
 impl fmt::Display for Table {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut records = BTreeMap::new();
-        for (name, record) in &self.records {
-            records.insert(name, record.to_string());
+        if self.records.is_empty() {
+            return write!(f, "Table: empty");
         }
-        write!(f, "Table({:?})", records)
+
+        let mut records = Vec::new();
+        for record in self.records.values() {
+            records.push(RowDisplay::from(record));
+        }
+        write!(f, "Table:\n{}", tabled::Table::new(records))
     }
 }
 
@@ -274,9 +285,13 @@ impl Default for Table {
 
 #[cfg(test)]
 mod tests {
-    use crate::mocks;
-
     use super::*;
+
+    use multihash::Multihash;
+
+    use crate::checksum::MULTIHASH_SHA256;
+    use crate::manifest::Row;
+    use crate::mocks;
 
     #[tokio::test]
     async fn read_existing_local() -> Res {
@@ -327,7 +342,7 @@ mod tests {
     #[test]
     fn test_formatting_no_records() -> Res {
         let table = Table::new(Header::default(), BTreeMap::new());
-        assert_eq!(table.to_string(), "Table({})".to_string());
+        assert_eq!(table.to_string(), "Table: empty".to_string());
         Ok(())
     }
 
@@ -360,7 +375,81 @@ mod tests {
                 ),
             ]),
         );
-        assert_eq!(table.to_string(), r##"Table({"one": "Row(AA)@AB^100#[65]$$Null$Null", "two": "Row(BA)@BB^200#[66]$$Null$Null"})"##.to_string());
+        assert_eq!(
+            table.to_string(),
+            r###"Table:
++------+-------+------+-------------+----------+------+------+
+| name | place | size | hash_base64 | hash_hex | info | meta |
++------+-------+------+-------------+----------+------+------+
+| AA   | AB    | 100  | QQ==        | 640141   | null | null |
++------+-------+------+-------------+----------+------+------+
+| BA   | BB    | 200  | Qg==        | c8010142 | null | null |
++------+-------+------+-------------+----------+------+------+"###
+        );
+
+        // assert_eq!(table.to_string(), r##"Table({"one": "Row(AA)@AB^100#[65]$$Null$Null", "two": "Row(BA)@BB^200#[66]$$Null$Null"})"##.to_string());
+        Ok(())
+    }
+
+    #[test]
+    fn test_serialize_row_entry_with_info() -> Res {
+        let hash = Multihash::<256>::wrap(MULTIHASH_SHA256, b"test")?;
+        let row = Row {
+            name: PathBuf::from("test.txt"),
+            place: "s3://test-bucket/test.txt".to_string(),
+            size: 42,
+            hash,
+            info: serde_json::json!({"foo": "bar"}),
+            meta: serde_json::Value::Null,
+        };
+
+        let serialized = serialize_row_entry(&row);
+        assert_eq!(
+            serialized,
+            serde_json::json!({
+                "hash": {"type": "SHA256", "value": hex::encode(hash.digest())},
+                "logical_key": "test.txt",
+                "meta": {"user_meta": {"foo": "bar"}},
+                "size": 42,
+            })
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_table_record_operations() -> Res {
+        let mut table = Table::default();
+        let path = PathBuf::from("foo/bar");
+
+        // 1. Check empty table doesn't contain record
+        assert!(!table.contains_record(&path).await);
+
+        // 2. Insert record and verify it exists
+        let row = Row {
+            name: path.clone(),
+            place: "s3://test-bucket/foo/bar".to_string(),
+            size: 42,
+            hash: Multihash::wrap(0, b"test")?,
+            info: serde_json::Value::Null,
+            meta: serde_json::Value::Null,
+        };
+        table.insert_record(row.clone()).await?;
+        assert!(table.contains_record(&path).await);
+
+        // 3. Update record
+        let updated_row = Row {
+            size: 84,
+            ..row.clone()
+        };
+        let old_row = table.update_record(updated_row.clone()).await?;
+        assert_eq!(old_row, Some(row));
+
+        // 4. Remove record and verify state
+        let removed_row = table.remove_record(&path)?;
+        assert_eq!(removed_row, updated_row);
+        assert!(!table.contains_record(&path).await);
+        assert_eq!(table.records_len().await, 0);
+
         Ok(())
     }
 

@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use temp_dir::TempDir;
+use tempfile::TempDir;
 use tokio::sync;
 
 use crate::cli::benchmark;
@@ -84,10 +84,10 @@ impl Model {
             local_domain: sync::Mutex::new(local_domain),
         }
     }
+
     pub fn from_temp_dir() -> Result<(Self, TempDir), Error> {
-        let temp_dir =
-            TempDir::with_prefix("quilt-rs").map_err(|err| Error::TempDir(err.to_string()))?;
-        Ok((Model::from(temp_dir.path().to_path_buf()), temp_dir))
+        let temp_dir = TempDir::new()?;
+        Ok((Model::from(&temp_dir), temp_dir))
     }
 }
 
@@ -96,4 +96,35 @@ impl From<PathBuf> for Model {
         let local_domain = quilt_rs::LocalDomain::new(root);
         Model::new(local_domain)
     }
+}
+
+impl From<&TempDir> for Model {
+    fn from(temp_dir: &TempDir) -> Self {
+        Model::from(temp_dir.path().to_path_buf())
+    }
+}
+
+#[cfg(test)]
+pub async fn install_package_into_temp_dir(
+    uri_str: &str,
+) -> Result<(Model, quilt_rs::InstalledPackage, TempDir), Error> {
+    let (model, temp_dir) = Model::from_temp_dir()?;
+
+    let output = model
+        .install(install::Input {
+            namespace: None,
+            paths: None,
+            uri: uri_str.to_string(),
+        })
+        .await?;
+
+    let installed_package = output.get_installed_package();
+
+    tracing::log::debug!(
+        "Installed package manifest: {:?}",
+        installed_package.manifest().await?
+    );
+
+    // We must return `temp_dir` because otherwise it will be dropped and removed
+    Ok((model, installed_package, temp_dir))
 }
