@@ -26,7 +26,7 @@ pub trait Commands {
     }
 
     async fn commit(&self, args: commit::Input) -> Result<commit::Output, Error> {
-        let local_domain = &self.get_local_domain().lock().await;
+        let local_domain = self.get_local_domain();
         commit::model(local_domain, args).await
     }
 

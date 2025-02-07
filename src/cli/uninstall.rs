@@ -65,7 +65,7 @@ mod tests {
         }
 
         {
-            let local_domain = m.get_local_domain().lock().await;
+            let local_domain = m.get_local_domain();
             // Try to uninstall again - should fail
             if let Err(error_str) = model(
                 &local_domain,
