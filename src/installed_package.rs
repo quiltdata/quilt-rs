@@ -47,7 +47,7 @@ impl std::fmt::Display for InstalledPackage {
 
 impl InstalledPackage {
     pub async fn manifest(&self) -> Res<Table> {
-        let lineage = self.lineage.lock().await.read(&self.storage).await?;
+        let lineage = self.lineage.read(&self.storage).await?;
         let pathbuf = self
             .paths
             .installed_manifest(&self.namespace, lineage.current_hash());
@@ -63,7 +63,7 @@ impl InstalledPackage {
     }
 
     pub async fn status(&self) -> Res<InstalledPackageStatus> {
-        let lineage = self.lineage.lock().await.read(&self.storage).await?;
+        let lineage = self.lineage.read(&self.storage).await?;
         let lineage = flow::refresh_latest_hash(lineage, &self.remote).await?;
         let manifest = self.manifest().await?;
         let (lineage, status) =
@@ -80,7 +80,7 @@ impl InstalledPackage {
         if paths.is_empty() {
             return Ok(BTreeMap::new());
         }
-        let lineage = self.lineage.lock().await.read(&self.storage).await?;
+        let lineage = self.lineage.read(&self.storage).await?;
         let mut manifest = self.manifest().await?;
         let lineage = flow::install_paths(
             lineage,
@@ -103,7 +103,7 @@ impl InstalledPackage {
     }
 
     pub async fn uninstall_paths(&self, paths: &Vec<PathBuf>) -> Res<LineagePaths> {
-        let lineage = self.lineage.lock().await.read(&self.storage).await?;
+        let lineage = self.lineage.read(&self.storage).await?;
         let lineage =
             flow::uninstall_paths(lineage, self.working_folder(), &self.storage, paths).await?;
         let lineage = self
@@ -126,7 +126,7 @@ impl InstalledPackage {
         user_meta: Option<JsonObject>,
         workflow: Option<Workflow>,
     ) -> Res<CommitState> {
-        let lineage = self.lineage.lock().await.read(&self.storage).await?;
+        let lineage = self.lineage.read(&self.storage).await?;
         let mut manifest = self.manifest().await?;
 
         let (lineage, status) =
@@ -158,7 +158,7 @@ impl InstalledPackage {
     }
 
     pub async fn push(&self) -> Res<ManifestUri> {
-        let lineage = self.lineage.lock().await.read(&self.storage).await?;
+        let lineage = self.lineage.read(&self.storage).await?;
 
         if lineage.commit.is_none() {
             return Err(Error::Push("No commits to push".to_string()));
