@@ -208,29 +208,57 @@ impl InstalledPackage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::{NamedTempFile, TempDir};
+    use tempfile::TempDir;
+
+    use crate::lineage::DomainLineageIo;
+    use crate::lineage::PackageLineageIo;
 
     #[tokio::test]
-    async fn test_commit_history() -> Res {
-        let temp_file = NamedTempFile::new()?;
+    async fn test_spamming_commit_writes() -> Res {
         let temp_dir = TempDir::new()?;
+        let paths = paths::DomainPaths::new(temp_dir.path().to_path_buf());
+
         let storage = LocalStorage::new();
         let remote = RemoteS3::new();
         let namespace: Namespace = ("test", "history").into();
 
         // Initialize domain lineage file
-        storage.write_file(
-            temp_file.path().to_path_buf(),
-            br#"{"packages": {"test/history": {}}}"#,
-        ).await?;
+        storage
+            .write_file(
+                &paths.lineage(),
+                br#"{
+                "packages": {
+                    "test/history": {
+                        "commit": null,
+                        "remote": {
+                            "bucket": "bucket",
+                            "namespace": "test/history",
+                            "hash": "abc123"
+                        },
+                        "base_hash": "abc123",
+                        "latest_hash": "abc123",
+                        "paths": {}
+                    }}
+                }"#,
+            )
+            .await?;
 
-        // Create test package
-        let domain_lineage = lineage::DomainLineageIo::new(temp_file.path().to_path_buf());
-        let package_lineage = domain_lineage.create_package_lineage(namespace.clone());
-        let paths = paths::DomainPaths::new(temp_dir.path().to_path_buf());
+        // Copy manifest to the expected path
+        let reference_manifest = crate::mocks::manifest::parquet_checksummed();
+        let test_manifest = temp_dir
+            .path()
+            .to_path_buf()
+            .join(".quilt/installed/test/history/abc123");
+        storage
+            .create_dir_all(&test_manifest.parent().unwrap())
+            .await?;
+        storage.copy(reference_manifest, test_manifest).await?;
 
         let package = InstalledPackage {
-            lineage: package_lineage,
+            lineage: PackageLineageIo::new(
+                DomainLineageIo::new(paths.lineage()),
+                namespace.clone(),
+            ),
             paths,
             remote,
             storage,
@@ -238,34 +266,26 @@ mod tests {
         };
 
         // Make 10 commits with different content
-        // let mut expected_hashes = Vec::new();
-        //for i in 0..1 {
-        //    let commit = package
-        //        .commit(
-        //            format!("Commit {}", i),
-        //            Some(serde_json::json!({ "count": i }).as_object().unwrap().clone()),
-        //            None,
-        //        )
-        //        .await?;
-        //    expected_hashes.insert(0, commit.hash);
-        //}
-        let _commit = package
-            .commit(
-                format!("Commit {}", 0),
-                Some(
-                    serde_json::json!({ "count": 0 })
-                        .as_object()
-                        .unwrap()
-                        .clone(),
-                ),
-                None,
-            )
-            .await?;
+        let mut expected_hashes = Vec::new();
+        for i in 0..10 {
+            let commit = package
+                .commit(
+                    format!("Commit new1 {}", i),
+                    Some(
+                        serde_json::json!({ "count": i })
+                            .as_object()
+                            .unwrap()
+                            .clone(),
+                    ),
+                    None,
+                )
+                .await?;
+            expected_hashes.insert(i, commit.hash);
+        }
 
-        // Verify commit history
-        let lineage = package.lineage().await?;
-        let commit = lineage.commit.unwrap();
-        assert_eq!(commit.prev_hashes.len(), 1);
+        let commit_state = package.lineage().await?.commit.unwrap();
+
+        assert_eq!(commit_state.prev_hashes.len(), 9);
 
         Ok(())
     }
