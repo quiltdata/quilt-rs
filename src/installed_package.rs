@@ -93,12 +93,7 @@ impl InstalledPackage {
             paths,
         )
         .await?;
-        let lineage = self
-            .lineage
-            .lock()
-            .await
-            .write(&self.storage, lineage)
-            .await?;
+        let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(lineage.paths)
     }
 
@@ -106,12 +101,7 @@ impl InstalledPackage {
         let lineage = self.lineage.read(&self.storage).await?;
         let lineage =
             flow::uninstall_paths(lineage, self.working_folder(), &self.storage, paths).await?;
-        let lineage = self
-            .lineage
-            .lock()
-            .await
-            .write(&self.storage, lineage)
-            .await?;
+        let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(lineage.paths)
     }
 
@@ -145,12 +135,7 @@ impl InstalledPackage {
             workflow,
         )
         .await?;
-        let lineage = self
-            .lineage
-            .lock()
-            .await
-            .write(&self.storage, lineage)
-            .await?;
+        let lineage = self.lineage.write(&self.storage, lineage).await?;
         match lineage.commit {
             Some(commit) => Ok(commit),
             None => Err(Error::Commit("Nothing committed".to_string())),
@@ -174,12 +159,7 @@ impl InstalledPackage {
             Some(self.namespace.clone()),
         )
         .await?;
-        let lineage = self
-            .lineage
-            .lock()
-            .await
-            .write(&self.storage, lineage)
-            .await?;
+        let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(lineage.remote)
     }
 
@@ -199,12 +179,7 @@ impl InstalledPackage {
             self.namespace.clone(),
         )
         .await?;
-        let lineage = self
-            .lineage
-            .lock()
-            .await
-            .write(&self.storage, lineage)
-            .await?;
+        let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(lineage.remote)
     }
 
