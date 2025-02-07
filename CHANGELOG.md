@@ -1,6 +1,13 @@
 # CHANGELOG
 
 ## [0.8.7]
+* Added "workflow" parameter for commit
+* Implemented tests for CLI, treating them as integration tests. They use real packages from Quilt stack
+* Increased test coverage to 79%
+* Moved HTTPS and AWS S3 clients to the `RemoteS3`, and use `RwLock` there in struct
+* Guard lineage with `Mutex` for `InstalledPackage`
+
+## [0.8.7]
 
 * Throw error if locally commited package and remote have different `top_hash`
 * Fix calculating hashes for files <8Mb
