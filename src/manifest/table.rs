@@ -453,38 +453,44 @@ mod tests {
         Ok(())
     }
 
-    // #[test]
-    // fn test_top_hash() -> Res {
-    //     let manifest = Table::new(
-    //         Row {
-    //             meta: serde_json::json!({
-    //                    "1234567890": "a",
-    //             }),
-    //             info: serde_json::json!({
-    //                    "message": "Second revision",
-    //                    "version": "v0",
-    //             }),
-    //             ..Row::default()
-    //         },
-    //         BTreeMap::from([(
-    //             PathBuf::from("test.md"),
-    //             Row {
-    //                 name: PathBuf::from("test.md"),
-    //                 place: "doesn't matter".to_string(),
-    //                 size: 3568,
-    //                 hash: ContentHash::SHA256Chunked(
-    //                     "MhntcZnyIL1AIPJNNh8LwzB68M5lFBW0pTEMFTeOSJo=".to_string(),
-    //                 )
-    //                 .try_into()?,
-    //                 info: serde_json::Value::Null,
-    //                 meta: serde_json::Value::Null,
-    //             },
-    //         )]),
-    //     );
-    //     assert_eq!(
-    //         manifest.top_hash(),
-    //         "83571a1d923f1ff9a965855030e85a5bac89b4b5af45d7f920b80e89343eca1f".to_string()
-    //     );
-    //     Ok(())
-    // }
+    #[tokio::test]
+    async fn test_top_hash() -> Res {
+        let manifest = Table::new(
+            Header {
+                meta: serde_json::json!({
+                       "1234567890": "a",
+                }),
+                info: serde_json::json!({
+                       "message": "Second revision",
+                       "version": "v0",
+                }),
+                ..Header::default()
+            },
+            BTreeMap::from([(
+                PathBuf::from("test.md"),
+                Row {
+                    name: PathBuf::from("test.md"),
+                    place: "doesn't matter".to_string(),
+                    size: 3568,
+                    hash: ContentHash::SHA256Chunked(
+                        "MhntcZnyIL1AIPJNNh8LwzB68M5lFBW0pTEMFTeOSJo=".to_string(),
+                    )
+                    .try_into()?,
+                    info: serde_json::Value::Null,
+                    meta: serde_json::Value::Null,
+                },
+            )]),
+        );
+
+        let mut top_hasher = TopHasher::new();
+        top_hasher.append_header(&manifest.header)?;
+        let path = PathBuf::from("test.md");
+        top_hasher.append(&manifest.get_record(&path).await?.unwrap())?;
+
+        assert_eq!(
+            top_hasher.finalize(),
+            "83571a1d923f1ff9a965855030e85a5bac89b4b5af45d7f920b80e89343eca1f".to_string()
+        );
+        Ok(())
+    }
 }
