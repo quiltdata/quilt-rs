@@ -68,11 +68,7 @@ impl InstalledPackage {
         let manifest = self.manifest().await?;
         let (lineage, status) =
             flow::status(lineage, &self.storage, &manifest, self.working_folder()).await?;
-        self.lineage
-            .lock()
-            .await
-            .write(&self.storage, lineage)
-            .await?;
+        self.lineage.write(&self.storage, lineage).await?;
         Ok(status)
     }
 
