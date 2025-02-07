@@ -10,6 +10,7 @@ use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
+use tracing::log;
 
 #[cfg(test)]
 pub mod mocks;
@@ -196,7 +197,10 @@ impl TryFrom<&str> for DomainLineage {
     type Error = Error;
 
     fn try_from(input: &str) -> Result<Self, Self::Error> {
-        serde_json::from_str(input).map_err(Error::LineageParse)
+        serde_json::from_str(input).map_err(|err| {
+            log::error!("Failed to parse `&str` for `DomainLineage` in `{}`", input);
+            Error::LineageParse(err)
+        })
     }
 }
 
@@ -204,7 +208,13 @@ impl TryFrom<Vec<u8>> for DomainLineage {
     type Error = Error;
 
     fn try_from(input: Vec<u8>) -> Result<Self, Self::Error> {
-        serde_json::from_slice(&input).map_err(Error::LineageParse)
+        serde_json::from_slice(&input).map_err(|err| {
+            log::error!(
+                "Failed to parse `Vec<u8>` for `DomainLineage` in `{:?}`",
+                input
+            );
+            Error::LineageParse(err)
+        })
     }
 }
 
