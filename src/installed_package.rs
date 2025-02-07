@@ -55,7 +55,7 @@ impl InstalledPackage {
     }
 
     pub async fn lineage(&self) -> Res<lineage::PackageLineage> {
-        self.lineage.lock().await.read(&self.storage).await
+        self.lineage.read(&self.storage).await
     }
 
     pub fn working_folder(&self) -> PathBuf {
@@ -164,7 +164,7 @@ impl InstalledPackage {
     }
 
     pub async fn pull(&self) -> Res<ManifestUri> {
-        let lineage = self.lineage.lock().await.read(&self.storage).await?;
+        let lineage = self.lineage.read(&self.storage).await?;
         let mut manifest = self.manifest().await?;
         let (lineage, status) =
             flow::status(lineage, &self.storage, &manifest, self.working_folder()).await?;
@@ -184,15 +184,10 @@ impl InstalledPackage {
     }
 
     pub async fn certify_latest(&self) -> Res<ManifestUri> {
-        let lineage = self.lineage.lock().await.read(&self.storage).await?;
+        let lineage = self.lineage.read(&self.storage).await?;
         let latest_manifest_uri = lineage.remote.clone();
         let lineage = flow::certify_latest(lineage, &self.remote, latest_manifest_uri).await?;
-        let lineage = self
-            .lineage
-            .lock()
-            .await
-            .write(&self.storage, lineage)
-            .await?;
+        let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(lineage.remote)
     }
 
@@ -209,12 +204,7 @@ impl InstalledPackage {
             self.namespace.clone(),
         )
         .await?;
-        let lineage = self
-            .lineage
-            .lock()
-            .await
-            .write(&self.storage, lineage)
-            .await?;
+        let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(lineage.remote)
     }
 }
