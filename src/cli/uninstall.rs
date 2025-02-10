@@ -52,9 +52,9 @@ mod tests {
         let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
 
         {
-            let local_domain = m.get_local_domain().lock().await;
+            let local_domain = m.get_local_domain();
             let output = model(
-                &local_domain,
+                local_domain,
                 Input {
                     namespace: ("spec", "quiltcore").into(),
                 },
@@ -65,10 +65,10 @@ mod tests {
         }
 
         {
-            let local_domain = m.get_local_domain().lock().await;
+            let local_domain = m.get_local_domain();
             // Try to uninstall again - should fail
             if let Err(error_str) = model(
-                &local_domain,
+                local_domain,
                 Input {
                     namespace: ("spec", "quiltcore").into(),
                 },

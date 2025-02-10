@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 use tempfile::TempDir;
-use tokio::sync;
 
 use crate::cli::benchmark;
 use crate::cli::browse;
@@ -15,74 +14,72 @@ use crate::cli::uninstall;
 use crate::cli::Error;
 
 pub struct Model {
-    local_domain: sync::Mutex<quilt_rs::LocalDomain>,
+    local_domain: quilt_rs::LocalDomain,
 }
 
 pub trait Commands {
-    fn get_local_domain(&self) -> &sync::Mutex<quilt_rs::LocalDomain>;
+    fn get_local_domain(&self) -> &quilt_rs::LocalDomain;
 
     async fn browse(&self, args: browse::Input) -> Result<browse::Output, Error> {
-        let local_domain = &self.get_local_domain().lock().await;
+        let local_domain = self.get_local_domain();
         browse::model(local_domain, args).await
     }
 
     async fn commit(&self, args: commit::Input) -> Result<commit::Output, Error> {
-        let local_domain = &self.get_local_domain().lock().await;
+        let local_domain = self.get_local_domain();
         commit::model(local_domain, args).await
     }
 
     async fn install(&self, args: install::Input) -> Result<install::Output, Error> {
-        let local_domain = &self.get_local_domain().lock().await;
+        let local_domain = self.get_local_domain();
         install::model(local_domain, args).await
     }
 
     async fn list(&self) -> Result<list::Output, Error> {
-        let local_domain = &self.get_local_domain().lock().await;
+        let local_domain = self.get_local_domain();
         list::model(local_domain).await
     }
 
     async fn package(&self, args: package::Input) -> Result<package::Output, Error> {
-        let local_domain = &self.get_local_domain().lock().await;
+        let local_domain = self.get_local_domain();
         package::model(local_domain, args).await
     }
 
     async fn pull(&self, args: pull::Input) -> Result<pull::Output, Error> {
-        let local_domain = &self.get_local_domain().lock().await;
+        let local_domain = self.get_local_domain();
         pull::model(local_domain, args).await
     }
 
     async fn push(&self, args: push::Input) -> Result<push::Output, Error> {
-        let local_domain = &self.get_local_domain().lock().await;
+        let local_domain = self.get_local_domain();
         push::model(local_domain, args).await
     }
 
     async fn status(&self, args: status::Input) -> Result<status::Output, Error> {
-        let local_domain = &self.get_local_domain().lock().await;
+        let local_domain = self.get_local_domain();
         status::model(local_domain, args).await
     }
 
     async fn benchmark(&self, args: benchmark::Input) -> Result<benchmark::Output, Error> {
-        let local_domain = &self.get_local_domain().lock().await;
+        let local_domain = self.get_local_domain();
         benchmark::model(local_domain, args).await
     }
 
     async fn uninstall(&self, args: uninstall::Input) -> Result<uninstall::Output, Error> {
-        let local_domain = &self.get_local_domain().lock().await;
+        let local_domain = self.get_local_domain();
         uninstall::model(local_domain, args).await
     }
 }
 
 impl Commands for Model {
-    fn get_local_domain(&self) -> &sync::Mutex<quilt_rs::LocalDomain> {
+    fn get_local_domain(&self) -> &quilt_rs::LocalDomain {
         &self.local_domain
     }
 }
 
 impl Model {
     fn new(local_domain: quilt_rs::LocalDomain) -> Self {
-        Model {
-            local_domain: sync::Mutex::new(local_domain),
-        }
+        Model { local_domain }
     }
 
     pub fn from_temp_dir() -> Result<(Self, TempDir), Error> {

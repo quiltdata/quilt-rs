@@ -74,6 +74,8 @@ impl Remote for MockRemote {
             .read_byte_stream(&key)
             .await
             .map_err(|err| match err {
+                // TODO: made a similar finer error for the ByteStreamError
+                Error::ByteStreamError(_) => Error::S3("Key doesn't exists".to_string()),
                 Error::Io(inner_err) => {
                     if inner_err.kind() == std::io::ErrorKind::NotFound {
                         Error::S3("Key doesn't exists".to_string())

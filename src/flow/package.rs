@@ -132,3 +132,62 @@ pub async fn package_s3_prefix(
 
     Ok(manifest_uri)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use aws_sdk_s3::types::Object;
+
+    use crate::io::remote::mocks::MockRemote;
+    use crate::io::storage::mocks::MockStorage;
+
+    #[tokio::test]
+    async fn test_get_object_attributes_inner_success() -> Res {
+        let remote = MockRemote::default();
+
+        // Create a mock object in S3
+        let listing_uri = S3Uri::try_from("s3://test-bucket/directory/")?;
+        let object_uri = S3Uri::try_from("s3://test-bucket/directory/test-key")?;
+        remote
+            .put_object(&object_uri, b"test content".to_vec())
+            .await?;
+
+        // Create mock S3 Object
+        let object = Object::builder()
+            .key("directory/test-key".to_string())
+            .size(12)
+            .build();
+
+        let result =
+            get_object_attributes_inner(&remote.storage, &remote, &listing_uri, Ok(object)).await;
+
+        let attrs = result.unwrap();
+        assert_eq!(attrs.size, 12);
+        assert_eq!(attrs.listing_uri.key, "directory/");
+        assert_eq!(attrs.object_uri.key, "directory/test-key");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_object_attributes_inner_not_found() -> Res {
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+
+        // Create mock S3 Object pointing to non-existent key
+        let s3_uri = S3Uri::try_from("s3://test-bucket/nonexistent-key")?;
+        let object = Object::builder()
+            .key("nonexistent-key".to_string())
+            .size(12)
+            .build();
+
+        let result = get_object_attributes_inner(&storage, &remote, &s3_uri, Ok(object)).await;
+        println!("RESULT {:?}", result);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Key doesn't exists"));
+        Ok(())
+    }
+}

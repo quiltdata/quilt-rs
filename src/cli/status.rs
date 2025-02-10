@@ -109,9 +109,9 @@ mod tests {
             .await?;
 
         {
-            let local_domain = m.get_local_domain().lock().await;
+            let local_domain = m.get_local_domain();
             let output = model(
-                &local_domain,
+                local_domain,
                 Input {
                     namespace: ("spec", "quiltcore").into(),
                 },
@@ -139,9 +139,9 @@ mod tests {
             .await?;
 
         {
-            let local_domain = m.get_local_domain().lock().await;
+            let local_domain = m.get_local_domain();
             let status_new_files = model(
-                &local_domain,
+                local_domain,
                 Input {
                     namespace: ("spec", "quiltcore").into(),
                 },
@@ -160,9 +160,9 @@ mod tests {
             .map_err(|e| Error::Test(format!("Failed to remove file: {}", e)))?;
 
         {
-            let local_domain = m.get_local_domain().lock().await;
+            let local_domain = m.get_local_domain();
             let status_file_removed = model(
-                &local_domain,
+                local_domain,
                 Input {
                     namespace: ("spec", "quiltcore").into(),
                 },
@@ -176,9 +176,9 @@ mod tests {
         }
 
         {
-            let local_domain = m.get_local_domain().lock().await;
+            let local_domain = m.get_local_domain();
             let not_found = model(
-                &local_domain,
+                local_domain,
                 Input {
                     namespace: ("a", "b").into(),
                 },
@@ -192,9 +192,9 @@ mod tests {
             .commit("Anything".to_string(), None, None)
             .await?;
         {
-            let local_domain = m.get_local_domain().lock().await;
+            let local_domain = m.get_local_domain();
             let status_ahead = model(
-                &local_domain,
+                local_domain,
                 Input {
                     namespace: ("spec", "quiltcore").into(),
                 },
@@ -216,9 +216,9 @@ mod tests {
         let (m, installed_package, _temp_dir) = install_package_into_temp_dir(uri).await?;
 
         {
-            let local_domain = m.get_local_domain().lock().await;
+            let local_domain = m.get_local_domain();
             let output = model(
-                &local_domain,
+                local_domain,
                 Input {
                     namespace: ("spec", "quiltcore").into(),
                 },
@@ -236,9 +236,9 @@ mod tests {
             .await?;
 
         {
-            let local_domain = m.get_local_domain().lock().await;
+            let local_domain = m.get_local_domain();
             let output = model(
-                &local_domain,
+                local_domain,
                 Input {
                     namespace: ("spec", "quiltcore").into(),
                 },

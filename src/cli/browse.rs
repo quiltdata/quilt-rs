@@ -141,9 +141,9 @@ mod tests {
 
         let (m, _temp_dir) = Model::from_temp_dir()?;
         {
-            let local_domain = m.get_local_domain().lock().await;
+            let local_domain = m.get_local_domain();
 
-            let output = model(&local_domain, Input { uri }).await?;
+            let output = model(local_domain, Input { uri }).await?;
 
             let output_str = format!("{}", output);
             assert_eq!(output_str, BROWSE_OUTPUT);
