@@ -104,11 +104,24 @@ impl LocalDomain {
         workflow_id: Option<String>,
     ) -> Result<Option<Workflow>, Error> {
         match self.resolve_workflow_config(namespace).await? {
-            Some((config, schemas)) => Ok(Some(Workflow {
-                id: workflow_id,
-                config: config.to_string(),
-                schemas,
-            })),
+            Some((config, schemas)) => {
+                let workflow_id = match workflow_id {
+                    Some(id) => {
+                        let url = schemas.get(&id).ok_or_else(|| {
+                            Error::Workflow(format!("Schema URL not found for workflow ID: {}", id))
+                        })?;
+                        Some(WorkflowId {
+                            id,
+                            url: url.parse()?,
+                        })
+                    }
+                    None => None,
+                };
+                Ok(Some(Workflow {
+                    config: config.to_string(),
+                    id: workflow_id,
+                }))
+            }
             None => match workflow_id {
                 Some(id) => Err(Error::Workflow(format!(
                     r#"There is no workflows config, but the workflow "{}" is set"#,

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use serde::de::Error as SerdeError;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
@@ -28,6 +29,19 @@ pub struct WorkflowId {
 pub struct Workflow {
     pub config: String,
     pub id: Option<WorkflowId>,
+}
+
+impl<'de> Deserialize<'de> for WorkflowId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ok(WorkflowId {
+            id: s,
+            url: S3Uri::default(), // This will be filled in from schemas
+        })
+    }
 }
 
 impl<'de> Deserialize<'de> for Workflow {
