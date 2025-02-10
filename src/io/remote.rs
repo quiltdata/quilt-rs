@@ -23,6 +23,7 @@ pub mod mocks;
 
 /// We use it for getting hashes in files listings when we create new packages from S3 directory.
 /// Also, we re-use this struct for calculating hashes locally when S3-checksums are disabled.
+#[derive(Debug)]
 pub struct S3Attributes {
     pub listing_uri: S3Uri,
     pub object_uri: S3Uri,
