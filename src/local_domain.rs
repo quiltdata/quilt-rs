@@ -16,8 +16,6 @@ use crate::manifest::Header;
 use crate::manifest::JsonObject;
 use crate::manifest::Table;
 use crate::manifest::Workflow;
-use serde_yaml::Value as YamlValue;
-use std::collections::HashMap;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
@@ -25,6 +23,8 @@ use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
+use serde_yaml::Value as YamlValue;
+use std::collections::HashMap;
 
 /// This is the entrypoint for the lib.
 /// All the work you can do with packages is done through calling `LocalDomain` methods.
@@ -50,7 +50,10 @@ impl LocalDomain {
         }
     }
 
-    async fn resolve_workflow_config(&self, namespace: Namespace) -> Res<Option<(S3Uri, HashMap<String, String>)>> {
+    async fn resolve_workflow_config(
+        &self,
+        namespace: Namespace,
+    ) -> Res<Option<(S3Uri, HashMap<String, String>)>> {
         let uri = match self
             .lineage
             .read(&self.storage)
@@ -65,14 +68,13 @@ impl LocalDomain {
             None => return Err(Error::PackageNotInstalled(namespace)),
         };
 
-        match self.remote.get_object(&uri).await {
+        match self.remote.get_object_stream(&uri).await {
             Ok(stream) => {
-                let mut bytes = Vec::new();
-                tokio::io::copy(&mut stream, &mut bytes).await?;
-                let yaml: YamlValue = serde_yaml::from_slice(&bytes)?;
+                let reader = stream.body.into_async_read();
+                let yaml: YamlValue = serde_yaml::from_reader(reader)?;
 
                 let mut schema_urls = HashMap::new();
-                
+
                 if let Some(schemas) = yaml["schemas"].as_mapping() {
                     for (name, schema) in schemas {
                         if let (Some(name), Some(url)) = (name.as_str(), schema["url"].as_str()) {
@@ -82,7 +84,7 @@ impl LocalDomain {
                 }
 
                 Ok(Some((uri, schema_urls)))
-            },
+            }
             Err(Error::S3(err_str)) => {
                 if err_str.contains("NoSuchKey: The specified key does not exist") {
                     Ok(None)

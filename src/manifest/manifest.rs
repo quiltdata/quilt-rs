@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 
+use serde::ser::SerializeMap;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
+use serde::Serializer;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncRead;
 use tokio::io::BufReader;
@@ -11,15 +13,17 @@ use tokio_stream::StreamExt;
 use crate::checksum::ContentHash;
 use crate::manifest::Header;
 use crate::manifest::Table;
+use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
 
 pub type JsonObject = serde_json::Map<String, serde_json::Value>;
 
-#[derive(Debug, Deserialize, PartialEq, Eq, Serialize, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Workflow {
     pub config: String,
     pub id: Option<String>,
+    pub schema: S3Uri,
 }
 
 /// Header (or first row) in JSONL manifest
