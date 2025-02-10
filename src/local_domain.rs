@@ -16,6 +16,8 @@ use crate::manifest::Header;
 use crate::manifest::JsonObject;
 use crate::manifest::Table;
 use crate::manifest::Workflow;
+use serde_yaml::Value as YamlValue;
+use std::collections::HashMap;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
@@ -48,7 +50,7 @@ impl LocalDomain {
         }
     }
 
-    async fn resolve_workflow_config(&self, namespace: Namespace) -> Res<Option<S3Uri>> {
+    async fn resolve_workflow_config(&self, namespace: Namespace) -> Res<Option<(S3Uri, HashMap<String, String>)>> {
         let uri = match self
             .lineage
             .read(&self.storage)
@@ -62,8 +64,25 @@ impl LocalDomain {
             },
             None => return Err(Error::PackageNotInstalled(namespace)),
         };
-        match self.remote.get_object_stream(&uri).await {
-            Ok(obj) => Ok(Some(obj.uri)),
+
+        match self.remote.get_object(&uri).await {
+            Ok(stream) => {
+                let mut bytes = Vec::new();
+                tokio::io::copy(&mut stream, &mut bytes).await?;
+                let yaml: YamlValue = serde_yaml::from_slice(&bytes)?;
+
+                let mut schema_urls = HashMap::new();
+                
+                if let Some(schemas) = yaml["schemas"].as_mapping() {
+                    for (name, schema) in schemas {
+                        if let (Some(name), Some(url)) = (name.as_str(), schema["url"].as_str()) {
+                            schema_urls.insert(name.to_string(), url.to_string());
+                        }
+                    }
+                }
+
+                Ok(Some((uri, schema_urls)))
+            },
             Err(Error::S3(err_str)) => {
                 if err_str.contains("NoSuchKey: The specified key does not exist") {
                     Ok(None)
@@ -81,9 +100,10 @@ impl LocalDomain {
         workflow_id: Option<String>,
     ) -> Result<Option<Workflow>, Error> {
         match self.resolve_workflow_config(namespace).await? {
-            Some(config) => Ok(Some(Workflow {
+            Some((config, schemas)) => Ok(Some(Workflow {
                 id: workflow_id,
                 config: config.to_string(),
+                schemas,
             })),
             None => match workflow_id {
                 Some(id) => Err(Error::Workflow(format!(
