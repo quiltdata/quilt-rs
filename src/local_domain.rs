@@ -70,8 +70,10 @@ impl LocalDomain {
 
         match self.remote.get_object_stream(&uri).await {
             Ok(stream) => {
-                let reader = stream.body.into_async_read();
-                let yaml: YamlValue = serde_yaml::from_reader(reader)?;
+                let mut bytes = Vec::new();
+                use tokio::io::AsyncReadExt;
+                stream.body.into_async_read().read_to_end(&mut bytes).await?;
+                let yaml: YamlValue = serde_yaml::from_slice(&bytes)?;
 
                 let mut schema_urls = HashMap::new();
 
