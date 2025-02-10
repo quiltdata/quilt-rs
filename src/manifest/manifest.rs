@@ -19,19 +19,23 @@ use crate::Res;
 
 pub type JsonObject = serde_json::Map<String, serde_json::Value>;
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
-#[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone)]
+pub struct WorkflowId {
+    pub id: String,
+    pub url: S3Uri,
+}
+
+#[derive(Debug, Clone)]
 pub struct Workflow {
     pub config: String,
-    pub id: Option<String>,
-    #[serde(rename = "schemas")]
-    pub schema_urls: HashMap<String, String>,
+    pub id: Option<WorkflowId>,
 }
 
 /// Header (or first row) in JSONL manifest
-#[derive(Debug, Deserialize, PartialEq, Eq, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ManifestHeader {
     pub version: String,
     pub message: Option<String>,
@@ -131,7 +135,7 @@ impl TryFrom<Quilt3ManifestRow> for ManifestRow {
 }
 
 /// Legacy JSONL in-memory manifest
-#[derive(Debug, Deserialize, PartialEq, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Manifest {
     pub header: ManifestHeader,
     pub rows: Vec<ManifestRow>,
