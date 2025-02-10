@@ -135,5 +135,8 @@ pub enum Error {
     Utf8(#[from] Utf8Error),
 
     #[error("Workflow error: {0}")]
-    Workflow(String)
+    Workflow(String),
+
+    #[error("YAML error: {0}")]
+    Yaml(#[from] serde_yaml::Error),
 }

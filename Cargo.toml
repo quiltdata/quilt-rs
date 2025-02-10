@@ -37,6 +37,7 @@ percent-encoding = "2.3.1"
 reqwest = "0.12.12"
 serde = { version = "1.0.217", features = ["derive", "serde_derive"] }
 serde_json = { version = "1.0.134", features = ["preserve_order"] }
+serde_yaml = "0.9.34"
 sha2 = "0.10.8"
 tabled = "0.17.0"
 tempfile = "3.15.0"
