@@ -19,6 +19,8 @@ use crate::Res;
 
 pub type JsonObject = serde_json::Map<String, serde_json::Value>;
 
+use std::collections::HashMap;
+
 #[derive(Debug, Clone)]
 pub struct WorkflowId {
     pub id: String,
@@ -29,6 +31,43 @@ pub struct WorkflowId {
 pub struct Workflow {
     pub config: String,
     pub id: Option<WorkflowId>,
+}
+
+impl<'de> Deserialize<'de> for Workflow {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct WorkflowHelper {
+            config: String,
+            id: Option<String>,
+            schemas: Option<HashMap<String, String>>,
+        }
+
+        let helper = WorkflowHelper::deserialize(deserializer)?;
+        
+        let id = match (helper.id, helper.schemas) {
+            (Some(id), Some(schemas)) => {
+                // Look up the schema URL using the workflow ID as key
+                schemas.get(&id).map(|url| WorkflowId {
+                    id,
+                    url: url.parse().map_err(serde::de::Error::custom)?,
+                })
+            }
+            (None, _) => None,
+            (Some(id), None) => {
+                return Err(serde::de::Error::custom(format!(
+                    "Schema URL not found for workflow ID: {}", id
+                )))
+            }
+        };
+
+        Ok(Workflow {
+            config: helper.config,
+            id,
+        })
+    }
 }
 
 impl Serialize for Workflow {
