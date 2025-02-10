@@ -35,8 +35,6 @@ pub struct WorkflowId {
 pub struct Workflow {
     pub config: String,
     pub id: Option<WorkflowId>,
-    #[serde(skip)]
-    pub schemas: HashMap<String, String>,
 }
 
 impl Serialize for Workflow {
@@ -45,22 +43,12 @@ impl Serialize for Workflow {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("Workflow", 3)?;
+        let mut state = serializer.serialize_struct("Workflow", 2)?;
         state.serialize_field("config", &self.config)?;
-        
         match &self.id {
-            Some(workflow_id) => {
-                state.serialize_field("id", &workflow_id.id)?;
-                let mut schemas = HashMap::new();
-                schemas.insert(workflow_id.id.clone(), workflow_id.url.to_string());
-                state.serialize_field("schemas", &schemas)?;
-            }
-            None => {
-                state.serialize_field("id", &None::<String>)?;
-                state.serialize_field("schemas", &HashMap::<String, String>::new())?;
-            }
+            Some(workflow_id) => state.serialize_field("id", &workflow_id.id)?,
+            None => state.serialize_field("id", &None::<String>)?,
         }
-        
         state.end()
     }
 }
