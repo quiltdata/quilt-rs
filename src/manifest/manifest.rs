@@ -362,11 +362,11 @@ mod tests {
         let file = storage.open_file(&path).await?;
 
         let result = Manifest::from_reader(file).await;
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Manifest header: Unsupported manifest version: v1"
-        );
+        if let Err(Error::ManifestHeader(error_string)) = result {
+            assert_eq!(error_string, "Unsupported manifest version: v1");
+        } else {
+            panic!("Expected ManifestHeader error, got: {:?}", result);
+        }
         Ok(())
     }
 
