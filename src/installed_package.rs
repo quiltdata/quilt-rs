@@ -283,9 +283,17 @@ mod tests {
             expected_hashes.insert(i, commit.hash);
         }
 
+        // Remove last, cause it's the "current" hash, not a part of `prev_hashes`
+        expected_hashes.pop();
+
         let commit_state = package.lineage().await?.commit.unwrap();
 
         assert_eq!(commit_state.prev_hashes.len(), 9);
+        // let hashes_to_assert: Vec<String> = expected_hashes.into_iter().rev().collect();
+        assert_eq!(
+            commit_state.prev_hashes,
+            expected_hashes.into_iter().rev().collect::<Vec<String>>()
+        );
 
         Ok(())
     }

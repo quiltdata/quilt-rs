@@ -36,37 +36,37 @@ pub trait Commands {
     }
 
     async fn list(&self) -> Result<list::Output, Error> {
-        let local_domain = &self.get_local_domain();
+        let local_domain = self.get_local_domain();
         list::model(local_domain).await
     }
 
     async fn package(&self, args: package::Input) -> Result<package::Output, Error> {
-        let local_domain = &self.get_local_domain();
+        let local_domain = self.get_local_domain();
         package::model(local_domain, args).await
     }
 
     async fn pull(&self, args: pull::Input) -> Result<pull::Output, Error> {
-        let local_domain = &self.get_local_domain();
+        let local_domain = self.get_local_domain();
         pull::model(local_domain, args).await
     }
 
     async fn push(&self, args: push::Input) -> Result<push::Output, Error> {
-        let local_domain = &self.get_local_domain();
+        let local_domain = self.get_local_domain();
         push::model(local_domain, args).await
     }
 
     async fn status(&self, args: status::Input) -> Result<status::Output, Error> {
-        let local_domain = &self.get_local_domain();
+        let local_domain = self.get_local_domain();
         status::model(local_domain, args).await
     }
 
     async fn benchmark(&self, args: benchmark::Input) -> Result<benchmark::Output, Error> {
-        let local_domain = &self.get_local_domain();
+        let local_domain = self.get_local_domain();
         benchmark::model(local_domain, args).await
     }
 
     async fn uninstall(&self, args: uninstall::Input) -> Result<uninstall::Output, Error> {
-        let local_domain = &self.get_local_domain();
+        let local_domain = self.get_local_domain();
         uninstall::model(local_domain, args).await
     }
 }
