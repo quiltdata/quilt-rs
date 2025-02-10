@@ -58,6 +58,12 @@ pub struct TopHasher {
     pub hasher: Box<Sha256>,
 }
 
+impl Default for TopHasher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TopHasher {
     pub fn new() -> Self {
         TopHasher {
