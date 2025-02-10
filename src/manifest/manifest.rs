@@ -1,6 +1,6 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
-use serde::ser::SerializeMap;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
@@ -19,19 +19,13 @@ use crate::Res;
 
 pub type JsonObject = serde_json::Map<String, serde_json::Value>;
 
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct WorkflowId {
     pub id: String,
     pub url: S3Uri,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Workflow {
     pub config: String,
     pub id: Option<WorkflowId>,
@@ -48,7 +42,7 @@ impl Serialize for Workflow {
                 let mut state = serializer.serialize_struct("Workflow", 3)?;
                 state.serialize_field("config", &self.config)?;
                 state.serialize_field("id", &workflow_id.id)?;
-                let mut schemas = std::collections::HashMap::new();
+                let mut schemas = HashMap::new();
                 schemas.insert(workflow_id.id.clone(), workflow_id.url.to_string());
                 state.serialize_field("schemas", &schemas)?;
                 state.end()
