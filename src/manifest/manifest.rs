@@ -43,13 +43,23 @@ impl Serialize for Workflow {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("Workflow", 2)?;
-        state.serialize_field("config", &self.config)?;
         match &self.id {
-            Some(workflow_id) => state.serialize_field("id", &workflow_id.id)?,
-            None => state.serialize_field("id", &None::<String>)?,
+            Some(workflow_id) => {
+                let mut state = serializer.serialize_struct("Workflow", 3)?;
+                state.serialize_field("config", &self.config)?;
+                state.serialize_field("id", &workflow_id.id)?;
+                let mut schemas = std::collections::HashMap::new();
+                schemas.insert(workflow_id.id.clone(), workflow_id.url.to_string());
+                state.serialize_field("schemas", &schemas)?;
+                state.end()
+            }
+            None => {
+                let mut state = serializer.serialize_struct("Workflow", 2)?;
+                state.serialize_field("config", &self.config)?;
+                state.serialize_field("id", &None::<String>)?;
+                state.end()
+            }
         }
-        state.end()
     }
 }
 
