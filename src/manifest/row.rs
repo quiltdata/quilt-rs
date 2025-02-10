@@ -91,7 +91,13 @@ impl Header {
                 match value {
                     serde_json::Value::Object(workflow) => Some(Workflow {
                         id: match workflow.get("id").unwrap_or(&serde_json::Value::Null) {
-                            serde_json::Value::String(id) => Some(id.to_string()),
+                            serde_json::Value::String(id) => Some(WorkflowId {
+                                id: id.to_string(),
+                                url: workflow.get("config")
+                                    .and_then(|v| v.as_str())
+                                    .and_then(|s| s.parse().ok())
+                                    .unwrap_or_default()
+                            }),
                             _ => None,
                         },
                         config: workflow

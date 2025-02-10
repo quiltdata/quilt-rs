@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::RwLock;
 use tracing::log;
+use std::default::Default;
 
 use async_stream::try_stream;
 use aws_config::BehaviorVersion;

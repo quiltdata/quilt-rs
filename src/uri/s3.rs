@@ -41,6 +41,16 @@ pub struct S3Uri {
     pub version: Option<String>,
 }
 
+impl Default for S3Uri {
+    fn default() -> Self {
+        Self {
+            bucket: String::new(),
+            key: String::new(),
+            version: None,
+        }
+    }
+}
+
 impl TryFrom<&str> for S3Uri {
     type Error = Error;
 
