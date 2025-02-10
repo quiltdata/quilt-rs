@@ -22,16 +22,47 @@ pub type JsonObject = serde_json::Map<String, serde_json::Value>;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone)]
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct WorkflowId {
     pub id: String,
     pub url: S3Uri,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Workflow {
     pub config: String,
     pub id: Option<WorkflowId>,
+    #[serde(skip)]
+    pub schemas: HashMap<String, String>,
+}
+
+impl Serialize for Workflow {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("Workflow", 3)?;
+        state.serialize_field("config", &self.config)?;
+        
+        match &self.id {
+            Some(workflow_id) => {
+                state.serialize_field("id", &workflow_id.id)?;
+                let mut schemas = HashMap::new();
+                schemas.insert(workflow_id.id.clone(), workflow_id.url.to_string());
+                state.serialize_field("schemas", &schemas)?;
+            }
+            None => {
+                state.serialize_field("id", &None::<String>)?;
+                state.serialize_field("schemas", &HashMap::<String, String>::new())?;
+            }
+        }
+        
+        state.end()
+    }
 }
 
 /// Header (or first row) in JSONL manifest
