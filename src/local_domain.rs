@@ -15,6 +15,7 @@ use crate::lineage::DomainLineage;
 use crate::manifest::Header;
 use crate::manifest::JsonObject;
 use crate::manifest::Table;
+use crate::manifest::Workflow;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
@@ -47,7 +48,7 @@ impl LocalDomain {
         }
     }
 
-    pub async fn resolve_workflow_config(&self, namespace: Namespace) -> Res<Option<S3Uri>> {
+    async fn resolve_workflow_config(&self, namespace: Namespace) -> Res<Option<S3Uri>> {
         let uri = match self
             .lineage
             .read(&self.storage)
@@ -71,6 +72,26 @@ impl LocalDomain {
                 }
             }
             Err(err) => Err(err),
+        }
+    }
+
+    pub async fn resolve_workflow(
+        &self,
+        namespace: Namespace,
+        workflow_id: Option<String>,
+    ) -> Result<Option<Workflow>, Error> {
+        match self.resolve_workflow_config(namespace).await? {
+            Some(config) => Ok(Some(Workflow {
+                id: workflow_id,
+                config: config.to_string(),
+            })),
+            None => match workflow_id {
+                Some(id) => Err(Error::Workflow(format!(
+                    r#"There is no workflows config, but the workflow "{}" is set"#,
+                    id
+                ))),
+                None => Ok(None),
+            },
         }
     }
 

@@ -133,4 +133,7 @@ pub enum Error {
 
     #[error("UTF-8 error: {0}")]
     Utf8(#[from] Utf8Error),
+
+    #[error("Workflow error: {0}")]
+    Workflow(String)
 }
