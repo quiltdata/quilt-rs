@@ -19,11 +19,15 @@ use crate::Res;
 
 pub type JsonObject = serde_json::Map<String, serde_json::Value>;
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
 pub struct Workflow {
     pub config: String,
     pub id: Option<String>,
-    pub schema: S3Uri,
+    #[serde(rename = "schemas")]
+    pub schema_urls: HashMap<String, String>,
 }
 
 /// Header (or first row) in JSONL manifest
