@@ -1,6 +1,13 @@
 # CHANGELOG
 
+## [0.8.9]
+
+* Remove unnecessary Mutex wrappers from `LocalDomain` and `InstalledPackage` structs since file I/O operations already provide synchronization through async/await
+* Adds new test `test_spamming_commit_writes` in installed_package.rs to verify sequential commits work correctly without mutex protection
+  `file.flush()` is what fixed the issue in the previous commit, not the Mutex.
+
 ## [0.8.8]
+
 * Added "workflow" parameter for commit
 * Implemented tests for CLI, treating them as integration tests. They use real packages from Quilt stack
 * Increased test coverage to 79%
