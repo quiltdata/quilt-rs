@@ -599,4 +599,50 @@ mod tests {
         assert_eq!(header.user_meta, None);
         assert_eq!(header.workflow, None);
     }
+
+    #[test]
+    fn test_workflow_deserialization() {
+        let json = r#"{
+            "config": "workflow config",
+            "id": "test-workflow",
+            "schemas": {
+                "test-workflow": "s3://bucket/workflows/test.json"
+            }
+        }"#;
+
+        let workflow: Workflow = serde_json::from_str(json).unwrap();
+        
+        assert_eq!(workflow.config, "workflow config");
+        assert_eq!(
+            workflow.id,
+            Some(WorkflowId {
+                id: "test-workflow".to_string(),
+                url: "s3://bucket/workflows/test.json".parse().unwrap()
+            })
+        );
+    }
+
+    #[test]
+    fn test_workflow_serialization() {
+        let workflow = Workflow {
+            config: "workflow config".to_string(),
+            id: Some(WorkflowId {
+                id: "test-workflow".to_string(),
+                url: "s3://bucket/workflows/test.json".parse().unwrap()
+            })
+        };
+
+        let json = serde_json::to_value(&workflow).unwrap();
+        
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "config": "workflow config",
+                "id": "test-workflow",
+                "schemas": {
+                    "test-workflow": "s3://bucket/workflows/test.json"
+                }
+            })
+        );
+    }
 }
