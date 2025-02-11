@@ -34,21 +34,11 @@ fn extract_path_relative_to_bucket(path: &str) -> Result<&str, Error> {
 }
 
 /// struct representation of the generic `s3://url`
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct S3Uri {
     pub bucket: String,
     pub key: String,
     pub version: Option<String>,
-}
-
-impl Default for S3Uri {
-    fn default() -> Self {
-        Self {
-            bucket: String::new(),
-            key: String::new(),
-            version: None,
-        }
-    }
 }
 
 impl TryFrom<&str> for S3Uri {
