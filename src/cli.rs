@@ -157,6 +157,7 @@ enum Commands {
     },
 }
 
+// TODO: pass args as an argument, so we can test it
 pub async fn init() -> Result<(), Error> {
     let args = Args::parse();
 
