@@ -39,16 +39,21 @@ pub async fn resolve_workflow<R: Remote>(
                 .await?;
             let yaml: YamlValue = serde_yaml::from_slice(&bytes)?;
             let schemas = yaml["schemas"].as_mapping().cloned().unwrap_or_default();
+            let workflows = yaml["workflows"].as_mapping().cloned().unwrap_or_default();
 
             Ok(Some(Workflow {
                 config: stream.uri.to_string(),
                 id: match &workflow_id {
                     Some(workflow_id_str) => {
-                        // FIXME: get the schema_id from config.workflows[workflow_id_str]
-                        if let Some(serde_yaml::Value::Mapping(schema)) =
-                            schemas.get(workflow_id_str)
-                        {
-                            match schema.get("url") {
+                        if let Some(serde_yaml::Value::Mapping(workflow)) = workflows.get(workflow_id_str) {
+                            let schema_id = workflow.get("metadata_schema").and_then(|v| v.as_str())
+                                .ok_or_else(|| Error::Workflow(format!(
+                                    "metadata_schema not found for workflow ID: {}",
+                                    workflow_id_str
+                                )))?;
+                            
+                            if let Some(serde_yaml::Value::Mapping(schema)) = schemas.get(schema_id) {
+                                match schema.get("url") {
                                 Some(serde_yaml::Value::String(url)) => Some(WorkflowId {
                                     id: workflow_id_str.to_string(),
                                     url: remote.resolve_url(&url.parse()?).await?,
