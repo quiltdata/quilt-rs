@@ -97,20 +97,17 @@ pub async fn resolve_workflow<R: Remote>(
     workflow_id: Option<String>,
     uri: S3Uri,
 ) -> Res<Option<Workflow>> {
-    let (uri, yaml) = fetch_workflows_config(remote, uri).await?;
+    let (config, yaml) = fetch_workflows_config(remote, uri).await?;
     match yaml {
         Some(yaml) => match workflow_id {
-            Some(id) => Ok(Some(Workflow {
-                config: uri,
-                id: Some(WorkflowId {
-                    id: id.clone(),
-                    url: get_schema_url(remote, yaml, &id).await?,
-                }),
-            })),
-            None => Ok(Some(Workflow {
-                config: uri,
-                id: None,
-            })),
+            Some(id) => {
+                let url = get_schema_url(remote, yaml, &id).await?;
+                Ok(Some(Workflow {
+                    config,
+                    id: Some(WorkflowId { id, url }),
+                }))
+            }
+            None => Ok(Some(Workflow { config, id: None })),
         },
         None => match workflow_id {
             Some(workflow_id) => Err(Error::Workflow(format!(
