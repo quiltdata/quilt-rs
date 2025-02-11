@@ -611,7 +611,7 @@ mod tests {
         }"#;
 
         let workflow: Workflow = serde_json::from_str(json).unwrap();
-        
+
         assert_eq!(workflow.config, "workflow config");
         assert_eq!(
             workflow.id,
@@ -623,17 +623,30 @@ mod tests {
     }
 
     #[test]
+    fn test_workflow_deserialization_none() {
+        let json = r#"{
+            "config": "workflow config",
+            "id": null
+        }"#;
+
+        let workflow: Workflow = serde_json::from_str(json).unwrap();
+
+        assert_eq!(workflow.config, "workflow config");
+        assert_eq!(workflow.id, None);
+    }
+
+    #[test]
     fn test_workflow_serialization() {
         let workflow = Workflow {
             config: "workflow config".to_string(),
             id: Some(WorkflowId {
                 id: "test-workflow".to_string(),
-                url: "s3://bucket/workflows/test.json".parse().unwrap()
-            })
+                url: "s3://bucket/workflows/test.json".parse().unwrap(),
+            }),
         };
 
         let json = serde_json::to_value(&workflow).unwrap();
-        
+
         assert_eq!(
             json,
             serde_json::json!({
@@ -642,6 +655,24 @@ mod tests {
                 "schemas": {
                     "test-workflow": "s3://bucket/workflows/test.json"
                 }
+            })
+        );
+    }
+
+    #[test]
+    fn test_workflow_serialization_none() {
+        let workflow = Workflow {
+            config: "workflow config".to_string(),
+            id: None,
+        };
+
+        let json = serde_json::to_value(&workflow).unwrap();
+
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "config": "workflow config",
+                "id": null
             })
         );
     }

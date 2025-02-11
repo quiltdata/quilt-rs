@@ -40,7 +40,9 @@ async fn commit_package(
 ) -> Result<CommitState, Error> {
     match local_domain.get_installed_package(&namespace).await? {
         Some(installed_package) => {
-            let workflow = local_domain.resolve_workflow(namespace, workflow_id).await?;
+            let workflow = local_domain
+                .resolve_workflow(namespace, workflow_id)
+                .await?;
             Ok(installed_package
                 .commit(message, user_meta, workflow)
                 .await?)
@@ -156,7 +158,7 @@ mod tests {
 
             assert_eq!(
                 output.unwrap_err().to_string(),
-                "Workflow 'Anything' not found in the workflows/config.yml"
+                r#"quilt_rs error: Workflow error: There is no workflows config, but the workflow "Anything" is set"#
             );
         }
 

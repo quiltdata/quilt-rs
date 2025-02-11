@@ -17,3 +17,4 @@ pub use manifest::Manifest;
 pub use manifest::ManifestHeader;
 pub use manifest::ManifestRow;
 pub use manifest::Workflow;
+pub use manifest::WorkflowId;

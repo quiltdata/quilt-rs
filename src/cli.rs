@@ -312,9 +312,6 @@ pub enum Error {
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
-    #[error("Workflow '{0}' not found in the workflows/config.yml")]
-    Workflow(String),
-
     #[cfg(test)]
     #[error("Test failed: {0}")]
     Test(String),
