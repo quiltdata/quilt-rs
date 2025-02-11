@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## [0.8.10]
+
+* Fix workflow format by adding `schemas` property
+* Security fix: update openssl
+
 ## [0.8.9]
 
 * Remove unnecessary Mutex wrappers from `LocalDomain` and `InstalledPackage` structs since file I/O operations already provide synchronization through async/await

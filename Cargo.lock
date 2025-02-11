@@ -2564,7 +2564,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-rs"
-version = "0.8.9"
+version = "0.8.10"
 dependencies = [
  "arrow",
  "arrow-array",
