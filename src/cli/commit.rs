@@ -107,6 +107,43 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn test_commit_package_with_workflow_and_meta() -> Result<(), Error> {
+        let uri = "quilt+s3://udp-spec#package=reference/with-workflow@4a9a3d39f655a03659333aad787b182e477e335e0fa78dd4d029521a9ca18dad";
+        let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
+        {
+            let local_domain = m.get_local_domain();
+
+            let output = model(
+                local_domain,
+                Input {
+                    message: "#Test message 1234!?#".to_string(),
+                    namespace: ("reference", "with-workflow").into(),
+                    user_meta: Some(
+                        serde_json::json!({
+                            "Date": "2025-12-31",
+                            "Name": "Foo", 
+                            "Owner": "Kevin",
+                            "Type": "NGS"
+                        })
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                    ),
+                    workflow: Some("my-workflow".to_string()),
+                },
+            )
+            .await?;
+
+            assert_eq!(
+                output.commit.hash,
+                "4a9a3d39f655a03659333aad787b182e477e335e0fa78dd4d029521a9ca18dad"
+            );
+        }
+
+        Ok(())
+    }
+
     /// Verify the commit of that package:
     ///  * workflow/config.yml DOESN'T exists
     ///  * workflow id is not set
