@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use serde::de::Error as SerdeError;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
@@ -19,13 +18,13 @@ use crate::Res;
 
 pub type JsonObject = serde_json::Map<String, serde_json::Value>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WorkflowId {
     pub id: String,
     pub url: S3Uri,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Workflow {
     pub config: String,
     pub id: Option<WorkflowId>,
@@ -57,19 +56,23 @@ impl<'de> Deserialize<'de> for Workflow {
         }
 
         let helper = WorkflowHelper::deserialize(deserializer)?;
-        
+
         let id = match (helper.id, helper.schemas) {
             (Some(id), Some(schemas)) => {
                 // Look up the schema URL using the workflow ID as key
                 schemas.get(&id).map(|url| WorkflowId {
                     id,
-                    url: url.parse().map_err(serde::de::Error::custom)?,
+                    url: url
+                        .parse()
+                        .map_err(|_| Error::S3Uri(url.to_string()))
+                        .unwrap(),
                 })
             }
             (None, _) => None,
             (Some(id), None) => {
                 return Err(serde::de::Error::custom(format!(
-                    "Schema URL not found for workflow ID: {}", id
+                    "Schema URL not found for workflow ID: {}",
+                    id
                 )))
             }
         };
@@ -108,7 +111,7 @@ impl Serialize for Workflow {
 }
 
 /// Header (or first row) in JSONL manifest
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct ManifestHeader {
     pub version: String,
     pub message: Option<String>,
@@ -208,7 +211,7 @@ impl TryFrom<Quilt3ManifestRow> for ManifestRow {
 }
 
 /// Legacy JSONL in-memory manifest
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct Manifest {
     pub header: ManifestHeader,
     pub rows: Vec<ManifestRow>,
