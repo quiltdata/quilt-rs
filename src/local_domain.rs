@@ -58,6 +58,30 @@ impl LocalDomain {
         flow::browse(&self.paths, &self.storage, &self.remote, uri).await
     }
 
+    pub async fn resolve_workflow(
+        &self,
+        namespace: Namespace,
+        workflow_id: Option<String>,
+    ) -> Res<Option<Workflow>> {
+        use crate::io::remote::workflow;
+        workflow::resolve_workflow(
+            &self.storage,
+            &self.remote,
+            namespace.clone(),
+            workflow_id,
+            || {
+                Ok(self
+                    .lineage
+                    .read(&self.storage)
+                    .await?
+                    .packages
+                    .get(&namespace)
+                    .map(|package| S3Uri::from(&package.remote)))
+            },
+        )
+        .await
+    }
+
     pub fn create_installed_package(&self, namespace: Namespace) -> Res<InstalledPackage> {
         // TODO: seems like you can use PackageLineage as an argument instead of namespace
         Ok(InstalledPackage {
