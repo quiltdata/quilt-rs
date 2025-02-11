@@ -88,8 +88,14 @@ pub enum Error {
     #[error("Path prefix not found: {0}")]
     PathPrefixNotFound(#[from] std::path::StripPrefixError),
 
+    #[error("Failed to read RwLock: {0}")]
+    PoisonLock(String),
+
     #[error("Push error: {0}")]
     Push(String),
+
+    #[error("Failed to initialize S3 Remote")]
+    RemoteInit,
 
     #[error("Reqwest error: {0}")]
     Reqwest(#[from] reqwest::Error),
@@ -127,4 +133,10 @@ pub enum Error {
 
     #[error("UTF-8 error: {0}")]
     Utf8(#[from] Utf8Error),
+
+    #[error("Workflow error: {0}")]
+    Workflow(String),
+
+    #[error("YAML error: {0}")]
+    Yaml(#[from] serde_yaml::Error),
 }

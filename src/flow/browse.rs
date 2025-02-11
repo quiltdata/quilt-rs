@@ -93,33 +93,57 @@ mod tests {
     use super::*;
 
     use std::path::PathBuf;
+    use std::str::FromStr;
 
     use crate::mocks;
 
+    /// Verifies that when a manifest is already cached,
+    /// the `browse_remote_manifest` function retrieves it from the cache
+    /// without making calls to the remote storage.
     #[tokio::test]
     async fn test_if_cached() -> Res {
         let paths = DomainPaths::default();
-        let manifest = ManifestUri {
+
+        // Determine the expected cache path for this manifest.
+        let manifest_uri = ManifestUri {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
             hash: "c".to_string(),
         };
-        let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
+        let cache_path = paths.manifest_cache(&manifest_uri.bucket, &manifest_uri.hash);
+
+        // Prepare the reference manifest file.
+        // It is copied into the cache path to simulate a cached manifest.
         let parquet = std::fs::read(mocks::manifest::parquet())?;
         let storage = mocks::storage::MockStorage::default();
-        storage.write_file(cache_path, &parquet).await?;
+        storage.write_file(&cache_path, &parquet).await?;
+
+        // Although there is no direct assertion for `remote.expect_get_object().never()`,
+        // we know the remote is not called because a missing key would throw an error.
         let remote = mocks::remote::MockRemote::default();
-        let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
+
+        // Since the manifest is cached, it should be retrieved from the cache
+        // without any remote interaction.
+        let cached_manifest =
+            cache_remote_manifest(&paths, &storage, &remote, &manifest_uri).await?;
+
+        // Verify that the cached manifest matches the reference manifest
         assert_eq!(
             cached_manifest.header.info.get("message").unwrap(),
             "test_spec_write 2023-11-29T14:01:39.543975"
         );
+
         Ok(())
     }
 
+    /// Verifies that when a manifest is already cached but contains invalid data,
+    /// the `browse_remote_manifest` function responds with an appropriate error.
     #[tokio::test]
     async fn test_if_cached_random_file() -> Res {
         let paths = DomainPaths::default();
+
+        // Simulate a corrupted cached manifest.
+        // Write invalid data (an empty vector) to the cache path.
         let manifest = ManifestUri {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
@@ -128,66 +152,105 @@ mod tests {
         let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
         let storage = mocks::storage::MockStorage::default();
         storage.write_file(cache_path, &Vec::new()).await?;
+
         let remote = mocks::remote::MockRemote::default();
+
         let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await;
+
         assert_eq!(
             cached_manifest.unwrap_err().to_string(),
             "Parquet error: External: Invalid argument (os error 22)"
         );
+
         Ok(())
     }
 
+    /// Verifies that when a manifest is not cached,
+    /// and the manifest exists remotely in a "parquet" location (with the "1220" prefix),
+    /// it is downloaded and cached correctly.
     #[tokio::test]
     async fn test_caching_parquet() -> Res {
-        let storage = mocks::storage::MockStorage::default();
         let paths = DomainPaths::default();
+
         let manifest = ManifestUri {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
             hash: "c".to_string(),
         };
+
+        // Simulate the existence of a reference manifest remotely.
+        // This is done by "writing" the reference manifest to a mocked remote location.
+        // Technically, it is written to a temporary directory with an URI as a path.
         let parquet = std::fs::read(mocks::manifest::parquet())?;
         let remote = mocks::remote::MockRemote::default();
-        remote
-            .put_object(
-                &S3Uri::try_from("s3://a/.quilt/packages/1220c.parquet")?,
-                parquet.clone(),
-            )
-            .await?;
+        let remote_uri = S3Uri::from_str(&format!(
+            "s3://{}/.quilt/packages/1220{}.parquet",
+            manifest.bucket, manifest.hash
+        ))?;
+        remote.put_object(&remote_uri, parquet.clone()).await?;
+
+        let storage = mocks::storage::MockStorage::default();
+
+        // Fetch the manifest from the remote location.
         let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
-        assert_eq!(
-            storage
-                .read_file(&PathBuf::from(".quilt/packages/a/c"))
-                .await?,
-            parquet
-        );
         assert_eq!(
             cached_manifest.header.info.get("message").unwrap(),
             "test_spec_write 2023-11-29T14:01:39.543975"
         );
+
+        // Manifest should be cached locally after being retrieved at the correct local path.
+        let cache_path = PathBuf::from(format!(
+            ".quilt/packages/{}/{}",
+            manifest.bucket, manifest.hash
+        ));
+        assert_eq!(storage.read_file(cache_path).await?, parquet);
+
         Ok(())
     }
 
+    /// Verifies that when a manifest is not cached,
+    /// and the manifest exists remotely in JSONL format,
+    /// it is downloaded, converted to Parquet, and cached correctly.
     #[tokio::test]
     async fn test_caching_jsonl() -> Res {
-        let storage = mocks::storage::MockStorage::default();
         let paths = DomainPaths::default();
+
+        // Define the manifest URI to simulate a package lookup.
         let manifest = ManifestUri {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
             hash: "c".to_string(),
         };
+
+        // Simulate the remote JSONL manifest.
+        // The JSONL data is loaded from a mocked fixture and placed in the remote location.
         let jsonl = std::fs::read(mocks::manifest::jsonl())?;
         let remote = mocks::remote::MockRemote::default();
-        remote
-            .put_object(&S3Uri::try_from("s3://a/.quilt/packages/c")?, jsonl.clone())
-            .await?;
+        let remote_uri = S3Uri::from_str(&format!(
+            "s3://{}/.quilt/packages/{}",
+            manifest.bucket, manifest.hash
+        ))?;
+        remote.put_object(&remote_uri, jsonl.clone()).await?;
+
+        let storage = mocks::storage::MockStorage::default();
+
+        // Fetch the manifest from the remote location.
+        // This should trigger a conversion from JSONL to Parquet and cache the result locally.
         let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
-        assert!(storage.exists(&PathBuf::from(".quilt/packages/a/c")).await);
+
+        // Verify that the converted Parquet manifest is cached locally.
+        let cache_path = PathBuf::from(format!(
+            ".quilt/packages/{}/{}",
+            manifest.bucket, manifest.hash
+        ));
+        assert!(storage.exists(cache_path).await);
+
+        // Verify that the cached manifest contains valid records
         assert!(cached_manifest
             .get_record(&PathBuf::from("README.md"))
             .await?
             .is_some());
+
         Ok(())
     }
 }

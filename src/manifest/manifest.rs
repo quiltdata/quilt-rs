@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use serde::Deserialize;
@@ -5,26 +6,142 @@ use serde::Deserializer;
 use serde::Serialize;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncRead;
-use tokio::io::AsyncWrite;
-use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
-use tokio::io::BufWriter;
 use tokio_stream::StreamExt;
 
 use crate::checksum::ContentHash;
+use crate::manifest::Header;
 use crate::manifest::Table;
+use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
 
 pub type JsonObject = serde_json::Map<String, serde_json::Value>;
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkflowId {
+    pub id: String,
+    pub url: S3Uri,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Workflow {
+    pub config: String,
+    pub id: Option<WorkflowId>,
+}
+
+impl<'de> Deserialize<'de> for WorkflowId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ok(WorkflowId {
+            id: s,
+            url: S3Uri::default(), // This will be filled in from schemas
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for Workflow {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct WorkflowHelper {
+            config: String,
+            id: Option<String>,
+            schemas: Option<HashMap<String, String>>,
+        }
+
+        let helper = WorkflowHelper::deserialize(deserializer)?;
+
+        let id = match (helper.id, helper.schemas) {
+            (Some(id), Some(schemas)) => {
+                // Look up the schema URL using the workflow ID as key
+                schemas.get(&id).map(|url| WorkflowId {
+                    id,
+                    url: url
+                        .parse()
+                        .map_err(|_| Error::S3Uri(url.to_string()))
+                        .unwrap(),
+                })
+            }
+            (None, _) => None,
+            (Some(id), None) => {
+                return Err(serde::de::Error::custom(format!(
+                    "Schema URL not found for workflow ID: {}",
+                    id
+                )))
+            }
+        };
+
+        Ok(Workflow {
+            config: helper.config,
+            id,
+        })
+    }
+}
+
+impl Serialize for Workflow {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        match &self.id {
+            Some(workflow_id) => {
+                let mut state = serializer.serialize_struct("Workflow", 3)?;
+                state.serialize_field("config", &self.config)?;
+                state.serialize_field("id", &workflow_id.id)?;
+                let mut schemas = HashMap::new();
+                schemas.insert(workflow_id.id.clone(), workflow_id.url.to_string());
+                state.serialize_field("schemas", &schemas)?;
+                state.end()
+            }
+            None => {
+                let mut state = serializer.serialize_struct("Workflow", 2)?;
+                state.serialize_field("config", &self.config)?;
+                state.serialize_field("id", &None::<String>)?;
+                state.end()
+            }
+        }
+    }
+}
+
 /// Header (or first row) in JSONL manifest
-#[derive(Debug, Deserialize, PartialEq, Eq, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct ManifestHeader {
     pub version: String,
     pub message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")] // Attempt to be quilt3-compatible.
     pub user_meta: Option<JsonObject>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<Workflow>,
+}
+
+impl Default for ManifestHeader {
+    fn default() -> Self {
+        Header::default().into()
+    }
+}
+
+impl From<&Header> for ManifestHeader {
+    fn from(header: &Header) -> Self {
+        ManifestHeader {
+            version: "v0".into(),
+            message: header.display_message(),
+            user_meta: header.display_user_meta(),
+            workflow: header.display_workflow(),
+        }
+    }
+}
+
+impl From<Header> for ManifestHeader {
+    fn from(header: Header) -> Self {
+        ManifestHeader::from(&header)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -94,7 +211,7 @@ impl TryFrom<Quilt3ManifestRow> for ManifestRow {
 }
 
 /// Legacy JSONL in-memory manifest
-#[derive(Debug, Deserialize, PartialEq, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct Manifest {
     pub header: ManifestHeader,
     pub rows: Vec<ManifestRow>,
@@ -131,13 +248,6 @@ impl Manifest {
         }
 
         Ok(Manifest { header, rows })
-    }
-
-    pub async fn to_file<W: AsyncWrite + Unpin>(&self, file: W) -> Res {
-        let mut writer = BufWriter::new(file);
-        writer.write_all(self.to_jsonlines().as_bytes()).await?;
-        writer.flush().await?;
-        Ok(())
     }
 
     pub fn to_jsonlines(&self) -> String {
@@ -215,37 +325,27 @@ impl Manifest {
             }
         }
         Ok(Manifest {
-            header: ManifestHeader {
-                version: "v0".into(),
-                message: table
-                    .header
-                    .info
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string()),
-                user_meta: table.header.meta.as_object().cloned(),
-            },
+            header: (&table.header).into(),
             rows: manifest_rows,
         })
-    }
-}
-
-impl Default for Manifest {
-    fn default() -> Self {
-        Manifest {
-            header: ManifestHeader {
-                version: "v0".to_string(),
-                message: Some("".to_string()),
-                user_meta: None,
-            },
-            rows: Vec::new(),
-        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use multihash::Multihash;
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    use crate::checksum::MULTIHASH_SHA256;
+    use crate::io::storage::mocks::MockStorage;
+    use crate::io::storage::LocalStorage;
+    use crate::io::storage::Storage;
+    use crate::manifest::Row;
+    use crate::manifest::Table;
+    use crate::mocks;
 
     #[test]
     fn test_equality_of_strictly_equal() {
@@ -285,5 +385,295 @@ mod tests {
             meta: None,
         };
         assert!(left == right)
+    }
+
+    #[tokio::test]
+    async fn test_manifest_from_reader_invalid() -> Res {
+        let storage = MockStorage::default();
+        let invalid_content = r#"{"invalid": "json"}"#;
+        let path = PathBuf::from("invalid_manifest.jsonl");
+        storage
+            .write_file(&path, invalid_content.as_bytes())
+            .await?;
+        let file = storage.open_file(&path).await?;
+
+        let result = Manifest::from_reader(file).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("missing field `version`"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_manifest_from_reader_empty() -> Res {
+        let storage = MockStorage::default();
+        let path = PathBuf::from("empty_manifest.jsonl");
+        storage.write_file(&path, b"").await?;
+        let file = storage.open_file(&path).await?;
+
+        let result = Manifest::from_reader(file).await;
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Manifest header: Empty manifest"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_manifest_from_reader_invalid_utf8() -> Res {
+        let storage = MockStorage::default();
+        let invalid_content = b"\xFF\xFF\xFF\xFF"; // Invalid UTF-8 bytes
+        let path = PathBuf::from("invalid_utf8_manifest.jsonl");
+        storage.write_file(&path, invalid_content).await?;
+        let file = storage.open_file(&path).await?;
+
+        let result = Manifest::from_reader(file).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Failed to read the manifest header"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_manifest_from_reader_unsupported_version() -> Res {
+        let storage = MockStorage::default();
+        let invalid_content = r#"{"version": "v1"}"#;
+        let path = PathBuf::from("unsupported_version_manifest.jsonl");
+        storage
+            .write_file(&path, invalid_content.as_bytes())
+            .await?;
+        let file = storage.open_file(&path).await?;
+
+        let result = Manifest::from_reader(file).await;
+        if let Err(Error::ManifestHeader(error_string)) = result {
+            assert_eq!(error_string, "Unsupported manifest version: v1");
+        } else {
+            panic!("Expected ManifestHeader error, got: {:?}", result);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_manifest_from_reader_invalid_row() -> Res {
+        let storage = MockStorage::default();
+        let invalid_content = r#"{"version": "v0"}
+{"invalid": "row"}"#;
+        let path = PathBuf::from("invalid_row_manifest.jsonl");
+        storage
+            .write_file(&path, invalid_content.as_bytes())
+            .await?;
+        let file = storage.open_file(&path).await?;
+
+        let result = Manifest::from_reader(file).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("missing field `logical_key`"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_manifest_from_reader_empty_physical_keys() -> Res {
+        let storage = MockStorage::default();
+        let invalid_content = r#"{"version": "v0"}
+{"logical_key": "test.txt", "physical_keys": [], "size": 0, "hash": {"type": "SHA256", "value": "abc123"}, "meta": {}}"#;
+        let path = PathBuf::from("empty_physical_keys_manifest.jsonl");
+        storage
+            .write_file(&path, invalid_content.as_bytes())
+            .await?;
+        let file = storage.open_file(&path).await?;
+
+        let result = Manifest::from_reader(file).await;
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Manifest header: Physical key is missing"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_manifest_from_reader_valid() -> Res {
+        let storage = LocalStorage::default();
+        let file = storage.open_file(mocks::manifest::jsonl()).await?;
+
+        assert_eq!(
+            Manifest::from_reader(file).await?,
+            Manifest {
+                header: ManifestHeader {
+                    version: "v0".to_string(),
+                    message: None,
+                    user_meta: None,
+                    workflow: None,
+                },
+                rows: vec![
+                    ManifestRow {
+                        logical_key: PathBuf::from("README.md"),
+                        physical_key: "s3://udp-spec/test_run/test_push/README.md?versionId=Rv.GfYdUWkLfeTT73Rodm3aBUrTIcC1X".to_string(),
+                        size: 26,
+                        hash: ContentHash::SHA256("bc2f10e72e751ea6cc1e0b9bdbbb531d437ccbba684b9fef90e1cc228318e112".to_string()),
+                        meta: Some(serde_json::Map::new()),
+                    }
+                ],
+            }
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_manifest_from_table_with_metadata() -> Res {
+        let hash = Multihash::<256>::wrap(MULTIHASH_SHA256, b"test")?;
+        let mut table = Table::default();
+        table.set_records(BTreeMap::from([(
+            PathBuf::from("test.txt"),
+            Row {
+                name: PathBuf::from("test.txt"),
+                place: "s3://test-bucket/test.txt".to_string(),
+                size: 42,
+                hash,
+                info: serde_json::json!({"foo": "bar"}),
+                meta: serde_json::json!({"baz": "qux"}),
+            },
+        )]));
+        let manifest = Manifest::from_table(&table).await?;
+
+        assert_eq!(
+            manifest,
+            Manifest {
+                header: ManifestHeader {
+                    version: "v0".to_string(),
+                    message: Some("".to_string()),
+                    user_meta: None,
+                    workflow: None,
+                },
+                rows: vec![ManifestRow {
+                    logical_key: PathBuf::from("test.txt"),
+                    physical_key: "s3://test-bucket/test.txt".to_string(),
+                    size: 42,
+                    hash: ContentHash::try_from(hash)?,
+                    meta: Some(serde_json::Map::from_iter(vec![
+                        ("user_meta".to_string(), serde_json::json!({"baz": "qux"})),
+                        ("foo".to_string(), serde_json::json!("bar")),
+                    ])),
+                }],
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_manifest_header_from_header() {
+        let header = Header {
+            info: serde_json::json!({
+                "message": "test message",
+                "version": "v0",
+            }),
+            meta: serde_json::json!({"user": "meta"}),
+        };
+
+        assert_eq!(
+            ManifestHeader::from(header),
+            ManifestHeader {
+                version: "v0".to_string(),
+                message: Some("test message".to_string()),
+                user_meta: Some(serde_json::Map::from_iter(vec![(
+                    "user".to_string(),
+                    serde_json::json!("meta")
+                ),])),
+                workflow: None,
+            }
+        );
+    }
+
+    #[test]
+    fn test_manifest_header_default() {
+        let header = ManifestHeader::default();
+        assert_eq!(header.version, "v0");
+        assert_eq!(header.message, Some("".to_string()));
+        assert_eq!(header.user_meta, None);
+        assert_eq!(header.workflow, None);
+    }
+
+    #[test]
+    fn test_workflow_deserialization() {
+        let json = r#"{
+            "config": "workflow config",
+            "id": "test-workflow",
+            "schemas": {
+                "test-workflow": "s3://bucket/workflows/test.json"
+            }
+        }"#;
+
+        let workflow: Workflow = serde_json::from_str(json).unwrap();
+
+        assert_eq!(workflow.config, "workflow config");
+        assert_eq!(
+            workflow.id,
+            Some(WorkflowId {
+                id: "test-workflow".to_string(),
+                url: "s3://bucket/workflows/test.json".parse().unwrap()
+            })
+        );
+    }
+
+    #[test]
+    fn test_workflow_deserialization_none() {
+        let json = r#"{
+            "config": "workflow config",
+            "id": null
+        }"#;
+
+        let workflow: Workflow = serde_json::from_str(json).unwrap();
+
+        assert_eq!(workflow.config, "workflow config");
+        assert_eq!(workflow.id, None);
+    }
+
+    #[test]
+    fn test_workflow_serialization() {
+        let workflow = Workflow {
+            config: "workflow config".to_string(),
+            id: Some(WorkflowId {
+                id: "test-workflow".to_string(),
+                url: "s3://bucket/workflows/test.json".parse().unwrap(),
+            }),
+        };
+
+        let json = serde_json::to_value(&workflow).unwrap();
+
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "config": "workflow config",
+                "id": "test-workflow",
+                "schemas": {
+                    "test-workflow": "s3://bucket/workflows/test.json"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn test_workflow_serialization_none() {
+        let workflow = Workflow {
+            config: "workflow config".to_string(),
+            id: None,
+        };
+
+        let json = serde_json::to_value(&workflow).unwrap();
+
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "config": "workflow config",
+                "id": null
+            })
+        );
     }
 }

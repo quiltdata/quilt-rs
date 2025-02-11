@@ -1,5 +1,10 @@
 use std::marker::Unpin;
+use std::path::Path;
 use std::path::PathBuf;
+
+use serde_yaml::Mapping;
+use serde_yaml::Value as YamlValue;
+use tokio::io::AsyncReadExt;
 
 use crate::flow;
 use crate::installed_package::InstalledPackage;
@@ -14,16 +19,19 @@ use crate::lineage::DomainLineage;
 use crate::manifest::Header;
 use crate::manifest::JsonObject;
 use crate::manifest::Table;
+use crate::manifest::Workflow;
+use crate::manifest::WorkflowId;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
+use crate::Error;
 use crate::Res;
 
 /// This is the entrypoint for the lib.
 /// All the work you can do with packages is done through calling `LocalDomain` methods.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct LocalDomain<S: Storage = LocalStorage, R: Remote = RemoteS3> {
     paths: paths::DomainPaths,
     lineage: lineage::DomainLineageIo,
@@ -32,8 +40,8 @@ pub struct LocalDomain<S: Storage = LocalStorage, R: Remote = RemoteS3> {
 }
 
 impl LocalDomain {
-    pub fn new(root_dir: PathBuf) -> Self {
-        let paths = paths::DomainPaths::new(root_dir.clone());
+    pub fn new(root_dir: impl AsRef<Path>) -> Self {
+        let paths = paths::DomainPaths::new(root_dir.as_ref().to_path_buf());
         let lineage = lineage::DomainLineageIo::new(paths.lineage());
         let storage = LocalStorage::new();
         let remote = RemoteS3::new();
@@ -45,24 +53,115 @@ impl LocalDomain {
         }
     }
 
+    // TODO: move to the io::remote
+    async fn resolve_workflow_config(&self, namespace: Namespace) -> Res<Option<(S3Uri, Mapping)>> {
+        let uri = match self
+            .lineage
+            .read(&self.storage)
+            .await?
+            .packages
+            .get(&namespace)
+        {
+            Some(package) => S3Uri {
+                key: ".quilt/workflows/config.yml".to_string(),
+                ..S3Uri::from(&package.remote)
+            },
+            None => return Err(Error::PackageNotInstalled(namespace)),
+        };
+
+        match self.remote.get_object_stream(&uri).await {
+            Ok(stream) => {
+                let mut bytes = Vec::new();
+                stream
+                    .body
+                    .into_async_read()
+                    .read_to_end(&mut bytes)
+                    .await?;
+                let yaml: YamlValue = serde_yaml::from_slice(&bytes)?;
+
+                Ok(Some((
+                    stream.uri,
+                    yaml["schemas"].as_mapping().cloned().unwrap_or_default(),
+                )))
+            }
+            Err(Error::S3(err_str)) => {
+                if err_str.contains("NoSuchKey: The specified key does not exist") {
+                    Ok(None)
+                } else {
+                    Err(Error::S3(err_str))
+                }
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    /// 1. No `workflows/config.yaml`
+    ///
+    ///    Return `None` or `Err`
+    ///
+    ///    1.a. `workflow_id` is null/None              → None
+    ///    1.b. `workflow_id` is set                    → Err
+    ///
+    /// 2. `workflows/config.yaml` is present
+    ///
+    ///    Return `Some(Workflow)` with `config` property
+    ///    And the `id` is:
+    ///
+    ///    2.a. `workflow_id` is set and valid          → Some(WorkflowId)
+    ///    2.b. `workflow_id` is null/None              → None
+    ///    2.c. `workflow_id` is set but not found      → Err
+    ///    2.d. `workflow_id` is "" (edge case for 2.c) → Err
+    pub async fn resolve_workflow(
+        &self,
+        namespace: Namespace,
+        workflow_id: Option<String>,
+    ) -> Res<Option<Workflow>> {
+        match self.resolve_workflow_config(namespace).await? {
+            Some((config, schemas)) => Ok(Some(Workflow {
+                config: config.to_string(),
+                id: match &workflow_id {
+                    Some(workflow_id_str) => {
+                        if let Some(serde_yaml::Value::String(url)) = schemas.get(workflow_id_str) {
+                            Some(WorkflowId {
+                                id: workflow_id_str.to_string(),
+                                url: url.parse()?,
+                            })
+                        } else {
+                            return Err(Error::Workflow(format!(
+                                "Schema URL not found for workflow ID: {}",
+                                workflow_id_str
+                            )));
+                        }
+                    }
+                    None => None,
+                },
+            })),
+            None => match workflow_id {
+                Some(id) => Err(Error::Workflow(format!(
+                    r#"There is no workflows config, but the workflow "{}" is set"#,
+                    id
+                ))),
+                None => Ok(None),
+            },
+        }
+    }
+
     pub async fn browse_remote_manifest(&self, uri: &ManifestUri) -> Res<Table> {
         flow::browse(&self.paths, &self.storage, &self.remote, uri).await
     }
 
-    // TODO: make public only for tests
-    pub fn create_installed_package(&self, namespace: Namespace) -> InstalledPackage {
+    pub fn create_installed_package(&self, namespace: Namespace) -> Res<InstalledPackage> {
         // TODO: seems like you can use PackageLineage as an argument instead of namespace
-        InstalledPackage {
+        Ok(InstalledPackage {
             lineage: self.lineage.create_package_lineage(namespace.clone()),
-            namespace: namespace.clone(),
+            namespace,
             paths: self.paths.clone(),
-            remote: self.remote.clone(),
+            remote: self.remote.try_clone()?,
             storage: self.storage.clone(),
-        }
+        })
     }
 
     pub async fn install_package(&self, manifest_uri: &ManifestUri) -> Res<InstalledPackage> {
-        // Read the lineage
         let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
         let lineage = flow::install_package(
             lineage,
@@ -72,16 +171,16 @@ impl LocalDomain {
             manifest_uri,
         )
         .await?;
-        let _fixme = self.lineage.write(&self.storage, lineage).await?;
+        self.lineage.write(&self.storage, lineage).await?;
 
-        Ok(self.create_installed_package(manifest_uri.namespace.clone()))
+        self.create_installed_package(manifest_uri.namespace.clone())
     }
 
     pub async fn uninstall_package(&self, namespace: Namespace) -> Res<()> {
         let lineage = self.lineage.read(&self.storage).await?;
         let lineage =
             flow::uninstall_package(lineage, &self.paths, &self.storage, namespace).await?;
-        let _fixme = self.lineage.write(&self.storage, lineage).await?;
+        self.lineage.write(&self.storage, lineage).await?;
         Ok(())
     }
 
@@ -89,10 +188,10 @@ impl LocalDomain {
         let lineage = self.lineage.read(&self.storage).await?;
         let mut namespaces: Vec<Namespace> = lineage.packages.into_keys().collect();
         namespaces.sort();
-        let packages = namespaces
-            .into_iter()
-            .map(|namespace| self.create_installed_package(namespace))
-            .collect();
+        let mut packages = Vec::new();
+        for namespace in namespaces {
+            packages.push(self.create_installed_package(namespace)?);
+        }
         Ok(packages)
     }
 
@@ -102,7 +201,7 @@ impl LocalDomain {
     ) -> Res<Option<InstalledPackage>> {
         let lineage = self.lineage.read(&self.storage).await?;
         if lineage.packages.contains_key(namespace) {
-            Ok(Some(self.create_installed_package(namespace.to_owned())))
+            Ok(Some(self.create_installed_package(namespace.to_owned())?))
         } else {
             Ok(None)
         }

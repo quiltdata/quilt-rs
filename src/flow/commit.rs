@@ -18,9 +18,11 @@ use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageFileFingerprint;
 use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
+use crate::manifest::Header;
 use crate::manifest::JsonObject;
 use crate::manifest::Row;
 use crate::manifest::Table;
+use crate::manifest::Workflow;
 use crate::paths;
 use crate::uri::Namespace;
 use crate::Error;
@@ -106,6 +108,7 @@ pub async fn commit_package(
     namespace: Namespace,
     message: String,
     user_meta: Option<JsonObject>,
+    workflow: Option<Workflow>,
 ) -> Res<PackageLineage> {
     log::debug!("commit: {message:?}, {user_meta:?}");
     // create a new manifest based on the stored version
@@ -177,15 +180,20 @@ pub async fn commit_package(
             }
         }
     }
-    let mut header = manifest.get_header().await?;
 
-    header.info = json!({
-        "message": message,
-        "version": "v0",
-    });
-    if let Some(user_meta) = user_meta {
-        header.meta = user_meta.into();
-    }
+    let header = Header {
+        info: json!({
+            "message": message,
+            "version": "v0",
+            "workflow": workflow,
+        }),
+        meta: if let Some(mut u) = user_meta {
+            u.sort_keys();
+            u.into()
+        } else {
+            serde_json::Value::Null
+        },
+    };
 
     let stream = stream_local_with_changes(manifest, removed_keys, modified_keys, new_files).await;
     let manifest_path = |t: &str| paths.installed_manifest(&namespace, t);
@@ -241,6 +249,7 @@ mod tests {
             ("foo", "bar").into(),
             commit_message,
             Some(user_meta),
+            None,
         )
         .await?;
         let hash = "56c329d2390c9c6efedb698f47b75f096112c89a7751d55a426507ec6c432897";
@@ -296,6 +305,7 @@ mod tests {
             ("foo", "bar").into(),
             commit_message,
             Some(user_meta),
+            None,
         )
         .await?;
 
@@ -351,6 +361,7 @@ mod tests {
             status,
             ("foo", "bar").into(),
             "Lorem ipsum".to_string(),
+            None,
             None,
         )
         .await?;
@@ -409,6 +420,7 @@ mod tests {
             ("foo", "bar").into(),
             "Lorem ipsum".to_string(),
             None,
+            None,
         )
         .await;
 
@@ -459,6 +471,7 @@ mod tests {
             status,
             ("foo", "bar").into(),
             "Lorem ipsum".to_string(),
+            None,
             None,
         )
         .await?;

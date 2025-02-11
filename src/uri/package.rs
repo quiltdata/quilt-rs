@@ -296,12 +296,6 @@ impl From<ManifestUri> for S3PackageUri {
     }
 }
 
-impl From<&ManifestUri> for S3PackageUri {
-    fn from(uri: &ManifestUri) -> S3PackageUri {
-        S3PackageUri::from(uri.clone())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -444,7 +438,7 @@ mod tests {
     }
 
     #[test]
-    fn test_stringify() -> Res {
+    fn test_stringify_with_latest() -> Res {
         let uri = S3PackageUri {
             bucket: "bucket".to_string(),
             catalog: Some(Host::Domain("do.ma.in".to_string())),
@@ -456,6 +450,97 @@ mod tests {
             uri.to_string(),
             "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=do.ma.in"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_stringify_with_hash() -> Res {
+        let uri = S3PackageUri {
+            bucket: "bucket".to_string(),
+            catalog: None,
+            namespace: ("foo", "bar").into(),
+            revision: RevisionPointer::Hash("abc123".to_string()),
+            path: None,
+        };
+        assert_eq!(uri.to_string(), "quilt+s3://bucket#package=foo/bar@abc123");
+        Ok(())
+    }
+
+    #[test]
+    fn test_stringify_with_tag() -> Res {
+        let uri = S3PackageUri {
+            bucket: "bucket".to_string(),
+            catalog: None,
+            namespace: ("foo", "bar").into(),
+            revision: RevisionPointer::Tag("foobar".to_string()),
+            path: None,
+        };
+        assert_eq!(uri.to_string(), "quilt+s3://bucket#package=foo/bar@foobar");
+        Ok(())
+    }
+
+    #[test]
+    fn test_from_manifest_uri() -> Res {
+        let manifest_uri = ManifestUri {
+            bucket: "test-bucket".to_string(),
+            namespace: ("foo", "bar").into(),
+            hash: "abc123".to_string(),
+        };
+
+        assert_eq!(
+            S3PackageUri::from(manifest_uri),
+            S3PackageUri {
+                bucket: "test-bucket".to_string(),
+                catalog: None,
+                namespace: ("foo", "bar").into(),
+                path: None,
+                revision: RevisionPointer::Hash("abc123".to_string()),
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_namespace_ordering_greater() -> Res {
+        let ns1 = Namespace::from(("z", "a"));
+        let ns2 = Namespace::from(("a", "b"));
+
+        assert!(ns1 > ns2);
+        assert_eq!(ns1.cmp(&ns2), Ordering::Greater);
+
+        let ns3 = Namespace::from(("same", "z"));
+        let ns4 = Namespace::from(("same", "a"));
+
+        assert!(ns3 > ns4);
+        assert_eq!(ns3.cmp(&ns4), Ordering::Greater);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_namespace_partial_ordering() -> Res {
+        let ns1 = Namespace::from(("a", "b"));
+        let ns2 = Namespace::from(("a", "b"));
+        let ns3 = Namespace::from(("c", "d"));
+
+        // Test equality
+        assert!(ns1 >= ns2);
+        assert!(ns1 <= ns2);
+        assert!(ns1 <= ns2);
+        assert!(ns1 >= ns2);
+
+        // Test less than
+        assert!(ns1 < ns3);
+        assert!(ns1 <= ns3);
+        assert!(ns1 <= ns3);
+        assert!(ns1 < ns3);
+
+        // Test greater than
+        assert!(ns3 > ns1);
+        assert!(ns3 >= ns1);
+        assert!(ns3 >= ns1);
+        assert!(ns3 > ns1);
+
         Ok(())
     }
 }

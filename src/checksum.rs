@@ -53,11 +53,11 @@ impl TryFrom<Multihash<256>> for ContentHash {
     }
 }
 
-impl TryInto<Multihash<256>> for ContentHash {
+impl TryFrom<ContentHash> for Multihash<256> {
     type Error = Error;
 
-    fn try_into(self) -> Result<Multihash<256>, Self::Error> {
-        match self {
+    fn try_from(content_hash: ContentHash) -> Result<Self, Self::Error> {
+        match content_hash {
             ContentHash::SHA256(hash) => {
                 let hash_bytes =
                     hex::decode(hash).map_err(|err| Error::InvalidMultihash(err.to_string()))?;
@@ -188,57 +188,150 @@ mod tests {
     use base64::Engine;
 
     #[tokio::test]
-    async fn test_sha256() {
+    async fn test_files_less_8mb() -> Res {
         let bytes = "0123456789abcdef".as_bytes();
-        let hash = calculate_sha256_chunked_checksum(bytes, bytes.len() as u64)
-            .await
-            .unwrap();
+        let hash = calculate_sha256_chunked_checksum(bytes, bytes.len() as u64).await?;
+        assert_eq!(hash.code(), MULTIHASH_SHA256_CHUNKED);
         assert_eq!(
             BASE64_STANDARD.encode(hash.digest()),
             "Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_edge_case() {
+    async fn test_files_equal_to_8mb() -> Res {
         let bytes = "12345678".as_bytes().repeat(1024 * 1024);
-        let hash = calculate_sha256_chunked_checksum(bytes.as_ref(), bytes.len() as u64)
-            .await
-            .unwrap();
+        let hash = calculate_sha256_chunked_checksum(bytes.as_ref(), bytes.len() as u64).await?;
         assert_eq!(
             BASE64_STANDARD.encode(hash.digest()),
             "7V3rZ3Q/AmAYax2wsQBZbc7N1EMIxlxRyMiMthGRdwg="
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_sha256_chunked_empty() {
+    async fn test_sha256_chunked_empty() -> Res {
         let bytes: &[u8] = &[];
-        let hash = calculate_sha256_chunked_checksum(bytes, bytes.len() as u64)
-            .await
-            .unwrap();
+        let hash = calculate_sha256_chunked_checksum(bytes, bytes.len() as u64).await?;
         assert_eq!(
             BASE64_STANDARD.encode(hash.digest()),
             "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_sha256_chunked_long() {
+    async fn test_files_bigger_then_8mb() -> Res {
         let bytes = "1234567890abcdefgh".as_bytes().repeat(1024 * 1024);
-        let hash = calculate_sha256_chunked_checksum(bytes.as_ref(), bytes.len() as u64)
-            .await
-            .unwrap();
+        let hash = calculate_sha256_chunked_checksum(bytes.as_ref(), bytes.len() as u64).await?;
         assert_eq!(
             BASE64_STANDARD.encode(hash.digest()),
             "T+rt/HKRJOiAkEGXKvc+DhCwRcrZiDrFkjKonDT1zgs="
         );
+        Ok(())
     }
 
     #[test]
-    fn test_get_compliant_chunked_checksum() {
-        fn b64decode(data: &str) -> Vec<u8> {
-            BASE64_STANDARD.decode(data.as_bytes()).unwrap()
+    fn test_get_checksum_chunksize_and_parts() {
+        // Test file smaller than threshold
+        let (chunksize, parts) = get_checksum_chunksize_and_parts(MULTIPART_THRESHOLD - 1);
+        assert_eq!(chunksize, MULTIPART_THRESHOLD);
+        assert_eq!(parts, 1);
+
+        // Test file equal to threshold
+        let (chunksize, parts) = get_checksum_chunksize_and_parts(MULTIPART_THRESHOLD);
+        assert_eq!(chunksize, MULTIPART_THRESHOLD);
+        assert_eq!(parts, 1);
+
+        // Test file requiring exactly MPU_MAX_PARTS
+        let file_size = MULTIPART_THRESHOLD * MPU_MAX_PARTS;
+        let (chunksize, parts) = get_checksum_chunksize_and_parts(file_size);
+        assert_eq!(chunksize, MULTIPART_THRESHOLD);
+        assert_eq!(parts, MPU_MAX_PARTS);
+
+        // Test file requiring more than MPU_MAX_PARTS at base chunk size
+        let file_size = MULTIPART_THRESHOLD * (MPU_MAX_PARTS + 1);
+        let (chunksize, parts) = get_checksum_chunksize_and_parts(file_size);
+        assert_eq!(chunksize, MULTIPART_THRESHOLD * 2);
+        assert_eq!(parts, (MPU_MAX_PARTS / 2) + 1);
+
+        // Test very large file requiring multiple chunk size doublings
+        let file_size = MULTIPART_THRESHOLD * MPU_MAX_PARTS * 8;
+        let (chunksize, parts) = get_checksum_chunksize_and_parts(file_size);
+        assert_eq!(chunksize, MULTIPART_THRESHOLD * 8);
+        assert_eq!(parts, MPU_MAX_PARTS);
+    }
+
+    #[test]
+    fn test_content_hash_try_into_hex_decode_error() {
+        let result: Result<Multihash<256>, Error> = ContentHash::SHA256("a".repeat(45)).try_into();
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid multihash: Odd number of digits"
+        );
+    }
+
+    #[test]
+    fn test_content_hash_chunked_try_into_hex_decode_error() {
+        let result: Result<Multihash<256>, Error> =
+            ContentHash::SHA256Chunked("a".repeat(45)).try_into();
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid multihash: Invalid input length: 45"
+        );
+    }
+
+    #[test]
+    fn test_content_hash_try_into_multihash_oversized() {
+        // Create a hash that's too large (>32 bytes)
+        let oversized_hash = "a".repeat(600); // 65 hex chars = 32.5 bytes
+        let content_hash = ContentHash::SHA256(oversized_hash);
+
+        let result: Result<Multihash<256>, Error> = content_hash.try_into();
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid multihash: Invalid multihash size 300."
+        );
+    }
+
+    #[test]
+    fn test_content_hash_chunked_try_into_multihash_oversized() -> Res {
+        let oversized_hash = "a".repeat(600);
+        let content_hash = ContentHash::SHA256Chunked(oversized_hash);
+        let result = Multihash::<256>::try_from(content_hash);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid multihash: Invalid multihash size 450."
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_content_hash_try_from_multihash_invalid_code() -> Res {
+        // Create a multihash with an unsupported code
+        let digest = [0u8; 32];
+        let invalid_code = 0x42; // Some random code that's not SHA256 or SHA256_CHUNKED
+        let multihash = Multihash::wrap(invalid_code, &digest)?;
+
+        let result = ContentHash::try_from(multihash);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid multihash: Unexpected code: 0x0042"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_compliant_chunked_checksum() -> Res {
+        fn b64decode(data: &str) -> Result<Vec<u8>, Error> {
+            Ok(BASE64_STANDARD.decode(data.as_bytes())?)
         }
 
         fn sha256(data: Vec<u8>) -> Vec<u8> {
@@ -266,7 +359,7 @@ mod tests {
                     .object_size(1048576), // below the threshold
                 Some(sha256(b64decode(
                     "MOFJVevxNSJm3C/4Bn5oEEYH51CrudOzZYK4r5Cfy1g=",
-                ))),
+                )?)),
             ),
             (
                 builder()
@@ -287,7 +380,7 @@ mod tests {
                             .build(),
                     )
                     .object_size(5242880), // below the threshold
-                Some(b64decode("vWr41JZ9PL656FAGy906ysrYj/8ccoMUWHT0xEXRftA=")),
+                Some(b64decode("vWr41JZ9PL656FAGy906ysrYj/8ccoMUWHT0xEXRftA=")?),
             ),
             (
                 builder()
@@ -318,7 +411,7 @@ mod tests {
                             .build(),
                     )
                     .object_size(8388608), // above the threshold
-                Some(b64decode("MIsGKY+ykqN4CPj3gGGu4Gv03N7OWKWpsZqEf+OrGJs=")),
+                Some(b64decode("MIsGKY+ykqN4CPj3gGGu4Gv03N7OWKWpsZqEf+OrGJs=")?),
             ),
             (
                 builder()
@@ -372,12 +465,13 @@ mod tests {
                             .build(),
                     )
                     .object_size(13631488), // above the threshold
-                Some(b64decode("bGeobZC1xyakKeDkOLWP9khl+vuOditELvPQhrT/R9M=")),
+                Some(b64decode("bGeobZC1xyakKeDkOLWP9khl+vuOditELvPQhrT/R9M=")?),
             ),
         ];
 
         for (attrs, expected) in test_data {
             assert_eq!(get_compliant_chunked_checksum(&attrs.build()), expected);
         }
+        Ok(())
     }
 }

@@ -14,22 +14,35 @@ use crate::lineage::InstalledPackageStatus;
 use crate::lineage::LineagePaths;
 use crate::manifest::JsonObject;
 use crate::manifest::Table;
+use crate::manifest::Workflow;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
+use crate::Error;
 use crate::Res;
 
 /// Similar to `LocalDomain` because it has access to the same lineage file and remote/storage
 /// traits.
 /// But it only manages one particular installed package.
 /// It can be instantiated from `LocalDomain` by installing new or listing existing packages.
-#[derive(Clone, Debug, PartialEq)]
-pub struct InstalledPackage<S: Storage + Clone = LocalStorage, R: Remote + Clone = RemoteS3> {
+#[derive(Debug)]
+pub struct InstalledPackage<S: Storage = LocalStorage, R: Remote = RemoteS3> {
     pub lineage: lineage::PackageLineageIo,
     pub paths: paths::DomainPaths,
     pub remote: R,
     pub storage: S,
     pub namespace: Namespace,
+}
+
+impl std::fmt::Display for InstalledPackage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            r##"Installed package "{}" at {}"##,
+            self.namespace,
+            self.working_folder().display()
+        )
+    }
 }
 
 impl InstalledPackage {
@@ -97,7 +110,8 @@ impl InstalledPackage {
         &self,
         message: String,
         user_meta: Option<JsonObject>,
-    ) -> Res<Option<CommitState>> {
+        workflow: Option<Workflow>,
+    ) -> Res<CommitState> {
         let lineage = self.lineage.read(&self.storage).await?;
         let mut manifest = self.manifest().await?;
 
@@ -114,14 +128,23 @@ impl InstalledPackage {
             self.namespace.clone(),
             message,
             user_meta,
+            workflow,
         )
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
-        Ok(lineage.commit)
+        match lineage.commit {
+            Some(commit) => Ok(commit),
+            None => Err(Error::Commit("Nothing committed".to_string())),
+        }
     }
 
     pub async fn push(&self) -> Res<ManifestUri> {
         let lineage = self.lineage.read(&self.storage).await?;
+
+        if lineage.commit.is_none() {
+            return Err(Error::Push("No commits to push".to_string()));
+        }
+
         let manifest = self.manifest().await?;
         let lineage = flow::push(
             lineage,
@@ -179,5 +202,99 @@ impl InstalledPackage {
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(lineage.remote)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    use crate::lineage::DomainLineageIo;
+    use crate::lineage::PackageLineageIo;
+
+    #[tokio::test]
+    async fn test_spamming_commit_writes() -> Res {
+        let temp_dir = TempDir::new()?;
+        let paths = paths::DomainPaths::new(temp_dir.path().to_path_buf());
+
+        let storage = LocalStorage::new();
+        let remote = RemoteS3::new();
+        let namespace: Namespace = ("test", "history").into();
+
+        // Initialize domain lineage file
+        storage
+            .write_file(
+                &paths.lineage(),
+                br#"{
+                "packages": {
+                    "test/history": {
+                        "commit": null,
+                        "remote": {
+                            "bucket": "bucket",
+                            "namespace": "test/history",
+                            "hash": "abc123"
+                        },
+                        "base_hash": "abc123",
+                        "latest_hash": "abc123",
+                        "paths": {}
+                    }}
+                }"#,
+            )
+            .await?;
+
+        // Copy manifest to the expected path
+        let reference_manifest = crate::mocks::manifest::parquet_checksummed();
+        let test_manifest = temp_dir
+            .path()
+            .to_path_buf()
+            .join(".quilt/installed/test/history/abc123");
+        storage
+            .create_dir_all(&test_manifest.parent().unwrap())
+            .await?;
+        storage.copy(reference_manifest, test_manifest).await?;
+
+        let package = InstalledPackage {
+            lineage: PackageLineageIo::new(
+                DomainLineageIo::new(paths.lineage()),
+                namespace.clone(),
+            ),
+            paths,
+            remote,
+            storage,
+            namespace,
+        };
+
+        // Make 10 commits with different content
+        let mut expected_hashes = Vec::new();
+        for i in 0..10 {
+            let commit = package
+                .commit(
+                    format!("Commit new1 {}", i),
+                    Some(
+                        serde_json::json!({ "count": i })
+                            .as_object()
+                            .unwrap()
+                            .clone(),
+                    ),
+                    None,
+                )
+                .await?;
+            expected_hashes.insert(i, commit.hash);
+        }
+
+        // Remove last, cause it's the "current" hash, not a part of `prev_hashes`
+        expected_hashes.pop();
+
+        let commit_state = package.lineage().await?.commit.unwrap();
+
+        assert_eq!(commit_state.prev_hashes.len(), 9);
+        // let hashes_to_assert: Vec<String> = expected_hashes.into_iter().rev().collect();
+        assert_eq!(
+            commit_state.prev_hashes,
+            expected_hashes.into_iter().rev().collect::<Vec<String>>()
+        );
+
+        Ok(())
     }
 }

@@ -50,3 +50,67 @@ pub async fn model(
         .await?;
     Ok(Output { manifest_uri })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::cli::model::Model;
+
+    /// Verifies that CLI throws error if source `s3://` URI is invalid:
+    #[tokio::test]
+    async fn test_invalid_source() -> Result<(), Error> {
+        let uri = "should-be-s3://anything".to_string();
+
+        let (m, _) = Model::from_temp_dir()?;
+
+        if let Std::Err(error_str) = command(
+            m,
+            Input {
+                message: None,
+                target: "anything".to_string(),
+                uri,
+                user_meta: None,
+            },
+        )
+        .await
+        {
+            assert!(error_str
+                .to_string()
+                .ends_with("Expected s3:// scheme in should-be-s3://anything"));
+        } else {
+            return Err(Error::Test("Failed to fail".to_string()));
+        }
+
+        Ok(())
+    }
+
+    /// Verifies that CLI throws error if target `quilt+s3://` URI is invalid:
+    #[tokio::test]
+    async fn test_invalid_target() -> Result<(), Error> {
+        let uri = "s3://any/thing".to_string();
+        let target = "quilt+s3://some-nonsense".to_string();
+
+        let (m, _) = Model::from_temp_dir()?;
+
+        if let Std::Err(error_str) = command(
+            m,
+            Input {
+                message: None,
+                target,
+                uri,
+                user_meta: None,
+            },
+        )
+        .await
+        {
+            assert!(error_str
+                .to_string()
+                .starts_with("quilt_rs error: Invalid package URI"),);
+        } else {
+            return Err(Error::Test("Failed to fail".to_string()));
+        }
+
+        Ok(())
+    }
+}

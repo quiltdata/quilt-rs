@@ -63,10 +63,14 @@ mod tests {
 
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+    use std::str::FromStr;
 
+    use crate::io::storage::LocalStorage;
     use crate::mocks;
     use crate::uri::S3Uri;
 
+    /// Verify that attempting to install a package that is already installed results in an error.
+    /// A package is considered installed if it is present in the lineage.
     #[tokio::test]
     async fn test_if_already_installed() -> Res {
         let namespace = ("foo", "bar");
@@ -91,27 +95,37 @@ mod tests {
         Ok(())
     }
 
+    /// Verify that a manifest is fetched from the remote storage and installed locally.
+    /// This test focuses on the manifest itself, not on the package files.
+    /// Package files are installed separately using `install_paths`.
     #[tokio::test]
     async fn test_installing() -> Res {
         let manifest_uri = ManifestUri {
             bucket: "a".to_string(),
-            hash: "c".to_string(),
+            hash: "abcdef1234".to_string(),
             namespace: ("f", "b").into(),
         };
+
+        // Load the reference manifest from `./fixtures`
         let parquet = std::fs::read(mocks::manifest::parquet())?;
         let remote = mocks::remote::MockRemote::default();
+
+        // Simulate the remote storage containing the Parquet manifest
+        let remote_uri = S3Uri::from_str(&format!(
+            "s3://{}/.quilt/packages/1220{}.parquet",
+            manifest_uri.bucket, manifest_uri.hash
+        ))?;
+        remote.put_object(&remote_uri, parquet).await?;
+
+        // Simulate the remote storage containing the reference to the latest manifest
+        let latest_uri = S3Uri::from_str(&format!(
+            "s3://{}/.quilt/named_packages/{}/latest",
+            manifest_uri.bucket, manifest_uri.namespace
+        ))?;
         remote
-            .put_object(
-                &S3Uri::try_from("s3://a/.quilt/packages/1220c.parquet")?,
-                parquet,
-            )
+            .put_object(&latest_uri, manifest_uri.hash.as_bytes().to_vec())
             .await?;
-        remote
-            .put_object(
-                &S3Uri::try_from("s3://a/.quilt/named_packages/f/b/latest")?,
-                Vec::new(),
-            )
-            .await?;
+
         let storage = mocks::storage::MockStorage::default();
         let result = install_package(
             DomainLineage::default(),
@@ -121,16 +135,68 @@ mod tests {
             &manifest_uri,
         )
         .await?;
-        assert_eq!(
-            result.packages.get(&("f", "b").into()).unwrap().remote,
-            manifest_uri
-        );
-        assert!(
-            storage
-                .exists(&PathBuf::from(".quilt/installed/f/b/c"))
-                .await
-        );
-        assert!(storage.exists(&PathBuf::from(".quilt/packages/a/c")).await);
+
+        let installed_package = result.packages.get(&("f", "b").into()).unwrap();
+        let tracked = installed_package.remote.clone();
+
+        assert_eq!(installed_package.latest_hash, "abcdef1234".to_string());
+
+        // Verify that the lineage records the installed package
+        assert_eq!(tracked, manifest_uri);
+
+        // Verify that the manifest is stored locally in the immutable manifest directory
+        let installed_manifest_path = PathBuf::from(format!(
+            ".quilt/installed/{}/{}",
+            tracked.namespace, tracked.hash
+        ));
+        assert!(storage.exists(&installed_manifest_path).await);
+
+        // Verify that the manifest is cached locally
+        let cached_manifest_path = PathBuf::from(format!(
+            ".quilt/packages/{}/{}",
+            tracked.bucket, tracked.hash
+        ));
+        assert!(storage.exists(&cached_manifest_path).await);
+        Ok(())
+    }
+
+    // Verify it throws correct error when no permissions
+    #[tokio::test]
+    async fn test_installing_when_no_permissions() -> Res {
+        let manifest_uri = ManifestUri {
+            bucket: "a".to_string(),
+            hash: "h".to_string(),
+            namespace: ("f", "b").into(),
+        };
+
+        // Load the reference manifest from `./fixtures`
+        let parquet = std::fs::read(mocks::manifest::parquet())?;
+        let remote = mocks::remote::MockRemote::default();
+
+        // Simulate the remote storage containing the Parquet manifest
+        let remote_uri = S3Uri::from_str(&format!(
+            "s3://{}/.quilt/packages/1220{}.parquet",
+            manifest_uri.bucket, manifest_uri.hash
+        ))?;
+        remote.put_object(&remote_uri, parquet).await?;
+
+        let storage = LocalStorage::new();
+        let result = install_package(
+            DomainLineage::default(),
+            &paths::DomainPaths::new(PathBuf::from("/")),
+            &storage,
+            &remote,
+            &manifest_uri,
+        )
+        .await;
+
+        let err = result.unwrap_err();
+        if let Error::Io(orig_err) = err {
+            assert_eq!(orig_err.kind(), std::io::ErrorKind::PermissionDenied);
+        } else {
+            panic!("Expected IO error, got: {:?}", err);
+        }
+
         Ok(())
     }
 }

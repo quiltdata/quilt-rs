@@ -1,15 +1,29 @@
 # CHANGELOG
 
+## [0.8.9]
+
+* Remove unnecessary Mutex wrappers from `LocalDomain` and `InstalledPackage` structs since file I/O operations already provide synchronization through async/await
+* Adds new test `test_spamming_commit_writes` in installed_package.rs to verify sequential commits work correctly without mutex protection
+  `file.flush()` is what fixed the issue in the previous commit, not the Mutex.
+
+## [0.8.8]
+
+* Added "workflow" parameter for commit
+* Implemented tests for CLI, treating them as integration tests. They use real packages from Quilt stack
+* Increased test coverage to 79%
+* Moved HTTPS and AWS S3 clients to the `RemoteS3`, and use `RwLock` there in struct
+* Guard lineage with `Mutex` for `InstalledPackage`
+
 ## [0.8.7]
 
-* Throw error if locally commited package and remote have different `top_hash`
+* Throw error if locally committed package and remote have different `top_hash`
 * Fix calculating hashes for files <8Mb
 * De-duplicate entries when user add files equal to the file that is not tracked and is already in a remote manifest
 
 ## [0.8.6]
 
 * Copy package pushed to the remote to the local storage.
-  Locally commited package and remote have different `top_hash`, because local manifest has `file://` physical keys.
+  Locally committed package and remote have different `top_hash`, because local manifest has `file://` physical keys.
 * `package_s3_prefix` (CLI `package` command) accepts `--message` and `--user_meta` arguments similar to `commit` command
 
 ## [0.8.5]

@@ -5,26 +5,22 @@ use crate::cli::model::Commands;
 use crate::cli::output::Std;
 use crate::cli::Error;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Input {
     pub message: String,
     pub namespace: Namespace,
     pub user_meta: Option<quilt_rs::manifest::JsonObject>,
+    pub workflow: Option<String>,
 }
 
 #[derive(Debug)]
 pub struct Output {
-    pub hash: Option<String>,
+    pub commit: CommitState,
 }
 
 impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.hash {
-            Some(hash) => {
-                write!(f, r##"New commit "{}" created"##, hash)
-            }
-            None => write!(f, "Nothing commited"),
-        }
+        write!(f, r##"New commit "{}" created"##, self.commit.hash)
     }
 }
 
@@ -40,9 +36,17 @@ async fn commit_package(
     namespace: Namespace,
     message: String,
     user_meta: Option<quilt_rs::manifest::JsonObject>,
-) -> Result<Option<CommitState>, Error> {
+    workflow_id: Option<String>,
+) -> Result<CommitState, Error> {
     match local_domain.get_installed_package(&namespace).await? {
-        Some(installed_package) => Ok(installed_package.commit(message, user_meta).await?),
+        Some(installed_package) => {
+            let workflow = local_domain
+                .resolve_workflow(namespace, workflow_id)
+                .await?;
+            Ok(installed_package
+                .commit(message, user_meta, workflow)
+                .await?)
+        }
         None => Err(Error::NamespaceNotFound(namespace)),
     }
 }
@@ -53,10 +57,324 @@ pub async fn model(
         message,
         namespace,
         user_meta,
+        workflow,
     }: Input,
 ) -> Result<Output, Error> {
-    let commit_state = commit_package(local_domain, namespace, message, user_meta).await?;
     Ok(Output {
-        hash: commit_state.map(|s| s.hash),
+        commit: commit_package(local_domain, namespace, message, user_meta, workflow).await?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::path::PathBuf;
+
+    use crate::cli::model::install_package_into_temp_dir;
+
+    use quilt_rs::io::storage::LocalStorage;
+    use quilt_rs::io::storage::Storage;
+
+    /// Verify the commit of that package:
+    ///  * workflow/config.yml exists
+    ///  * workflow id is not set
+    ///  * no files to commit,
+    #[tokio::test]
+    async fn test_commit_package_with_message_and_null_workflow() -> Result<(), Error> {
+        let uri= "quilt+s3://udp-spec#package=reference/message-only@095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f";
+        let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
+        {
+            let local_domain = m.get_local_domain();
+
+            let output = model(
+                local_domain,
+                Input {
+                    message: "#Test message 1234!?#".to_string(),
+                    namespace: ("reference", "message-only").into(),
+                    user_meta: None,
+                    workflow: None,
+                },
+            )
+            .await?;
+
+            assert_eq!(
+                output.commit.hash,
+                "095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f"
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Verify the commit of that package:
+    ///  * workflow/config.yml DOESN'T exists
+    ///  * workflow id is not set
+    ///  * no files to commit,
+    #[tokio::test]
+    async fn test_commit_package_with_message_only() -> Result<(), Error> {
+        let uri= "quilt+s3://data-yaml-spec-tests#package=reference/message-only@ce2ca6a39eb02725b24e3ccf158022dc80c2ab96b066e5660d87abafdbaee768";
+        let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
+        {
+            let local_domain = m.get_local_domain();
+
+            let output = model(
+                local_domain,
+                Input {
+                    message: "#Test message 1234!?#".to_string(),
+                    namespace: ("reference", "message-only").into(),
+                    user_meta: None,
+                    workflow: None,
+                },
+            )
+            .await?;
+
+            assert_eq!(
+                output.commit.hash,
+                "ce2ca6a39eb02725b24e3ccf158022dc80c2ab96b066e5660d87abafdbaee768"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_throwing_error_when_workflow_set_but_no_workflows_config() -> Result<(), Error> {
+        let uri= "quilt+s3://data-yaml-spec-tests#package=reference/message-only@ce2ca6a39eb02725b24e3ccf158022dc80c2ab96b066e5660d87abafdbaee768";
+        let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
+        {
+            let local_domain = m.get_local_domain();
+
+            let output = model(
+                local_domain,
+                Input {
+                    message: "#Test message 1234!?#".to_string(),
+                    namespace: ("reference", "message-only").into(),
+                    user_meta: None,
+                    workflow: Some("Anything".to_string()),
+                },
+            )
+            .await;
+
+            assert_eq!(
+                output.unwrap_err().to_string(),
+                r#"quilt_rs error: Workflow error: There is no workflows config, but the workflow "Anything" is set"#
+            );
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_commit_package_with_meta_only() -> Result<(), Error> {
+        let uri= "quilt+s3://data-yaml-spec-tests#package=reference/meta@a0e161c9a281f38382007f4775e7d6ecbb50f929a197ba3e84443ec911ab6388";
+        let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
+        {
+            let local_domain = m.get_local_domain();
+
+            let output = model(
+                local_domain,
+                Input {
+                    message: "Initial".to_string(),
+                    namespace: ("reference", "meta").into(),
+                    user_meta: Some(
+                        serde_json::json!({
+                            // NOTE: will be sorted
+                            "C": "D",
+                            "c": "d",
+                            "a": "b",
+                            "A": "B",
+                            "e": 123,
+                            "f": null
+                        })
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                    ),
+                    workflow: None,
+                },
+            )
+            .await?;
+
+            assert_eq!(
+                output.commit.hash,
+                "a0e161c9a281f38382007f4775e7d6ecbb50f929a197ba3e84443ec911ab6388"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_model() -> Result<(), Error> {
+        let uri = "quilt+s3://udp-spec#package=spec/quilt-rs@11c5f6dbd1bf1d8675c18aaaa963b2f0dced2f892c7406fa36c9cd17d3d31b73";
+
+        // TODO: commit is not-modified when we commit the same file (timestamp.txt)
+        // TODO: commit is modified when we modify a file (README.md)
+        // let readme_logical_key = PathBuf::from("READ ME.md");
+        let timestamp_logical_key = PathBuf::from("timestamp.txt");
+
+        let (m, installed_package, _temp_dir) = install_package_into_temp_dir(uri).await?;
+
+        let first_input = Input {
+            message: "Test message".to_string(),
+            namespace: ("spec", "quilt-rs").into(),
+            user_meta: None,
+            workflow: None,
+        };
+        let hash_for_initial_test_commit =
+            "d6e62c3c43ddd30447d99eede1c7280c017b15cc716037b74af7bb5230fbb61a";
+
+        {
+            let local_domain = m.get_local_domain();
+
+            let output = model(local_domain, first_input.clone())
+                .await
+                .expect("Failed to commit");
+
+            assert_eq!(
+                format!("{}", output),
+                format!("New commit \"{}\" created", hash_for_initial_test_commit)
+            );
+        }
+
+        {
+            let local_domain = m.get_local_domain();
+            let second_commit = model(local_domain, first_input)
+                .await
+                .expect("Failed to commit second commit which is identical to the first one");
+
+            assert_eq!(second_commit.commit.hash, hash_for_initial_test_commit);
+            assert_eq!(
+                second_commit.commit.prev_hashes,
+                vec![hash_for_initial_test_commit]
+            );
+        }
+
+        {
+            let local_domain = m.get_local_domain();
+            let third_commit = model(
+                local_domain,
+                Input {
+                    message: "New commit message".to_string(),
+                    namespace: ("spec", "quilt-rs").into(),
+                    user_meta: Some(
+                        serde_json::json!({"key": "value"})
+                            .as_object()
+                            .unwrap()
+                            .clone(),
+                    ),
+                    workflow: None,
+                },
+            )
+            .await
+            .expect("Failed to commit third commit different from the first one");
+
+            assert_eq!(
+                third_commit.commit.hash,
+                "e2a86408670c7a33f78758d72166333e4a96b6aadbb3b03d25fd6e209dc6e0b3"
+            );
+            assert_eq!(
+                third_commit.commit.prev_hashes,
+                vec![hash_for_initial_test_commit, hash_for_initial_test_commit]
+            );
+        }
+
+        {
+            let local_domain = m.get_local_domain();
+            let not_found = model(
+                local_domain,
+                Input {
+                    message: "Anything".to_string(),
+                    namespace: ("a", "b").into(),
+                    user_meta: None,
+                    workflow: None,
+                },
+            )
+            .await;
+
+            assert_eq!(not_found.unwrap_err().to_string(), "Package a/b not found");
+        }
+
+        let working_dir = installed_package.working_folder();
+        let storage = LocalStorage::new();
+        storage
+            .write_file(working_dir.join(timestamp_logical_key), b"1697916638")
+            .await
+            .expect("Failed to write timestamp.txt to the installed package working directory");
+        {
+            let local_domain = m.get_local_domain();
+            let commit_the_same_file = model(
+                local_domain,
+                Input {
+                    message: "Test message".to_string(),
+                    namespace: ("spec", "quilt-rs").into(),
+                    user_meta: None,
+                    workflow: None,
+                },
+            )
+            .await
+            .expect("Failed to commit the same file ensuring the commit hash will persist");
+            assert_eq!(
+                commit_the_same_file.commit.hash,
+                hash_for_initial_test_commit
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Verifies that valid command returns correct output after committing a new version
+    /// which is the same as the previous one because message and user_meta left the same.
+    #[tokio::test]
+    async fn test_valid_command() -> Result<(), Error> {
+        let uri = "quilt+s3://udp-spec#package=reference/message-only@095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f";
+        let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
+
+        if let Std::Out(output) = command(
+            m,
+            Input {
+                message: "#Test message 1234!?#".to_string(),
+                namespace: ("reference", "message-only").into(),
+                user_meta: None,
+                workflow: None,
+            },
+        )
+        .await
+        {
+            assert_eq!(
+                output,
+                r#"New commit "095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f" created"#
+            );
+        } else {
+            return Err(Error::Test("Failed to commit".to_string()));
+        }
+
+        Ok(())
+    }
+
+    /// Verifies that invalid command returns appropriate error when package is not installed
+    #[tokio::test]
+    async fn test_invalid_command() -> Result<(), Error> {
+        let uri = "quilt+s3://udp-spec#package=reference/message-only@095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f";
+        let (m, _, _) = install_package_into_temp_dir(uri).await?;
+
+        if let Std::Err(error) = command(
+            m,
+            Input {
+                message: "Any message".to_string(),
+                namespace: ("in", "valid").into(),
+                user_meta: None,
+                workflow: None,
+            },
+        )
+        .await
+        {
+            assert_eq!(error.to_string(), "Package in/valid not found");
+        } else {
+            return Err(Error::Test("Expected package not found error".to_string()));
+        }
+
+        Ok(())
+    }
 }

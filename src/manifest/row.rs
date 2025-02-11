@@ -8,8 +8,13 @@ use crate::io::remote::S3Attributes;
 use crate::manifest::JsonObject;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
+use crate::manifest::Workflow;
+use crate::manifest::WorkflowId;
+use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
+use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
 
 const HEADER_ROW: &str = ".";
 
@@ -40,23 +45,105 @@ const HEADER_ROW: &str = ".";
 /// Represents the header row in Parquet manifest
 #[derive(Clone, Debug, PartialEq)]
 pub struct Header {
-    // TODO: use `message` and `version` instead
-    pub info: serde_json::Value, // system metadata
-    pub meta: serde_json::Value, // user metadata
+    pub(crate) info: serde_json::Value, // system metadata
+    pub(crate) meta: serde_json::Value, // user metadata
 }
 
+// There is some confusion between `display_*` and `get_*` methods :(
+// TODO: Probably, it makes sense to create structs
+//       for `message`, `user_meta` and `workflow`
+//       and implement `From` converters for them
 impl Header {
-    pub fn new(message: Option<String>, user_meta: Option<JsonObject>) -> Header {
+    pub fn new(
+        message: Option<String>,
+        user_meta: Option<JsonObject>,
+        workflow: Option<Workflow>,
+    ) -> Header {
         Header {
             info: serde_json::json!({
                 "message": message.unwrap_or_default(),
                 "version": "v0",
+                "workflow": match workflow {
+                    Some(w) => serde_json::json!(w),
+                    None => serde_json::Value::Null,
+                },
             }),
             meta: match user_meta {
                 Some(meta) => meta.into(),
                 None => serde_json::Value::Null,
             },
         }
+    }
+
+    pub fn display_message(&self) -> Option<String> {
+        self.info
+            .get("message")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    }
+
+    pub fn display_user_meta(&self) -> Option<JsonObject> {
+        self.meta.as_object().cloned()
+    }
+
+    pub fn display_workflow(&self) -> Option<Workflow> {
+        match self.info.get("workflow") {
+            Some(value) => {
+                match value {
+                    serde_json::Value::Object(workflow) => Some(Workflow {
+                        id: match workflow.get("id").unwrap_or(&serde_json::Value::Null) {
+                            serde_json::Value::String(id) => {
+                                let workflow_id = id.to_string();
+                                let schemas = workflow.get("schemas").unwrap();
+                                if let serde_json::Value::Object(schemas) = schemas {
+                                    let schema = schemas.get(&workflow_id).unwrap();
+                                    let schema = schema.as_str().unwrap();
+                                    Some(WorkflowId {
+                                        id: workflow_id,
+                                        url: S3Uri::try_from(schema).unwrap(),
+                                    })
+                                } else {
+                                    None
+                                }
+                            }
+                            _ => None,
+                        },
+                        config: workflow
+                            .get("config")
+                            .expect("Workflow URL is empty")
+                            .as_str()
+                            .expect("Workflow config must be a string")
+                            .to_string(),
+                    }),
+                    serde_json::Value::Null => None,
+                    _ => None, // TODO: make Result and return Error
+                }
+            }
+            None => None,
+        }
+    }
+
+    // TODO: return Result consistently to `get_version`
+    pub fn get_message(&self) -> Option<serde_json::Value> {
+        self.info.get("message").cloned()
+    }
+
+    // TODO: return Result consistently to `get_version`
+    //       also, validate the value is object
+    pub fn get_user_meta(&self) -> Option<JsonObject> {
+        self.meta.as_object().cloned()
+    }
+
+    // TODO: return Result<String, Error>, because the value required
+    pub fn get_version(&self) -> Option<serde_json::Value> {
+        self.info.get("version").cloned()
+    }
+
+    // TODO: return Result consistently to `get_version`
+    //              also validate the value
+    // FIXME: when workflow is null
+    pub fn get_workflow(&self) -> Option<serde_json::Value> {
+        self.info.get("workflow").cloned()
     }
 }
 
@@ -122,15 +209,39 @@ impl Row {
     }
 }
 
+#[derive(tabled::Tabled)]
+pub struct RowDisplay {
+    name: String,
+    place: String,
+    size: u64,
+    hash_base64: String,
+    hash_hex: String,
+    info: String,
+    meta: String,
+}
+
+impl From<&Row> for RowDisplay {
+    fn from(row: &Row) -> Self {
+        RowDisplay {
+            name: row.name.display().to_string(),
+            place: row.place.clone(),
+            size: row.size,
+            hash_base64: BASE64_STANDARD.encode(row.hash.digest()),
+            hash_hex: hex::encode(row.hash.to_bytes()),
+            info: row
+                .display_info()
+                .unwrap_or(serde_json::Value::default().to_string()),
+            meta: row
+                .display_meta()
+                .unwrap_or(serde_json::Value::default().to_string()),
+        }
+    }
+}
+
 impl fmt::Display for Row {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let result = format!("Row({})", self.name.display())
-            + &format!("@{}", self.place)
-            + &format!("^{:?}", self.size)
-            + &format!("#{:?}", self.hash.digest())
-            + &format!("$${:?}", self.info)
-            + &format!("${:?}", self.meta);
-        write!(f, "{}", result)
+        let table = tabled::Table::new(vec![RowDisplay::from(self)]);
+        write!(f, "{}", table)
     }
 }
 
@@ -140,6 +251,7 @@ impl From<&Manifest> for Header {
             info: serde_json::json!({
                 "message": quilt3_manifest.header.message,
                 "version": quilt3_manifest.header.version,
+                "workflow": quilt3_manifest.header.workflow,
             }),
             meta: match quilt3_manifest.header.user_meta.clone() {
                 Some(meta) => meta.into(),
@@ -187,7 +299,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_formatting_without_path() -> Res {
+    fn test_formatting() -> Res {
         let row = Row {
             name: PathBuf::from("Foo"),
             place: "Bar".to_string(),
@@ -196,7 +308,108 @@ mod tests {
             info: serde_json::Value::Bool(false),
             meta: serde_json::json!({"foo":"bar"}),
         };
-        assert_eq!(row.to_string(), r##"Row(Foo)@Bar^123#[104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100]$$Bool(false)$Object {"foo": String("bar")}"##.to_string());
+        assert_eq!(
+            row.to_string(),
+            r###"+------+-------+------+------------------+------------------------------+-------+---------------+
+| name | place | size | hash_base64      | hash_hex                     | info  | meta          |
++------+-------+------+------------------+------------------------------+-------+---------------+
+| Foo  | Bar   | 123  | aGVsbG8gd29ybGQ= | d9020b68656c6c6f20776f726c64 | false | {"foo":"bar"} |
++------+-------+------+------------------+------------------------------+-------+---------------+"###
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_from_s3_attributes() -> Res {
+        use crate::uri::S3Uri;
+
+        let listing_uri = S3Uri {
+            bucket: "test-bucket".to_string(),
+            key: "prefix/".to_string(),
+            version: None,
+        };
+
+        let object_uri = S3Uri {
+            bucket: "test-bucket".to_string(),
+            key: "prefix/data/file.txt".to_string(),
+            version: Some("v1".to_string()),
+        };
+
+        let attrs = S3Attributes {
+            listing_uri,
+            object_uri,
+            size: 42,
+            hash: Multihash::wrap(345, b"test hash")?,
+        };
+
+        assert_eq!(
+            Row::from(attrs),
+            Row {
+                name: PathBuf::from("data/file.txt"),
+                place: "s3://test-bucket/prefix/data/file.txt?versionId=v1".to_string(),
+                size: 42,
+                hash: Multihash::wrap(345, b"test hash")?,
+                info: serde_json::Value::Null,
+                meta: serde_json::Value::Null,
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_display_workflow_none() {
+        let header = Header::new(None, None, None);
+        assert_eq!(header.display_workflow(), None);
+    }
+
+    #[test]
+    fn test_display_workflow_null() {
+        let header = Header {
+            meta: serde_json::Value::Null,
+            info: serde_json::json!({
+                "message": "",
+                "version": "v0",
+                "workflow": null,
+            }),
+        };
+        assert_eq!(header.display_workflow(), None);
+    }
+
+    #[test]
+    fn test_display_workflow_invalid() {
+        let header = Header {
+            meta: serde_json::Value::Null,
+            info: serde_json::json!({
+                "message": "",
+                "version": "v0",
+                "workflow": "invalid",
+            }),
+        };
+        assert_eq!(header.display_workflow(), None);
+    }
+
+    #[test]
+    fn test_display_workflow_valid() -> Res {
+        let workflow = Workflow {
+            id: Some(WorkflowId {
+                id: "test-id".to_string(),
+                url: "s3://test-url/workflows/schema.json".parse()?,
+            }),
+            config: "test-config".to_string(),
+        };
+        let header = Header::new(None, None, Some(workflow.clone()));
+        assert_eq!(header.display_workflow(), Some(workflow));
+        Ok(())
+    }
+
+    #[test]
+    fn test_display_workflow_no_id() -> Res {
+        let workflow = Workflow {
+            id: None,
+            config: "test-config".to_string(),
+        };
+        let header = Header::new(None, None, Some(workflow.clone()));
+        assert_eq!(header.display_workflow(), Some(workflow));
         Ok(())
     }
 }

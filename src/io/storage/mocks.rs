@@ -4,11 +4,11 @@ use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::Object;
 use chrono::DateTime;
 use chrono::Utc;
+use tempfile::TempDir;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
-use tempfile;
-
+use crate::checksum::calculate_sha256_chunked_checksum;
 use crate::io::remote::RemoteObjectStream;
 use crate::io::remote::S3Attributes;
 use crate::uri::S3Uri;
@@ -18,13 +18,13 @@ use super::Storage;
 
 /// A mock implementation of the `Storage` trait.
 pub(crate) struct MockStorage {
-    pub(crate) temp_dir: tempfile::TempDir,
+    pub(crate) temp_dir: TempDir,
 }
 
 impl Default for MockStorage {
     fn default() -> Self {
         MockStorage {
-            temp_dir: tempfile::tempdir().expect("Failed to create temporrary directory"),
+            temp_dir: TempDir::new().expect("Failed to create temporary directory"),
         }
     }
 }
@@ -149,10 +149,18 @@ impl Storage for MockStorage {
 
     async fn get_object_attributes(
         &self,
-        _stream: RemoteObjectStream,
-        _listing_uri: &S3Uri,
-        _object: &Object,
+        stream: RemoteObjectStream,
+        listing_uri: &S3Uri,
+        object: &Object,
     ) -> Res<S3Attributes> {
-        unimplemented!()
+        let reader = stream.body.into_async_read();
+        let size: u64 = object.size.unwrap_or(0).try_into()?;
+        let hash = calculate_sha256_chunked_checksum(reader, size).await?;
+        Ok(S3Attributes {
+            listing_uri: listing_uri.clone(),
+            object_uri: stream.uri,
+            hash,
+            size,
+        })
     }
 }
