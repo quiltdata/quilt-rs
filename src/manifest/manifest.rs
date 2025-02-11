@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use serde::Deserialize;
@@ -11,19 +12,106 @@ use tokio_stream::StreamExt;
 use crate::checksum::ContentHash;
 use crate::manifest::Header;
 use crate::manifest::Table;
+use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
 
 pub type JsonObject = serde_json::Map<String, serde_json::Value>;
 
-#[derive(Debug, Deserialize, PartialEq, Eq, Serialize, Clone)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkflowId {
+    pub id: String,
+    pub url: S3Uri,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Workflow {
     pub config: String,
-    pub id: Option<String>,
+    pub id: Option<WorkflowId>,
+}
+
+impl<'de> Deserialize<'de> for WorkflowId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ok(WorkflowId {
+            id: s,
+            url: S3Uri::default(), // This will be filled in from schemas
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for Workflow {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct WorkflowHelper {
+            config: String,
+            id: Option<String>,
+            schemas: Option<HashMap<String, String>>,
+        }
+
+        let helper = WorkflowHelper::deserialize(deserializer)?;
+
+        let id = match (helper.id, helper.schemas) {
+            (Some(id), Some(schemas)) => {
+                // Look up the schema URL using the workflow ID as key
+                schemas.get(&id).map(|url| WorkflowId {
+                    id,
+                    url: url
+                        .parse()
+                        .map_err(|_| Error::S3Uri(url.to_string()))
+                        .unwrap(),
+                })
+            }
+            (None, _) => None,
+            (Some(id), None) => {
+                return Err(serde::de::Error::custom(format!(
+                    "Schema URL not found for workflow ID: {}",
+                    id
+                )))
+            }
+        };
+
+        Ok(Workflow {
+            config: helper.config,
+            id,
+        })
+    }
+}
+
+impl Serialize for Workflow {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        match &self.id {
+            Some(workflow_id) => {
+                let mut state = serializer.serialize_struct("Workflow", 3)?;
+                state.serialize_field("config", &self.config)?;
+                state.serialize_field("id", &workflow_id.id)?;
+                let mut schemas = HashMap::new();
+                schemas.insert(workflow_id.id.clone(), workflow_id.url.to_string());
+                state.serialize_field("schemas", &schemas)?;
+                state.end()
+            }
+            None => {
+                let mut state = serializer.serialize_struct("Workflow", 2)?;
+                state.serialize_field("config", &self.config)?;
+                state.serialize_field("id", &None::<String>)?;
+                state.end()
+            }
+        }
+    }
 }
 
 /// Header (or first row) in JSONL manifest
-#[derive(Debug, Deserialize, PartialEq, Eq, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct ManifestHeader {
     pub version: String,
     pub message: Option<String>,
@@ -123,7 +211,7 @@ impl TryFrom<Quilt3ManifestRow> for ManifestRow {
 }
 
 /// Legacy JSONL in-memory manifest
-#[derive(Debug, Deserialize, PartialEq, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct Manifest {
     pub header: ManifestHeader,
     pub rows: Vec<ManifestRow>,
@@ -510,5 +598,82 @@ mod tests {
         assert_eq!(header.message, Some("".to_string()));
         assert_eq!(header.user_meta, None);
         assert_eq!(header.workflow, None);
+    }
+
+    #[test]
+    fn test_workflow_deserialization() {
+        let json = r#"{
+            "config": "workflow config",
+            "id": "test-workflow",
+            "schemas": {
+                "test-workflow": "s3://bucket/workflows/test.json"
+            }
+        }"#;
+
+        let workflow: Workflow = serde_json::from_str(json).unwrap();
+
+        assert_eq!(workflow.config, "workflow config");
+        assert_eq!(
+            workflow.id,
+            Some(WorkflowId {
+                id: "test-workflow".to_string(),
+                url: "s3://bucket/workflows/test.json".parse().unwrap()
+            })
+        );
+    }
+
+    #[test]
+    fn test_workflow_deserialization_none() {
+        let json = r#"{
+            "config": "workflow config",
+            "id": null
+        }"#;
+
+        let workflow: Workflow = serde_json::from_str(json).unwrap();
+
+        assert_eq!(workflow.config, "workflow config");
+        assert_eq!(workflow.id, None);
+    }
+
+    #[test]
+    fn test_workflow_serialization() {
+        let workflow = Workflow {
+            config: "workflow config".to_string(),
+            id: Some(WorkflowId {
+                id: "test-workflow".to_string(),
+                url: "s3://bucket/workflows/test.json".parse().unwrap(),
+            }),
+        };
+
+        let json = serde_json::to_value(&workflow).unwrap();
+
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "config": "workflow config",
+                "id": "test-workflow",
+                "schemas": {
+                    "test-workflow": "s3://bucket/workflows/test.json"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn test_workflow_serialization_none() {
+        let workflow = Workflow {
+            config: "workflow config".to_string(),
+            id: None,
+        };
+
+        let json = serde_json::to_value(&workflow).unwrap();
+
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "config": "workflow config",
+                "id": null
+            })
+        );
     }
 }

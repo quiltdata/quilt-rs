@@ -1,5 +1,6 @@
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::default::Default;
 use std::path::Path;
 use std::sync::RwLock;
 use tracing::log;

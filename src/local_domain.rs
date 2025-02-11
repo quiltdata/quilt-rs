@@ -2,6 +2,10 @@ use std::marker::Unpin;
 use std::path::Path;
 use std::path::PathBuf;
 
+use serde_yaml::Mapping;
+use serde_yaml::Value as YamlValue;
+use tokio::io::AsyncReadExt;
+
 use crate::flow;
 use crate::installed_package::InstalledPackage;
 use crate::io::manifest::build_manifest_from_rows_stream;
@@ -15,6 +19,8 @@ use crate::lineage::DomainLineage;
 use crate::manifest::Header;
 use crate::manifest::JsonObject;
 use crate::manifest::Table;
+use crate::manifest::Workflow;
+use crate::manifest::WorkflowId;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
@@ -47,7 +53,8 @@ impl LocalDomain {
         }
     }
 
-    pub async fn resolve_workflow_config(&self, namespace: Namespace) -> Res<Option<S3Uri>> {
+    // TODO: move to the io::remote
+    async fn resolve_workflow_config(&self, namespace: Namespace) -> Res<Option<(S3Uri, Mapping)>> {
         let uri = match self
             .lineage
             .read(&self.storage)
@@ -61,8 +68,22 @@ impl LocalDomain {
             },
             None => return Err(Error::PackageNotInstalled(namespace)),
         };
+
         match self.remote.get_object_stream(&uri).await {
-            Ok(obj) => Ok(Some(obj.uri)),
+            Ok(stream) => {
+                let mut bytes = Vec::new();
+                stream
+                    .body
+                    .into_async_read()
+                    .read_to_end(&mut bytes)
+                    .await?;
+                let yaml: YamlValue = serde_yaml::from_slice(&bytes)?;
+
+                Ok(Some((
+                    stream.uri,
+                    yaml["schemas"].as_mapping().cloned().unwrap_or_default(),
+                )))
+            }
             Err(Error::S3(err_str)) => {
                 if err_str.contains("NoSuchKey: The specified key does not exist") {
                     Ok(None)
@@ -71,6 +92,57 @@ impl LocalDomain {
                 }
             }
             Err(err) => Err(err),
+        }
+    }
+
+    /// 1. No `workflows/config.yaml`
+    ///
+    ///    Return `None` or `Err`
+    ///
+    ///    1.a. `workflow_id` is null/None              → None
+    ///    1.b. `workflow_id` is set                    → Err
+    ///
+    /// 2. `workflows/config.yaml` is present
+    ///
+    ///    Return `Some(Workflow)` with `config` property
+    ///    And the `id` is:
+    ///
+    ///    2.a. `workflow_id` is set and valid          → Some(WorkflowId)
+    ///    2.b. `workflow_id` is null/None              → None
+    ///    2.c. `workflow_id` is set but not found      → Err
+    ///    2.d. `workflow_id` is "" (edge case for 2.c) → Err
+    pub async fn resolve_workflow(
+        &self,
+        namespace: Namespace,
+        workflow_id: Option<String>,
+    ) -> Res<Option<Workflow>> {
+        match self.resolve_workflow_config(namespace).await? {
+            Some((config, schemas)) => Ok(Some(Workflow {
+                config: config.to_string(),
+                id: match &workflow_id {
+                    Some(workflow_id_str) => {
+                        if let Some(serde_yaml::Value::String(url)) = schemas.get(workflow_id_str) {
+                            Some(WorkflowId {
+                                id: workflow_id_str.to_string(),
+                                url: url.parse()?,
+                            })
+                        } else {
+                            return Err(Error::Workflow(format!(
+                                "Schema URL not found for workflow ID: {}",
+                                workflow_id_str
+                            )));
+                        }
+                    }
+                    None => None,
+                },
+            })),
+            None => match workflow_id {
+                Some(id) => Err(Error::Workflow(format!(
+                    r#"There is no workflows config, but the workflow "{}" is set"#,
+                    id
+                ))),
+                None => Ok(None),
+            },
         }
     }
 

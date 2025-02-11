@@ -157,6 +157,7 @@ enum Commands {
     },
 }
 
+// TODO: pass args as an argument, so we can test it
 pub async fn init() -> Result<(), Error> {
     let args = Args::parse();
 
@@ -311,9 +312,6 @@ pub enum Error {
 
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
-
-    #[error("Workflow '{0}' not found in the workflows/config.yml")]
-    Workflow(String),
 
     #[cfg(test)]
     #[error("Test failed: {0}")]

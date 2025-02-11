@@ -9,6 +9,8 @@ use crate::manifest::JsonObject;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
 use crate::manifest::Workflow;
+use crate::manifest::WorkflowId;
+use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
 use base64::prelude::BASE64_STANDARD;
@@ -85,13 +87,25 @@ impl Header {
     }
 
     pub fn display_workflow(&self) -> Option<Workflow> {
-        // FIXME: when workflow is null
         match self.info.get("workflow") {
             Some(value) => {
                 match value {
                     serde_json::Value::Object(workflow) => Some(Workflow {
                         id: match workflow.get("id").unwrap_or(&serde_json::Value::Null) {
-                            serde_json::Value::String(id) => Some(id.to_string()),
+                            serde_json::Value::String(id) => {
+                                let workflow_id = id.to_string();
+                                let schemas = workflow.get("schemas").unwrap();
+                                if let serde_json::Value::Object(schemas) = schemas {
+                                    let schema = schemas.get(&workflow_id).unwrap();
+                                    let schema = schema.as_str().unwrap();
+                                    Some(WorkflowId {
+                                        id: workflow_id,
+                                        url: S3Uri::try_from(schema).unwrap(),
+                                    })
+                                } else {
+                                    None
+                                }
+                            }
                             _ => None,
                         },
                         config: workflow
@@ -377,7 +391,10 @@ mod tests {
     #[test]
     fn test_display_workflow_valid() -> Res {
         let workflow = Workflow {
-            id: Some("test-id".to_string()),
+            id: Some(WorkflowId {
+                id: "test-id".to_string(),
+                url: "s3://test-url/workflows/schema.json".parse()?,
+            }),
             config: "test-config".to_string(),
         };
         let header = Header::new(None, None, Some(workflow.clone()));
