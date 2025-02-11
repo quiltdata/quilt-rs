@@ -40,9 +40,7 @@ async fn commit_package(
 ) -> Result<CommitState, Error> {
     match local_domain.get_installed_package(&namespace).await? {
         Some(installed_package) => {
-            let workflow = local_domain
-                .resolve_workflow(namespace, workflow_id)
-                .await?;
+            let workflow = installed_package.resolve_workflow(workflow_id).await?;
             Ok(installed_package
                 .commit(message, user_meta, workflow)
                 .await?)

@@ -2,10 +2,6 @@ use std::marker::Unpin;
 use std::path::Path;
 use std::path::PathBuf;
 
-use serde_yaml::Mapping;
-use serde_yaml::Value as YamlValue;
-use tokio::io::AsyncReadExt;
-
 use crate::flow;
 use crate::installed_package::InstalledPackage;
 use crate::io::manifest::build_manifest_from_rows_stream;
@@ -19,14 +15,11 @@ use crate::lineage::DomainLineage;
 use crate::manifest::Header;
 use crate::manifest::JsonObject;
 use crate::manifest::Table;
-use crate::manifest::Workflow;
-use crate::manifest::WorkflowId;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
-use crate::Error;
 use crate::Res;
 
 /// This is the entrypoint for the lib.
@@ -53,33 +46,8 @@ impl LocalDomain {
         }
     }
 
-
     pub async fn browse_remote_manifest(&self, uri: &ManifestUri) -> Res<Table> {
         flow::browse(&self.paths, &self.storage, &self.remote, uri).await
-    }
-
-    pub async fn resolve_workflow(
-        &self,
-        namespace: Namespace,
-        workflow_id: Option<String>,
-    ) -> Res<Option<Workflow>> {
-        use crate::io::remote::workflow;
-        workflow::resolve_workflow(
-            &self.storage,
-            &self.remote,
-            namespace.clone(),
-            workflow_id,
-            || {
-                Ok(self
-                    .lineage
-                    .read(&self.storage)
-                    .await?
-                    .packages
-                    .get(&namespace)
-                    .map(|package| S3Uri::from(&package.remote)))
-            },
-        )
-        .await
     }
 
     pub fn create_installed_package(&self, namespace: Namespace) -> Res<InstalledPackage> {

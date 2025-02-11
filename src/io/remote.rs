@@ -15,8 +15,10 @@ use crate::uri::S3Uri;
 use crate::Res;
 
 mod s3;
+mod workflow;
 
 pub use s3::RemoteS3;
+pub use workflow::resolve_workflow;
 
 #[cfg(test)]
 pub mod mocks;
