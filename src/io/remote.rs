@@ -73,6 +73,9 @@ pub trait Remote {
     // TODO: return Item = Res<Row>
     fn list_objects(&self, listing_uri: S3Uri) -> impl Future<Output = impl ObjectsStream> + Send;
 
+    // Makes a head request and resolves the final versioned URL
+    fn resolve_url(&self, s3_uri: &S3Uri) -> impl Future<Output = Res<S3Uri>> + Send;
+
     /// Upload file. Just that
     fn put_object(
         &self,

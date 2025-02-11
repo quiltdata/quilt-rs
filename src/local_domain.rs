@@ -121,11 +121,22 @@ impl LocalDomain {
                 config: config.to_string(),
                 id: match &workflow_id {
                     Some(workflow_id_str) => {
-                        if let Some(serde_yaml::Value::String(url)) = schemas.get(workflow_id_str) {
-                            Some(WorkflowId {
-                                id: workflow_id_str.to_string(),
-                                url: url.parse()?,
-                            })
+                        // FIXME: get the schema_id from config.workflows[workflow_id_str]
+                        if let Some(serde_yaml::Value::Mapping(schema)) =
+                            schemas.get(workflow_id_str)
+                        {
+                            match schema.get("url") {
+                                Some(serde_yaml::Value::String(url)) => Some(WorkflowId {
+                                    id: workflow_id_str.to_string(),
+                                    url: self.remote.resolve_url(&url.parse()?).await?,
+                                }),
+                                _ => {
+                                    return Err(Error::Workflow(format!(
+                                        "Schema URL not found for workflow ID: {}",
+                                        workflow_id_str
+                                    )))
+                                }
+                            }
                         } else {
                             return Err(Error::Workflow(format!(
                                 "Schema URL not found for workflow ID: {}",

@@ -102,6 +102,16 @@ impl Remote for MockRemote {
         self.storage.write_file(key, &contents_vec).await
     }
 
+    async fn resolve_url(&self, s3_uri: &S3Uri) -> Res<S3Uri> {
+        let key = s3_uri.to_string();
+        log::debug!("Mocking {} HEAD request", key);
+        if self.storage.exists(&key).await {
+            Ok(s3_uri.clone())
+        } else {
+            Err(Error::S3("Key doesn't exists".to_string()))
+        }
+    }
+
     async fn upload_file(
         &self,
         source_path: impl AsRef<Path>,

@@ -117,12 +117,12 @@ mod tests {
             let output = model(
                 local_domain,
                 Input {
-                    message: "#Test message 1234!?#".to_string(),
+                    message: "Test message".to_string(),
                     namespace: ("reference", "with-workflow").into(),
                     user_meta: Some(
                         serde_json::json!({
                             "Date": "2025-12-31",
-                            "Name": "Foo", 
+                            "Name": "Foo",
                             "Owner": "Kevin",
                             "Type": "NGS"
                         })
