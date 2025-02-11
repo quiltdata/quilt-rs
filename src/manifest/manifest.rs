@@ -26,7 +26,7 @@ pub struct WorkflowId {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Workflow {
-    pub config: String,
+    pub config: S3Uri,
     pub id: Option<WorkflowId>,
 }
 
@@ -78,7 +78,7 @@ impl<'de> Deserialize<'de> for Workflow {
         };
 
         Ok(Workflow {
-            config: helper.config,
+            config: helper.config.parse().map_err(serde::de::Error::custom)?,
             id,
         })
     }
@@ -93,7 +93,7 @@ impl Serialize for Workflow {
         match &self.id {
             Some(workflow_id) => {
                 let mut state = serializer.serialize_struct("Workflow", 3)?;
-                state.serialize_field("config", &self.config)?;
+                state.serialize_field("config", &self.config.to_string())?;
                 state.serialize_field("id", &workflow_id.id)?;
                 let mut schemas = HashMap::new();
                 schemas.insert(workflow_id.id.clone(), workflow_id.url.to_string());
@@ -102,7 +102,7 @@ impl Serialize for Workflow {
             }
             None => {
                 let mut state = serializer.serialize_struct("Workflow", 2)?;
-                state.serialize_field("config", &self.config)?;
+                state.serialize_field("config", &self.config.to_string())?;
                 state.serialize_field("id", &None::<String>)?;
                 state.end()
             }
@@ -601,9 +601,9 @@ mod tests {
     }
 
     #[test]
-    fn test_workflow_deserialization() {
+    fn test_workflow_deserialization() -> Res {
         let json = r#"{
-            "config": "workflow config",
+            "config": "s3://workflow/config",
             "id": "test-workflow",
             "schemas": {
                 "test-workflow": "s3://bucket/workflows/test.json"
@@ -612,7 +612,7 @@ mod tests {
 
         let workflow: Workflow = serde_json::from_str(json).unwrap();
 
-        assert_eq!(workflow.config, "workflow config");
+        assert_eq!(workflow.config, "s3://workflow/config".parse()?);
         assert_eq!(
             workflow.id,
             Some(WorkflowId {
@@ -620,25 +620,27 @@ mod tests {
                 url: "s3://bucket/workflows/test.json".parse().unwrap()
             })
         );
+        Ok(())
     }
 
     #[test]
-    fn test_workflow_deserialization_none() {
+    fn test_workflow_deserialization_none() -> Res {
         let json = r#"{
-            "config": "workflow config",
+            "config": "s3://workflow/config",
             "id": null
         }"#;
 
         let workflow: Workflow = serde_json::from_str(json).unwrap();
 
-        assert_eq!(workflow.config, "workflow config");
+        assert_eq!(workflow.config, "s3://workflow/config".parse()?);
         assert_eq!(workflow.id, None);
+        Ok(())
     }
 
     #[test]
-    fn test_workflow_serialization() {
+    fn test_workflow_serialization() -> Res {
         let workflow = Workflow {
-            config: "workflow config".to_string(),
+            config: "s3://workflow/config".parse()?,
             id: Some(WorkflowId {
                 id: "test-workflow".to_string(),
                 url: "s3://bucket/workflows/test.json".parse().unwrap(),
@@ -650,19 +652,20 @@ mod tests {
         assert_eq!(
             json,
             serde_json::json!({
-                "config": "workflow config",
+                "config": "s3://workflow/config",
                 "id": "test-workflow",
                 "schemas": {
                     "test-workflow": "s3://bucket/workflows/test.json"
                 }
             })
         );
+        Ok(())
     }
 
     #[test]
-    fn test_workflow_serialization_none() {
+    fn test_workflow_serialization_none() -> Res {
         let workflow = Workflow {
-            config: "workflow config".to_string(),
+            config: "s3://workflow/config".parse()?,
             id: None,
         };
 
@@ -671,9 +674,10 @@ mod tests {
         assert_eq!(
             json,
             serde_json::json!({
-                "config": "workflow config",
+                "config": "s3://workflow/config",
                 "id": null
             })
         );
+        Ok(())
     }
 }

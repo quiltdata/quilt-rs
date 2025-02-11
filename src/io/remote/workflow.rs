@@ -8,6 +8,74 @@ use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
 
+fn get_schema_id(yaml: &YamlValue, workflow_id: &str) -> Res<String> {
+    match &yaml["workflows"] {
+        YamlValue::Mapping(workflows) => match &workflows[workflow_id] {
+            YamlValue::Mapping(workflow) => match &workflow["metadata_schema"] {
+                YamlValue::String(schema_id) => Ok(schema_id.clone()),
+                _ => Err(Error::Workflow(format!(
+                    "`metadata_schema` not found for workflow ID: {}",
+                    workflow_id
+                ))),
+            },
+            _ => Err(Error::Workflow(format!(
+                "Workflow {} not found in workflows/config.yaml",
+                workflow_id
+            ))),
+        },
+        _ => Err(Error::Workflow(
+            "Workflows not found in workflows/config.yaml".to_string(),
+        )),
+    }
+}
+
+async fn get_schema_url<R: Remote>(remote: &R, yaml: YamlValue, workflow_id: &str) -> Res<S3Uri> {
+    let schema_id = get_schema_id(&yaml, workflow_id)?;
+    match &yaml["schemas"] {
+        YamlValue::Mapping(schemas) => match &schemas[&schema_id] {
+            YamlValue::Mapping(schema) => match &schema["url"] {
+                YamlValue::String(url) => Ok(remote.resolve_url(&url.parse()?).await?),
+                _ => Err(Error::Workflow(format!(
+                    "Schema {} doesn't have URL",
+                    schema_id
+                ))),
+            },
+            _ => Err(Error::Workflow(format!(
+                "Schema {}, referenced by workflow {} not found in workflows/config.yaml",
+                schema_id, workflow_id,
+            ))),
+        },
+        _ => Err(Error::Workflow(
+            "Schemas not found in workflows/config.yaml".to_string(),
+        )),
+    }
+}
+
+async fn fetch_workflows_config<R: Remote>(
+    remote: &R,
+    uri: S3Uri,
+) -> Res<(S3Uri, Option<YamlValue>)> {
+    match remote.get_object_stream(&uri).await {
+        Ok(stream) => {
+            let mut bytes = Vec::new();
+            stream
+                .body
+                .into_async_read()
+                .read_to_end(&mut bytes)
+                .await?;
+            Ok((stream.uri, serde_yaml::from_slice(&bytes)?))
+        }
+        Err(Error::S3(err_str)) => {
+            if err_str.contains("NoSuchKey: The specified key does not exist") {
+                Ok((uri.clone(), None))
+            } else {
+                Err(Error::S3(err_str))
+            }
+        }
+        Err(err) => Err(err),
+    }
+}
+
 /// 1. No `workflows/config.yaml`
 ///
 ///    Return `None` or `Err`
@@ -29,66 +97,27 @@ pub async fn resolve_workflow<R: Remote>(
     workflow_id: Option<String>,
     uri: S3Uri,
 ) -> Res<Option<Workflow>> {
-    match remote.get_object_stream(&uri).await {
-        Ok(stream) => {
-            let mut bytes = Vec::new();
-            stream
-                .body
-                .into_async_read()
-                .read_to_end(&mut bytes)
-                .await?;
-            let yaml: YamlValue = serde_yaml::from_slice(&bytes)?;
-            let schemas = yaml["schemas"].as_mapping().cloned().unwrap_or_default();
-            let workflows = yaml["workflows"].as_mapping().cloned().unwrap_or_default();
-
-            Ok(Some(Workflow {
-                config: stream.uri.to_string(),
-                id: match &workflow_id {
-                    Some(workflow_id_str) => {
-                        if let Some(serde_yaml::Value::Mapping(workflow)) = workflows.get(workflow_id_str) {
-                            let schema_id = workflow.get("metadata_schema").and_then(|v| v.as_str())
-                                .ok_or_else(|| Error::Workflow(format!(
-                                    "metadata_schema not found for workflow ID: {}",
-                                    workflow_id_str
-                                )))?;
-                            
-                            if let Some(serde_yaml::Value::Mapping(schema)) = schemas.get(schema_id) {
-                                match schema.get("url") {
-                                Some(serde_yaml::Value::String(url)) => Some(WorkflowId {
-                                    id: workflow_id_str.to_string(),
-                                    url: remote.resolve_url(&url.parse()?).await?,
-                                }),
-                                _ => {
-                                    return Err(Error::Workflow(format!(
-                                        "Schema URL not found for workflow ID: {}",
-                                        workflow_id_str
-                                    )))
-                                }
-                            }
-                        } else {
-                            return Err(Error::Workflow(format!(
-                                "Schema URL not found for workflow ID: {}",
-                                workflow_id_str
-                            )));
-                        }
-                    }
-                    None => None,
-                },
-            }))
-        }
-        Err(Error::S3(err_str)) => {
-            if err_str.contains("NoSuchKey: The specified key does not exist") {
-                match workflow_id {
-                    Some(id) => Err(Error::Workflow(format!(
-                        r#"There is no workflows config, but the workflow "{}" is set"#,
-                        id
-                    ))),
-                    None => Ok(None),
-                }
-            } else {
-                Err(Error::S3(err_str))
-            }
-        }
-        Err(err) => Err(err),
+    let (uri, yaml) = fetch_workflows_config(remote, uri).await?;
+    match yaml {
+        Some(yaml) => match workflow_id {
+            Some(id) => Ok(Some(Workflow {
+                config: uri,
+                id: Some(WorkflowId {
+                    id: id.clone(),
+                    url: get_schema_url(remote, yaml, &id).await?,
+                }),
+            })),
+            None => Ok(Some(Workflow {
+                config: uri,
+                id: None,
+            })),
+        },
+        None => match workflow_id {
+            Some(workflow_id) => Err(Error::Workflow(format!(
+                "There is no workflows config, but the workflow \"{}\" is set",
+                workflow_id
+            ))),
+            None => Ok(None),
+        },
     }
 }

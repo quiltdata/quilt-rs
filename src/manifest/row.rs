@@ -113,7 +113,9 @@ impl Header {
                             .expect("Workflow URL is empty")
                             .as_str()
                             .expect("Workflow config must be a string")
-                            .to_string(),
+                            .to_string()
+                            .parse()
+                            .unwrap(),
                     }),
                     serde_json::Value::Null => None,
                     _ => None, // TODO: make Result and return Error
@@ -395,7 +397,7 @@ mod tests {
                 id: "test-id".to_string(),
                 url: "s3://test-url/workflows/schema.json".parse()?,
             }),
-            config: "test-config".to_string(),
+            config: "s3://test/config".parse()?,
         };
         let header = Header::new(None, None, Some(workflow.clone()));
         assert_eq!(header.display_workflow(), Some(workflow));
@@ -406,7 +408,7 @@ mod tests {
     fn test_display_workflow_no_id() -> Res {
         let workflow = Workflow {
             id: None,
-            config: "test-config".to_string(),
+            config: "s3://test/config".parse()?,
         };
         let header = Header::new(None, None, Some(workflow.clone()));
         assert_eq!(header.display_workflow(), Some(workflow));
