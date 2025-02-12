@@ -152,3 +152,54 @@ The `commit` command creates a new revision of an installed package by capturing
 ### Status
 
 The preparation step for the commit. It calculates all the necessary hashes for the files, but does not create a new commit.
+
+### Push
+
+The `push` command uploads committed changes to the remote S3 storage, making them available to other users. It handles efficient data transfer by reusing existing objects and managing package versioning.
+
+#### Options:
+
+1. Push committed changes to remote storage
+```bash
+quilt --domain /path/to/domain --namespace spec/package
+```
+
+2. Push to track remote latest version
+```bash
+# Will update latest tag if base hash matches remote
+quilt --domain /path/to/domain --namespace spec/package
+```
+
+#### Technical Details:
+
+- Verifies commit exists before pushing
+- Copies modified files to remote S3 storage
+- Generates new manifest with updated object locations
+- Updates remote package lineage
+- Tags new version as "latest" if tracking
+- Maintains base/latest hash references
+- Validates remote bucket versioning support
+- Reuses existing remote objects to minimize data transfer
+
+#### Test cases TBD:
+
+##### Valid:
+
+- [] Push new commits to remote
+- [] Push unchanged package (no-op)
+- [] Push to track remote latest
+- [] Push with large files
+- [] Push with many files
+- [] Push concurrent changes
+- [] Push to update latest tag
+
+##### Invalid:
+
+- [] Push without commits
+- [] Push package that doesn't exist
+- [] Push to non-versioned bucket
+- [] Network failures during push
+- [] Permission issues
+- [] Version conflicts
+- [] Storage quota exceeded
+- [] Interrupted pushes
