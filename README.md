@@ -92,22 +92,23 @@ Install a package using a `quilt+s3://bucket#package=namespace/name@hash&path=so
 
 #### Valid:
 
-- [] Installing multiple paths simultaneously
-- [] Installing with custom namespace
-- [] Installing large packages
-- [] Installing nested directory structures
-- [] Re-installing with different paths
+- [ ] Install a package without paths (`cli::install::tests::test_valid_command`)
+- [ ] Installing multiple paths
+- [ ] Installing with custom namespace
+- [ ] Installing large packages
+- [ ] Installing nested directory structures
+- [ ] Re-installing with different paths
 
 #### Invalid:
 
-- [] Network failures
-- [] Invalid URI format
-- [] Non-existent package
-- [] Invalid paths
-- [] Permission issues
-- [] Installing with special characters in paths
-- [] Installing with empty paths list
-- [] Installing with non-existent paths
+- [ ] Network failures
+- [ ] Invalid URI format (`cli::install::tests::test_invalid_command`)
+- [ ] Non-existent package
+- [ ] Invalid paths
+- [ ] Permission issues (`flow::install::tests::test_installing_when_no_permissions`)
+- [ ] Installing with special characters in paths
+- [ ] Installing with empty paths list
+- [ ] Installing with non-existent paths
 
 ### Commit
 
@@ -132,23 +133,23 @@ The `commit` command creates a new revision of an installed package by capturing
 
 #### Valid:
 
-- [] Commit the package with message only, or with a combination of user meta and/or workflow.
+- [ ] Commit the package with message only, or with a combination of user meta and/or workflow.
   Consider, that workflows config can exist or not exist, and it affects the commit hash.
-- [] Commit modified files
-- [] Commit new files
-- [] Commit file deletions
-- [] Commit unchanged files (produces same hash)
+- [ ] Commit modified files
+- [ ] Commit new files
+- [ ] Commit file deletions
+- [ ] Commit unchanged files (produces same hash)
 
 #### Invalid:
 
-- [] Commit package that doesn't exist
-- [] When workflow ID is provided but no workflow config exists
-- [] When workflow ID doesn't match configured workflows
-- [] When workflow config is invalid/malformed
-- [] When user metadata is not a valid JSON object
-- [] IO permissions errors
-- [] Network failures (commit checks the workflows config)
-- [] Concurrent commit attempts
+- [ ] Commit package that doesn't exist
+- [ ] When workflow ID is provided but no workflow config exists
+- [ ] When workflow ID doesn't match configured workflows
+- [ ] When workflow config is invalid/malformed
+- [ ] When user metadata is not a valid JSON object
+- [ ] IO permissions errors
+- [ ] Network failures (commit checks the workflows config)
+- [ ] Concurrent commit attempts
 
 ### Status
 
@@ -176,24 +177,24 @@ The `push` command uploads committed manifests and files to the remote S3 storag
 
 ##### Valid:
 
-- [] Push one commit to remote
-- [] Push multiple commits to remote
-- [] Push the package without commits (no-op)
-- [] Push the package with local changes (pushed only committed changes (?))
-- [] Push outdated package (will not be tracked as latest)
-- [] Push with large files
-- [] Push with many files
-- [] Push concurrent changes
-- [] Push to update latest tag (when we made a commit on top of the latest)
+- [ ] Push one commit to remote
+- [ ] Push multiple commits to remote
+- [ ] Push the package without commits (no-op)
+- [ ] Push the package with local changes (pushed only committed changes (?))
+- [ ] Push outdated package (will not be tracked as latest)
+- [ ] Push with large files
+- [ ] Push with many files
+- [ ] Push concurrent changes
+- [ ] Push to update latest tag (when we made a commit on top of the latest)
 
 ##### Invalid:
 
-- [] Push package that doesn't exist
-- [] Push to non-versioned bucket
-- [] Network failures during push
-- [] Permission issues
-- [] Version conflicts (push 1 slowly, then push 2 fast, latest will be 1?)
-- [] Interrupted pushes
+- [ ] Push package that doesn't exist
+- [ ] Push to non-versioned bucket
+- [ ] Network failures during push
+- [ ] Permission issues
+- [ ] Version conflicts (push 1 slowly, then push 2 fast, latest will be 1?)
+- [ ] Interrupted pushes
 
 ### Pull
 
@@ -217,22 +218,22 @@ The `pull` command downloads the latest version of a package (manifest and insta
 
 ##### Valid:
 
-- [] Pull when behind remote
-- [] Pull unchanged package (no-op)
-- [] Pull with tracked paths
-- [] Pull with removed paths
-- [] Pull with large files
-- [] Pull to update latest
+- [ ] Pull when behind remote
+- [ ] Pull unchanged package (no-op)
+- [ ] Pull with tracked paths
+- [ ] Pull with removed paths
+- [ ] Pull with large files
+- [ ] Pull to update latest
 
 ##### Invalid:
 
-- [] Pull with uncommitted changes
-- [] Pull with new files (they will be deleted)
-- [] Pull with pending commits
-- [] Pull diverged package
-- [] Pull package that doesn't exist
-- [] Network failures during pull, or pull interrupted
-- [] Permission issues
+- [ ] Pull with uncommitted changes
+- [ ] Pull with new files (they will be deleted)
+- [ ] Pull with pending commits
+- [ ] Pull diverged package
+- [ ] Pull package that doesn't exist
+- [ ] Network failures during pull, or pull interrupted
+- [ ] Permission issues
 
 ### Reset to latest
 
@@ -254,18 +255,18 @@ The `reset` command forcefully updates a package to match the remote latest vers
 
 ##### Valid:
 
-- [] Reset when behind remote
-- [] Reset unchanged package (no-op)
-- [] Reset with tracked paths
-- [] Reset with removed paths
-- [] Reset with local changes
-- [] Reset with pending commits
+- [ ] Reset when behind remote
+- [ ] Reset unchanged package (no-op)
+- [ ] Reset with tracked paths
+- [ ] Reset with removed paths
+- [ ] Reset with local changes
+- [ ] Reset with pending commits
 
 ##### Invalid:
 
-- [] Reset package that doesn't exist (invalid namespace)
-- [] Network failures during reset
-- [] Permission issues
+- [ ] Reset package that doesn't exist (invalid namespace)
+- [ ] Network failures during reset
+- [ ] Permission issues
 
 ### Certify latest
 
@@ -284,16 +285,16 @@ The `certify` command marks a specific package version as the "latest" in remote
 
 ##### Valid:
 
-- [] Certify current version
-- [] Certify outdated version
-- [] Certify with concurrent updates
-- [] Re-certify same version
+- [ ] Certify current version
+- [ ] Certify outdated version
+- [ ] Certify with concurrent updates
+- [ ] Re-certify same version
 
 ##### Invalid:
 
-- [] Certify package that doesn't exist
-- [] Network failures
-- [] Permission issues
+- [ ] Certify package that doesn't exist
+- [ ] Network failures
+- [ ] Permission issues
 
 ### List
 
@@ -313,17 +314,17 @@ The `list` command displays all packages installed in the local domain.
 
 ##### Valid:
 
-- [] List empty domain
-- [] List single installed package
-- [] List multiple installed packages
-- [] List after package removal
-- [] List packages with special characters in names
+- [ ] List empty domain
+- [ ] List single installed package
+- [ ] List multiple installed packages
+- [ ] List after package removal
+- [ ] List packages with special characters in names
 
 ##### Invalid:
 
-- [] List with invalid domain path
-- [] List with permission issues
-- [] List with corrupted lineage file
+- [ ] List with invalid domain path
+- [ ] List with permission issues
+- [ ] List with corrupted lineage file
 
 ### Browse
 
@@ -344,17 +345,17 @@ The `browse` command displays the contents and metadata of a remote package mani
 
 ##### Valid:
 
-- [] Browse package with message only
-- [] Browse package with user metadata
-- [] Browse package with workflow
-- [] Browse package with multiple files
-- [] Browse cached manifest
-- [] Browse Parquet manifest
-- [] Browse JSONL manifest
+- [ ] Browse package with message only
+- [ ] Browse package with user metadata
+- [ ] Browse package with workflow
+- [ ] Browse package with multiple files
+- [ ] Browse cached manifest
+- [ ] Browse Parquet manifest
+- [ ] Browse JSONL manifest
 
 ##### Invalid:
 
-- [] Browse with invalid URI
-- [] Browse non-existent package
-- [] Browse with network failures
-- [] Browse with permission issues
+- [ ] Browse with invalid URI
+- [ ] Browse non-existent package
+- [ ] Browse with network failures
+- [ ] Browse with permission issues
