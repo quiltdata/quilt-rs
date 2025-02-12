@@ -37,10 +37,10 @@ cargo upgrades
 
 ## Verify files integrity
 
-* `sha256sum` calculates SHA256 hash of a file.
-* `base64` converts binary data to base64.
-* `xxd -r -p` converts HEX produced by SHA256 to binary
-* `split -b 8388608` splits file into `8 * 1024 * 1024` bytes
+- `sha256sum` calculates SHA256 hash of a file.
+- `base64` converts binary data to base64.
+- `xxd -r -p` converts HEX produced by SHA256 to binary
+- `split -b 8388608` splits file into `8 * 1024 * 1024` bytes
 
 ### 0Mb
 
@@ -60,9 +60,51 @@ sha256sum ./FILE | xxd -r -p | sha256sum | xxd -r -p | base64
 split -b 8388608 ./FILE --filter='sha256sum' | xxd -r -p | sha256sum | xxd -r -p | base64
 ```
 
-
 ## Verify packages
 
 ```bash
 split -l 1 ~/MANIFEST.jsonl --filter="jq -cSM 'del(.physical_keys)'" | tr -d '\n' | sha256sum
 ```
+
+## Commands
+
+### Install
+
+Install a package using a `quilt+s3://bucket#package=namespace/name@hash&path=some/file.txt` URI.
+
+#### Options:
+
+1. Install a package without paths
+2. Install a pacakge with specific paths
+3. Install a package then install paths
+4. Install a package specifying a different namespace
+5. Re-use existing package when installing the same package
+
+#### Technical details:
+
+- Track a package and installed paths in the lineage file `.quilt/data.json`
+- Cache manifests locally under `.quilt/packages/<bucket>/<hash>`
+- Install the manifest into `.quilt/installed/<namespace>/<hash>`
+- Store immutable files under `.quilt/objects/<hash>`
+- Create working copies of files in the package's working directory `<namespace>/<name>`
+
+#### Test cases TBD:
+
+#### Valid workflow:
+- [] Installing multiple paths simultaneously
+- [] Installing with custom namespace
+- [] Installing large packages
+- [] Installing nested directory structures
+- [] Re-installing with different paths
+
+#### Invalid workflow:
+- [] Network failures
+- [] Invalid URI format
+- [] Non-existent package
+- [] Invalid paths
+- [] Permission issues
+- [] Installing with special characters in paths
+- [] Installing with empty paths list
+- [] Installing with non-existent paths
+
+### Commit
