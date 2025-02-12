@@ -344,17 +344,17 @@ The `browse` command displays the contents and metadata of a remote package mani
 
 ##### Valid:
 
-- [ ] Browse package with message only
-- [ ] Browse package with user metadata
+- [x] Browse package with message only (~~`cli::browse::tests::test_model`~~ — with message and metadata)
+- [x] Browse package with user metadata (`cli::browse::tests::test_model`)
 - [ ] Browse package with workflow
-- [ ] Browse package with multiple files
-- [ ] Browse cached manifest
-- [ ] Browse Parquet manifest
-- [ ] Browse JSONL manifest
+- [x] Browse package with multiple files (`cli::browse::tests::test_model`)
+- [x] Browse cached manifest (`flow::browse::tests::test_if_cached`)
+- [x] Browse Parquet manifest (`flow::browse::tests::test_caching_parquet`)
+- [x] Browse JSONL manifest (`flow::browse::tests::test_caching_jsonl`)
 
 ##### Invalid:
 
-- [ ] Browse with invalid URI
+- [x] Browse with invalid URI (`cli::browse::tests::test_if_uri_is_invalid`)
 - [ ] Browse non-existent package
 - [ ] Browse with network failures
-- [ ] Browse with permission issues
+- [x] Browse with corrupted cache (`flow::browse::tests::test_if_cached_random_file`)
