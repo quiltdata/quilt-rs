@@ -233,3 +233,79 @@ The `pull` command downloads the latest version of a package (manifest and insta
 - [] Pull package that doesn't exist
 - [] Network failures during pull, or pull interrupted
 - [] Permission issues
+
+### Reset to latest
+
+The `reset` command forcefully updates a package to match the remote latest version, discarding any local changes or commits.
+
+#### Options:
+
+1. Reset package to latest remote version
+```bash
+quilt --domain /path/to/domain --namespace spec/package reset
+```
+
+#### Technical Details:
+
+- Verifies remote latest version differs from current
+- Removes all local files in working directory
+- Re-downloads manifest from remote latest
+- Re-installs tracked paths from latest version
+- Updates local manifest and lineage
+- Maintains base/latest hash references
+- Handles path existence in new version
+
+#### Test cases TBD:
+
+##### Valid:
+
+- [] Reset when behind remote
+- [] Reset unchanged package (no-op)
+- [] Reset with tracked paths
+- [] Reset with removed paths
+- [] Reset with local changes
+- [] Reset with pending commits
+
+##### Invalid:
+
+- [] Reset package that doesn't exist
+- [] Network failures during reset
+- [] Permission issues
+- [] Storage quota exceeded
+- [] Interrupted resets
+
+### Certify latest
+
+The `certify` command marks a specific package version as the "latest" in remote storage.
+
+#### Options:
+
+1. Certify current version as latest
+```bash
+quilt --domain /path/to/domain --namespace spec/package certify
+```
+
+#### Technical Details:
+
+- Updates remote "latest" tag to point to current version
+- Updates local base/latest hash references
+- Maintains package lineage history
+- Handles concurrent certifications
+- Validates remote bucket versioning
+
+#### Test cases TBD:
+
+##### Valid:
+
+- [] Certify current version
+- [] Certify outdated version
+- [] Certify with concurrent updates
+- [] Re-certify same version
+
+##### Invalid:
+
+- [] Certify package that doesn't exist
+- [] Network failures during certification
+- [] Permission issues
+- [] Version conflicts
+- [] Interrupted certification
