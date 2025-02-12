@@ -122,7 +122,8 @@ The `commit` command creates a new revision of an installed package by capturing
 
 #### Technical Details:
 
-- Generates unique content-based hashes for each file in the commit and the commit itself, and store manifest in `.quilt/installed/<namespace>/<hash>`
+- Generates hashes for each file and copy files into `.quilt/objects/<hash>`
+- Generate hash for the commit and store manifest in `.quilt/installed/<namespace>/<hash>`
 - Tracks the latest commit in the lineage file `.quilt/data.json`
 - Tracks the list of local commits (hashes only) in `.quilt/data.json`
 - Handles unchanged files by reusing previous hashes
@@ -155,51 +156,41 @@ The preparation step for the commit. It calculates all the necessary hashes for 
 
 ### Push
 
-The `push` command uploads committed changes to the remote S3 storage, making them available to other users. It handles efficient data transfer by reusing existing objects and managing package versioning.
+The `push` command uploads committed manifests and files to the remote S3 storage. It reuses existing objects, and tag the remote package as latest if tracking.
 
 #### Options:
 
 1. Push committed changes to remote storage
-```bash
-quilt --domain /path/to/domain --namespace spec/package
-```
-
-2. Push to track remote latest version
-```bash
-# Will update latest tag if base hash matches remote
-quilt --domain /path/to/domain --namespace spec/package
-```
 
 #### Technical Details:
 
 - Verifies commit exists before pushing
-- Copies modified files to remote S3 storage
-- Generates new manifest with updated object locations
-- Updates remote package lineage
+- Copies modified and hashed files from `.quilt/objects/<hash>` to remote S3 storage
+- Generates new manifest, but it _must_ stays the same as the local one
+- Updates `remote` package lineage
 - Tags new version as "latest" if tracking
 - Maintains base/latest hash references
-- Validates remote bucket versioning support
-- Reuses existing remote objects to minimize data transfer
+- Reuses existing remote objects to minimize data transfer (in other words, do nothing for the files that are not present in local filesystem)
 
 #### Test cases TBD:
 
 ##### Valid:
 
-- [] Push new commits to remote
-- [] Push unchanged package (no-op)
-- [] Push to track remote latest
+- [] Push one commit to remote
+- [] Push multiple commits to remote
+- [] Push the package without commits (no-op)
+- [] Push the package with local changes (pushed only committed changes (?))
+- [] Push outdated package (will not be tracked as latest)
 - [] Push with large files
 - [] Push with many files
 - [] Push concurrent changes
-- [] Push to update latest tag
+- [] Push to update latest tag (when we made a commit on top of the latest)
 
 ##### Invalid:
 
-- [] Push without commits
 - [] Push package that doesn't exist
 - [] Push to non-versioned bucket
 - [] Network failures during push
 - [] Permission issues
-- [] Version conflicts
-- [] Storage quota exceeded
+- [] Version conflicts (push 1 slowly, then push 2 fast, latest will be 1?))
 - [] Interrupted pushes
