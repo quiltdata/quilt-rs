@@ -217,8 +217,8 @@ The `pull` command downloads the latest version of a package (manifest and insta
 
 ##### Valid:
 
-- [ ] Pull when behind remote
-- [ ] Pull unchanged package (no-op)
+- [x] Pull when behind remote (`cli::pull::tests::test_model`, `cli::pull::tests::test_valid_command`)
+- [x] Pull unchanged package (no-op) (`flow::pull::tests::test_no_pull_if_up_to_date`)
 - [ ] Pull with tracked paths
 - [ ] Pull with removed paths
 - [ ] Pull with large files
@@ -226,11 +226,11 @@ The `pull` command downloads the latest version of a package (manifest and insta
 
 ##### Invalid:
 
-- [ ] Pull with uncommitted changes
+- [x] Pull with uncommitted changes (`flow::pull::tests::test_no_pull_if_changes`)
 - [ ] Pull with new files (they will be deleted)
-- [ ] Pull with pending commits
-- [ ] Pull diverged package
-- [ ] Pull package that doesn't exist
+- [x] Pull with pending commits (`flow::pull::tests::test_no_pull_if_commit`)
+- [x] Pull diverged package (`flow::pull::tests::test_no_pull_if_diverged`)
+- [x] Pull package that doesn't exist (`cli::pull::tests::test_invalid_command`)
 - [ ] Network failures during pull, or pull interrupted
 - [ ] Permission issues
 
