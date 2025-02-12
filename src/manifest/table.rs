@@ -32,24 +32,22 @@ use crate::manifest::RowDisplay;
 use crate::Error;
 use crate::Res;
 
-fn serialize_table_header(header: &Header) -> serde_json::Map<String, serde_json::Value> {
+fn serialize_table_header(header: &Header) -> Res<serde_json::Map<String, serde_json::Value>> {
     let mut header_meta = serde_json::Map::new();
-    if let Some(message) = header.get_message() {
-        header_meta.insert("message".to_string(), message);
+    if let Some(message) = header.get_message()? {
+        header_meta.insert("message".to_string(), serde_json::to_value(message)?);
     }
-    if let Some(user_meta) = header.get_user_meta() {
-        header_meta.insert("user_meta".into(), serde_json::Value::Object(user_meta));
+    if let Some(user_meta) = header.get_user_meta()? {
+        header_meta.insert("user_meta".into(), serde_json::to_value(user_meta)?);
     }
-    if let Some(version) = header.get_version() {
-        header_meta.insert("version".to_string(), version);
+    header_meta.insert(
+        "version".to_string(),
+        serde_json::Value::String(header.get_version()?),
+    );
+    if let Some(workflow) = header.get_workflow()? {
+        header_meta.insert("workflow".to_string(), serde_json::to_value(&workflow)?);
     }
-    if let Some(workflow) = header.get_workflow() {
-        if workflow.is_object() {
-            // TODO: validate workflow. It should be `{ id: string, config: string }`
-            header_meta.insert("workflow".to_string(), workflow);
-        }
-    }
-    header_meta
+    Ok(header_meta)
 }
 
 /// Helper for creating `top_hash`
@@ -73,7 +71,7 @@ impl TopHasher {
 
     /// Append `Header` to the hasher
     pub fn append_header(&mut self, header: &Header) -> Res {
-        let value = serialize_table_header(header);
+        let value = serialize_table_header(header)?;
         let value_str = serde_json::to_string(&value)?;
         self.hasher.update(value_str);
         Ok(())

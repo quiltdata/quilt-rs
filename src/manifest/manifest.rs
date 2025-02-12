@@ -60,13 +60,20 @@ impl<'de> Deserialize<'de> for Workflow {
         let id = match (helper.id, helper.schemas) {
             (Some(id), Some(schemas)) => {
                 // Look up the schema URL using the workflow ID as key
-                schemas.get(&id).map(|url| WorkflowId {
-                    id,
-                    url: url
-                        .parse()
-                        .map_err(|_| Error::S3Uri(url.to_string()))
-                        .unwrap(),
-                })
+                match schemas.get(&id) {
+                    Some(url) => match url.parse() {
+                        Ok(url) => Some(WorkflowId { id, url }),
+                        Err(_) => {
+                            return Err(serde::de::Error::custom(Error::S3Uri(url.to_string())))
+                        }
+                    },
+                    None => {
+                        return Err(serde::de::Error::custom(format!(
+                            "Schema URL not found for workflow ID: {}",
+                            id
+                        )))
+                    }
+                }
             }
             (None, _) => None,
             (Some(id), None) => {
@@ -121,26 +128,23 @@ pub struct ManifestHeader {
     pub workflow: Option<Workflow>,
 }
 
-impl Default for ManifestHeader {
-    fn default() -> Self {
-        Header::default().into()
-    }
-}
+impl TryFrom<&Header> for ManifestHeader {
+    type Error = Error;
 
-impl From<&Header> for ManifestHeader {
-    fn from(header: &Header) -> Self {
-        ManifestHeader {
+    fn try_from(header: &Header) -> Result<Self, Self::Error> {
+        Ok(ManifestHeader {
             version: "v0".into(),
-            message: header.display_message(),
-            user_meta: header.display_user_meta(),
-            workflow: header.display_workflow(),
-        }
+            message: header.get_message()?,
+            user_meta: header.get_user_meta()?,
+            workflow: header.get_workflow()?,
+        })
     }
 }
 
-impl From<Header> for ManifestHeader {
-    fn from(header: Header) -> Self {
-        ManifestHeader::from(&header)
+impl TryFrom<Header> for ManifestHeader {
+    type Error = Error;
+    fn try_from(header: Header) -> Result<Self, Self::Error> {
+        ManifestHeader::try_from(&header)
     }
 }
 
@@ -325,7 +329,7 @@ impl Manifest {
             }
         }
         Ok(Manifest {
-            header: (&table.header).into(),
+            header: (&table.header).try_into()?,
             rows: manifest_rows,
         })
     }
@@ -568,7 +572,7 @@ mod tests {
     }
 
     #[test]
-    fn test_manifest_header_from_header() {
+    fn test_manifest_header_from_header() -> Res {
         let header = Header {
             info: serde_json::json!({
                 "message": "test message",
@@ -578,7 +582,7 @@ mod tests {
         };
 
         assert_eq!(
-            ManifestHeader::from(header),
+            ManifestHeader::try_from(header)?,
             ManifestHeader {
                 version: "v0".to_string(),
                 message: Some("test message".to_string()),
@@ -589,15 +593,17 @@ mod tests {
                 workflow: None,
             }
         );
+        Ok(())
     }
 
     #[test]
-    fn test_manifest_header_default() {
-        let header = ManifestHeader::default();
+    fn test_manifest_header_default() -> Res {
+        let header = ManifestHeader::try_from(Header::default())?;
         assert_eq!(header.version, "v0");
         assert_eq!(header.message, Some("".to_string()));
         assert_eq!(header.user_meta, None);
         assert_eq!(header.workflow, None);
+        Ok(())
     }
 
     #[test]
