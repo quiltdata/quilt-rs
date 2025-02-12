@@ -108,3 +108,61 @@ Install a package using a `quilt+s3://bucket#package=namespace/name@hash&path=so
 - [] Installing with non-existent paths
 
 ### Commit
+
+The `commit` command creates a new revision of an installed package by capturing changes to tracked files along with metadata.
+
+#### Usage:
+
+```bash
+# Basic commit with message
+quilt --domain /path/to/domain --namespace spec/package --message "commit message"
+
+# Commit with user metadata
+quilt --domain /path/to/domain --namespace spec/package --message "msg" --user-meta '{"key":"value"}'
+
+# Commit with workflow
+quilt --domain /path/to/domain --namespace spec/package --message "msg" --workflow "workflow-id"
+```
+
+#### Features:
+
+- Required commit message for each revision
+- Optional user metadata as JSON object
+- Optional workflow ID integration
+- Content-based commit hashing
+- Maintains commit history in package lineage
+- Tracks file modifications, additions and deletions
+
+#### Technical Details:
+
+- Generates unique content-based hashes for each commit
+- Stores commit metadata in the package lineage file
+- Validates workflow IDs against configured workflows
+- Tracks changes to files since last commit
+- Maintains commit history chain
+- Handles unchanged files by reusing previous hashes
+
+#### Common Use Cases:
+
+1. Basic Changes:
+   - Commit modified files
+   - Commit new files
+   - Commit file deletions
+   - Commit unchanged files (produces same hash)
+
+2. Metadata Management:
+   - Add user metadata to commits
+   - Update package metadata
+   - Track workflow states
+   - Add commit messages
+
+3. Workflow Integration:
+   - Commit with workflow validation
+   - Track workflow states
+   - Maintain workflow configurations
+
+4. Change Tracking:
+   - Track file modifications
+   - Monitor content changes
+   - Maintain revision history
+   - Compare file states
