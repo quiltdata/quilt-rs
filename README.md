@@ -194,3 +194,42 @@ The `push` command uploads committed manifests and files to the remote S3 storag
 - [] Permission issues
 - [] Version conflicts (push 1 slowly, then push 2 fast, latest will be 1?))
 - [] Interrupted pushes
+
+### Pull
+
+The `pull` command downloads the latest version of a package (manifest and installed files) from remote storage. It disallow to pull when there are uncommitted local changes or pending commits.
+
+#### Options:
+
+1. Pull latest version of a package
+
+#### Technical Details:
+
+- Skips pull if already up-to-date
+- Verifies no uncommitted local changes exist
+- Verifies no pending commits exist
+- Verifies remote is tracking (FIXME: I DON'T UNDERSTAND THIS: when `remote.hash` != `base_hash`)
+- Updates package to the latest remote version
+- Re-installs tracked paths from new version
+- Updates local manifest and lineage
+
+#### Test cases TBD:
+
+##### Valid:
+
+- [] Pull when behind remote
+- [] Pull unchanged package (no-op)
+- [] Pull with tracked paths
+- [] Pull with removed paths
+- [] Pull with large files
+- [] Pull to update latest
+
+##### Invalid:
+
+- [] Pull with uncommitted changes
+- [] Pull with new files (they will be deleted)
+- [] Pull with pending commits
+- [] Pull diverged package
+- [] Pull package that doesn't exist
+- [] Network failures during pull, or pull interrupted
+- [] Permission issues
