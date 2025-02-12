@@ -176,19 +176,19 @@ The `push` command uploads committed manifests and files to the remote S3 storag
 
 ##### Valid:
 
-- [ ] Push one commit to remote
+- [x] Push one commit to remote (`flow::push::tests::test_single_chunk_push`)
 - [ ] Push multiple commits to remote
-- [ ] Push the package without commits (no-op)
-- [ ] Push the package with local changes (pushed only committed changes (?))
+- [x] Push the package without commits (no-op) (`flow::push::tests::test_no_push_if_no_commit`)
+- [ ] Push the package with local changes
 - [ ] Push outdated package (will not be tracked as latest)
 - [ ] Push with large files
-- [ ] Push with many files
+- [ ] Push with many files (`flow::push::tests::test_multichunk_push` - currently ignored)
 - [ ] Push concurrent changes
 - [ ] Push to update latest tag (when we made a commit on top of the latest)
 
 ##### Invalid:
 
-- [ ] Push package that doesn't exist
+- [x] Push package that doesn't exist (`cli::push::tests::test_namespace_not_found`)
 - [ ] Push to non-versioned bucket
 - [ ] Network failures during push
 - [ ] Permission issues
