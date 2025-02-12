@@ -616,7 +616,7 @@ mod tests {
             }
         }"#;
 
-        let workflow: Workflow = serde_json::from_str(json).unwrap();
+        let workflow: Workflow = serde_json::from_str(json)?;
 
         assert_eq!(workflow.config, "s3://workflow/config".parse()?);
         assert_eq!(
@@ -636,7 +636,7 @@ mod tests {
             "id": null
         }"#;
 
-        let workflow: Workflow = serde_json::from_str(json).unwrap();
+        let workflow: Workflow = serde_json::from_str(json)?;
 
         assert_eq!(workflow.config, "s3://workflow/config".parse()?);
         assert_eq!(workflow.id, None);
