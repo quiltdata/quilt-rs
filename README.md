@@ -294,3 +294,77 @@ The `certify` command marks a specific package version as the "latest" in remote
 - [] Certify package that doesn't exist
 - [] Network failures
 - [] Permission issues
+
+### List
+
+The `list` command displays all packages installed in the local domain.
+
+#### Options:
+
+1. List all installed packages
+```bash
+quilt --domain /path/to/domain list
+```
+
+#### Technical Details:
+
+- Reads package information from lineage file `.quilt/data.json`
+- Shows package namespaces for all installed packages
+- Displays "No installed packages" when domain is empty
+- Maintains sorted order of packages by namespace
+
+#### Test cases TBD:
+
+##### Valid:
+
+- [] List empty domain
+- [] List single installed package
+- [] List multiple installed packages
+- [] List after package removal
+- [] List packages with special characters in names
+
+##### Invalid:
+
+- [] List with invalid domain path
+- [] List with permission issues
+- [] List with corrupted lineage file
+- [] List with network issues
+
+### Browse
+
+The `browse` command displays the contents and metadata of a remote package manifest.
+
+#### Options:
+
+1. Browse remote package manifest
+```bash
+quilt browse quilt+s3://bucket#package=namespace/name@hash
+```
+
+#### Technical Details:
+
+- Downloads and caches remote manifest locally
+- Displays manifest header information (message, user meta, workflow)
+- Shows list of files with their locations and sizes
+- Supports both Parquet and JSONL manifest formats
+- Maintains manifest cache in `.quilt/packages/`
+
+#### Test cases TBD:
+
+##### Valid:
+
+- [] Browse package with message only
+- [] Browse package with user metadata
+- [] Browse package with workflow
+- [] Browse package with multiple files
+- [] Browse cached manifest
+- [] Browse different manifest formats
+
+##### Invalid:
+
+- [] Browse with invalid URI
+- [] Browse non-existent package
+- [] Browse with network failures
+- [] Browse with permission issues
+- [] Browse corrupted manifest
+- [] Browse with invalid manifest format
