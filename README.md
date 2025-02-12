@@ -240,10 +240,7 @@ The `reset` command forcefully updates a package to match the remote latest vers
 
 #### Options:
 
-1. Reset package to latest remote version
-```bash
-quilt --domain /path/to/domain --namespace spec/package reset
-```
+1. Reset package to the latest remote version
 
 #### Technical Details:
 
@@ -251,9 +248,7 @@ quilt --domain /path/to/domain --namespace spec/package reset
 - Removes all local files in working directory
 - Re-downloads manifest from remote latest
 - Re-installs tracked paths from latest version
-- Updates local manifest and lineage
-- Maintains base/latest hash references
-- Handles path existence in new version
+- Installs new manifest and update lineage's `remote`
 
 #### Test cases TBD:
 
@@ -268,11 +263,9 @@ quilt --domain /path/to/domain --namespace spec/package reset
 
 ##### Invalid:
 
-- [] Reset package that doesn't exist
+- [] Reset package that doesn't exist (invalid namespace)
 - [] Network failures during reset
 - [] Permission issues
-- [] Storage quota exceeded
-- [] Interrupted resets
 
 ### Certify latest
 
@@ -281,17 +274,11 @@ The `certify` command marks a specific package version as the "latest" in remote
 #### Options:
 
 1. Certify current version as latest
-```bash
-quilt --domain /path/to/domain --namespace spec/package certify
-```
 
 #### Technical Details:
 
-- Updates remote "latest" tag to point to current version
-- Updates local base/latest hash references
-- Maintains package lineage history
-- Handles concurrent certifications
-- Validates remote bucket versioning
+- Updates remote "latest": put the hash value into the "latest" file
+- Updates lineage's `latest_hash` and `base_hash`
 
 #### Test cases TBD:
 
@@ -305,7 +292,5 @@ quilt --domain /path/to/domain --namespace spec/package certify
 ##### Invalid:
 
 - [] Certify package that doesn't exist
-- [] Network failures during certification
+- [] Network failures
 - [] Permission issues
-- [] Version conflicts
-- [] Interrupted certification
