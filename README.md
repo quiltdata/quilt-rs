@@ -182,7 +182,7 @@ The `push` command uploads committed manifests and files to the remote S3 storag
 - [ ] Push the package with local changes
 - [ ] Push outdated package (will not be tracked as latest)
 - [ ] Push with large files
-- [ ] Push with many files (`flow::push::tests::test_multichunk_push` - currently ignored)
+- [ ] Push with many files
 - [ ] Push concurrent changes
 - [ ] Push to update latest tag (when we made a commit on top of the latest)
 
