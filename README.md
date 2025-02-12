@@ -92,7 +92,7 @@ Install a package using a `quilt+s3://bucket#package=namespace/name@hash&path=so
 
 #### Valid:
 
-- [ ] Install a package without paths (`cli::install::tests::test_valid_command`)
+- [x] Install a package without paths (`cli::install::tests::test_valid_command`)
 - [ ] Installing multiple paths
 - [ ] Installing with custom namespace
 - [ ] Installing large packages
@@ -102,10 +102,10 @@ Install a package using a `quilt+s3://bucket#package=namespace/name@hash&path=so
 #### Invalid:
 
 - [ ] Network failures
-- [ ] Invalid URI format (`cli::install::tests::test_invalid_command`)
+- [x] Invalid URI format (`cli::install::tests::test_invalid_command`)
 - [ ] Non-existent package
 - [ ] Invalid paths
-- [ ] Permission issues (`flow::install::tests::test_installing_when_no_permissions`)
+- [x] Permission issues (`flow::install::tests::test_installing_when_no_permissions`)
 - [ ] Installing with special characters in paths
 - [ ] Installing with empty paths list
 - [ ] Installing with non-existent paths
