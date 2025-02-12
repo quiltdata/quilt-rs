@@ -34,30 +34,48 @@ impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut output: Vec<String> = Vec::new();
         let header = self.manifest.header.clone();
-        let message = header
-            .get_message()
-            .map_err(|e| {
-                tracing::error!("Failed to stringify message: {}", e);
-                e
-            })
-            .unwrap_or_default()
-            .unwrap_or_default();
-        let user_meta = header.get_user_meta().map_or(String::default(), |meta| {
-            serde_json::to_string(&meta)
-                .map_err(|e| {
+
+        // Handle message
+        let message = match header.get_message() {
+            Ok(Some(msg)) => msg,
+            Ok(None) => String::from("No message"),
+            Err(e) => {
+                tracing::error!("Failed to get message: {}", e);
+                String::from("Failed to get message")
+            }
+        };
+
+        // Handle user meta
+        let user_meta = match header.get_user_meta() {
+            Ok(Some(meta)) => match serde_json::to_string(&meta) {
+                Ok(s) => s,
+                Err(e) => {
                     tracing::error!("Failed to stringify user_meta: {}", e);
-                    e
-                })
-                .unwrap_or_default()
-        });
-        let workflow = header.get_workflow().map_or(String::default(), |v| {
-            serde_json::to_string(&v)
-                .map_err(|e| {
+                    String::from("Failed to stringify user meta")
+                }
+            },
+            Ok(None) => String::from("No user meta"),
+            Err(e) => {
+                tracing::error!("Failed to get user_meta: {}", e);
+                String::from("Failed to get user meta")
+            }
+        };
+
+        // Handle workflow
+        let workflow = match header.get_workflow() {
+            Ok(Some(w)) => match serde_json::to_string(&w) {
+                Ok(s) => s,
+                Err(e) => {
                     tracing::error!("Failed to stringify workflow: {}", e);
-                    e
-                })
-                .unwrap_or_default()
-        });
+                    String::from("Failed to stringify workflow")
+                }
+            },
+            Ok(None) => String::from("No workflow"),
+            Err(e) => {
+                tracing::error!("Failed to get workflow: {}", e);
+                String::from("Failed to get workflow")
+            }
+        };
         let mut header_table = tabled::Table::new(vec![RemoteManifestHeader {
             message,
             user_meta,
