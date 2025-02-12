@@ -9,8 +9,6 @@ use crate::manifest::JsonObject;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
 use crate::manifest::Workflow;
-use crate::manifest::WorkflowId;
-use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
 use base64::prelude::BASE64_STANDARD;
@@ -75,75 +73,30 @@ impl Header {
         }
     }
 
-    pub fn display_message(&self) -> Option<String> {
-        self.info
-            .get("message")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-    }
-
-    pub fn display_user_meta(&self) -> Option<JsonObject> {
-        self.meta.as_object().cloned()
-    }
-
-    pub fn display_workflow(&self) -> Option<Workflow> {
-        match self.info.get("workflow") {
-            Some(value) => {
-                match value {
-                    serde_json::Value::Object(workflow) => Some(Workflow {
-                        id: match workflow.get("id").unwrap_or(&serde_json::Value::Null) {
-                            serde_json::Value::String(id) => {
-                                let workflow_id = id.to_string();
-                                let schemas = workflow.get("schemas").unwrap();
-                                if let serde_json::Value::Object(schemas) = schemas {
-                                    let schema = schemas.get(&workflow_id).unwrap();
-                                    let schema = schema.as_str().unwrap();
-                                    Some(WorkflowId {
-                                        id: workflow_id,
-                                        url: S3Uri::try_from(schema).unwrap(),
-                                    })
-                                } else {
-                                    None
-                                }
-                            }
-                            _ => None,
-                        },
-                        config: workflow
-                            .get("config")
-                            .expect("Workflow URL is empty")
-                            .as_str()
-                            .expect("Workflow config must be a string")
-                            .to_string(),
-                    }),
-                    serde_json::Value::Null => None,
-                    _ => None, // TODO: make Result and return Error
-                }
-            }
-            None => None,
+    pub fn get_message(&self) -> Res<Option<String>> {
+        match self.info.get("message") {
+            Some(serde_json::Value::String(message)) => Ok(Some(message.clone())),
+            _ => Ok(None),
         }
     }
 
-    // TODO: return Result consistently to `get_version`
-    pub fn get_message(&self) -> Option<serde_json::Value> {
-        self.info.get("message").cloned()
+    pub fn get_user_meta(&self) -> Res<Option<JsonObject>> {
+        Ok(self.meta.as_object().cloned())
     }
 
-    // TODO: return Result consistently to `get_version`
-    //       also, validate the value is object
-    pub fn get_user_meta(&self) -> Option<JsonObject> {
-        self.meta.as_object().cloned()
+    pub fn get_version(&self) -> Res<String> {
+        match self.info.get("version") {
+            Some(serde_json::Value::String(version)) => Ok(version.clone()),
+            _ => Err(Error::ManifestHeader("Version not found".to_string())),
+        }
     }
 
-    // TODO: return Result<String, Error>, because the value required
-    pub fn get_version(&self) -> Option<serde_json::Value> {
-        self.info.get("version").cloned()
-    }
-
-    // TODO: return Result consistently to `get_version`
-    //              also validate the value
-    // FIXME: when workflow is null
-    pub fn get_workflow(&self) -> Option<serde_json::Value> {
-        self.info.get("workflow").cloned()
+    pub fn get_workflow(&self) -> Res<Option<Workflow>> {
+        match self.info.get("workflow").cloned() {
+            Some(serde_json::Value::Null) => Ok(None),
+            Some(value) => Ok(Some(serde_json::from_value(value)?)),
+            None => Ok(None),
+        }
     }
 }
 
@@ -298,6 +251,8 @@ impl From<S3Attributes> for Row {
 mod tests {
     use super::*;
 
+    use crate::manifest::WorkflowId;
+
     #[test]
     fn test_formatting() -> Res {
         let row = Row {
@@ -357,13 +312,14 @@ mod tests {
     }
 
     #[test]
-    fn test_display_workflow_none() {
+    fn test_display_workflow_none() -> Res {
         let header = Header::new(None, None, None);
-        assert_eq!(header.display_workflow(), None);
+        assert_eq!(header.get_workflow()?, None);
+        Ok(())
     }
 
     #[test]
-    fn test_display_workflow_null() {
+    fn test_display_workflow_null() -> Res {
         let header = Header {
             meta: serde_json::Value::Null,
             info: serde_json::json!({
@@ -372,11 +328,12 @@ mod tests {
                 "workflow": null,
             }),
         };
-        assert_eq!(header.display_workflow(), None);
+        assert_eq!(header.get_workflow()?, None);
+        Ok(())
     }
 
     #[test]
-    fn test_display_workflow_invalid() {
+    fn test_display_workflow_invalid() -> Res {
         let header = Header {
             meta: serde_json::Value::Null,
             info: serde_json::json!({
@@ -385,7 +342,13 @@ mod tests {
                 "workflow": "invalid",
             }),
         };
-        assert_eq!(header.display_workflow(), None);
+        let workflow_result = header.get_workflow();
+        assert!(workflow_result.is_err());
+        assert_eq!(
+            workflow_result.unwrap_err().to_string(),
+            "JSON error: invalid type: string \"invalid\", expected struct WorkflowHelper"
+        );
+        Ok(())
     }
 
     #[test]
@@ -395,10 +358,10 @@ mod tests {
                 id: "test-id".to_string(),
                 url: "s3://test-url/workflows/schema.json".parse()?,
             }),
-            config: "test-config".to_string(),
+            config: "s3://test/config".parse()?,
         };
         let header = Header::new(None, None, Some(workflow.clone()));
-        assert_eq!(header.display_workflow(), Some(workflow));
+        assert_eq!(header.get_workflow()?, Some(workflow));
         Ok(())
     }
 
@@ -406,10 +369,10 @@ mod tests {
     fn test_display_workflow_no_id() -> Res {
         let workflow = Workflow {
             id: None,
-            config: "test-config".to_string(),
+            config: "s3://test/config".parse()?,
         };
         let header = Header::new(None, None, Some(workflow.clone()));
-        assert_eq!(header.display_workflow(), Some(workflow));
+        assert_eq!(header.get_workflow()?, Some(workflow));
         Ok(())
     }
 }

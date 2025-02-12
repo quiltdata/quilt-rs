@@ -298,7 +298,7 @@ pub async fn init() -> Result<(), Error> {
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error("Domain path doesn't exists: {0}")]
+    #[error("Domain path doesn't exist: {0}")]
     Domain(PathBuf),
 
     #[error("quilt_rs error: {0}")]

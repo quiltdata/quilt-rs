@@ -34,25 +34,45 @@ impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut output: Vec<String> = Vec::new();
         let header = self.manifest.header.clone();
-        let message = header.display_message().unwrap_or_default();
-        let user_meta = header
-            .display_user_meta()
-            .map_or(String::default(), |meta| {
-                serde_json::to_string(&meta)
-                    .map_err(|e| {
-                        tracing::error!("Failed to stringify user_meta: {}", e);
-                        e
-                    })
-                    .unwrap_or_default()
-            });
-        let workflow = header.display_workflow().map_or(String::default(), |v| {
-            serde_json::to_string(&v)
-                .map_err(|e| {
+
+        let message = match header.get_message() {
+            Ok(Some(msg)) => msg,
+            Ok(None) => "∅".to_string(),
+            Err(e) => {
+                tracing::error!("Failed to get message: {}", e);
+                "⚠".to_string()
+            }
+        };
+
+        let user_meta = match header.get_user_meta() {
+            Ok(Some(meta)) => match serde_json::to_string(&meta) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!("Failed to stringify user_meta: {}", e);
+                    "⚠".to_string()
+                }
+            },
+            Ok(None) => "∅".to_string(),
+            Err(e) => {
+                tracing::error!("Failed to get user_meta: {}", e);
+                "⚠".to_string()
+            }
+        };
+
+        let workflow = match header.get_workflow() {
+            Ok(Some(w)) => match serde_json::to_string(&w) {
+                Ok(s) => s,
+                Err(e) => {
                     tracing::error!("Failed to stringify workflow: {}", e);
-                    e
-                })
-                .unwrap_or_default()
-        });
+                    "⚠".to_string()
+                }
+            },
+            Ok(None) => "∅".to_string(),
+            Err(e) => {
+                tracing::error!("Failed to get workflow: {}", e);
+                "⚠".to_string()
+            }
+        };
         let mut header_table = tabled::Table::new(vec![RemoteManifestHeader {
             message,
             user_meta,
@@ -114,7 +134,7 @@ mod tests {
 +----------------------------+---------------------------------------------------+----------+
 | message                    | user_meta                                         | workflow |
 +----------------------------+---------------------------------------------------+----------+
-| test_spec_write 1697916638 | {"Author":"Ernest","Count":1,"Date":"2023-07-12"} |          |
+| test_spec_write 1697916638 | {"Author":"Ernest","Count":1,"Date":"2023-07-12"} | ∅        |
 +----------------------------+---------------------------------------------------+----------+
 +---------------+---------------------------------------------------------------------------------------+------+
 | Remote manifest entries                                                                                      |
@@ -149,8 +169,8 @@ mod tests {
             assert_eq!(output_str, BROWSE_OUTPUT);
 
             assert_eq!(
-                output.manifest.header.display_message().unwrap(),
-                "test_spec_write 1697916638",
+                output.manifest.header.get_message()?,
+                Some("test_spec_write 1697916638".to_string()),
             );
             assert_eq!(
                 output

@@ -39,7 +39,7 @@ impl Remote for MockRemote {
         self.storage.open_file(&key).await.map_err(|err| match err {
             Error::Io(inner_err) => {
                 if inner_err.kind() == std::io::ErrorKind::NotFound {
-                    Error::S3("Key doesn't exists".to_string())
+                    Error::S3("Key doesn't exist".to_string())
                 } else {
                     Error::Io(inner_err)
                 }
@@ -75,10 +75,10 @@ impl Remote for MockRemote {
             .await
             .map_err(|err| match err {
                 // TODO: made a similar finer error for the ByteStreamError
-                Error::ByteStreamError(_) => Error::S3("Key doesn't exists".to_string()),
+                Error::ByteStreamError(_) => Error::S3("Key doesn't exist".to_string()),
                 Error::Io(inner_err) => {
                     if inner_err.kind() == std::io::ErrorKind::NotFound {
-                        Error::S3("Key doesn't exists".to_string())
+                        Error::S3("Key doesn't exist".to_string())
                     } else {
                         Error::Io(inner_err)
                     }
@@ -100,6 +100,16 @@ impl Remote for MockRemote {
         log::debug!("Mocking {} put request", key);
         let contents_vec = contents.into().collect().await?.to_vec();
         self.storage.write_file(key, &contents_vec).await
+    }
+
+    async fn resolve_url(&self, s3_uri: &S3Uri) -> Res<S3Uri> {
+        let key = s3_uri.to_string();
+        log::debug!("Mocking {} HEAD request", key);
+        if self.storage.exists(&key).await {
+            Ok(s3_uri.clone())
+        } else {
+            Err(Error::S3("Key doesn't exist".to_string()))
+        }
     }
 
     async fn upload_file(
@@ -136,7 +146,7 @@ mod tests {
         let s3_uri_not_found = S3Uri::try_from("s3://b/n?versionId=v")?;
         let not_found = remote.get_object(&s3_uri_not_found).await;
         match not_found {
-            Err(err) => assert_eq!(err.to_string(), "S3 error: Key doesn't exists".to_string()),
+            Err(err) => assert_eq!(err.to_string(), "S3 error: Key doesn't exist".to_string()),
             Ok(_) => panic!("shouldn't happen"),
         }
         let s3_uri_found = S3Uri::try_from("s3://found/n?versionId=v")?;

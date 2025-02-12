@@ -26,7 +26,7 @@ pub struct WorkflowId {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Workflow {
-    pub config: String,
+    pub config: S3Uri,
     pub id: Option<WorkflowId>,
 }
 
@@ -60,13 +60,20 @@ impl<'de> Deserialize<'de> for Workflow {
         let id = match (helper.id, helper.schemas) {
             (Some(id), Some(schemas)) => {
                 // Look up the schema URL using the workflow ID as key
-                schemas.get(&id).map(|url| WorkflowId {
-                    id,
-                    url: url
-                        .parse()
-                        .map_err(|_| Error::S3Uri(url.to_string()))
-                        .unwrap(),
-                })
+                match schemas.get(&id) {
+                    Some(url) => match url.parse() {
+                        Ok(url) => Some(WorkflowId { id, url }),
+                        Err(_) => {
+                            return Err(serde::de::Error::custom(Error::S3Uri(url.to_string())))
+                        }
+                    },
+                    None => {
+                        return Err(serde::de::Error::custom(format!(
+                            "Schema URL not found for workflow ID: {}",
+                            id
+                        )))
+                    }
+                }
             }
             (None, _) => None,
             (Some(id), None) => {
@@ -78,7 +85,7 @@ impl<'de> Deserialize<'de> for Workflow {
         };
 
         Ok(Workflow {
-            config: helper.config,
+            config: helper.config.parse().map_err(serde::de::Error::custom)?,
             id,
         })
     }
@@ -93,7 +100,7 @@ impl Serialize for Workflow {
         match &self.id {
             Some(workflow_id) => {
                 let mut state = serializer.serialize_struct("Workflow", 3)?;
-                state.serialize_field("config", &self.config)?;
+                state.serialize_field("config", &self.config.to_string())?;
                 state.serialize_field("id", &workflow_id.id)?;
                 let mut schemas = HashMap::new();
                 schemas.insert(workflow_id.id.clone(), workflow_id.url.to_string());
@@ -102,7 +109,7 @@ impl Serialize for Workflow {
             }
             None => {
                 let mut state = serializer.serialize_struct("Workflow", 2)?;
-                state.serialize_field("config", &self.config)?;
+                state.serialize_field("config", &self.config.to_string())?;
                 state.serialize_field("id", &None::<String>)?;
                 state.end()
             }
@@ -121,26 +128,23 @@ pub struct ManifestHeader {
     pub workflow: Option<Workflow>,
 }
 
-impl Default for ManifestHeader {
-    fn default() -> Self {
-        Header::default().into()
-    }
-}
+impl TryFrom<&Header> for ManifestHeader {
+    type Error = Error;
 
-impl From<&Header> for ManifestHeader {
-    fn from(header: &Header) -> Self {
-        ManifestHeader {
+    fn try_from(header: &Header) -> Result<Self, Self::Error> {
+        Ok(ManifestHeader {
             version: "v0".into(),
-            message: header.display_message(),
-            user_meta: header.display_user_meta(),
-            workflow: header.display_workflow(),
-        }
+            message: header.get_message()?,
+            user_meta: header.get_user_meta()?,
+            workflow: header.get_workflow()?,
+        })
     }
 }
 
-impl From<Header> for ManifestHeader {
-    fn from(header: Header) -> Self {
-        ManifestHeader::from(&header)
+impl TryFrom<Header> for ManifestHeader {
+    type Error = Error;
+    fn try_from(header: Header) -> Result<Self, Self::Error> {
+        ManifestHeader::try_from(&header)
     }
 }
 
@@ -325,7 +329,7 @@ impl Manifest {
             }
         }
         Ok(Manifest {
-            header: (&table.header).into(),
+            header: (&table.header).try_into()?,
             rows: manifest_rows,
         })
     }
@@ -568,7 +572,7 @@ mod tests {
     }
 
     #[test]
-    fn test_manifest_header_from_header() {
+    fn test_manifest_header_from_header() -> Res {
         let header = Header {
             info: serde_json::json!({
                 "message": "test message",
@@ -578,7 +582,7 @@ mod tests {
         };
 
         assert_eq!(
-            ManifestHeader::from(header),
+            ManifestHeader::try_from(header)?,
             ManifestHeader {
                 version: "v0".to_string(),
                 message: Some("test message".to_string()),
@@ -589,30 +593,32 @@ mod tests {
                 workflow: None,
             }
         );
+        Ok(())
     }
 
     #[test]
-    fn test_manifest_header_default() {
-        let header = ManifestHeader::default();
+    fn test_manifest_header_default() -> Res {
+        let header = ManifestHeader::try_from(Header::default())?;
         assert_eq!(header.version, "v0");
         assert_eq!(header.message, Some("".to_string()));
         assert_eq!(header.user_meta, None);
         assert_eq!(header.workflow, None);
+        Ok(())
     }
 
     #[test]
-    fn test_workflow_deserialization() {
+    fn test_workflow_deserialization() -> Res {
         let json = r#"{
-            "config": "workflow config",
+            "config": "s3://workflow/config",
             "id": "test-workflow",
             "schemas": {
                 "test-workflow": "s3://bucket/workflows/test.json"
             }
         }"#;
 
-        let workflow: Workflow = serde_json::from_str(json).unwrap();
+        let workflow: Workflow = serde_json::from_str(json)?;
 
-        assert_eq!(workflow.config, "workflow config");
+        assert_eq!(workflow.config, "s3://workflow/config".parse()?);
         assert_eq!(
             workflow.id,
             Some(WorkflowId {
@@ -620,25 +626,27 @@ mod tests {
                 url: "s3://bucket/workflows/test.json".parse().unwrap()
             })
         );
+        Ok(())
     }
 
     #[test]
-    fn test_workflow_deserialization_none() {
+    fn test_workflow_deserialization_none() -> Res {
         let json = r#"{
-            "config": "workflow config",
+            "config": "s3://workflow/config",
             "id": null
         }"#;
 
-        let workflow: Workflow = serde_json::from_str(json).unwrap();
+        let workflow: Workflow = serde_json::from_str(json)?;
 
-        assert_eq!(workflow.config, "workflow config");
+        assert_eq!(workflow.config, "s3://workflow/config".parse()?);
         assert_eq!(workflow.id, None);
+        Ok(())
     }
 
     #[test]
-    fn test_workflow_serialization() {
+    fn test_workflow_serialization() -> Res {
         let workflow = Workflow {
-            config: "workflow config".to_string(),
+            config: "s3://workflow/config".parse()?,
             id: Some(WorkflowId {
                 id: "test-workflow".to_string(),
                 url: "s3://bucket/workflows/test.json".parse().unwrap(),
@@ -650,19 +658,20 @@ mod tests {
         assert_eq!(
             json,
             serde_json::json!({
-                "config": "workflow config",
+                "config": "s3://workflow/config",
                 "id": "test-workflow",
                 "schemas": {
                     "test-workflow": "s3://bucket/workflows/test.json"
                 }
             })
         );
+        Ok(())
     }
 
     #[test]
-    fn test_workflow_serialization_none() {
+    fn test_workflow_serialization_none() -> Res {
         let workflow = Workflow {
-            config: "workflow config".to_string(),
+            config: "s3://workflow/config".parse()?,
             id: None,
         };
 
@@ -671,9 +680,10 @@ mod tests {
         assert_eq!(
             json,
             serde_json::json!({
-                "config": "workflow config",
+                "config": "s3://workflow/config",
                 "id": null
             })
         );
+        Ok(())
     }
 }

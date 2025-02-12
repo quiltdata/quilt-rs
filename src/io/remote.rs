@@ -15,8 +15,10 @@ use crate::uri::S3Uri;
 use crate::Res;
 
 mod s3;
+mod workflow;
 
 pub use s3::RemoteS3;
+pub use workflow::resolve_workflow;
 
 #[cfg(test)]
 pub mod mocks;
@@ -72,6 +74,9 @@ pub trait Remote {
     /// List objects list under S3 prefix using tokio Stream
     // TODO: return Item = Res<Row>
     fn list_objects(&self, listing_uri: S3Uri) -> impl Future<Output = impl ObjectsStream> + Send;
+
+    // Makes a head request and resolves the final versioned URL
+    fn resolve_url(&self, s3_uri: &S3Uri) -> impl Future<Output = Res<S3Uri>> + Send;
 
     /// Upload file. Just that
     fn put_object(

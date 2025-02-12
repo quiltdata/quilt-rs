@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use tracing::log;
 
 use crate::flow;
+use crate::io::remote::resolve_workflow;
 use crate::io::remote::Remote;
 use crate::io::remote::RemoteS3;
 use crate::io::storage::LocalStorage;
@@ -18,6 +19,7 @@ use crate::manifest::Workflow;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
+use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
 
@@ -202,6 +204,15 @@ impl InstalledPackage {
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(lineage.remote)
+    }
+
+    pub async fn resolve_workflow(&self, workflow_id: Option<String>) -> Res<Option<Workflow>> {
+        let remote_uri = self.lineage.read(&self.storage).await?.remote;
+        let workflows_config_uri = S3Uri {
+            key: ".quilt/workflows/config.yml".to_string(),
+            ..S3Uri::from(&remote_uri)
+        };
+        resolve_workflow(&self.remote, workflow_id, workflows_config_uri).await
     }
 }
 

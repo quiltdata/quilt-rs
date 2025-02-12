@@ -420,6 +420,22 @@ impl Remote for RemoteS3 {
         Ok(())
     }
 
+    async fn resolve_url(&self, s3_uri: &S3Uri) -> Res<S3Uri> {
+        let client = self.get_client_for_bucket(&s3_uri.bucket).await?;
+        let result = client.head_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
+        let result = match &s3_uri.version {
+            Some(version) => result.version_id(version),
+            None => result,
+        };
+        match result.send().await {
+            Ok(head) => Ok(S3Uri {
+                version: head.version_id,
+                ..s3_uri.clone()
+            }),
+            Err(err) => Err(Error::S3(DisplayErrorContext(err).to_string())),
+        }
+    }
+
     async fn upload_file(
         &self,
         source_path: impl AsRef<Path>,
