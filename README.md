@@ -75,7 +75,7 @@ Install a package using a `quilt+s3://bucket#package=namespace/name@hash&path=so
 #### Options:
 
 1. Install a package without paths
-2. Install a pacakge with specific paths
+2. Install a package with specific paths
 3. Install a package then install paths
 4. Install a package specifying a different namespace
 5. Re-use existing package when installing the same package
@@ -166,7 +166,7 @@ The `push` command uploads committed manifests and files to the remote S3 storag
 
 - Verifies commit exists before pushing
 - Copies modified and hashed files from `.quilt/objects/<hash>` to remote S3 storage
-- Generates new manifest, but it _must_ stays the same as the local one
+- Generates new manifest, but it _must_ stay the same as the local one
 - Updates `remote` package lineage
 - Tags new version as "latest" if tracking
 - Maintains base/latest hash references
@@ -192,7 +192,7 @@ The `push` command uploads committed manifests and files to the remote S3 storag
 - [] Push to non-versioned bucket
 - [] Network failures during push
 - [] Permission issues
-- [] Version conflicts (push 1 slowly, then push 2 fast, latest will be 1?))
+- [] Version conflicts (push 1 slowly, then push 2 fast, latest will be 1?)
 - [] Interrupted pushes
 
 ### Pull
