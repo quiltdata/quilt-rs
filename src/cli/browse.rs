@@ -35,45 +35,42 @@ impl std::fmt::Display for Output {
         let mut output: Vec<String> = Vec::new();
         let header = self.manifest.header.clone();
 
-        // Handle message
         let message = match header.get_message() {
             Ok(Some(msg)) => msg,
-            Ok(None) => String::from("No message"),
+            Ok(None) => "∅".to_string(),
             Err(e) => {
                 tracing::error!("Failed to get message: {}", e);
-                String::from("Failed to get message")
+                "⚠".to_string()
             }
         };
 
-        // Handle user meta
         let user_meta = match header.get_user_meta() {
             Ok(Some(meta)) => match serde_json::to_string(&meta) {
                 Ok(s) => s,
                 Err(e) => {
                     tracing::error!("Failed to stringify user_meta: {}", e);
-                    String::from("Failed to stringify user meta")
+                    "⚠".to_string()
                 }
             },
-            Ok(None) => String::from("No user meta"),
+            Ok(None) => "∅".to_string(),
             Err(e) => {
                 tracing::error!("Failed to get user_meta: {}", e);
-                String::from("Failed to get user meta")
+                "⚠".to_string()
             }
         };
 
-        // Handle workflow
         let workflow = match header.get_workflow() {
             Ok(Some(w)) => match serde_json::to_string(&w) {
                 Ok(s) => s,
                 Err(e) => {
                     tracing::error!("Failed to stringify workflow: {}", e);
-                    String::from("Failed to stringify workflow")
+                    "⚠".to_string()
                 }
             },
-            Ok(None) => String::from("No workflow"),
+            Ok(None) => "∅".to_string(),
             Err(e) => {
                 tracing::error!("Failed to get workflow: {}", e);
-                String::from("Failed to get workflow")
+                "⚠".to_string()
             }
         };
         let mut header_table = tabled::Table::new(vec![RemoteManifestHeader {
