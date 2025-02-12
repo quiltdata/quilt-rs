@@ -314,16 +314,16 @@ The `list` command displays all packages installed in the local domain.
 
 ##### Valid:
 
-- [ ] List empty domain
-- [ ] List single installed package
+- [x] List empty domain (`cli::list::tests::test_empty_list`, `cli::list::tests::test_command_empty`)
+- [x] List single installed package (`cli::list::tests::test_model`, `cli::list::tests::test_command_with_package`)
 - [ ] List multiple installed packages
 - [ ] List after package removal
 - [ ] List packages with special characters in names
 
 ##### Invalid:
 
-- [ ] List with invalid domain path
-- [ ] List with permission issues
+- [x] List with invalid domain path (`cli::list::tests::test_invalid_command`)
+- [x] List with permission issues (`cli::list::tests::test_invalid_command`)
 - [ ] List with corrupted lineage file
 
 ### Browse
