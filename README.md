@@ -90,14 +90,16 @@ Install a package using a `quilt+s3://bucket#package=namespace/name@hash&path=so
 
 #### Test cases TBD:
 
-#### Valid workflow:
+#### Valid:
+
 - [] Installing multiple paths simultaneously
 - [] Installing with custom namespace
 - [] Installing large packages
 - [] Installing nested directory structures
 - [] Re-installing with different paths
 
-#### Invalid workflow:
+#### Invalid:
+
 - [] Network failures
 - [] Invalid URI format
 - [] Non-existent package
@@ -111,58 +113,42 @@ Install a package using a `quilt+s3://bucket#package=namespace/name@hash&path=so
 
 The `commit` command creates a new revision of an installed package by capturing changes to tracked files along with metadata.
 
-#### Usage:
+#### Options:
 
-```bash
-# Basic commit with message
-quilt --domain /path/to/domain --namespace spec/package --message "commit message"
-
-# Commit with user metadata
-quilt --domain /path/to/domain --namespace spec/package --message "msg" --user-meta '{"key":"value"}'
-
-# Commit with workflow
-quilt --domain /path/to/domain --namespace spec/package --message "msg" --workflow "workflow-id"
-```
-
-#### Features:
-
-- Required commit message for each revision
-- Optional user metadata as JSON object
-- Optional workflow ID integration
-- Content-based commit hashing
-- Maintains commit history in package lineage
-- Tracks file modifications, additions and deletions
+1. Commit the package with message only
+2. Commit the package with message and metadata
+3. Commit the package with message and workflow
+4. Commit the package with message, metadata and workflow
 
 #### Technical Details:
 
-- Generates unique content-based hashes for each commit
-- Stores commit metadata in the package lineage file
-- Validates workflow IDs against configured workflows
-- Tracks changes to files since last commit
-- Maintains commit history chain
+- Generates unique content-based hashes for each file in the commit and the commit itself, and store manifest in `.quilt/installed/<namespace>/<hash>`
+- Tracks the latest commit in the lineage file `.quilt/data.json`
+- Tracks the list of local commits (hashes only) in `.quilt/data.json`
 - Handles unchanged files by reusing previous hashes
 
-#### Common Use Cases:
+#### Test cases TBD:
 
-1. Basic Changes:
-   - Commit modified files
-   - Commit new files
-   - Commit file deletions
-   - Commit unchanged files (produces same hash)
+#### Valid:
 
-2. Metadata Management:
-   - Add user metadata to commits
-   - Update package metadata
-   - Track workflow states
-   - Add commit messages
+- [] Commit the package with message only, or with a combination of user meta and/or workflow.
+  Consider, that workflows config can exist or not exist, and it affects the commit hash.
+- [] Commit modified files
+- [] Commit new files
+- [] Commit file deletions
+- [] Commit unchanged files (produces same hash)
 
-3. Workflow Integration:
-   - Commit with workflow validation
-   - Track workflow states
-   - Maintain workflow configurations
+#### Invalid:
 
-4. Change Tracking:
-   - Track file modifications
-   - Monitor content changes
-   - Maintain revision history
-   - Compare file states
+- [] Commit package that doesn't exist
+- [] When workflow ID is provided but no workflow config exists
+- [] When workflow ID doesn't match configured workflows
+- [] When workflow config is invalid/malformed
+- [] When user metadata is not a valid JSON object
+- [] IO permissions errors
+- [] Network failures (commit checks the workflows config)
+- [] Concurrent commit attempts
+
+### Status
+
+The preparation step for the commit. It calculates all the necessary hashes for the files, but does not create a new commit.
