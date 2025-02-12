@@ -254,8 +254,8 @@ The `reset` command forcefully updates a package to match the remote latest vers
 
 ##### Valid:
 
-- [ ] Reset when behind remote
-- [ ] Reset unchanged package (no-op)
+- [x] Reset when behind remote (`flow::reset_to_latest::tests::test_reseting_to_latest`)
+- [x] Reset unchanged package (no-op) (`flow::reset_to_latest::tests::test_if_already_latest`)
 - [ ] Reset with tracked paths
 - [ ] Reset with removed paths
 - [ ] Reset with local changes
@@ -284,7 +284,7 @@ The `certify` command marks a specific package version as the "latest" in remote
 
 ##### Valid:
 
-- [ ] Certify current version
+- [x] Certify current version (`flow::certify_latest::tests::test_certifying_latest`)
 - [ ] Certify outdated version
 - [ ] Certify with concurrent updates
 - [ ] Re-certify same version
