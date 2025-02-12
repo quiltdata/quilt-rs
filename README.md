@@ -1,6 +1,8 @@
 # quilt-rs
 
-Rust library for accessing Quilt data packages.
+Library and CLI provide a set of commands for managing data packages, allowing users to install, commit, push, and pull packages from S3 storage, as well as browse and track changes in package contents.
+
+It supports operations like installing specific paths from packages, managing package metadata, and tracking package lineage with features for viewing status and handling workflows.
 
 ## Testing
 
