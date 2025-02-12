@@ -161,6 +161,7 @@ mod tests {
     }
 
     // Verify it throws correct error when no permissions
+    // Permissions denied, because we try to create a file in the OS root directory
     #[tokio::test]
     async fn test_installing_when_no_permissions() -> Res {
         let manifest_uri = ManifestUri {
