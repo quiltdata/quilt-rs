@@ -133,17 +133,16 @@ The `commit` command creates a new revision of an installed package by capturing
 
 #### Valid:
 
-- [ ] Commit the package with message only, or with a combination of user meta and/or workflow.
-  Consider, that workflows config can exist or not exist, and it affects the commit hash.
-- [ ] Commit modified files
-- [ ] Commit new files
-- [ ] Commit file deletions
-- [ ] Commit unchanged files (produces same hash)
+- [x] Commit the package with message only, or with a combination of user meta and/or workflow (`cli::commit::tests::test_commit_package_with_message_only`, `cli::commit::tests::test_commit_package_with_workflow_and_meta`, `cli::commit::tests::test_commit_package_with_meta_only`)
+- [x] Commit modified files (`flow::commit::tests::test_modifying_and_commit`)
+- [x] Commit new files (`flow::commit::tests::test_adding_and_commit`)
+- [x] Commit file deletions (`flow::commit::tests::test_removing_and_commit`)
+- [x] Commit unchanged files (produces same hash) (`cli::commit::tests::test_model`)
 
 #### Invalid:
 
-- [ ] Commit package that doesn't exist
-- [ ] When workflow ID is provided but no workflow config exists
+- [x] Commit package that doesn't exist (`cli::commit::tests::test_invalid_command`)
+- [x] When workflow ID is provided but no workflow config exists (`cli::commit::tests::test_throwing_error_when_workflow_set_but_no_workflows_config`)
 - [ ] When workflow ID doesn't match configured workflows
 - [ ] When workflow config is invalid/malformed
 - [ ] When user metadata is not a valid JSON object
