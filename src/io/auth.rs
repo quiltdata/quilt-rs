@@ -32,12 +32,38 @@ pub struct AuthIo<S: Storage = LocalStorage, R: Remote = RemoteS3> {
     dir: PathBuf,
 }
 
-impl AuthIo {
+impl<S: Storage, R: Remote> AuthIo<S, R> {
     fn tokens_path(&self) -> PathBuf {
         self.dir.join(AUTH_TOKENS)
     }
 
     fn credentials_path(&self) -> PathBuf {
         self.dir.join(AUTH_CREDENTIALS)
+    }
+
+    pub async fn read_tokens(&self) -> crate::Res<Option<Tokens>> {
+        if !self.storage.exists(&self.tokens_path()).await {
+            return Ok(None);
+        }
+        let contents = self.storage.read_file(&self.tokens_path()).await?;
+        Ok(Some(serde_json::from_slice(&contents)?))
+    }
+
+    pub async fn write_tokens(&self, tokens: &Tokens) -> crate::Res<()> {
+        let contents = serde_json::to_vec(tokens)?;
+        self.storage.write_file(&self.tokens_path(), &contents).await
+    }
+
+    pub async fn read_credentials(&self) -> crate::Res<Option<Credentials>> {
+        if !self.storage.exists(&self.credentials_path()).await {
+            return Ok(None);
+        }
+        let contents = self.storage.read_file(&self.credentials_path()).await?;
+        Ok(Some(serde_json::from_slice(&contents)?))
+    }
+
+    pub async fn write_credentials(&self, credentials: &Credentials) -> crate::Res<()> {
+        let contents = serde_json::to_vec(credentials)?;
+        self.storage.write_file(&self.credentials_path(), &contents).await
     }
 }
