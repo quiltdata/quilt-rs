@@ -3,17 +3,24 @@
 
 use std::path::PathBuf;
 
+use url::Host;
+
 use crate::io::storage::Storage;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::Res;
 
-const MANIFEST_DIR: &str = ".quilt/packages";
-const TAGS_DIR: &str = ".quilt/named_packages";
+const AUTH_CREDENTIALS: &str = "credentials.json";
+const AUTH_DIR: &str = ".auth";
+const AUTH_TOKENS: &str = "tokens.json";
 
-const OBJECTS_DIR: &str = ".quilt/objects";
 const LINEAGE_FILE: &str = ".quilt/data.json";
+
 const INSTALLED_DIR: &str = ".quilt/installed";
+const MANIFEST_DIR: &str = ".quilt/packages";
+const OBJECTS_DIR: &str = ".quilt/objects";
+
+const TAGS_DIR: &str = ".quilt/named_packages";
 
 /// Where do we store tagged "packages". Files that contain packages' hashes.
 pub fn tag_key(namespace: &Namespace, tag: &str) -> String {
@@ -45,6 +52,18 @@ pub struct DomainPaths {
 impl DomainPaths {
     pub fn new(root_dir: PathBuf) -> Self {
         DomainPaths { root_dir }
+    }
+
+    fn auth_host(&self, host: &Host) -> PathBuf {
+        self.root_dir.join(AUTH_DIR).join(host.to_string())
+    }
+
+    pub fn credentials(&self, host: &Host) -> PathBuf {
+        self.auth_host(host).join(AUTH_CREDENTIALS)
+    }
+
+    pub fn tokens(&self, host: &Host) -> PathBuf {
+        self.auth_host(host).join(AUTH_TOKENS)
     }
 
     /// Path to the installed manifest
@@ -81,11 +100,6 @@ impl DomainPaths {
         self.objects_dir().join(hex::encode(hash))
     }
 
-    /// Directory for storing installed files that can be modified
-    pub fn working_dir(&self, namespace: &Namespace) -> PathBuf {
-        self.root_dir.join(namespace.to_string())
-    }
-
     /// What directories are essential when we initiate `LocalDomain`
     pub fn required_local_domain_paths(&self) -> Vec<PathBuf> {
         vec![
@@ -104,6 +118,11 @@ impl DomainPaths {
             self.installed_manifests(namespace),
         ]);
         paths
+    }
+
+    /// Directory for storing installed files that can be modified
+    pub fn working_dir(&self, namespace: &Namespace) -> PathBuf {
+        self.root_dir.join(namespace.to_string())
     }
 }
 
