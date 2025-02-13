@@ -213,6 +213,7 @@ pub struct DomainLineageIo {
     path: PathBuf,
 }
 
+// TODO impl std::io::Write and std::io::Read for DomainLineageIo
 impl DomainLineageIo {
     pub fn new(path: PathBuf) -> Self {
         DomainLineageIo { path }

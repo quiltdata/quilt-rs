@@ -41,7 +41,7 @@ impl<S: Storage, R: Remote> AuthIo<S, R> {
         self.dir.join(AUTH_CREDENTIALS)
     }
 
-    pub async fn read_tokens(&self) -> crate::Res<Option<Tokens>> {
+    async fn read_tokens(&self) -> crate::Res<Option<Tokens>> {
         if !self.storage.exists(&self.tokens_path()).await {
             return Ok(None);
         }
@@ -49,14 +49,14 @@ impl<S: Storage, R: Remote> AuthIo<S, R> {
         Ok(Some(serde_json::from_slice(&contents)?))
     }
 
-    pub async fn write_tokens(&self, tokens: &Tokens) -> crate::Res<()> {
+    async fn write_tokens(&self, tokens: &Tokens) -> crate::Res<()> {
         let contents = serde_json::to_vec(tokens)?;
         self.storage
             .write_file(&self.tokens_path(), &contents)
             .await
     }
 
-    pub async fn read_credentials(&self) -> crate::Res<Option<Credentials>> {
+    async fn read_credentials(&self) -> crate::Res<Option<Credentials>> {
         if !self.storage.exists(&self.credentials_path()).await {
             return Ok(None);
         }
@@ -64,7 +64,7 @@ impl<S: Storage, R: Remote> AuthIo<S, R> {
         Ok(Some(serde_json::from_slice(&contents)?))
     }
 
-    pub async fn write_credentials(&self, credentials: &Credentials) -> crate::Res<()> {
+    async fn write_credentials(&self, credentials: &Credentials) -> crate::Res<()> {
         let contents = serde_json::to_vec(credentials)?;
         self.storage
             .write_file(&self.credentials_path(), &contents)
@@ -75,31 +75,17 @@ impl<S: Storage, R: Remote> AuthIo<S, R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use chrono::Utc;
+
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
-    use chrono::Utc;
-    use tempfile::TempDir;
 
-
-    fn make_test_tokens() -> Tokens {
-        Tokens {
-            access_token: "test_access".to_string(),
-            refresh_token: "test_refresh".to_string(),
-            expires_at: Utc::now(),
-        }
-    }
-
-    fn make_test_credentials() -> Credentials {
-        Credentials {
-            access_key: "test_key".to_string(),
-            secret_key: "test_secret".to_string(),
-            token: "test_token".to_string(),
-            expiry_time: Utc::now(),
-        }
-    }
-
+    /// 1. Read tokens when they don't exist yet → None
+    /// 2. Write tokens → Ok
+    /// 3. Read tokens are the same as written tokens 
     #[tokio::test]
-    async fn test_read_tokens_not_found() -> crate::Res<()> {
+    async fn test_write_read_tokens() -> crate::Res<()> {
         let storage = MockStorage::default();
         let dir = storage.temp_dir.path().to_path_buf();
         let auth = AuthIo {
@@ -110,19 +96,12 @@ mod tests {
 
         let tokens = auth.read_tokens().await?;
         assert!(tokens.is_none());
-        Ok(())
-    }
 
-    #[tokio::test]
-    async fn test_write_read_tokens() -> crate::Res<()> {
-        let storage = MockStorage::default();
-        let dir = storage.temp_dir.path().to_path_buf();
-        let auth = AuthIo {
-            storage,
-            remote: MockRemote::default(),
-            dir,
+        let test_tokens = Tokens {
+            access_token: "test_access".to_string(),
+            refresh_token: "test_refresh".to_string(),
+            expires_at: Utc::now(),
         };
-        let test_tokens = make_test_tokens();
 
         // Write tokens
         auth.write_tokens(&test_tokens).await?;
@@ -136,20 +115,9 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_read_credentials_not_found() -> crate::Res<()> {
-        let storage = MockStorage::default();
-        let dir = storage.temp_dir.path().to_path_buf();
-        let auth = AuthIo {
-            storage,
-            remote: MockRemote::default(),
-            dir,
-        };
-        let creds = auth.read_credentials().await?;
-        assert!(creds.is_none());
-        Ok(())
-    }
-
+    /// 1. Read credentials when they don't exist yet → None
+    /// 2. Write credentials → Ok
+    /// 3. Read credentials are the same as written credentials 
     #[tokio::test]
     async fn test_write_read_credentials() -> crate::Res<()> {
         let storage = MockStorage::default();
@@ -159,7 +127,16 @@ mod tests {
             remote: MockRemote::default(),
             dir,
         };
-        let test_creds = make_test_credentials();
+
+        let creds = auth.read_credentials().await?;
+        assert!(creds.is_none());
+
+        let test_creds = Credentials {
+            access_key: "test_key".to_string(),
+            secret_key: "test_secret".to_string(),
+            token: "test_token".to_string(),
+            expiry_time: Utc::now(),
+        };
 
         // Write credentials
         auth.write_credentials(&test_creds).await?;
