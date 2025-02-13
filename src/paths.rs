@@ -10,9 +10,9 @@ use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::Res;
 
-const AUTH_CREDENTIALS: &str = "credentials.json";
+pub const AUTH_CREDENTIALS: &str = "credentials.json";
 const AUTH_DIR: &str = ".auth";
-const AUTH_TOKENS: &str = "tokens.json";
+pub const AUTH_TOKENS: &str = "tokens.json";
 
 const LINEAGE_FILE: &str = ".quilt/data.json";
 
@@ -54,7 +54,7 @@ impl DomainPaths {
         DomainPaths { root_dir }
     }
 
-    fn auth_host(&self, host: &Host) -> PathBuf {
+    pub fn auth_host(&self, host: &Host) -> PathBuf {
         self.root_dir.join(AUTH_DIR).join(host.to_string())
     }
 
