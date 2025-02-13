@@ -95,6 +95,13 @@ async fn create_immutable_object_copy(
     Ok(row)
 }
 
+// TODO
+// pub struct Commit {
+//[     message: Option<String>,
+//     user_meta: Option<JsonObject>,
+//     workflow: Option<Workflow>,
+// }
+
 /// Commit new commit with new `message`, `user_meta` and all changes got from calling `flow::status`
 // TODO: move `working_dir` to `paths`, and `paths` to `storage`
 #[allow(clippy::too_many_arguments)]
