@@ -80,17 +80,6 @@ mod tests {
     use chrono::Utc;
     use tempfile::TempDir;
 
-    fn setup() -> (AuthIo<MockStorage, MockRemote>, TempDir) {
-        let temp_dir = TempDir::new().unwrap();
-        let storage = MockStorage::new();
-        let remote = MockRemote::new();
-        let auth = AuthIo {
-            storage,
-            remote,
-            dir: temp_dir.path().to_path_buf(),
-        };
-        (auth, temp_dir)
-    }
 
     fn make_test_tokens() -> Tokens {
         Tokens {
@@ -126,7 +115,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_read_tokens() -> crate::Res<()> {
-        let (auth, _temp) = setup();
+        let storage = MockStorage::default();
+        let dir = storage.temp_dir.path().to_path_buf();
+        let auth = AuthIo {
+            storage,
+            remote: MockRemote::default(),
+            dir,
+        };
         let test_tokens = make_test_tokens();
 
         // Write tokens
@@ -143,7 +138,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_credentials_not_found() -> crate::Res<()> {
-        let (auth, _temp) = setup();
+        let storage = MockStorage::default();
+        let dir = storage.temp_dir.path().to_path_buf();
+        let auth = AuthIo {
+            storage,
+            remote: MockRemote::default(),
+            dir,
+        };
         let creds = auth.read_credentials().await?;
         assert!(creds.is_none());
         Ok(())
@@ -151,7 +152,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_read_credentials() -> crate::Res<()> {
-        let (auth, _temp) = setup();
+        let storage = MockStorage::default();
+        let dir = storage.temp_dir.path().to_path_buf();
+        let auth = AuthIo {
+            storage,
+            remote: MockRemote::default(),
+            dir,
+        };
         let test_creds = make_test_credentials();
 
         // Write credentials
