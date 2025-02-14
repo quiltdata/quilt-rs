@@ -6,9 +6,29 @@ use std::str::FromStr;
 
 use crate::Error;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Host {
+    #[serde(skip)]
     inner: url::Host,
+}
+
+impl Serialize for Host {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for Host {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Host::from_str(&s).map_err(serde::de::Error::custom)
+    }
 }
 
 impl From<url::Host> for Host {
