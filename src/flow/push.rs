@@ -14,6 +14,7 @@ use crate::lineage::PackageLineage;
 use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::paths;
+use crate::uri::Host;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::uri::S3PackageHandle;
@@ -22,6 +23,7 @@ use crate::Res;
 
 async fn use_existing_row_or_upload(
     remote: &impl Remote,
+    host: &Host,
     package_handle: &S3PackageHandle,
     remote_manifest: &Table,
     rows: StreamItem,
@@ -37,7 +39,7 @@ async fn use_existing_row_or_upload(
                 }));
             }
         } else {
-            output.push(upload_row(remote, package_handle.clone(), row).await)
+            output.push(upload_row(remote, host, package_handle.clone(), row).await)
         }
     }
     Ok(output)
@@ -45,13 +47,15 @@ async fn use_existing_row_or_upload(
 
 async fn stream_uploaded_local_rows<'a>(
     remote: &'a impl Remote,
+    host: &'a Host,
     local_manifest: &'a Table,
     remote_manifest: &'a Table,
     package_handle: &'a S3PackageHandle,
 ) -> impl RowsStream + 'a {
     let stream = local_manifest.records_stream().await;
-    stream
-        .then(move |rows| use_existing_row_or_upload(remote, package_handle, remote_manifest, rows))
+    stream.then(move |rows| {
+        use_existing_row_or_upload(remote, host, package_handle, remote_manifest, rows)
+    })
 }
 
 /// Push the new package revision to the remote and tags it as "latest".
@@ -84,8 +88,14 @@ pub async fn push_package(
     let header = local_manifest.get_header().await?;
     let package_handle = S3PackageHandle::from(manifest_uri.clone());
     let stream = Box::pin(
-        stream_uploaded_local_rows(remote, &local_manifest, &remote_manifest, &package_handle)
-            .await,
+        stream_uploaded_local_rows(
+            remote,
+            &manifest_uri.catalog,
+            &local_manifest,
+            &remote_manifest,
+            &package_handle,
+        )
+        .await,
     );
     let manifest_path = |t: &str| paths.manifest_cache(&manifest_uri.bucket, t);
     let (cache_path, top_hash) =
@@ -101,7 +111,9 @@ pub async fn push_package(
     tag_timestamp(remote, &new_manifest_uri, commit.timestamp).await?;
 
     // Check the hash of remote's latest manifest
-    lineage.latest_hash = resolve_latest(remote, manifest_uri.into()).await?.hash;
+    lineage.latest_hash = resolve_latest(remote, &new_manifest_uri.catalog, manifest_uri.into())
+        .await?
+        .hash;
     lineage.remote = new_manifest_uri.clone();
 
     // Reset the commit state.

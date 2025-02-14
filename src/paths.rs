@@ -3,9 +3,8 @@
 
 use std::path::PathBuf;
 
-use url::Host;
-
 use crate::io::storage::Storage;
+use crate::uri::Host;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::Res;
@@ -55,15 +54,9 @@ impl DomainPaths {
     }
 
     pub fn auth_host(&self, host: &Host) -> PathBuf {
-        self.root_dir.join(AUTH_DIR).join(host.to_string())
-    }
-
-    pub fn credentials(&self, host: &Host) -> PathBuf {
-        self.auth_host(host).join(AUTH_CREDENTIALS)
-    }
-
-    pub fn tokens(&self, host: &Host) -> PathBuf {
-        self.auth_host(host).join(AUTH_TOKENS)
+        self.root_dir
+            .join(AUTH_DIR)
+            .join(PathBuf::from(host.to_string()))
     }
 
     /// Path to the installed manifest

@@ -21,7 +21,12 @@ pub async fn reset_to_latest(
     working_dir: PathBuf,
     namespace: Namespace,
 ) -> Res<PackageLineage> {
-    let latest = resolve_latest(remote, lineage.remote.clone().into()).await?;
+    let latest = resolve_latest(
+        remote,
+        &lineage.remote.catalog,
+        lineage.remote.clone().into(),
+    )
+    .await?;
     if latest.hash == lineage.remote.hash {
         // already at latest
         return Ok(lineage);

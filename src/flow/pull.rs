@@ -55,7 +55,12 @@ pub async fn pull_package(
     lineage.remote.hash.clone_from(&lineage.latest_hash);
     lineage.base_hash.clone_from(&lineage.latest_hash);
 
-    let manifest_uri = resolve_latest(remote, lineage.remote.clone().into()).await?;
+    let manifest_uri = resolve_latest(
+        remote,
+        &lineage.remote.catalog,
+        lineage.remote.clone().into(),
+    )
+    .await?;
     flow::cache_remote_manifest(paths, storage, remote, &manifest_uri).await?;
     copy_cached_to_installed(
         paths,

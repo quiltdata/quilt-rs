@@ -60,7 +60,7 @@ pub struct CommitState {
 }
 
 /// Stores lineage (installation/modification history) of the package read from `data.json` file
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct PackageLineage {
     /// Local commits
     pub commit: Option<CommitState>,
@@ -74,6 +74,19 @@ pub struct PackageLineage {
     /// Installed paths (or files in other words)
     #[serde(default = "BTreeMap::new")]
     pub paths: LineagePaths,
+}
+
+#[cfg(test)]
+impl Default for PackageLineage {
+    fn default() -> Self {
+        PackageLineage {
+            commit: None,
+            remote: ManifestUri::default(),
+            base_hash: String::default(),
+            latest_hash: String::default(),
+            paths: LineagePaths::default(),
+        }
+    }
 }
 
 impl From<PackageLineage> for UpstreamState {

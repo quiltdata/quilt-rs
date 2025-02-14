@@ -47,7 +47,7 @@ pub async fn install_package(
     storage.create_dir_all(&working_dir).await?;
 
     // Resolve and record latest manifest hash
-    let latest = resolve_latest(remote, manifest_uri.into()).await?;
+    let latest = resolve_latest(remote, &manifest_uri.catalog, manifest_uri.into()).await?;
     // Update the lineage (with empty paths).
     let mut lineage = lineage;
     lineage.packages.insert(
@@ -104,6 +104,7 @@ mod tests {
             bucket: "a".to_string(),
             hash: "abcdef1234".to_string(),
             namespace: ("f", "b").into(),
+            catalog: "https://test.quilt".parse()?,
         };
 
         // Load the reference manifest from `./fixtures`
@@ -168,6 +169,7 @@ mod tests {
             bucket: "a".to_string(),
             hash: "h".to_string(),
             namespace: ("f", "b").into(),
+            catalog: "https://test.quilt".parse()?,
         };
 
         // Load the reference manifest from `./fixtures`

@@ -16,6 +16,7 @@ use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
+use crate::uri::Host;
 use crate::uri::Namespace;
 use crate::uri::S3Uri;
 use crate::Error;
@@ -24,10 +25,11 @@ use crate::Res;
 async fn cache_immutable_object(
     storage: &impl Storage,
     remote: &impl Remote,
+    host: &Host,
     object_dest: &PathBuf,
     uri: &S3Uri,
 ) -> Res {
-    let stream = remote.get_object_stream(uri).await?;
+    let stream = remote.get_object_stream(host, uri).await?;
     storage.write_byte_stream(object_dest, stream.body).await
 }
 
@@ -119,7 +121,14 @@ pub async fn install_paths(
         let object_dest = paths.object(row.hash.digest());
 
         if !storage.exists(&object_dest).await {
-            cache_immutable_object(storage, remote, &object_dest, &row.place.parse()?).await?;
+            cache_immutable_object(
+                storage,
+                remote,
+                &lineage.remote.catalog,
+                &object_dest,
+                &row.place.parse()?,
+            )
+            .await?;
         }
 
         let place = Url::from_file_path(&object_dest)

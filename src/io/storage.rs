@@ -17,6 +17,7 @@ use crate::uri::S3Uri;
 use crate::Res;
 
 mod local;
+pub mod auth;
 
 pub use local::LocalStorage;
 

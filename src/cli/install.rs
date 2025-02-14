@@ -52,13 +52,21 @@ async fn install_package(
     uri: &quilt_rs::uri::S3PackageUri,
     namespace: Option<Namespace>,
 ) -> Result<quilt_rs::InstalledPackage, Error> {
-    let remote = quilt_rs::io::remote::RemoteS3::new();
+    let remote = local_domain.get_remote();
     let namespace = namespace.unwrap_or(uri.namespace.clone());
     if let Some(installed_package) = local_domain.get_installed_package(&namespace).await? {
         // FIXME: check the actual remote_manifest
         return Ok(installed_package);
     }
-    let manifest_uri = quilt_rs::io::manifest::resolve_manifest_uri(&remote, uri).await?;
+    let host = match uri.catalog {
+        Some(ref catalog) => catalog.clone(),
+        None => {
+            return Err(Error::Quilt(quilt_rs::Error::PackageURI(
+                "`Catalog` is required".to_string(),
+            )))
+        }
+    };
+    let manifest_uri = quilt_rs::io::manifest::resolve_manifest_uri(remote, &host, uri).await?;
     Ok(local_domain.install_package(&manifest_uri).await?)
 }
 

@@ -22,6 +22,18 @@ pub struct ManifestUri {
     pub namespace: Namespace,
 }
 
+#[cfg(test)]
+impl Default for ManifestUri {
+    fn default() -> Self {
+        ManifestUri {
+            bucket: String::default(),
+            catalog: Host::default(),
+            hash: String::default(),
+            namespace: Namespace::default(),
+        }
+    }
+}
+
 impl From<ManifestUri> for S3Uri {
     fn from(remote: ManifestUri) -> S3Uri {
         S3Uri {
@@ -43,7 +55,10 @@ impl TryFrom<S3PackageUri> for ManifestUri {
     fn try_from(uri: S3PackageUri) -> Result<Self, Self::Error> {
         Ok(ManifestUri {
             bucket: uri.bucket,
-            catalog: uri.catalog,
+            catalog: match uri.catalog {
+                Some(catalog) => catalog,
+                None => return Err(Error::Host("`catalog` is required for Manifest URI used in application, which credentials to use".to_string())),
+            },
             namespace: uri.namespace,
             hash: match uri.revision {
                 RevisionPointer::Hash(top_hash) => top_hash,
@@ -130,6 +145,7 @@ mod tests {
                 bucket: "test-bucket".to_string(),
                 namespace: ("foo", "bar").into(),
                 hash: "abc123".to_string(),
+                catalog: Host::default(),
             }
         );
         Ok(())
@@ -142,6 +158,7 @@ mod tests {
                 bucket: "test-bucket".to_string(),
                 namespace: ("ignored", "ignored").into(),
                 hash: "abc123".to_string(),
+                catalog: Host::default(),
             }),
             S3Uri {
                 bucket: "test-bucket".to_string(),

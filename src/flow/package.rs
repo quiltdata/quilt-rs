@@ -18,6 +18,7 @@ use crate::manifest::JsonObject;
 use crate::manifest::Row;
 use crate::paths::DomainPaths;
 use crate::perf::Measure;
+use crate::uri::Host;
 use crate::uri::ManifestUri;
 use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
@@ -27,12 +28,13 @@ use crate::Res;
 async fn get_object_attributes_inner(
     storage: &impl Storage,
     remote: &impl Remote,
+    host: &Host,
     listing_uri: &S3Uri,
     object: Res<Object>,
 ) -> Res<S3Attributes> {
     let obj = object?;
     let key = obj.key.clone().ok_or(Error::ObjectKey)?;
-    match remote.get_object_attributes(listing_uri, &obj).await {
+    match remote.get_object_attributes(host, listing_uri, &obj).await {
         Ok(attrs) => Ok(attrs),
         Err(Error::Checksum(msg)) => {
             log::debug!("{}", msg);
@@ -42,11 +44,14 @@ async fn get_object_attributes_inner(
                 &key
             );
             let stream = remote
-                .get_object_stream(&S3Uri {
-                    bucket: listing_uri.bucket.clone(),
-                    key,
-                    version: None,
-                })
+                .get_object_stream(
+                    host,
+                    &S3Uri {
+                        bucket: listing_uri.bucket.clone(),
+                        key,
+                        version: None,
+                    },
+                )
                 .await?;
             storage
                 .get_object_attributes(stream, listing_uri, &obj)
@@ -62,13 +67,14 @@ async fn get_object_attributes_inner(
 async fn get_object_attributes(
     storage: &impl Storage,
     remote: &impl Remote,
+    host: &Host,
     listing_uri: S3Uri,
     objects: StreamItem,
 ) -> Res<Vec<S3Attributes>> {
     try_join_all(
         objects?
             .into_iter()
-            .map(|object| get_object_attributes_inner(storage, remote, &listing_uri, object))
+            .map(|object| get_object_attributes_inner(storage, remote, host, &listing_uri, object))
             .collect::<Vec<_>>(),
     )
     .await
@@ -77,11 +83,12 @@ async fn get_object_attributes(
 async fn stream_objects<'a>(
     storage: &'a impl Storage,
     remote: &'a impl Remote,
+    host: &'a Host,
     listing_uri: S3Uri,
 ) -> impl RowsStream + 'a {
-    let stream = remote.list_objects(listing_uri.clone()).await;
+    let stream = remote.list_objects(host, listing_uri.clone()).await;
     stream
-        .then(move |objs| get_object_attributes(storage, remote, listing_uri.clone(), objs))
+        .then(move |objs| get_object_attributes(storage, remote, host, listing_uri.clone(), objs))
         .map(|result| {
             result.map(move |objs| objs.into_iter().map(|obj| Ok(Row::from(obj))).collect())
         })
@@ -104,9 +111,17 @@ pub async fn package_s3_prefix(
     //       with fd limits on Mac by default it's 256
     // TODO: s3 uri key ends with / and has no version
     // FIXME: filter or fail on keys with `.` or `..` in path segments as quilt3 do
+    let host = match dest_uri.catalog {
+        Some(ref catalog) => catalog.clone(),
+        None => {
+            return Err(Error::PackageURI(
+                "`catalog` is required in target URL, to know which credentials to use".to_string(),
+            ))
+        }
+    };
 
     let perf = Measure::start();
-    let stream = Box::pin(stream_objects(storage, remote, source_uri.clone()).await);
+    let stream = Box::pin(stream_objects(storage, remote, &host, source_uri.clone()).await);
     let manifest_path = |t: &str| paths.manifest_cache(&source_uri.bucket, t);
     let header = Header::new(message, user_meta, None);
     let (cache_path, top_hash) =
@@ -120,6 +135,7 @@ pub async fn package_s3_prefix(
         bucket,
         namespace,
         hash: top_hash,
+        catalog: host,
     };
     let perf = perf.elapsed();
     log::info!("Created manifest {:?} for {}", manifest_uri, perf);

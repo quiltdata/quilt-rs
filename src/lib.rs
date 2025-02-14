@@ -22,6 +22,7 @@
 
 pub mod flow;
 
+pub mod auth;
 pub mod checksum;
 mod error;
 mod installed_package;

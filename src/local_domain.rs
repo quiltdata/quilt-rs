@@ -33,11 +33,15 @@ pub struct LocalDomain<S: Storage = LocalStorage, R: Remote = RemoteS3> {
 }
 
 impl LocalDomain {
+    pub fn get_remote(&self) -> &RemoteS3 {
+        &self.remote
+    }
+
     pub fn new(root_dir: impl AsRef<Path>) -> Self {
         let paths = paths::DomainPaths::new(root_dir.as_ref().to_path_buf());
         let lineage = lineage::DomainLineageIo::new(paths.lineage());
         let storage = LocalStorage::new();
-        let remote = RemoteS3::new();
+        let remote = RemoteS3::new(paths.clone(), storage.clone());
         Self {
             lineage,
             paths,

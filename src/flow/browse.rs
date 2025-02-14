@@ -23,12 +23,14 @@ async fn stream_jsonl_rows(jsonl: Manifest) -> impl RowsStream {
 }
 
 async fn is_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Res<bool> {
-    remote.exists(&S3Uri::from(manifest)).await
+    remote
+        .exists(&manifest.catalog, &S3Uri::from(manifest))
+        .await
 }
 
 async fn fetch_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Res<Vec<u8>> {
     let s3_uri = S3Uri::from(manifest);
-    let mut contents = remote.get_object(&s3_uri).await?;
+    let mut contents = remote.get_object(&manifest.catalog, &s3_uri).await?;
     let mut output = Vec::new();
     contents.read_to_end(&mut output).await?;
     Ok(output)
@@ -36,7 +38,7 @@ async fn fetch_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Res<Vec<
 
 async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res<Manifest> {
     let s3_uri: S3Uri = ManifestUriLegacy::from(manifest_uri).into();
-    let contents = remote.get_object(&s3_uri).await?;
+    let contents = remote.get_object(&manifest_uri.catalog, &s3_uri).await?;
     Manifest::from_reader(contents).await
 }
 
@@ -96,6 +98,7 @@ mod tests {
     use std::str::FromStr;
 
     use crate::mocks;
+    use crate::uri::Host;
 
     /// Verifies that when a manifest is already cached,
     /// the `browse_remote_manifest` function retrieves it from the cache
@@ -109,6 +112,7 @@ mod tests {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
             hash: "c".to_string(),
+            catalog: Host::default(),
         };
         let cache_path = paths.manifest_cache(&manifest_uri.bucket, &manifest_uri.hash);
 
@@ -148,6 +152,7 @@ mod tests {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
             hash: "c".to_string(),
+            catalog: Host::default(),
         };
         let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
         let storage = mocks::storage::MockStorage::default();
@@ -176,6 +181,7 @@ mod tests {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
             hash: "c".to_string(),
+            catalog: Host::default(),
         };
 
         // Simulate the existence of a reference manifest remotely.
@@ -187,7 +193,7 @@ mod tests {
             "s3://{}/.quilt/packages/1220{}.parquet",
             manifest.bucket, manifest.hash
         ))?;
-        remote.put_object(&remote_uri, parquet.clone()).await?;
+        remote.put_object(&manifest.catalog, &remote_uri, parquet.clone()).await?;
 
         let storage = mocks::storage::MockStorage::default();
 
@@ -220,6 +226,7 @@ mod tests {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
             hash: "c".to_string(),
+            catalog: Host::default(),
         };
 
         // Simulate the remote JSONL manifest.
@@ -230,7 +237,7 @@ mod tests {
             "s3://{}/.quilt/packages/{}",
             manifest.bucket, manifest.hash
         ))?;
-        remote.put_object(&remote_uri, jsonl.clone()).await?;
+        remote.put_object(&manifest.catalog, &remote_uri, jsonl.clone()).await?;
 
         let storage = mocks::storage::MockStorage::default();
 

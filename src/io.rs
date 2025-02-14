@@ -1,6 +1,5 @@
 //! Contains helpers and wrappers to work with IO.
 
-pub mod auth;
 pub mod manifest;
 mod parquet;
 /// It is public only for documentation and testing

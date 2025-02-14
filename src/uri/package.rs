@@ -14,9 +14,9 @@ use serde::Serializer;
 use url::form_urlencoded;
 use url::Url;
 
+use crate::uri::Host;
 use crate::uri::ManifestUri;
 use crate::Error;
-use crate::Host;
 
 const LATEST_TAG: &str = "latest";
 
@@ -224,7 +224,10 @@ impl TryFrom<&str> for S3PackageUri {
 
         let path = params.remove("path").map(PathBuf::from);
 
-        let catalog = params.remove("catalog").map(Host::Domain);
+        let catalog = match params.remove("catalog") {
+            Some(c) => Some(c.parse()?),
+            None => None,
+        };
 
         if !params.is_empty() {
             return Err(Error::PackageURI(format!(
@@ -428,7 +431,7 @@ mod tests {
             uri,
             S3PackageUri {
                 bucket: "bucket".to_string(),
-                catalog: Some(Host::Domain("do.ma.in".to_string())),
+                catalog: Some(Host::default()),
                 namespace: ("foo", "bar").into(),
                 revision: RevisionPointer::Tag("latest".to_string()),
                 path: Some(PathBuf::from("read/me.md")),
@@ -441,7 +444,7 @@ mod tests {
     fn test_stringify_with_latest() -> Res {
         let uri = S3PackageUri {
             bucket: "bucket".to_string(),
-            catalog: Some(Host::Domain("do.ma.in".to_string())),
+            catalog: Some(Host::default()),
             namespace: ("foo", "bar").into(),
             revision: RevisionPointer::Tag("latest".to_string()),
             path: Some(PathBuf::from("read/me.md")),
@@ -485,6 +488,7 @@ mod tests {
             bucket: "test-bucket".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "abc123".to_string(),
+            catalog: Host::default(),
         };
 
         assert_eq!(
