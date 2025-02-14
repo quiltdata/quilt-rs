@@ -2,6 +2,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::paths;
+use crate::uri::Host;
 use crate::uri::Namespace;
 use crate::uri::RevisionPointer;
 use crate::uri::S3PackageUri;
@@ -13,11 +14,12 @@ use crate::Error;
 /// They are s3-unversioned but have hash.
 ///
 /// This manifest URI is for manifest file in Parquet format.
-#[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManifestUri {
     pub bucket: String,
-    pub namespace: Namespace,
+    pub catalog: Host,
     pub hash: String,
+    pub namespace: Namespace,
 }
 
 impl From<ManifestUri> for S3Uri {
@@ -41,6 +43,7 @@ impl TryFrom<S3PackageUri> for ManifestUri {
     fn try_from(uri: S3PackageUri) -> Result<Self, Self::Error> {
         Ok(ManifestUri {
             bucket: uri.bucket,
+            catalog: uri.catalog,
             namespace: uri.namespace,
             hash: match uri.revision {
                 RevisionPointer::Hash(top_hash) => top_hash,

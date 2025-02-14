@@ -2,12 +2,14 @@
 //! Namespace containing various URIs.
 //! Most of them you can convert one to another.
 
+mod host;
 mod manifest;
 mod object;
 mod package;
 mod s3;
 mod tag;
 
+pub use host::Host;
 pub use manifest::ManifestUri;
 pub use manifest::ManifestUriLegacy;
 pub use object::ObjectUri;

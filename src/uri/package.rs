@@ -12,11 +12,11 @@ use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
 use url::form_urlencoded;
-use url::Host;
 use url::Url;
 
 use crate::uri::ManifestUri;
 use crate::Error;
+use crate::Host;
 
 const LATEST_TAG: &str = "latest";
 
