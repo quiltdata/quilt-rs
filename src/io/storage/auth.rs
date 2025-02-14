@@ -3,8 +3,6 @@ use std::path::PathBuf;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::io::remote::Remote;
-use crate::io::remote::RemoteS3;
 use crate::io::storage::LocalStorage;
 use crate::io::storage::Storage;
 use crate::paths::AUTH_CREDENTIALS;
@@ -26,13 +24,12 @@ struct Credentials {
 }
 
 #[derive(Deserialize, Serialize, Debug)]
-pub struct AuthIo<S: Storage = LocalStorage, R: Remote = RemoteS3> {
+pub struct AuthIo<S: Storage = LocalStorage> {
     storage: S,
-    remote: R,
     dir: PathBuf,
 }
 
-impl<S: Storage, R: Remote> AuthIo<S, R> {
+impl<S: Storage> AuthIo<S> {
     fn tokens_path(&self) -> PathBuf {
         self.dir.join(AUTH_TOKENS)
     }
@@ -78,21 +75,16 @@ mod tests {
 
     use chrono::Utc;
 
-    use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
 
     /// 1. Read tokens when they don't exist yet → None
     /// 2. Write tokens → Ok
-    /// 3. Read tokens are the same as written tokens 
+    /// 3. Read tokens are the same as written tokens
     #[tokio::test]
     async fn test_write_read_tokens() -> crate::Res<()> {
         let storage = MockStorage::default();
         let dir = storage.temp_dir.path().to_path_buf();
-        let auth = AuthIo {
-            storage,
-            remote: MockRemote::default(),
-            dir,
-        };
+        let auth = AuthIo { storage, dir };
 
         let tokens = auth.read_tokens().await?;
         assert!(tokens.is_none());
@@ -117,16 +109,12 @@ mod tests {
 
     /// 1. Read credentials when they don't exist yet → None
     /// 2. Write credentials → Ok
-    /// 3. Read credentials are the same as written credentials 
+    /// 3. Read credentials are the same as written credentials
     #[tokio::test]
     async fn test_write_read_credentials() -> crate::Res<()> {
         let storage = MockStorage::default();
         let dir = storage.temp_dir.path().to_path_buf();
-        let auth = AuthIo {
-            storage,
-            remote: MockRemote::default(),
-            dir,
-        };
+        let auth = AuthIo { storage, dir };
 
         let creds = auth.read_credentials().await?;
         assert!(creds.is_none());
