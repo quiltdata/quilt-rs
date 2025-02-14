@@ -8,7 +8,6 @@ use crate::Error;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Host {
-    #[serde(skip)]
     inner: url::Host,
 }
 

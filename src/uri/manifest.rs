@@ -140,7 +140,7 @@ mod tests {
                 namespace: ("foo", "bar").into(),
                 revision: RevisionPointer::Hash("abc123".to_string()),
                 path: None,
-                catalog: None,
+                catalog: Some(Host::default()),
             })?,
             ManifestUri {
                 bucket: "test-bucket".to_string(),

@@ -271,9 +271,9 @@ mod tests {
       "commit": null,
       "remote": {
         "bucket": "bucket",
-        "namespace": "foo/bar",
+        "catalog": "test.quilt.dev",
         "hash": "abcdef",
-        "catalog": "test.quilt.dev"
+        "namespace": "foo/bar"
       },
       "base_hash": "abcdef",
       "latest_hash": "abcdef",

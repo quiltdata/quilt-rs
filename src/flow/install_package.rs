@@ -104,7 +104,7 @@ mod tests {
             bucket: "a".to_string(),
             hash: "abcdef1234".to_string(),
             namespace: ("f", "b").into(),
-            catalog: "https://test.quilt.dev".parse()?,
+            catalog: "test.quilt.dev".parse()?,
         };
 
         // Load the reference manifest from `./fixtures`
@@ -175,7 +175,7 @@ mod tests {
             bucket: "a".to_string(),
             hash: "h".to_string(),
             namespace: ("f", "b").into(),
-            catalog: "https://test.quilt.dev".parse()?,
+            catalog: "test.quilt.dev".parse()?,
         };
 
         // Load the reference manifest from `./fixtures`
