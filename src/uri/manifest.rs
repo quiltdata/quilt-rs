@@ -27,9 +27,9 @@ impl Default for ManifestUri {
     fn default() -> Self {
         ManifestUri {
             bucket: String::default(),
-            catalog: Host::default(),
-            hash: String::default(),
             namespace: Namespace::default(),
+            hash: String::default(),
+            catalog: Host::default(),
         }
     }
 }
@@ -110,6 +110,7 @@ impl From<&ManifestUri> for ManifestUriLegacy {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::Res;
 
     #[test]
@@ -119,7 +120,7 @@ mod tests {
             namespace: ("bar", "baz").into(),
             revision: RevisionPointer::Tag("latest".to_string()),
             path: None,
-            catalog: None,
+            catalog: Some(Host::default()),
         };
 
         let result = ManifestUri::try_from(package_uri);

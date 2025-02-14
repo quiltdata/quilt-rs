@@ -358,3 +358,48 @@ The `browse` command displays the contents and metadata of a remote package mani
 - [ ] Browse non-existent package
 - [ ] Browse with network failures
 - [x] Browse with corrupted cache (`flow::browse::tests::test_if_cached_random_file`)
+
+
+
+### Auth
+
+
+Commands:
+  * `browse` -> URI (must have `catalog=host`)
+  * `list` -> offline
+  * the rest are performed against `InstalledPackage` (lineage should have `remote.catalog=host`)
+
+So, we know the `catalog=host` before every `RemoteS3` operation performed.
+
+We can't init Remote for specific host, because we need to execute `browse` on same Remote with different `catalog=host`.
+
+* Move http client (`HttpIo`) to io/remote/http.rs
+* Init `RemoteS3` with `HttpIo`
+* `HttpIo` has methods:
+  + `get_auth_tokens`
+  + `refresh_credentials`
+  + `find_bucket_region`
+
+* `Auth` in src/io/remote/auth.rs
+  + Instantiated with `AuthIo` (which in turn has `Storage` and `PathBuf`)
+  + Instantiated with `Host`
+  + Instantiated with `HttpIo`
+  + has `get_credentials_or_refresh` method
+
+So, for Auth, I need `remote.client`, `host` (and call `paths.auth_host(host)` for dir)
+
+Rename `AuthIo` to `LocalAuth`
+
+
+What if we create `RemoteS3PerHost`,
+ it re-uses RemoteS3
+ and wrap every call with adding credentials
+ we can `impl Remote for RemoteS3PerHost`, but change the implementation of the get_client_for_bucket
+
+
+
+
+ ----!!!
+
+ But init `HttpIo` early in `LocalDomain::new` (we can even just reqwest::http::new() and pass the reference, where we need it).
+ Init RemoteS3 only when the host is known.

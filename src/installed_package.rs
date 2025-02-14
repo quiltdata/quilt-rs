@@ -244,7 +244,8 @@ mod tests {
                         "remote": {
                             "bucket": "bucket",
                             "namespace": "test/history",
-                            "hash": "abc123"
+                            "hash": "abc123",
+                            "catalog": "test.quilt.dev"
                         },
                         "base_hash": "abc123",
                         "latest_hash": "abc123",

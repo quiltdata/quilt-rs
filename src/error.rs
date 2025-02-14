@@ -28,7 +28,7 @@ pub enum Error {
     #[error("Invalid file:// URI: {0}")]
     FileUri(Url),
 
-    #[error("Invalid host URI: {0}")]
+    #[error("Invalid host: {0}")]
     Host(String),
 
     #[error("Failed to install path: {0}")]

@@ -21,6 +21,7 @@ mod tests {
     use super::*;
 
     use crate::mocks;
+    use crate::uri::Host;
     use crate::uri::S3Uri;
 
     #[tokio::test]
@@ -28,6 +29,7 @@ mod tests {
         let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(
+                &Host::default(),
                 &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
                 b"OUTDATED_HASH".to_vec(),
             )
@@ -36,6 +38,7 @@ mod tests {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
             hash: "LATEST_HASH".to_string(),
+            catalog: Host::default(),
         });
         let resolved_lineage = certify_latest(
             source_lineage.clone(),

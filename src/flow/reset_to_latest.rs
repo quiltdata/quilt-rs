@@ -77,6 +77,7 @@ mod tests {
 
     use crate::lineage::PackageLineage;
     use crate::mocks;
+    use crate::uri::Host;
     use crate::uri::S3Uri;
 
     #[tokio::test]
@@ -85,11 +86,13 @@ mod tests {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
             hash: "foo".to_string(),
+            catalog: Host::default(),
         });
 
         let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(
+                &Host::default(),
                 &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
                 b"foo".to_vec(),
             )
@@ -115,18 +118,21 @@ mod tests {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
             hash: "OUTDATED_HASH".to_string(),
+            catalog: Host::default(),
         });
 
         let jsonl = std::fs::read(mocks::manifest::jsonl())?;
         let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(
+                &Host::default(),
                 &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
                 b"LATEST_HASH".to_vec(),
             )
             .await?;
         remote
             .put_object(
+                &Host::default(),
                 &S3Uri::try_from("s3://b/.quilt/packages/LATEST_HASH")?,
                 jsonl,
             )

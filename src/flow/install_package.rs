@@ -104,7 +104,7 @@ mod tests {
             bucket: "a".to_string(),
             hash: "abcdef1234".to_string(),
             namespace: ("f", "b").into(),
-            catalog: "https://test.quilt".parse()?,
+            catalog: "https://test.quilt.dev".parse()?,
         };
 
         // Load the reference manifest from `./fixtures`
@@ -116,7 +116,9 @@ mod tests {
             "s3://{}/.quilt/packages/1220{}.parquet",
             manifest_uri.bucket, manifest_uri.hash
         ))?;
-        remote.put_object(&remote_uri, parquet).await?;
+        remote
+            .put_object(&manifest_uri.catalog, &remote_uri, parquet)
+            .await?;
 
         // Simulate the remote storage containing the reference to the latest manifest
         let latest_uri = S3Uri::from_str(&format!(
@@ -124,7 +126,11 @@ mod tests {
             manifest_uri.bucket, manifest_uri.namespace
         ))?;
         remote
-            .put_object(&latest_uri, manifest_uri.hash.as_bytes().to_vec())
+            .put_object(
+                &manifest_uri.catalog,
+                &latest_uri,
+                manifest_uri.hash.as_bytes().to_vec(),
+            )
             .await?;
 
         let storage = mocks::storage::MockStorage::default();
@@ -169,7 +175,7 @@ mod tests {
             bucket: "a".to_string(),
             hash: "h".to_string(),
             namespace: ("f", "b").into(),
-            catalog: "https://test.quilt".parse()?,
+            catalog: "https://test.quilt.dev".parse()?,
         };
 
         // Load the reference manifest from `./fixtures`
@@ -181,7 +187,7 @@ mod tests {
             "s3://{}/.quilt/packages/1220{}.parquet",
             manifest_uri.bucket, manifest_uri.hash
         ))?;
-        remote.put_object(&remote_uri, parquet).await?;
+        remote.put_object(&manifest_uri.catalog, &remote_uri, parquet).await?;
 
         let storage = LocalStorage::new();
         let result = install_package(

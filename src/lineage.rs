@@ -147,6 +147,7 @@ mod tests {
 
     use crate::checksum::calculate_sha256_chunked_checksum;
     use crate::mocks;
+    use crate::uri::Host;
     use crate::uri::ManifestUri;
 
     #[test]
@@ -239,6 +240,7 @@ mod tests {
                                 bucket: "bucket".to_string(),
                                 namespace: ("foo", "bar").into(),
                                 hash: "abcdef".to_string(),
+                                catalog: Host::default(),
                             },
                             base_hash: "abcdef".to_string(),
                             latest_hash: "abcdef".to_string(),
@@ -270,7 +272,8 @@ mod tests {
       "remote": {
         "bucket": "bucket",
         "namespace": "foo/bar",
-        "hash": "abcdef"
+        "hash": "abcdef",
+        "catalog": "test.quilt.dev"
       },
       "base_hash": "abcdef",
       "latest_hash": "abcdef",

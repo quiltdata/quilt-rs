@@ -166,7 +166,7 @@ mod tests {
         let listing_uri = S3Uri::try_from("s3://test-bucket/directory/")?;
         let object_uri = S3Uri::try_from("s3://test-bucket/directory/test-key")?;
         remote
-            .put_object(&object_uri, b"test content".to_vec())
+            .put_object(&Host::default(), &object_uri, b"test content".to_vec())
             .await?;
 
         // Create mock S3 Object
@@ -175,8 +175,14 @@ mod tests {
             .size(12)
             .build();
 
-        let result =
-            get_object_attributes_inner(&remote.storage, &remote, &listing_uri, Ok(object)).await;
+        let result = get_object_attributes_inner(
+            &remote.storage,
+            &remote,
+            &Host::default(),
+            &listing_uri,
+            Ok(object),
+        )
+        .await;
 
         let attrs = result.unwrap();
         assert_eq!(attrs.size, 12);
@@ -197,7 +203,9 @@ mod tests {
             .size(12)
             .build();
 
-        let result = get_object_attributes_inner(&storage, &remote, &s3_uri, Ok(object)).await;
+        let result =
+            get_object_attributes_inner(&storage, &remote, &Host::default(), &s3_uri, Ok(object))
+                .await;
         println!("RESULT {:?}", result);
         assert!(result.is_err());
         assert!(result

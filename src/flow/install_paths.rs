@@ -247,9 +247,14 @@ mod tests {
 
         let remote_file_url = "s3://any/valid-url.md".to_string();
 
+        // Before installation, lineage does not track any paths
+        let lineage = PackageLineage::default();
+
         // Simulate the remote object
         let remote_object_uri = S3Uri::from_str(&remote_file_url)?;
-        remote.put_object(&remote_object_uri, Vec::new()).await?;
+        remote
+            .put_object(&lineage.remote.catalog, &remote_object_uri, Vec::new())
+            .await?;
 
         // Create the manifest with a single remote row with a random hash
         let hash: multihash::Multihash<256> = multihash::Multihash::wrap(0x16, b"anything")?;
@@ -260,8 +265,6 @@ mod tests {
             ..Row::default()
         }]);
 
-        // Before installation, lineage does not track any paths
-        let lineage = PackageLineage::default();
         assert!(lineage.paths.is_empty());
 
         // Perform the installation
@@ -340,9 +343,13 @@ mod tests {
         // Simulate the remote object
         let remote = mocks::remote::MockRemote::default();
         let remote_object_uri_2 = S3Uri::from_str(&row_2.place)?;
-        remote.put_object(&remote_object_uri_2, Vec::new()).await?;
+        remote
+            .put_object(&lineage.remote.catalog, &remote_object_uri_2, Vec::new())
+            .await?;
         let remote_object_uri_4 = S3Uri::from_str(&row_4.place)?;
-        remote.put_object(&remote_object_uri_4, Vec::new()).await?;
+        remote
+            .put_object(&lineage.remote.catalog, &remote_object_uri_4, Vec::new())
+            .await?;
 
         let entries_paths = vec![
             row_1.name.clone(),

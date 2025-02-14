@@ -171,6 +171,7 @@ mod tests {
             bucket: "b".to_string(),
             namespace: ("a", "c").into(),
             hash: "__FOO__".to_string(),
+            catalog: Host::default(),
         };
         let lineage = PackageLineage {
             commit: Some(CommitState {
@@ -193,12 +194,14 @@ mod tests {
         let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(
+                &Host::default(),
                 &S3Uri::try_from("s3://b/.quilt/packages/1220__FOO__.parquet")?,
                 jsonl,
             )
             .await?;
         remote
             .put_object(
+                &Host::default(),
                 &S3Uri::try_from("s3://b/.quilt/named_packages/a/c/latest")?,
                 b"abcdef".to_vec(),
             )
@@ -216,6 +219,7 @@ mod tests {
             bucket: "b".to_string(),
             namespace: ("a", "c").into(),
             hash: "770459d4230273fd44b272c552d1204458175e7d7cb26fcd601c662cf5f72d05".to_string(),
+            catalog: Host::default(),
         };
         assert_eq!(
             lineage,
@@ -235,6 +239,7 @@ mod tests {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
             hash: "__FOO__".to_string(),
+            catalog: Host::default(),
         };
         let lineage = PackageLineage {
             commit: Some(CommitState {
@@ -256,12 +261,14 @@ mod tests {
         let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(
+                &Host::default(),
                 &S3Uri::try_from("s3://b/.quilt/packages/1220__FOO__.parquet")?,
                 jsonl,
             )
             .await?;
         remote
             .put_object(
+                &Host::default(),
                 &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
                 b"abcdef".to_vec(),
             )
@@ -292,6 +299,7 @@ mod tests {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
             hash: "475af395ee2856548851913bfd803de4fcc7cdbb3d1d2c13bf0dc221ed6bc68b".to_string(),
+            catalog: Host::default(),
         };
         assert_eq!(
             lineage,

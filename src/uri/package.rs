@@ -426,7 +426,7 @@ mod tests {
     #[test]
     fn test_catalog() -> Res {
         let uri: S3PackageUri =
-            "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=do.ma.in".parse()?;
+            "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=test.quilt.dev".parse()?;
         assert_eq!(
             uri,
             S3PackageUri {
@@ -451,7 +451,7 @@ mod tests {
         };
         assert_eq!(
             uri.to_string(),
-            "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=do.ma.in"
+            "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=test.quilt.dev"
         );
         Ok(())
     }

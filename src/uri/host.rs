@@ -37,7 +37,7 @@ impl FromStr for Host {
 impl Default for Host {
     fn default() -> Self {
         Host {
-            inner: url::Host::Domain("https://test.quilt".to_string()),
+            inner: url::Host::Domain("test.quilt.dev".to_string()),
         }
     }
 }
