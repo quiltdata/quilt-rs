@@ -57,7 +57,7 @@ pub async fn pull_package(
 
     let manifest_uri = resolve_latest(
         remote,
-        &lineage.remote.catalog,
+        lineage.remote.catalog.clone(),
         lineage.remote.clone().into(),
     )
     .await?;

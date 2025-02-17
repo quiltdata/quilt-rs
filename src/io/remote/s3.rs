@@ -233,7 +233,7 @@ async fn multipart_upload_and_checksum(
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct CredsRef {
     region: Region,
-    host: Host,
+    host: Option<Host>,
 }
 
 /// Implementation of the `Remote` trait for S3
@@ -298,7 +298,7 @@ impl RemoteS3 {
 
     async fn get_client_for_region(
         &self,
-        host: &Host,
+        host: Option<Host>,
         region: aws_types::region::Region,
     ) -> Res<aws_sdk_s3::Client> {
         {
@@ -313,28 +313,39 @@ impl RemoteS3 {
             }
         }
 
-        let creds = self
-            .auth
-            .get_credentials_or_refresh(&self.http, host)
-            .await?;
-        let config = aws_config::defaults(BehaviorVersion::latest())
-            .region(region.clone())
-            .credentials_provider(Credentials::new(
-                creds.access_key,
-                &creds.secret_key,
-                Some(creds.token),
-                Some(creds.expiry_time.into()),
-                "quilt-registry",
-            ))
-            .load()
-            .await;
+        let config = match host {
+            None => {
+                // FIXME: Catch credentials error and return LoginRequired
+                aws_config::defaults(BehaviorVersion::latest())
+                    .region(region.clone())
+                    .load()
+                    .await
+            }
+            Some(ref host) => {
+                let creds = self
+                    .auth
+                    .get_credentials_or_refresh(&self.http, host)
+                    .await?;
+                aws_config::defaults(BehaviorVersion::latest())
+                    .region(region.clone())
+                    .credentials_provider(Credentials::new(
+                        creds.access_key,
+                        &creds.secret_key,
+                        Some(creds.token),
+                        Some(creds.expiry_time.into()),
+                        "quilt-registry",
+                    ))
+                    .load()
+                    .await
+            }
+        };
         let client = aws_sdk_s3::Client::new(&config);
 
         let mut map = self.s3.write().unwrap();
 
         let creds_ref = CredsRef {
             region: region.clone(),
-            host: host.clone(),
+            host,
         };
         match map.entry(creds_ref) {
             Entry::Occupied(entry) => Ok(entry.get().clone()),
@@ -342,14 +353,18 @@ impl RemoteS3 {
         }
     }
 
-    async fn get_client_for_bucket(&self, host: &Host, bucket: &str) -> Res<aws_sdk_s3::Client> {
+    async fn get_client_for_bucket(
+        &self,
+        host: Option<Host>,
+        bucket: &str,
+    ) -> Res<aws_sdk_s3::Client> {
         let region = self.get_region_for_bucket(bucket).await?.clone();
-        Ok(self.get_client_for_region(host, region).await?)
+        self.get_client_for_region(host, region).await
     }
 }
 
 impl Remote for RemoteS3 {
-    async fn exists(&self, host: &Host, s3_uri: &S3Uri) -> Res<bool> {
+    async fn exists(&self, host: Option<Host>, s3_uri: &S3Uri) -> Res<bool> {
         let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
         let result = client.head_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
         let result = match &s3_uri.version {
@@ -363,14 +378,18 @@ impl Remote for RemoteS3 {
         }
     }
 
-    async fn get_object(&self, host: &Host, s3_uri: &S3Uri) -> Res<impl AsyncRead + Send + Unpin> {
+    async fn get_object(
+        &self,
+        host: Option<Host>,
+        s3_uri: &S3Uri,
+    ) -> Res<impl AsyncRead + Send + Unpin> {
         let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
         get_object(&client, s3_uri).await
     }
 
     async fn get_object_attributes(
         &self,
-        host: &Host,
+        host: Option<Host>,
         listing_uri: &S3Uri,
         object: &Object,
     ) -> Res<S3Attributes> {
@@ -412,12 +431,16 @@ impl Remote for RemoteS3 {
         })
     }
 
-    async fn get_object_stream(&self, host: &Host, s3_uri: &S3Uri) -> Res<RemoteObjectStream> {
+    async fn get_object_stream(
+        &self,
+        host: Option<Host>,
+        s3_uri: &S3Uri,
+    ) -> Res<RemoteObjectStream> {
         let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
         get_object_stream(&client, s3_uri).await
     }
 
-    async fn list_objects(&self, host: &Host, listing_uri: S3Uri) -> impl ObjectsStream {
+    async fn list_objects(&self, host: Option<Host>, listing_uri: S3Uri) -> impl ObjectsStream {
         try_stream! {
             let client = self.get_client_for_bucket(host, &listing_uri.bucket).await?;
             let mut paginated_stream = client
@@ -441,7 +464,7 @@ impl Remote for RemoteS3 {
 
     async fn put_object(
         &self,
-        host: &Host,
+        host: Option<Host>,
         s3_uri: &S3Uri,
         contents: impl Into<ByteStream>,
     ) -> Res {
@@ -458,7 +481,7 @@ impl Remote for RemoteS3 {
         Ok(())
     }
 
-    async fn resolve_url(&self, host: &Host, s3_uri: &S3Uri) -> Res<S3Uri> {
+    async fn resolve_url(&self, host: Option<Host>, s3_uri: &S3Uri) -> Res<S3Uri> {
         let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
         let result = client.head_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
         let result = match &s3_uri.version {
@@ -476,7 +499,7 @@ impl Remote for RemoteS3 {
 
     async fn upload_file(
         &self,
-        host: &Host,
+        host: Option<Host>,
         source_path: impl AsRef<Path>,
         dest_uri: &S3Uri,
         size: u64,

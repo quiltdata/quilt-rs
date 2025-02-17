@@ -32,7 +32,7 @@ fn get_schema_id(yaml: &YamlValue, workflow_id: &str) -> Res<String> {
 
 async fn get_schema_url<R: Remote>(
     remote: &R,
-    host: &Host,
+    host: Option<Host>,
     yaml: YamlValue,
     workflow_id: &str,
 ) -> Res<S3Uri> {
@@ -59,7 +59,7 @@ async fn get_schema_url<R: Remote>(
 
 async fn fetch_workflows_config<R: Remote>(
     remote: &R,
-    host: &Host,
+    host: Option<Host>,
     uri: S3Uri,
 ) -> Res<(S3Uri, Option<YamlValue>)> {
     match remote.get_object_stream(host, &uri).await {
@@ -101,11 +101,11 @@ async fn fetch_workflows_config<R: Remote>(
 ///    2.d. `workflow_id` is "" (edge case for 2.c) → Err
 pub async fn resolve_workflow<R: Remote>(
     remote: &R,
-    host: &Host,
+    host: Option<Host>,
     workflow_id: Option<String>,
     uri: S3Uri,
 ) -> Res<Option<Workflow>> {
-    let (config, yaml) = fetch_workflows_config(remote, host, uri).await?;
+    let (config, yaml) = fetch_workflows_config(remote, host.clone(), uri).await?;
     match yaml {
         Some(yaml) => match workflow_id {
             Some(id) => {

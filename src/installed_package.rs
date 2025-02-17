@@ -212,7 +212,13 @@ impl InstalledPackage {
             key: ".quilt/workflows/config.yml".to_string(),
             ..S3Uri::from(&remote_uri)
         };
-        resolve_workflow(&self.remote, &remote_uri.catalog, workflow_id, workflows_config_uri).await
+        resolve_workflow(
+            &self.remote,
+            remote_uri.catalog,
+            workflow_id,
+            workflows_config_uri,
+        )
+        .await
     }
 }
 

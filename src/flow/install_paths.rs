@@ -25,7 +25,7 @@ use crate::Res;
 async fn cache_immutable_object(
     storage: &impl Storage,
     remote: &impl Remote,
-    host: &Host,
+    host: Option<Host>,
     object_dest: &PathBuf,
     uri: &S3Uri,
 ) -> Res {
@@ -124,7 +124,7 @@ pub async fn install_paths(
             cache_immutable_object(
                 storage,
                 remote,
-                &lineage.remote.catalog,
+                lineage.remote.catalog.clone(),
                 &object_dest,
                 &row.place.parse()?,
             )
@@ -253,7 +253,11 @@ mod tests {
         // Simulate the remote object
         let remote_object_uri = S3Uri::from_str(&remote_file_url)?;
         remote
-            .put_object(&lineage.remote.catalog, &remote_object_uri, Vec::new())
+            .put_object(
+                lineage.remote.catalog.clone(),
+                &remote_object_uri,
+                Vec::new(),
+            )
             .await?;
 
         // Create the manifest with a single remote row with a random hash
@@ -344,11 +348,19 @@ mod tests {
         let remote = mocks::remote::MockRemote::default();
         let remote_object_uri_2 = S3Uri::from_str(&row_2.place)?;
         remote
-            .put_object(&lineage.remote.catalog, &remote_object_uri_2, Vec::new())
+            .put_object(
+                lineage.remote.catalog.clone(),
+                &remote_object_uri_2,
+                Vec::new(),
+            )
             .await?;
         let remote_object_uri_4 = S3Uri::from_str(&row_4.place)?;
         remote
-            .put_object(&lineage.remote.catalog, &remote_object_uri_4, Vec::new())
+            .put_object(
+                lineage.remote.catalog.clone(),
+                &remote_object_uri_4,
+                Vec::new(),
+            )
             .await?;
 
         let entries_paths = vec![

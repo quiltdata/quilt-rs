@@ -14,24 +14,12 @@ use crate::Error;
 /// They are s3-unversioned but have hash.
 ///
 /// This manifest URI is for manifest file in Parquet format.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ManifestUri {
     pub bucket: String,
-    pub catalog: Host,
+    pub catalog: Option<Host>,
     pub hash: String,
     pub namespace: Namespace,
-}
-
-#[cfg(test)]
-impl Default for ManifestUri {
-    fn default() -> Self {
-        ManifestUri {
-            bucket: String::default(),
-            namespace: Namespace::default(),
-            hash: String::default(),
-            catalog: Host::default(),
-        }
-    }
 }
 
 impl From<ManifestUri> for S3Uri {
@@ -55,10 +43,7 @@ impl TryFrom<S3PackageUri> for ManifestUri {
     fn try_from(uri: S3PackageUri) -> Result<Self, Self::Error> {
         Ok(ManifestUri {
             bucket: uri.bucket,
-            catalog: match uri.catalog {
-                Some(catalog) => catalog,
-                None => return Err(Error::Host("`catalog` is required for Manifest URI used in application, which credentials to use".to_string())),
-            },
+            catalog: uri.catalog,
             namespace: uri.namespace,
             hash: match uri.revision {
                 RevisionPointer::Hash(top_hash) => top_hash,
@@ -120,7 +105,7 @@ mod tests {
             namespace: ("bar", "baz").into(),
             revision: RevisionPointer::Tag("latest".to_string()),
             path: None,
-            catalog: Some(Host::default()),
+            catalog: None,
         };
 
         let result = ManifestUri::try_from(package_uri);
@@ -140,13 +125,13 @@ mod tests {
                 namespace: ("foo", "bar").into(),
                 revision: RevisionPointer::Hash("abc123".to_string()),
                 path: None,
-                catalog: Some(Host::default()),
+                catalog: None,
             })?,
             ManifestUri {
                 bucket: "test-bucket".to_string(),
                 namespace: ("foo", "bar").into(),
                 hash: "abc123".to_string(),
-                catalog: Host::default(),
+                catalog: None,
             }
         );
         Ok(())
@@ -159,7 +144,7 @@ mod tests {
                 bucket: "test-bucket".to_string(),
                 namespace: ("ignored", "ignored").into(),
                 hash: "abc123".to_string(),
-                catalog: Host::default(),
+                catalog: None,
             }),
             S3Uri {
                 bucket: "test-bucket".to_string(),

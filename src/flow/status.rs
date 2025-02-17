@@ -43,12 +43,8 @@ pub async fn refresh_latest_hash(
     mut lineage: PackageLineage,
     remote: &impl Remote,
 ) -> Res<PackageLineage> {
-    let latest = resolve_latest(
-        remote,
-        &lineage.remote.catalog,
-        lineage.remote.clone().into(),
-    )
-    .await?;
+    let manifest_uri = lineage.remote.clone();
+    let latest = resolve_latest(remote, manifest_uri.catalog.clone(), manifest_uri.into()).await?;
     if lineage.latest_hash == latest.hash {
         return Ok(lineage);
     }

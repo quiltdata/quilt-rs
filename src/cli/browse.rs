@@ -106,15 +106,8 @@ pub async fn model(
 ) -> Result<Output, Error> {
     let remote = local_domain.get_remote();
     let uri: quilt_rs::uri::S3PackageUri = uri.parse()?;
-    let host = match uri.catalog {
-        Some(ref catalog) => catalog.clone(),
-        None => {
-            return Err(Error::Quilt(quilt_rs::Error::PackageURI(
-                "`Catalog` is required".to_string(),
-            )))
-        }
-    };
-    let manifest_uri = quilt_rs::io::manifest::resolve_manifest_uri(remote, &host, &uri).await?;
+    let manifest_uri =
+        quilt_rs::io::manifest::resolve_manifest_uri(remote, uri.catalog.clone(), &uri).await?;
 
     let manifest = local_domain.browse_remote_manifest(&manifest_uri).await?;
 

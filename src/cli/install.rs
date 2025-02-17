@@ -58,15 +58,8 @@ async fn install_package(
         // FIXME: check the actual remote_manifest
         return Ok(installed_package);
     }
-    let host = match uri.catalog {
-        Some(ref catalog) => catalog.clone(),
-        None => {
-            return Err(Error::Quilt(quilt_rs::Error::PackageURI(
-                "`Catalog` is required".to_string(),
-            )))
-        }
-    };
-    let manifest_uri = quilt_rs::io::manifest::resolve_manifest_uri(remote, &host, uri).await?;
+    let manifest_uri =
+        quilt_rs::io::manifest::resolve_manifest_uri(remote, uri.catalog.clone(), uri).await?;
     Ok(local_domain.install_package(&manifest_uri).await?)
 }
 

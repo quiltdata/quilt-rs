@@ -23,7 +23,7 @@ use crate::Res;
 
 async fn use_existing_row_or_upload(
     remote: &impl Remote,
-    host: &Host,
+    host: Option<Host>,
     package_handle: &S3PackageHandle,
     remote_manifest: &Table,
     rows: StreamItem,
@@ -39,7 +39,7 @@ async fn use_existing_row_or_upload(
                 }));
             }
         } else {
-            output.push(upload_row(remote, host, package_handle.clone(), row).await)
+            output.push(upload_row(remote, host.clone(), package_handle.clone(), row).await)
         }
     }
     Ok(output)
@@ -47,14 +47,14 @@ async fn use_existing_row_or_upload(
 
 async fn stream_uploaded_local_rows<'a>(
     remote: &'a impl Remote,
-    host: &'a Host,
+    host: Option<Host>,
     local_manifest: &'a Table,
     remote_manifest: &'a Table,
     package_handle: &'a S3PackageHandle,
 ) -> impl RowsStream + 'a {
     let stream = local_manifest.records_stream().await;
     stream.then(move |rows| {
-        use_existing_row_or_upload(remote, host, package_handle, remote_manifest, rows)
+        use_existing_row_or_upload(remote, host.clone(), package_handle, remote_manifest, rows)
     })
 }
 
@@ -90,7 +90,7 @@ pub async fn push_package(
     let stream = Box::pin(
         stream_uploaded_local_rows(
             remote,
-            &manifest_uri.catalog,
+            manifest_uri.catalog.clone(),
             &local_manifest,
             &remote_manifest,
             &package_handle,
@@ -111,9 +111,13 @@ pub async fn push_package(
     tag_timestamp(remote, &new_manifest_uri, commit.timestamp).await?;
 
     // Check the hash of remote's latest manifest
-    lineage.latest_hash = resolve_latest(remote, &new_manifest_uri.catalog, manifest_uri.into())
-        .await?
-        .hash;
+    lineage.latest_hash = resolve_latest(
+        remote,
+        new_manifest_uri.catalog.clone(),
+        manifest_uri.into(),
+    )
+    .await?
+    .hash;
     lineage.remote = new_manifest_uri.clone();
 
     // Reset the commit state.
@@ -171,7 +175,7 @@ mod tests {
             bucket: "b".to_string(),
             namespace: ("a", "c").into(),
             hash: "__FOO__".to_string(),
-            catalog: Host::default(),
+            catalog: None,
         };
         let lineage = PackageLineage {
             commit: Some(CommitState {
@@ -194,14 +198,14 @@ mod tests {
         let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(
-                &Host::default(),
+                None,
                 &S3Uri::try_from("s3://b/.quilt/packages/1220__FOO__.parquet")?,
                 jsonl,
             )
             .await?;
         remote
             .put_object(
-                &Host::default(),
+                None,
                 &S3Uri::try_from("s3://b/.quilt/named_packages/a/c/latest")?,
                 b"abcdef".to_vec(),
             )
@@ -219,7 +223,7 @@ mod tests {
             bucket: "b".to_string(),
             namespace: ("a", "c").into(),
             hash: "770459d4230273fd44b272c552d1204458175e7d7cb26fcd601c662cf5f72d05".to_string(),
-            catalog: Host::default(),
+            catalog: None,
         };
         assert_eq!(
             lineage,
@@ -239,7 +243,7 @@ mod tests {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
             hash: "__FOO__".to_string(),
-            catalog: Host::default(),
+            catalog: None,
         };
         let lineage = PackageLineage {
             commit: Some(CommitState {
@@ -261,14 +265,14 @@ mod tests {
         let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(
-                &Host::default(),
+                None,
                 &S3Uri::try_from("s3://b/.quilt/packages/1220__FOO__.parquet")?,
                 jsonl,
             )
             .await?;
         remote
             .put_object(
-                &Host::default(),
+                None,
                 &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
                 b"abcdef".to_vec(),
             )
@@ -299,7 +303,7 @@ mod tests {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
             hash: "475af395ee2856548851913bfd803de4fcc7cdbb3d1d2c13bf0dc221ed6bc68b".to_string(),
-            catalog: Host::default(),
+            catalog: None,
         };
         assert_eq!(
             lineage,

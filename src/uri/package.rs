@@ -488,7 +488,7 @@ mod tests {
             bucket: "test-bucket".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "abc123".to_string(),
-            catalog: Host::default(),
+            catalog: None,
         };
 
         assert_eq!(
