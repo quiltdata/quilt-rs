@@ -1,4 +1,10 @@
+use std::collections::HashMap;
+
+use chrono::serde::ts_seconds;
 use reqwest::Client as HttpClient;
+use serde::Deserialize;
+use serde::Deserializer;
+use serde::Serialize;
 
 use crate::io::storage::auth::AuthIo;
 use crate::io::storage::auth::Credentials;
@@ -7,6 +13,55 @@ use crate::io::storage::LocalStorage;
 use crate::paths::DomainPaths;
 use crate::uri::Host;
 use crate::Res;
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct RemoteTokens {
+    pub access_token: String,
+    pub refresh_token: String,
+    #[serde(with = "ts_seconds")]
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl From<RemoteTokens> for Tokens {
+    fn from(raw: RemoteTokens) -> Self {
+        Tokens {
+            access_token: raw.access_token,
+            refresh_token: raw.refresh_token,
+            expires_at: raw.expires_at,
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+#[serde(rename_all = "PascalCase")]
+struct RemoteCredentials {
+    access_key_id: String,
+    #[serde(deserialize_with = "date_from_rfc3339")]
+    expiration: chrono::DateTime<chrono::Utc>,
+    secret_access_key: String,
+    session_token: String,
+}
+
+impl From<RemoteCredentials> for Credentials {
+    fn from(raw: RemoteCredentials) -> Self {
+        Credentials {
+            access_key: raw.access_key_id,
+            secret_key: raw.secret_access_key,
+            token: raw.session_token,
+            expires_at: raw.expiration,
+        }
+    }
+}
+
+fn date_from_rfc3339<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<chrono::DateTime<chrono::Utc>, D::Error> {
+    String::deserialize(deserializer).map(|s| {
+        chrono::DateTime::parse_from_rfc3339(&s)
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+    })
+}
 
 #[derive(Debug, Clone)]
 pub struct Auth {
@@ -19,38 +74,13 @@ impl Auth {
         Self { paths, storage }
     }
 
-    pub async fn login(
-        &self,
-        http_client: &HttpClient,
-        host: &Host,
-        refresh_token: String,
-    ) -> Res<()> {
-        // 1. Verify URL exists
-        // if self.registry_url.is_empty() {
-        //     return Err(Error::MissingRegistryUrl);
-        // }
-
-        // // 2. Open browser to get refresh token
-        // let code_url = format!("{}/code", self.registry_url);
-        // if let Err(_) = webbrowser::open(&code_url) {
-        //     println!("Please visit {} to get your authentication code", code_url);
-        // }
-
-        // 3. Prompt for refresh token
-        // println!("Enter the code from the webpage:");
-        // let mut refresh_token = String::new();
-        // std::io::stdin().read_line(&mut refresh_token)?;
-        // let refresh_token = refresh_token.trim().to_string();
-
-        // 4. Exchange refresh token for auth tokens
+    pub async fn login(&self, http_client: &HttpClient, host: &Host, refresh_token: String) -> Res {
         let tokens = self
             .get_auth_tokens(http_client, host, &refresh_token)
             .await?;
 
-        // 5. Cache tokens
         self.save_tokens(host, &tokens).await?;
 
-        // 6. Get initial credentials
         self.refresh_credentials(http_client, host, &tokens.access_token)
             .await?;
 
@@ -63,13 +93,19 @@ impl Auth {
         host: &Host,
         refresh_token: &str,
     ) -> Res<Tokens> {
-        let response = http_client
-            .post(format!("{}/api/token", host))
-            .form(&[("refresh_token", refresh_token)])
-            .send()
-            .await?;
+        let mut form_data: HashMap<String, String> = HashMap::new();
+        form_data.insert("refresh_token".to_string(), refresh_token.to_string());
+        let request = http_client
+            .post(format!("https://{}/api/token", host))
+            .header("User-Agent", "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1; SV1; .NET CLR 1.0.3705; .NET CLR 1.1.4322)")
+            .form(&form_data)
+            .build()?;
+        let response = http_client.execute(request).await?;
 
-        Ok(response.json().await?)
+        let tokens_json: RemoteTokens = response.json().await?;
+        let tokens = Tokens::from(tokens_json);
+
+        Ok(tokens)
     }
 
     async fn save_tokens(&self, host: &Host, tokens: &Tokens) -> Res<()> {
@@ -83,18 +119,22 @@ impl Auth {
         host: &Host,
         access_token: &str,
     ) -> Res<Credentials> {
-        let response = http_client
-            .post(format!("{}/api/auth/get_credentials", host))
+        let empty: HashMap<String, String> = HashMap::new();
+        let request = http_client
+            .get(format!("https://{}/api/auth/get_credentials", host))
             .bearer_auth(access_token)
-            .send()
-            .await?;
+            .header("User-Agent", "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1; SV1; .NET CLR 1.0.3705; .NET CLR 1.1.4322)")
+            .json(&empty)
+            .build()?;
+        let response = http_client.execute(request).await?;
 
-        let creds: Credentials = response.json().await?;
+        let creds_json: RemoteCredentials = response.json().await?;
+        let credentials = Credentials::from(creds_json);
 
         let auth_io = AuthIo::new(self.storage.clone(), self.paths.auth_host(host));
-        auth_io.write_credentials(&creds).await?;
+        auth_io.write_credentials(&credentials).await?;
 
-        Ok(creds)
+        Ok(credentials)
     }
 
     pub async fn get_credentials_or_refresh(

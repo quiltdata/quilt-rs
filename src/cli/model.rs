@@ -6,6 +6,7 @@ use crate::cli::browse;
 use crate::cli::commit;
 use crate::cli::install;
 use crate::cli::list;
+use crate::cli::login;
 use crate::cli::package;
 use crate::cli::pull;
 use crate::cli::push;
@@ -38,6 +39,11 @@ pub trait Commands {
     async fn list(&self) -> Result<list::Output, Error> {
         let local_domain = self.get_local_domain();
         list::model(local_domain).await
+    }
+
+    async fn login(&self, args: login::Input) -> Result<login::Output, Error> {
+        let local_domain = self.get_local_domain();
+        login::model(local_domain, args).await
     }
 
     async fn package(&self, args: package::Input) -> Result<package::Output, Error> {

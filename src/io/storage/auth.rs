@@ -20,7 +20,7 @@ pub struct Credentials {
     pub access_key: String,
     pub secret_key: String,
     pub token: String,
-    pub expiry_time: chrono::DateTime<chrono::Utc>,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -129,7 +129,7 @@ mod tests {
             access_key: "test_key".to_string(),
             secret_key: "test_secret".to_string(),
             token: "test_token".to_string(),
-            expiry_time: Utc::now(),
+            expires_at: Utc::now(),
         };
 
         // Write credentials
@@ -140,7 +140,7 @@ mod tests {
         assert_eq!(read_creds.access_key, test_creds.access_key);
         assert_eq!(read_creds.secret_key, test_creds.secret_key);
         assert_eq!(read_creds.token, test_creds.token);
-        assert_eq!(read_creds.expiry_time, test_creds.expiry_time);
+        assert_eq!(read_creds.expires_at, test_creds.expires_at);
 
         Ok(())
     }

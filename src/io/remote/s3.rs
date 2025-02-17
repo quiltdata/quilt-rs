@@ -272,6 +272,10 @@ impl RemoteS3 {
         })
     }
 
+    pub async fn login(&self, host: &Host, refresh_token: String) -> Res {
+        self.auth.login(&self.http, host, refresh_token).await
+    }
+
     async fn get_region_for_bucket(&self, bucket: &str) -> Res<Region> {
         {
             if let Some(region) = self
@@ -332,7 +336,7 @@ impl RemoteS3 {
                         creds.access_key,
                         &creds.secret_key,
                         Some(creds.token),
-                        Some(creds.expiry_time.into()),
+                        Some(creds.expires_at.into()),
                         "quilt-registry",
                     ))
                     .load()

@@ -7,6 +7,7 @@ use clap::Parser;
 use clap::Subcommand;
 use tracing::log;
 
+use quilt_rs::uri::Host;
 use quilt_rs::uri::Namespace;
 
 mod benchmark;
@@ -14,6 +15,7 @@ mod browse;
 mod commit;
 mod install;
 mod list;
+mod login;
 mod model;
 mod output;
 mod package;
@@ -24,6 +26,7 @@ mod uninstall;
 
 use model::Model;
 use output::print;
+use output::Std;
 
 fn parse_optional_namespace(namespace: Option<String>) -> Result<Option<Namespace>, Error> {
     Ok(match namespace {
@@ -82,6 +85,18 @@ enum Commands {
         /// You can provide multiple paths.
         #[arg(short, long)]
         path: Option<Vec<PathBuf>>,
+    },
+    /// List installed packages
+    Login {
+        /// Code from the https://QUILT_STACK/code page
+        #[arg(short, long)]
+        code: Option<String>,
+        /// Path to local domain
+        #[arg(short, long)]
+        domain: PathBuf,
+        /// Domain of the https://QUILT_STACK/
+        #[arg(long)]
+        host: Host,
     },
     /// List installed packages
     List {
@@ -210,6 +225,22 @@ pub async fn init() -> Result<(), Error> {
             print(install::command(Model::from(domain), args).await);
             Ok(())
         }
+        Commands::Login { code, domain, host } => {
+            match code {
+                Some(code) => {
+                    let args = login::Input { code, host };
+                    let m = Model::from(domain);
+                    print(login::command(m, args).await);
+                }
+                None => {
+                    // TODO: Check the lineage, if there are some `package.remote.catalog`
+                    print(Std::Err(Error::LoginRequired(
+                        "Please visit https://QUILT_STACK/code to get your code".to_string(),
+                    )));
+                }
+            }
+            Ok(())
+        }
         Commands::List { domain } => {
             if !domain.exists() {
                 return Err(Error::Domain(domain));
@@ -303,6 +334,9 @@ pub enum Error {
 
     #[error("quilt_rs error: {0}")]
     Quilt(quilt_rs::Error),
+
+    #[error("Login required: {0}")]
+    LoginRequired(String), // TODO: Host?
 
     #[error("Package {0} not found")]
     NamespaceNotFound(Namespace),
