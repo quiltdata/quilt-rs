@@ -14,6 +14,9 @@ use crate::paths::DomainPaths;
 use crate::uri::Host;
 use crate::Res;
 
+const USER_AGENT: &str =
+    "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1; SV1; .NET CLR 1.0.3705; .NET CLR 1.1.4322)";
+
 #[derive(Deserialize, Serialize, Debug)]
 pub struct RemoteTokens {
     pub access_token: String,
@@ -63,6 +66,72 @@ fn date_from_rfc3339<'de, D: Deserializer<'de>>(
     })
 }
 
+#[derive(Deserialize, Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct QuiltStackConfig {
+    registry_url: url::Url,
+}
+
+async fn get_registry_url(http_client: &HttpClient, host: &Host) -> Res<url::Host> {
+    let request = http_client
+        .get(format!("https://{}/config.json", host))
+        .header("User-Agent", USER_AGENT)
+        .build()?;
+    let response = http_client.execute(request).await?;
+
+    let QuiltStackConfig { registry_url } = response.json().await?;
+    Ok(url::Host::Domain(
+        registry_url
+            .domain()
+            .ok_or(crate::Error::LoginRequired)?
+            .to_string(),
+    ))
+}
+
+async fn get_auth_tokens(
+    http_client: &HttpClient,
+    host: &Host,
+    refresh_token: &str,
+) -> Res<Tokens> {
+    let registry = get_registry_url(http_client, host).await?;
+
+    let mut form_data: HashMap<String, String> = HashMap::new();
+    form_data.insert("refresh_token".to_string(), refresh_token.to_string());
+    let request = http_client
+        .post(format!("https://{}/api/token", registry))
+        .header("User-Agent", USER_AGENT)
+        .form(&form_data)
+        .build()?;
+    let response = http_client.execute(request).await?;
+
+    let tokens_json: RemoteTokens = response.json().await?;
+    let tokens = Tokens::from(tokens_json);
+
+    Ok(tokens)
+}
+
+async fn refresh_credentials(
+    http_client: &HttpClient,
+    host: &Host,
+    access_token: &str,
+) -> Res<Credentials> {
+    let registry = get_registry_url(http_client, host).await?;
+
+    let empty: HashMap<String, String> = HashMap::new();
+    let request = http_client
+        .get(format!("https://{}/api/auth/get_credentials", registry))
+        .bearer_auth(access_token)
+        .header("User-Agent", USER_AGENT)
+        .json(&empty)
+        .build()?;
+    let response = http_client.execute(request).await?;
+
+    let creds_json: RemoteCredentials = response.json().await?;
+    let credentials = Credentials::from(creds_json);
+
+    Ok(credentials)
+}
+
 #[derive(Debug, Clone)]
 pub struct Auth {
     paths: DomainPaths,
@@ -87,25 +156,13 @@ impl Auth {
         Ok(())
     }
 
-    pub async fn get_auth_tokens(
+    async fn get_auth_tokens(
         &self,
         http_client: &HttpClient,
         host: &Host,
         refresh_token: &str,
     ) -> Res<Tokens> {
-        let mut form_data: HashMap<String, String> = HashMap::new();
-        form_data.insert("refresh_token".to_string(), refresh_token.to_string());
-        let request = http_client
-            .post(format!("https://{}/api/token", host))
-            .header("User-Agent", "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1; SV1; .NET CLR 1.0.3705; .NET CLR 1.1.4322)")
-            .form(&form_data)
-            .build()?;
-        let response = http_client.execute(request).await?;
-
-        let tokens_json: RemoteTokens = response.json().await?;
-        let tokens = Tokens::from(tokens_json);
-
-        Ok(tokens)
+        get_auth_tokens(http_client, host, refresh_token).await
     }
 
     async fn save_tokens(&self, host: &Host, tokens: &Tokens) -> Res<()> {
@@ -119,17 +176,7 @@ impl Auth {
         host: &Host,
         access_token: &str,
     ) -> Res<Credentials> {
-        let empty: HashMap<String, String> = HashMap::new();
-        let request = http_client
-            .get(format!("https://{}/api/auth/get_credentials", host))
-            .bearer_auth(access_token)
-            .header("User-Agent", "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1; SV1; .NET CLR 1.0.3705; .NET CLR 1.1.4322)")
-            .json(&empty)
-            .build()?;
-        let response = http_client.execute(request).await?;
-
-        let creds_json: RemoteCredentials = response.json().await?;
-        let credentials = Credentials::from(creds_json);
+        let credentials = refresh_credentials(http_client, host, access_token).await?;
 
         let auth_io = AuthIo::new(self.storage.clone(), self.paths.auth_host(host));
         auth_io.write_credentials(&credentials).await?;
