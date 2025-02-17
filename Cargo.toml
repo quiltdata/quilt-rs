@@ -1,6 +1,6 @@
 [package]
 name = "quilt-rs"
-version = "0.8.10"
+version = "0.8.7"
 edition = "2021"
 description = "Rust library for accessing Quilt data packages."
 documentation = "https://docs.quiltdata.com"
@@ -37,9 +37,9 @@ percent-encoding = "2.3.1"
 reqwest = "0.12.12"
 serde = { version = "1.0.217", features = ["derive", "serde_derive"] }
 serde_json = { version = "1.0.134", features = ["preserve_order"] }
-serde_yaml = "0.9.34"
 sha2 = "0.10.8"
-tabled = "0.18.0"
+tabled = "0.17.0"
+temp-dir = "0.1.14"
 tempfile = "3.15.0"
 thiserror = "2.0.9"
 tokio = { version = "1.42.0", features = ["full"] }
@@ -49,4 +49,5 @@ tracing-subscriber = "0.3.19"
 url = {version = "2.5.4", features = ["serde"]}
 
 [dev-dependencies]
+temp_testdir = "0.2.3"
 tokio-test = "0.4.4"
