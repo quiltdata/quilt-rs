@@ -58,7 +58,18 @@ impl<S: Storage> AuthIo<S> {
             return Ok(None);
         }
         let contents = self.storage.read_file(&self.credentials_path()).await?;
-        Ok(Some(serde_json::from_slice(&contents)?))
+        let credentials: Credentials = serde_json::from_slice(&contents)?;
+        
+        // Check if credentials are expired
+        if credentials.expires_at <= chrono::Utc::now() {
+            return Ok(None);
+        }
+        
+        Ok(Some(credentials))
+    }
+
+    pub async fn get_credentials(&self) -> crate::Res<Option<Credentials>> {
+        self.read_credentials().await
     }
 
     pub async fn write_credentials(&self, credentials: &Credentials) -> crate::Res<()> {

@@ -319,15 +319,12 @@ impl RemoteS3 {
             
             if let Some(client) = map.get(&creds_ref) {
                 if let Some(host) = &host {
-                    // For authenticated clients, check if credentials are expired
-                    if let Some(creds) = client.config().credentials_provider() {
-                        if let Ok(creds) = creds.provide_credentials().await {
-                            if !creds.is_expired() {
-                                return Ok(client.clone());
-                            }
-                            // Credentials expired, will create new client with refreshed credentials
-                        }
+                    // For authenticated clients, check if credentials are valid
+                    let auth_io = AuthIo::new(self.auth.storage.clone(), self.auth.paths.auth_host(host));
+                    if auth_io.get_credentials().await?.is_some() {
+                        return Ok(client.clone());
                     }
+                    // Credentials expired, will create new client with refreshed credentials
                 } else {
                     // For clients infered credentials from ~/.aws, reuse existing client
                     return Ok(client.clone());

@@ -191,7 +191,7 @@ impl Auth {
         host: &Host,
     ) -> Res<Credentials> {
         let auth_io = AuthIo::new(self.storage.clone(), self.paths.auth_host(host));
-        match auth_io.read_credentials().await? {
+        match auth_io.get_credentials().await? {
             Some(creds) => Ok(creds),
             None => match auth_io.read_tokens().await? {
                 Some(tokens) => {
