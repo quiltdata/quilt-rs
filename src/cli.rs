@@ -290,13 +290,7 @@ pub async fn init() -> Result<(), Error> {
                 print(login::command(m, args).await);
             } else {
                 // TODO: Check the lineage, if there are some `package.remote.catalog`
-                print(Std::Err(Error::LoginRequired(format!(
-                    r#"
-Please visit https://{0}/code to get your code.
-Then run:
-> quilt_rs login --host {0} --code YOUR_CODE"#,
-                    host
-                ))));
+                print(Std::Err(Error::LoginRequired(host)));
             }
             Ok(())
         }
@@ -398,8 +392,13 @@ pub enum Error {
     #[error("quilt_rs error: {0}")]
     Quilt(quilt_rs::Error),
 
-    #[error("Login required: {0}")]
-    LoginRequired(String), // TODO: Host?
+    #[error(
+        r#"
+Please visit https://{0}/code to get your code.
+Then run:
+> quilt_rs login --host {0} --code YOUR_CODE"#
+    )]
+    LoginRequired(Host),
 
     #[error("Package {0} not found")]
     NamespaceNotFound(Namespace),

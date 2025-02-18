@@ -84,7 +84,7 @@ async fn get_registry_url(http_client: &HttpClient, host: &Host) -> Res<url::Hos
     Ok(url::Host::Domain(
         registry_url
             .domain()
-            .ok_or(crate::Error::LoginRequired)?
+            .ok_or(crate::Error::LoginRequiredRegistryUrl(host.clone()))?
             .to_string(),
     ))
 }

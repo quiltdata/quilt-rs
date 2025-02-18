@@ -6,6 +6,7 @@ use thiserror::Error;
 use url::Url;
 
 use crate::uri;
+use crate::uri::Host;
 
 /// The error type for this library
 #[derive(Error, Debug)]
@@ -48,6 +49,9 @@ pub enum Error {
 
     #[error("Failed to get access token, need to login explicitly")]
     LoginRequired,
+
+    #[error("Failed to get registry URL from {0}. Does {0}/config.json has it?")]
+    LoginRequiredRegistryUrl(Host),
 
     #[error("Failed to parse lineage file: {0}")]
     LineageParse(serde_json::Error),
