@@ -7,6 +7,7 @@ use crate::io::storage::LocalStorage;
 use crate::io::storage::Storage;
 use crate::paths::AUTH_CREDENTIALS;
 use crate::paths::AUTH_TOKENS;
+use crate::Res;
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct Tokens {
@@ -38,7 +39,7 @@ impl<S: Storage> AuthIo<S> {
         self.dir.join(AUTH_CREDENTIALS)
     }
 
-    pub async fn read_tokens(&self) -> crate::Res<Option<Tokens>> {
+    pub async fn read_tokens(&self) -> Res<Option<Tokens>> {
         if !self.storage.exists(&self.tokens_path()).await {
             return Ok(None);
         }
@@ -46,33 +47,33 @@ impl<S: Storage> AuthIo<S> {
         Ok(Some(serde_json::from_slice(&contents)?))
     }
 
-    pub async fn write_tokens(&self, tokens: &Tokens) -> crate::Res<()> {
+    pub async fn write_tokens(&self, tokens: &Tokens) -> Res {
         let contents = serde_json::to_vec(tokens)?;
         self.storage
             .write_file(&self.tokens_path(), &contents)
             .await
     }
 
-    pub async fn read_credentials(&self) -> crate::Res<Option<Credentials>> {
+    pub async fn read_credentials(&self) -> Res<Option<Credentials>> {
         if !self.storage.exists(&self.credentials_path()).await {
             return Ok(None);
         }
         let contents = self.storage.read_file(&self.credentials_path()).await?;
         let credentials: Credentials = serde_json::from_slice(&contents)?;
-        
+
         // Check if credentials are expired
         if credentials.expires_at <= chrono::Utc::now() {
             return Ok(None);
         }
-        
+
         Ok(Some(credentials))
     }
 
-    pub async fn get_credentials(&self) -> crate::Res<Option<Credentials>> {
+    pub async fn get_credentials(&self) -> Res<Option<Credentials>> {
         self.read_credentials().await
     }
 
-    pub async fn write_credentials(&self, credentials: &Credentials) -> crate::Res<()> {
+    pub async fn write_credentials(&self, credentials: &Credentials) -> Res {
         let contents = serde_json::to_vec(credentials)?;
         self.storage
             .write_file(&self.credentials_path(), &contents)
@@ -98,7 +99,7 @@ mod tests {
     /// 2. Write tokens → Ok
     /// 3. Read tokens are the same as written tokens
     #[tokio::test]
-    async fn test_write_read_tokens() -> crate::Res<()> {
+    async fn test_write_read_tokens() -> Res {
         let storage = MockStorage::default();
         let dir = storage.temp_dir.path().to_path_buf();
         let auth = AuthIo { storage, dir };
@@ -128,7 +129,7 @@ mod tests {
     /// 2. Write credentials → Ok
     /// 3. Read credentials are the same as written credentials
     #[tokio::test]
-    async fn test_write_read_credentials() -> crate::Res<()> {
+    async fn test_write_read_credentials() -> Res {
         let storage = MockStorage::default();
         let dir = storage.temp_dir.path().to_path_buf();
         let auth = AuthIo { storage, dir };
