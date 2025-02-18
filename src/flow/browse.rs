@@ -24,13 +24,13 @@ async fn stream_jsonl_rows(jsonl: Manifest) -> impl RowsStream {
 
 async fn is_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Res<bool> {
     remote
-        .exists(manifest.catalog.clone(), &S3Uri::from(manifest))
+        .exists(&manifest.catalog, &S3Uri::from(manifest))
         .await
 }
 
 async fn fetch_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Res<Vec<u8>> {
     let s3_uri = S3Uri::from(manifest);
-    let mut contents = remote.get_object(manifest.catalog.clone(), &s3_uri).await?;
+    let mut contents = remote.get_object(&manifest.catalog, &s3_uri).await?;
     let mut output = Vec::new();
     contents.read_to_end(&mut output).await?;
     Ok(output)
@@ -39,7 +39,7 @@ async fn fetch_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Res<Vec<
 async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res<Manifest> {
     let s3_uri: S3Uri = ManifestUriLegacy::from(manifest_uri).into();
     let contents = remote
-        .get_object(manifest_uri.catalog.clone(), &s3_uri)
+        .get_object(&manifest_uri.catalog, &s3_uri)
         .await?;
     Manifest::from_reader(contents).await
 }

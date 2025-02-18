@@ -53,7 +53,7 @@ async fn upload_legacy(
         .as_bytes()
         .to_vec();
     remote
-        .put_object(manifest_uri.catalog.clone(), &s3_uri, jsonl)
+        .put_object(&manifest_uri.catalog, &s3_uri, jsonl)
         .await
 }
 
@@ -69,7 +69,7 @@ async fn upload_from(
     let body = storage.read_byte_stream(manifest_path).await?;
     log::info!("Writing remote manifest to {:?}", manifest_uri);
     remote
-        .put_object(manifest_uri.catalog.clone(), &manifest_uri.into(), body)
+        .put_object(&manifest_uri.catalog, &manifest_uri.into(), body)
         .await
 }
 
@@ -137,7 +137,7 @@ pub async fn resolve_latest(
 ) -> Res<ManifestUri> {
     let tag_uri = TagUri::latest(uri.clone());
     let stream = remote
-        .get_object_stream(host.clone(), &tag_uri.into())
+        .get_object_stream(&host, &tag_uri.into())
         .await?;
     let hash = bytestream_to_string(stream.body).await?;
     Ok(ManifestUri {
@@ -204,7 +204,7 @@ pub async fn upload_row(
     log::info!("Uploading to S3: {}", object_uri);
 
     let (remote_url, hash) = remote
-        .upload_file(host, &file_path, &object_uri.into(), row.size)
+        .upload_file(&host, &file_path, &object_uri.into(), row.size)
         .await?;
 
     // Update the manifest with the sha2-256-chunked checksum

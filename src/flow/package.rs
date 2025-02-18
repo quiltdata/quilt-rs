@@ -35,7 +35,7 @@ async fn get_object_attributes_inner(
     let obj = object?;
     let key = obj.key.clone().ok_or(Error::ObjectKey)?;
     match remote
-        .get_object_attributes(host.clone(), listing_uri, &obj)
+        .get_object_attributes(&host, listing_uri, &obj)
         .await
     {
         Ok(attrs) => Ok(attrs),
@@ -48,7 +48,7 @@ async fn get_object_attributes_inner(
             );
             let stream = remote
                 .get_object_stream(
-                    host,
+                    &host,
                     &S3Uri {
                         bucket: listing_uri.bucket.clone(),
                         key,
@@ -91,7 +91,7 @@ async fn stream_objects<'a>(
     host: Option<Host>,
     listing_uri: S3Uri,
 ) -> impl RowsStream + 'a {
-    let stream = remote.list_objects(host.clone(), listing_uri.clone()).await;
+    let stream = remote.list_objects(&host, listing_uri.clone()).await;
     stream
         .then(move |objs| {
             get_object_attributes(storage, remote, host.clone(), listing_uri.clone(), objs)

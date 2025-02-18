@@ -214,7 +214,7 @@ impl InstalledPackage {
         };
         resolve_workflow(
             &self.remote,
-            remote_uri.catalog,
+            &remote_uri.catalog,
             workflow_id,
             workflows_config_uri,
         )
