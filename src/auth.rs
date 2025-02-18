@@ -59,10 +59,11 @@ impl From<RemoteCredentials> for Credentials {
 fn date_from_rfc3339<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<chrono::DateTime<chrono::Utc>, D::Error> {
-    String::deserialize(deserializer).map(|s| {
+    use serde::de::Error;
+    String::deserialize(deserializer).and_then(|s| {
         chrono::DateTime::parse_from_rfc3339(&s)
-            .unwrap()
-            .with_timezone(&chrono::Utc)
+            .map_err(|e| Error::custom(format!("Invalid RFC3339 date: {}", e)))
+            .map(|dt| dt.with_timezone(&chrono::Utc))
     })
 }
 
