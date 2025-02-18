@@ -69,10 +69,6 @@ impl<S: Storage> AuthIo<S> {
         Ok(Some(credentials))
     }
 
-    pub async fn get_credentials(&self) -> Res<Option<Credentials>> {
-        self.read_credentials().await
-    }
-
     pub async fn write_credentials(&self, credentials: &Credentials) -> Res {
         let contents = serde_json::to_vec(credentials)?;
         self.storage

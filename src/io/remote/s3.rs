@@ -22,7 +22,6 @@ use tokio::io::AsyncRead;
 use tracing::log;
 
 use crate::auth;
-use crate::io::storage::auth::AuthIo;
 use crate::checksum::calculate_sha256_checksum;
 use crate::checksum::get_checksum_chunksize_and_parts;
 use crate::checksum::get_compliant_chunked_checksum;
@@ -31,6 +30,7 @@ use crate::checksum::MPU_MAX_PARTS;
 use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use crate::io::remote::ObjectsStream;
 use crate::io::remote::Remote;
+use crate::io::storage::auth::AuthIo;
 use crate::io::storage::LocalStorage;
 use crate::paths::DomainPaths;
 use crate::uri::Host;
@@ -313,22 +313,29 @@ impl RemoteS3 {
 
         // Try to get existing client from cache and check if credentials are valid
         {
-            let map = self
-                .s3
-                .read()
-                .map_err(|e| Error::PoisonLock(e.to_string()))?;
-            
-            if let Some(client) = map.get(&creds_ref) {
+            // Check if we have a valid cached client
+            let cached_client = {
+                let map = self
+                    .s3
+                    .read()
+                    .map_err(|e| Error::PoisonLock(e.to_string()))?;
+                map.get(&creds_ref).cloned()
+            };
+
+            if let Some(client) = cached_client {
                 if let Some(host) = &host {
-                    // For authenticated clients, check if credentials are valid
-                    let auth_io = AuthIo::new(self.auth.storage.clone(), self.auth.paths.auth_host(host));
-                    if auth_io.get_credentials().await?.is_some() {
-                        return Ok(client.clone());
+                    // If credentials saved, check if they are valid
+                    let auth_io =
+                        AuthIo::new(self.auth.storage.clone(), self.auth.paths.auth_host(host));
+                    if let Some(creds) = auth_io.read_credentials().await? {
+                        if creds.expires_at > chrono::Utc::now() {
+                            return Ok(client);
+                        }
                     }
                     // Credentials expired, will create new client with refreshed credentials
                 } else {
                     // For clients infered credentials from ~/.aws, reuse existing client
-                    return Ok(client.clone());
+                    return Ok(client);
                 }
             }
         }
