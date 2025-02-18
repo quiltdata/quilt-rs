@@ -5,7 +5,6 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use clap::Subcommand;
-use tempfile::TempDir;
 use tracing::log;
 
 use quilt_rs::uri::Host;
@@ -38,17 +37,14 @@ fn parse_optional_namespace(namespace: Option<String>) -> Result<Option<Namespac
     })
 }
 
-fn get_domain_dir(dir_arg: Option<PathBuf>) -> Result<(PathBuf, Option<TempDir>), Error> {
-    Ok(match dir_arg {
-        Some(user_specified_dir) => (user_specified_dir, None),
+fn get_domain_dir(dir_arg: Option<PathBuf>) -> Result<PathBuf, Error> {
+    match dir_arg {
+        Some(user_specified_dir) => Ok(user_specified_dir),
         None => match dirs::data_local_dir() {
-            Some(default_user_dir) => (default_user_dir.join(DOMAIN_DIR_NAMESPACE), None),
-            None => {
-                let temp_dir = TempDir::new()?;
-                (temp_dir.path().to_path_buf(), Some(temp_dir))
-            }
+            Some(default_user_dir) => Ok(default_user_dir.join(DOMAIN_DIR_NAMESPACE)),
+            None => Err(Error::Domain),
         },
-    })
+    }
 }
 
 #[derive(Parser)]
@@ -60,6 +56,19 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Test and benchmark creating manifest with large number of rows
+    Benchmark {
+        /// Path to local domain
+        #[arg(short, long)]
+        domain: Option<PathBuf>,
+        /// How many rows in manifest?
+        /// Ex. 1000000
+        #[arg(short, long)]
+        number: i32,
+        /// Manifest destination path
+        #[arg(short, long)]
+        path: Option<PathBuf>,
+    },
     /// Browse remote manifest
     Browse {
         /// Path to local domain
@@ -171,19 +180,6 @@ enum Commands {
         #[arg(short, long)]
         namespace: String,
     },
-    /// Test and benchmark creating manifest with large number of rows
-    Benchmark {
-        /// Path to local domain
-        #[arg(short, long)]
-        domain: Option<PathBuf>,
-        /// How many rows in manifest?
-        /// Ex. 1000000
-        #[arg(short, long)]
-        number: i32,
-        /// Manifest destination path
-        #[arg(short, long)]
-        path: Option<PathBuf>,
-    },
     /// Uninstall package from local domain
     Uninstall {
         /// Path to local domain
@@ -200,20 +196,37 @@ enum Commands {
 pub async fn init() -> Result<(), Error> {
     let args = Args::parse();
 
-    // FIXME: every command should have a domain,
-    //        because domain stores credentials
+    // NOTE: every command should have some domain,
+    //       because domain stores credentials
+    //       It's optional for user, but we use one anyway.
+    //       If it is None, we use:
+    //         * home directory ~/.local/share/com.quiltdata.quilt-rs`
+    //         * or temporary directory
     match args.command {
+        Commands::Benchmark {
+            domain,
+            number,
+            path,
+        } => {
+            let root_dir = get_domain_dir(domain)?;
+            let m = Model::from(root_dir);
+            let args = benchmark::Input {
+                number,
+                dest: path.unwrap_or(PathBuf::from("manifest.pq")),
+            };
+
+            log::info!("Benchmark manifest creation {:?}", args,);
+            print(benchmark::command(m, args).await);
+
+            Ok(())
+        }
         Commands::Browse { domain, uri } => {
-            let (root_dir, temp_dir) = get_domain_dir(domain)?;
+            let root_dir = get_domain_dir(domain)?;
             let m = Model::from(root_dir);
             let args = browse::Input { uri };
 
             log::info!("Browsing {:?}", args);
             print(browse::command(m, args).await);
-
-            if let Some(temp_dir) = temp_dir {
-                log::warn!("Temporary domain was used: {:?}", temp_dir);
-            }
 
             Ok(())
         }
@@ -224,7 +237,7 @@ pub async fn init() -> Result<(), Error> {
             user_meta,
             workflow,
         } => {
-            let (root_dir, temp_dir) = get_domain_dir(domain)?;
+            let root_dir = get_domain_dir(domain)?;
             let m = Model::from(root_dir);
 
             let user_meta = match &user_meta {
@@ -246,10 +259,6 @@ pub async fn init() -> Result<(), Error> {
             log::info!("Committing {:?}", args);
             print(commit::command(m, args).await);
 
-            if let Some(temp_dir) = temp_dir {
-                log::warn!("Temporary domain was used: {:?}", temp_dir);
-            }
-
             Ok(())
         }
         Commands::Install {
@@ -258,7 +267,7 @@ pub async fn init() -> Result<(), Error> {
             namespace,
             uri,
         } => {
-            let (root_dir, temp_dir) = get_domain_dir(domain)?;
+            let root_dir = get_domain_dir(domain)?;
             let m = Model::from(root_dir);
             let args = install::Input {
                 namespace: parse_optional_namespace(namespace)?,
@@ -269,24 +278,16 @@ pub async fn init() -> Result<(), Error> {
             log::info!("Installing {:?}", args);
             print(install::command(m, args).await);
 
-            if let Some(temp_dir) = temp_dir {
-                log::warn!("Temporary domain was used: {:?}", temp_dir);
-            }
-
             Ok(())
         }
         Commands::Login { code, domain, host } => {
             if let Some(code) = code {
-                let (root_dir, temp_dir) = get_domain_dir(domain)?;
+                let root_dir = get_domain_dir(domain)?;
                 let m = Model::from(root_dir);
                 let args = login::Input { code, host };
 
                 log::info!("Logging in {:?}", args);
                 print(login::command(m, args).await);
-
-                if let Some(temp_dir) = temp_dir {
-                    log::warn!("Temporary domain was used: {:?}", temp_dir);
-                }
             } else {
                 // TODO: Check the lineage, if there are some `package.remote.catalog`
                 print(Std::Err(Error::LoginRequired(format!(
@@ -300,15 +301,11 @@ Then run:
             Ok(())
         }
         Commands::List { domain } => {
-            let (root_dir, temp_dir) = get_domain_dir(domain)?;
+            let root_dir = get_domain_dir(domain)?;
             let m = Model::from(root_dir);
 
             log::info!("Listing installed packages");
             print(list::command(m).await);
-
-            if let Some(temp_dir) = temp_dir {
-                log::warn!("Temporary domain was used: {:?}", temp_dir);
-            }
 
             Ok(())
         }
@@ -319,7 +316,7 @@ Then run:
             uri,
             user_meta,
         } => {
-            let (root_dir, temp_dir) = get_domain_dir(domain)?;
+            let root_dir = get_domain_dir(domain)?;
             let m = Model::from(root_dir);
             let user_meta = match &user_meta {
                 Some(object) => match serde_json::from_str(object)? {
@@ -340,14 +337,10 @@ Then run:
             log::info!("Packaging {:?}", args);
             print(package::command(m, args).await);
 
-            if let Some(temp_dir) = temp_dir {
-                log::warn!("Temporary domain was used: {:?}", temp_dir);
-            }
-
             Ok(())
         }
         Commands::Pull { domain, namespace } => {
-            let (root_dir, temp_dir) = get_domain_dir(domain)?;
+            let root_dir = get_domain_dir(domain)?;
             let m = Model::from(root_dir);
             let args = pull::Input {
                 namespace: namespace.try_into()?,
@@ -356,14 +349,10 @@ Then run:
             log::info!("Pull {:?}", args);
             print(pull::command(m, args).await);
 
-            if let Some(temp_dir) = temp_dir {
-                log::warn!("Temporary domain was used: {:?}", temp_dir);
-            }
-
             Ok(())
         }
         Commands::Push { domain, namespace } => {
-            let (root_dir, temp_dir) = get_domain_dir(domain)?;
+            let root_dir = get_domain_dir(domain)?;
             let m = Model::from(root_dir);
             let args = push::Input {
                 namespace: namespace.try_into()?,
@@ -372,14 +361,10 @@ Then run:
             log::info!("Pushing {:?}", args);
             print(push::command(m, args).await);
 
-            if let Some(temp_dir) = temp_dir {
-                log::warn!("Temporary domain was used: {:?}", temp_dir);
-            }
-
             Ok(())
         }
         Commands::Status { domain, namespace } => {
-            let (root_dir, temp_dir) = get_domain_dir(domain)?;
+            let root_dir = get_domain_dir(domain)?;
             let m = Model::from(root_dir);
             let args = status::Input {
                 namespace: namespace.try_into()?,
@@ -388,35 +373,10 @@ Then run:
             log::info!("Status {:?}", args);
             print(status::command(m, args).await);
 
-            if let Some(temp_dir) = temp_dir {
-                log::warn!("Temporary domain was used: {:?}", temp_dir);
-            }
-
-            Ok(())
-        }
-        Commands::Benchmark {
-            domain,
-            number,
-            path,
-        } => {
-            let (root_dir, temp_dir) = get_domain_dir(domain)?;
-            let m = Model::from(root_dir);
-            let args = benchmark::Input {
-                number,
-                dest: path.unwrap_or(PathBuf::from("manifest.pq")),
-            };
-
-            log::info!("Benchmark manifest creation {:?}", args,);
-            print(benchmark::command(m, args).await);
-
-            if let Some(temp_dir) = temp_dir {
-                log::warn!("Temporary domain was used: {:?}", temp_dir);
-            }
-
             Ok(())
         }
         Commands::Uninstall { domain, namespace } => {
-            let (root_dir, temp_dir) = get_domain_dir(domain)?;
+            let root_dir = get_domain_dir(domain)?;
             let m = Model::from(root_dir);
             let args = uninstall::Input {
                 namespace: namespace.try_into()?,
@@ -425,10 +385,6 @@ Then run:
             log::info!("Uninstalling {:?}", args);
             print(uninstall::command(m, args).await);
 
-            if let Some(temp_dir) = temp_dir {
-                log::warn!("Temporary domain was used: {:?}", temp_dir);
-            }
-
             Ok(())
         }
     }
@@ -436,6 +392,9 @@ Then run:
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    #[error("Domain directory is required. We store files and credentials there")]
+    Domain,
+
     #[error("quilt_rs error: {0}")]
     Quilt(quilt_rs::Error),
 
