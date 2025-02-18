@@ -310,15 +310,28 @@ impl RemoteS3 {
             host: host.clone(),
         };
 
-        // Try to get existing client from cache
+        // Try to get existing client from cache and check if credentials are valid
         {
             let map = self
                 .s3
                 .read()
                 .map_err(|e| Error::PoisonLock(e.to_string()))?;
+            
             if let Some(client) = map.get(&creds_ref) {
-                // TODO: check client.credentials, if they are not expired
-                return Ok(client.clone());
+                if let Some(host) = &host {
+                    // For authenticated clients, check if credentials are expired
+                    if let Some(creds) = client.config().credentials_provider() {
+                        if let Ok(creds) = creds.provide_credentials().await {
+                            if !creds.is_expired() {
+                                return Ok(client.clone());
+                            }
+                            // Credentials expired, will create new client with refreshed credentials
+                        }
+                    }
+                } else {
+                    // For clients infered credentials from ~/.aws, reuse existing client
+                    return Ok(client.clone());
+                }
             }
         }
 
@@ -363,7 +376,11 @@ impl RemoteS3 {
             .map_err(|e| Error::PoisonLock(e.to_string()))?;
 
         match map.entry(creds_ref) {
-            Entry::Occupied(entry) => Ok(entry.get().clone()),
+            Entry::Occupied(mut entry) => {
+                // Replace existing client with new one
+                entry.insert(client.clone());
+                Ok(client)
+            }
             Entry::Vacant(entry) => Ok(entry.insert(client).clone()),
         }
     }
