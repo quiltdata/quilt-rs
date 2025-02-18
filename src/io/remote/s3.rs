@@ -328,7 +328,7 @@ impl RemoteS3 {
                     let auth_io =
                         AuthIo::new(self.auth.storage.clone(), self.auth.paths.auth_host(host));
                     if let Some(creds) = auth_io.read_credentials().await? {
-                        if creds.expires_at > chrono::Utc::now() {
+                        if creds.expires_at <= chrono::Utc::now() {
                             return Ok(client);
                         }
                     }

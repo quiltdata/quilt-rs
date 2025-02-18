@@ -106,7 +106,7 @@ mod tests {
         let test_tokens = Tokens {
             access_token: "test_access".to_string(),
             refresh_token: "test_refresh".to_string(),
-            expires_at: Utc::now() + chrono::Duration::minutes(1),
+            expires_at: Utc::now(),
         };
 
         // Write tokens
@@ -137,7 +137,7 @@ mod tests {
             access_key: "test_key".to_string(),
             secret_key: "test_secret".to_string(),
             token: "test_token".to_string(),
-            expires_at: Utc::now(),
+            expires_at: Utc::now() + chrono::Duration::minutes(1),
         };
 
         // Write credentials
