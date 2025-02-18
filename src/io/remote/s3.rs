@@ -305,18 +305,22 @@ impl RemoteS3 {
         host: Option<Host>,
         region: aws_types::region::Region,
     ) -> Res<aws_sdk_s3::Client> {
+        let creds_ref = CredsRef {
+            region: region.clone(),
+            host: host.clone(),
+        };
+
+        // Try to get existing client from cache
         {
-            let map = self.s3.read().unwrap();
-            let creds_ref = CredsRef {
-                region: region.clone(),
-                host: host.clone(),
-            };
+            let map = self.s3.read()
+                .map_err(|e| Error::PoisonLock(e.to_string()))?;
             if let Some(client) = map.get(&creds_ref) {
                 // TODO: check client.credentials, if they are not expired
                 return Ok(client.clone());
             }
         }
 
+        // Create new client
         let config = match host {
             None => {
                 // FIXME: Catch credentials error and return LoginRequired
@@ -345,12 +349,10 @@ impl RemoteS3 {
         };
         let client = aws_sdk_s3::Client::new(&config);
 
-        let mut map = self.s3.write().unwrap();
+        // Cache the new client
+        let mut map = self.s3.write()
+            .map_err(|e| Error::PoisonLock(e.to_string()))?;
 
-        let creds_ref = CredsRef {
-            region: region.clone(),
-            host,
-        };
         match map.entry(creds_ref) {
             Entry::Occupied(entry) => Ok(entry.get().clone()),
             Entry::Vacant(entry) => Ok(entry.insert(client).clone()),
