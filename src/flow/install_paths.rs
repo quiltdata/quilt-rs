@@ -253,11 +253,7 @@ mod tests {
         // Simulate the remote object
         let remote_object_uri = S3Uri::from_str(&remote_file_url)?;
         remote
-            .put_object(
-                &lineage.remote.catalog,
-                &remote_object_uri,
-                Vec::new(),
-            )
+            .put_object(&lineage.remote.catalog, &remote_object_uri, Vec::new())
             .await?;
 
         // Create the manifest with a single remote row with a random hash
@@ -348,19 +344,11 @@ mod tests {
         let remote = mocks::remote::MockRemote::default();
         let remote_object_uri_2 = S3Uri::from_str(&row_2.place)?;
         remote
-            .put_object(
-                &lineage.remote.catalog,
-                &remote_object_uri_2,
-                Vec::new(),
-            )
+            .put_object(&lineage.remote.catalog, &remote_object_uri_2, Vec::new())
             .await?;
         let remote_object_uri_4 = S3Uri::from_str(&row_4.place)?;
         remote
-            .put_object(
-                &lineage.remote.catalog,
-                &remote_object_uri_4,
-                Vec::new(),
-            )
+            .put_object(&lineage.remote.catalog, &remote_object_uri_4, Vec::new())
             .await?;
 
         let entries_paths = vec![

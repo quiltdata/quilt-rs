@@ -34,7 +34,7 @@ async fn get_object_attributes_inner(
 ) -> Res<S3Attributes> {
     let obj = object?;
     let key = obj.key.clone().ok_or(Error::ObjectKey)?;
-    match remote.get_object_attributes(&host, listing_uri, &obj).await {
+    match remote.get_object_attributes(host, listing_uri, &obj).await {
         Ok(attrs) => Ok(attrs),
         Err(Error::Checksum(msg)) => {
             log::debug!("{}", msg);
@@ -45,7 +45,7 @@ async fn get_object_attributes_inner(
             );
             let stream = remote
                 .get_object_stream(
-                    &host,
+                    host,
                     &S3Uri {
                         bucket: listing_uri.bucket.clone(),
                         key,
@@ -74,7 +74,7 @@ async fn get_object_attributes(
     try_join_all(
         objects?
             .into_iter()
-            .map(|object| get_object_attributes_inner(storage, remote, &host, &listing_uri, object))
+            .map(|object| get_object_attributes_inner(storage, remote, host, listing_uri, object))
             .collect::<Vec<_>>(),
     )
     .await
@@ -86,9 +86,9 @@ async fn stream_objects<'a>(
     host: &'a Option<Host>,
     listing_uri: &'a S3Uri,
 ) -> impl RowsStream + 'a {
-    let stream = remote.list_objects(&host, &listing_uri).await;
+    let stream = remote.list_objects(host, listing_uri).await;
     stream
-        .then(move |objs| get_object_attributes(storage, remote, &host, listing_uri, objs))
+        .then(move |objs| get_object_attributes(storage, remote, host, listing_uri, objs))
         .map(|result| {
             result.map(move |objs| objs.into_iter().map(|obj| Ok(Row::from(obj))).collect())
         })
@@ -113,8 +113,7 @@ pub async fn package_s3_prefix(
     // FIXME: filter or fail on keys with `.` or `..` in path segments as quilt3 do
 
     let perf = Measure::start();
-    let stream =
-        Box::pin(stream_objects(storage, remote, &dest_uri.catalog, source_uri).await);
+    let stream = Box::pin(stream_objects(storage, remote, &dest_uri.catalog, source_uri).await);
     let manifest_path = |t: &str| paths.manifest_cache(&source_uri.bucket, t);
     let header = Header::new(message, user_meta, None);
     let (cache_path, top_hash) =

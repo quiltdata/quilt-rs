@@ -50,7 +50,8 @@ impl<T: Stream<Item = StreamItem>> ObjectsStream for T {}
 /// This trait encapsulates the S3 operations that Quilt needs to perform.
 pub trait Remote {
     /// Checks if object exists
-    fn exists(&self, host: &Option<Host>, s3_uri: &S3Uri) -> impl Future<Output = Res<bool>> + Send;
+    fn exists(&self, host: &Option<Host>, s3_uri: &S3Uri)
+        -> impl Future<Output = Res<bool>> + Send;
 
     /// Gets the objects contents as a `File`
     // TODO: use `self.get_object_stream`. Under-the-hood it is a stream already

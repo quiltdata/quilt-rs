@@ -136,9 +136,7 @@ pub async fn resolve_latest(
     uri: S3PackageHandle,
 ) -> Res<ManifestUri> {
     let tag_uri = TagUri::latest(uri.clone());
-    let stream = remote
-        .get_object_stream(&host, &tag_uri.into())
-        .await?;
+    let stream = remote.get_object_stream(&host, &tag_uri.into()).await?;
     let hash = bytestream_to_string(stream.body).await?;
     Ok(ManifestUri {
         hash,
