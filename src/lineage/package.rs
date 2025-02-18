@@ -64,7 +64,7 @@ pub struct CommitState {
 pub struct PackageLineage {
     /// Local commits
     pub commit: Option<CommitState>,
-    /// Where we intsalled this package from
+    /// Where we installed this package from
     pub remote: ManifestUri,
     // TODO: I don't understand yet how and why we use it
     pub base_hash: String,
