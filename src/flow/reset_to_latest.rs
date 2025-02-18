@@ -21,7 +21,12 @@ pub async fn reset_to_latest(
     working_dir: PathBuf,
     namespace: Namespace,
 ) -> Res<PackageLineage> {
-    let latest = resolve_latest(remote, lineage.remote.clone().into()).await?;
+    let latest = resolve_latest(
+        remote,
+        &lineage.remote.catalog,
+        &lineage.remote.clone().into(),
+    )
+    .await?;
     if latest.hash == lineage.remote.hash {
         // already at latest
         return Ok(lineage);
@@ -80,11 +85,13 @@ mod tests {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
             hash: "foo".to_string(),
+            catalog: None,
         });
 
         let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(
+                &None,
                 &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
                 b"foo".to_vec(),
             )
@@ -110,18 +117,21 @@ mod tests {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
             hash: "OUTDATED_HASH".to_string(),
+            catalog: None,
         });
 
         let jsonl = std::fs::read(mocks::manifest::jsonl())?;
         let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(
+                &None,
                 &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
                 b"LATEST_HASH".to_vec(),
             )
             .await?;
         remote
             .put_object(
+                &None,
                 &S3Uri::try_from("s3://b/.quilt/packages/LATEST_HASH")?,
                 jsonl,
             )

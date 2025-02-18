@@ -4,6 +4,7 @@ use tokio::io::AsyncReadExt;
 use crate::io::remote::Remote;
 use crate::manifest::Workflow;
 use crate::manifest::WorkflowId;
+use crate::uri::Host;
 use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
@@ -29,12 +30,17 @@ fn get_schema_id(yaml: &YamlValue, workflow_id: &str) -> Res<String> {
     }
 }
 
-async fn get_schema_url<R: Remote>(remote: &R, yaml: YamlValue, workflow_id: &str) -> Res<S3Uri> {
+async fn get_schema_url<R: Remote>(
+    remote: &R,
+    host: &Option<Host>,
+    yaml: YamlValue,
+    workflow_id: &str,
+) -> Res<S3Uri> {
     let schema_id = get_schema_id(&yaml, workflow_id)?;
     match &yaml["schemas"] {
         YamlValue::Mapping(schemas) => match &schemas[&schema_id] {
             YamlValue::Mapping(schema) => match &schema["url"] {
-                YamlValue::String(url) => Ok(remote.resolve_url(&url.parse()?).await?),
+                YamlValue::String(url) => Ok(remote.resolve_url(host, &url.parse()?).await?),
                 _ => Err(Error::Workflow(format!(
                     "Schema {} doesn't have URL",
                     schema_id
@@ -53,9 +59,10 @@ async fn get_schema_url<R: Remote>(remote: &R, yaml: YamlValue, workflow_id: &st
 
 async fn fetch_workflows_config<R: Remote>(
     remote: &R,
+    host: &Option<Host>,
     uri: S3Uri,
 ) -> Res<(S3Uri, Option<YamlValue>)> {
-    match remote.get_object_stream(&uri).await {
+    match remote.get_object_stream(host, &uri).await {
         Ok(stream) => {
             let mut bytes = Vec::new();
             stream
@@ -94,14 +101,15 @@ async fn fetch_workflows_config<R: Remote>(
 ///    2.d. `workflow_id` is "" (edge case for 2.c) → Err
 pub async fn resolve_workflow<R: Remote>(
     remote: &R,
+    host: &Option<Host>,
     workflow_id: Option<String>,
     uri: S3Uri,
 ) -> Res<Option<Workflow>> {
-    let (config, yaml) = fetch_workflows_config(remote, uri).await?;
+    let (config, yaml) = fetch_workflows_config(remote, host, uri).await?;
     match yaml {
         Some(yaml) => match workflow_id {
             Some(id) => {
-                let url = get_schema_url(remote, yaml, &id).await?;
+                let url = get_schema_url(remote, host, yaml, &id).await?;
                 Ok(Some(Workflow {
                     config,
                     id: Some(WorkflowId { id, url }),

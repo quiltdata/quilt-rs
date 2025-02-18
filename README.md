@@ -358,3 +358,9 @@ The `browse` command displays the contents and metadata of a remote package mani
 - [ ] Browse non-existent package
 - [ ] Browse with network failures
 - [x] Browse with corrupted cache (`flow::browse::tests::test_if_cached_random_file`)
+
+
+
+### Auth
+
+TBD

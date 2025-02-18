@@ -16,6 +16,7 @@ use crate::io::remote::S3Attributes;
 use crate::uri::S3Uri;
 use crate::Res;
 
+pub mod auth;
 mod local;
 
 pub use local::LocalStorage;

@@ -19,6 +19,7 @@ use crate::manifest::Manifest;
 use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::manifest::TopHasher;
+use crate::uri::Host;
 use crate::uri::ManifestUri;
 use crate::uri::ManifestUriLegacy;
 use crate::uri::ObjectUri;
@@ -51,7 +52,9 @@ async fn upload_legacy(
         .to_jsonlines()
         .as_bytes()
         .to_vec();
-    remote.put_object(&s3_uri, jsonl).await
+    remote
+        .put_object(&manifest_uri.catalog, &s3_uri, jsonl)
+        .await
 }
 
 /// Upload manifest from the local path
@@ -65,7 +68,9 @@ async fn upload_from(
     // TODO: FAIL if the manifest with this hash already exists?
     let body = storage.read_byte_stream(manifest_path).await?;
     log::info!("Writing remote manifest to {:?}", manifest_uri);
-    remote.put_object(&manifest_uri.into(), body).await
+    remote
+        .put_object(&manifest_uri.catalog, &manifest_uri.into(), body)
+        .await
 }
 
 /// Upload manifest with both formats JSONL and Parquet.
@@ -114,31 +119,46 @@ pub async fn tag_latest(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res
 
 async fn upload_tag(remote: &impl Remote, manifest_uri: &ManifestUri, tag_uri: TagUri) -> Res {
     remote
-        .put_object(&tag_uri.into(), manifest_uri.hash.as_bytes().to_vec())
+        .put_object(
+            &manifest_uri.catalog,
+            &tag_uri.into(),
+            manifest_uri.hash.as_bytes().to_vec(),
+        )
         .await
 }
 
 /// Downloads the latest tagged package
 /// and returns its content: hash of the latest package revision.
 /// Then creates `ManifestUri`.
-pub async fn resolve_latest(remote: &impl Remote, uri: S3PackageHandle) -> Res<ManifestUri> {
+pub async fn resolve_latest(
+    remote: &impl Remote,
+    host: &Option<Host>,
+    uri: &S3PackageHandle,
+) -> Res<ManifestUri> {
     let tag_uri = TagUri::latest(uri.clone());
-    let stream = remote.get_object_stream(&tag_uri.into()).await?;
+    let stream = remote.get_object_stream(host, &tag_uri.into()).await?;
     let hash = bytestream_to_string(stream.body).await?;
+    let S3PackageHandle { bucket, namespace } = uri.to_owned();
+    let catalog = host.to_owned();
     Ok(ManifestUri {
         hash,
-        bucket: uri.bucket,
-        namespace: uri.namespace,
+        bucket,
+        namespace,
+        catalog,
     })
 }
 
 /// `ManifestUri` should always have `hash`.
 /// But `S3PackageUri` can be just tagged as "latest".
 /// So, we need to dowload "latest" tag and find out what the `hash` is
-async fn resolve_top_hash(remote: &impl Remote, uri: &S3PackageUri) -> Res<String> {
+async fn resolve_top_hash(
+    remote: &impl Remote,
+    host: &Option<Host>,
+    uri: &S3PackageUri,
+) -> Res<String> {
     match &uri.revision {
         RevisionPointer::Hash(top_hash) => Ok(top_hash.clone()),
-        RevisionPointer::Tag(_) => Ok(resolve_latest(remote, uri.into()).await?.hash),
+        RevisionPointer::Tag(_) => Ok(resolve_latest(remote, host, &uri.into()).await?.hash),
     }
 }
 
@@ -146,14 +166,20 @@ async fn resolve_top_hash(remote: &impl Remote, uri: &S3PackageUri) -> Res<Strin
 /// `ManifestUri` should always have `hash`.
 /// But `S3PackageUri` can be just tagged as "latest".
 /// So, we need to dowload "latest" tag and find out what the `hash` is
-pub async fn resolve_manifest_uri(remote: &impl Remote, uri: &S3PackageUri) -> Res<ManifestUri> {
+pub async fn resolve_manifest_uri(
+    remote: &impl Remote,
+    host: &Option<Host>,
+    uri: &S3PackageUri,
+) -> Res<ManifestUri> {
     let bucket = uri.bucket.clone();
     let namespace = uri.namespace.clone();
-    let hash = resolve_top_hash(remote, uri).await?;
+    let hash = resolve_top_hash(remote, host, uri).await?;
+    let catalog = host.to_owned();
     Ok(ManifestUri {
         bucket,
         namespace,
         hash,
+        catalog,
     })
 }
 
@@ -163,6 +189,7 @@ pub async fn resolve_manifest_uri(remote: &impl Remote, uri: &S3PackageUri) -> R
 /// Response with the new `Row` with `place` pointing to the place it was uploaded to.
 pub async fn upload_row(
     remote: &impl Remote,
+    host: &Option<Host>,
     package_handle: S3PackageHandle,
     row: Row,
 ) -> Res<Row> {
@@ -178,7 +205,7 @@ pub async fn upload_row(
     log::info!("Uploading to S3: {}", object_uri);
 
     let (remote_url, hash) = remote
-        .upload_file(&file_path, &object_uri.into(), row.size)
+        .upload_file(host, &file_path, &object_uri.into(), row.size)
         .await?;
 
     // Update the manifest with the sha2-256-chunked checksum
@@ -299,7 +326,7 @@ mod tests {
     async fn test_resolve_existing_hash() -> Res {
         let uri = S3PackageUri::try_from("quilt+s3://b#package=foo/bar@hjknlmn")?;
         let remote = mocks::remote::MockRemote::default();
-        let top_hash = resolve_top_hash(&remote, &uri).await?;
+        let top_hash = resolve_top_hash(&remote, &None, &uri).await?;
         assert_eq!(top_hash, "hjknlmn".to_string(),);
         Ok(())
     }
@@ -310,11 +337,12 @@ mod tests {
         let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(
+                &None,
                 &S3Uri::try_from("s3://b/.quilt/named_packages/foo/bar/latest")?,
                 b"abcdef".to_vec(),
             )
             .await?;
-        let top_hash = resolve_top_hash(&remote, &uri).await?;
+        let top_hash = resolve_top_hash(&remote, &None, &uri).await?;
         assert_eq!(top_hash, "abcdef".to_string(),);
         Ok(())
     }

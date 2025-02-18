@@ -12,9 +12,9 @@ use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
 use url::form_urlencoded;
-use url::Host;
 use url::Url;
 
+use crate::uri::Host;
 use crate::uri::ManifestUri;
 use crate::Error;
 
@@ -139,6 +139,7 @@ impl<'de> Deserialize<'de> for Namespace {
     }
 }
 
+// TODO: From<AsRef<S3PackageHandle>> or From<AsRef<S3PackageUri>>?
 /// This is kinda URI for the package without revisions.
 /// You can use it when you don't know or don't care about revision of the package.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -224,7 +225,10 @@ impl TryFrom<&str> for S3PackageUri {
 
         let path = params.remove("path").map(PathBuf::from);
 
-        let catalog = params.remove("catalog").map(Host::Domain);
+        let catalog = match params.remove("catalog") {
+            Some(c) => Some(c.parse()?),
+            None => None,
+        };
 
         if !params.is_empty() {
             return Err(Error::PackageURI(format!(
@@ -423,12 +427,12 @@ mod tests {
     #[test]
     fn test_catalog() -> Res {
         let uri: S3PackageUri =
-            "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=do.ma.in".parse()?;
+            "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=test.quilt.dev".parse()?;
         assert_eq!(
             uri,
             S3PackageUri {
                 bucket: "bucket".to_string(),
-                catalog: Some(Host::Domain("do.ma.in".to_string())),
+                catalog: Some(Host::default()),
                 namespace: ("foo", "bar").into(),
                 revision: RevisionPointer::Tag("latest".to_string()),
                 path: Some(PathBuf::from("read/me.md")),
@@ -441,14 +445,14 @@ mod tests {
     fn test_stringify_with_latest() -> Res {
         let uri = S3PackageUri {
             bucket: "bucket".to_string(),
-            catalog: Some(Host::Domain("do.ma.in".to_string())),
+            catalog: Some(Host::default()),
             namespace: ("foo", "bar").into(),
             revision: RevisionPointer::Tag("latest".to_string()),
             path: Some(PathBuf::from("read/me.md")),
         };
         assert_eq!(
             uri.to_string(),
-            "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=do.ma.in"
+            "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=test.quilt.dev"
         );
         Ok(())
     }
@@ -485,6 +489,7 @@ mod tests {
             bucket: "test-bucket".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "abc123".to_string(),
+            catalog: None,
         };
 
         assert_eq!(

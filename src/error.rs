@@ -6,6 +6,7 @@ use thiserror::Error;
 use url::Url;
 
 use crate::uri;
+use crate::uri::Host;
 
 /// The error type for this library
 #[derive(Error, Debug)]
@@ -28,6 +29,9 @@ pub enum Error {
     #[error("Invalid file:// URI: {0}")]
     FileUri(Url),
 
+    #[error("Invalid host: {0}")]
+    Host(String),
+
     #[error("Failed to install path: {0}")]
     InstallPath(String),
 
@@ -42,6 +46,12 @@ pub enum Error {
 
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
+
+    #[error("Failed to get access token, need to login explicitly")]
+    LoginRequired,
+
+    #[error("Failed to get registry URL from {0}. Does {0}/config.json has it?")]
+    LoginRequiredRegistryUrl(Host),
 
     #[error("Failed to parse lineage file: {0}")]
     LineageParse(serde_json::Error),

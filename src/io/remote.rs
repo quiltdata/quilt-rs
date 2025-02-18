@@ -11,6 +11,7 @@ use multihash::Multihash;
 use tokio::io::AsyncRead;
 use tokio_stream::Stream;
 
+use crate::uri::Host;
 use crate::uri::S3Uri;
 use crate::Res;
 
@@ -49,18 +50,21 @@ impl<T: Stream<Item = StreamItem>> ObjectsStream for T {}
 /// This trait encapsulates the S3 operations that Quilt needs to perform.
 pub trait Remote {
     /// Checks if object exists
-    fn exists(&self, s3_uri: &S3Uri) -> impl Future<Output = Res<bool>> + Send;
+    fn exists(&self, host: &Option<Host>, s3_uri: &S3Uri)
+        -> impl Future<Output = Res<bool>> + Send;
 
     /// Gets the objects contents as a `File`
     // TODO: use `self.get_object_stream`. Under-the-hood it is a stream already
     fn get_object(
         &self,
+        host: &Option<Host>,
         s3_uri: &S3Uri,
     ) -> impl Future<Output = Res<impl AsyncRead + Send + Unpin>> + Send;
 
     /// Get object attributes: checksums, number of chunks, chunksize, version_id
     fn get_object_attributes(
         &self,
+        host: &Option<Host>,
         listing_uri: &S3Uri,
         object: &Object,
     ) -> impl Future<Output = Res<S3Attributes>>;
@@ -68,19 +72,29 @@ pub trait Remote {
     /// Fetches the objects contents as a `ByteStream`
     fn get_object_stream(
         &self,
+        host: &Option<Host>,
         s3_uri: &S3Uri,
     ) -> impl Future<Output = Res<RemoteObjectStream>> + Send;
 
     /// List objects list under S3 prefix using tokio Stream
     // TODO: return Item = Res<Row>
-    fn list_objects(&self, listing_uri: S3Uri) -> impl Future<Output = impl ObjectsStream> + Send;
+    fn list_objects(
+        &self,
+        host: &Option<Host>,
+        listing_uri: &S3Uri,
+    ) -> impl Future<Output = impl ObjectsStream> + Send;
 
     // Makes a head request and resolves the final versioned URL
-    fn resolve_url(&self, s3_uri: &S3Uri) -> impl Future<Output = Res<S3Uri>> + Send;
+    fn resolve_url(
+        &self,
+        host: &Option<Host>,
+        s3_uri: &S3Uri,
+    ) -> impl Future<Output = Res<S3Uri>> + Send;
 
     /// Upload file. Just that
     fn put_object(
         &self,
+        host: &Option<Host>,
         s3_uri: &S3Uri,
         contents: impl Into<ByteStream>,
     ) -> impl Future<Output = Res>;
@@ -88,6 +102,7 @@ pub trait Remote {
     /// Upload file and request checkum from S3
     fn upload_file(
         &self,
+        host: &Option<Host>,
         source_path: impl AsRef<Path>,
         dest_uri: &S3Uri,
         size: u64,

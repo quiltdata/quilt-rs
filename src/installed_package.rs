@@ -212,7 +212,13 @@ impl InstalledPackage {
             key: ".quilt/workflows/config.yml".to_string(),
             ..S3Uri::from(&remote_uri)
         };
-        resolve_workflow(&self.remote, workflow_id, workflows_config_uri).await
+        resolve_workflow(
+            &self.remote,
+            &remote_uri.catalog,
+            workflow_id,
+            workflows_config_uri,
+        )
+        .await
     }
 }
 
@@ -230,7 +236,7 @@ mod tests {
         let paths = paths::DomainPaths::new(temp_dir.path().to_path_buf());
 
         let storage = LocalStorage::new();
-        let remote = RemoteS3::new();
+        let remote = RemoteS3::new(paths.clone(), storage.clone());
         let namespace: Namespace = ("test", "history").into();
 
         // Initialize domain lineage file
@@ -244,7 +250,8 @@ mod tests {
                         "remote": {
                             "bucket": "bucket",
                             "namespace": "test/history",
-                            "hash": "abc123"
+                            "hash": "abc123",
+                            "catalog": "test.quilt.dev"
                         },
                         "base_hash": "abc123",
                         "latest_hash": "abc123",
