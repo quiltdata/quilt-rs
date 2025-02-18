@@ -135,8 +135,8 @@ async fn refresh_credentials(
 
 #[derive(Debug, Clone)]
 pub struct Auth {
-    paths: DomainPaths,
-    storage: LocalStorage,
+    pub paths: DomainPaths,
+    pub storage: LocalStorage,
 }
 
 impl Auth {
