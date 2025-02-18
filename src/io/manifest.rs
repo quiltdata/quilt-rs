@@ -189,7 +189,7 @@ pub async fn resolve_manifest_uri(
 /// Response with the new `Row` with `place` pointing to the place it was uploaded to.
 pub async fn upload_row(
     remote: &impl Remote,
-    host: Option<Host>,
+    host: &Option<Host>,
     package_handle: S3PackageHandle,
     row: Row,
 ) -> Res<Row> {

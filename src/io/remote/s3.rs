@@ -303,7 +303,7 @@ impl RemoteS3 {
 
     async fn get_client_for_region(
         &self,
-        host: Option<Host>,
+        host: &Option<Host>,
         region: aws_types::region::Region,
     ) -> Res<aws_sdk_s3::Client> {
         let creds_ref = CredsRef {
@@ -396,7 +396,7 @@ impl RemoteS3 {
         bucket: &str,
     ) -> Res<aws_sdk_s3::Client> {
         let region = self.get_region_for_bucket(bucket).await?.clone();
-        self.get_client_for_region(host.clone(), region).await
+        self.get_client_for_region(host, region).await
     }
 }
 

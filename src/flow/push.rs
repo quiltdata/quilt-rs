@@ -39,7 +39,7 @@ async fn use_existing_row_or_upload(
                 }));
             }
         } else {
-            output.push(upload_row(remote, host.clone(), package_handle.clone(), row).await)
+            output.push(upload_row(remote, host, package_handle.clone(), row).await)
         }
     }
     Ok(output)
