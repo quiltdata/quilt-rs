@@ -205,7 +205,7 @@ pub async fn upload_row(
     log::info!("Uploading to S3: {}", object_uri);
 
     let (remote_url, hash) = remote
-        .upload_file(&host, &file_path, &object_uri.into(), row.size)
+        .upload_file(host, &file_path, &object_uri.into(), row.size)
         .await?;
 
     // Update the manifest with the sha2-256-chunked checksum
