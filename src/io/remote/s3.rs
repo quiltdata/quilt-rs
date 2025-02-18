@@ -323,11 +323,16 @@ impl RemoteS3 {
         // Create new client
         let config = match host {
             None => {
-                // FIXME: Catch credentials error and return LoginRequired
-                aws_config::defaults(BehaviorVersion::latest())
+                let config = aws_config::defaults(BehaviorVersion::latest())
                     .region(region.clone())
                     .load()
-                    .await
+                    .await;
+                
+                // Check if we have valid credentials
+                if config.credentials_provider().is_none() {
+                    return Err(Error::LoginRequired);
+                }
+                config
             }
             Some(ref host) => {
                 let creds = self
