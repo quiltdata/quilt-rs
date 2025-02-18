@@ -37,7 +37,7 @@ pub struct PackageFileFingerprint {
     pub hash: Multihash<256>,
 }
 
-/// Status of the package and workding directory of the pakage
+/// Status of the package and working directory of the package
 #[derive(Debug, PartialEq, Default)]
 pub struct InstalledPackageStatus {
     /// Current commit vs upstream state
