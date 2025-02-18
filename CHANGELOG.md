@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## [0.8.11]
+
+* Add authentication to Quilt Stack preseving backward compatibility with getting credentials from `~/.aws`
+* `domain` path is now required for every command internally, but is optional for users
+   If `domain` is not provided, the default user data directory is used
+* New command `login`
+
 ## [0.8.10]
 
 * Fix workflow format by adding `schemas` property
