@@ -28,7 +28,7 @@ mod tests {
         let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(
-                None,
+                &None,
                 &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
                 b"OUTDATED_HASH".to_vec(),
             )

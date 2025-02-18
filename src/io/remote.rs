@@ -80,7 +80,7 @@ pub trait Remote {
     fn list_objects(
         &self,
         host: &Option<Host>,
-        listing_uri: S3Uri,
+        listing_uri: &S3Uri,
     ) -> impl Future<Output = impl ObjectsStream> + Send;
 
     // Makes a head request and resolves the final versioned URL

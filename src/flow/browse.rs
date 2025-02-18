@@ -38,9 +38,7 @@ async fn fetch_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Res<Vec<
 
 async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res<Manifest> {
     let s3_uri: S3Uri = ManifestUriLegacy::from(manifest_uri).into();
-    let contents = remote
-        .get_object(&manifest_uri.catalog, &s3_uri)
-        .await?;
+    let contents = remote.get_object(&manifest_uri.catalog, &s3_uri).await?;
     Manifest::from_reader(contents).await
 }
 
@@ -195,7 +193,7 @@ mod tests {
             manifest.bucket, manifest.hash
         ))?;
         remote
-            .put_object(manifest.catalog.clone(), &remote_uri, parquet.clone())
+            .put_object(&manifest.catalog, &remote_uri, parquet.clone())
             .await?;
 
         let storage = mocks::storage::MockStorage::default();
@@ -241,7 +239,7 @@ mod tests {
             manifest.bucket, manifest.hash
         ))?;
         remote
-            .put_object(manifest.catalog.clone(), &remote_uri, jsonl.clone())
+            .put_object(&manifest.catalog, &remote_uri, jsonl.clone())
             .await?;
 
         let storage = mocks::storage::MockStorage::default();

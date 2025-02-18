@@ -117,7 +117,7 @@ mod tests {
             manifest_uri.bucket, manifest_uri.hash
         ))?;
         remote
-            .put_object(manifest_uri.catalog.clone(), &remote_uri, parquet)
+            .put_object(&manifest_uri.catalog, &remote_uri, parquet)
             .await?;
 
         // Simulate the remote storage containing the reference to the latest manifest
@@ -127,7 +127,7 @@ mod tests {
         ))?;
         remote
             .put_object(
-                manifest_uri.catalog.clone(),
+                &manifest_uri.catalog,
                 &latest_uri,
                 manifest_uri.hash.as_bytes().to_vec(),
             )
@@ -188,7 +188,7 @@ mod tests {
             manifest_uri.bucket, manifest_uri.hash
         ))?;
         remote
-            .put_object(manifest_uri.catalog.clone(), &remote_uri, parquet)
+            .put_object(&manifest_uri.catalog, &remote_uri, parquet)
             .await?;
 
         let storage = LocalStorage::new();

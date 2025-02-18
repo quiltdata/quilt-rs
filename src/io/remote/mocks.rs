@@ -101,7 +101,7 @@ impl Remote for MockRemote {
         })
     }
 
-    async fn list_objects(&self, _host: &Option<Host>, _listing_uri: S3Uri) -> impl ObjectsStream {
+    async fn list_objects(&self, _host: &Option<Host>, _listing_uri: &S3Uri) -> impl ObjectsStream {
         tokio_stream::iter(Vec::new())
     }
 
@@ -155,19 +155,19 @@ mod tests {
         let remote = MockRemote::default();
         remote
             .put_object(
-                None,
+                &None,
                 &S3Uri::try_from("s3://found/n?versionId=v")?,
                 b"Hello".to_vec(),
             )
             .await?;
         let s3_uri_not_found = S3Uri::try_from("s3://b/n?versionId=v")?;
-        let not_found = remote.get_object(None, &s3_uri_not_found).await;
+        let not_found = remote.get_object(&None, &s3_uri_not_found).await;
         match not_found {
             Err(err) => assert_eq!(err.to_string(), "S3 error: Key doesn't exist".to_string()),
             Ok(_) => panic!("shouldn't happen"),
         }
         let s3_uri_found = S3Uri::try_from("s3://found/n?versionId=v")?;
-        let mut found = remote.get_object(None, &s3_uri_found).await?;
+        let mut found = remote.get_object(&None, &s3_uri_found).await?;
         let mut output = Vec::new();
         found.read_to_end(&mut output).await?;
         assert_eq!(output, b"Hello");

@@ -254,7 +254,7 @@ mod tests {
         let remote_object_uri = S3Uri::from_str(&remote_file_url)?;
         remote
             .put_object(
-                lineage.remote.catalog.clone(),
+                &lineage.remote.catalog,
                 &remote_object_uri,
                 Vec::new(),
             )
@@ -349,7 +349,7 @@ mod tests {
         let remote_object_uri_2 = S3Uri::from_str(&row_2.place)?;
         remote
             .put_object(
-                lineage.remote.catalog.clone(),
+                &lineage.remote.catalog,
                 &remote_object_uri_2,
                 Vec::new(),
             )
@@ -357,7 +357,7 @@ mod tests {
         let remote_object_uri_4 = S3Uri::from_str(&row_4.place)?;
         remote
             .put_object(
-                lineage.remote.catalog.clone(),
+                &lineage.remote.catalog,
                 &remote_object_uri_4,
                 Vec::new(),
             )

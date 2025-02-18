@@ -120,7 +120,7 @@ pub async fn tag_latest(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res
 async fn upload_tag(remote: &impl Remote, manifest_uri: &ManifestUri, tag_uri: TagUri) -> Res {
     remote
         .put_object(
-            manifest_uri.catalog.clone(),
+            &manifest_uri.catalog,
             &tag_uri.into(),
             manifest_uri.hash.as_bytes().to_vec(),
         )
@@ -336,7 +336,7 @@ mod tests {
         let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(
-                None,
+                &None,
                 &S3Uri::try_from("s3://b/.quilt/named_packages/foo/bar/latest")?,
                 b"abcdef".to_vec(),
             )

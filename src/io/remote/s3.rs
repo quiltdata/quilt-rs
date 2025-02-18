@@ -477,7 +477,7 @@ impl Remote for RemoteS3 {
         get_object_stream(&client, s3_uri).await
     }
 
-    async fn list_objects(&self, host: &Option<Host>, listing_uri: S3Uri) -> impl ObjectsStream {
+    async fn list_objects(&self, host: &Option<Host>, listing_uri: &S3Uri) -> impl ObjectsStream {
         try_stream! {
             let client = self.get_client_for_bucket(host, &listing_uri.bucket).await?;
             let mut paginated_stream = client

@@ -198,14 +198,14 @@ mod tests {
         let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(
-                None,
+                &None,
                 &S3Uri::try_from("s3://b/.quilt/packages/1220__FOO__.parquet")?,
                 jsonl,
             )
             .await?;
         remote
             .put_object(
-                None,
+                &None,
                 &S3Uri::try_from("s3://b/.quilt/named_packages/a/c/latest")?,
                 b"abcdef".to_vec(),
             )
@@ -265,14 +265,14 @@ mod tests {
         let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(
-                None,
+                &None,
                 &S3Uri::try_from("s3://b/.quilt/packages/1220__FOO__.parquet")?,
                 jsonl,
             )
             .await?;
         remote
             .put_object(
-                None,
+                &None,
                 &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
                 b"abcdef".to_vec(),
             )
