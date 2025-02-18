@@ -132,17 +132,19 @@ async fn upload_tag(remote: &impl Remote, manifest_uri: &ManifestUri, tag_uri: T
 /// Then creates `ManifestUri`.
 pub async fn resolve_latest(
     remote: &impl Remote,
-    host: Option<Host>,
-    uri: S3PackageHandle,
+    host: &Option<Host>,
+    uri: &S3PackageHandle,
 ) -> Res<ManifestUri> {
     let tag_uri = TagUri::latest(uri.clone());
-    let stream = remote.get_object_stream(&host, &tag_uri.into()).await?;
+    let stream = remote.get_object_stream(host, &tag_uri.into()).await?;
     let hash = bytestream_to_string(stream.body).await?;
+    let S3PackageHandle { bucket, namespace } = uri.to_owned();
+    let catalog = host.to_owned();
     Ok(ManifestUri {
         hash,
-        bucket: uri.bucket,
-        namespace: uri.namespace,
-        catalog: host,
+        bucket,
+        namespace,
+        catalog,
     })
 }
 
@@ -151,12 +153,12 @@ pub async fn resolve_latest(
 /// So, we need to dowload "latest" tag and find out what the `hash` is
 async fn resolve_top_hash(
     remote: &impl Remote,
-    host: Option<Host>,
+    host: &Option<Host>,
     uri: &S3PackageUri,
 ) -> Res<String> {
     match &uri.revision {
         RevisionPointer::Hash(top_hash) => Ok(top_hash.clone()),
-        RevisionPointer::Tag(_) => Ok(resolve_latest(remote, host, uri.into()).await?.hash),
+        RevisionPointer::Tag(_) => Ok(resolve_latest(remote, host, &uri.into()).await?.hash),
     }
 }
 
@@ -166,17 +168,18 @@ async fn resolve_top_hash(
 /// So, we need to dowload "latest" tag and find out what the `hash` is
 pub async fn resolve_manifest_uri(
     remote: &impl Remote,
-    host: Option<Host>,
+    host: &Option<Host>,
     uri: &S3PackageUri,
 ) -> Res<ManifestUri> {
     let bucket = uri.bucket.clone();
     let namespace = uri.namespace.clone();
-    let hash = resolve_top_hash(remote, host.clone(), uri).await?;
+    let hash = resolve_top_hash(remote, host, uri).await?;
+    let catalog = host.to_owned();
     Ok(ManifestUri {
         bucket,
         namespace,
         hash,
-        catalog: host,
+        catalog,
     })
 }
 
@@ -323,7 +326,7 @@ mod tests {
     async fn test_resolve_existing_hash() -> Res {
         let uri = S3PackageUri::try_from("quilt+s3://b#package=foo/bar@hjknlmn")?;
         let remote = mocks::remote::MockRemote::default();
-        let top_hash = resolve_top_hash(&remote, None, &uri).await?;
+        let top_hash = resolve_top_hash(&remote, &None, &uri).await?;
         assert_eq!(top_hash, "hjknlmn".to_string(),);
         Ok(())
     }
@@ -339,7 +342,7 @@ mod tests {
                 b"abcdef".to_vec(),
             )
             .await?;
-        let top_hash = resolve_top_hash(&remote, None, &uri).await?;
+        let top_hash = resolve_top_hash(&remote, &None, &uri).await?;
         assert_eq!(top_hash, "abcdef".to_string(),);
         Ok(())
     }

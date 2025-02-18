@@ -23,8 +23,8 @@ pub async fn reset_to_latest(
 ) -> Res<PackageLineage> {
     let latest = resolve_latest(
         remote,
-        lineage.remote.catalog.clone(),
-        lineage.remote.clone().into(),
+        &lineage.remote.catalog,
+        &lineage.remote.clone().into(),
     )
     .await?;
     if latest.hash == lineage.remote.hash {

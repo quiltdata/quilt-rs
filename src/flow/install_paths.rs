@@ -25,11 +25,11 @@ use crate::Res;
 async fn cache_immutable_object(
     storage: &impl Storage,
     remote: &impl Remote,
-    host: Option<Host>,
+    host: &Option<Host>,
     object_dest: &PathBuf,
     uri: &S3Uri,
 ) -> Res {
-    let stream = remote.get_object_stream(&host, uri).await?;
+    let stream = remote.get_object_stream(host, uri).await?;
     storage.write_byte_stream(object_dest, stream.body).await
 }
 
@@ -124,7 +124,7 @@ pub async fn install_paths(
             cache_immutable_object(
                 storage,
                 remote,
-                lineage.remote.catalog.clone(),
+                &lineage.remote.catalog,
                 &object_dest,
                 &row.place.parse()?,
             )

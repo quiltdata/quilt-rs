@@ -139,6 +139,7 @@ impl<'de> Deserialize<'de> for Namespace {
     }
 }
 
+// TODO: From<AsRef<S3PackageHandle>> or From<AsRef<S3PackageUri>>?
 /// This is kinda URI for the package without revisions.
 /// You can use it when you don't know or don't care about revision of the package.
 #[derive(Clone, Debug, PartialEq, Eq)]

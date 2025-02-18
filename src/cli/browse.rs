@@ -107,7 +107,7 @@ pub async fn model(
     let remote = local_domain.get_remote();
     let uri: quilt_rs::uri::S3PackageUri = uri.parse()?;
     let manifest_uri =
-        quilt_rs::io::manifest::resolve_manifest_uri(remote, uri.catalog.clone(), &uri).await?;
+        quilt_rs::io::manifest::resolve_manifest_uri(remote, &uri.catalog, &uri).await?;
 
     let manifest = local_domain.browse_remote_manifest(&manifest_uri).await?;
 

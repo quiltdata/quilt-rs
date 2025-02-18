@@ -59,7 +59,7 @@ async fn install_package(
         return Ok(installed_package);
     }
     let manifest_uri =
-        quilt_rs::io::manifest::resolve_manifest_uri(remote, uri.catalog.clone(), uri).await?;
+        quilt_rs::io::manifest::resolve_manifest_uri(remote, &uri.catalog, uri).await?;
     Ok(local_domain.install_package(&manifest_uri).await?)
 }
 
