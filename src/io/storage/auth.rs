@@ -106,7 +106,7 @@ mod tests {
         let test_tokens = Tokens {
             access_token: "test_access".to_string(),
             refresh_token: "test_refresh".to_string(),
-            expires_at: Utc::now(),
+            expires_at: Utc::now() + chrono::Duration::minutes(1),
         };
 
         // Write tokens
