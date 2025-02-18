@@ -392,11 +392,11 @@ impl RemoteS3 {
 
     async fn get_client_for_bucket(
         &self,
-        host: Option<Host>,
+        host: &Option<Host>,
         bucket: &str,
     ) -> Res<aws_sdk_s3::Client> {
         let region = self.get_region_for_bucket(bucket).await?.clone();
-        self.get_client_for_region(host, region).await
+        self.get_client_for_region(host.clone(), region).await
     }
 }
 
