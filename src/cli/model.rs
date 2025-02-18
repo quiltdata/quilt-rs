@@ -88,6 +88,7 @@ impl Model {
         Model { local_domain }
     }
 
+    #[cfg(test)]
     pub fn from_temp_dir() -> Result<(Self, TempDir), Error> {
         let temp_dir = TempDir::new()?;
         Ok((Model::from(&temp_dir), temp_dir))
