@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## [0.8.11-1]
+
+* Merged two errors into one `LoginRequired` error using `Option` argument
+
 ## [0.8.11]
 
 * Add authentication to Quilt Stack preserving backward compatibility with getting credentials from `~/.aws`
