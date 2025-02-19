@@ -47,8 +47,8 @@ pub enum Error {
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
-    #[error("Failed to get access token, need to login explicitly")]
-    LoginRequired,
+    #[error("Failed to get access token: {0:?}")]
+    LoginRequired(Option<Host>),
 
     #[error("Failed to get registry URL from {0}. Does {0}/config.json has it?")]
     LoginRequiredRegistryUrl(Host),

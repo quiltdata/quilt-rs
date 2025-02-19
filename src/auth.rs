@@ -198,7 +198,7 @@ impl Auth {
                     self.refresh_credentials(http_client, host, &tokens.access_token)
                         .await
                 }
-                None => Err(crate::Error::LoginRequired),
+                None => Err(crate::Error::LoginRequired(Some(host.to_owned()))),
             },
         }
     }

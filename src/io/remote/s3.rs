@@ -350,7 +350,7 @@ impl RemoteS3 {
 
                 // Check if we have valid credentials
                 if config.credentials_provider().is_none() {
-                    return Err(Error::LoginRequired);
+                    return Err(Error::LoginRequired(None));
                 }
                 config
             }
