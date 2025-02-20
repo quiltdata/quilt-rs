@@ -223,18 +223,17 @@ mod tests {
             unimplemented!("head is not used in this test")
         }
 
-        async fn post<T: serde::de::DeserializeOwned, F: serde::Serialize + Send + Sync>(
+        async fn post<T: serde::de::DeserializeOwned>(
             &self,
             url: &str,
-            form_data: &F,
+            form_data: &HashMap<String, String>,
         ) -> Res<T> {
             // This test is only for the default Host
             let host = Host::default();
             assert_eq!(url, format!("https://registry-{}/api/token", host));
 
             // Verify form data contains the refresh token
-            let form_map: &HashMap<String, String> = form_data.downcast_ref().unwrap();
-            assert_eq!(form_map.get("refresh_token").unwrap(), "test-refresh-token");
+            assert_eq!(form_data.get("refresh_token").unwrap(), "test-refresh-token");
 
             let tokens = RemoteTokens {
                 access_token: "test-access-token".to_string(),

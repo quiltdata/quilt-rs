@@ -1,16 +1,19 @@
-use crate::Res;
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use reqwest::header::HeaderMap;
 use serde::de::DeserializeOwned;
+
+use crate::Res;
 
 #[async_trait]
 pub trait HttpClient: Send + Sync {
     async fn get<T: DeserializeOwned>(&self, url: &str, auth_token: Option<&str>) -> Res<T>;
     async fn head(&self, url: &str) -> Res<HeaderMap>;
-    async fn post<T: DeserializeOwned, F: serde::Serialize + Send + Sync>(
+    async fn post<T: DeserializeOwned>(
         &self,
         url: &str,
-        form_data: &F,
+        form_data: &HashMap<String, String>,
     ) -> Res<T>;
 }
 
@@ -48,10 +51,10 @@ impl HttpClient for ReqwestClient {
         Ok(response.headers().clone())
     }
 
-    async fn post<T: DeserializeOwned, F: serde::Serialize + Send + Sync>(
+    async fn post<T: DeserializeOwned>(
         &self,
         url: &str,
-        form_data: &F,
+        form_data: &HashMap<String, String>,
     ) -> Res<T> {
         let response = self
             .client
