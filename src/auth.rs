@@ -200,6 +200,10 @@ mod tests {
     use async_trait::async_trait;
     use reqwest::header::HeaderMap;
 
+    const ACCESS_TOKEN: &str = "test-access-token";
+    const REFRESH_TOKEN: &str = "test-refresh-token";
+    const TIMESTAMP: i64 = 1708444800;
+
     struct TestHttpClient;
 
     #[async_trait]
@@ -221,12 +225,12 @@ mod tests {
                     Ok(serde_json::from_value(serde_json::to_value(config)?)?)
                 }
                 u if u == format!("https://{}/api/auth/get_credentials", registry) => {
-                    assert_eq!(auth_token, Some("test-access-token"));
+                    assert_eq!(auth_token, Some(ACCESS_TOKEN));
                     let creds = RemoteCredentials {
                         access_key_id: "test-access-key".to_string(),
                         secret_access_key: "test-secret-key".to_string(),
                         session_token: "test-session-token".to_string(),
-                        expiration: chrono::DateTime::from_timestamp(1708444800, 0).unwrap(),
+                        expiration: chrono::DateTime::from_timestamp(TIMESTAMP, 0).unwrap(),
                     };
                     Ok(serde_json::from_value(serde_json::to_value(creds)?)?)
                 }
@@ -248,12 +252,12 @@ mod tests {
             assert_eq!(url, format!("https://registry-{}/api/token", host));
 
             // Verify form data contains the refresh token
-            assert_eq!(form_data.get("refresh_token").unwrap(), "test-refresh-token");
+            assert_eq!(form_data.get("refresh_token").unwrap(), REFRESH_TOKEN);
 
             let tokens = RemoteTokens {
-                access_token: "test-access-token".to_string(),
+                access_token: ACCESS_TOKEN.to_string(),
                 refresh_token: "new-refresh-token".to_string(),
-                expires_at: chrono::DateTime::from_timestamp(1708444800, 0).unwrap(),
+                expires_at: chrono::DateTime::from_timestamp(TIMESTAMP, 0).unwrap(),
             };
             Ok(serde_json::from_value(serde_json::to_value(tokens)?)?)
         }
@@ -274,10 +278,8 @@ mod tests {
     async fn test_get_auth_tokens() {
         let client = TestHttpClient;
         let host = Host::default();
-        let refresh_token = "test-refresh-token";
-
-        let tokens = get_auth_tokens(&client, &host, refresh_token).await.unwrap();
-        assert_eq!(tokens.access_token, "test-access-token");
+        let tokens = get_auth_tokens(&client, &host, REFRESH_TOKEN).await.unwrap();
+        assert_eq!(tokens.access_token, ACCESS_TOKEN);
         assert_eq!(tokens.refresh_token, "new-refresh-token");
         assert_eq!(
             tokens.expires_at,
@@ -289,9 +291,7 @@ mod tests {
     async fn test_refresh_credentials() {
         let client = TestHttpClient;
         let host = Host::default();
-        let access_token = "test-access-token";
-
-        let credentials = refresh_credentials(&client, &host, access_token).await.unwrap();
+        let credentials = refresh_credentials(&client, &host, ACCESS_TOKEN).await.unwrap();
         assert_eq!(credentials.access_key, "test-access-key");
         assert_eq!(credentials.secret_key, "test-secret-key");
         assert_eq!(credentials.token, "test-session-token");
