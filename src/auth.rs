@@ -74,13 +74,9 @@ struct QuiltStackConfig {
 }
 
 async fn get_registry_url(http_client: &impl HttpClient, host: &Host) -> Res<url::Host> {
-    let response = http_client
+    let QuiltStackConfig { registry_url } = http_client
         .get(&format!("https://{}/config.json", host))
-        .header("User-Agent", USER_AGENT)
-        .send()
         .await?;
-
-    let QuiltStackConfig { registry_url } = response.json().await?;
     Ok(url::Host::Domain(
         registry_url
             .domain()

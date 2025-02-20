@@ -1,12 +1,13 @@
-use reqwest::RequestBuilder;
+use reqwest::{RequestBuilder, header::HeaderMap};
 use async_trait::async_trait;
+use serde::de::DeserializeOwned;
 use crate::Res;
 
 #[async_trait]
 pub trait HttpClient: Send + Sync {
-    fn get(&self, url: &str) -> RequestBuilder;
+    async fn get<T: DeserializeOwned>(&self, url: &str) -> Res<T>;
+    async fn head(&self, url: &str) -> Res<HeaderMap>;
     fn post(&self, url: &str) -> RequestBuilder;
-    async fn execute(&self, request: RequestBuilder) -> Res<reqwest::Response>;
     fn bearer_auth(&self, token: &str) -> RequestBuilder;
     fn json<T: serde::Serialize + Send + Sync>(&self, json: &T) -> RequestBuilder;
     fn form<T: serde::Serialize + Send + Sync>(&self, form: &T) -> RequestBuilder;
@@ -27,16 +28,18 @@ impl ReqwestClient {
 
 #[async_trait]
 impl HttpClient for ReqwestClient {
-    fn get(&self, url: &str) -> RequestBuilder {
-        self.client.get(url)
+    async fn get<T: DeserializeOwned>(&self, url: &str) -> Res<T> {
+        let response = self.client.get(url).send().await?;
+        Ok(response.json().await?)
+    }
+
+    async fn head(&self, url: &str) -> Res<HeaderMap> {
+        let response = self.client.head(url).send().await?;
+        Ok(response.headers().clone())
     }
 
     fn post(&self, url: &str) -> RequestBuilder {
         self.client.post(url)
-    }
-
-    async fn execute(&self, request: RequestBuilder) -> Res<reqwest::Response> {
-        Ok(request.send().await?)
     }
 
     fn bearer_auth(&self, token: &str) -> RequestBuilder {
