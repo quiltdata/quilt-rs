@@ -5,8 +5,7 @@ use crate::Res;
 
 #[async_trait]
 pub trait HttpClient: Send + Sync {
-    async fn get<T: DeserializeOwned>(&self, url: &str) -> Res<T>;
-    async fn get_with_auth<T: DeserializeOwned>(&self, url: &str, token: &str) -> Res<T>;
+    async fn get<T: DeserializeOwned>(&self, url: &str, auth_token: Option<&str>) -> Res<T>;
     async fn head(&self, url: &str) -> Res<HeaderMap>;
     fn post(&self, url: &str) -> RequestBuilder;
     fn json<T: serde::Serialize + Send + Sync>(&self, json: &T) -> RequestBuilder;
