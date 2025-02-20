@@ -203,8 +203,14 @@ mod tests {
     const ACCESS_TOKEN: &str = "test-access-token";
     const REFRESH_TOKEN: &str = "test-refresh-token";
     const TIMESTAMP: i64 = 1708444800;
-    const TEST_HOST: Host = Host::from("test.quilt.dev");
-    const REGISTRY_URL: &str = "registry-test.quilt.dev";
+
+    fn get_host() -> Host {
+        "test.quilt.dev".parse().unwrap()
+    }
+
+    fn get_registry() -> String {
+        "registry-test.quilt.dev".to_string()
+    }
 
     struct TestHttpClient;
 
@@ -215,10 +221,10 @@ mod tests {
             url: &str,
             auth_token: Option<&str>,
         ) -> Res<T> {
-            let registry = REGISTRY_URL;
+            let registry = get_registry();
 
             match url {
-                u if u == format!("https://{}/config.json", TEST_HOST) => {
+                u if u == format!("https://{}/config.json", get_host()) => {
                     let config = QuiltStackConfig {
                         registry_url: format!("https://{}", registry).parse()?,
                     };
@@ -247,7 +253,7 @@ mod tests {
             url: &str,
             form_data: &HashMap<String, String>,
         ) -> Res<T> {
-            assert_eq!(url, format!("https://{}/api/token", REGISTRY_URL));
+            assert_eq!(url, format!("https://{}/api/token", get_registry()));
 
             // Verify form data contains the refresh token
             assert_eq!(form_data.get("refresh_token").unwrap(), REFRESH_TOKEN);
@@ -264,7 +270,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_registry_url() {
         let client = TestHttpClient;
-        let result = get_registry_url(&client, &TEST_HOST).await.unwrap();
+        let result = get_registry_url(&client, &get_host()).await.unwrap();
         assert_eq!(
             result,
             url::Host::Domain("registry-test.quilt.dev".to_string())
@@ -274,7 +280,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_auth_tokens() {
         let client = TestHttpClient;
-        let tokens = get_auth_tokens(&client, &TEST_HOST, REFRESH_TOKEN)
+        let tokens = get_auth_tokens(&client, &get_host(), REFRESH_TOKEN)
             .await
             .unwrap();
         assert_eq!(tokens.access_token, ACCESS_TOKEN);
@@ -288,7 +294,7 @@ mod tests {
     #[tokio::test]
     async fn test_refresh_credentials() {
         let client = TestHttpClient;
-        let credentials = refresh_credentials(&client, &TEST_HOST, ACCESS_TOKEN)
+        let credentials = refresh_credentials(&client, &get_host(), ACCESS_TOKEN)
             .await
             .unwrap();
         assert_eq!(credentials.access_key, "test-access-key");
