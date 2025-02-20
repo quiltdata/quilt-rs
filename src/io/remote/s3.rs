@@ -22,13 +22,13 @@ use tokio::io::AsyncRead;
 use tracing::log;
 
 use crate::auth;
-use crate::io::remote::HttpClient;
 use crate::checksum::calculate_sha256_checksum;
 use crate::checksum::get_checksum_chunksize_and_parts;
 use crate::checksum::get_compliant_chunked_checksum;
 use crate::checksum::ContentHash;
 use crate::checksum::MPU_MAX_PARTS;
 use crate::checksum::MULTIHASH_SHA256_CHUNKED;
+use crate::io::remote::HttpClient;
 use crate::io::remote::ObjectsStream;
 use crate::io::remote::Remote;
 use crate::io::storage::auth::AuthIo;
@@ -73,9 +73,11 @@ impl TryFrom<GetObjectAttributesOutput> for S3AttributesWrapper {
 }
 
 async fn find_bucket_region(client: &impl HttpClient, bucket: &str) -> Res<String> {
-    let headers = client.head(&format!("https://s3.amazonaws.com/{bucket}")).await?;
-
-    match headers.get("x-amz-bucket-region") {
+    match client
+        .head(&format!("https://s3.amazonaws.com/{}", bucket))
+        .await?
+        .get("x-amz-bucket-region")
+    {
         Some(location) => Ok(location.to_str()?.into()),
         None => Err(Error::MissingHTTPHeader("x-amz-bucket-region".to_string())),
     }

@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use super::{CommitState, LineagePaths, PackageLineage};
+use super::CommitState;
+use super::LineagePaths;
+use super::PackageLineage;
 use crate::lineage::PathState;
 use crate::mocks;
 use crate::uri::ManifestUri;

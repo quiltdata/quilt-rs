@@ -117,7 +117,7 @@ pub async fn commit_package(
     user_meta: Option<JsonObject>,
     workflow: Option<Workflow>,
 ) -> Res<PackageLineage> {
-    log::debug!("commit: {message:?}, {user_meta:?}");
+    log::debug!("commit: {:?}, {:?}", message, user_meta);
     // create a new manifest based on the stored version
 
     // for each modified file:

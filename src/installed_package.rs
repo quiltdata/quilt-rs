@@ -104,7 +104,7 @@ impl InstalledPackage {
     }
 
     pub async fn revert_paths(&self, paths: &Vec<String>) -> Res {
-        log::debug!("revert_paths: {paths:?}");
+        log::debug!("revert_paths: {:?}", paths);
         unimplemented!()
     }
 

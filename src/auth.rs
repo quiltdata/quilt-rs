@@ -14,9 +14,6 @@ use crate::paths::DomainPaths;
 use crate::uri::Host;
 use crate::Res;
 
-const USER_AGENT: &str =
-    "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1; SV1; .NET CLR 1.0.3705; .NET CLR 1.1.4322)";
-
 #[derive(Deserialize, Serialize, Debug)]
 pub struct RemoteTokens {
     pub access_token: String,

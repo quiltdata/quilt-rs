@@ -1,13 +1,17 @@
-use reqwest::{RequestBuilder, header::HeaderMap};
-use async_trait::async_trait;
-use serde::de::DeserializeOwned;
 use crate::Res;
+use async_trait::async_trait;
+use reqwest::header::HeaderMap;
+use serde::de::DeserializeOwned;
 
 #[async_trait]
 pub trait HttpClient: Send + Sync {
     async fn get<T: DeserializeOwned>(&self, url: &str, auth_token: Option<&str>) -> Res<T>;
     async fn head(&self, url: &str) -> Res<HeaderMap>;
-    async fn post<T: DeserializeOwned, F: serde::Serialize + Send + Sync>(&self, url: &str, form_data: &F) -> Res<T>;
+    async fn post<T: DeserializeOwned, F: serde::Serialize + Send + Sync>(
+        &self,
+        url: &str,
+        form_data: &F,
+    ) -> Res<T>;
 }
 
 #[derive(Clone, Debug)]
@@ -29,14 +33,12 @@ const USER_AGENT: &str =
 #[async_trait]
 impl HttpClient for ReqwestClient {
     async fn get<T: DeserializeOwned>(&self, url: &str, auth_token: Option<&str>) -> Res<T> {
-        let mut request = self.client
-            .get(url)
-            .header("User-Agent", USER_AGENT);
-            
+        let mut request = self.client.get(url).header("User-Agent", USER_AGENT);
+
         if let Some(token) = auth_token {
             request = request.bearer_auth(token);
         }
-        
+
         let response = request.send().await?;
         Ok(response.json().await?)
     }
@@ -46,8 +48,13 @@ impl HttpClient for ReqwestClient {
         Ok(response.headers().clone())
     }
 
-    async fn post<T: DeserializeOwned, F: serde::Serialize + Send + Sync>(&self, url: &str, form_data: &F) -> Res<T> {
-        let response = self.client
+    async fn post<T: DeserializeOwned, F: serde::Serialize + Send + Sync>(
+        &self,
+        url: &str,
+        form_data: &F,
+    ) -> Res<T> {
+        let response = self
+            .client
             .post(url)
             .header("User-Agent", USER_AGENT)
             .form(form_data)
