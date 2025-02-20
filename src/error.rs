@@ -50,7 +50,7 @@ pub enum Error {
     #[error("Failed to get access token: {0:?}")]
     LoginRequired(Option<Host>),
 
-    #[error("Failed to get registry URL from {0}. Does {0}/config.json has it?")]
+    #[error("Failed to get registry URL from {0}. Does {0}/config.json have it?")]
     LoginRequiredRegistryUrl(Host),
 
     #[error("Failed to parse lineage file: {0}")]
