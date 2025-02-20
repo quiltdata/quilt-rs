@@ -203,6 +203,8 @@ mod tests {
     const ACCESS_TOKEN: &str = "test-access-token";
     const REFRESH_TOKEN: &str = "test-refresh-token";
     const TIMESTAMP: i64 = 1708444800;
+    const TEST_HOST: Host = Host::Domain("test.quilt.dev".to_string());
+    const REGISTRY_URL: &str = "registry-test.quilt.dev";
 
     struct TestHttpClient;
 
@@ -213,9 +215,7 @@ mod tests {
             url: &str,
             auth_token: Option<&str>,
         ) -> Res<T> {
-            // This test is only for the default Host
-            let host = Host::default();
-            let registry = format!("registry-{}", host);
+            let registry = REGISTRY_URL;
 
             match url {
                 u if u == format!("https://{}/config.json", host) => {
@@ -247,9 +247,7 @@ mod tests {
             url: &str,
             form_data: &HashMap<String, String>,
         ) -> Res<T> {
-            // This test is only for the default Host
-            let host = Host::default();
-            assert_eq!(url, format!("https://registry-{}/api/token", host));
+            assert_eq!(url, format!("https://{}/api/token", REGISTRY_URL));
 
             // Verify form data contains the refresh token
             assert_eq!(form_data.get("refresh_token").unwrap(), REFRESH_TOKEN);
@@ -266,7 +264,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_registry_url() {
         let client = TestHttpClient;
-        let host = Host::default();
+        let host = TEST_HOST;
         let result = get_registry_url(&client, &host).await.unwrap();
         assert_eq!(
             result,
