@@ -30,6 +30,86 @@ fn get_schema_id(yaml: &YamlValue, workflow_id: &str) -> Res<String> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::io::remote::mocks::MockRemote;
+
+    #[tokio::test]
+    async fn test_no_config_yaml() -> Res<()> {
+        let remote = MockRemote::default();
+        let host = None;
+        let uri: S3Uri = "s3://test-bucket/workflows/no-config.yaml".parse()?;
+
+        // Case 1.a: No config.yaml and workflow_id is None
+        let result = resolve_workflow(&remote, &host, None, uri.clone()).await?;
+        assert!(result.is_none());
+
+        // Case 1.b: No config.yaml but workflow_id is set
+        let err = resolve_workflow(&remote, &host, Some("test-workflow".to_string()), uri)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::Workflow(_)));
+        assert!(err.to_string().contains("There is no workflows config"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_with_config_yaml() -> Res<()> {
+        let remote = MockRemote::default();
+        let host = None;
+        let uri: S3Uri = "s3://test-bucket/workflows/config.yaml".parse()?;
+
+        // Put test config.yaml into mock remote storage
+        let config = r#"
+workflows:
+  test-workflow:
+    metadata_schema: test-schema
+schemas:
+  test-schema:
+    url: s3://test-bucket/schemas/test.json
+"#;
+        remote.put_object(&None, &uri, config.as_bytes().to_vec()).await?;
+
+        // Case 2.a: Config exists, workflow_id is set and valid
+        let result = resolve_workflow(&remote, &host, Some("test-workflow".to_string()), uri.clone())
+            .await?
+            .unwrap();
+        assert_eq!(result.config, uri);
+        assert_eq!(
+            result.id.unwrap(),
+            WorkflowId {
+                id: "test-workflow".to_string(),
+                url: "s3://test-bucket/schemas/test.json".parse()?
+            }
+        );
+
+        // Case 2.b: Config exists but workflow_id is None
+        let result = resolve_workflow(&remote, &host, None, uri.clone())
+            .await?
+            .unwrap();
+        assert_eq!(result.config, uri);
+        assert!(result.id.is_none());
+
+        // Case 2.c: Config exists but workflow_id is not found
+        let err = resolve_workflow(&remote, &host, Some("non-existent".to_string()), uri.clone())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::Workflow(_)));
+        assert!(err.to_string().contains("Workflow non-existent not found"));
+
+        // Case 2.d: Config exists but workflow_id is empty
+        let err = resolve_workflow(&remote, &host, Some("".to_string()), uri)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::Workflow(_)));
+        assert!(err.to_string().contains("Workflow  not found"));
+
+        Ok(())
+    }
+}
+
 async fn get_schema_url<R: Remote>(
     remote: &R,
     host: &Option<Host>,
