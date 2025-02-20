@@ -17,7 +17,7 @@ use crate::Res;
 
 mod s3;
 mod workflow;
-mod client;
+pub mod client;
 
 pub use s3::RemoteS3;
 pub use workflow::resolve_workflow;
