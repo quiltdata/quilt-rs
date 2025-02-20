@@ -193,3 +193,53 @@ impl Auth {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use reqwest::header::HeaderMap;
+
+    struct TestHttpClient;
+
+    #[async_trait]
+    impl HttpClient for TestHttpClient {
+        async fn get<T: serde::de::DeserializeOwned>(
+            &self,
+            url: &str,
+            _auth_token: Option<&str>,
+        ) -> Res<T> {
+            // This test is only for the default Host
+            let host = Host::default();
+            assert_eq!(url, format!("https://{}/config.json", host));
+
+            let config = QuiltStackConfig {
+                registry_url: format!("https://registry-{}", host).parse()?,
+            };
+            Ok(serde_json::from_value(serde_json::to_value(config)?)?)
+        }
+
+        async fn head(&self, _url: &str) -> Res<HeaderMap> {
+            unimplemented!("head is not used in this test")
+        }
+
+        async fn post<T: serde::de::DeserializeOwned, F: serde::Serialize + Send + Sync>(
+            &self,
+            _url: &str,
+            _form_data: &F,
+        ) -> Res<T> {
+            unimplemented!("post is not used in this test")
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_registry_url() {
+        let client = TestHttpClient;
+        let host = Host::default();
+        let result = get_registry_url(&client, &host).await.unwrap();
+        assert_eq!(
+            result,
+            url::Host::Domain("registry-test.quilt.dev".to_string())
+        );
+    }
+}
