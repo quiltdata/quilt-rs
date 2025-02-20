@@ -22,6 +22,7 @@ use tokio::io::AsyncRead;
 use tracing::log;
 
 use crate::auth;
+use crate::io::remote::HttpClient;
 use crate::checksum::calculate_sha256_checksum;
 use crate::checksum::get_checksum_chunksize_and_parts;
 use crate::checksum::get_compliant_chunked_checksum;
