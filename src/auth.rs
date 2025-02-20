@@ -225,10 +225,23 @@ mod tests {
 
         async fn post<T: serde::de::DeserializeOwned, F: serde::Serialize + Send + Sync>(
             &self,
-            _url: &str,
-            _form_data: &F,
+            url: &str,
+            form_data: &F,
         ) -> Res<T> {
-            unimplemented!("post is not used in this test")
+            // This test is only for the default Host
+            let host = Host::default();
+            assert_eq!(url, format!("https://registry-{}/api/token", host));
+
+            // Verify form data contains the refresh token
+            let form_map: &HashMap<String, String> = form_data.downcast_ref().unwrap();
+            assert_eq!(form_map.get("refresh_token").unwrap(), "test-refresh-token");
+
+            let tokens = RemoteTokens {
+                access_token: "test-access-token".to_string(),
+                refresh_token: "new-refresh-token".to_string(),
+                expires_at: chrono::DateTime::from_timestamp(1708444800, 0).unwrap(),
+            };
+            Ok(serde_json::from_value(serde_json::to_value(tokens)?)?)
         }
     }
 
@@ -240,6 +253,21 @@ mod tests {
         assert_eq!(
             result,
             url::Host::Domain("registry-test.quilt.dev".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_auth_tokens() {
+        let client = TestHttpClient;
+        let host = Host::default();
+        let refresh_token = "test-refresh-token";
+
+        let tokens = get_auth_tokens(&client, &host, refresh_token).await.unwrap();
+        assert_eq!(tokens.access_token, "test-access-token");
+        assert_eq!(tokens.refresh_token, "new-refresh-token");
+        assert_eq!(
+            tokens.expires_at,
+            chrono::DateTime::from_timestamp(1708444800, 0).unwrap()
         );
     }
 }
