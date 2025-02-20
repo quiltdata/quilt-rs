@@ -6,9 +6,9 @@ use crate::Res;
 #[async_trait]
 pub trait HttpClient: Send + Sync {
     async fn get<T: DeserializeOwned>(&self, url: &str) -> Res<T>;
+    async fn get_with_auth<T: DeserializeOwned>(&self, url: &str, token: &str) -> Res<T>;
     async fn head(&self, url: &str) -> Res<HeaderMap>;
     fn post(&self, url: &str) -> RequestBuilder;
-    fn bearer_auth(&self, token: &str) -> RequestBuilder;
     fn json<T: serde::Serialize + Send + Sync>(&self, json: &T) -> RequestBuilder;
     fn form<T: serde::Serialize + Send + Sync>(&self, form: &T) -> RequestBuilder;
 }
@@ -26,10 +26,27 @@ impl ReqwestClient {
     }
 }
 
+const USER_AGENT: &str =
+    "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1; SV1; .NET CLR 1.0.3705; .NET CLR 1.1.4322)";
+
 #[async_trait]
 impl HttpClient for ReqwestClient {
     async fn get<T: DeserializeOwned>(&self, url: &str) -> Res<T> {
-        let response = self.client.get(url).send().await?;
+        let response = self.client
+            .get(url)
+            .header("User-Agent", USER_AGENT)
+            .send()
+            .await?;
+        Ok(response.json().await?)
+    }
+
+    async fn get_with_auth<T: DeserializeOwned>(&self, url: &str, token: &str) -> Res<T> {
+        let response = self.client
+            .get(url)
+            .header("User-Agent", USER_AGENT)
+            .bearer_auth(token)
+            .send()
+            .await?;
         Ok(response.json().await?)
     }
 
