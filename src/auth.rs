@@ -94,14 +94,9 @@ async fn get_auth_tokens(
 
     let mut form_data: HashMap<String, String> = HashMap::new();
     form_data.insert("refresh_token".to_string(), refresh_token.to_string());
-    let response = http_client
-        .post(&format!("https://{}/api/token", registry))
-        .header("User-Agent", USER_AGENT)
-        .form(&form_data)
-        .send()
+    let tokens_json: RemoteTokens = http_client
+        .post(&format!("https://{}/api/token", registry), &form_data)
         .await?;
-
-    let tokens_json: RemoteTokens = response.json().await?;
     let tokens = Tokens::from(tokens_json);
 
     Ok(tokens)

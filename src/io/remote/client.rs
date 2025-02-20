@@ -7,9 +7,7 @@ use crate::Res;
 pub trait HttpClient: Send + Sync {
     async fn get<T: DeserializeOwned>(&self, url: &str, auth_token: Option<&str>) -> Res<T>;
     async fn head(&self, url: &str) -> Res<HeaderMap>;
-    fn post(&self, url: &str) -> RequestBuilder;
-    fn json<T: serde::Serialize + Send + Sync>(&self, json: &T) -> RequestBuilder;
-    fn form<T: serde::Serialize + Send + Sync>(&self, form: &T) -> RequestBuilder;
+    async fn post<T: DeserializeOwned, F: serde::Serialize + Send + Sync>(&self, url: &str, form_data: &F) -> Res<T>;
 }
 
 #[derive(Clone, Debug)]
@@ -48,15 +46,13 @@ impl HttpClient for ReqwestClient {
         Ok(response.headers().clone())
     }
 
-    fn post(&self, url: &str) -> RequestBuilder {
-        self.client.post(url)
-    }
-
-    fn json<T: serde::Serialize + Send + Sync>(&self, json: &T) -> RequestBuilder {
-        self.client.get("").json(json)
-    }
-
-    fn form<T: serde::Serialize + Send + Sync>(&self, form: &T) -> RequestBuilder {
-        self.client.get("").form(form)
+    async fn post<T: DeserializeOwned, F: serde::Serialize + Send + Sync>(&self, url: &str, form_data: &F) -> Res<T> {
+        let response = self.client
+            .post(url)
+            .header("User-Agent", USER_AGENT)
+            .form(form_data)
+            .send()
+            .await?;
+        Ok(response.json().await?)
     }
 }
