@@ -31,22 +31,16 @@ const USER_AGENT: &str =
 
 #[async_trait]
 impl HttpClient for ReqwestClient {
-    async fn get<T: DeserializeOwned>(&self, url: &str) -> Res<T> {
-        let response = self.client
+    async fn get<T: DeserializeOwned>(&self, url: &str, auth_token: Option<&str>) -> Res<T> {
+        let mut request = self.client
             .get(url)
-            .header("User-Agent", USER_AGENT)
-            .send()
-            .await?;
-        Ok(response.json().await?)
-    }
-
-    async fn get_with_auth<T: DeserializeOwned>(&self, url: &str, token: &str) -> Res<T> {
-        let response = self.client
-            .get(url)
-            .header("User-Agent", USER_AGENT)
-            .bearer_auth(token)
-            .send()
-            .await?;
+            .header("User-Agent", USER_AGENT);
+            
+        if let Some(token) = auth_token {
+            request = request.bearer_auth(token);
+        }
+        
+        let response = request.send().await?;
         Ok(response.json().await?)
     }
 

@@ -74,7 +74,7 @@ struct QuiltStackConfig {
 }
 
 async fn get_registry_url(http_client: &impl HttpClient, host: &Host) -> Res<url::Host> {
-    let QuiltStackConfig { registry_url } = http_client.get(&format!("https://{}/config.json", host)).await?;
+    let QuiltStackConfig { registry_url } = http_client.get(&format!("https://{}/config.json", host), None).await?;
     Ok(url::Host::Domain(
         registry_url
             .domain()
@@ -114,7 +114,7 @@ async fn refresh_credentials(
 
     let empty: HashMap<String, String> = HashMap::new();
     let response: RemoteCredentials = http_client
-        .get_with_auth(&format!("https://{}/api/auth/get_credentials", registry), access_token)
+        .get(&format!("https://{}/api/auth/get_credentials", registry), Some(access_token))
         .await?;
 
     let creds_json: RemoteCredentials = response.json().await?;
