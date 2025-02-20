@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use chrono::serde::ts_seconds;
 use crate::io::remote::client::HttpClient;
+use chrono::serde::ts_seconds;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
@@ -74,7 +74,9 @@ struct QuiltStackConfig {
 }
 
 async fn get_registry_url(http_client: &impl HttpClient, host: &Host) -> Res<url::Host> {
-    let QuiltStackConfig { registry_url } = http_client.get(&format!("https://{}/config.json", host), None).await?;
+    let QuiltStackConfig { registry_url } = http_client
+        .get(&format!("https://{}/config.json", host), None)
+        .await?;
     Ok(url::Host::Domain(
         registry_url
             .domain()
@@ -112,12 +114,13 @@ async fn refresh_credentials(
 ) -> Res<Credentials> {
     let registry = get_registry_url(http_client, host).await?;
 
-    let empty: HashMap<String, String> = HashMap::new();
-    let response: RemoteCredentials = http_client
-        .get(&format!("https://{}/api/auth/get_credentials", registry), Some(access_token))
+    let creds_json: RemoteCredentials = http_client
+        .get(
+            &format!("https://{}/api/auth/get_credentials", registry),
+            Some(access_token),
+        )
         .await?;
 
-    let creds_json: RemoteCredentials = response.json().await?;
     let credentials = Credentials::from(creds_json);
 
     Ok(credentials)
@@ -134,7 +137,12 @@ impl Auth {
         Self { paths, storage }
     }
 
-    pub async fn login<T: HttpClient>(&self, http_client: &T, host: &Host, refresh_token: String) -> Res {
+    pub async fn login<T: HttpClient>(
+        &self,
+        http_client: &T,
+        host: &Host,
+        refresh_token: String,
+    ) -> Res {
         let tokens = self
             .get_auth_tokens(http_client, host, &refresh_token)
             .await?;

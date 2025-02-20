@@ -52,10 +52,6 @@ impl HttpClient for ReqwestClient {
         self.client.post(url)
     }
 
-    fn bearer_auth(&self, token: &str) -> RequestBuilder {
-        self.client.get("").bearer_auth(token)
-    }
-
     fn json<T: serde::Serialize + Send + Sync>(&self, json: &T) -> RequestBuilder {
         self.client.get("").json(json)
     }
