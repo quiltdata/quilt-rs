@@ -74,10 +74,11 @@ struct QuiltStackConfig {
 }
 
 async fn get_registry_url(http_client: &impl HttpClient, host: &Host) -> Res<url::Host> {
-    let request = http_client
+    let response = http_client
         .get(&format!("https://{}/config.json", host))
-        .header("User-Agent", USER_AGENT);
-    let response = http_client.execute(request).await?;
+        .header("User-Agent", USER_AGENT)
+        .send()
+        .await?;
 
     let QuiltStackConfig { registry_url } = response.json().await?;
     Ok(url::Host::Domain(
@@ -97,11 +98,12 @@ async fn get_auth_tokens(
 
     let mut form_data: HashMap<String, String> = HashMap::new();
     form_data.insert("refresh_token".to_string(), refresh_token.to_string());
-    let request = http_client
+    let response = http_client
         .post(&format!("https://{}/api/token", registry))
         .header("User-Agent", USER_AGENT)
-        .form(&form_data);
-    let response = http_client.execute(request).await?;
+        .form(&form_data)
+        .send()
+        .await?;
 
     let tokens_json: RemoteTokens = response.json().await?;
     let tokens = Tokens::from(tokens_json);
@@ -117,12 +119,13 @@ async fn refresh_credentials(
     let registry = get_registry_url(http_client, host).await?;
 
     let empty: HashMap<String, String> = HashMap::new();
-    let request = http_client
+    let response = http_client
         .get(&format!("https://{}/api/auth/get_credentials", registry))
         .bearer_auth(access_token)
         .header("User-Agent", USER_AGENT)
-        .json(&empty);
-    let response = http_client.execute(request).await?;
+        .json(&empty)
+        .send()
+        .await?;
 
     let creds_json: RemoteCredentials = response.json().await?;
     let credentials = Credentials::from(creds_json);
