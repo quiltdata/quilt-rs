@@ -85,7 +85,9 @@ impl Remote for MockRemote {
             .await
             .map_err(|err| match err {
                 // TODO: made a similar finer error for the ByteStreamError
-                Error::ByteStreamError(_) => Error::S3("NoSuchKey: The specified key does not exist".to_string()),
+                Error::ByteStreamError(_) => {
+                    Error::S3("NoSuchKey: The specified key does not exist".to_string())
+                }
                 Error::Io(inner_err) => {
                     if inner_err.kind() == std::io::ErrorKind::NotFound {
                         Error::S3("NoSuchKey: The specified key does not exist".to_string())
@@ -123,7 +125,9 @@ impl Remote for MockRemote {
         if self.storage.exists(&key).await {
             Ok(s3_uri.clone())
         } else {
-            Err(Error::S3("NoSuchKey: The specified key does not exist".to_string()))
+            Err(Error::S3(
+                "NoSuchKey: The specified key does not exist".to_string(),
+            ))
         }
     }
 
@@ -163,7 +167,10 @@ mod tests {
         let s3_uri_not_found = S3Uri::try_from("s3://b/n?versionId=v")?;
         let not_found = remote.get_object(&None, &s3_uri_not_found).await;
         match not_found {
-            Err(err) => assert_eq!(err.to_string(), "S3 error: NoSuchKey: The specified key does not exist".to_string()),
+            Err(err) => assert_eq!(
+                err.to_string(),
+                "S3 error: NoSuchKey: The specified key does not exist".to_string()
+            ),
             Ok(_) => panic!("shouldn't happen"),
         }
         let s3_uri_found = S3Uri::try_from("s3://found/n?versionId=v")?;
