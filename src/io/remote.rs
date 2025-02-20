@@ -15,13 +15,13 @@ use crate::uri::Host;
 use crate::uri::S3Uri;
 use crate::Res;
 
+pub mod client;
 mod s3;
 mod workflow;
-pub mod client;
 
+pub use client::HttpClient;
 pub use s3::RemoteS3;
 pub use workflow::resolve_workflow;
-pub use client::HttpClient;
 
 #[cfg(test)]
 pub mod mocks;
