@@ -203,7 +203,7 @@ mod tests {
     const ACCESS_TOKEN: &str = "test-access-token";
     const REFRESH_TOKEN: &str = "test-refresh-token";
     const TIMESTAMP: i64 = 1708444800;
-    const TEST_HOST: Host = Host::Domain("test.quilt.dev".to_string());
+    const TEST_HOST: Host = Host::from("test.quilt.dev");
     const REGISTRY_URL: &str = "registry-test.quilt.dev";
 
     struct TestHttpClient;
@@ -218,7 +218,7 @@ mod tests {
             let registry = REGISTRY_URL;
 
             match url {
-                u if u == format!("https://{}/config.json", host) => {
+                u if u == format!("https://{}/config.json", TEST_HOST) => {
                     let config = QuiltStackConfig {
                         registry_url: format!("https://{}", registry).parse()?,
                     };
@@ -264,8 +264,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_registry_url() {
         let client = TestHttpClient;
-        let host = TEST_HOST;
-        let result = get_registry_url(&client, &host).await.unwrap();
+        let result = get_registry_url(&client, &TEST_HOST).await.unwrap();
         assert_eq!(
             result,
             url::Host::Domain("registry-test.quilt.dev".to_string())
@@ -275,8 +274,9 @@ mod tests {
     #[tokio::test]
     async fn test_get_auth_tokens() {
         let client = TestHttpClient;
-        let host = Host::default();
-        let tokens = get_auth_tokens(&client, &host, REFRESH_TOKEN).await.unwrap();
+        let tokens = get_auth_tokens(&client, &TEST_HOST, REFRESH_TOKEN)
+            .await
+            .unwrap();
         assert_eq!(tokens.access_token, ACCESS_TOKEN);
         assert_eq!(tokens.refresh_token, "new-refresh-token");
         assert_eq!(
@@ -288,8 +288,9 @@ mod tests {
     #[tokio::test]
     async fn test_refresh_credentials() {
         let client = TestHttpClient;
-        let host = Host::default();
-        let credentials = refresh_credentials(&client, &host, ACCESS_TOKEN).await.unwrap();
+        let credentials = refresh_credentials(&client, &TEST_HOST, ACCESS_TOKEN)
+            .await
+            .unwrap();
         assert_eq!(credentials.access_key, "test-access-key");
         assert_eq!(credentials.secret_key, "test-secret-key");
         assert_eq!(credentials.token, "test-session-token");
