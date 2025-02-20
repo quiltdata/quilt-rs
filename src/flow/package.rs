@@ -197,7 +197,7 @@ mod tests {
         assert!(result
             .unwrap_err()
             .to_string()
-            .contains("Key doesn't exist"));
+            .contains("NoSuchKey"));
         Ok(())
     }
 }
