@@ -71,10 +71,10 @@ impl TryFrom<GetObjectAttributesOutput> for S3AttributesWrapper {
     }
 }
 
-async fn find_bucket_region(client: &reqwest::Client, bucket: &str) -> Res<String> {
+async fn find_bucket_region(client: &impl HttpClient, bucket: &str) -> Res<String> {
     let response = client
-        .head(format!("https://s3.amazonaws.com/{bucket}"))
-        .send()
+        .get(&format!("https://s3.amazonaws.com/{bucket}"))
+        .execute()
         .await?;
 
     match response.headers().get("x-amz-bucket-region") {

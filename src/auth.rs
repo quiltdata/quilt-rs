@@ -141,7 +141,7 @@ impl Auth {
         Self { paths, storage }
     }
 
-    pub async fn login(&self, http_client: &HttpClient, host: &Host, refresh_token: String) -> Res {
+    pub async fn login<T: HttpClient>(&self, http_client: &T, host: &Host, refresh_token: String) -> Res {
         let tokens = self
             .get_auth_tokens(http_client, host, &refresh_token)
             .await?;
@@ -154,9 +154,9 @@ impl Auth {
         Ok(())
     }
 
-    async fn get_auth_tokens(
+    async fn get_auth_tokens<T: HttpClient>(
         &self,
-        http_client: &HttpClient,
+        http_client: &T,
         host: &Host,
         refresh_token: &str,
     ) -> Res<Tokens> {
@@ -168,9 +168,9 @@ impl Auth {
         auth_io.write_tokens(tokens).await
     }
 
-    async fn refresh_credentials(
+    async fn refresh_credentials<T: HttpClient>(
         &self,
-        http_client: &HttpClient,
+        http_client: &T,
         host: &Host,
         access_token: &str,
     ) -> Res<Credentials> {
@@ -182,9 +182,9 @@ impl Auth {
         Ok(credentials)
     }
 
-    pub async fn get_credentials_or_refresh(
+    pub async fn get_credentials_or_refresh<T: HttpClient>(
         &self,
-        http_client: &HttpClient,
+        http_client: &T,
         host: &Host,
     ) -> Res<Credentials> {
         let auth_io = AuthIo::new(self.storage.clone(), self.paths.auth_host(host));

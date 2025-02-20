@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use reqwest::RequestBuilder;
 use async_trait::async_trait;
 use crate::Res;
