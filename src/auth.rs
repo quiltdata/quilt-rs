@@ -207,16 +207,31 @@ mod tests {
         async fn get<T: serde::de::DeserializeOwned>(
             &self,
             url: &str,
-            _auth_token: Option<&str>,
+            auth_token: Option<&str>,
         ) -> Res<T> {
             // This test is only for the default Host
             let host = Host::default();
-            assert_eq!(url, format!("https://{}/config.json", host));
+            let registry = format!("registry-{}", host);
 
-            let config = QuiltStackConfig {
-                registry_url: format!("https://registry-{}", host).parse()?,
-            };
-            Ok(serde_json::from_value(serde_json::to_value(config)?)?)
+            match url {
+                u if u == format!("https://{}/config.json", host) => {
+                    let config = QuiltStackConfig {
+                        registry_url: format!("https://{}", registry).parse()?,
+                    };
+                    Ok(serde_json::from_value(serde_json::to_value(config)?)?)
+                }
+                u if u == format!("https://{}/api/auth/get_credentials", registry) => {
+                    assert_eq!(auth_token, Some("test-access-token"));
+                    let creds = RemoteCredentials {
+                        access_key_id: "test-access-key".to_string(),
+                        secret_access_key: "test-secret-key".to_string(),
+                        session_token: "test-session-token".to_string(),
+                        expiration: chrono::DateTime::from_timestamp(1708444800, 0).unwrap(),
+                    };
+                    Ok(serde_json::from_value(serde_json::to_value(creds)?)?)
+                }
+                _ => panic!("Unexpected URL: {}", url),
+            }
         }
 
         async fn head(&self, _url: &str) -> Res<HeaderMap> {
@@ -266,6 +281,22 @@ mod tests {
         assert_eq!(tokens.refresh_token, "new-refresh-token");
         assert_eq!(
             tokens.expires_at,
+            chrono::DateTime::from_timestamp(1708444800, 0).unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_refresh_credentials() {
+        let client = TestHttpClient;
+        let host = Host::default();
+        let access_token = "test-access-token";
+
+        let credentials = refresh_credentials(&client, &host, access_token).await.unwrap();
+        assert_eq!(credentials.access_key, "test-access-key");
+        assert_eq!(credentials.secret_key, "test-secret-key");
+        assert_eq!(credentials.token, "test-session-token");
+        assert_eq!(
+            credentials.expires_at,
             chrono::DateTime::from_timestamp(1708444800, 0).unwrap()
         );
     }
