@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use chrono::serde::ts_seconds;
-use reqwest::Client as HttpClient;
+use crate::io::remote::client::HttpClient;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
@@ -73,11 +73,10 @@ struct QuiltStackConfig {
     registry_url: url::Url,
 }
 
-async fn get_registry_url(http_client: &HttpClient, host: &Host) -> Res<url::Host> {
+async fn get_registry_url(http_client: &impl HttpClient, host: &Host) -> Res<url::Host> {
     let request = http_client
-        .get(format!("https://{}/config.json", host))
-        .header("User-Agent", USER_AGENT)
-        .build()?;
+        .get(&format!("https://{}/config.json", host))
+        .header("User-Agent", USER_AGENT);
     let response = http_client.execute(request).await?;
 
     let QuiltStackConfig { registry_url } = response.json().await?;
@@ -90,7 +89,7 @@ async fn get_registry_url(http_client: &HttpClient, host: &Host) -> Res<url::Hos
 }
 
 async fn get_auth_tokens(
-    http_client: &HttpClient,
+    http_client: &impl HttpClient,
     host: &Host,
     refresh_token: &str,
 ) -> Res<Tokens> {
@@ -99,10 +98,9 @@ async fn get_auth_tokens(
     let mut form_data: HashMap<String, String> = HashMap::new();
     form_data.insert("refresh_token".to_string(), refresh_token.to_string());
     let request = http_client
-        .post(format!("https://{}/api/token", registry))
+        .post(&format!("https://{}/api/token", registry))
         .header("User-Agent", USER_AGENT)
-        .form(&form_data)
-        .build()?;
+        .form(&form_data);
     let response = http_client.execute(request).await?;
 
     let tokens_json: RemoteTokens = response.json().await?;
@@ -112,7 +110,7 @@ async fn get_auth_tokens(
 }
 
 async fn refresh_credentials(
-    http_client: &HttpClient,
+    http_client: &impl HttpClient,
     host: &Host,
     access_token: &str,
 ) -> Res<Credentials> {
@@ -120,11 +118,10 @@ async fn refresh_credentials(
 
     let empty: HashMap<String, String> = HashMap::new();
     let request = http_client
-        .get(format!("https://{}/api/auth/get_credentials", registry))
+        .get(&format!("https://{}/api/auth/get_credentials", registry))
         .bearer_auth(access_token)
         .header("User-Agent", USER_AGENT)
-        .json(&empty)
-        .build()?;
+        .json(&empty);
     let response = http_client.execute(request).await?;
 
     let creds_json: RemoteCredentials = response.json().await?;

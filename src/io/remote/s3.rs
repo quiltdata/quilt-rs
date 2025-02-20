@@ -241,7 +241,7 @@ struct CredsRef {
 #[derive(Debug)]
 pub struct RemoteS3 {
     auth: auth::Auth,
-    http: reqwest::Client,
+    http: crate::io::remote::client::ReqwestClient,
     s3: RwLock<HashMap<CredsRef, aws_sdk_s3::Client>>,
     regions: RwLock<HashMap<String, Region>>,
 }
@@ -249,7 +249,7 @@ pub struct RemoteS3 {
 impl RemoteS3 {
     pub fn new(paths: DomainPaths, storage: LocalStorage) -> Self {
         RemoteS3 {
-            http: reqwest::Client::new(),
+            http: crate::io::remote::client::ReqwestClient::new(),
             s3: RwLock::new(HashMap::new()),
             regions: RwLock::new(HashMap::new()),
             auth: auth::Auth::new(paths, storage),
