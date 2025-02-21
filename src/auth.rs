@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 
 use crate::io::remote::client::HttpClient;
-use tracing::{debug, info};
 use chrono::serde::ts_seconds;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
+use tracing::debug;
+use tracing::info;
+use tracing::warn;
 
 use crate::io::storage::auth::AuthIo;
 use crate::io::storage::auth::Credentials;
@@ -138,7 +140,7 @@ impl<S: Storage + Clone> Auth<S> {
         refresh_token: String,
     ) -> Res {
         info!("⏳ Logging in to host {:?}", host);
-        
+
         let tokens = self
             .get_auth_tokens(http_client, host, &refresh_token)
             .await?;
@@ -168,7 +170,10 @@ impl<S: Storage + Clone> Auth<S> {
         debug!("⏳ Saving tokens for host {:?}", host);
         let auth_io = AuthIo::new(self.storage.clone(), self.paths.auth_host(host));
         auth_io.write_tokens(tokens).await?;
-        debug!("✔️ Successfully saved tokens");
+        debug!(
+            "✔️ Successfully saved tokens to the {:?}",
+            self.paths.auth_host(host)
+        );
         Ok(())
     }
 
@@ -184,7 +189,10 @@ impl<S: Storage + Clone> Auth<S> {
         let auth_io = AuthIo::new(self.storage.clone(), self.paths.auth_host(host));
         auth_io.write_credentials(&credentials).await?;
 
-        debug!("✔️ Successfully refreshed credentials");
+        debug!(
+            "✔️ Successfully refreshed credentials in {:?}",
+            self.paths.auth_host(host)
+        );
         Ok(credentials)
     }
 
@@ -207,7 +215,7 @@ impl<S: Storage + Clone> Auth<S> {
                         .await
                 }
                 None => {
-                    debug!("❌ No tokens found, login required");
+                    warn!("❌ No tokens found, login required");
                     Err(crate::Error::LoginRequired(Some(host.to_owned())))
                 }
             },
