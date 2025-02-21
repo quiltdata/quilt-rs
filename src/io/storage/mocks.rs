@@ -24,7 +24,7 @@ pub(crate) struct MockStorage {
 impl Clone for MockStorage {
     fn clone(&self) -> Self {
         MockStorage {
-            temp_dir: TempDir::new_in(self.temp_dir.path().to_path_buf())
+            temp_dir: TempDir::new_in(self.temp_dir.path())
                 .expect("Failed to create temporary directory"),
         }
     }

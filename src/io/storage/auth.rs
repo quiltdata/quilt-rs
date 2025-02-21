@@ -61,9 +61,7 @@ impl<S: Storage> AuthIo<S> {
         debug!("⏳ Writing auth tokens to {:?}", tokens_path);
 
         let contents = serde_json::to_vec(tokens)?;
-        self.storage
-            .write_file(&tokens_path, &contents)
-            .await?;
+        self.storage.write_file(&tokens_path, &contents).await?;
 
         debug!("✔️ Successfully wrote tokens: {:?}", tokens);
 
