@@ -1,5 +1,6 @@
 use tokio::io::AsyncReadExt;
 use tokio_stream::StreamExt;
+use tracing::info;
 
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::RowsStream;
@@ -54,6 +55,8 @@ pub async fn cache_remote_manifest(
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
 ) -> Res<Table> {
+    info!("⏳ Caching remote manifest: {}", manifest_uri);
+
     scaffold_paths(storage, paths.required_local_domain_paths()).await?;
     // check if the manifest is already cached
     // if not, download and cache it
@@ -75,6 +78,8 @@ pub async fn cache_remote_manifest(
             build_manifest_from_rows_stream(storage, manifest_path, header, stream).await?;
         };
     }
+
+    info!("⏳ Successfully cached the manifest {}", manifest_uri);
 
     Table::read_from_path(storage, &cache_path).await
 }

@@ -300,19 +300,6 @@ impl From<ManifestUri> for S3PackageUri {
     }
 }
 
-impl<T: AsRef<ManifestUri>> From<T> for S3PackageUri {
-    fn from(manifest_ref: T) -> Self {
-        let uri = manifest_ref.as_ref();
-        S3PackageUri {
-            bucket: uri.bucket.clone(),
-            catalog: uri.catalog.clone(),
-            namespace: uri.namespace.clone(),
-            path: None,
-            revision: RevisionPointer::Hash(uri.hash.clone()),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
