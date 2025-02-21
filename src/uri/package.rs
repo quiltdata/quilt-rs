@@ -292,7 +292,19 @@ impl From<ManifestUri> for S3PackageUri {
     fn from(uri: ManifestUri) -> S3PackageUri {
         S3PackageUri {
             bucket: uri.bucket,
-            catalog: None,
+            catalog: uri.catalog,
+            namespace: uri.namespace,
+            path: None,
+            revision: RevisionPointer::Hash(uri.hash),
+        }
+    }
+}
+
+impl From<AsRef<ManifestUri>> for &S3PackageUri {
+    fn as_ref(&self) -> &S3PackageUri {
+        S3PackageUri {
+            bucket: uri.bucket,
+            catalog: uri.catalog,
             namespace: uri.namespace,
             path: None,
             revision: RevisionPointer::Hash(uri.hash),
