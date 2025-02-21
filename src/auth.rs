@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::io::remote::client::HttpClient;
+use tracing::{debug, info};
 use chrono::serde::ts_seconds;
 use serde::Deserialize;
 use serde::Deserializer;
@@ -136,6 +137,8 @@ impl<S: Storage + Clone> Auth<S> {
         host: &Host,
         refresh_token: String,
     ) -> Res {
+        info!("⏳ Logging in to host {:?}", host);
+        
         let tokens = self
             .get_auth_tokens(http_client, host, &refresh_token)
             .await?;
@@ -145,6 +148,7 @@ impl<S: Storage + Clone> Auth<S> {
         self.refresh_credentials(http_client, host, &tokens.access_token)
             .await?;
 
+        info!("✔️ Successfully logged in to {:?}", host);
         Ok(())
     }
 
@@ -154,12 +158,18 @@ impl<S: Storage + Clone> Auth<S> {
         host: &Host,
         refresh_token: &str,
     ) -> Res<Tokens> {
-        get_auth_tokens(http_client, host, refresh_token).await
+        debug!("⏳ Getting auth tokens for host {:?}", host);
+        let tokens = get_auth_tokens(http_client, host, refresh_token).await?;
+        debug!("✔️ Successfully retrieved auth tokens");
+        Ok(tokens)
     }
 
     async fn save_tokens(&self, host: &Host, tokens: &Tokens) -> Res<()> {
+        debug!("⏳ Saving tokens for host {:?}", host);
         let auth_io = AuthIo::new(self.storage.clone(), self.paths.auth_host(host));
-        auth_io.write_tokens(tokens).await
+        auth_io.write_tokens(tokens).await?;
+        debug!("✔️ Successfully saved tokens");
+        Ok(())
     }
 
     async fn refresh_credentials<T: HttpClient>(
@@ -168,11 +178,13 @@ impl<S: Storage + Clone> Auth<S> {
         host: &Host,
         access_token: &str,
     ) -> Res<Credentials> {
+        debug!("⏳ Refreshing credentials for host {:?}", host);
         let credentials = refresh_credentials(http_client, host, access_token).await?;
 
         let auth_io = AuthIo::new(self.storage.clone(), self.paths.auth_host(host));
         auth_io.write_credentials(&credentials).await?;
 
+        debug!("✔️ Successfully refreshed credentials");
         Ok(credentials)
     }
 
@@ -181,15 +193,23 @@ impl<S: Storage + Clone> Auth<S> {
         http_client: &T,
         host: &Host,
     ) -> Res<Credentials> {
+        debug!("⏳ Getting or refreshing credentials for host {:?}", host);
         let auth_io = AuthIo::new(self.storage.clone(), self.paths.auth_host(host));
         match auth_io.read_credentials().await? {
-            Some(creds) => Ok(creds),
+            Some(creds) => {
+                debug!("✔️ Found valid credentials");
+                Ok(creds)
+            }
             None => match auth_io.read_tokens().await? {
                 Some(tokens) => {
+                    debug!("⏳ Found tokens, refreshing credentials");
                     self.refresh_credentials(http_client, host, &tokens.access_token)
                         .await
                 }
-                None => Err(crate::Error::LoginRequired(Some(host.to_owned()))),
+                None => {
+                    debug!("❌ No tokens found, login required");
+                    Err(crate::Error::LoginRequired(Some(host.to_owned())))
+                }
             },
         }
     }
