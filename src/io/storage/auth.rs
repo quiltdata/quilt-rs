@@ -77,8 +77,8 @@ impl<S: Storage> AuthIo<S> {
     }
 }
 
-impl AuthIo {
-    pub fn new(storage: LocalStorage, dir: PathBuf) -> Self {
+impl<S: Storage> AuthIo<S> {
+    pub fn new(storage: S, dir: PathBuf) -> Self {
         AuthIo { storage, dir }
     }
 }
@@ -98,7 +98,7 @@ mod tests {
     async fn test_write_read_tokens() -> Res {
         let storage = MockStorage::default();
         let dir = storage.temp_dir.path().to_path_buf();
-        let auth = AuthIo { storage, dir };
+        let auth = AuthIo::new(storage, dir);
 
         let tokens = auth.read_tokens().await?;
         assert!(tokens.is_none());
@@ -127,7 +127,7 @@ mod tests {
         // Test non-existent credentials
         let storage = MockStorage::default();
         let dir = storage.temp_dir.path().to_path_buf();
-        let auth = AuthIo { storage, dir };
+        let auth = AuthIo::new(storage, dir);
 
         let creds = auth.read_credentials().await?;
         assert!(creds.is_none());
@@ -150,7 +150,7 @@ mod tests {
             expires_at: Utc::now() + chrono::Duration::minutes(1),
         };
         auth.write_credentials(&valid_creds).await?;
-        
+
         let read_creds = auth.read_credentials().await?.unwrap();
         assert_eq!(read_creds.access_key, valid_creds.access_key);
         assert_eq!(read_creds.secret_key, valid_creds.secret_key);
