@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 use serde::Serialize;
+use tracing::debug;
 
 use crate::io::storage::LocalStorage;
 use crate::io::storage::Storage;
@@ -40,45 +41,72 @@ impl<S: Storage> AuthIo<S> {
     }
 
     pub async fn read_tokens(&self) -> Res<Option<Tokens>> {
-        if !self.storage.exists(&self.tokens_path()).await {
+        let tokens_path = self.tokens_path();
+        debug!("⏳ Reading auth tokens from {:?}", tokens_path);
+
+        if !self.storage.exists(&tokens_path).await {
+            debug!("No tokens file found");
             return Ok(None);
         }
-        let contents = self.storage.read_file(&self.tokens_path()).await?;
-        Ok(Some(serde_json::from_slice(&contents)?))
+        let contents = self.storage.read_file(&tokens_path).await?;
+        let tokens = serde_json::from_slice(&contents)?;
+
+        debug!("✔️ Successfully read tokens");
+
+        Ok(Some(tokens))
     }
 
     pub async fn write_tokens(&self, tokens: &Tokens) -> Res {
+        let tokens_path = self.tokens_path();
+        debug!("⏳ Writing auth tokens to {:?}", tokens_path);
+
         let contents = serde_json::to_vec(tokens)?;
-        self.storage
-            .write_file(&self.tokens_path(), &contents)
-            .await
+        self.storage.write_file(&tokens_path, &contents).await?;
+
+        debug!("✔️ Successfully wrote tokens: {:?}", tokens);
+
+        Ok(())
     }
 
     pub async fn read_credentials(&self) -> Res<Option<Credentials>> {
-        if !self.storage.exists(&self.credentials_path()).await {
+        let credentials_path = self.credentials_path();
+        debug!("⏳ Reading credentials from {:?}", credentials_path);
+
+        if !self.storage.exists(&credentials_path).await {
+            debug!("No credentials file found");
             return Ok(None);
         }
-        let contents = self.storage.read_file(&self.credentials_path()).await?;
+        let contents = self.storage.read_file(&credentials_path).await?;
         let credentials: Credentials = serde_json::from_slice(&contents)?;
 
         // Check if credentials are expired
         if credentials.expires_at <= chrono::Utc::now() {
+            debug!("Credentials have expired");
             return Ok(None);
         }
+
+        debug!("✔️ Successfully read valid credentials");
 
         Ok(Some(credentials))
     }
 
     pub async fn write_credentials(&self, credentials: &Credentials) -> Res {
+        let credentials_path = self.credentials_path();
+        debug!("⏳ Writing credentials to {:?}", credentials_path);
+
         let contents = serde_json::to_vec(credentials)?;
         self.storage
-            .write_file(&self.credentials_path(), &contents)
-            .await
+            .write_file(&credentials_path, &contents)
+            .await?;
+
+        debug!("✔️ Successfully wrote credentials: {:?}", credentials);
+
+        Ok(())
     }
 }
 
-impl AuthIo {
-    pub fn new(storage: LocalStorage, dir: PathBuf) -> Self {
+impl<S: Storage> AuthIo<S> {
+    pub fn new(storage: S, dir: PathBuf) -> Self {
         AuthIo { storage, dir }
     }
 }
@@ -98,7 +126,7 @@ mod tests {
     async fn test_write_read_tokens() -> Res {
         let storage = MockStorage::default();
         let dir = storage.temp_dir.path().to_path_buf();
-        let auth = AuthIo { storage, dir };
+        let auth = AuthIo::new(storage, dir);
 
         let tokens = auth.read_tokens().await?;
         assert!(tokens.is_none());
@@ -121,34 +149,41 @@ mod tests {
         Ok(())
     }
 
-    /// 1. Read credentials when they don't exist yet → None
-    /// 2. Write credentials → Ok
-    /// 3. Read credentials are the same as written credentials
+    /// Tests reading and writing credentials, including expiration behavior
     #[tokio::test]
-    async fn test_write_read_credentials() -> Res {
+    async fn test_credentials() -> Res {
+        // Test non-existent credentials
         let storage = MockStorage::default();
         let dir = storage.temp_dir.path().to_path_buf();
-        let auth = AuthIo { storage, dir };
+        let auth = AuthIo::new(storage, dir);
 
         let creds = auth.read_credentials().await?;
         assert!(creds.is_none());
 
-        let test_creds = Credentials {
+        // Test expired credentials
+        let expired_creds = Credentials {
+            access_key: "expired_key".to_string(),
+            secret_key: "expired_secret".to_string(),
+            token: "expired_token".to_string(),
+            expires_at: Utc::now() - chrono::Duration::minutes(1),
+        };
+        auth.write_credentials(&expired_creds).await?;
+        assert!(auth.read_credentials().await?.is_none());
+
+        // Test valid credentials
+        let valid_creds = Credentials {
             access_key: "test_key".to_string(),
             secret_key: "test_secret".to_string(),
             token: "test_token".to_string(),
             expires_at: Utc::now() + chrono::Duration::minutes(1),
         };
+        auth.write_credentials(&valid_creds).await?;
 
-        // Write credentials
-        auth.write_credentials(&test_creds).await?;
-
-        // Read them back
         let read_creds = auth.read_credentials().await?.unwrap();
-        assert_eq!(read_creds.access_key, test_creds.access_key);
-        assert_eq!(read_creds.secret_key, test_creds.secret_key);
-        assert_eq!(read_creds.token, test_creds.token);
-        assert_eq!(read_creds.expires_at, test_creds.expires_at);
+        assert_eq!(read_creds.access_key, valid_creds.access_key);
+        assert_eq!(read_creds.secret_key, valid_creds.secret_key);
+        assert_eq!(read_creds.token, valid_creds.token);
+        assert_eq!(read_creds.expires_at, valid_creds.expires_at);
 
         Ok(())
     }

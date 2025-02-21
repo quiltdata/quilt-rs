@@ -19,6 +19,8 @@ use aws_types::region::Region;
 use multihash::Multihash;
 use parquet::data_type::AsBytes;
 use tokio::io::AsyncRead;
+use tracing::debug;
+use tracing::info;
 use tracing::log;
 
 use crate::auth;
@@ -28,6 +30,7 @@ use crate::checksum::get_compliant_chunked_checksum;
 use crate::checksum::ContentHash;
 use crate::checksum::MPU_MAX_PARTS;
 use crate::checksum::MULTIHASH_SHA256_CHUNKED;
+use crate::io::remote::HttpClient;
 use crate::io::remote::ObjectsStream;
 use crate::io::remote::Remote;
 use crate::io::storage::auth::AuthIo;
@@ -71,13 +74,12 @@ impl TryFrom<GetObjectAttributesOutput> for S3AttributesWrapper {
     }
 }
 
-async fn find_bucket_region(client: &reqwest::Client, bucket: &str) -> Res<String> {
-    let response = client
-        .head(format!("https://s3.amazonaws.com/{bucket}"))
-        .send()
-        .await?;
-
-    match response.headers().get("x-amz-bucket-region") {
+async fn find_bucket_region(client: &impl HttpClient, bucket: &str) -> Res<String> {
+    match client
+        .head(&format!("https://s3.amazonaws.com/{}", bucket))
+        .await?
+        .get("x-amz-bucket-region")
+    {
         Some(location) => Ok(location.to_str()?.into()),
         None => Err(Error::MissingHTTPHeader("x-amz-bucket-region".to_string())),
     }
@@ -241,7 +243,7 @@ struct CredsRef {
 #[derive(Debug)]
 pub struct RemoteS3 {
     auth: auth::Auth,
-    http: reqwest::Client,
+    http: crate::io::remote::client::ReqwestClient,
     s3: RwLock<HashMap<CredsRef, aws_sdk_s3::Client>>,
     regions: RwLock<HashMap<String, Region>>,
 }
@@ -249,7 +251,7 @@ pub struct RemoteS3 {
 impl RemoteS3 {
     pub fn new(paths: DomainPaths, storage: LocalStorage) -> Self {
         RemoteS3 {
-            http: reqwest::Client::new(),
+            http: crate::io::remote::client::ReqwestClient::new(),
             s3: RwLock::new(HashMap::new()),
             regions: RwLock::new(HashMap::new()),
             auth: auth::Auth::new(paths, storage),
@@ -340,9 +342,11 @@ impl RemoteS3 {
             }
         }
 
+        info!("⏳ Creating new S3 client for region {:?}", region);
         // Create new client
         let config = match host {
             None => {
+                info!("⏳ No `&catalog=`, so we use credentials in ~/.aws");
                 let config = aws_config::defaults(BehaviorVersion::latest())
                     .region(region.clone())
                     .load()
@@ -359,6 +363,7 @@ impl RemoteS3 {
                     .auth
                     .get_credentials_or_refresh(&self.http, host)
                     .await?;
+                debug!("✔️ Got credentials for host {:?}", host);
                 aws_config::defaults(BehaviorVersion::latest())
                     .region(region.clone())
                     .credentials_provider(Credentials::new(
@@ -373,6 +378,7 @@ impl RemoteS3 {
             }
         };
         let client = aws_sdk_s3::Client::new(&config);
+        debug!("✔️ created new S3 client for region {:?}", region);
 
         // Cache the new client
         let mut map = self

@@ -9,7 +9,8 @@ use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::Object;
 use chrono::DateTime;
 use chrono::Utc;
-use tokio::fs::{File, ReadDir};
+use tokio::fs::File;
+use tokio::fs::ReadDir;
 
 use crate::io::remote::RemoteObjectStream;
 use crate::io::remote::S3Attributes;
