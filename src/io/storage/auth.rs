@@ -41,29 +41,36 @@ impl<S: Storage> AuthIo<S> {
     }
 
     pub async fn read_tokens(&self) -> Res<Option<Tokens>> {
-        debug!("Reading auth tokens from {:?}", self.tokens_path());
+        debug!("⏳ Reading auth tokens from {:?}", self.tokens_path());
+
         if !self.storage.exists(&self.tokens_path()).await {
             debug!("No tokens file found");
             return Ok(None);
         }
         let contents = self.storage.read_file(&self.tokens_path()).await?;
         let tokens = serde_json::from_slice(&contents)?;
-        debug!("Successfully read tokens");
+
+        debug!("✔️ Successfully read tokens");
+
         Ok(Some(tokens))
     }
 
     pub async fn write_tokens(&self, tokens: &Tokens) -> Res {
-        debug!("Writing auth tokens to {:?}", self.tokens_path());
+        debug!("⏳ Writing auth tokens to {:?}", self.tokens_path());
+
         let contents = serde_json::to_vec(tokens)?;
         self.storage
             .write_file(&self.tokens_path(), &contents)
             .await?;
-        debug!("Successfully wrote tokens: {:?}", tokens);
+
+        debug!("✔️ Successfully wrote tokens: {:?}", tokens);
+
         Ok(())
     }
 
     pub async fn read_credentials(&self) -> Res<Option<Credentials>> {
-        debug!("Reading credentials from {:?}", self.credentials_path());
+        debug!("⏳ Reading credentials from {:?}", self.credentials_path());
+
         if !self.storage.exists(&self.credentials_path()).await {
             debug!("No credentials file found");
             return Ok(None);
@@ -77,17 +84,21 @@ impl<S: Storage> AuthIo<S> {
             return Ok(None);
         }
 
-        debug!("Successfully read valid credentials");
+        debug!("✔️ Successfully read valid credentials");
+
         Ok(Some(credentials))
     }
 
     pub async fn write_credentials(&self, credentials: &Credentials) -> Res {
-        debug!("Writing credentials to {:?}", self.credentials_path());
+        debug!("⏳ Writing credentials to {:?}", self.credentials_path());
+
         let contents = serde_json::to_vec(credentials)?;
         self.storage
             .write_file(&self.credentials_path(), &contents)
             .await?;
-        debug!("Successfully wrote credentials: {:?}", credentials);
+
+        debug!("✔️ Successfully wrote credentials: {:?}", credentials);
+
         Ok(())
     }
 }
