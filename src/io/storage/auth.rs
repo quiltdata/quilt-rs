@@ -121,11 +121,10 @@ mod tests {
         Ok(())
     }
 
-    /// 1. Read credentials when they don't exist yet → None
-    /// 2. Write credentials → Ok
-    /// 3. Read credentials are the same as written credentials
+    /// Tests reading and writing credentials, including expiration behavior
     #[tokio::test]
-    async fn test_write_read_credentials() -> Res {
+    async fn test_credentials() -> Res {
+        // Test non-existent credentials
         let storage = MockStorage::default();
         let dir = storage.temp_dir.path().to_path_buf();
         let auth = AuthIo { storage, dir };
@@ -133,22 +132,30 @@ mod tests {
         let creds = auth.read_credentials().await?;
         assert!(creds.is_none());
 
-        let test_creds = Credentials {
+        // Test expired credentials
+        let expired_creds = Credentials {
+            access_key: "expired_key".to_string(),
+            secret_key: "expired_secret".to_string(),
+            token: "expired_token".to_string(),
+            expires_at: Utc::now() - chrono::Duration::minutes(1),
+        };
+        auth.write_credentials(&expired_creds).await?;
+        assert!(auth.read_credentials().await?.is_none());
+
+        // Test valid credentials
+        let valid_creds = Credentials {
             access_key: "test_key".to_string(),
             secret_key: "test_secret".to_string(),
             token: "test_token".to_string(),
             expires_at: Utc::now() + chrono::Duration::minutes(1),
         };
-
-        // Write credentials
-        auth.write_credentials(&test_creds).await?;
-
-        // Read them back
+        auth.write_credentials(&valid_creds).await?;
+        
         let read_creds = auth.read_credentials().await?.unwrap();
-        assert_eq!(read_creds.access_key, test_creds.access_key);
-        assert_eq!(read_creds.secret_key, test_creds.secret_key);
-        assert_eq!(read_creds.token, test_creds.token);
-        assert_eq!(read_creds.expires_at, test_creds.expires_at);
+        assert_eq!(read_creds.access_key, valid_creds.access_key);
+        assert_eq!(read_creds.secret_key, valid_creds.secret_key);
+        assert_eq!(read_creds.token, valid_creds.token);
+        assert_eq!(read_creds.expires_at, valid_creds.expires_at);
 
         Ok(())
     }
