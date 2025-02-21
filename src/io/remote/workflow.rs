@@ -167,13 +167,13 @@ schemas:
   bar:
     url: s3://test-bucket/schemas/test.json
 "#;
-        let scheam_uri: S3Uri = "s3://test-bucket/schemas/test.json".parse()?;
+        let schema_uri: S3Uri = "s3://test-bucket/schemas/test.json".parse()?;
         let schema = b"{}";
         remote
             .put_object(&None, &uri, config.as_bytes().to_vec())
             .await?;
         remote
-            .put_object(&None, &scheam_uri, schema.to_vec())
+            .put_object(&None, &schema_uri, schema.to_vec())
             .await?;
 
         // Case 2.a: Config exists, workflow_id is set and valid

@@ -49,11 +49,19 @@ impl HttpClient for ReqwestClient {
         }
 
         let response = request.send().await?;
+        if !response.status().is_success() {
+            return Err(response.error_for_status().unwrap_err().into());
+        }
         Ok(response.json().await?)
     }
 
     async fn head(&self, url: &str) -> Res<HeaderMap> {
-        let response = self.client.head(url).send().await?;
+        let response = self
+            .client
+            .head(url)
+            .header("User-Agent", USER_AGENT)
+            .send()
+            .await?;
         Ok(response.headers().clone())
     }
 
@@ -69,6 +77,9 @@ impl HttpClient for ReqwestClient {
             .form(form_data)
             .send()
             .await?;
+        if !response.status().is_success() {
+            return Err(response.error_for_status().unwrap_err().into());
+        }
         Ok(response.json().await?)
     }
 }
