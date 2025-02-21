@@ -19,6 +19,8 @@ use aws_types::region::Region;
 use multihash::Multihash;
 use parquet::data_type::AsBytes;
 use tokio::io::AsyncRead;
+use tracing::debug;
+use tracing::info;
 use tracing::log;
 
 use crate::auth;
@@ -340,9 +342,11 @@ impl RemoteS3 {
             }
         }
 
+        info!("⏳ Creating new S3 client for region {:?}", region);
         // Create new client
         let config = match host {
             None => {
+                info!("⏳ No `&catalog=`, so we use credentials in ~/.aws");
                 let config = aws_config::defaults(BehaviorVersion::latest())
                     .region(region.clone())
                     .load()
@@ -359,6 +363,7 @@ impl RemoteS3 {
                     .auth
                     .get_credentials_or_refresh(&self.http, host)
                     .await?;
+                debug!("✔️ Got credentials for host {:?}", host);
                 aws_config::defaults(BehaviorVersion::latest())
                     .region(region.clone())
                     .credentials_provider(Credentials::new(
@@ -373,6 +378,7 @@ impl RemoteS3 {
             }
         };
         let client = aws_sdk_s3::Client::new(&config);
+        debug!("✔️ created new S3 client for region {:?}", region);
 
         // Cache the new client
         let mut map = self
