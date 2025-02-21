@@ -305,4 +305,37 @@ mod tests {
             chrono::DateTime::from_timestamp(1708444800, 0).unwrap()
         );
     }
+
+    #[test]
+    fn test_remote_credentials_deserialization() {
+        // Test valid RFC3339 date
+        let valid_json = r#"{
+            "AccessKeyId": "test-key",
+            "Expiration": "2024-02-20T15:00:00Z",
+            "SecretAccessKey": "test-secret",
+            "SessionToken": "test-token"
+        }"#;
+        
+        let creds: RemoteCredentials = serde_json::from_str(valid_json).unwrap();
+        assert_eq!(creds.access_key_id, "test-key");
+        assert_eq!(creds.secret_access_key, "test-secret");
+        assert_eq!(creds.session_token, "test-token");
+        assert_eq!(
+            creds.expiration,
+            chrono::DateTime::parse_from_rfc3339("2024-02-20T15:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc)
+        );
+
+        // Test invalid RFC3339 date
+        let invalid_json = r#"{
+            "AccessKeyId": "test-key",
+            "Expiration": "2024-02-20 15:00:00",
+            "SecretAccessKey": "test-secret",
+            "SessionToken": "test-token"
+        }"#;
+        
+        let error = serde_json::from_str::<RemoteCredentials>(invalid_json).unwrap_err();
+        assert!(error.to_string().contains("Invalid RFC3339 date"));
+    }
 }
