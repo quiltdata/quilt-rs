@@ -306,6 +306,40 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_auth_refresh_credentials() -> Res {
+        use crate::io::storage::mocks::MockStorage;
+        use crate::paths::DomainPaths;
+
+        let storage = MockStorage::default();
+        let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
+        let auth = Auth::new(paths.clone(), storage.clone());
+        let host = get_host();
+        
+        let credentials = auth
+            .refresh_credentials(&TestHttpClient, &host, ACCESS_TOKEN)
+            .await?;
+        
+        // Verify returned credentials
+        assert_eq!(credentials.access_key, "test-access-key");
+        assert_eq!(credentials.secret_key, "test-secret-key");
+        assert_eq!(credentials.token, "test-session-token");
+        assert_eq!(
+            credentials.expires_at,
+            chrono::DateTime::from_timestamp(TIMESTAMP, 0).unwrap()
+        );
+
+        // Verify credentials were written correctly
+        let auth_io = AuthIo::new(storage, paths.auth_host(&host));
+        let read_creds = auth_io.read_credentials().await?.unwrap();
+        assert_eq!(read_creds.access_key, credentials.access_key);
+        assert_eq!(read_creds.secret_key, credentials.secret_key);
+        assert_eq!(read_creds.token, credentials.token);
+        assert_eq!(read_creds.expires_at, credentials.expires_at);
+
+        Ok(())
+    }
+
     #[test]
     fn test_remote_credentials_deserialization() {
         // Test valid RFC3339 date
