@@ -300,14 +300,15 @@ impl From<ManifestUri> for S3PackageUri {
     }
 }
 
-impl From<AsRef<ManifestUri>> for &S3PackageUri {
-    fn as_ref(&self) -> &S3PackageUri {
+impl<T: AsRef<ManifestUri>> From<T> for S3PackageUri {
+    fn from(manifest_ref: T) -> Self {
+        let uri = manifest_ref.as_ref();
         S3PackageUri {
-            bucket: uri.bucket,
-            catalog: uri.catalog,
-            namespace: uri.namespace,
+            bucket: uri.bucket.clone(),
+            catalog: uri.catalog.clone(),
+            namespace: uri.namespace.clone(),
             path: None,
-            revision: RevisionPointer::Hash(uri.hash),
+            revision: RevisionPointer::Hash(uri.hash.clone()),
         }
     }
 }
@@ -504,8 +505,21 @@ mod tests {
             catalog: None,
         };
 
+        // Test From<ManifestUri>
         assert_eq!(
-            S3PackageUri::from(manifest_uri),
+            S3PackageUri::from(manifest_uri.clone()),
+            S3PackageUri {
+                bucket: "test-bucket".to_string(),
+                catalog: None,
+                namespace: ("foo", "bar").into(),
+                path: None,
+                revision: RevisionPointer::Hash("abc123".to_string()),
+            }
+        );
+
+        // Test From<&ManifestUri>
+        assert_eq!(
+            S3PackageUri::from(&manifest_uri),
             S3PackageUri {
                 bucket: "test-bucket".to_string(),
                 catalog: None,
