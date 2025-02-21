@@ -41,13 +41,14 @@ impl<S: Storage> AuthIo<S> {
     }
 
     pub async fn read_tokens(&self) -> Res<Option<Tokens>> {
-        debug!("⏳ Reading auth tokens from {:?}", self.tokens_path());
+        let tokens_path = self.tokens_path();
+        debug!("⏳ Reading auth tokens from {:?}", tokens_path);
 
-        if !self.storage.exists(&self.tokens_path()).await {
+        if !self.storage.exists(&tokens_path).await {
             debug!("No tokens file found");
             return Ok(None);
         }
-        let contents = self.storage.read_file(&self.tokens_path()).await?;
+        let contents = self.storage.read_file(&tokens_path).await?;
         let tokens = serde_json::from_slice(&contents)?;
 
         debug!("✔️ Successfully read tokens");
@@ -56,11 +57,12 @@ impl<S: Storage> AuthIo<S> {
     }
 
     pub async fn write_tokens(&self, tokens: &Tokens) -> Res {
-        debug!("⏳ Writing auth tokens to {:?}", self.tokens_path());
+        let tokens_path = self.tokens_path();
+        debug!("⏳ Writing auth tokens to {:?}", tokens_path);
 
         let contents = serde_json::to_vec(tokens)?;
         self.storage
-            .write_file(&self.tokens_path(), &contents)
+            .write_file(&tokens_path, &contents)
             .await?;
 
         debug!("✔️ Successfully wrote tokens: {:?}", tokens);
@@ -69,13 +71,14 @@ impl<S: Storage> AuthIo<S> {
     }
 
     pub async fn read_credentials(&self) -> Res<Option<Credentials>> {
-        debug!("⏳ Reading credentials from {:?}", self.credentials_path());
+        let credentials_path = self.credentials_path();
+        debug!("⏳ Reading credentials from {:?}", credentials_path);
 
-        if !self.storage.exists(&self.credentials_path()).await {
+        if !self.storage.exists(&credentials_path).await {
             debug!("No credentials file found");
             return Ok(None);
         }
-        let contents = self.storage.read_file(&self.credentials_path()).await?;
+        let contents = self.storage.read_file(&credentials_path).await?;
         let credentials: Credentials = serde_json::from_slice(&contents)?;
 
         // Check if credentials are expired
@@ -90,11 +93,12 @@ impl<S: Storage> AuthIo<S> {
     }
 
     pub async fn write_credentials(&self, credentials: &Credentials) -> Res {
-        debug!("⏳ Writing credentials to {:?}", self.credentials_path());
+        let credentials_path = self.credentials_path();
+        debug!("⏳ Writing credentials to {:?}", credentials_path);
 
         let contents = serde_json::to_vec(credentials)?;
         self.storage
-            .write_file(&self.credentials_path(), &contents)
+            .write_file(&credentials_path, &contents)
             .await?;
 
         debug!("✔️ Successfully wrote credentials: {:?}", credentials);
