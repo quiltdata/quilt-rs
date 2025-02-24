@@ -252,6 +252,16 @@ impl TryFrom<&str> for S3PackageUri {
     }
 }
 
+impl S3PackageUri {
+    fn format_hash(hash: &str) -> String {
+        if hash.len() <= 12 {
+            hash.to_string()
+        } else {
+            format!("{}...{}", &hash[..6], &hash[hash.len()-6..])
+        }
+    }
+}
+
 impl fmt::Display for S3PackageUri {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let hash = match &self.revision {
@@ -259,10 +269,10 @@ impl fmt::Display for S3PackageUri {
                 if h == "latest" {
                     "".to_string()
                 } else {
-                    format!("@{}", h)
+                    format!("@{}", Self::format_hash(h))
                 }
             }
-            RevisionPointer::Hash(h) => format!("@{}", h),
+            RevisionPointer::Hash(h) => format!("@{}", Self::format_hash(h)),
         };
         let path_part = match &self.path {
             Some(p) => format!("&path={}", p.display()),
@@ -465,6 +475,7 @@ mod tests {
 
     #[test]
     fn test_stringify_with_hash() -> Res {
+        // Test with short hash
         let uri = S3PackageUri {
             bucket: "bucket".to_string(),
             catalog: None,
@@ -473,6 +484,16 @@ mod tests {
             path: None,
         };
         assert_eq!(uri.to_string(), "quilt+s3://bucket#package=foo/bar@abc123");
+
+        // Test with long hash
+        let uri = S3PackageUri {
+            bucket: "bucket".to_string(),
+            catalog: None,
+            namespace: ("foo", "bar").into(),
+            revision: RevisionPointer::Hash("abcdef1234567890xyz".to_string()),
+            path: None,
+        };
+        assert_eq!(uri.to_string(), "quilt+s3://bucket#package=foo/bar@abcdef...890xyz");
         Ok(())
     }
 
