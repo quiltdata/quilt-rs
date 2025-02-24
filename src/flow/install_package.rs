@@ -1,3 +1,6 @@
+use tracing::debug;
+use tracing::info;
+
 use crate::flow;
 use crate::io::manifest::resolve_latest;
 use crate::io::remote::Remote;
@@ -8,7 +11,6 @@ use crate::paths;
 use crate::uri::ManifestUri;
 use crate::Error;
 use crate::Res;
-use tracing::{debug, info};
 
 /// Installs the package.
 /// It fetches manifest and puts it into `installed_packages`.

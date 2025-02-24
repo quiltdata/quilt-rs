@@ -1,5 +1,10 @@
 use std::path::PathBuf;
 
+use tracing::debug;
+use tracing::error;
+use tracing::info;
+use tracing::warn;
+
 use crate::flow;
 use crate::io::manifest::resolve_latest;
 use crate::io::remote::Remote;
@@ -13,10 +18,6 @@ use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::Error;
 use crate::Res;
-use tracing::debug;
-use tracing::error;
-use tracing::info;
-use tracing::warn;
 
 /// Pulls the latest package from remote.
 /// It also remove every local file in working directory and then re-installs it.
