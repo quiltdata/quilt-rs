@@ -1,4 +1,4 @@
-use tracing::log;
+use tracing::{debug, info};
 
 use crate::io::storage::Storage;
 use crate::lineage::DomainLineage;
@@ -15,22 +15,29 @@ pub async fn uninstall_package(
     storage: &impl Storage,
     namespace: Namespace,
 ) -> Res<DomainLineage> {
-    log::debug!("Uninstalling package {}", namespace);
+    info!("⏳ Uninstalling package {}", namespace);
 
+    debug!("🔍 Checking if package exists in lineage");
     lineage
         .packages
         .remove(&namespace)
         .ok_or(Error::PackageNotInstalled(namespace.to_owned()))?;
+    debug!("✔️ Package removed from lineage");
 
-    storage
-        .remove_dir_all(paths.installed_manifests(&namespace))
-        .await?;
-    storage
-        .remove_dir_all(paths.working_dir(&namespace))
-        .await?;
+    debug!("⏳ Removing installed manifests");
+    let manifest_path = paths.installed_manifests(&namespace);
+    storage.remove_dir_all(&manifest_path).await?;
+    debug!("✔️ Removed manifests at: {}", manifest_path.display());
+
+    debug!("⏳ Removing working directory");
+    let working_dir = paths.working_dir(&namespace);
+    storage.remove_dir_all(&working_dir).await?;
+    debug!("✔️ Removed working directory: {}", working_dir.display());
 
     // TODO: Remove object files? But need to make sure no other manifest uses them.
+    debug!("ℹ️ Skipping object files cleanup - may be used by other packages");
 
+    info!("✔️ Successfully uninstalled package {}", namespace);
     Ok(lineage)
 }
 
