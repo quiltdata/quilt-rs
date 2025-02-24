@@ -8,6 +8,7 @@ use crate::paths;
 use crate::uri::ManifestUri;
 use crate::Error;
 use crate::Res;
+use tracing::{debug, info};
 
 /// Installs the package.
 /// It fetches manifest and puts it into `installed_packages`.
@@ -20,40 +21,50 @@ pub async fn install_package(
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
 ) -> Res<DomainLineage> {
-    // bail if already installed
+    info!("⏳ Installing package: {}", manifest_uri);
+
     // TODO: if compatible (same remote), just return the installed package
     if lineage.packages.contains_key(&manifest_uri.namespace) {
+        debug!("❌ Package already installed: {}", manifest_uri.namespace);
         return Err(Error::PackageAlreadyInstalled(
             manifest_uri.namespace.clone(),
         ));
     }
 
+    debug!("⏳ Caching remote manifest");
     flow::cache_remote_manifest(paths, storage, remote, &manifest_uri.clone()).await?;
 
-    // Make an "installed" copy of the remote manifest.
+    debug!("⏳ Creating installed copy of manifest");
     let installed_manifest_path =
         paths.installed_manifest(&manifest_uri.namespace, &manifest_uri.hash);
     storage
         .create_dir_all(&installed_manifest_path.parent().unwrap())
         .await?;
     paths::copy_cached_to_installed(paths, storage, manifest_uri).await?;
+    debug!(
+        "✔️ Manifest installed at: {}",
+        installed_manifest_path.display()
+    );
 
-    // Create the identity cache dir.
+    // TODO: merge with existing `scaffold_paths` calls
+    debug!("⏳ Creating required directories");
+
     let objects_dir = paths.objects_dir();
-    storage.create_dir_all(&objects_dir).await?;
+    storage.create_dir_all(objects_dir).await?;
 
-    // Create the working dir.
     let working_dir = paths.working_dir(&manifest_uri.namespace);
     storage.create_dir_all(&working_dir).await?;
 
-    // Resolve and record latest manifest hash
+    debug!("⏳ Resolving latest hash for this package handle");
     let latest = resolve_latest(remote, &manifest_uri.catalog, &manifest_uri.into()).await?;
-    // Update the lineage (with empty paths).
+    debug!("✔️ Latest hash is {}", latest.hash);
+
     let mut lineage = lineage;
     lineage.packages.insert(
         manifest_uri.namespace.clone(),
         PackageLineage::from_remote(manifest_uri.clone(), latest.hash),
     );
+    info!("✔️ Successfully installed package: {}", manifest_uri);
     Ok(lineage)
 }
 
