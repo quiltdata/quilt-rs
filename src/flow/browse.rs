@@ -56,7 +56,7 @@ pub async fn cache_remote_manifest(
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
 ) -> Res<Table> {
-    info!("⏳ Caching remote manifest: {}", manifest_uri);
+    info!("⏳ Caching remote manifest: {}", manifest_uri.display());
 
     scaffold_paths(storage, paths.required_local_domain_paths()).await?;
     // check if the manifest is already cached
@@ -72,7 +72,7 @@ pub async fn cache_remote_manifest(
         if is_parquet(remote, manifest_uri).await? {
             debug!(
                 "⏳ Manifest {} stored remotely in Parquet format. Fetching…",
-                manifest_uri
+                manifest_uri.display()
             );
             let manifest = fetch_parquet(remote, manifest_uri).await?;
             debug!("✔️ Fetched manifest. Size: {}", manifest.len());
@@ -81,7 +81,7 @@ pub async fn cache_remote_manifest(
         } else {
             debug!(
                 "⏳ Manifest {} stored remotely in JSONL format. Fetching…",
-                manifest_uri
+                manifest_uri.display()
             );
             let manifest = fetch_jsonl(remote, manifest_uri).await?;
             debug!("✔️ Fetched JSONL manifest");
@@ -99,7 +99,7 @@ pub async fn cache_remote_manifest(
         debug!("✔️ Manifest exists already in {}", cache_path.display());
     }
 
-    info!("✔️ Manifest {} was written …", manifest_uri);
+    info!("✔️ Manifest {} was written …", manifest_uri.display());
 
     let manifest = Table::read_from_path(storage, &cache_path).await?;
 

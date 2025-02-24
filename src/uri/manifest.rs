@@ -66,6 +66,12 @@ impl fmt::Display for ManifestUri {
     }
 }
 
+impl ManifestUri {
+    pub fn display(&self) -> String {
+        S3PackageUri::from(self).display()
+    }
+}
+
 /// The same as `ManifestUri` but for legacy JSONL format
 /// They have the same struct-ure, but different impl-ementations, especially, for key `property`.
 #[derive(Clone, Debug)]

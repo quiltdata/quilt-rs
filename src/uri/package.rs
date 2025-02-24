@@ -257,8 +257,33 @@ impl S3PackageUri {
         if hash.len() <= 12 {
             hash.to_string()
         } else {
-            format!("{}...{}", &hash[..6], &hash[hash.len()-6..])
+            format!("{}...{}", &hash[..6], &hash[hash.len() - 6..])
         }
+    }
+
+    pub fn display(&self) -> String {
+        let hash = match &self.revision {
+            RevisionPointer::Tag(h) => {
+                if h == "latest" {
+                    "".to_string()
+                } else {
+                    format!("@{}", Self::format_hash(h))
+                }
+            }
+            RevisionPointer::Hash(h) => format!("@{}", Self::format_hash(h)),
+        };
+        let path_part = match &self.path {
+            Some(p) => format!("&path={}", p.display()),
+            None => "".to_string(),
+        };
+        let catalog_part = match &self.catalog {
+            Some(p) => format!("&catalog={}", p),
+            None => "".to_string(),
+        };
+        format!(
+            "quilt+s3://{}#package={}{}{}{}",
+            self.bucket, self.namespace, hash, path_part, catalog_part
+        )
     }
 }
 
@@ -269,7 +294,7 @@ impl fmt::Display for S3PackageUri {
                 if h == "latest" {
                     "".to_string()
                 } else {
-                    format!("@{}", Self::format_hash(h))
+                    format!("@{}", h)
                 }
             }
             RevisionPointer::Hash(h) => format!("@{}", Self::format_hash(h)),
@@ -493,7 +518,10 @@ mod tests {
             revision: RevisionPointer::Hash("abcdef1234567890xyz".to_string()),
             path: None,
         };
-        assert_eq!(uri.to_string(), "quilt+s3://bucket#package=foo/bar@abcdef...890xyz");
+        assert_eq!(
+            uri.to_string(),
+            "quilt+s3://bucket#package=foo/bar@abcdef...890xyz"
+        );
         Ok(())
     }
 

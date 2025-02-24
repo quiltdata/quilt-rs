@@ -133,7 +133,7 @@ pub async fn package_s3_prefix(
     };
     info!(
         "✔️ Created manifest {} for {}",
-        manifest_uri,
+        manifest_uri.display(),
         perf.elapsed()
     );
 

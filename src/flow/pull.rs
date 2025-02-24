@@ -77,7 +77,7 @@ pub async fn pull_package(
         &lineage.remote.clone().into(),
     )
     .await?;
-    debug!("✔️ Latest manifest resolved: {}", manifest_uri);
+    debug!("✔️ Latest manifest resolved: {}", manifest_uri.display());
 
     debug!("⏳ Caching remote manifest");
     flow::cache_remote_manifest(paths, storage, remote, &manifest_uri).await?;

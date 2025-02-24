@@ -96,7 +96,7 @@ pub async fn push_package(
         namespace: namespace.unwrap_or(lineage.remote.namespace.clone()),
         ..lineage.remote.clone()
     };
-    debug!("✔️ Created manifest URI: {}", manifest_uri);
+    debug!("✔️ Created manifest URI: {}", manifest_uri.display());
 
     debug!("⏳ Building and uploading manifest");
     let header = local_manifest.get_header().await?;
@@ -125,7 +125,7 @@ pub async fn push_package(
         ..manifest_uri.clone()
     };
 
-    debug!("⏳ Uploading manifest to remote {}", new_manifest_uri);
+    debug!("⏳ Uploading manifest to remote {}", new_manifest_uri.display());
     upload_manifest(storage, remote, &new_manifest_uri, &cache_path).await?;
     debug!("✔️ Manifest uploaded");
 

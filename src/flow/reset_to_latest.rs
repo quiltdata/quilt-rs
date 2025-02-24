@@ -24,7 +24,7 @@ pub async fn reset_to_latest(
 ) -> Res<PackageLineage> {
     info!("⏳ Starting reset to latest for package {}", namespace);
 
-    debug!("⏳ Resolving latest manifest hash for {}", lineage.remote);
+    debug!("⏳ Resolving latest manifest hash for {}", lineage.remote.display());
     let latest = resolve_latest(
         remote,
         &lineage.remote.catalog,

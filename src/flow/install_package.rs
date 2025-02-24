@@ -23,7 +23,7 @@ pub async fn install_package(
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
 ) -> Res<DomainLineage> {
-    info!("⏳ Installing package: {}", manifest_uri);
+    info!("⏳ Installing package: {}", manifest_uri.display());
 
     // TODO: if compatible (same remote), just return the installed package
     if lineage.packages.contains_key(&manifest_uri.namespace) {
@@ -66,7 +66,7 @@ pub async fn install_package(
         manifest_uri.namespace.clone(),
         PackageLineage::from_remote(manifest_uri.clone(), latest.hash),
     );
-    info!("✔️ Successfully installed package: {}", manifest_uri);
+    info!("✔️ Successfully installed package: {}", manifest_uri.display());
     Ok(lineage)
 }
 
