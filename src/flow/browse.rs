@@ -99,14 +99,11 @@ pub async fn cache_remote_manifest(
         debug!("✔️ Manifest exists already in {}", cache_path.display());
     }
 
-    info!("⏳ Have written the manifest {} …", manifest_uri);
+    info!("✔️ Manifest {} was written …", manifest_uri);
 
     let manifest = Table::read_from_path(storage, &cache_path).await?;
 
-    info!(
-        "✔️ … and, Successfully cached the manifest {:?}",
-        manifest.header
-    );
+    info!("✔️ … and, Successfully cached:\n{}", manifest);
 
     Ok(manifest)
 }
