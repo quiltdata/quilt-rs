@@ -13,7 +13,10 @@ use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::Error;
 use crate::Res;
-use tracing::{debug, info};
+use tracing::debug;
+use tracing::error;
+use tracing::info;
+use tracing::warn;
 
 /// Pulls the latest package from remote.
 /// It also remove every local file in working directory and then re-installs it.
@@ -30,34 +33,29 @@ pub async fn pull_package(
     namespace: Namespace,
 ) -> Res<PackageLineage> {
     info!("⏳ Starting pull for package {}", namespace);
-    
-    debug!("🔍 Checking for pending changes");
+
     if !status.changes.is_empty() {
-        debug!("❌ Found pending changes, cannot pull");
+        error!("❌ Found pending changes, cannot pull");
         return Err(Error::Package("package has pending changes".to_string()));
     }
 
-    debug!("🔍 Checking for pending commits");
     if lineage.commit.is_some() {
-        debug!("❌ Found pending commits, cannot pull");
+        error!("❌ Found pending commits, cannot pull");
         return Err(Error::Package("package has pending commits".to_string()));
     }
 
-    debug!("🔍 Checking if package has diverged");
     if lineage.remote.hash != lineage.base_hash {
-        debug!("❌ Package has diverged from remote");
+        error!("❌ Package has diverged from remote");
         return Err(Error::Package("package has diverged".to_string()));
     }
 
     // TODO: do we need to explicitly update latest_hash?
     // status() tries to update, but may fail.
-    debug!("🔍 Checking if package is up-to-date");
     if lineage.base_hash == lineage.latest_hash {
-        debug!("✔️ Package is already up-to-date");
+        error!("❌ Package is already up-to-date");
         return Err(Error::Package("package is already up-to-date".to_string()));
     }
 
-    debug!("⏳ Collecting installed paths");
     // TODO: What should we do about installed paths?
     // They may or may not exist in the updated package.
     let installed_paths: Vec<PathBuf> = lineage.paths.keys().cloned().collect();
@@ -70,7 +68,6 @@ pub async fn pull_package(
     // There needs to be a better way.
     lineage.remote.hash.clone_from(&lineage.latest_hash);
     lineage.base_hash.clone_from(&lineage.latest_hash);
-    debug!("✔️ Updated to latest hash: {}", lineage.latest_hash);
 
     debug!("⏳ Resolving latest manifest");
     let manifest_uri = resolve_latest(
@@ -83,7 +80,7 @@ pub async fn pull_package(
 
     debug!("⏳ Caching remote manifest");
     flow::cache_remote_manifest(paths, storage, remote, &manifest_uri).await?;
-    
+
     debug!("⏳ Installing cached manifest");
     copy_cached_to_installed(
         paths,
@@ -102,11 +99,11 @@ pub async fn pull_package(
             debug!("✔️ Will reinstall path: {}", x.display());
             paths_to_install.push(x)
         } else {
-            debug!("ℹ️ Path no longer exists in manifest: {}", x.display());
+            warn!("❌ Path no longer exists in manifest: {}", x.display());
         }
     }
     info!("⏳ Reinstalling {} paths", paths_to_install.len());
-    let result = flow::install_paths(
+    let package_lineage = flow::install_paths(
         lineage,
         manifest,
         paths,
@@ -116,13 +113,11 @@ pub async fn pull_package(
         remote,
         &paths_to_install,
     )
-    .await;
+    .await?;
 
-    if result.is_ok() {
-        info!("✔️ Successfully pulled and updated package");
-    }
-    
-    result
+    info!("✔️ Successfully pulled and updated package");
+
+    Ok(package_lineage)
 }
 
 #[cfg(test)]

@@ -40,8 +40,7 @@ async fn get_object_attributes_inner(
             debug!("{}", msg);
             debug!(
                 "⏳ Calculating checksum for bucket {} key {}",
-                &listing_uri.bucket,
-                &key
+                &listing_uri.bucket, &key
             );
             let stream = remote
                 .get_object_stream(
@@ -105,8 +104,10 @@ pub async fn package_s3_prefix(
     message: Option<String>,
     user_meta: Option<JsonObject>,
 ) -> Res<ManifestUri> {
-    info!("⏳ Creating package from S3 prefix");
-    debug!("Source URI: {:?}, target URI: {:?}", source_uri, dest_uri);
+    info!(
+        "⏳ Creating package from {} S3 prefix at {}",
+        source_uri, dest_uri
+    );
     // TODO: make get_object_attributes() calls concurrently across list_objects() pages
     // TODO: increase concurrency, to do that we need to figure out how to deal
     //       with fd limits on Mac by default it's 256
@@ -130,22 +131,28 @@ pub async fn package_s3_prefix(
         hash: top_hash,
         catalog: dest_uri.catalog,
     };
-    let perf = perf.elapsed();
-    info!("✔️ Created manifest {:?} for {}", manifest_uri, perf);
-    
+    info!(
+        "✔️ Created manifest {} for {}",
+        manifest_uri,
+        perf.elapsed()
+    );
+
     debug!("⏳ Uploading manifest to remote storage");
     upload_manifest(storage, remote, &manifest_uri, &cache_path).await?;
-    debug!("✔️ Manifest uploaded for {}", perf.elapsed());
-    
+    debug!("✔️ Manifest uploaded ({})", perf.elapsed());
+
     debug!("⏳ Adding timestamp tag");
     tag_timestamp(remote, &manifest_uri, chrono::Utc::now()).await?;
     debug!("✔️ Timestamp tag uploaded");
-    
+
     debug!("⏳ Setting as latest version");
     tag_latest(remote, &manifest_uri).await?;
     debug!("✔️ Latest tag uploaded");
-    
-    info!("✔️ Successfully created and uploaded package");
+
+    info!(
+        "✔️ Successfully created and uploaded package for {}",
+        perf.elapsed()
+    );
 
     Ok(manifest_uri)
 }
