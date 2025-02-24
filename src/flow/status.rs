@@ -168,7 +168,10 @@ pub async fn create_status(
     manifest: &Table,
     working_dir: PathBuf,
 ) -> Res<(PackageLineage, InstalledPackageStatus)> {
-    info!("⏳ Creating status for working directory: {}", working_dir.display());
+    info!(
+        "⏳ Creating status for working directory: {}",
+        working_dir.display()
+    );
     // compute the status based on the following sources:
     //   - the cached manifest
     //   - paths
@@ -191,10 +194,10 @@ pub async fn create_status(
     }
     debug!("✔️ Found {} paths in lineage", orig_paths.len());
 
-    debug!("⏳ Locating and analyzing files in working directory");
     let files = locate_files_in_working_dir(storage, manifest, working_dir, orig_paths).await?;
-    debug!("⏳ Computing file fingerprints and changes");
+    debug!("✔️ Locatd files in working directory {:?}", files);
     let changes = fingerprint_files(files).await?;
+    debug!("✔️ Computed file fingerprints {:?}", changes);
 
     debug!("⏳ Creating package status");
     let status = InstalledPackageStatus::new(lineage.clone().into(), changes);
