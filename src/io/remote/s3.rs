@@ -16,12 +16,13 @@ use aws_sdk_s3::types::CompletedPart;
 use aws_sdk_s3::types::Object;
 use aws_smithy_types::byte_stream::Length;
 use aws_types::region::Region;
+use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
 use multihash::Multihash;
 use parquet::data_type::AsBytes;
 use tokio::io::AsyncRead;
 use tracing::debug;
 use tracing::info;
-use tracing::log;
 use tracing::warn;
 
 use crate::auth;
@@ -425,7 +426,10 @@ impl RemoteS3 {
 
 impl Remote for RemoteS3 {
     async fn exists(&self, host: &Option<Host>, s3_uri: &S3Uri) -> Res<bool> {
-        debug!("⏳ Checking if object exists - host: {:?}, uri: {}", host, s3_uri);
+        debug!(
+            "⏳ Checking if object exists - host: {:?}, uri: {}",
+            host, s3_uri
+        );
         let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
         let result = client.head_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
         let result = match &s3_uri.version {
@@ -490,33 +494,41 @@ impl Remote for RemoteS3 {
             .object_attributes(aws_sdk_s3::types::ObjectAttributes::ObjectSize)
             .max_parts(MPU_MAX_PARTS as i32)
             .send()
-            .await {
-                Ok(attrs) => {
-                    let S3AttributesWrapper {
-                        size,
-                        hash,
-                        version,
-                    } = attrs.try_into()?;
-                    let attributes = S3Attributes {
-                        listing_uri: listing_uri.clone(),
-                        object_uri: S3Uri {
-                            bucket: listing_uri.bucket.clone(),
-                            key: key.to_string(),
-                            version: Some(version),
-                        },
-                        hash,
-                        size,
-                    };
-                    info!("✔️ Retrieved attributes for {}/{} - size: {}, hash: {}", 
-                          listing_uri.bucket, key, size, hash);
-                    Ok(attributes)
-                }
-                Err(err) => {
-                    warn!("❌ Failed to get attributes for {}/{}: {}", 
-                          listing_uri.bucket, key, err);
-                    Err(Error::S3(DisplayErrorContext(err).to_string()))
-                }
+            .await
+        {
+            Ok(attrs) => {
+                let S3AttributesWrapper {
+                    size,
+                    hash,
+                    version,
+                } = attrs.try_into()?;
+                let attributes = S3Attributes {
+                    listing_uri: listing_uri.clone(),
+                    object_uri: S3Uri {
+                        bucket: listing_uri.bucket.clone(),
+                        key: key.to_string(),
+                        version: Some(version),
+                    },
+                    hash,
+                    size,
+                };
+                info!(
+                    "✔️ Retrieved attributes for {}/{} - size: {}, hash: {}",
+                    listing_uri.bucket,
+                    key,
+                    size,
+                    BASE64_STANDARD.encode(hash.digest())
+                );
+                Ok(attributes)
             }
+            Err(err) => {
+                warn!(
+                    "❌ Failed to get attributes for {}/{}: {}",
+                    listing_uri.bucket, key, err
+                );
+                Err(Error::S3(DisplayErrorContext(err).to_string()))
+            }
+        }
     }
 
     async fn get_object_stream(
@@ -524,7 +536,10 @@ impl Remote for RemoteS3 {
         host: &Option<Host>,
         s3_uri: &S3Uri,
     ) -> Res<RemoteObjectStream> {
-        debug!("⏳ Getting object stream - host: {:?}, uri: {}", host, s3_uri);
+        debug!(
+            "⏳ Getting object stream - host: {:?}, uri: {}",
+            host, s3_uri
+        );
         let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
         match get_object_stream(&client, s3_uri).await {
             Ok(stream) => {
