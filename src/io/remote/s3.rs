@@ -425,6 +425,7 @@ impl RemoteS3 {
 
 impl Remote for RemoteS3 {
     async fn exists(&self, host: &Option<Host>, s3_uri: &S3Uri) -> Res<bool> {
+        debug!("⏳ Checking if object exists - host: {:?}, uri: {}", host, s3_uri);
         let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
         let result = client.head_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
         let result = match &s3_uri.version {
@@ -432,9 +433,18 @@ impl Remote for RemoteS3 {
             None => result,
         };
         match result.send().await {
-            Ok(_) => Ok(true),
-            Err(SdkError::ServiceError(err)) if err.err().is_not_found() => Ok(false),
-            Err(err) => Err(Error::S3(DisplayErrorContext(err).to_string())),
+            Ok(_) => {
+                info!("✔️ Object exists at {}", s3_uri);
+                Ok(true)
+            }
+            Err(SdkError::ServiceError(err)) if err.err().is_not_found() => {
+                info!("ℹ️ Object does not exist at {}", s3_uri);
+                Ok(false)
+            }
+            Err(err) => {
+                warn!("❌ Failed to check object existence at {}: {}", s3_uri, err);
+                Err(Error::S3(DisplayErrorContext(err).to_string()))
+            }
         }
     }
 
@@ -443,8 +453,18 @@ impl Remote for RemoteS3 {
         host: &Option<Host>,
         s3_uri: &S3Uri,
     ) -> Res<impl AsyncRead + Send + Unpin> {
+        debug!("⏳ Getting object - host: {:?}, uri: {}", host, s3_uri);
         let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
-        get_object(&client, s3_uri).await
+        match get_object(&client, s3_uri).await {
+            Ok(reader) => {
+                info!("✔️ Successfully retrieved object from {}", s3_uri);
+                Ok(reader)
+            }
+            Err(e) => {
+                warn!("❌ Failed to get object from {}: {}", s3_uri, e);
+                Err(e)
+            }
+        }
     }
 
     async fn get_object_attributes(
