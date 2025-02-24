@@ -66,7 +66,10 @@ pub async fn install_package(
         manifest_uri.namespace.clone(),
         PackageLineage::from_remote(manifest_uri.clone(), latest.hash),
     );
-    info!("✔️ Successfully installed package: {}", manifest_uri.display());
+    info!(
+        "✔️ Successfully installed package: {}",
+        manifest_uri.display()
+    );
     Ok(lineage)
 }
 

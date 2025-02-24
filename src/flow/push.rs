@@ -125,7 +125,10 @@ pub async fn push_package(
         ..manifest_uri.clone()
     };
 
-    debug!("⏳ Uploading manifest to remote {}", new_manifest_uri.display());
+    debug!(
+        "⏳ Uploading manifest to remote {}",
+        new_manifest_uri.display()
+    );
     upload_manifest(storage, remote, &new_manifest_uri, &cache_path).await?;
     debug!("✔️ Manifest uploaded");
 
