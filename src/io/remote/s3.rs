@@ -329,14 +329,26 @@ impl RemoteS3 {
                     // If credentials saved, check if they are valid
                     let auth_io =
                         AuthIo::new(self.auth.storage.clone(), self.auth.paths.auth_host(host));
-                    if let Some(creds) = auth_io.read_credentials().await? {
-                        if creds.expires_at <= chrono::Utc::now() {
-                            return Ok(client);
+                    match auth_io.read_credentials().await {
+                        Ok(Some(creds)) => {
+                            if creds.expires_at > chrono::Utc::now() {
+                                info!("✔️ Using cached S3 client with valid credentials for {}", host);
+                                return Ok(client);
+                            }
+                            info!("⚠️ Cached credentials for {} have expired", host);
+                        }
+                        Ok(None) => {
+                            info!("ℹ️ No credentials found for {}, will create new client", host);
+                        }
+                        Err(e) => {
+                            warn!("❌ Failed to read credentials for {}: {}", host, e);
+                            return Err(e);
                         }
                     }
-                    // Credentials expired, will create new client with refreshed credentials
+                    // Credentials expired or missing, will create new client with refreshed credentials
                 } else {
-                    // For clients infered credentials from ~/.aws, reuse existing client
+                    // For clients with inferred credentials from ~/.aws, reuse existing client
+                    info!("✔️ Using cached S3 client with AWS credentials");
                     return Ok(client);
                 }
             }
