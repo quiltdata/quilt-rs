@@ -11,6 +11,7 @@ use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::Res;
+use tracing::{debug, info};
 
 pub async fn reset_to_latest(
     lineage: PackageLineage,
@@ -21,26 +22,39 @@ pub async fn reset_to_latest(
     working_dir: PathBuf,
     namespace: Namespace,
 ) -> Res<PackageLineage> {
+    info!("⏳ Starting reset to latest for package {}", namespace);
+
+    debug!("⏳ Resolving latest manifest hash for {}", lineage.remote);
     let latest = resolve_latest(
         remote,
         &lineage.remote.catalog,
         &lineage.remote.clone().into(),
     )
     .await?;
+    debug!("✔️ Latest hash resolved: {}", latest.hash);
+
     if latest.hash == lineage.remote.hash {
-        // already at latest
+        info!("✔️ Package is already at latest version");
         return Ok(lineage);
     }
 
     let installed_paths: Vec<PathBuf> = lineage.paths.clone().into_keys().collect();
+    debug!("⏳ Uninstalling {} paths", installed_paths.len());
     let mut lineage =
         flow::uninstall_paths(lineage, working_dir.clone(), storage, &installed_paths).await?;
 
+    debug!("⏳ Updating lineage hashes");
     // TODO: Should be a method of lineage
     lineage.latest_hash.clone_from(&latest.hash);
     lineage.base_hash.clone_from(&latest.hash);
+    debug!("✔️ Updated lineage to latest hash: {}", latest.hash);
 
+    debug!("⏳ Caching remote manifest");
     flow::cache_remote_manifest(paths, storage, remote, &latest.clone()).await?;
+
+    // TODO: merge the following steps with `pull.rs`
+
+    debug!("⏳ Installing cached manifest");
     copy_cached_to_installed(
         paths,
         storage,
@@ -51,14 +65,21 @@ pub async fn reset_to_latest(
     )
     .await?;
     lineage.remote = latest;
+    debug!("✔️ Manifest installed successfully");
 
+    debug!("⏳ Checking which paths to reinstall");
     let mut paths_to_install = Vec::new();
     for x in installed_paths {
         if manifest.contains_record(&x).await {
+            debug!("✔️ Will reinstall path: {}", x.display());
             paths_to_install.push(x)
+        } else {
+            debug!("ℹ️ Path no longer exists in manifest: {}", x.display());
         }
     }
-    flow::install_paths(
+
+    info!("⏳ Reinstalling {} paths", paths_to_install.len());
+    let result = flow::install_paths(
         lineage,
         manifest,
         paths,
@@ -68,7 +89,10 @@ pub async fn reset_to_latest(
         remote,
         &paths_to_install,
     )
-    .await
+    .await?;
+
+    info!("✔️ Successfully reset package to latest version");
+    Ok(result)
 }
 
 #[cfg(test)]
