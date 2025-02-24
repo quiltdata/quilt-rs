@@ -164,7 +164,11 @@ pub async fn install_paths(
 
         let working_dest = working_dir.join(&row.name);
         let last_modified = create_mutable_copy(storage, &object_dest, &working_dest).await?;
-        debug!("✔️ Created mutable copy at {} for {}", last_modified, working_dest.display());
+        debug!(
+            "✔️ Created mutable copy at {} for {}",
+            last_modified,
+            working_dest.display()
+        );
 
         lineage.paths.insert(
             row.name.clone(),

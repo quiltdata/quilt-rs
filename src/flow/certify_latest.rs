@@ -3,7 +3,7 @@ use crate::io::remote::Remote;
 use crate::lineage::PackageLineage;
 use crate::uri::ManifestUri;
 use crate::Res;
-use tracing::{debug, info};
+use tracing::info;
 
 /// Tags the `manifest_uri` as "latest" remotely.
 /// And update localy in .quilt/lineage.json `base_hash` and `latest_hash` to that hash as well.
@@ -15,7 +15,10 @@ pub async fn certify_latest(
     info!("⏳ Certifying manifest {} as latest", manifest_uri);
     tag_latest(remote, &manifest_uri).await?;
     lineage.update_latest(manifest_uri.clone());
-    info!("✔️ Successfully certified manifest {} as latest", manifest_uri);
+    info!(
+        "✔️ Successfully certified manifest {} as latest",
+        manifest_uri
+    );
     Ok(lineage)
 }
 
