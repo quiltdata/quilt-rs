@@ -16,12 +16,14 @@ use aws_sdk_s3::types::CompletedPart;
 use aws_sdk_s3::types::Object;
 use aws_smithy_types::byte_stream::Length;
 use aws_types::region::Region;
+use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
 use multihash::Multihash;
 use parquet::data_type::AsBytes;
 use tokio::io::AsyncRead;
 use tracing::debug;
 use tracing::info;
-use tracing::log;
+use tracing::warn;
 
 use crate::auth;
 use crate::checksum::calculate_sha256_checksum;
@@ -329,14 +331,30 @@ impl RemoteS3 {
                     // If credentials saved, check if they are valid
                     let auth_io =
                         AuthIo::new(self.auth.storage.clone(), self.auth.paths.auth_host(host));
-                    if let Some(creds) = auth_io.read_credentials().await? {
-                        if creds.expires_at <= chrono::Utc::now() {
+                    match auth_io.read_credentials().await {
+                        // We ensured credentials are not expired inside `read_credentials`
+                        Ok(Some(_)) => {
+                            info!(
+                                "✔️ Using cached S3 client with valid credentials for {}",
+                                host
+                            );
                             return Ok(client);
                         }
+                        Ok(None) => {
+                            info!(
+                                "❌ No credentials found for {}, will create new client",
+                                host
+                            );
+                        }
+                        Err(e) => {
+                            warn!("❌ Failed to read credentials for {}: {}", host, e);
+                            return Err(e);
+                        }
                     }
-                    // Credentials expired, will create new client with refreshed credentials
+                    // Credentials expired or missing, will create new client with refreshed credentials
                 } else {
-                    // For clients infered credentials from ~/.aws, reuse existing client
+                    // For clients with inferred credentials from ~/.aws, reuse existing client
+                    info!("✔️ Using cached S3 client with AWS credentials");
                     return Ok(client);
                 }
             }
@@ -408,6 +426,10 @@ impl RemoteS3 {
 
 impl Remote for RemoteS3 {
     async fn exists(&self, host: &Option<Host>, s3_uri: &S3Uri) -> Res<bool> {
+        debug!(
+            "⏳ Checking if object exists - host: {:?}, uri: {}",
+            host, s3_uri
+        );
         let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
         let result = client.head_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
         let result = match &s3_uri.version {
@@ -415,9 +437,18 @@ impl Remote for RemoteS3 {
             None => result,
         };
         match result.send().await {
-            Ok(_) => Ok(true),
-            Err(SdkError::ServiceError(err)) if err.err().is_not_found() => Ok(false),
-            Err(err) => Err(Error::S3(DisplayErrorContext(err).to_string())),
+            Ok(_) => {
+                info!("✔️ Object exists at {}", s3_uri);
+                Ok(true)
+            }
+            Err(SdkError::ServiceError(err)) if err.err().is_not_found() => {
+                info!("ℹ️ Object does not exist at {}", s3_uri);
+                Ok(false)
+            }
+            Err(err) => {
+                warn!("❌ Failed to check object existence at {}: {}", s3_uri, err);
+                Err(Error::S3(DisplayErrorContext(err).to_string()))
+            }
         }
     }
 
@@ -426,8 +457,18 @@ impl Remote for RemoteS3 {
         host: &Option<Host>,
         s3_uri: &S3Uri,
     ) -> Res<impl AsyncRead + Send + Unpin> {
+        debug!("⏳ Getting object - host: {:?}, uri: {}", host, s3_uri);
         let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
-        get_object(&client, s3_uri).await
+        match get_object(&client, s3_uri).await {
+            Ok(reader) => {
+                info!("✔️ Successfully retrieved object from {}", s3_uri);
+                Ok(reader)
+            }
+            Err(e) => {
+                warn!("❌ Failed to get object from {}: {}", s3_uri, e);
+                Err(e)
+            }
+        }
     }
 
     async fn get_object_attributes(
@@ -440,12 +481,11 @@ impl Remote for RemoteS3 {
             .get_client_for_bucket(host, &listing_uri.bucket)
             .await?;
         let key = object.key.clone().ok_or(Error::ObjectKey)?;
-        log::debug!(
-            "Getting attributes for bucket {} key {}",
-            &listing_uri.bucket,
-            key
+        debug!(
+            "⏳ Getting object attributes - host: {:?}, bucket: {}, key: {}",
+            host, &listing_uri.bucket, key
         );
-        let attrs = client
+        match client
             .get_object_attributes()
             .bucket(&listing_uri.bucket)
             .key(key.clone())
@@ -455,23 +495,40 @@ impl Remote for RemoteS3 {
             .max_parts(MPU_MAX_PARTS as i32)
             .send()
             .await
-            .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
-
-        let S3AttributesWrapper {
-            size,
-            hash,
-            version,
-        } = attrs.try_into()?;
-        Ok(S3Attributes {
-            listing_uri: listing_uri.clone(),
-            object_uri: S3Uri {
-                bucket: listing_uri.bucket.clone(),
-                key: key.to_string(),
-                version: Some(version),
-            },
-            hash,
-            size,
-        })
+        {
+            Ok(attrs) => {
+                let S3AttributesWrapper {
+                    size,
+                    hash,
+                    version,
+                } = attrs.try_into()?;
+                let attributes = S3Attributes {
+                    listing_uri: listing_uri.clone(),
+                    object_uri: S3Uri {
+                        bucket: listing_uri.bucket.clone(),
+                        key: key.to_string(),
+                        version: Some(version),
+                    },
+                    hash,
+                    size,
+                };
+                info!(
+                    "✔️ Retrieved attributes for {}/{} - size: {}, hash: {}",
+                    listing_uri.bucket,
+                    key,
+                    size,
+                    BASE64_STANDARD.encode(hash.digest())
+                );
+                Ok(attributes)
+            }
+            Err(err) => {
+                warn!(
+                    "❌ Failed to get attributes for {}/{}: {}",
+                    listing_uri.bucket, key, err
+                );
+                Err(Error::S3(DisplayErrorContext(err).to_string()))
+            }
+        }
     }
 
     async fn get_object_stream(
@@ -479,8 +536,21 @@ impl Remote for RemoteS3 {
         host: &Option<Host>,
         s3_uri: &S3Uri,
     ) -> Res<RemoteObjectStream> {
+        debug!(
+            "⏳ Getting object stream - host: {:?}, uri: {}",
+            host, s3_uri
+        );
         let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
-        get_object_stream(&client, s3_uri).await
+        match get_object_stream(&client, s3_uri).await {
+            Ok(stream) => {
+                info!("✔️ Created stream for object {}", s3_uri);
+                Ok(stream)
+            }
+            Err(e) => {
+                warn!("❌ Failed to create stream for {}: {}", s3_uri, e);
+                Err(e)
+            }
+        }
     }
 
     async fn list_objects(&self, host: &Option<Host>, listing_uri: &S3Uri) -> impl ObjectsStream {

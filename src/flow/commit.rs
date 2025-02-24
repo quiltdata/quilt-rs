@@ -5,7 +5,8 @@ use std::path::PathBuf;
 
 use serde_json::json;
 use tokio_stream::StreamExt;
-use tracing::log;
+use tracing::warn;
+use tracing::{debug, info};
 use url::Url;
 
 use crate::io::manifest::build_manifest_from_rows_stream;
@@ -63,6 +64,10 @@ async fn create_immutable_object_copy(
     logical_key: &PathBuf,
     current: PackageFileFingerprint,
 ) -> Res<Row> {
+    debug!(
+        "⏳ Creating immutable object copy for: {}",
+        logical_key.display()
+    );
     let objects_dir = paths.objects_dir();
     // FIXME: This should really be done when the domain is created.
     storage.create_dir_all(&objects_dir).await?;
@@ -83,7 +88,17 @@ async fn create_immutable_object_copy(
     let work_dest = working_dir.join(logical_key);
 
     if !storage.exists(&object_dest).await {
+        debug!(
+            "⏳ Copying file to objects directory: {}",
+            object_dest.display()
+        );
         storage.copy(&work_dest, object_dest).await?;
+        debug!("✔️ File copied successfully");
+    } else {
+        debug!(
+            "✔️ Object already exists in storage: {}",
+            object_dest.display()
+        );
     }
     lineage.paths.insert(
         logical_key.clone(),
@@ -117,7 +132,10 @@ pub async fn commit_package(
     user_meta: Option<JsonObject>,
     workflow: Option<Workflow>,
 ) -> Res<PackageLineage> {
-    log::debug!("commit: {:?}, {:?}", message, user_meta);
+    info!(
+        r#"⏳ Starting commit with message "{}" and user_meta `{:?}`"#,
+        message, user_meta
+    );
     // create a new manifest based on the stored version
 
     // for each modified file:
@@ -156,6 +174,11 @@ pub async fn commit_package(
     let mut removed_keys = HashSet::new();
     let mut new_files = Vec::new();
     for (logical_key, state) in status.changes {
+        debug!(
+            "Processing change type {:?} for: {}",
+            state,
+            logical_key.display()
+        );
         match state {
             Change::Removed(row) => {
                 lineage.paths.remove(&row.name);
@@ -202,11 +225,21 @@ pub async fn commit_package(
         },
     };
 
+    debug!(
+        "⏳ Building new manifest with {} removed, {} modified, {} new files",
+        removed_keys.len(),
+        modified_keys.len(),
+        new_files.len()
+    );
     let stream = stream_local_with_changes(manifest, removed_keys, modified_keys, new_files).await;
     let manifest_path = |t: &str| paths.installed_manifest(&namespace, t);
-    let (_, new_top_hash) =
+    let (manifest_path, new_top_hash) =
         build_manifest_from_rows_stream(storage, manifest_path, header, stream).await?;
-
+    info!(
+        "✔️New manifest with {} was built in {}",
+        manifest_path.display(),
+        new_top_hash
+    );
     let mut prev_hashes = Vec::new();
     if let Some(commit) = lineage.commit {
         prev_hashes.push(commit.hash.to_owned());
@@ -219,6 +252,14 @@ pub async fn commit_package(
     };
     lineage.commit = Some(commit);
 
+    if let Some(ref commit) = lineage.commit {
+        info!(
+            "✔️ Successfully committed changes with hash: {}",
+            commit.hash
+        );
+    } else {
+        warn!("❌ Failed writing the commit to the lineage",);
+    }
     Ok(lineage)
 }
 

@@ -1,7 +1,9 @@
 use std::io::ErrorKind;
 use std::path::PathBuf;
 
-use tracing::log;
+use tracing::debug;
+use tracing::error;
+use tracing::info;
 
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
@@ -19,21 +21,30 @@ pub async fn uninstall_paths(
     storage: &impl Storage,
     paths: &Vec<PathBuf>,
 ) -> Res<PackageLineage> {
-    log::debug!("Uninstalling paths {:?}", paths);
+    info!("⏳ Uninstalling {} paths", paths.len());
 
     for path in paths {
+        debug!("⏳ Processing path: {}", path.display());
+
+        debug!("⏳ Removing path from lineage");
         lineage.paths.remove(path).ok_or(not_found_error(path))?;
+        debug!("✔️ Path removed from lineage");
 
         let working_path = working_dir.join(path);
+        debug!("⏳ Removing file from {}", working_path.display());
         if let Err(err) = storage.remove_file(working_path).await {
             if err.kind() != ErrorKind::NotFound {
                 return Err(Error::Io(err));
             }
+            error!("❌ Failed to remove: {:?}", err);
+        } else {
+            debug!("✔️ File removed successfully");
         }
     }
 
     // TODO: Remove unused files in OBJECTS_DIR?
 
+    info!("✔️ Successfully uninstalled {} paths", paths.len());
     Ok(lineage)
 }
 

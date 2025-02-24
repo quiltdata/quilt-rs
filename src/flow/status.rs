@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use tokio::fs::File;
 
-use tracing::log;
+use tracing::{debug, info, warn};
 
 use crate::checksum::calculate_sha256_checksum;
 use crate::checksum::calculate_sha256_chunked_checksum;
@@ -80,7 +80,7 @@ async fn locate_files_in_working_dir(
         let mut dir_entries = match storage.read_dir(&dir).await {
             Ok(dir_entries) => dir_entries,
             Err(err) => {
-                log::error!("Failed to read directory {:?}: {}", dir, err);
+                warn!("❌ Failed to read directory {}: {}", dir.display(), err);
                 continue;
             }
         };
@@ -135,8 +135,8 @@ async fn fingerprint_files(files: Vec<(PathBuf, WorkdirFile)>) -> Res<ChangeSet>
                     let fingerprint = PackageFileFingerprint { size, hash };
                     changes.insert(logical_key, Change::Modified(fingerprint));
                 } else {
-                    log::debug!(
-                        "File {} is not tracked and is not modified compared to remote manifest",
+                    debug!(
+                        "✔️ File {} matches remote manifest but is not tracked locally",
                         logical_key.display()
                     );
                 }
@@ -153,7 +153,7 @@ async fn fingerprint_files(files: Vec<(PathBuf, WorkdirFile)>) -> Res<ChangeSet>
             WorkdirFile::UnSupported => {
                 // TODO: handle symlinks
                 // TODO: changes.insert(path, Change::Broken)
-                log::warn!("Unexpected file type: {:?}", logical_key);
+                warn!("❌ Unexpected file type: {}", logical_key.display());
             }
         }
     }
@@ -168,6 +168,10 @@ pub async fn create_status(
     manifest: &Table,
     working_dir: PathBuf,
 ) -> Res<(PackageLineage, InstalledPackageStatus)> {
+    info!(
+        "⏳ Creating status for working directory: {}",
+        working_dir.display()
+    );
     // compute the status based on the following sources:
     //   - the cached manifest
     //   - paths
@@ -175,22 +179,29 @@ pub async fn create_status(
     // installed entries marked as "installed" (initially as "downloading")
     // modified entries marked as "modified", etc
 
+    debug!("⏳ Collecting paths from lineage");
     let mut orig_paths = HashMap::new();
     for path in lineage.paths.keys() {
+        debug!("🔍 Checking manifest for path: {}", path.display());
         let row = manifest
             .get_record(path)
             .await?
             .ok_or(Error::ManifestPath(format!(
-                "path {:?} not found in installed manifest",
-                path
+                "path {} not found in installed manifest",
+                path.display()
             )))?;
         orig_paths.insert(path.clone(), row);
     }
+    debug!("✔️ Found {} paths in lineage", orig_paths.len());
 
     let files = locate_files_in_working_dir(storage, manifest, working_dir, orig_paths).await?;
+    debug!("✔️ Locatd files in working directory {:?}", files);
     let changes = fingerprint_files(files).await?;
+    debug!("✔️ Computed file fingerprints {:?}", changes);
 
+    debug!("⏳ Creating package status");
     let status = InstalledPackageStatus::new(lineage.clone().into(), changes);
+    info!("✔️ Status created with {} changes", status.changes.len());
     Ok((lineage, status))
 }
 

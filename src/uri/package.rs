@@ -252,6 +252,41 @@ impl TryFrom<&str> for S3PackageUri {
     }
 }
 
+impl S3PackageUri {
+    fn format_hash(hash: &str) -> String {
+        if hash.len() <= 12 {
+            hash.to_string()
+        } else {
+            format!("{}...{}", &hash[..6], &hash[hash.len() - 6..])
+        }
+    }
+
+    pub fn display(&self) -> String {
+        let hash = match &self.revision {
+            RevisionPointer::Tag(h) => {
+                if h == "latest" {
+                    "".to_string()
+                } else {
+                    format!("@{}", h)
+                }
+            }
+            RevisionPointer::Hash(h) => format!("@{}", Self::format_hash(h)),
+        };
+        let path_part = match &self.path {
+            Some(p) => format!("&path={}", p.display()),
+            None => "".to_string(),
+        };
+        let catalog_part = match &self.catalog {
+            Some(p) => format!("&catalog={}", p),
+            None => "".to_string(),
+        };
+        format!(
+            "quilt+s3://{}#package={}{}{}{}",
+            self.bucket, self.namespace, hash, path_part, catalog_part
+        )
+    }
+}
+
 impl fmt::Display for S3PackageUri {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let hash = match &self.revision {
@@ -292,11 +327,17 @@ impl From<ManifestUri> for S3PackageUri {
     fn from(uri: ManifestUri) -> S3PackageUri {
         S3PackageUri {
             bucket: uri.bucket,
-            catalog: None,
+            catalog: uri.catalog,
             namespace: uri.namespace,
             path: None,
             revision: RevisionPointer::Hash(uri.hash),
         }
+    }
+}
+
+impl From<&ManifestUri> for S3PackageUri {
+    fn from(uri: &ManifestUri) -> S3PackageUri {
+        S3PackageUri::from(uri.clone())
     }
 }
 
@@ -459,6 +500,7 @@ mod tests {
 
     #[test]
     fn test_stringify_with_hash() -> Res {
+        // Test with short hash
         let uri = S3PackageUri {
             bucket: "bucket".to_string(),
             catalog: None,
@@ -467,6 +509,19 @@ mod tests {
             path: None,
         };
         assert_eq!(uri.to_string(), "quilt+s3://bucket#package=foo/bar@abc123");
+
+        // Test with long hash
+        let uri = S3PackageUri {
+            bucket: "bucket".to_string(),
+            catalog: None,
+            namespace: ("foo", "bar").into(),
+            revision: RevisionPointer::Hash("abcdef1234567890xyz".to_string()),
+            path: None,
+        };
+        assert_eq!(
+            uri.to_string(),
+            "quilt+s3://bucket#package=foo/bar@abcdef1234567890xyz"
+        );
         Ok(())
     }
 
@@ -492,8 +547,21 @@ mod tests {
             catalog: None,
         };
 
+        // Test From<ManifestUri>
         assert_eq!(
-            S3PackageUri::from(manifest_uri),
+            S3PackageUri::from(manifest_uri.clone()),
+            S3PackageUri {
+                bucket: "test-bucket".to_string(),
+                catalog: None,
+                namespace: ("foo", "bar").into(),
+                path: None,
+                revision: RevisionPointer::Hash("abc123".to_string()),
+            }
+        );
+
+        // Test From<&ManifestUri>
+        assert_eq!(
+            S3PackageUri::from(&manifest_uri),
             S3PackageUri {
                 bucket: "test-bucket".to_string(),
                 catalog: None,

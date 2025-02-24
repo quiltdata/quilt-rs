@@ -1,4 +1,7 @@
 use tokio_stream::StreamExt;
+use tracing::debug;
+use tracing::info;
+use tracing::warn;
 
 use crate::flow;
 use crate::io::manifest::build_manifest_from_rows_stream;
@@ -31,14 +34,17 @@ async fn use_existing_row_or_upload(
     let mut output = Vec::new();
     for row in rows? {
         let row = row?;
+        debug!("⏳ Processing row: {}", row.name.display());
         if let Ok(Some(remote_row)) = remote_manifest.get_record(&row.name).await {
             if remote_row == row {
+                debug!("✔️ Using existing remote row for: {}", row.name.display());
                 output.push(Ok(Row {
                     place: remote_row.place.to_owned(),
                     ..row.clone()
                 }));
             }
         } else {
+            debug!("⏳ Uploading new row for: {}", row.name.display());
             output.push(upload_row(remote, host, package_handle.clone(), row).await)
         }
     }
@@ -68,11 +74,16 @@ pub async fn push_package(
     namespace: Option<Namespace>,
 ) -> Res<PackageLineage> {
     let commit = match lineage.commit {
-        None => return Ok(lineage), // nothing to commit
+        None => {
+            info!("No changes to push");
+            return Ok(lineage); // nothing to commit
+        }
         Some(commit) => commit,
     };
 
+    debug!("⏳ Fetching remote manifest");
     let remote_manifest = flow::browse(paths, storage, remote, &lineage.remote).await?;
+    debug!("✔️ Remote manifest fetched");
 
     // ## copy data
     // Copy each of the _modified_ paths from their local_key to remote_key,
@@ -80,13 +91,16 @@ pub async fn push_package(
     //
     // TODO: FAIL if the remote bucket does NOT support versioning (as it would be destructive)
 
+    debug!("⏳ Creating manifest URI");
     let manifest_uri = ManifestUri {
         namespace: namespace.unwrap_or(lineage.remote.namespace.clone()),
         ..lineage.remote.clone()
     };
+    debug!("✔️ Created manifest URI: {}", manifest_uri.display());
 
+    debug!("⏳ Building and uploading manifest");
     let header = local_manifest.get_header().await?;
-    let package_handle = S3PackageHandle::from(manifest_uri.clone());
+    let package_handle = S3PackageHandle::from(&manifest_uri);
     let stream = Box::pin(
         stream_uploaded_local_rows(
             remote,
@@ -100,26 +114,40 @@ pub async fn push_package(
     let manifest_path = |t: &str| paths.manifest_cache(&manifest_uri.bucket, t);
     let (cache_path, top_hash) =
         build_manifest_from_rows_stream(storage, manifest_path, header, stream).await?;
+    debug!(
+        "✔️ Built manifest with hash {} at {}",
+        top_hash,
+        cache_path.display()
+    );
 
     let new_manifest_uri = ManifestUri {
         hash: top_hash,
         ..manifest_uri.clone()
     };
 
+    debug!(
+        "⏳ Uploading manifest to remote {}",
+        new_manifest_uri.display()
+    );
     upload_manifest(storage, remote, &new_manifest_uri, &cache_path).await?;
+    debug!("✔️ Manifest uploaded");
 
+    debug!("⏳ Adding timestamp tag {}", commit.timestamp);
     tag_timestamp(remote, &new_manifest_uri, commit.timestamp).await?;
+    debug!("✔️ Timestamp tag added");
 
-    // Check the hash of remote's latest manifest
+    debug!("⏳ Checking remote's latest manifest hash");
     lineage.latest_hash = resolve_latest(remote, &new_manifest_uri.catalog, &manifest_uri.into())
         .await?
         .hash;
-    lineage.remote = new_manifest_uri.clone();
+    debug!("✔️ Latest hash is: {}", lineage.latest_hash);
 
-    // Reset the commit state.
+    lineage.remote = new_manifest_uri.clone();
     lineage.commit = None;
 
     if new_manifest_uri.hash != commit.hash {
+        debug!("❌ Hash mismatch, copying cached to installed");
+        // Otherwise, lineage will be pointing to the wrong/inexisting hash
         paths::copy_cached_to_installed(paths, storage, &new_manifest_uri).await?;
         Err(Error::Push(
             "Latest local hash is not equal to pushed manifest commit".to_string(),
@@ -128,10 +156,13 @@ pub async fn push_package(
 
     // Try certifying latest if tracking
     if lineage.base_hash == lineage.latest_hash {
-        // remote latest has not been updated, certifying the new latest
+        debug!("⏳ Remote latest not updated, certifying new latest");
         return flow::certify_latest(lineage, remote, new_manifest_uri).await;
+    } else {
+        warn!(r#"⏳ We do not "track" the latest hash, so we will not certify it"#);
     }
 
+    info!("✔️ Successfully pushed package");
     Ok(lineage)
 }
 

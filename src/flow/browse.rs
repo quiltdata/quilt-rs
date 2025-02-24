@@ -1,5 +1,7 @@
 use tokio::io::AsyncReadExt;
 use tokio_stream::StreamExt;
+use tracing::debug;
+use tracing::info;
 
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::RowsStream;
@@ -54,6 +56,8 @@ pub async fn cache_remote_manifest(
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
 ) -> Res<Table> {
+    info!("⏳ Caching remote manifest: {}", manifest_uri.display());
+
     scaffold_paths(storage, paths.required_local_domain_paths()).await?;
     // check if the manifest is already cached
     // if not, download and cache it
@@ -63,20 +67,45 @@ pub async fn cache_remote_manifest(
     let cache_path = paths.manifest_cache(&manifest_uri.bucket, &manifest_uri.hash);
 
     if !storage.exists(&cache_path).await {
+        debug!("🔍 Manifest does not exist in cache, fetching from remote");
         // Does not exist yet
         if is_parquet(remote, manifest_uri).await? {
+            debug!(
+                "⏳ Manifest {} stored remotely in Parquet format. Fetching…",
+                manifest_uri.display()
+            );
             let manifest = fetch_parquet(remote, manifest_uri).await?;
+            debug!("✔️ Fetched manifest. Size: {}", manifest.len());
             storage.write_file(&cache_path, &manifest).await?;
+            debug!("✔️ Manifest has written to {}", cache_path.display());
         } else {
+            debug!(
+                "⏳ Manifest {} stored remotely in JSONL format. Fetching…",
+                manifest_uri.display()
+            );
             let manifest = fetch_jsonl(remote, manifest_uri).await?;
+            debug!("✔️ Fetched JSONL manifest");
             let header = Header::from(&manifest);
             let manifest_path = |_: &str| cache_path.clone();
             let stream = stream_jsonl_rows(manifest).await;
-            build_manifest_from_rows_stream(storage, manifest_path, header, stream).await?;
+            let (dest_path, _) =
+                build_manifest_from_rows_stream(storage, manifest_path, header, stream).await?;
+            debug!(
+                "✔️ Manifest has converted to Parquet and written to {}",
+                dest_path.display()
+            );
         };
+    } else {
+        debug!("✔️ Manifest exists already in {}", cache_path.display());
     }
 
-    Table::read_from_path(storage, &cache_path).await
+    info!("✔️ Manifest {} was written …", manifest_uri.display());
+
+    let manifest = Table::read_from_path(storage, &cache_path).await?;
+
+    info!("✔️ … and, Successfully cached:\n{}", manifest);
+
+    Ok(manifest)
 }
 
 /// Alias for the `cache_remote_manifest`.

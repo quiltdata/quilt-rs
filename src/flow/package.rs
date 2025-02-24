@@ -2,7 +2,7 @@ use aws_sdk_s3::types::Object;
 use chrono;
 use futures::future::try_join_all;
 use tokio_stream::StreamExt;
-use tracing::log;
+use tracing::{debug, info, warn};
 
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::tag_latest;
@@ -37,11 +37,10 @@ async fn get_object_attributes_inner(
     match remote.get_object_attributes(host, listing_uri, &obj).await {
         Ok(attrs) => Ok(attrs),
         Err(Error::Checksum(msg)) => {
-            log::debug!("{}", msg);
-            log::debug!(
-                "Calculating checksum for bucket {} key {}",
-                &listing_uri.bucket,
-                &key
+            debug!("{}", msg);
+            debug!(
+                "⏳ Calculating checksum for bucket {} key {}",
+                &listing_uri.bucket, &key
             );
             let stream = remote
                 .get_object_stream(
@@ -58,7 +57,7 @@ async fn get_object_attributes_inner(
                 .await
         }
         Err(err) => {
-            log::warn!("Error getting attributes: {}", err);
+            warn!("❌ Error getting attributes: {}", err);
             Err(err)
         }
     }
@@ -105,7 +104,10 @@ pub async fn package_s3_prefix(
     message: Option<String>,
     user_meta: Option<JsonObject>,
 ) -> Res<ManifestUri> {
-    log::debug!("Source URI: {:?}, target URI: {:?}", source_uri, dest_uri);
+    info!(
+        "⏳ Creating package from {} S3 prefix at {}",
+        source_uri, dest_uri
+    );
     // TODO: make get_object_attributes() calls concurrently across list_objects() pages
     // TODO: increase concurrency, to do that we need to figure out how to deal
     //       with fd limits on Mac by default it's 256
@@ -129,14 +131,28 @@ pub async fn package_s3_prefix(
         hash: top_hash,
         catalog: dest_uri.catalog,
     };
-    let perf = perf.elapsed();
-    log::info!("Created manifest {:?} for {}", manifest_uri, perf);
+    info!(
+        "✔️ Created manifest {} for {}",
+        manifest_uri.display(),
+        perf.elapsed()
+    );
+
+    debug!("⏳ Uploading manifest to remote storage");
     upload_manifest(storage, remote, &manifest_uri, &cache_path).await?;
-    log::debug!("Manifest uploaded for {}", perf.elapsed());
+    debug!("✔️ Manifest uploaded ({})", perf.elapsed());
+
+    debug!("⏳ Adding timestamp tag");
     tag_timestamp(remote, &manifest_uri, chrono::Utc::now()).await?;
-    log::debug!("Timestamp tag uploaded");
+    debug!("✔️ Timestamp tag uploaded");
+
+    debug!("⏳ Setting as latest version");
     tag_latest(remote, &manifest_uri).await?;
-    log::debug!("Latest uploaded");
+    debug!("✔️ Latest tag uploaded");
+
+    info!(
+        "✔️ Successfully created and uploaded package for {}",
+        perf.elapsed()
+    );
 
     Ok(manifest_uri)
 }

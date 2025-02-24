@@ -1,5 +1,10 @@
 use std::path::PathBuf;
 
+use tracing::debug;
+use tracing::error;
+use tracing::info;
+use tracing::warn;
+
 use crate::flow;
 use crate::io::manifest::resolve_latest;
 use crate::io::remote::Remote;
@@ -28,40 +33,56 @@ pub async fn pull_package(
     status: InstalledPackageStatus,
     namespace: Namespace,
 ) -> Res<PackageLineage> {
+    info!("⏳ Starting pull for package {}", namespace);
+
     if !status.changes.is_empty() {
+        error!("❌ Found pending changes, cannot pull");
         return Err(Error::Package("package has pending changes".to_string()));
     }
 
     if lineage.commit.is_some() {
+        error!("❌ Found pending commits, cannot pull");
         return Err(Error::Package("package has pending commits".to_string()));
     }
+
     if lineage.remote.hash != lineage.base_hash {
+        error!("❌ Package has diverged from remote");
         return Err(Error::Package("package has diverged".to_string()));
     }
+
     // TODO: do we need to explicitly update latest_hash?
     // status() tries to update, but may fail.
     if lineage.base_hash == lineage.latest_hash {
+        error!("❌ Package is already up-to-date");
         return Err(Error::Package("package is already up-to-date".to_string()));
     }
 
     // TODO: What should we do about installed paths?
     // They may or may not exist in the updated package.
     let installed_paths: Vec<PathBuf> = lineage.paths.keys().cloned().collect();
+    debug!("⏳ Uninstalling {} paths", installed_paths.len());
     let mut lineage =
         flow::uninstall_paths(lineage, working_dir.clone(), storage, &installed_paths).await?;
 
+    debug!("⏳ Updating lineage hashes");
     // TODO: uninstall_paths() just modified the lineage, so re-reading it here.
     // There needs to be a better way.
     lineage.remote.hash.clone_from(&lineage.latest_hash);
     lineage.base_hash.clone_from(&lineage.latest_hash);
 
+    debug!("⏳ Resolving latest manifest");
     let manifest_uri = resolve_latest(
         remote,
         &lineage.remote.catalog,
         &lineage.remote.clone().into(),
     )
     .await?;
+    debug!("✔️ Latest manifest resolved: {}", manifest_uri.display());
+
+    debug!("⏳ Caching remote manifest");
     flow::cache_remote_manifest(paths, storage, remote, &manifest_uri).await?;
+
+    debug!("⏳ Installing cached manifest");
     copy_cached_to_installed(
         paths,
         storage,
@@ -72,13 +93,18 @@ pub async fn pull_package(
     )
     .await?;
 
+    debug!("⏳ Checking which paths to reinstall");
     let mut paths_to_install = Vec::new();
     for x in installed_paths {
         if manifest.contains_record(&x).await {
+            debug!("✔️ Will reinstall path: {}", x.display());
             paths_to_install.push(x)
+        } else {
+            warn!("❌ Path no longer exists in manifest: {}", x.display());
         }
     }
-    flow::install_paths(
+    info!("⏳ Reinstalling {} paths", paths_to_install.len());
+    let package_lineage = flow::install_paths(
         lineage,
         manifest,
         paths,
@@ -88,7 +114,11 @@ pub async fn pull_package(
         remote,
         &paths_to_install,
     )
-    .await
+    .await?;
+
+    info!("✔️ Successfully pulled and updated package");
+
+    Ok(package_lineage)
 }
 
 #[cfg(test)]
