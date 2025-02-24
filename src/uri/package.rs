@@ -267,7 +267,7 @@ impl S3PackageUri {
                 if h == "latest" {
                     "".to_string()
                 } else {
-                    format!("@{}", Self::format_hash(h))
+                    format!("@{}", h)
                 }
             }
             RevisionPointer::Hash(h) => format!("@{}", Self::format_hash(h)),
@@ -297,7 +297,7 @@ impl fmt::Display for S3PackageUri {
                     format!("@{}", h)
                 }
             }
-            RevisionPointer::Hash(h) => format!("@{}", Self::format_hash(h)),
+            RevisionPointer::Hash(h) => format!("@{}", h),
         };
         let path_part = match &self.path {
             Some(p) => format!("&path={}", p.display()),
@@ -520,7 +520,7 @@ mod tests {
         };
         assert_eq!(
             uri.to_string(),
-            "quilt+s3://bucket#package=foo/bar@abcdef...890xyz"
+            "quilt+s3://bucket#package=foo/bar@abcdef1234567890xyz"
         );
         Ok(())
     }
@@ -543,7 +543,7 @@ mod tests {
         let manifest_uri = ManifestUri {
             bucket: "test-bucket".to_string(),
             namespace: ("foo", "bar").into(),
-            hash: "abc123abc123abc123abc123".to_string(),
+            hash: "abc123".to_string(),
             catalog: None,
         };
 
@@ -555,7 +555,7 @@ mod tests {
                 catalog: None,
                 namespace: ("foo", "bar").into(),
                 path: None,
-                revision: RevisionPointer::Hash("abc123abc123abc123abc123".to_string()),
+                revision: RevisionPointer::Hash("abc123".to_string()),
             }
         );
 
@@ -567,7 +567,7 @@ mod tests {
                 catalog: None,
                 namespace: ("foo", "bar").into(),
                 path: None,
-                revision: RevisionPointer::Hash("abc123abc123abc123abc123".to_string()),
+                revision: RevisionPointer::Hash("abc123".to_string()),
             }
         );
         Ok(())
