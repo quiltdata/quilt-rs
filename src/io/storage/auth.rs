@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use serde::Deserialize;
 use serde::Serialize;
 use tracing::debug;
+use tracing::warn;
 
 use crate::io::storage::LocalStorage;
 use crate::io::storage::Storage;
@@ -73,7 +74,7 @@ impl<S: Storage> AuthIo<S> {
         debug!("⏳ Reading credentials from {:?}", credentials_path);
 
         if !self.storage.exists(&credentials_path).await {
-            debug!("No credentials file found");
+            warn!("No credentials file found");
             return Ok(None);
         }
         let contents = self.storage.read_file(&credentials_path).await?;
@@ -81,7 +82,7 @@ impl<S: Storage> AuthIo<S> {
 
         // Check if credentials are expired
         if credentials.expires_at <= chrono::Utc::now() {
-            debug!("Credentials have expired");
+            warn!("❌ Credentials have expired");
             return Ok(None);
         }
 

@@ -22,6 +22,7 @@ use tokio::io::AsyncRead;
 use tracing::debug;
 use tracing::info;
 use tracing::log;
+use tracing::warn;
 
 use crate::auth;
 use crate::checksum::calculate_sha256_checksum;
@@ -330,15 +331,19 @@ impl RemoteS3 {
                     let auth_io =
                         AuthIo::new(self.auth.storage.clone(), self.auth.paths.auth_host(host));
                     match auth_io.read_credentials().await {
-                        Ok(Some(creds)) => {
-                            if creds.expires_at > chrono::Utc::now() {
-                                info!("✔️ Using cached S3 client with valid credentials for {}", host);
-                                return Ok(client);
-                            }
-                            info!("⚠️ Cached credentials for {} have expired", host);
+                        // We ensured credentials are not expired inside `read_credentials`
+                        Ok(Some(_)) => {
+                            info!(
+                                "✔️ Using cached S3 client with valid credentials for {}",
+                                host
+                            );
+                            return Ok(client);
                         }
                         Ok(None) => {
-                            info!("ℹ️ No credentials found for {}, will create new client", host);
+                            info!(
+                                "❌ No credentials found for {}, will create new client",
+                                host
+                            );
                         }
                         Err(e) => {
                             warn!("❌ Failed to read credentials for {}: {}", host, e);

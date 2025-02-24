@@ -139,9 +139,12 @@ impl<S: Storage + Clone> Auth<S> {
         host: &Host,
         refresh_token: String,
     ) -> Res {
-        info!("⏳ Attempting login to host {} with refresh token", host);
+        info!("⏳ Logging in to host {} with refresh token", host);
 
-        let tokens = match self.get_auth_tokens(http_client, host, &refresh_token).await {
+        let tokens = match self
+            .get_auth_tokens(http_client, host, &refresh_token)
+            .await
+        {
             Ok(t) => t,
             Err(e) => {
                 warn!("❌ Failed to get auth tokens for {}: {}", host, e);
@@ -154,7 +157,10 @@ impl<S: Storage + Clone> Auth<S> {
             return Err(e);
         }
 
-        if let Err(e) = self.refresh_credentials(http_client, host, &tokens.access_token).await {
+        if let Err(e) = self
+            .refresh_credentials(http_client, host, &tokens.access_token)
+            .await
+        {
             warn!("❌ Failed to refresh credentials for {}: {}", host, e);
             return Err(e);
         }
@@ -210,20 +216,16 @@ impl<S: Storage + Clone> Auth<S> {
         http_client: &T,
         host: &Host,
     ) -> Res<Credentials> {
-        info!("⏳ Attempting to get or refresh credentials for {}", host);
+        info!("⏳ Getting or refreshing credentials for {}", host);
         let auth_io = AuthIo::new(self.storage.clone(), self.paths.auth_host(host));
-        
+
         match auth_io.read_credentials().await {
             Ok(Some(creds)) => {
-                if creds.expires_at <= chrono::Utc::now() {
-                    info!("⚠️ Credentials for {} have expired, attempting refresh", host);
-                } else {
-                    info!("✔️ Found valid credentials for {}", host);
-                    return Ok(creds);
-                }
+                debug!("✔️ Found valid credentials for {}", host);
+                return Ok(creds);
             }
             Ok(None) => {
-                info!("ℹ️ No existing credentials found for {}", host);
+                info!("❌ No existing credentials found for {}", host);
             }
             Err(e) => {
                 warn!("❌ Failed to read credentials for {}: {}", host, e);
@@ -233,8 +235,14 @@ impl<S: Storage + Clone> Auth<S> {
 
         match auth_io.read_tokens().await {
             Ok(Some(tokens)) => {
-                info!("⏳ Refreshing credentials using existing tokens for {}", host);
-                match self.refresh_credentials(http_client, host, &tokens.access_token).await {
+                info!(
+                    "⏳ Refreshing credentials using existing tokens for {}",
+                    host
+                );
+                match self
+                    .refresh_credentials(http_client, host, &tokens.access_token)
+                    .await
+                {
                     Ok(creds) => {
                         info!("✔️ Successfully refreshed credentials for {}", host);
                         Ok(creds)
