@@ -12,16 +12,10 @@ pub async fn certify_latest(
     remote: &impl Remote,
     manifest_uri: ManifestUri,
 ) -> Res<PackageLineage> {
-    info!("⏳ Certifying manifest as latest: {}", manifest_uri);
+    info!("⏳ Certifying manifest {} as latest", manifest_uri);
     tag_latest(remote, &manifest_uri).await?;
-    debug!("✔️ Successfully tagged manifest as latest");
-
-    debug!("⏳ Updating local lineage with latest manifest");
     lineage.update_latest(manifest_uri.clone());
-    info!(
-        "✔️ Successfully certified manifest {} as latest",
-        manifest_uri
-    );
+    info!("✔️ Successfully certified manifest {} as latest", manifest_uri);
     Ok(lineage)
 }
 

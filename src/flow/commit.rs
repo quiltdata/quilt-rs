@@ -174,7 +174,7 @@ pub async fn commit_package(
     let mut removed_keys = HashSet::new();
     let mut new_files = Vec::new();
     for (logical_key, state) in status.changes {
-        debug!("Identifying change for: {}", logical_key.display());
+        debug!("Processing change type {:?} for: {}", state, logical_key.display());
         match state {
             Change::Removed(row) => {
                 lineage.paths.remove(&row.name);
@@ -221,14 +221,12 @@ pub async fn commit_package(
         },
     };
 
-    debug!("⏳ Building new manifest...");
+    debug!("⏳ Building new manifest with {} removed, {} modified, {} new files", 
+           removed_keys.len(), modified_keys.len(), new_files.len());
     let stream = stream_local_with_changes(manifest, removed_keys, modified_keys, new_files).await;
     let manifest_path = |t: &str| paths.installed_manifest(&namespace, t);
     let (manifest_path, new_top_hash) =
         build_manifest_from_rows_stream(storage, manifest_path, header, stream).await?;
-    debug!("✔️ New manifest built at: {}", manifest_path.display());
-
-    debug!("⏳ Updating commit history...");
     let mut prev_hashes = Vec::new();
     if let Some(commit) = lineage.commit {
         prev_hashes.push(commit.hash.to_owned());
