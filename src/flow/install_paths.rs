@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use tokio_stream::StreamExt;
+use tracing::{debug, info};
 use url::Url;
 
 use crate::io::manifest::build_manifest_from_rows_stream;
@@ -83,16 +84,25 @@ pub async fn install_paths(
     entries_paths: &Vec<PathBuf>,
 ) -> Res<PackageLineage> {
     if entries_paths.is_empty() {
+        info!("No paths to install");
         return Ok(lineage);
     }
 
+    info!(
+        "⏳ Installing {} paths for package {}",
+        entries_paths.len(),
+        namespace
+    );
+
     scaffold_paths(storage, paths.required_installed_package_paths(&namespace)).await?;
 
+    debug!("🔍 Checking for already installed paths");
     // TODO: what happens if paths are already installed? Ignore, or error?
     // Fail early if path is already installed
     if !HashSet::<PathBuf, RandomState>::from_iter(lineage.paths.keys().cloned())
         .is_disjoint(&HashSet::from_iter(entries_paths.to_owned()))
     {
+        debug!("❌ Found paths that are already installed");
         return Err(Error::InstallPath(
             "some paths are already installed".to_string(),
         ));
@@ -112,6 +122,7 @@ pub async fn install_paths(
     let mut entries = BTreeMap::new();
 
     for path in entries_paths {
+        debug!("⏳ Processing path: {}", path.display());
         // TODO: Consider using a hashmap or treemap for manifest.rows
         let row = table
             .get_record(path)
@@ -121,6 +132,7 @@ pub async fn install_paths(
         let object_dest = paths.object(row.hash.digest());
 
         if !storage.exists(&object_dest).await {
+            debug!("⏳ Caching object: {}", object_dest.display());
             cache_immutable_object(
                 storage,
                 remote,
@@ -129,6 +141,9 @@ pub async fn install_paths(
                 &row.place.parse()?,
             )
             .await?;
+            debug!("✔️ Object cached successfully");
+        } else {
+            debug!("✔️ Object already in cache: {}", object_dest.display());
         }
 
         let place = Url::from_file_path(&object_dest)
@@ -136,6 +151,11 @@ pub async fn install_paths(
                 Error::InstallPath(format!("Failed to create URL from {:?}", &object_dest))
             })?
             .to_string();
+        debug!(
+            "✔️ Path {} converted to a `place` {}",
+            object_dest.display(),
+            place
+        );
         entries.insert(
             row.name.clone(),
             Row {
@@ -145,7 +165,9 @@ pub async fn install_paths(
         );
 
         let working_dest = working_dir.join(&row.name);
+        debug!("⏳ Creating mutable copy at: {}", working_dest.display());
         let last_modified = create_mutable_copy(storage, &object_dest, &working_dest).await?;
+        debug!("✔️ Created mutable copy at {}", last_modified);
 
         lineage.paths.insert(
             row.name.clone(),
@@ -154,13 +176,16 @@ pub async fn install_paths(
                 hash: row.hash,
             },
         );
+        debug!("✔️ Added {}  to lineage paths ", row.name.display());
     }
 
+    debug!("⏳ Building manifest with installed rows");
     let header = table.get_header().await?;
     let stream = stream_remote_with_installed_rows(table, entries).await;
     let manifest_path = |t: &str| paths.installed_manifest(&namespace, t);
     build_manifest_from_rows_stream(storage, manifest_path, header, stream).await?;
 
+    info!("✔️ Successfully installed {} paths", entries_paths.len());
     Ok(lineage)
 }
 
