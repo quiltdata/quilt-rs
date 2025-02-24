@@ -122,7 +122,6 @@ pub async fn install_paths(
     let mut entries = BTreeMap::new();
 
     for path in entries_paths {
-        debug!("⏳ Processing path: {}", path.display());
         // TODO: Consider using a hashmap or treemap for manifest.rows
         let row = table
             .get_record(path)
@@ -132,7 +131,6 @@ pub async fn install_paths(
         let object_dest = paths.object(row.hash.digest());
 
         if !storage.exists(&object_dest).await {
-            debug!("⏳ Caching object: {}", object_dest.display());
             cache_immutable_object(
                 storage,
                 remote,
@@ -141,7 +139,7 @@ pub async fn install_paths(
                 &row.place.parse()?,
             )
             .await?;
-            debug!("✔️ Object cached successfully");
+            debug!("✔️ Cached object: {}", object_dest.display());
         } else {
             debug!("✔️ Object already in cache: {}", object_dest.display());
         }
@@ -165,9 +163,8 @@ pub async fn install_paths(
         );
 
         let working_dest = working_dir.join(&row.name);
-        debug!("⏳ Creating mutable copy at: {}", working_dest.display());
         let last_modified = create_mutable_copy(storage, &object_dest, &working_dest).await?;
-        debug!("✔️ Created mutable copy at {}", last_modified);
+        debug!("✔️ Created mutable copy at {} for {}", last_modified, working_dest.display());
 
         lineage.paths.insert(
             row.name.clone(),
