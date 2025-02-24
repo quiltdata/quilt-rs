@@ -1,7 +1,8 @@
 # CHANGELOG
 
-## [0.8.11-1]
-
+## [0.8.12]
+* Added log messages in every "flow"
+* Added tests for authentication
 * Merged two errors into one `LoginRequired` error using `Option` argument
 
 ## [0.8.11]
