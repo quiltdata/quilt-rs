@@ -61,7 +61,7 @@ impl TryFrom<S3PackageUri> for ManifestUri {
 
 impl fmt::Display for ManifestUri {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let uri = S3PackageUri::from(self.to_owned());
+        let uri = S3PackageUri::from(self);
         write!(f, "{}", uri)
     }
 }

@@ -300,6 +300,12 @@ impl From<ManifestUri> for S3PackageUri {
     }
 }
 
+impl From<&ManifestUri> for S3PackageUri {
+    fn from(uri: &ManifestUri) -> S3PackageUri {
+        S3PackageUri::from(uri.clone())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
