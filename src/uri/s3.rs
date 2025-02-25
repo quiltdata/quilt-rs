@@ -45,7 +45,7 @@ pub struct S3Uri {
 impl S3Uri {
     pub fn display_for_host(&self, host: Option<Host>) -> String {
         let host = match host {
-            Some(r) => format!("https://{}", r),
+            Some(host_value) => format!("https://{}", host_value),
             None => "https://open.quilt.bio".to_string(),
         };
         match self.version {
