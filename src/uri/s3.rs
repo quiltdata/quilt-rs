@@ -3,6 +3,7 @@ use std::str::Chars;
 
 use url::Url;
 
+use crate::uri::Host;
 use crate::Error;
 
 fn head_str(mut chars: Chars<'_>) -> (Option<char>, &str) {
@@ -39,6 +40,22 @@ pub struct S3Uri {
     pub bucket: String,
     pub key: String,
     pub version: Option<String>,
+}
+
+impl S3Uri {
+    pub fn display_for_host(&self, host: Option<Host>) -> String {
+        let host = match host {
+            Some(r) => format!("https://{}", r),
+            None => "https://open.quilt.bio".to_string(),
+        };
+        match self.version {
+            Some(ref version) => format!(
+                "{}/{}/b/tree/{}?version={}",
+                host, self.bucket, self.key, version
+            ),
+            None => format!("{}/{}/b/tree/{}", host, self.bucket, self.key),
+        }
+    }
 }
 
 impl TryFrom<&str> for S3Uri {
