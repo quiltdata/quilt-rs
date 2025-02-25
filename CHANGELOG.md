@@ -1,6 +1,12 @@
 # CHANGELOG
 
+## [0.8.13]
+
+* Handle missing keys/values in workflows config 
+* Add helper function to display catalog URL
+
 ## [0.8.12]
+
 * Added log messages in every "flow"
 * Added tests for authentication
 * Merged two errors into one `LoginRequired` error using `Option` argument

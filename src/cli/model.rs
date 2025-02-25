@@ -103,6 +103,7 @@ impl From<PathBuf> for Model {
 }
 
 impl From<&TempDir> for Model {
+    #[must_use]
     fn from(temp_dir: &TempDir) -> Self {
         Model::from(temp_dir.path().to_path_buf())
     }
