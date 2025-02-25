@@ -37,10 +37,10 @@ async fn get_schema_url<R: Remote>(
     workflow_id: &str,
 ) -> Res<S3Uri> {
     let schema_id = get_schema_id(&yaml, workflow_id)?;
-    match &yaml["schemas"] {
-        YamlValue::Mapping(schemas) => match &schemas[&schema_id] {
-            YamlValue::Mapping(schema) => match &schema["url"] {
-                YamlValue::String(url) => Ok(remote.resolve_url(host, &url.parse()?).await?),
+    match &yaml.get("schemas") {
+        Some(YamlValue::Mapping(schemas)) => match &schemas.get(&schema_id) {
+            Some(YamlValue::Mapping(schema)) => match &schema.get("url") {
+                Some(YamlValue::String(url)) => Ok(remote.resolve_url(host, &url.parse()?).await?),
                 _ => Err(Error::Workflow(format!(
                     "Schema {} doesn't have URL",
                     schema_id
