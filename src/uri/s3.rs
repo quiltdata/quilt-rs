@@ -3,6 +3,8 @@ use std::str::Chars;
 
 use url::Url;
 
+const DEFAULT_QUILT_HOST: &str = "https://open.quilt.bio";
+
 use crate::uri::Host;
 use crate::Error;
 
@@ -46,7 +48,7 @@ impl S3Uri {
     pub fn display_for_host(&self, host: Option<Host>) -> String {
         let host = match host {
             Some(host_value) => format!("https://{}", host_value),
-            None => "https://open.quilt.bio".to_string(),
+            None => DEFAULT_QUILT_HOST.to_string(),
         };
         match self.version {
             Some(ref version) => format!(
