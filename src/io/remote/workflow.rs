@@ -10,10 +10,10 @@ use crate::Error;
 use crate::Res;
 
 fn get_schema_id(yaml: &YamlValue, workflow_id: &str) -> Res<String> {
-    match &yaml["workflows"] {
-        YamlValue::Mapping(workflows) => match &workflows[workflow_id] {
-            YamlValue::Mapping(workflow) => match &workflow["metadata_schema"] {
-                YamlValue::String(schema_id) => Ok(schema_id.clone()),
+    match &yaml.get("workflows") {
+        Some(YamlValue::Mapping(workflows)) => match &workflows.get(workflow_id) {
+            Some(YamlValue::Mapping(workflow)) => match &workflow.get("metadata_schema") {
+                Some(YamlValue::String(schema_id)) => Ok(schema_id.clone()),
                 _ => Err(Error::Workflow(format!(
                     "`metadata_schema` not found for workflow ID: {}",
                     workflow_id
