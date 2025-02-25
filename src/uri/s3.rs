@@ -258,4 +258,34 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn test_display_for_host() -> Res {
+        let uri = S3Uri {
+            bucket: "bucket".to_string(),
+            key: "foo/bar".to_string(),
+            version: None,
+        };
+        assert_eq!(
+            uri.display_for_host(None),
+            "https://open.quilt.bio/bucket/b/tree/foo/bar"
+        );
+
+        let uri_with_version = S3Uri {
+            bucket: "bucket".to_string(),
+            key: "foo/bar".to_string(),
+            version: Some("abc".to_string()),
+        };
+        assert_eq!(
+            uri_with_version.display_for_host(None),
+            "https://open.quilt.bio/bucket/b/tree/foo/bar?version=abc"
+        );
+
+        let host = "custom.host".parse()?;
+        assert_eq!(
+            uri.display_for_host(Some(host)),
+            "https://custom.host/bucket/b/tree/foo/bar"
+        );
+        Ok(())
+    }
 }
