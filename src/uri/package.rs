@@ -286,7 +286,7 @@ impl S3PackageUri {
         )
     }
 
-    pub fn display_for_host(&self, host: &Host) -> url::Url {
+    pub fn display_for_host(&self, host: &Host) -> Res<url::Url> {
         let version = match &self.revision {
             RevisionPointer::Tag(tag) => tag,
             RevisionPointer::Hash(hash) => hash,
@@ -294,24 +294,23 @@ impl S3PackageUri {
         let mut url = url::Url::parse(&format!(
             "https://{}/b/{}/packages/{}/tree/{}",
             host, self.bucket, self.namespace, version
-        ))
-        .expect("Failed to parse URL");
+        ))?;
 
         if let Some(path) = &self.path {
             // Append the path to the URL path
             let mut new_path = url.path().to_string();
             new_path.push('/');
             new_path.push_str(&path.display().to_string());
-            url.set_path(&new_path);
+            url.set_path(&new_path)?;
         }
-        url
+        Ok(url)
     }
 
     pub fn display_for_catalog(&self) -> Result<url::Url, Error> {
         let host = self.catalog.as_ref().ok_or(Error::PackageURI(
             "Package URI has no catalog specified".to_string(),
         ))?;
-        Ok(self.display_for_host(host))
+        self.display_for_host(host)
     }
 }
 
@@ -652,13 +651,13 @@ mod tests {
         let uri_latest: S3PackageUri =
             "quilt+s3://bucket#package=foo/bar&path=read/me.md".parse()?;
         assert_eq!(
-            uri_latest.display_for_host(&host).as_str(),
+            uri_latest.display_for_host(&host)?.as_str(),
             "https://test.quilt.dev/b/bucket/packages/foo/bar/tree/latest/read/me.md"
         );
 
         let uri_versioned: S3PackageUri = "quilt+s3://bucket#package=foo/bar@ΑαΒβΓγΔδΕεΖζΗηΘθΙιΚκΛλΜμΝνΞξΟοΠπΡρΣσςΤτΥυΦφΧχΨψΩω&path=read/me.md".parse()?;
         assert_eq!(
-             uri_versioned.display_for_host(&host).as_str(),
+             uri_versioned.display_for_host(&host)?.as_str(),
              "https://test.quilt.dev/b/bucket/packages/foo/bar/tree/ΑαΒβΓγΔδΕεΖζΗηΘθΙιΚκΛλΜμΝνΞξΟοΠπΡρΣσςΤτΥυΦφΧχΨψΩω/read/me.md"
          );
         Ok(())

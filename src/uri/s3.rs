@@ -43,17 +43,16 @@ pub struct S3Uri {
 }
 
 impl S3Uri {
-    pub fn display_for_host(&self, host: &Host) -> url::Url {
+    pub fn display_for_host(&self, host: &Host) -> Res<url::Url> {
         let mut url = url::Url::parse(&format!(
             "https://{}/b/{}/tree/{}",
             host, self.bucket, self.key
-        ))
-        .expect("Failed to parse URL");
+        ))?;
         
         if let Some(ref version) = self.version {
             url.query_pairs_mut().append_pair("version", version);
         }
-        url
+        Ok(url)
     }
 }
 
@@ -267,7 +266,7 @@ mod tests {
             version: None,
         };
         assert_eq!(
-            uri.display_for_host(&host).as_str(),
+            uri.display_for_host(&host)?.as_str(),
             "https://test.quilt.dev/b/bucket/tree/foo/bar"
         );
 
@@ -277,7 +276,7 @@ mod tests {
             version: Some("abc".to_string()),
         };
         assert_eq!(
-            uri_with_version.display_for_host(&host).as_str(),
+            uri_with_version.display_for_host(&host)?.as_str(),
             "https://test.quilt.dev/b/bucket/tree/foo/bar?version=abc"
         );
         Ok(())
