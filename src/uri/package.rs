@@ -287,10 +287,7 @@ impl S3PackageUri {
     }
 
     pub fn display_for_host(&self, host: &Host) -> String {
-        let base_url = match host {
-            Some(h) => format!("https://{}", host),
-            None => "https://open.quilt.dev".to_string(),
-        };
+        let base_url = format!("https://{}", host);
 
         let version = match &self.revision {
             RevisionPointer::Tag(tag) => tag,
