@@ -185,11 +185,11 @@ impl From<&ManifestUri> for S3PackageHandle {
 /// You can use this URL for both packages and files in packages.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct S3PackageUri {
-    pub bucket: String,
     pub catalog: Option<Host>,
+    pub bucket: String,
     pub namespace: Namespace,
-    pub path: Option<PathBuf>,
     pub revision: RevisionPointer,
+    pub path: Option<PathBuf>,
 }
 
 // TODO: consider using S3Uri
