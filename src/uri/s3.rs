@@ -3,10 +3,9 @@ use std::str::Chars;
 
 use url::Url;
 
-const DEFAULT_QUILT_HOST: &str = "https://open.quilt.bio";
-
 use crate::uri::Host;
 use crate::Error;
+use crate::Res;
 
 fn head_str(mut chars: Chars<'_>) -> (Option<char>, &str) {
     let leading_char = chars.next();
@@ -45,18 +44,16 @@ pub struct S3Uri {
 }
 
 impl S3Uri {
-    pub fn display_for_host(&self, host: Option<Host>) -> String {
-        let host = match host {
-            Some(host_value) => format!("https://{}", host_value),
-            None => DEFAULT_QUILT_HOST.to_string(),
-        };
-        match self.version {
-            Some(ref version) => format!(
-                "{}/{}/b/tree/{}?version={}",
-                host, self.bucket, self.key, version
-            ),
-            None => format!("{}/{}/b/tree/{}", host, self.bucket, self.key),
+    pub fn display_for_host(&self, host: &Host) -> Res<url::Url> {
+        let mut url = url::Url::parse(&format!(
+            "https://{}/b/{}/tree/{}",
+            host, self.bucket, self.key
+        ))?;
+
+        if let Some(ref version) = self.version {
+            url.query_pairs_mut().append_pair("version", version);
         }
+        Ok(url)
     }
 }
 
@@ -263,14 +260,15 @@ mod tests {
 
     #[test]
     fn test_display_for_host() -> Res {
+        let host = Host::default();
         let uri = S3Uri {
             bucket: "bucket".to_string(),
             key: "foo/bar".to_string(),
             version: None,
         };
         assert_eq!(
-            uri.display_for_host(None),
-            "https://open.quilt.bio/bucket/b/tree/foo/bar"
+            uri.display_for_host(&host)?.as_str(),
+            "https://test.quilt.dev/b/bucket/tree/foo/bar"
         );
 
         let uri_with_version = S3Uri {
@@ -279,14 +277,8 @@ mod tests {
             version: Some("abc".to_string()),
         };
         assert_eq!(
-            uri_with_version.display_for_host(None),
-            "https://open.quilt.bio/bucket/b/tree/foo/bar?version=abc"
-        );
-
-        let host = "custom.host".parse()?;
-        assert_eq!(
-            uri.display_for_host(Some(host)),
-            "https://custom.host/bucket/b/tree/foo/bar"
+            uri_with_version.display_for_host(&host)?.as_str(),
+            "https://test.quilt.dev/b/bucket/tree/foo/bar?version=abc"
         );
         Ok(())
     }

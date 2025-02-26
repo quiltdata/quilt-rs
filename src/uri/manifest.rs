@@ -18,10 +18,10 @@ use crate::Error;
 /// This manifest URI is for manifest file in Parquet format.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ManifestUri {
+    pub catalog: Option<Host>, // TODO: rename to origin
     pub bucket: String,
-    pub catalog: Option<Host>,
-    pub hash: String,
     pub namespace: Namespace,
+    pub hash: String,
 }
 
 impl From<ManifestUri> for S3Uri {

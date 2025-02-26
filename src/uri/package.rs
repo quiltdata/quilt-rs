@@ -17,6 +17,7 @@ use url::Url;
 use crate::uri::Host;
 use crate::uri::ManifestUri;
 use crate::Error;
+use crate::Res;
 
 const LATEST_TAG: &str = "latest";
 
@@ -184,11 +185,11 @@ impl From<&ManifestUri> for S3PackageHandle {
 /// You can use this URL for both packages and files in packages.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct S3PackageUri {
+    pub catalog: Option<Host>,
     pub bucket: String,
     pub namespace: Namespace,
     pub revision: RevisionPointer,
     pub path: Option<PathBuf>,
-    pub catalog: Option<Host>,
 }
 
 // TODO: consider using S3Uri
@@ -284,6 +285,32 @@ impl S3PackageUri {
             "quilt+s3://{}#package={}{}{}{}",
             self.bucket, self.namespace, hash, path_part, catalog_part
         )
+    }
+
+    pub fn display_for_host(&self, host: &Host) -> Res<url::Url> {
+        let version = match &self.revision {
+            RevisionPointer::Tag(tag) => tag,
+            RevisionPointer::Hash(hash) => hash,
+        };
+        let mut url = url::Url::parse(&format!(
+            "https://{}/b/{}/packages/{}/tree/{}",
+            host, self.bucket, self.namespace, version
+        ))?;
+
+        if let Some(path) = &self.path {
+            let mut new_path = url.path().to_string();
+            new_path.push('/');
+            new_path.push_str(&path.display().to_string());
+            url.set_path(&new_path);
+        }
+        Ok(url)
+    }
+
+    pub fn display_for_catalog(&self) -> Result<url::Url, Error> {
+        let host = self.catalog.as_ref().ok_or(Error::PackageURI(
+            "Package URI has no catalog specified".to_string(),
+        ))?;
+        self.display_for_host(host)
     }
 }
 
@@ -614,6 +641,41 @@ mod tests {
         assert!(ns3 >= ns1);
         assert!(ns3 > ns1);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_display_for_host() -> Res {
+        let host = Host::default();
+
+        let uri_latest: S3PackageUri =
+            "quilt+s3://bucket#package=foo/bar&path=read/me.md".parse()?;
+        assert_eq!(
+            uri_latest.display_for_host(&host)?.as_str(),
+            "https://test.quilt.dev/b/bucket/packages/foo/bar/tree/latest/read/me.md"
+        );
+
+        let uri_versioned: S3PackageUri =
+            "quilt+s3://bucket#package=foo/bar@AaBbCcDdEeFfGgHhJjKk&path=read/me.md".parse()?;
+        assert_eq!(
+            uri_versioned.display_for_host(&host)?.as_str(),
+            "https://test.quilt.dev/b/bucket/packages/foo/bar/tree/AaBbCcDdEeFfGgHhJjKk/read/me.md"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_display_for_catalog() -> Res {
+        let uri_with_catalog: S3PackageUri =
+            "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=test.quilt.dev".parse()?;
+        assert_eq!(
+            uri_with_catalog.display_for_catalog()?.as_str(),
+            "https://test.quilt.dev/b/bucket/packages/foo/bar/tree/latest/read/me.md"
+        );
+
+        let uri_without_catalog: S3PackageUri =
+            "quilt+s3://bucket#package=foo/bar&path=read/me.md".parse()?;
+        assert!(uri_without_catalog.display_for_catalog().is_err());
         Ok(())
     }
 }

@@ -269,10 +269,10 @@ mod tests {
     "foo/bar": {
       "commit": null,
       "remote": {
-        "bucket": "bucket",
         "catalog": null,
-        "hash": "abcdef",
-        "namespace": "foo/bar"
+        "bucket": "bucket",
+        "namespace": "foo/bar",
+        "hash": "abcdef"
       },
       "base_hash": "abcdef",
       "latest_hash": "abcdef",

@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## [0.8.14]
+
+* Add `display_for_host` method for `S3PackageUri`
+* Remove default host from `display_for_host`, some host is always required
+
 ## [0.8.13]
 
 * Handle missing keys/values in workflows config 
