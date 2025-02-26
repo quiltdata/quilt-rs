@@ -286,9 +286,9 @@ impl S3PackageUri {
         )
     }
 
-    pub fn display_for_host(&self, host: &Option<Host>) -> String {
+    pub fn display_for_host(&self, host: &Host) -> String {
         let base_url = match host {
-            Some(h) => format!("https://{}", h),
+            Some(h) => format!("https://{}", host),
             None => "https://open.quilt.dev".to_string(),
         };
 
@@ -297,16 +297,14 @@ impl S3PackageUri {
             RevisionPointer::Hash(hash) => hash,
         };
 
-        let path_part = self.path.as_ref().map_or("".to_string(), |p| format!("/{}", p.display()));
-
-        format!(
-            "{}/b/{}/packages/{}/tree/{}{}", 
-            base_url,
-            self.bucket,
-            self.namespace,
-            version,
-            path_part
-        )
+        let root_url = format!(
+            "{}/b/{}/packages/{}/tree/{}",
+            base_url, self.bucket, self.namespace, version
+        );
+        match &self.path {
+            Some(path) => format!("{}/{}", root_url, path.display()),
+            None => root_url,
+        }
     }
 }
 
