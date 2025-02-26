@@ -45,7 +45,7 @@ pub struct S3Uri {
 }
 
 impl S3Uri {
-    pub fn display_for_host(&self, host: Option<Host>) -> String {
+    pub fn display_for_host(&self, host: &Option<Host>) -> String {
         let hostname = match host {
             Some(host_value) => format!("https://{}", host_value),
             None => DEFAULT_QUILT_HOST.to_string(),
@@ -267,7 +267,7 @@ mod tests {
             version: None,
         };
         assert_eq!(
-            uri.display_for_host(None),
+            uri.display_for_host(&None),
             "https://open.quilt.bio/b/bucket/tree/foo/bar"
         );
 
@@ -277,13 +277,13 @@ mod tests {
             version: Some("abc".to_string()),
         };
         assert_eq!(
-            uri_with_version.display_for_host(None),
+            uri_with_version.display_for_host(&None),
             "https://open.quilt.bio/b/bucket/tree/foo/bar?version=abc"
         );
 
         let host = "custom.host".parse()?;
         assert_eq!(
-            uri.display_for_host(Some(host)),
+            uri.display_for_host(&Some(host)),
             "https://custom.host/b/bucket/tree/foo/bar"
         );
         Ok(())

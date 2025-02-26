@@ -287,16 +287,13 @@ impl S3PackageUri {
     }
 
     pub fn display_for_host(&self, host: &Host) -> String {
-        let base_url = format!("https://{}", host);
-
         let version = match &self.revision {
             RevisionPointer::Tag(tag) => tag,
             RevisionPointer::Hash(hash) => hash,
         };
-
         let root_url = format!(
-            "{}/b/{}/packages/{}/tree/{}",
-            base_url, self.bucket, self.namespace, version
+            "https://{}/b/{}/packages/{}/tree/{}",
+            host, self.bucket, self.namespace, version
         );
         match &self.path {
             Some(path) => format!("{}/{}", root_url, path.display()),
@@ -637,13 +634,20 @@ mod tests {
 
     #[test]
     fn test_display_for_host() -> Res {
+        let host = Host::default();
+
         let uri_latest: S3PackageUri =
             "quilt+s3://bucket#package=foo/bar&path=read/me.md".parse()?;
-        let host = Host::default();
         assert_eq!(
             uri_latest.display_for_host(&host),
             "https://test.quilt.dev/b/bucket/packages/foo/bar/tree/latest/read/me.md"
         );
+
+        let uri_versioned: S3PackageUri = "quilt+s3://bucket#package=foo/bar@ΑαΒβΓγΔδΕεΖζΗηΘθΙιΚκΛλΜμΝνΞξΟοΠπΡρΣσςΤτΥυΦφΧχΨψΩω&path=read/me.md".parse()?;
+        assert_eq!(
+             uri_versioned.display_for_host(&host),
+             "https://test.quilt.dev/b/bucket/packages/foo/bar/tree/ΑαΒβΓγΔδΕεΖζΗηΘθΙιΚκΛλΜμΝνΞξΟοΠπΡρΣσςΤτΥυΦφΧχΨψΩω/read/me.md"
+         );
         Ok(())
     }
 }
