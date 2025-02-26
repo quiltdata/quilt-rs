@@ -285,6 +285,10 @@ impl S3PackageUri {
             self.bucket, self.namespace, hash, path_part, catalog_part
         )
     }
+
+    pub fn display_for_host(&self, _host: &Option<Host>) -> String {
+        unimplemented!()
+    }
 }
 
 impl fmt::Display for S3PackageUri {
@@ -614,6 +618,24 @@ mod tests {
         assert!(ns3 >= ns1);
         assert!(ns3 > ns1);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_display_for_host() -> Res {
+        let uri_latest: S3PackageUri =
+            "quilt+s3://bucket#package=foo/bar&path=read/me.md".parse()?;
+        let host = Host::default();
+        assert_eq!(
+            uri_latest.display_for_host(&Some(host)),
+            "https://test.quilt.dev/b/bucket/packages/foo/bar/tree/latest/read/me.md"
+        );
+
+        let uri_versioned: S3PackageUri = "quilt+s3://bucket#package=foo/bar@ΑαΒβΓγΔδΕεΖζΗηΘθΙιΚκΛλΜμΝνΞξΟοΠπΡρΣσςΤτΥυΦφΧχΨψΩω&path=read/me.md".parse()?;
+        assert_eq!(
+            uri_versioned.display_for_host(&None),
+            "https://open.quilt.dev/b/bucket/packages/foo/bar/tree/ΑαΒβΓγΔδΕεΖζΗηΘθΙιΚκΛλΜμΝνΞξΟοΠπΡρΣσςΤτΥυΦφΧχΨψΩω/read/me.md"
+        );
         Ok(())
     }
 }
