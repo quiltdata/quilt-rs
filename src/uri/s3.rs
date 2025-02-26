@@ -5,6 +5,7 @@ use url::Url;
 
 use crate::uri::Host;
 use crate::Error;
+use crate::Res;
 
 fn head_str(mut chars: Chars<'_>) -> (Option<char>, &str) {
     let leading_char = chars.next();
@@ -48,7 +49,7 @@ impl S3Uri {
             "https://{}/b/{}/tree/{}",
             host, self.bucket, self.key
         ))?;
-        
+
         if let Some(ref version) = self.version {
             url.query_pairs_mut().append_pair("version", version);
         }

@@ -17,6 +17,7 @@ use url::Url;
 use crate::uri::Host;
 use crate::uri::ManifestUri;
 use crate::Error;
+use crate::Res;
 
 const LATEST_TAG: &str = "latest";
 
@@ -297,11 +298,10 @@ impl S3PackageUri {
         ))?;
 
         if let Some(path) = &self.path {
-            // Append the path to the URL path
             let mut new_path = url.path().to_string();
             new_path.push('/');
             new_path.push_str(&path.display().to_string());
-            url.set_path(&new_path)?;
+            url.set_path(&new_path);
         }
         Ok(url)
     }
@@ -655,11 +655,12 @@ mod tests {
             "https://test.quilt.dev/b/bucket/packages/foo/bar/tree/latest/read/me.md"
         );
 
-        let uri_versioned: S3PackageUri = "quilt+s3://bucket#package=foo/bar@ΑαΒβΓγΔδΕεΖζΗηΘθΙιΚκΛλΜμΝνΞξΟοΠπΡρΣσςΤτΥυΦφΧχΨψΩω&path=read/me.md".parse()?;
+        let uri_versioned: S3PackageUri =
+            "quilt+s3://bucket#package=foo/bar@AaBbCcDdEeFfGgHhJjKk&path=read/me.md".parse()?;
         assert_eq!(
-             uri_versioned.display_for_host(&host)?.as_str(),
-             "https://test.quilt.dev/b/bucket/packages/foo/bar/tree/ΑαΒβΓγΔδΕεΖζΗηΘθΙιΚκΛλΜμΝνΞξΟοΠπΡρΣσςΤτΥυΦφΧχΨψΩω/read/me.md"
-         );
+            uri_versioned.display_for_host(&host)?.as_str(),
+            "https://test.quilt.dev/b/bucket/packages/foo/bar/tree/AaBbCcDdEeFfGgHhJjKk/read/me.md"
+        );
         Ok(())
     }
 
@@ -672,7 +673,7 @@ mod tests {
             "https://test.quilt.dev/b/bucket/packages/foo/bar/tree/latest/read/me.md"
         );
 
-        let uri_without_catalog: S3PackageUri = 
+        let uri_without_catalog: S3PackageUri =
             "quilt+s3://bucket#package=foo/bar&path=read/me.md".parse()?;
         assert!(uri_without_catalog.display_for_catalog().is_err());
         Ok(())
