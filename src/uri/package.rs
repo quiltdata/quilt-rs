@@ -286,22 +286,28 @@ impl S3PackageUri {
         )
     }
 
-    pub fn display_for_host(&self, host: &Host) -> String {
+    pub fn display_for_host(&self, host: &Host) -> url::Url {
         let version = match &self.revision {
             RevisionPointer::Tag(tag) => tag,
             RevisionPointer::Hash(hash) => hash,
         };
-        let root_url = format!(
+        let mut url = url::Url::parse(&format!(
             "https://{}/b/{}/packages/{}/tree/{}",
             host, self.bucket, self.namespace, version
-        );
-        match &self.path {
-            Some(path) => format!("{}/{}", root_url, path.display()),
-            None => root_url,
+        ))
+        .expect("Failed to parse URL");
+
+        if let Some(path) = &self.path {
+            // Append the path to the URL path
+            let mut new_path = url.path().to_string();
+            new_path.push('/');
+            new_path.push_str(&path.display().to_string());
+            url.set_path(&new_path);
         }
+        url
     }
 
-    pub fn display_for_catalog(&self) -> Result<String, Error> {
+    pub fn display_for_catalog(&self) -> Result<url::Url, Error> {
         let host = self.catalog.as_ref().ok_or(Error::PackageURI(
             "Package URI has no catalog specified".to_string(),
         ))?;
@@ -646,13 +652,13 @@ mod tests {
         let uri_latest: S3PackageUri =
             "quilt+s3://bucket#package=foo/bar&path=read/me.md".parse()?;
         assert_eq!(
-            uri_latest.display_for_host(&host),
+            uri_latest.display_for_host(&host).as_str(),
             "https://test.quilt.dev/b/bucket/packages/foo/bar/tree/latest/read/me.md"
         );
 
         let uri_versioned: S3PackageUri = "quilt+s3://bucket#package=foo/bar@ΑαΒβΓγΔδΕεΖζΗηΘθΙιΚκΛλΜμΝνΞξΟοΠπΡρΣσςΤτΥυΦφΧχΨψΩω&path=read/me.md".parse()?;
         assert_eq!(
-             uri_versioned.display_for_host(&host),
+             uri_versioned.display_for_host(&host).as_str(),
              "https://test.quilt.dev/b/bucket/packages/foo/bar/tree/ΑαΒβΓγΔδΕεΖζΗηΘθΙιΚκΛλΜμΝνΞξΟοΠπΡρΣσςΤτΥυΦφΧχΨψΩω/read/me.md"
          );
         Ok(())
@@ -663,7 +669,7 @@ mod tests {
         let uri_with_catalog: S3PackageUri =
             "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=test.quilt.dev".parse()?;
         assert_eq!(
-            uri_with_catalog.display_for_catalog()?,
+            uri_with_catalog.display_for_catalog()?.as_str(),
             "https://test.quilt.dev/b/bucket/packages/foo/bar/tree/latest/read/me.md"
         );
 
