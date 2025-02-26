@@ -300,6 +300,13 @@ impl S3PackageUri {
             None => root_url,
         }
     }
+
+    pub fn display_for_catalog(&self) -> Result<String, Error> {
+        let host = self.catalog.as_ref().ok_or(Error::PackageURI(
+            "Package URI has no catalog specified".to_string(),
+        ))?;
+        Ok(self.display_for_host(host))
+    }
 }
 
 impl fmt::Display for S3PackageUri {
@@ -648,6 +655,21 @@ mod tests {
              uri_versioned.display_for_host(&host),
              "https://test.quilt.dev/b/bucket/packages/foo/bar/tree/ΑαΒβΓγΔδΕεΖζΗηΘθΙιΚκΛλΜμΝνΞξΟοΠπΡρΣσςΤτΥυΦφΧχΨψΩω/read/me.md"
          );
+        Ok(())
+    }
+
+    #[test]
+    fn test_display_for_catalog() -> Res {
+        let uri_with_catalog: S3PackageUri =
+            "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=test.quilt.dev".parse()?;
+        assert_eq!(
+            uri_with_catalog.display_for_catalog()?,
+            "https://test.quilt.dev/b/bucket/packages/foo/bar/tree/latest/read/me.md"
+        );
+
+        let uri_without_catalog: S3PackageUri = 
+            "quilt+s3://bucket#package=foo/bar&path=read/me.md".parse()?;
+        assert!(uri_without_catalog.display_for_catalog().is_err());
         Ok(())
     }
 }
