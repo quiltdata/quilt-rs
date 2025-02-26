@@ -644,14 +644,8 @@ mod tests {
             "quilt+s3://bucket#package=foo/bar&path=read/me.md".parse()?;
         let host = Host::default();
         assert_eq!(
-            uri_latest.display_for_host(&Some(host)),
+            uri_latest.display_for_host(&host),
             "https://test.quilt.dev/b/bucket/packages/foo/bar/tree/latest/read/me.md"
-        );
-
-        let uri_versioned: S3PackageUri = "quilt+s3://bucket#package=foo/bar@ΑαΒβΓγΔδΕεΖζΗηΘθΙιΚκΛλΜμΝνΞξΟοΠπΡρΣσςΤτΥυΦφΧχΨψΩω&path=read/me.md".parse()?;
-        assert_eq!(
-            uri_versioned.display_for_host(&None),
-            "https://open.quilt.dev/b/bucket/packages/foo/bar/tree/ΑαΒβΓγΔδΕεΖζΗηΘθΙιΚκΛλΜμΝνΞξΟοΠπΡρΣσςΤτΥυΦφΧχΨψΩω/read/me.md"
         );
         Ok(())
     }
