@@ -185,10 +185,10 @@ impl From<&ManifestUri> for S3PackageHandle {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct S3PackageUri {
     pub bucket: String,
-    pub namespace: Namespace,
-    pub revision: RevisionPointer,
-    pub path: Option<PathBuf>,
     pub catalog: Option<Host>,
+    pub namespace: Namespace,
+    pub path: Option<PathBuf>,
+    pub revision: RevisionPointer,
 }
 
 // TODO: consider using S3Uri

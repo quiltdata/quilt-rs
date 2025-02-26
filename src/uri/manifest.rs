@@ -19,7 +19,7 @@ use crate::Error;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ManifestUri {
     pub bucket: String,
-    pub catalog: Option<Host>,
+    pub catalog: Option<Host>, // TODO: rename to origin
     pub hash: String,
     pub namespace: Namespace,
 }
