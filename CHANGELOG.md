@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## [0.9.0](https://crates.io/crates/quilt-rs/0.9.0) - 2025-02-27
+
+Bump a version number to highlight the accumulated changes of the 0.8.* versions.
+
+### Changed
+
+* Reduce log output when caching the package
+
 ## [0.8.14]
 
 * Add `display_for_host` method for `S3PackageUri`
