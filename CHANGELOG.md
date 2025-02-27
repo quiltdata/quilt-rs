@@ -2,7 +2,7 @@
 
 ## [0.9.0](https://crates.io/crates/quilt-rs/0.9.0) - 2025-02-27
 
-Bump a version number to highlight the accumutated changes of the 0.8.* versions.
+Bump a version number to highlight the accumulated changes of the 0.8.* versions.
 
 ### Changed
 
