@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## [0.9.0]
+
+* Bump a version number to highlight the accumutated changes of the 0.8.* versions
+
 ## [0.8.14]
 
 * Add `display_for_host` method for `S3PackageUri`
