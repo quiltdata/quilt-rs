@@ -103,7 +103,7 @@ pub async fn cache_remote_manifest(
 
     let manifest = Table::read_from_path(storage, &cache_path).await?;
 
-    info!("✔️ … and, Successfully cached:\n{}", manifest);
+    info!("✔️ … and, Successfully cached:\n{:?}", manifest.header);
 
     Ok(manifest)
 }
