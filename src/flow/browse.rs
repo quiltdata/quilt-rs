@@ -84,10 +84,10 @@ pub async fn cache_remote_manifest(
             let manifest = fetch_jsonl(remote, manifest_uri).await?;
             debug!("✔️ Fetched JSONL manifest");
             let header = Header::from(&manifest);
-            let manifest_path = |_: &str| cache_path.clone();
+            let dest_dir = cache_path.parent().unwrap_or(&cache_path).to_path_buf();
             let stream = stream_jsonl_rows(manifest).await;
             let (dest_path, _) =
-                build_manifest_from_rows_stream(storage, manifest_path, header, stream).await?;
+                build_manifest_from_rows_stream(storage, dest_dir, header, stream).await?;
             debug!(
                 "✔️ Manifest has converted to Parquet and written to {}",
                 dest_path.display()

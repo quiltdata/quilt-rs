@@ -83,6 +83,11 @@ impl DomainPaths {
         self.root_dir.join(MANIFEST_DIR).join(bucket).join(hash)
     }
 
+    /// Directory for storing cached manifests for a bucket
+    pub fn manifest_cache_dir(&self, bucket: &str) -> PathBuf {
+        self.root_dir.join(MANIFEST_DIR).join(bucket)
+    }
+
     /// Directory for storing pristine hashed files
     pub fn objects_dir(&self) -> PathBuf {
         self.root_dir.join(OBJECTS_DIR)

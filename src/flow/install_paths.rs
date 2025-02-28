@@ -183,8 +183,8 @@ pub async fn install_paths(
     debug!("⏳ Building manifest with installed rows");
     let header = table.get_header().await?;
     let stream = stream_remote_with_installed_rows(table, entries).await;
-    let manifest_path = |t: &str| paths.installed_manifest(&namespace, t);
-    build_manifest_from_rows_stream(storage, manifest_path, header, stream).await?;
+    let dest_dir = paths.installed_manifests(&namespace);
+    build_manifest_from_rows_stream(storage, dest_dir, header, stream).await?;
 
     info!("✔️ Successfully installed {} paths", entries_paths.len());
     Ok(lineage)
