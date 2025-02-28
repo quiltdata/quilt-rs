@@ -283,7 +283,7 @@ impl<T: Stream<Item = StreamItem>> RowsStream for T {}
 /// Then it calclutates top_hash and move the temporary file to the destination path.
 pub async fn build_manifest_from_rows_stream(
     storage: &impl Storage,
-    manifest_path: impl Fn(&str) -> PathBuf,
+    dest_dir: PathBuf,
     header: Header,
     mut stream: impl RowsStream + Unpin,
 ) -> Res<(PathBuf, String)> {
@@ -309,7 +309,7 @@ pub async fn build_manifest_from_rows_stream(
     manifest.flush().await?;
 
     let top_hash = top_hasher.finalize();
-    let dest_path = manifest_path(&top_hash);
+    let dest_path = dest_dir.join(&top_hash);
     storage.create_dir_all(&dest_path.parent().unwrap()).await?;
     storage.rename(temp_path, &dest_path).await?;
 
