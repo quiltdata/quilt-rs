@@ -230,9 +230,9 @@ pub async fn commit_package(
         new_files.len()
     );
     let stream = stream_local_with_changes(manifest, removed_keys, modified_keys, new_files).await;
-    let manifest_path = |t: &str| paths.installed_manifest(&namespace, t);
+    let dest_dir = paths.installed_manifests(&namespace);
     let (manifest_path, new_top_hash) =
-        build_manifest_from_rows_stream(storage, manifest_path, header, stream).await?;
+        build_manifest_from_rows_stream(storage, dest_dir, header, stream).await?;
     info!(
         "✔️New manifest with {} was built in {}",
         manifest_path.display(),

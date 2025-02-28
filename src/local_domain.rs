@@ -146,8 +146,8 @@ impl LocalDomain {
         dest_path: PathBuf,
         stream: impl RowsStream + Unpin,
     ) -> Res<(PathBuf, String)> {
-        let manifest_path = |_t: &str| dest_path.clone();
-        build_manifest_from_rows_stream(&self.storage, manifest_path, Header::default(), stream)
+        let dest_dir = dest_path.parent().unwrap_or(&dest_path).to_path_buf();
+        build_manifest_from_rows_stream(&self.storage, dest_dir, Header::default(), stream)
             .await
     }
 }
