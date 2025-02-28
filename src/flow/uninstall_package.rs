@@ -49,6 +49,7 @@ mod tests {
 
     use crate::lineage::PackageLineage;
     use crate::mocks;
+    use crate::paths::scaffold_paths;
 
     #[tokio::test]
     async fn test_panic_if_no_installed_package() {
@@ -70,13 +71,10 @@ mod tests {
         };
         let paths = paths::DomainPaths::default();
         let storage = mocks::storage::MockStorage::default();
+
         let namespace = Namespace::from(("foo", "bar"));
-        storage
-            .create_dir_all(paths.installed_manifests(&namespace))
-            .await?;
-        storage
-            .create_dir_all(paths.working_dir(&namespace))
-            .await?;
+
+        scaffold_paths(&storage, paths.required_installed_package_paths(&namespace)).await?;
 
         let lineage = uninstall_package(lineage, &paths, &storage, namespace).await?;
         assert!(lineage.packages.is_empty());

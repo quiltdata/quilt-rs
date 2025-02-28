@@ -39,23 +39,11 @@ pub async fn install_package(
     debug!("⏳ Creating installed copy of manifest");
     let installed_manifest_path =
         paths.installed_manifest(&manifest_uri.namespace, &manifest_uri.hash);
-    storage
-        .create_dir_all(&installed_manifest_path.parent().unwrap())
-        .await?;
     paths::copy_cached_to_installed(paths, storage, manifest_uri).await?;
     debug!(
         "✔️ Manifest installed at: {}",
         installed_manifest_path.display()
     );
-
-    // TODO: merge with existing `scaffold_paths` calls
-    debug!("⏳ Creating required directories");
-
-    let objects_dir = paths.objects_dir();
-    storage.create_dir_all(objects_dir).await?;
-
-    let working_dir = paths.working_dir(&manifest_uri.namespace);
-    storage.create_dir_all(&working_dir).await?;
 
     debug!("⏳ Resolving latest hash for this package handle");
     let latest = resolve_latest(remote, &manifest_uri.catalog, &manifest_uri.into()).await?;

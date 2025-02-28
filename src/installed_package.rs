@@ -229,6 +229,7 @@ mod tests {
 
     use crate::lineage::DomainLineageIo;
     use crate::lineage::PackageLineageIo;
+    use crate::paths::scaffold_paths;
 
     #[tokio::test]
     async fn test_spamming_commit_writes() -> Res {
@@ -239,6 +240,7 @@ mod tests {
         let remote = RemoteS3::new(paths.clone(), storage.clone());
         let namespace: Namespace = ("test", "history").into();
 
+        scaffold_paths(&storage, paths.required_installed_package_paths(&namespace)).await?;
         // Initialize domain lineage file
         storage
             .write_file(
@@ -267,9 +269,6 @@ mod tests {
             .path()
             .to_path_buf()
             .join(".quilt/installed/test/history/abc123");
-        storage
-            .create_dir_all(&test_manifest.parent().unwrap())
-            .await?;
         storage.copy(reference_manifest, test_manifest).await?;
 
         let package = InstalledPackage {

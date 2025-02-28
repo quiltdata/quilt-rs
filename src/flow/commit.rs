@@ -69,8 +69,6 @@ async fn create_immutable_object_copy(
         logical_key.display()
     );
     let objects_dir = paths.objects_dir();
-    // FIXME: This should really be done when the domain is created.
-    storage.create_dir_all(&objects_dir).await?;
     let object_dest = objects_dir.join(hex::encode(current.hash.digest()));
     let new_physical_key = Url::from_file_path(&object_dest)
         .map_err(|_| Error::Commit(format!("Failed to create URL from {:?}", &object_dest)))?

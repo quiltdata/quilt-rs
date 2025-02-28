@@ -50,6 +50,15 @@ impl LocalDomain {
         }
     }
 
+    pub async fn scaffold_paths(&self, namespace: Option<&Namespace>) -> Res {
+        let required_paths = match namespace {
+            Some(namespace) => self.paths.required_installed_package_paths(namespace),
+            None => self.paths.required_local_domain_paths(),
+        };
+        paths::scaffold_paths(&self.storage, required_paths).await?;
+        Ok(())
+    }
+
     pub async fn browse_remote_manifest(&self, uri: &ManifestUri) -> Res<Table> {
         flow::browse(&self.paths, &self.storage, &self.remote, uri).await
     }
@@ -66,6 +75,8 @@ impl LocalDomain {
     }
 
     pub async fn install_package(&self, manifest_uri: &ManifestUri) -> Res<InstalledPackage> {
+        // TODO: we can call namespaced scaffold in model
+        self.scaffold_paths(Some(&manifest_uri.namespace)).await?;
         let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
         let lineage = flow::install_package(
             lineage,

@@ -23,56 +23,67 @@ pub trait Commands {
 
     async fn browse(&self, args: browse::Input) -> Result<browse::Output, Error> {
         let local_domain = self.get_local_domain();
+        local_domain.scaffold_paths(None).await?;
         browse::model(local_domain, args).await
     }
 
     async fn commit(&self, args: commit::Input) -> Result<commit::Output, Error> {
         let local_domain = self.get_local_domain();
+        local_domain.scaffold_paths(None).await?;
         commit::model(local_domain, args).await
     }
 
     async fn install(&self, args: install::Input) -> Result<install::Output, Error> {
         let local_domain = self.get_local_domain();
+        local_domain.scaffold_paths(None).await?;
         install::model(local_domain, args).await
     }
 
     async fn list(&self) -> Result<list::Output, Error> {
         let local_domain = self.get_local_domain();
+        local_domain.scaffold_paths(None).await?;
         list::model(local_domain).await
     }
 
     async fn login(&self, args: login::Input) -> Result<login::Output, Error> {
         let local_domain = self.get_local_domain();
+        local_domain.scaffold_paths(None).await?;
         login::model(local_domain, args).await
     }
 
     async fn package(&self, args: package::Input) -> Result<package::Output, Error> {
         let local_domain = self.get_local_domain();
+        local_domain.scaffold_paths(None).await?;
         package::model(local_domain, args).await
     }
 
     async fn pull(&self, args: pull::Input) -> Result<pull::Output, Error> {
         let local_domain = self.get_local_domain();
+        local_domain.scaffold_paths(None).await?;
         pull::model(local_domain, args).await
     }
 
     async fn push(&self, args: push::Input) -> Result<push::Output, Error> {
         let local_domain = self.get_local_domain();
+        local_domain.scaffold_paths(None).await?;
         push::model(local_domain, args).await
     }
 
     async fn status(&self, args: status::Input) -> Result<status::Output, Error> {
         let local_domain = self.get_local_domain();
+        local_domain.scaffold_paths(None).await?;
         status::model(local_domain, args).await
     }
 
     async fn benchmark(&self, args: benchmark::Input) -> Result<benchmark::Output, Error> {
         let local_domain = self.get_local_domain();
+        local_domain.scaffold_paths(None).await?;
         benchmark::model(local_domain, args).await
     }
 
     async fn uninstall(&self, args: uninstall::Input) -> Result<uninstall::Output, Error> {
         let local_domain = self.get_local_domain();
+        local_domain.scaffold_paths(None).await?;
         uninstall::model(local_domain, args).await
     }
 }

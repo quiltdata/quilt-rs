@@ -11,7 +11,6 @@ use crate::manifest::Header;
 use crate::manifest::Manifest;
 use crate::manifest::Row;
 use crate::manifest::Table;
-use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::uri::ManifestUriLegacy;
@@ -58,7 +57,6 @@ pub async fn cache_remote_manifest(
 ) -> Res<Table> {
     info!("⏳ Caching remote manifest: {}", manifest_uri.display());
 
-    scaffold_paths(storage, paths.required_local_domain_paths()).await?;
     // check if the manifest is already cached
     // if not, download and cache it
     // return cached manifest
