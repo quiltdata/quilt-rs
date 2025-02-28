@@ -111,9 +111,9 @@ pub async fn push_package(
         )
         .await,
     );
-    let manifest_path = |t: &str| paths.manifest_cache(&manifest_uri.bucket, t);
+    let dest_dir = paths.manifest_cache_dir(&manifest_uri.bucket);
     let (cache_path, top_hash) =
-        build_manifest_from_rows_stream(storage, manifest_path, header, stream).await?;
+        build_manifest_from_rows_stream(storage, dest_dir, header, stream).await?;
     debug!(
         "✔️ Built manifest with hash {} at {}",
         top_hash,
