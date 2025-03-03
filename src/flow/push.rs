@@ -216,7 +216,7 @@ mod tests {
             remote: manifest_uri,
             ..PackageLineage::default()
         };
-        let jsonl = std::fs::read(fixtures::manifest::parquet_checksummed())?;
+        let jsonl = std::fs::read(fixtures::manifest::parquet_checksummed()?)?;
         let manifest_key =
             ".quilt/packages/b/770459d4230273fd44b272c552d1204458175e7d7cb26fcd601c662cf5f72d05";
         let storage = MockStorage::default();

@@ -159,7 +159,7 @@ mod tests {
 
         // Prepare the reference manifest file.
         // It is copied into the cache path to simulate a cached manifest.
-        let parquet = std::fs::read(fixtures::manifest::parquet())?;
+        let parquet = std::fs::read(fixtures::manifest::parquet()?)?;
         let storage = MockStorage::default();
         storage.write_file(&cache_path, &parquet).await?;
 
@@ -274,7 +274,7 @@ mod tests {
 
         // Simulate the remote JSONL manifest.
         // The JSONL data is loaded from a mocked fixture and placed in the remote location.
-        let jsonl = std::fs::read(fixtures::manifest::jsonl())?;
+        let jsonl = std::fs::read(fixtures::manifest::jsonl()?)?;
         let remote = MockRemote::default();
         let remote_uri = S3Uri::from_str(&format!(
             "s3://{}/.quilt/packages/{}",
