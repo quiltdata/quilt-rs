@@ -3,7 +3,6 @@ use tracing::{debug, info};
 use crate::io::storage::Storage;
 use crate::lineage::DomainLineage;
 use crate::paths;
-use crate::paths::scaffold_paths;
 use crate::uri::Namespace;
 use crate::Error;
 use crate::Res;
@@ -17,8 +16,6 @@ pub async fn uninstall_package(
     namespace: Namespace,
 ) -> Res<DomainLineage> {
     info!("⏳ Uninstalling package {}", namespace);
-
-    scaffold_paths(storage, paths.required_for_installing(&namespace)).await?;
 
     debug!("🔍 Checking if package exists in lineage");
     lineage
@@ -53,7 +50,6 @@ mod tests {
     use crate::lineage::PackageLineage;
 
     use crate::io::storage::mocks::MockStorage;
-    use crate::paths::scaffold_paths;
 
     #[tokio::test]
     async fn test_panic_if_no_installed_package() {
@@ -78,7 +74,7 @@ mod tests {
 
         let namespace = Namespace::from(("foo", "bar"));
 
-        scaffold_paths(&storage, paths.required_for_installing(&namespace)).await?;
+        paths.scaffold_for_installing(&storage, &namespace).await?;
 
         let lineage = uninstall_package(lineage, &paths, &storage, namespace).await?;
         assert!(lineage.packages.is_empty());

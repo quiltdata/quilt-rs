@@ -8,7 +8,6 @@ use crate::io::storage::Storage;
 use crate::lineage::DomainLineage;
 use crate::lineage::PackageLineage;
 use crate::paths::copy_cached_to_installed;
-use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::Error;
@@ -27,12 +26,12 @@ pub async fn install_package(
 ) -> Res<DomainLineage> {
     info!("⏳ Installing package: {}", manifest_uri.display());
 
-    scaffold_paths(
-        storage,
-        paths.required_for_installing(&manifest_uri.namespace),
-    )
-    .await?;
-    scaffold_paths(storage, paths.required_for_caching(&manifest_uri.bucket)).await?;
+    paths
+        .scaffold_for_installing(storage, &manifest_uri.namespace)
+        .await?;
+    paths
+        .scaffold_for_caching(storage, &manifest_uri.bucket)
+        .await?;
 
     // TODO: if compatible (same remote), just return the installed package
     if lineage.packages.contains_key(&manifest_uri.namespace) {
