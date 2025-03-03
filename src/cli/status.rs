@@ -177,7 +177,8 @@ mod tests {
 
             let file_removed_status_str = format!("{}", status_file_removed);
             assert!(file_removed_status_str.contains("Installed package is up to date"));
-            assert!(file_removed_status_str.contains("foo/bar.md                               | Added"));
+            assert!(file_removed_status_str
+                .contains("foo/bar.md                               | Added"));
             assert!(file_removed_status_str
                 .contains("one/two two/three three three/READ ME.md | Removed"));
         }
