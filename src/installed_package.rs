@@ -240,7 +240,7 @@ mod tests {
         let remote = RemoteS3::new(paths.clone(), storage.clone());
         let namespace: Namespace = ("test", "history").into();
 
-        scaffold_paths(&storage, paths.required_installed_package_paths(&namespace)).await?;
+        scaffold_paths(&storage, paths.required_for_installing(&namespace)).await?;
         // Initialize domain lineage file
         storage
             .write_file(

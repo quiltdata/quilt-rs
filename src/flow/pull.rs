@@ -13,6 +13,7 @@ use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageLineage;
 use crate::manifest::Table;
 use crate::paths::copy_cached_to_installed;
+use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
@@ -34,6 +35,8 @@ pub async fn pull_package(
     namespace: Namespace,
 ) -> Res<PackageLineage> {
     info!("⏳ Starting pull for package {}", namespace);
+
+    scaffold_paths(storage, paths.required_for_installing(&namespace)).await?;
 
     if !status.changes.is_empty() {
         error!("❌ Found pending changes, cannot pull");

@@ -50,10 +50,9 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 async fn install_package(
     local_domain: &quilt_rs::LocalDomain,
     uri: &quilt_rs::uri::S3PackageUri,
-    namespace: Option<Namespace>,
+    namespace: Namespace,
 ) -> Result<quilt_rs::InstalledPackage, Error> {
     let remote = local_domain.get_remote();
-    let namespace = namespace.unwrap_or(uri.namespace.clone());
     if let Some(installed_package) = local_domain.get_installed_package(&namespace).await? {
         // FIXME: check the actual remote_manifest
         return Ok(installed_package);
@@ -97,6 +96,8 @@ pub async fn model(
 ) -> Result<Output, Error> {
     let uri: quilt_rs::uri::S3PackageUri = uri.parse()?;
     let path = uri.path.clone();
+
+    let namespace = namespace.unwrap_or(uri.namespace.clone());
     let installed_package = install_package(local_domain, &uri, namespace).await?;
     let paths = get_entries(path, paths);
 

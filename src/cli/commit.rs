@@ -58,9 +58,8 @@ pub async fn model(
         workflow,
     }: Input,
 ) -> Result<Output, Error> {
-    Ok(Output {
-        commit: commit_package(local_domain, namespace, message, user_meta, workflow).await?,
-    })
+    let commit = commit_package(local_domain, namespace, message, user_meta, workflow).await?;
+    Ok(Output { commit })
 }
 
 #[cfg(test)]

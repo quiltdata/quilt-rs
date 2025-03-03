@@ -28,7 +28,6 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 
 pub async fn model(
     local_domain: &quilt_rs::LocalDomain,
-
     Input { namespace }: Input,
 ) -> Result<Output, Error> {
     local_domain.uninstall_package(namespace.clone()).await?;

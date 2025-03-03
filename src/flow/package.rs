@@ -16,6 +16,7 @@ use crate::io::storage::Storage;
 use crate::manifest::Header;
 use crate::manifest::JsonObject;
 use crate::manifest::Row;
+use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
 use crate::perf::Measure;
 use crate::uri::Host;
@@ -108,6 +109,9 @@ pub async fn package_s3_prefix(
         "⏳ Creating package from {} S3 prefix at {}",
         source_uri, dest_uri
     );
+
+    scaffold_paths(storage, paths.required_for_caching(&dest_uri.bucket)).await?;
+
     // TODO: make get_object_attributes() calls concurrently across list_objects() pages
     // TODO: increase concurrency, to do that we need to figure out how to deal
     //       with fd limits on Mac by default it's 256

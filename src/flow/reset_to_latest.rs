@@ -7,6 +7,7 @@ use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::manifest::Table;
 use crate::paths::copy_cached_to_installed;
+use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
@@ -23,6 +24,9 @@ pub async fn reset_to_latest(
     namespace: Namespace,
 ) -> Res<PackageLineage> {
     info!("⏳ Starting reset to latest for package {}", namespace);
+
+    scaffold_paths(storage, paths.required_for_installing(&namespace)).await?;
+    scaffold_paths(storage, paths.required_for_caching(&lineage.remote.bucket)).await?;
 
     debug!(
         "⏳ Resolving latest manifest hash for {}",

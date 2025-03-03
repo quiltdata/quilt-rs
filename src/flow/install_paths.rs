@@ -94,7 +94,7 @@ pub async fn install_paths(
         namespace
     );
 
-    scaffold_paths(storage, paths.required_installed_package_paths(&namespace)).await?;
+    scaffold_paths(storage, paths.required_for_installing(&namespace)).await?;
 
     debug!("🔍 Checking for already installed paths");
     // TODO: what happens if paths are already installed? Ignore, or error?

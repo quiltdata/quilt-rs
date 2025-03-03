@@ -17,6 +17,7 @@ use crate::lineage::PackageLineage;
 use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::paths;
+use crate::paths::scaffold_paths;
 use crate::uri::Host;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
@@ -73,6 +74,8 @@ pub async fn push_package(
     remote: &impl Remote,
     namespace: Option<Namespace>,
 ) -> Res<PackageLineage> {
+    scaffold_paths(storage, paths.required_for_caching(&lineage.remote.bucket)).await?;
+
     let commit = match lineage.commit {
         None => {
             info!("No changes to push");
@@ -91,9 +94,12 @@ pub async fn push_package(
     //
     // TODO: FAIL if the remote bucket does NOT support versioning (as it would be destructive)
 
+    let namespace = namespace.unwrap_or(lineage.remote.namespace.clone());
+    scaffold_paths(storage, paths.required_for_installing(&namespace)).await?;
+
     debug!("⏳ Creating manifest URI");
     let manifest_uri = ManifestUri {
-        namespace: namespace.unwrap_or(lineage.remote.namespace.clone()),
+        namespace,
         ..lineage.remote.clone()
     };
     debug!("✔️ Created manifest URI: {}", manifest_uri.display());

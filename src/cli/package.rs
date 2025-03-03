@@ -45,6 +45,7 @@ pub async fn model(
 ) -> Result<Output, Error> {
     let uri = uri.parse()?;
     let target_uri = target.parse()?;
+
     let manifest_uri = local_domain
         .package_s3_prefix(&uri, target_uri, message, user_meta)
         .await?;
