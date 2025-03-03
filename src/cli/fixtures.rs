@@ -1,5 +1,3 @@
-pub const DEFAULT_PACKAGE_URI_LATEST: &str =
-    "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs";
 pub const DEFAULT_PACKAGE_URI: &str =
     "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7";
 pub const DEFAULT_PACKAGE_README_LK: &str = "one/two two/three three three/READ ME.md";
@@ -11,3 +9,5 @@ pub const DEFAULT_PACKAGE_TIMESTAMP_PK: &str = "s3://data-yaml-spec-tests/refere
 pub const DEFAULT_NAMESPACE: &str = "reference/quilt-rs";
 pub const DEFAULT_TOP_HASH: &str =
     "a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7";
+pub const DEFAULT_PACKAGE_URI_LATEST: &str =
+    "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs";
