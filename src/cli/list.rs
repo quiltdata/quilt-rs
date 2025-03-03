@@ -42,6 +42,7 @@ mod tests {
     use tempfile::Builder;
     use test_log::test;
 
+    use crate::cli::fixtures::packages::default as pkg;
     use crate::cli::model::install_package_into_temp_dir;
     use crate::cli::model::Model;
 
@@ -63,7 +64,7 @@ mod tests {
     #[test(tokio::test)]
     async fn test_model() -> Result<(), Error> {
         // Test with one installed package
-        let uri = "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs&path=one/two%20two/three%20three%20three/READ%20ME.md";
+        let uri = format!("{}&path={}", pkg::URI, pkg::README_LK_ESCAPED);
         let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
         {
             let local_domain = m.get_local_domain();
@@ -71,9 +72,9 @@ mod tests {
 
             assert_eq!(
                 output.installed_packages_list[0].namespace,
-                ("reference", "quilt-rs").into()
+                pkg::NAMESPACE.into()
             );
-            assert_eq!(format!("{}", output), "InstalledPackage<reference/quilt-rs>");
+            assert_eq!(format!("{}", output), format!("InstalledPackage<{}>", pkg::NAMESPACE_STR));
         }
 
         Ok(())
@@ -99,11 +100,11 @@ mod tests {
     // TODO: install and list multiple packages
     #[test(tokio::test)]
     async fn test_command_with_package() -> Result<(), Error> {
-        let uri = "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs&path=one/two%20two/three%20three%20three/READ%20ME.md";
+        let uri = format!("{}&path={}", pkg::URI, pkg::README_LK_ESCAPED);
         let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
 
         if let Std::Out(output) = command(m).await {
-            assert_eq!(output, "InstalledPackage<reference/quilt-rs>");
+            assert_eq!(output, format!("InstalledPackage<{}>", pkg::NAMESPACE_STR));
         } else {
             return Err(Error::Test("Failed to list packages".to_string()));
         }
