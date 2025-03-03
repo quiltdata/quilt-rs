@@ -7,7 +7,6 @@ use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::manifest::Table;
 use crate::paths::copy_cached_to_installed;
-use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
@@ -25,8 +24,10 @@ pub async fn reset_to_latest(
 ) -> Res<PackageLineage> {
     info!("⏳ Starting reset to latest for package {}", namespace);
 
-    scaffold_paths(storage, paths.required_for_installing(&namespace)).await?;
-    scaffold_paths(storage, paths.required_for_caching(&lineage.remote.bucket)).await?;
+    paths.scaffold_for_installing(storage, &namespace).await?;
+    paths
+        .scaffold_for_caching(storage, &lineage.remote.bucket)
+        .await?;
 
     debug!(
         "⏳ Resolving latest manifest hash for {}",
@@ -110,7 +111,6 @@ mod tests {
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::PackageLineage;
-    use crate::paths::scaffold_paths;
     use crate::uri::S3Uri;
 
     use test_log::test;
@@ -162,7 +162,9 @@ mod tests {
 
         let paths = DomainPaths::default();
         let storage = MockStorage::default();
-        scaffold_paths(&storage, paths.required_for_caching(&manifest_uri.bucket)).await?;
+        paths
+            .scaffold_for_caching(&storage, &manifest_uri.bucket)
+            .await?;
 
         let source_lineage = PackageLineage {
             remote: manifest_uri,

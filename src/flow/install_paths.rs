@@ -15,7 +15,6 @@ use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
 use crate::manifest::Row;
 use crate::manifest::Table;
-use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
 use crate::uri::Host;
 use crate::uri::Namespace;
@@ -93,8 +92,6 @@ pub async fn install_paths(
         entries_paths.len(),
         namespace
     );
-
-    scaffold_paths(storage, paths.required_for_installing(&namespace)).await?;
 
     debug!("🔍 Checking for already installed paths");
     // TODO: what happens if paths are already installed? Ignore, or error?
@@ -275,6 +272,10 @@ mod tests {
         let storage = MockStorage::default();
         let single_object_path = PathBuf::from("a/a");
         let entries_paths = vec![single_object_path.clone()];
+
+        domain_paths
+            .scaffold_for_installing(&storage, &namespace.into())
+            .await?;
 
         let remote_file_url = "s3://any/valid-url.md".to_string();
 

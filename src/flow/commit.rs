@@ -24,7 +24,6 @@ use crate::manifest::JsonObject;
 use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::manifest::Workflow;
-use crate::paths::scaffold_paths;
 use crate::paths::DomainPaths;
 use crate::uri::Namespace;
 use crate::Error;
@@ -135,9 +134,6 @@ pub async fn commit_package(
         r#"⏳ Starting commit with message "{}" and user_meta `{:?}`"#,
         message, user_meta
     );
-
-    let required_paths = paths.required_for_installing(&namespace);
-    scaffold_paths(storage, required_paths).await?;
 
     // create a new manifest based on the stored version
 
