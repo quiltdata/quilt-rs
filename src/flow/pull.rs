@@ -138,7 +138,7 @@ mod tests {
     async fn test_no_pull_if_changes() -> Res {
         let storage = MockStorage::default();
         let lineage = PackageLineage {
-            paths: BTreeMap::from([(PathBuf::from("a/a"), sample_file_1::path_state())]),
+            paths: BTreeMap::from([(PathBuf::from("a/a"), sample_file_1::path_state()?)]),
             ..PackageLineage::default()
         };
         let sample_file_path = PathBuf::from("a/a");

@@ -306,7 +306,7 @@ mod tests {
     async fn test_removed_files() -> Res {
         let sample_file_path = PathBuf::from("a/a");
         let lineage = PackageLineage {
-            paths: BTreeMap::from([(sample_file_path.clone(), sample_file_1::path_state())]),
+            paths: BTreeMap::from([(sample_file_path.clone(), sample_file_1::path_state()?)]),
             ..PackageLineage::default()
         };
         let mut manifest = Table::default();
