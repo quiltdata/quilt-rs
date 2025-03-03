@@ -31,7 +31,7 @@ pub mod packages {
     }
 
     pub mod no_workflows_message_only {
-        pub const  URI: &str= "quilt+s3://data-yaml-spec-tests#package=reference/message-only@ce2ca6a39eb02725b24e3ccf158022dc80c2ab96b066e5660d87abafdbaee768";
+        pub const URI: &str= "quilt+s3://data-yaml-spec-tests#package=reference/message-only@ce2ca6a39eb02725b24e3ccf158022dc80c2ab96b066e5660d87abafdbaee768";
         pub const TOP_HASH: &str =
             "ce2ca6a39eb02725b24e3ccf158022dc80c2ab96b066e5660d87abafdbaee768";
         pub const NAMESPACE: (&str, &str) = ("reference", "message-only");
