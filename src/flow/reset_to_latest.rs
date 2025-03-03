@@ -102,8 +102,8 @@ pub async fn reset_to_latest(
 mod tests {
     use super::*;
 
-    use crate::lineage::PackageLineage;
     use crate::fixtures;
+    use crate::lineage::PackageLineage;
     use crate::paths::scaffold_paths;
     use crate::uri::S3Uri;
 
@@ -111,12 +111,16 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_if_already_latest() -> Res {
-        let source_lineage = fixtures::lineage::with_remote(ManifestUri {
+        let source_manifest_uri = ManifestUri {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
             hash: "foo".to_string(),
             catalog: None,
-        });
+        };
+        let source_lineage = PackageLineage {
+            remote: source_manifest_uri,
+            ..PackageLineage::default()
+        };
 
         let remote = fixtures::remote::MockRemote::default();
         remote
@@ -154,7 +158,10 @@ mod tests {
         let storage = fixtures::storage::MockStorage::default();
         scaffold_paths(&storage, paths.required_for_caching(&manifest_uri.bucket)).await?;
 
-        let source_lineage = fixtures::lineage::with_remote(manifest_uri);
+        let source_lineage = PackageLineage {
+            remote: manifest_uri,
+            ..PackageLineage::default()
+        };
 
         let jsonl = std::fs::read(fixtures::manifest::jsonl())?;
         let hash = fixtures::manifest::JSONL_HASH;

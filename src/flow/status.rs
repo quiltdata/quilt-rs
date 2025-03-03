@@ -209,11 +209,14 @@ pub async fn create_status(
 mod tests {
     use super::*;
 
+    use std::collections::BTreeMap;
+
     use crate::checksum::ContentHash;
+    use crate::fixtures;
+    use crate::fixtures::sample_file_1;
     use crate::lineage::CommitState;
     use crate::lineage::PackageFileFingerprint;
     use crate::lineage::UpstreamState;
-    use crate::fixtures;
 
     #[tokio::test]
     async fn test_default_status() -> Res {
@@ -231,10 +234,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_behind() -> Res {
-        let base_hash = "AAA";
-        let latest_hash = "BBB";
-        let commit_hash = "AAA";
-        let lineage = fixtures::lineage::with_commit_hashes(base_hash, latest_hash, commit_hash);
+        let lineage = PackageLineage {
+            commit: Some(CommitState {
+                hash: "AAA".to_string(),
+                ..CommitState::default()
+            }),
+            base_hash: "AAA".to_string(),
+            latest_hash: "BBB".to_string(),
+            ..PackageLineage::default()
+        };
 
         let (_lineage, status) = create_status(
             lineage,
@@ -249,10 +257,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_ahead() -> Res {
-        let base_hash = "AAA";
-        let latest_hash = "AAA";
-        let commit_hash = "BBB";
-        let lineage = fixtures::lineage::with_commit_hashes(base_hash, latest_hash, commit_hash);
+        let lineage = PackageLineage {
+            commit: Some(CommitState {
+                hash: "BBB".to_string(),
+                ..CommitState::default()
+            }),
+            base_hash: "AAA".to_string(),
+            latest_hash: "AAA".to_string(),
+            ..PackageLineage::default()
+        };
 
         let (_, status) = create_status(
             lineage,
@@ -290,7 +303,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_removed_files() -> Res {
-        let lineage = fixtures::lineage::with_paths(vec![PathBuf::from("a/a")]);
+        let lineage = PackageLineage {
+            paths: BTreeMap::from([(PathBuf::from("a/a"), sample_file_1::path_state())]),
+            ..PackageLineage::default()
+        };
         let manifest = fixtures::manifest::with_record_keys(vec![PathBuf::from("a/a")]);
         let (_, status) = create_status(
             lineage,

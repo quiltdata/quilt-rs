@@ -27,7 +27,7 @@ fn str_to_multihash<'de, D: de::Deserializer<'de>>(
 }
 
 /// State of the file tracked in lineage
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PathState {
     /// Last "modified" date.
     /// Last time it was installed or commited.
