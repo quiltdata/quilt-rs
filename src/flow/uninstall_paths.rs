@@ -54,12 +54,12 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::fixtures;
     use crate::fixtures::sample_file_1;
+    use crate::io::storage::mocks::MockStorage;
 
     #[tokio::test]
     async fn uninstall_not_installed_path() -> Res {
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
         let lineage = PackageLineage::default();
         let paths = vec![PathBuf::from("test folde/r")];
 
@@ -82,7 +82,7 @@ mod tests {
             ..PackageLineage::default()
         };
 
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
         storage
             .write_file(PathBuf::from("a/a"), &Vec::new())
             .await?;
@@ -123,7 +123,7 @@ mod tests {
         };
 
         let paths = vec![PathBuf::from("b/b"), PathBuf::from("a/a")];
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
         let modified_lineage = uninstall_paths(lineage, PathBuf::new(), &storage, &paths).await?;
         assert!(modified_lineage.paths.is_empty());
         Ok(())

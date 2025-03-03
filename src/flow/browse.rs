@@ -95,8 +95,7 @@ pub async fn cache_remote_manifest(
                 return Err(Error::ManifestPath(format!(
                     "Top hash mismatch: expected {}, got {}",
                     manifest_uri.hash, top_hash
-                ))
-                .into());
+                )));
             }
             debug!(
                 "✔️ Manifest has converted to Parquet and written to {}",
@@ -138,6 +137,7 @@ mod tests {
     use test_log::test;
 
     use crate::fixtures;
+    use crate::io::storage::mocks::MockStorage;
     use crate::paths::scaffold_paths;
 
     /// Verifies that when a manifest is already cached,
@@ -159,7 +159,7 @@ mod tests {
         // Prepare the reference manifest file.
         // It is copied into the cache path to simulate a cached manifest.
         let parquet = std::fs::read(fixtures::manifest::parquet())?;
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
         storage.write_file(&cache_path, &parquet).await?;
 
         // Although there is no direct assertion for `remote.expect_get_object().never()`,
@@ -195,7 +195,7 @@ mod tests {
             catalog: None,
         };
         let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
         storage.write_file(cache_path, &Vec::new()).await?;
 
         let remote = fixtures::remote::MockRemote::default();
@@ -237,7 +237,7 @@ mod tests {
             .put_object(&manifest.catalog, &remote_uri, parquet.clone())
             .await?;
 
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
 
         // Fetch the manifest from the remote location.
         let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
@@ -283,7 +283,7 @@ mod tests {
             .put_object(&manifest.catalog, &remote_uri, jsonl.clone())
             .await?;
 
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
         scaffold_paths(&storage, paths.required_for_caching(&manifest.bucket)).await?;
 
         // Fetch the manifest from the remote location.

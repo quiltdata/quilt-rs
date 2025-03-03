@@ -198,8 +198,9 @@ mod tests {
     use std::str::FromStr;
     use tempfile;
 
-    use crate::manifest::Row;
     use crate::fixtures;
+    use crate::io::storage::mocks::MockStorage;
+    use crate::manifest::Row;
 
     // Verify installing the path that is already fetched to the `.quilt/objects`
     // Practically it is useful when we try to install identical files. Then we can re-use cache (because files are located by hash).
@@ -214,7 +215,7 @@ mod tests {
 
         // Simulate the file already exists in `.quilt/objects/HASH`
         // We trust that the hash is correct, so we can skip the actual file content
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
         // The same hash is used in `mocks::manifest::with_record_keys`
         // So, it's not completely random.
         let hash = fixtures::row_hash_sample1();
@@ -267,7 +268,7 @@ mod tests {
 
         // Simulate the manifest with rows containing an object path
         let remote = fixtures::remote::MockRemote::default();
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
         let single_object_path = PathBuf::from("a/a");
         let entries_paths = vec![single_object_path.clone()];
 
@@ -359,7 +360,7 @@ mod tests {
 
         // Simulate two of three files (1 and 3) are already exist in `.quilt/objects/HASH`
         // We trust that the hash is correct, so we can skip the actual file content
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
         let parent = domain_working_dir.path();
         let object_path_1 = parent.join(domain_paths.object(row_1.hash.digest()));
         storage.write_file(object_path_1, &Vec::new()).await?;
@@ -419,7 +420,7 @@ mod tests {
     async fn test_installing_path_that_doesnt_exists_in_manifest() -> Res {
         let lineage = PackageLineage::default();
         let remote = fixtures::remote::MockRemote::default();
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
 
         // We want to install z/z
         let entries_paths = vec![PathBuf::from("z/z")];

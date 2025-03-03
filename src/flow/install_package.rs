@@ -69,8 +69,9 @@ mod tests {
     use std::path::PathBuf;
     use std::str::FromStr;
 
-    use crate::io::storage::LocalStorage;
     use crate::fixtures;
+    use crate::io::storage::mocks::MockStorage;
+    use crate::io::storage::LocalStorage;
     use crate::uri::S3Uri;
 
     /// Verify that attempting to install a package that is already installed results in an error.
@@ -84,7 +85,7 @@ mod tests {
         let result = install_package(
             lineage,
             &paths::DomainPaths::default(),
-            &fixtures::storage::MockStorage::default(),
+            &MockStorage::default(),
             &fixtures::remote::MockRemote::default(),
             &ManifestUri {
                 namespace: namespace.into(),
@@ -137,7 +138,7 @@ mod tests {
             )
             .await?;
 
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
         let result = install_package(
             DomainLineage::default(),
             &paths::DomainPaths::default(),

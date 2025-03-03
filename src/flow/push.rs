@@ -173,15 +173,16 @@ mod tests {
     use crate::uri::S3Uri;
     use std::path::PathBuf;
 
+    use crate::fixtures;
+    use crate::io::storage::mocks::MockStorage;
     use crate::lineage::CommitState;
     use crate::lineage::PackageLineage;
     use crate::manifest::Row;
-    use crate::fixtures;
     use crate::uri::ManifestUri;
 
     #[tokio::test]
     async fn test_no_push_if_no_commit() -> Res {
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
         let remote = fixtures::remote::MockRemote::default();
         let lineage = push_package(
             PackageLineage::default(),
@@ -217,7 +218,7 @@ mod tests {
         let jsonl = std::fs::read(fixtures::manifest::parquet_checksummed())?;
         let manifest_key =
             ".quilt/packages/b/770459d4230273fd44b272c552d1204458175e7d7cb26fcd601c662cf5f72d05";
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
         storage
             .write_file(PathBuf::from(manifest_key), &jsonl)
             .await?;
@@ -285,7 +286,7 @@ mod tests {
         let jsonl = std::fs::read(fixtures::manifest::parquet_checksummed())?;
         let manifest_key =
             ".quilt/packages/b/475af395ee2856548851913bfd803de4fcc7cdbb3d1d2c13bf0dc221ed6bc68b";
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
         storage
             .write_file(PathBuf::from(manifest_key), &jsonl)
             .await?;

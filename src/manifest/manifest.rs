@@ -344,12 +344,12 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::checksum::MULTIHASH_SHA256;
+    use crate::fixtures;
     use crate::io::storage::mocks::MockStorage;
     use crate::io::storage::LocalStorage;
     use crate::io::storage::Storage;
     use crate::manifest::Row;
     use crate::manifest::Table;
-    use crate::fixtures;
 
     #[test]
     fn test_equality_of_strictly_equal() {
