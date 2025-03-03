@@ -54,6 +54,7 @@ mod tests {
 
     use test_log::test;
 
+    use crate::cli::fixtures::packages::outdated as pkg;
     use crate::cli::model::install_package_into_temp_dir;
     use crate::cli::model::Model;
 
@@ -63,7 +64,7 @@ mod tests {
     ///   * verifies the package is up to date
     #[test(tokio::test)]
     async fn test_model() -> Result<(), Error> {
-        let uri = "quilt+s3://data-yaml-spec-tests#package=scale/10u@f8216f57739c9824f22f1f7a1f8ded59fd50791c92bf9c317d06376811ecbfef";
+        let uri = pkg::URI;
         let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
         {
             let local_domain = m.get_local_domain();
@@ -71,14 +72,14 @@ mod tests {
             let output = model(
                 local_domain,
                 Input {
-                    namespace: ("scale", "10u").into(),
+                    namespace: pkg::NAMESPACE.into(),
                 },
             )
             .await?;
 
             assert_eq!(
                 output.hash,
-                "ae239090f2a01de382e8af719fe4a451ef1d1fa4a3ef7b21c6b36513d42c6630"
+                pkg::LATEST_TOP_HASH
             );
         }
 
@@ -88,20 +89,20 @@ mod tests {
     /// Verifies that pull command returns correct output after pulling latest version
     #[test(tokio::test)]
     async fn test_valid_command() -> Result<(), Error> {
-        let uri = "quilt+s3://data-yaml-spec-tests#package=scale/10u@f8216f57739c9824f22f1f7a1f8ded59fd50791c92bf9c317d06376811ecbfef";
+        let uri = pkg::URI;
         let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
 
         if let Std::Out(output_str) = command(
             m,
             Input {
-                namespace: ("scale", "10u").into(),
+                namespace: pkg::NAMESPACE.into(),
             },
         )
         .await
         {
             assert_eq!(
                 output_str,
-                r#"Revision "ae239090f2a01de382e8af719fe4a451ef1d1fa4a3ef7b21c6b36513d42c6630" pulled"#
+                format!(r#"Revision "{}" pulled"#, pkg::LATEST_TOP_HASH)
             );
         } else {
             return Err(Error::Test("Failed to pull".to_string()));
