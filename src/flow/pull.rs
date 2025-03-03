@@ -129,6 +129,7 @@ mod tests {
 
     use crate::fixtures;
     use crate::fixtures::sample_file_1;
+    use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::Change;
     use crate::lineage::CommitState;
@@ -149,7 +150,7 @@ mod tests {
             )]),
             ..InstalledPackageStatus::default()
         };
-        let remote = fixtures::remote::MockRemote::default();
+        let remote = MockRemote::default();
         let error = pull_package(
             lineage,
             &mut fixtures::manifest::with_record_keys(vec![PathBuf::from("a/a")]),
@@ -171,7 +172,7 @@ mod tests {
     #[tokio::test]
     async fn test_no_pull_if_commit() {
         let storage = MockStorage::default();
-        let remote = fixtures::remote::MockRemote::default();
+        let remote = MockRemote::default();
         let lineage = PackageLineage {
             commit: Some(CommitState::default()),
             ..PackageLineage::default()
@@ -197,7 +198,7 @@ mod tests {
     #[tokio::test]
     async fn test_no_pull_if_diverged() {
         let storage = MockStorage::default();
-        let remote = fixtures::remote::MockRemote::default();
+        let remote = MockRemote::default();
         let lineage = PackageLineage {
             remote: ManifestUri {
                 hash: "a".to_string(),
@@ -226,7 +227,7 @@ mod tests {
     #[tokio::test]
     async fn test_no_pull_if_up_to_date() {
         let storage = MockStorage::default();
-        let remote = fixtures::remote::MockRemote::default();
+        let remote = MockRemote::default();
         let lineage = PackageLineage {
             remote: ManifestUri {
                 hash: "a".to_string(),

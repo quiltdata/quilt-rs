@@ -103,6 +103,7 @@ mod tests {
     use super::*;
 
     use crate::fixtures;
+    use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::PackageLineage;
     use crate::paths::scaffold_paths;
@@ -123,7 +124,7 @@ mod tests {
             ..PackageLineage::default()
         };
 
-        let remote = fixtures::remote::MockRemote::default();
+        let remote = MockRemote::default();
         remote
             .put_object(
                 &None,
@@ -166,7 +167,7 @@ mod tests {
 
         let jsonl = std::fs::read(fixtures::manifest::jsonl())?;
         let hash = fixtures::manifest::JSONL_HASH;
-        let remote = fixtures::remote::MockRemote::default();
+        let remote = MockRemote::default();
         remote
             .put_object(
                 &None,

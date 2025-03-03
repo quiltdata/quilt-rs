@@ -70,6 +70,7 @@ mod tests {
     use std::str::FromStr;
 
     use crate::fixtures;
+    use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::io::storage::LocalStorage;
     use crate::uri::S3Uri;
@@ -86,7 +87,7 @@ mod tests {
             lineage,
             &paths::DomainPaths::default(),
             &MockStorage::default(),
-            &fixtures::remote::MockRemote::default(),
+            &MockRemote::default(),
             &ManifestUri {
                 namespace: namespace.into(),
                 ..ManifestUri::default()
@@ -114,7 +115,7 @@ mod tests {
 
         // Load the reference manifest from `./fixtures`
         let parquet = std::fs::read(fixtures::manifest::parquet())?;
-        let remote = fixtures::remote::MockRemote::default();
+        let remote = MockRemote::default();
 
         // Simulate the remote storage containing the Parquet manifest
         let remote_uri = S3Uri::from_str(&format!(
@@ -185,7 +186,7 @@ mod tests {
 
         // Load the reference manifest from `./fixtures`
         let parquet = std::fs::read(fixtures::manifest::parquet())?;
-        let remote = fixtures::remote::MockRemote::default();
+        let remote = MockRemote::default();
 
         // Simulate the remote storage containing the Parquet manifest
         let remote_uri = S3Uri::from_str(&format!(
