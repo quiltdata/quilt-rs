@@ -55,10 +55,12 @@ pub async fn model(
 mod tests {
     use super::*;
 
+    use test_log::test;
+
     use crate::cli::model::Model;
 
     /// Verifies that CLI throws error if source `s3://` URI is invalid:
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_invalid_source() -> Result<(), Error> {
         let uri = "should-be-s3://anything".to_string();
 
@@ -86,7 +88,7 @@ mod tests {
     }
 
     /// Verifies that CLI throws error if target `quilt+s3://` URI is invalid:
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_invalid_target() -> Result<(), Error> {
         let uri = "s3://any/thing".to_string();
         let target = "quilt+s3://some-nonsense".to_string();

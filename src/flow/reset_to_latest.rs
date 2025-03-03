@@ -104,9 +104,12 @@ mod tests {
 
     use crate::lineage::PackageLineage;
     use crate::mocks;
+    use crate::paths::scaffold_paths;
     use crate::uri::S3Uri;
 
-    #[tokio::test]
+    use test_log::test;
+
+    #[test(tokio::test)]
     async fn test_if_already_latest() -> Res {
         let source_lineage = mocks::lineage::with_remote(ManifestUri {
             bucket: "b".to_string(),
@@ -138,28 +141,35 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_reseting_to_latest() -> Res {
-        let source_lineage = mocks::lineage::with_remote(ManifestUri {
+        let manifest_uri = ManifestUri {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
             hash: "OUTDATED_HASH".to_string(),
             catalog: None,
-        });
+        };
+
+        let paths = DomainPaths::default();
+        let storage = mocks::storage::MockStorage::default();
+        scaffold_paths(&storage, paths.required_for_caching(&manifest_uri.bucket)).await?;
+
+        let source_lineage = mocks::lineage::with_remote(manifest_uri);
 
         let jsonl = std::fs::read(mocks::manifest::jsonl())?;
+        let hash = mocks::manifest::JSONL_HASH;
         let remote = mocks::remote::MockRemote::default();
         remote
             .put_object(
                 &None,
                 &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
-                b"LATEST_HASH".to_vec(),
+                hash.as_bytes().to_vec(),
             )
             .await?;
         remote
             .put_object(
                 &None,
-                &S3Uri::try_from("s3://b/.quilt/packages/LATEST_HASH")?,
+                &S3Uri::try_from(format!("s3://b/.quilt/packages/{}", &hash).as_str())?,
                 jsonl,
             )
             .await?;
@@ -167,8 +177,8 @@ mod tests {
         let resolved_lineage = reset_to_latest(
             source_lineage.clone(),
             &mut Table::default(),
-            &DomainPaths::default(),
-            &mocks::storage::MockStorage::default(),
+            &paths,
+            &storage,
             &remote,
             PathBuf::default(),
             Namespace::default(),
@@ -177,10 +187,10 @@ mod tests {
         assert_eq!(
             resolved_lineage,
             PackageLineage {
-                base_hash: "LATEST_HASH".to_string(),
-                latest_hash: "LATEST_HASH".to_string(),
+                base_hash: hash.to_string(),
+                latest_hash: hash.to_string(),
                 remote: ManifestUri {
-                    hash: "LATEST_HASH".to_string(),
+                    hash: hash.to_string(),
                     ..source_lineage.remote
                 },
                 ..source_lineage

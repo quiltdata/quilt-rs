@@ -89,17 +89,20 @@ mod tests {
 
     use std::path::PathBuf;
 
+    use test_log::test;
+
     use crate::cli::model::install_package_into_temp_dir;
+
     use quilt_rs::io::storage::LocalStorage;
     use quilt_rs::io::storage::Storage;
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_model() -> Result<(), Error> {
-        let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c";
+        let uri = "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7";
 
         let (m, installed_package, _temp_dir) = install_package_into_temp_dir(uri).await?;
 
-        let readme_logical_key = PathBuf::from("READ ME.md");
+        let readme_logical_key = PathBuf::from("one/two two/three three three/READ ME.md");
         let timestamp_logical_key = PathBuf::from("timestamp.txt");
         installed_package
             .install_paths(&vec![
@@ -113,7 +116,7 @@ mod tests {
             let output = model(
                 local_domain,
                 Input {
-                    namespace: ("spec", "quiltcore").into(),
+                    namespace: ("reference", "quilt-rs").into(),
                 },
             )
             .await?;
@@ -143,15 +146,18 @@ mod tests {
             let status_new_files = model(
                 local_domain,
                 Input {
-                    namespace: ("spec", "quiltcore").into(),
+                    namespace: ("reference", "quilt-rs").into(),
                 },
             )
             .await?;
 
             let status_new_files_str = format!("{}", status_new_files);
             assert!(status_new_files_str.contains("Installed package is up to date"));
-            assert!(status_new_files_str.contains("foo/bar.md | Added"));
-            assert!(status_new_files_str.contains("READ ME.md | Modified"));
+            assert!(
+                status_new_files_str.contains("foo/bar.md                               | Added")
+            );
+            assert!(status_new_files_str
+                .contains("one/two two/three three three/READ ME.md | Modified"));
         }
 
         storage
@@ -164,15 +170,16 @@ mod tests {
             let status_file_removed = model(
                 local_domain,
                 Input {
-                    namespace: ("spec", "quiltcore").into(),
+                    namespace: ("reference", "quilt-rs").into(),
                 },
             )
             .await?;
 
             let file_removed_status_str = format!("{}", status_file_removed);
             assert!(file_removed_status_str.contains("Installed package is up to date"));
-            assert!(file_removed_status_str.contains("foo/bar.md | Added"));
-            assert!(file_removed_status_str.contains("READ ME.md | Removed"));
+            assert!(file_removed_status_str.contains("foo/bar.md                               | Added"));
+            assert!(file_removed_status_str
+                .contains("one/two two/three three three/READ ME.md | Removed"));
         }
 
         {
@@ -196,7 +203,7 @@ mod tests {
             let status_ahead = model(
                 local_domain,
                 Input {
-                    namespace: ("spec", "quiltcore").into(),
+                    namespace: ("reference", "quilt-rs").into(),
                 },
             )
             .await?;
@@ -209,9 +216,9 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_model_when_latest_is_outdated() -> Result<(), Error> {
-        let uri = "quilt+s3://udp-spec#package=spec/quiltcore@681f1900320a0bb1de2d6aadd5288c727182ecc32b71115b0b29edc25474e43e";
+        let uri = "quilt+s3://data-yaml-spec-tests#package=scale/10u@f8216f57739c9824f22f1f7a1f8ded59fd50791c92bf9c317d06376811ecbfef";
 
         let (m, installed_package, _temp_dir) = install_package_into_temp_dir(uri).await?;
 
@@ -220,7 +227,7 @@ mod tests {
             let output = model(
                 local_domain,
                 Input {
-                    namespace: ("spec", "quiltcore").into(),
+                    namespace: ("scale", "10u").into(),
                 },
             )
             .await?;
@@ -240,7 +247,7 @@ mod tests {
             let output = model(
                 local_domain,
                 Input {
-                    namespace: ("spec", "quiltcore").into(),
+                    namespace: ("scale", "10u").into(),
                 },
             )
             .await?;

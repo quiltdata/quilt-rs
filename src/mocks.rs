@@ -34,6 +34,8 @@ pub mod manifest {
     static TEST_LOCAL_PARQUET_CHECKSUMMED: &str = "fixtures/checksummed.parquet";
     static TEST_LOCAL_JSONL: &str = "fixtures/manifest.jsonl";
 
+    pub const JSONL_HASH: &str = "3af08e839fec032c6804596d32932f6f0550abe8b9696c56ed15fe7f8e853ebd";
+
     fn local_uri(key: &str) -> PathBuf {
         std::env::current_dir().unwrap().join(key)
     }

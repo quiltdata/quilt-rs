@@ -18,6 +18,7 @@ pub struct Model {
     local_domain: quilt_rs::LocalDomain,
 }
 
+// TODO: move scaffold_paths to model calls inside cli
 pub trait Commands {
     fn get_local_domain(&self) -> &quilt_rs::LocalDomain;
 

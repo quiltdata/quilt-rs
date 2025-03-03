@@ -52,6 +52,8 @@ pub async fn model(
 mod tests {
     use super::*;
 
+    use test_log::test;
+
     use crate::cli::model::install_package_into_temp_dir;
     use crate::cli::model::Model;
 
@@ -59,9 +61,9 @@ mod tests {
     ///   * installs an outdated package version
     ///   * pulls the latest version
     ///   * verifies the package is up to date
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_model() -> Result<(), Error> {
-        let uri = "quilt+s3://udp-spec#package=spec/quiltcore@681f1900320a0bb1de2d6aadd5288c727182ecc32b71115b0b29edc25474e43e";
+        let uri = "quilt+s3://data-yaml-spec-tests#package=scale/10u@f8216f57739c9824f22f1f7a1f8ded59fd50791c92bf9c317d06376811ecbfef";
         let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
         {
             let local_domain = m.get_local_domain();
@@ -69,14 +71,14 @@ mod tests {
             let output = model(
                 local_domain,
                 Input {
-                    namespace: ("spec", "quiltcore").into(),
+                    namespace: ("scale", "10u").into(),
                 },
             )
             .await?;
 
             assert_eq!(
                 output.hash,
-                "44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c"
+                "ae239090f2a01de382e8af719fe4a451ef1d1fa4a3ef7b21c6b36513d42c6630"
             );
         }
 
@@ -84,22 +86,22 @@ mod tests {
     }
 
     /// Verifies that pull command returns correct output after pulling latest version
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_valid_command() -> Result<(), Error> {
-        let uri = "quilt+s3://udp-spec#package=spec/quiltcore@681f1900320a0bb1de2d6aadd5288c727182ecc32b71115b0b29edc25474e43e";
+        let uri = "quilt+s3://data-yaml-spec-tests#package=scale/10u@f8216f57739c9824f22f1f7a1f8ded59fd50791c92bf9c317d06376811ecbfef";
         let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
 
         if let Std::Out(output_str) = command(
             m,
             Input {
-                namespace: ("spec", "quiltcore").into(),
+                namespace: ("scale", "10u").into(),
             },
         )
         .await
         {
             assert_eq!(
                 output_str,
-                r#"Revision "44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c" pulled"#
+                r#"Revision "ae239090f2a01de382e8af719fe4a451ef1d1fa4a3ef7b21c6b36513d42c6630" pulled"#
             );
         } else {
             return Err(Error::Test("Failed to pull".to_string()));
@@ -109,7 +111,7 @@ mod tests {
     }
 
     /// Verifies that pull command fails when package is not found
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_invalid_command() -> Result<(), Error> {
         let (m, _temp_dir) = Model::from_temp_dir()?;
         if let Std::Err(error_str) = command(

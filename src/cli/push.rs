@@ -52,11 +52,13 @@ pub async fn model(
 mod tests {
     use super::*;
 
+    use test_log::test;
+
     use crate::cli::model::install_package_into_temp_dir;
     use crate::cli::model::Model;
 
     /// Verifies that push command returns error when push a non-existent package
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_namespace_not_found() -> Result<(), Error> {
         let (m, _temp_dir) = Model::from_temp_dir()?;
 
@@ -79,15 +81,15 @@ mod tests {
     /// Verifies that push command returns error when there are no commits:
     ///   * installs a package but makes no commits
     ///   * attempts to push without commits
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_no_commit() -> Result<(), Error> {
-        let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c";
+        let uri = "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7";
         let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
 
         if let Std::Err(error_str) = command(
             m,
             Input {
-                namespace: ("spec", "quiltcore").into(),
+                namespace: ("reference", "quilt-rs").into(),
             },
         )
         .await

@@ -60,6 +60,9 @@ impl LocalDomain {
     }
 
     pub async fn browse_remote_manifest(&self, uri: &ManifestUri) -> Res<Table> {
+        let required_paths = self.paths.required_for_caching(&uri.bucket);
+        paths::scaffold_paths(&self.storage, required_paths).await?;
+
         flow::browse(&self.paths, &self.storage, &self.remote, uri).await
     }
 
@@ -76,6 +79,9 @@ impl LocalDomain {
 
     pub async fn install_package(&self, manifest_uri: &ManifestUri) -> Res<InstalledPackage> {
         // TODO: we can call namespaced scaffold in model
+        let required_paths = self.paths.required_for_caching(&manifest_uri.bucket);
+        paths::scaffold_paths(&self.storage, required_paths).await?;
+
         self.scaffold_paths(Some(&manifest_uri.namespace)).await?;
         let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
         let lineage = flow::install_package(
@@ -129,6 +135,8 @@ impl LocalDomain {
         message: Option<String>,
         user_meta: Option<JsonObject>,
     ) -> Res<ManifestUri> {
+        let required_paths = self.paths.required_for_caching(&dest_uri.bucket);
+        paths::scaffold_paths(&self.storage, required_paths).await?;
         flow::package_s3_prefix(
             &self.paths,
             &self.storage,
@@ -147,7 +155,6 @@ impl LocalDomain {
         stream: impl RowsStream + Unpin,
     ) -> Res<(PathBuf, String)> {
         let dest_dir = dest_path.parent().unwrap_or(&dest_path).to_path_buf();
-        build_manifest_from_rows_stream(&self.storage, dest_dir, Header::default(), stream)
-            .await
+        build_manifest_from_rows_stream(&self.storage, dest_dir, Header::default(), stream).await
     }
 }
