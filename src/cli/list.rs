@@ -65,7 +65,7 @@ mod tests {
     async fn test_model() -> Result<(), Error> {
         // Test with one installed package
         let uri = format!("{}&path={}", pkg::URI, pkg::README_LK_ESCAPED);
-        let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
+        let (m, _, _temp_dir) = install_package_into_temp_dir(&uri).await?;
         {
             let local_domain = m.get_local_domain();
             let output = model(local_domain).await?;
@@ -74,7 +74,10 @@ mod tests {
                 output.installed_packages_list[0].namespace,
                 pkg::NAMESPACE.into()
             );
-            assert_eq!(format!("{}", output), format!("InstalledPackage<{}>", pkg::NAMESPACE_STR));
+            assert_eq!(
+                format!("{}", output),
+                format!("InstalledPackage<{}>", pkg::NAMESPACE_STR)
+            );
         }
 
         Ok(())
@@ -101,7 +104,7 @@ mod tests {
     #[test(tokio::test)]
     async fn test_command_with_package() -> Result<(), Error> {
         let uri = format!("{}&path={}", pkg::URI, pkg::README_LK_ESCAPED);
-        let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
+        let (m, _, _temp_dir) = install_package_into_temp_dir(&uri).await?;
 
         if let Std::Out(output) = command(m).await {
             assert_eq!(output, format!("InstalledPackage<{}>", pkg::NAMESPACE_STR));

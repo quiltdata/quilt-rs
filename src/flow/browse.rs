@@ -95,8 +95,7 @@ pub async fn cache_remote_manifest(
                 return Err(Error::ManifestPath(format!(
                     "Top hash mismatch: expected {}, got {}",
                     manifest_uri.hash, top_hash
-                ))
-                .into());
+                )));
             }
             debug!(
                 "✔️ Manifest has converted to Parquet and written to {}",
