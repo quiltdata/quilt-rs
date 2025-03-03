@@ -35,7 +35,7 @@ mod perf;
 pub mod uri;
 
 #[cfg(test)]
-pub mod mocks;
+pub mod fixtures;
 
 pub use error::Error;
 pub use installed_package::InstalledPackage;

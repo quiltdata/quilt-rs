@@ -50,7 +50,18 @@ impl LocalDomain {
         }
     }
 
+    pub async fn scaffold_paths_for_installing(&self, namespace: &Namespace) -> Res {
+        self.paths
+            .scaffold_for_installing(&self.storage, namespace)
+            .await
+    }
+
+    pub async fn scaffold_paths_for_caching(&self, bucket: &str) -> Res {
+        self.paths.scaffold_for_caching(&self.storage, bucket).await
+    }
+
     pub async fn browse_remote_manifest(&self, uri: &ManifestUri) -> Res<Table> {
+        self.scaffold_paths_for_caching(&uri.bucket).await?;
         flow::browse(&self.paths, &self.storage, &self.remote, uri).await
     }
 
@@ -66,6 +77,10 @@ impl LocalDomain {
     }
 
     pub async fn install_package(&self, manifest_uri: &ManifestUri) -> Res<InstalledPackage> {
+        self.scaffold_paths_for_caching(&manifest_uri.bucket)
+            .await?;
+        self.scaffold_paths_for_installing(&manifest_uri.namespace)
+            .await?;
         let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
         let lineage = flow::install_package(
             lineage,
@@ -81,6 +96,8 @@ impl LocalDomain {
     }
 
     pub async fn uninstall_package(&self, namespace: Namespace) -> Res<()> {
+        self.scaffold_paths_for_installing(&namespace).await?;
+
         let lineage = self.lineage.read(&self.storage).await?;
         let lineage =
             flow::uninstall_package(lineage, &self.paths, &self.storage, namespace).await?;
@@ -118,6 +135,7 @@ impl LocalDomain {
         message: Option<String>,
         user_meta: Option<JsonObject>,
     ) -> Res<ManifestUri> {
+        self.scaffold_paths_for_caching(&dest_uri.bucket).await?;
         flow::package_s3_prefix(
             &self.paths,
             &self.storage,
@@ -135,8 +153,7 @@ impl LocalDomain {
         dest_path: PathBuf,
         stream: impl RowsStream + Unpin,
     ) -> Res<(PathBuf, String)> {
-        let manifest_path = |_t: &str| dest_path.clone();
-        build_manifest_from_rows_stream(&self.storage, manifest_path, Header::default(), stream)
-            .await
+        let dest_dir = dest_path.parent().unwrap_or(&dest_path).to_path_buf();
+        build_manifest_from_rows_stream(&self.storage, dest_dir, Header::default(), stream).await
     }
 }

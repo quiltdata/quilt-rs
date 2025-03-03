@@ -45,6 +45,7 @@ pub async fn model(
 ) -> Result<Output, Error> {
     let uri = uri.parse()?;
     let target_uri = target.parse()?;
+
     let manifest_uri = local_domain
         .package_s3_prefix(&uri, target_uri, message, user_meta)
         .await?;
@@ -55,10 +56,12 @@ pub async fn model(
 mod tests {
     use super::*;
 
+    use test_log::test;
+
     use crate::cli::model::Model;
 
     /// Verifies that CLI throws error if source `s3://` URI is invalid:
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_invalid_source() -> Result<(), Error> {
         let uri = "should-be-s3://anything".to_string();
 
@@ -86,10 +89,12 @@ mod tests {
     }
 
     /// Verifies that CLI throws error if target `quilt+s3://` URI is invalid:
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_invalid_target() -> Result<(), Error> {
-        let uri = "s3://any/thing".to_string();
-        let target = "quilt+s3://some-nonsense".to_string();
+        use crate::cli::fixtures::packages::invalid as pkg;
+
+        let uri = pkg::SOURCE_PK.to_string();
+        let target = pkg::URI.to_string();
 
         let (m, _) = Model::from_temp_dir()?;
 

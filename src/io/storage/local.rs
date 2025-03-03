@@ -142,13 +142,15 @@ mod tests {
     use tempfile::tempdir;
     use tokio::io::AsyncWriteExt;
 
-    use crate::mocks;
+    use crate::fixtures;
 
     #[tokio::test]
     #[ignore] // It doesn't work in CI. In CI file has `now` date
     async fn test_getting_file_modified_ts() -> Res {
         let storage = LocalStorage::default();
-        let timestamp = storage.modified_timestamp(mocks::manifest::jsonl()).await?;
+        let timestamp = storage
+            .modified_timestamp(fixtures::manifest::jsonl()?)
+            .await?;
         assert_eq!(
             timestamp.to_string(),
             "2024-01-15 11:31:00.615186989 UTC".to_string()
@@ -164,7 +166,7 @@ mod tests {
         let storage = LocalStorage::default();
 
         assert!(fs::metadata(&dest).await.is_err());
-        storage.copy(mocks::manifest::jsonl(), &dest).await?;
+        storage.copy(fixtures::manifest::jsonl()?, &dest).await?;
         assert!(fs::metadata(dest).await.is_ok());
 
         Ok(())
@@ -226,15 +228,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_byte_stream() -> Res {
-        use crate::mocks;
-
         let storage = LocalStorage::default();
-        let stream = storage.read_byte_stream(mocks::manifest::jsonl()).await?;
+        let stream = storage
+            .read_byte_stream(fixtures::manifest::jsonl()?)
+            .await?;
         let bytes = stream.collect().await?.to_vec();
 
         // Verify we can read the known test file
         assert!(!bytes.is_empty());
-        assert_eq!(bytes, fs::read(mocks::manifest::jsonl()).await?);
+        assert_eq!(bytes, fs::read(fixtures::manifest::jsonl()?).await?);
 
         Ok(())
     }

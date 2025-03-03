@@ -108,6 +108,7 @@ pub async fn package_s3_prefix(
         "⏳ Creating package from {} S3 prefix at {}",
         source_uri, dest_uri
     );
+
     // TODO: make get_object_attributes() calls concurrently across list_objects() pages
     // TODO: increase concurrency, to do that we need to figure out how to deal
     //       with fd limits on Mac by default it's 256
@@ -116,10 +117,10 @@ pub async fn package_s3_prefix(
 
     let perf = Measure::start();
     let stream = Box::pin(stream_objects(storage, remote, &dest_uri.catalog, source_uri).await);
-    let manifest_path = |t: &str| paths.manifest_cache(&source_uri.bucket, t);
+    let dest_dir = paths.manifest_cache_dir(&source_uri.bucket);
     let header = Header::new(message, user_meta, None);
     let (cache_path, top_hash) =
-        build_manifest_from_rows_stream(storage, manifest_path, header, stream).await?;
+        build_manifest_from_rows_stream(storage, dest_dir, header, stream).await?;
 
     let S3PackageUri {
         bucket, namespace, ..

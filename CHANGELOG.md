@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## [0.9.1](https://crates.io/crates/quilt-rs/0.9.1) - 2025-03-03
+
+### Fixed
+
+* Fix hashing the `user_meta` when caching the package by soring the keys.
+  The bug didn't affect the workflow, because the manifests were written to the correct place anyway (by hash derived from the remote location).
+
+### Changed
+
+* Refactor derectories scaffolding: paths are now scaffolded before every operation, and we imply the file structure is correct during the operation.
+* Refactor mocks and fixtures. They are more organized now.
+
 ## [0.9.0](https://crates.io/crates/quilt-rs/0.9.0) - 2025-02-27
 
 Bump a version number to highlight the accumulated changes of the 0.8.* versions.

@@ -24,7 +24,7 @@ use crate::manifest::JsonObject;
 use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::manifest::Workflow;
-use crate::paths;
+use crate::paths::DomainPaths;
 use crate::uri::Namespace;
 use crate::Error;
 use crate::Res;
@@ -58,7 +58,7 @@ async fn stream_local_with_changes(
 
 async fn create_immutable_object_copy(
     storage: &impl Storage,
-    paths: &paths::DomainPaths,
+    paths: &DomainPaths,
     working_dir: &Path,
     lineage: &mut PackageLineage,
     logical_key: &PathBuf,
@@ -69,8 +69,6 @@ async fn create_immutable_object_copy(
         logical_key.display()
     );
     let objects_dir = paths.objects_dir();
-    // FIXME: This should really be done when the domain is created.
-    storage.create_dir_all(&objects_dir).await?;
     let object_dest = objects_dir.join(hex::encode(current.hash.digest()));
     let new_physical_key = Url::from_file_path(&object_dest)
         .map_err(|_| Error::Commit(format!("Failed to create URL from {:?}", &object_dest)))?
@@ -123,7 +121,7 @@ async fn create_immutable_object_copy(
 pub async fn commit_package(
     mut lineage: PackageLineage,
     manifest: &mut Table,
-    paths: &paths::DomainPaths,
+    paths: &DomainPaths,
     storage: &(impl Storage + Sync),
     working_dir: PathBuf,
     status: InstalledPackageStatus,
@@ -136,6 +134,7 @@ pub async fn commit_package(
         r#"⏳ Starting commit with message "{}" and user_meta `{:?}`"#,
         message, user_meta
     );
+
     // create a new manifest based on the stored version
 
     // for each modified file:
@@ -232,9 +231,9 @@ pub async fn commit_package(
         new_files.len()
     );
     let stream = stream_local_with_changes(manifest, removed_keys, modified_keys, new_files).await;
-    let manifest_path = |t: &str| paths.installed_manifest(&namespace, t);
+    let dest_dir = paths.installed_manifests(&namespace);
     let (manifest_path, new_top_hash) =
-        build_manifest_from_rows_stream(storage, manifest_path, header, stream).await?;
+        build_manifest_from_rows_stream(storage, dest_dir, header, stream).await?;
     info!(
         "✔️New manifest with {} was built in {}",
         manifest_path.display(),
@@ -269,14 +268,15 @@ mod tests {
 
     use std::collections::BTreeMap;
 
+    use crate::fixtures::sample_file_1;
+    use crate::io::storage::mocks::MockStorage;
     use crate::lineage::Change;
-    use crate::mocks;
 
     // NOTE: Tests use "/" path for working directory, because it then parsed with Url and have to be absolute path
 
     #[tokio::test]
     async fn test_commit() -> Res {
-        let storage = mocks::storage::MockStorage::default();
+        let storage = MockStorage::default();
 
         let commit_message = "Lorem ipsum".to_string();
         let mut user_meta = serde_json::Map::new();
@@ -290,7 +290,7 @@ mod tests {
         let lineage = commit_package(
             lineage,
             &mut Table::default(),
-            &paths::DomainPaths::default(),
+            &DomainPaths::default(),
             &storage,
             PathBuf::default(),
             InstalledPackageStatus::default(),
@@ -312,7 +312,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_removing_and_commit() -> Res {
-        let storage = mocks::storage::MockStorage::default();
+        let storage = MockStorage::default();
 
         let commit_message = "Lorem ipsum".to_string();
         let mut user_meta = serde_json::Map::new();
@@ -331,8 +331,14 @@ mod tests {
             ..InstalledPackageStatus::default()
         };
 
-        let lineage = mocks::lineage::with_paths(vec![PathBuf::from("foo")]);
-        let mut manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("foo")]);
+        let lineage = PackageLineage {
+            paths: BTreeMap::from([(PathBuf::from("foo"), sample_file_1::path_state()?)]),
+            ..PackageLineage::default()
+        };
+        let mut manifest = Table::default();
+        manifest
+            .insert_record(sample_file_1::row(PathBuf::from("foo"))?)
+            .await?;
 
         assert!(
             lineage.commit.is_none(),
@@ -346,7 +352,7 @@ mod tests {
         let lineage = commit_package(
             lineage,
             &mut manifest,
-            &paths::DomainPaths::default(),
+            &DomainPaths::default(),
             &storage,
             PathBuf::default(),
             status,
@@ -375,7 +381,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_adding_and_commit() -> Res {
-        let storage = mocks::storage::MockStorage::default();
+        let storage = MockStorage::default();
         storage
             .write_file(PathBuf::from("/working-dir/bar"), &Vec::new())
             .await?;
@@ -383,13 +389,16 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("bar"),
-                Change::Added(mocks::status::package_file_fingerprint()),
+                Change::Added(sample_file_1::fingerprint()?),
             )]),
             ..InstalledPackageStatus::default()
         };
 
         let lineage = PackageLineage::default();
-        let mut manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("foo")]);
+        let mut manifest = Table::default();
+        manifest
+            .insert_record(sample_file_1::row(PathBuf::from("foo"))?)
+            .await?;
 
         assert!(
             lineage.commit.is_none(),
@@ -403,7 +412,7 @@ mod tests {
         let lineage = commit_package(
             lineage,
             &mut manifest,
-            &paths::DomainPaths::new(PathBuf::from("/")),
+            &DomainPaths::new(PathBuf::from("/")),
             &storage,
             PathBuf::from("/working-dir"),
             status,
@@ -442,7 +451,7 @@ mod tests {
     #[ignore]
     #[tokio::test]
     async fn test_adding_manifest_already_has_it() -> Res {
-        let storage = mocks::storage::MockStorage::default();
+        let storage = MockStorage::default();
         storage
             .write_file(PathBuf::from("foo"), &Vec::new())
             .await?;
@@ -455,13 +464,19 @@ mod tests {
             ..InstalledPackageStatus::default()
         };
 
-        let lineage = mocks::lineage::with_paths(vec![PathBuf::from("foo")]);
-        let mut manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("foo")]);
+        let lineage = PackageLineage {
+            paths: BTreeMap::from([(PathBuf::from("foo"), sample_file_1::path_state()?)]),
+            ..PackageLineage::default()
+        };
+        let mut manifest = Table::default();
+        manifest
+            .insert_record(sample_file_1::row(PathBuf::from("foo"))?)
+            .await?;
 
         let result = commit_package(
             lineage,
             &mut manifest,
-            &paths::DomainPaths::new(PathBuf::from("/")),
+            &DomainPaths::new(PathBuf::from("/")),
             &storage,
             PathBuf::default(),
             status,
@@ -482,7 +497,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_modifying_and_commit() -> Res {
-        let storage = mocks::storage::MockStorage::default();
+        let storage = MockStorage::default();
         storage
             .write_file(PathBuf::from("/working-dir/bar"), &Vec::new())
             .await?;
@@ -498,8 +513,14 @@ mod tests {
             ..InstalledPackageStatus::default()
         };
 
-        let lineage = mocks::lineage::with_paths(vec![PathBuf::from("bar")]);
-        let mut manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("bar")]);
+        let lineage = PackageLineage {
+            paths: BTreeMap::from([(PathBuf::from("bar"), sample_file_1::path_state()?)]),
+            ..PackageLineage::default()
+        };
+        let mut manifest = Table::default();
+        manifest
+            .insert_record(sample_file_1::row(PathBuf::from("bar"))?)
+            .await?;
 
         assert!(
             lineage.commit.is_none(),
@@ -513,7 +534,7 @@ mod tests {
         let lineage = commit_package(
             lineage,
             &mut manifest,
-            &paths::DomainPaths::new(PathBuf::from("/")),
+            &DomainPaths::new(PathBuf::from("/")),
             &storage,
             PathBuf::from("/working-dir"),
             status,

@@ -24,6 +24,9 @@ mod push;
 mod status;
 mod uninstall;
 
+#[cfg(test)]
+mod fixtures;
+
 use model::Model;
 use output::print;
 use output::Std;
@@ -65,9 +68,9 @@ enum Commands {
         /// Ex. 1000000
         #[arg(short, long)]
         number: i32,
-        /// Manifest destination path
+        /// Manifest destination dir
         #[arg(short, long)]
-        path: Option<PathBuf>,
+        dest: Option<PathBuf>,
     },
     /// Browse remote manifest
     Browse {
@@ -206,14 +209,15 @@ pub async fn init() -> Result<(), Error> {
         Commands::Benchmark {
             domain,
             number,
-            path,
+            dest,
         } => {
             let root_dir = get_domain_dir(domain)?;
             let m = Model::from(root_dir);
-            let args = benchmark::Input {
-                number,
-                dest: path.unwrap_or(PathBuf::from("manifest.pq")),
+            let dest_dir = match dest {
+                Some(dir) => dir,
+                None => tempfile::tempdir()?.path().to_path_buf(),
             };
+            let args = benchmark::Input { number, dest_dir };
 
             log::info!("Benchmark manifest creation {:?}", args,);
             print(benchmark::command(m, args).await);

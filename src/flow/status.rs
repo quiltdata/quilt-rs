@@ -172,6 +172,7 @@ pub async fn create_status(
         "⏳ Creating status for working directory: {}",
         working_dir.display()
     );
+
     // compute the status based on the following sources:
     //   - the cached manifest
     //   - paths
@@ -209,15 +210,19 @@ pub async fn create_status(
 mod tests {
     use super::*;
 
+    use std::collections::BTreeMap;
+
     use crate::checksum::ContentHash;
+    use crate::fixtures;
+    use crate::fixtures::sample_file_1;
+    use crate::io::storage::mocks::MockStorage;
     use crate::lineage::CommitState;
     use crate::lineage::PackageFileFingerprint;
     use crate::lineage::UpstreamState;
-    use crate::mocks;
 
     #[tokio::test]
     async fn test_default_status() -> Res {
-        let storage = mocks::storage::MockStorage::default();
+        let storage = MockStorage::default();
         let (_lineage, status) = create_status(
             PackageLineage::default(),
             &storage,
@@ -231,14 +236,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_behind() -> Res {
-        let base_hash = "AAA";
-        let latest_hash = "BBB";
-        let commit_hash = "AAA";
-        let lineage = mocks::lineage::with_commit_hashes(base_hash, latest_hash, commit_hash);
+        let lineage = PackageLineage {
+            commit: Some(CommitState {
+                hash: "AAA".to_string(),
+                ..CommitState::default()
+            }),
+            base_hash: "AAA".to_string(),
+            latest_hash: "BBB".to_string(),
+            ..PackageLineage::default()
+        };
 
         let (_lineage, status) = create_status(
             lineage,
-            &mocks::storage::MockStorage::default(),
+            &MockStorage::default(),
             &Table::default(),
             PathBuf::default(),
         )
@@ -249,14 +259,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_ahead() -> Res {
-        let base_hash = "AAA";
-        let latest_hash = "AAA";
-        let commit_hash = "BBB";
-        let lineage = mocks::lineage::with_commit_hashes(base_hash, latest_hash, commit_hash);
+        let lineage = PackageLineage {
+            commit: Some(CommitState {
+                hash: "BBB".to_string(),
+                ..CommitState::default()
+            }),
+            base_hash: "AAA".to_string(),
+            latest_hash: "AAA".to_string(),
+            ..PackageLineage::default()
+        };
 
         let (_, status) = create_status(
             lineage,
-            &mocks::storage::MockStorage::default(),
+            &MockStorage::default(),
             &Table::default(),
             PathBuf::default(),
         )
@@ -279,7 +294,7 @@ mod tests {
 
         let (_, status) = create_status(
             lineage,
-            &mocks::storage::MockStorage::default(),
+            &MockStorage::default(),
             &Table::default(),
             PathBuf::default(),
         )
@@ -290,11 +305,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_removed_files() -> Res {
-        let lineage = mocks::lineage::with_paths(vec![PathBuf::from("a/a")]);
-        let manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("a/a")]);
+        let sample_file_path = PathBuf::from("a/a");
+        let lineage = PackageLineage {
+            paths: BTreeMap::from([(sample_file_path.clone(), sample_file_1::path_state()?)]),
+            ..PackageLineage::default()
+        };
+        let mut manifest = Table::default();
+        manifest
+            .insert_record(sample_file_1::row(sample_file_path.clone())?)
+            .await?;
         let (_, status) = create_status(
             lineage,
-            &mocks::storage::MockStorage::default(),
+            &MockStorage::default(),
             &manifest,
             PathBuf::default(),
         )
@@ -312,13 +334,13 @@ mod tests {
         let lineage = PackageLineage::default();
         let manifest = Table::default();
 
-        let storage = mocks::storage::MockStorage::default();
+        let storage = MockStorage::default();
         let working_dir = storage.temp_dir.as_ref().join(PathBuf::from("foo/bar"));
         let file_path = PathBuf::from("inside/package/file.pq");
         storage
             .write_file(
                 working_dir.join(&file_path),
-                &std::fs::read(mocks::manifest::parquet())?,
+                &std::fs::read(fixtures::manifest::parquet()?)?,
             )
             .await?;
 

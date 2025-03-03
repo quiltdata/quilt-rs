@@ -91,9 +91,11 @@ pub async fn push_package(
     //
     // TODO: FAIL if the remote bucket does NOT support versioning (as it would be destructive)
 
+    let namespace = namespace.unwrap_or(lineage.remote.namespace.clone());
+
     debug!("⏳ Creating manifest URI");
     let manifest_uri = ManifestUri {
-        namespace: namespace.unwrap_or(lineage.remote.namespace.clone()),
+        namespace,
         ..lineage.remote.clone()
     };
     debug!("✔️ Created manifest URI: {}", manifest_uri.display());
@@ -111,9 +113,9 @@ pub async fn push_package(
         )
         .await,
     );
-    let manifest_path = |t: &str| paths.manifest_cache(&manifest_uri.bucket, t);
+    let dest_dir = paths.manifest_cache_dir(&manifest_uri.bucket);
     let (cache_path, top_hash) =
-        build_manifest_from_rows_stream(storage, manifest_path, header, stream).await?;
+        build_manifest_from_rows_stream(storage, dest_dir, header, stream).await?;
     debug!(
         "✔️ Built manifest with hash {} at {}",
         top_hash,
@@ -170,19 +172,21 @@ pub async fn push_package(
 mod tests {
     use super::*;
 
-    use crate::uri::S3Uri;
     use std::path::PathBuf;
 
+    use crate::fixtures;
+    use crate::io::remote::mocks::MockRemote;
+    use crate::io::storage::mocks::MockStorage;
     use crate::lineage::CommitState;
     use crate::lineage::PackageLineage;
     use crate::manifest::Row;
-    use crate::mocks;
     use crate::uri::ManifestUri;
+    use crate::uri::S3Uri;
 
     #[tokio::test]
     async fn test_no_push_if_no_commit() -> Res {
-        let storage = mocks::storage::MockStorage::default();
-        let remote = mocks::remote::MockRemote::default();
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
         let lineage = push_package(
             PackageLineage::default(),
             Table::default(),
@@ -214,15 +218,15 @@ mod tests {
             remote: manifest_uri,
             ..PackageLineage::default()
         };
-        let jsonl = std::fs::read(mocks::manifest::parquet_checksummed())?;
+        let jsonl = std::fs::read(fixtures::manifest::parquet_checksummed()?)?;
         let manifest_key =
             ".quilt/packages/b/770459d4230273fd44b272c552d1204458175e7d7cb26fcd601c662cf5f72d05";
-        let storage = mocks::storage::MockStorage::default();
+        let storage = MockStorage::default();
         storage
             .write_file(PathBuf::from(manifest_key), &jsonl)
             .await?;
 
-        let remote = mocks::remote::MockRemote::default();
+        let remote = MockRemote::default();
         remote
             .put_object(
                 &None,
@@ -282,14 +286,14 @@ mod tests {
             remote: manifest_uri,
             ..PackageLineage::default()
         };
-        let jsonl = std::fs::read(mocks::manifest::parquet_checksummed())?;
+        let jsonl = std::fs::read(fixtures::manifest::parquet_checksummed()?)?;
         let manifest_key =
             ".quilt/packages/b/475af395ee2856548851913bfd803de4fcc7cdbb3d1d2c13bf0dc221ed6bc68b";
-        let storage = mocks::storage::MockStorage::default();
+        let storage = MockStorage::default();
         storage
             .write_file(PathBuf::from(manifest_key), &jsonl)
             .await?;
-        let remote = mocks::remote::MockRemote::default();
+        let remote = MockRemote::default();
         remote
             .put_object(
                 &None,
@@ -306,16 +310,20 @@ mod tests {
             .await?;
 
         let file_path = PathBuf::from("/b/a/r");
-        let manifest_file = std::fs::read(mocks::manifest::parquet_checksummed())?;
+        let manifest_file = std::fs::read(fixtures::manifest::parquet_checksummed()?)?;
         remote
             .storage
             .write_file(&file_path, &manifest_file)
             .await?;
-        let manifest = mocks::manifest::with_rows(vec![Row {
-            name: PathBuf::from("bar"),
-            place: format!("file://{}", file_path.display()),
-            ..Row::default()
-        }]);
+
+        let mut manifest = Table::default();
+        manifest
+            .insert_record(Row {
+                name: PathBuf::from("bar"),
+                place: format!("file://{}", file_path.display()),
+                ..Row::default()
+            })
+            .await?;
 
         let lineage = push_package(
             lineage,

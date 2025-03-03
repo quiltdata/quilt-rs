@@ -58,9 +58,8 @@ pub async fn model(
         workflow,
     }: Input,
 ) -> Result<Output, Error> {
-    Ok(Output {
-        commit: commit_package(local_domain, namespace, message, user_meta, workflow).await?,
-    })
+    let commit = commit_package(local_domain, namespace, message, user_meta, workflow).await?;
+    Ok(Output { commit })
 }
 
 #[cfg(test)]
@@ -68,6 +67,8 @@ mod tests {
     use super::*;
 
     use std::path::PathBuf;
+
+    use test_log::test;
 
     use crate::cli::model::install_package_into_temp_dir;
 
@@ -78,9 +79,11 @@ mod tests {
     ///  * workflow/config.yml exists
     ///  * workflow id is not set
     ///  * no files to commit,
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_commit_package_with_message_and_null_workflow() -> Result<(), Error> {
-        let uri= "quilt+s3://udp-spec#package=reference/message-only@095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f";
+        use crate::cli::fixtures::packages::workflow_null as pkg;
+
+        let uri = pkg::URI;
         let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
         {
             let local_domain = m.get_local_domain();
@@ -88,26 +91,25 @@ mod tests {
             let output = model(
                 local_domain,
                 Input {
-                    message: "#Test message 1234!?#".to_string(),
-                    namespace: ("reference", "message-only").into(),
+                    message: pkg::MESSAGE.to_string(),
+                    namespace: pkg::NAMESPACE.into(),
                     user_meta: None,
                     workflow: None,
                 },
             )
             .await?;
 
-            assert_eq!(
-                output.commit.hash,
-                "095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f"
-            );
+            assert_eq!(output.commit.hash, pkg::TOP_HASH);
         }
 
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_commit_package_with_workflow_and_meta() -> Result<(), Error> {
-        let uri = "quilt+s3://udp-spec#package=reference/with-workflow@4a9a3d39f655a03659333aad787b182e477e335e0fa78dd4d029521a9ca18dad";
+        use crate::cli::fixtures::packages::my_workflow as pkg;
+
+        let uri = pkg::URI;
         let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
         {
             let local_domain = m.get_local_domain();
@@ -115,8 +117,8 @@ mod tests {
             let output = model(
                 local_domain,
                 Input {
-                    message: "Test message".to_string(),
-                    namespace: ("reference", "with-workflow").into(),
+                    message: pkg::MESSAGE.to_string(),
+                    namespace: pkg::NAMESPACE.into(),
                     user_meta: Some(
                         serde_json::json!({
                             "Date": "2025-12-31",
@@ -133,10 +135,7 @@ mod tests {
             )
             .await?;
 
-            assert_eq!(
-                output.commit.hash,
-                "4a9a3d39f655a03659333aad787b182e477e335e0fa78dd4d029521a9ca18dad"
-            );
+            assert_eq!(output.commit.hash, pkg::TOP_HASH);
         }
 
         Ok(())
@@ -146,9 +145,11 @@ mod tests {
     ///  * workflow/config.yml DOESN'T exists
     ///  * workflow id is not set
     ///  * no files to commit,
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_commit_package_with_message_only() -> Result<(), Error> {
-        let uri= "quilt+s3://data-yaml-spec-tests#package=reference/message-only@ce2ca6a39eb02725b24e3ccf158022dc80c2ab96b066e5660d87abafdbaee768";
+        use crate::cli::fixtures::packages::no_workflows_message_only as pkg;
+
+        let uri = pkg::URI;
         let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
         {
             let local_domain = m.get_local_domain();
@@ -156,26 +157,25 @@ mod tests {
             let output = model(
                 local_domain,
                 Input {
-                    message: "#Test message 1234!?#".to_string(),
-                    namespace: ("reference", "message-only").into(),
+                    message: pkg::MESSAGE.to_string(),
+                    namespace: pkg::NAMESPACE.into(),
                     user_meta: None,
                     workflow: None,
                 },
             )
             .await?;
 
-            assert_eq!(
-                output.commit.hash,
-                "ce2ca6a39eb02725b24e3ccf158022dc80c2ab96b066e5660d87abafdbaee768"
-            );
+            assert_eq!(output.commit.hash, pkg::TOP_HASH);
         }
 
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_throwing_error_when_workflow_set_but_no_workflows_config() -> Result<(), Error> {
-        let uri= "quilt+s3://data-yaml-spec-tests#package=reference/message-only@ce2ca6a39eb02725b24e3ccf158022dc80c2ab96b066e5660d87abafdbaee768";
+        use crate::cli::fixtures::packages::no_workflows_message_only as pkg;
+
+        let uri = pkg::URI;
         let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
         {
             let local_domain = m.get_local_domain();
@@ -183,8 +183,8 @@ mod tests {
             let output = model(
                 local_domain,
                 Input {
-                    message: "#Test message 1234!?#".to_string(),
-                    namespace: ("reference", "message-only").into(),
+                    message: pkg::MESSAGE.to_string(),
+                    namespace: pkg::NAMESPACE.into(),
                     user_meta: None,
                     workflow: Some("Anything".to_string()),
                 },
@@ -200,9 +200,11 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_commit_package_with_meta_only() -> Result<(), Error> {
-        let uri= "quilt+s3://data-yaml-spec-tests#package=reference/meta@a0e161c9a281f38382007f4775e7d6ecbb50f929a197ba3e84443ec911ab6388";
+        use crate::cli::fixtures::packages::no_workflows_with_meta as pkg;
+
+        let uri = pkg::URI;
         let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
         {
             let local_domain = m.get_local_domain();
@@ -211,7 +213,7 @@ mod tests {
                 local_domain,
                 Input {
                     message: "Initial".to_string(),
-                    namespace: ("reference", "meta").into(),
+                    namespace: pkg::NAMESPACE.into(),
                     user_meta: Some(
                         serde_json::json!({
                             // NOTE: will be sorted
@@ -231,16 +233,13 @@ mod tests {
             )
             .await?;
 
-            assert_eq!(
-                output.commit.hash,
-                "a0e161c9a281f38382007f4775e7d6ecbb50f929a197ba3e84443ec911ab6388"
-            );
+            assert_eq!(output.commit.hash, pkg::TOP_HASH);
         }
 
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_model() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quilt-rs@11c5f6dbd1bf1d8675c18aaaa963b2f0dced2f892c7406fa36c9cd17d3d31b73";
 
@@ -361,16 +360,18 @@ mod tests {
 
     /// Verifies that valid command returns correct output after committing a new version
     /// which is the same as the previous one because message and user_meta left the same.
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_valid_command() -> Result<(), Error> {
-        let uri = "quilt+s3://udp-spec#package=reference/message-only@095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f";
+        use crate::cli::fixtures::packages::workflow_null as pkg;
+
+        let uri = pkg::URI;
         let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
 
         if let Std::Out(output) = command(
             m,
             Input {
-                message: "#Test message 1234!?#".to_string(),
-                namespace: ("reference", "message-only").into(),
+                message: pkg::MESSAGE.to_string(),
+                namespace: pkg::NAMESPACE.into(),
                 user_meta: None,
                 workflow: None,
             },
@@ -389,9 +390,11 @@ mod tests {
     }
 
     /// Verifies that invalid command returns appropriate error when package is not installed
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_invalid_command() -> Result<(), Error> {
-        let uri = "quilt+s3://udp-spec#package=reference/message-only@095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f";
+        use crate::cli::fixtures::packages::workflow_null as pkg;
+
+        let uri = pkg::URI;
         let (m, _, _) = install_package_into_temp_dir(uri).await?;
 
         if let Std::Err(error) = command(

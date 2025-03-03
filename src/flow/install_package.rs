@@ -7,7 +7,8 @@ use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::DomainLineage;
 use crate::lineage::PackageLineage;
-use crate::paths;
+use crate::paths::copy_cached_to_installed;
+use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::Error;
 use crate::Res;
@@ -18,12 +19,19 @@ use crate::Res;
 /// DOES NOT install any paths!
 pub async fn install_package(
     lineage: DomainLineage,
-    paths: &paths::DomainPaths,
+    paths: &DomainPaths,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
 ) -> Res<DomainLineage> {
     info!("⏳ Installing package: {}", manifest_uri.display());
+
+    paths
+        .scaffold_for_installing(storage, &manifest_uri.namespace)
+        .await?;
+    paths
+        .scaffold_for_caching(storage, &manifest_uri.bucket)
+        .await?;
 
     // TODO: if compatible (same remote), just return the installed package
     if lineage.packages.contains_key(&manifest_uri.namespace) {
@@ -39,23 +47,11 @@ pub async fn install_package(
     debug!("⏳ Creating installed copy of manifest");
     let installed_manifest_path =
         paths.installed_manifest(&manifest_uri.namespace, &manifest_uri.hash);
-    storage
-        .create_dir_all(&installed_manifest_path.parent().unwrap())
-        .await?;
-    paths::copy_cached_to_installed(paths, storage, manifest_uri).await?;
+    copy_cached_to_installed(paths, storage, manifest_uri).await?;
     debug!(
         "✔️ Manifest installed at: {}",
         installed_manifest_path.display()
     );
-
-    // TODO: merge with existing `scaffold_paths` calls
-    debug!("⏳ Creating required directories");
-
-    let objects_dir = paths.objects_dir();
-    storage.create_dir_all(objects_dir).await?;
-
-    let working_dir = paths.working_dir(&manifest_uri.namespace);
-    storage.create_dir_all(&working_dir).await?;
 
     debug!("⏳ Resolving latest hash for this package handle");
     let latest = resolve_latest(remote, &manifest_uri.catalog, &manifest_uri.into()).await?;
@@ -81,8 +77,10 @@ mod tests {
     use std::path::PathBuf;
     use std::str::FromStr;
 
+    use crate::fixtures;
+    use crate::io::remote::mocks::MockRemote;
+    use crate::io::storage::mocks::MockStorage;
     use crate::io::storage::LocalStorage;
-    use crate::mocks;
     use crate::uri::S3Uri;
 
     /// Verify that attempting to install a package that is already installed results in an error.
@@ -95,9 +93,9 @@ mod tests {
         };
         let result = install_package(
             lineage,
-            &paths::DomainPaths::default(),
-            &mocks::storage::MockStorage::default(),
-            &mocks::remote::MockRemote::default(),
+            &DomainPaths::default(),
+            &MockStorage::default(),
+            &MockRemote::default(),
             &ManifestUri {
                 namespace: namespace.into(),
                 ..ManifestUri::default()
@@ -124,8 +122,8 @@ mod tests {
         };
 
         // Load the reference manifest from `./fixtures`
-        let parquet = std::fs::read(mocks::manifest::parquet())?;
-        let remote = mocks::remote::MockRemote::default();
+        let parquet = std::fs::read(fixtures::manifest::parquet()?)?;
+        let remote = MockRemote::default();
 
         // Simulate the remote storage containing the Parquet manifest
         let remote_uri = S3Uri::from_str(&format!(
@@ -149,10 +147,10 @@ mod tests {
             )
             .await?;
 
-        let storage = mocks::storage::MockStorage::default();
+        let storage = MockStorage::default();
         let result = install_package(
             DomainLineage::default(),
-            &paths::DomainPaths::default(),
+            &DomainPaths::default(),
             &storage,
             &remote,
             &manifest_uri,
@@ -195,8 +193,8 @@ mod tests {
         };
 
         // Load the reference manifest from `./fixtures`
-        let parquet = std::fs::read(mocks::manifest::parquet())?;
-        let remote = mocks::remote::MockRemote::default();
+        let parquet = std::fs::read(fixtures::manifest::parquet()?)?;
+        let remote = MockRemote::default();
 
         // Simulate the remote storage containing the Parquet manifest
         let remote_uri = S3Uri::from_str(&format!(
@@ -210,7 +208,7 @@ mod tests {
         let storage = LocalStorage::new();
         let result = install_package(
             DomainLineage::default(),
-            &paths::DomainPaths::new(PathBuf::from("/")),
+            &DomainPaths::new(PathBuf::from("/")),
             &storage,
             &remote,
             &manifest_uri,

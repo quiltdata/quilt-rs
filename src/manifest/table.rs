@@ -37,7 +37,8 @@ fn serialize_table_header(header: &Header) -> Res<serde_json::Map<String, serde_
     if let Some(message) = header.get_message()? {
         header_meta.insert("message".to_string(), serde_json::to_value(message)?);
     }
-    if let Some(user_meta) = header.get_user_meta()? {
+    if let Some(mut user_meta) = header.get_user_meta()? {
+        user_meta.sort_keys();
         header_meta.insert("user_meta".into(), serde_json::to_value(user_meta)?);
     }
     header_meta.insert(
@@ -124,7 +125,7 @@ pub struct Table {
 
 impl Table {
     // TODO: new creates empty records, from(header, records) creates full Table
-    fn new(header: Header, records: BTreeMap<PathBuf, Row>) -> Self {
+    pub fn new(header: Header, records: BTreeMap<PathBuf, Row>) -> Self {
         Table { header, records }
     }
 
@@ -288,19 +289,20 @@ mod tests {
     use multihash::Multihash;
 
     use crate::checksum::MULTIHASH_SHA256;
+    use crate::fixtures;
+    use crate::io::storage::mocks::MockStorage;
     use crate::manifest::Row;
-    use crate::mocks;
 
     #[tokio::test]
     async fn read_existing_local() -> Res {
-        let storage = mocks::storage::MockStorage::default();
+        let storage = MockStorage::default();
         storage
             .write_file(
-                mocks::manifest::parquet(),
-                &std::fs::read(mocks::manifest::parquet())?,
+                fixtures::manifest::parquet()?,
+                &std::fs::read(fixtures::manifest::parquet()?)?,
             )
             .await?;
-        let table = Table::read_from_path(&storage, &mocks::manifest::parquet())
+        let table = Table::read_from_path(&storage, &fixtures::manifest::parquet()?)
             .await
             .unwrap();
         assert_eq!(table.records_len().await, 2);

@@ -42,16 +42,17 @@ pub async fn model(
     local_domain: &quilt_rs::LocalDomain,
     Input { namespace }: Input,
 ) -> Result<Output, Error> {
-    let manifest_uri = pull_package(local_domain, namespace).await?;
-    Ok(Output {
-        hash: manifest_uri.hash,
-    })
+    let ManifestUri { hash, .. } = pull_package(local_domain, namespace).await?;
+    Ok(Output { hash })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use test_log::test;
+
+    use crate::cli::fixtures::packages::outdated as pkg;
     use crate::cli::model::install_package_into_temp_dir;
     use crate::cli::model::Model;
 
@@ -59,9 +60,9 @@ mod tests {
     ///   * installs an outdated package version
     ///   * pulls the latest version
     ///   * verifies the package is up to date
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_model() -> Result<(), Error> {
-        let uri = "quilt+s3://udp-spec#package=spec/quiltcore@681f1900320a0bb1de2d6aadd5288c727182ecc32b71115b0b29edc25474e43e";
+        let uri = pkg::URI;
         let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
         {
             let local_domain = m.get_local_domain();
@@ -69,37 +70,34 @@ mod tests {
             let output = model(
                 local_domain,
                 Input {
-                    namespace: ("spec", "quiltcore").into(),
+                    namespace: pkg::NAMESPACE.into(),
                 },
             )
             .await?;
 
-            assert_eq!(
-                output.hash,
-                "44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c"
-            );
+            assert_eq!(output.hash, pkg::LATEST_TOP_HASH);
         }
 
         Ok(())
     }
 
     /// Verifies that pull command returns correct output after pulling latest version
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_valid_command() -> Result<(), Error> {
-        let uri = "quilt+s3://udp-spec#package=spec/quiltcore@681f1900320a0bb1de2d6aadd5288c727182ecc32b71115b0b29edc25474e43e";
+        let uri = pkg::URI;
         let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
 
         if let Std::Out(output_str) = command(
             m,
             Input {
-                namespace: ("spec", "quiltcore").into(),
+                namespace: pkg::NAMESPACE.into(),
             },
         )
         .await
         {
             assert_eq!(
                 output_str,
-                r#"Revision "44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c" pulled"#
+                format!(r#"Revision "{}" pulled"#, pkg::LATEST_TOP_HASH)
             );
         } else {
             return Err(Error::Test("Failed to pull".to_string()));
@@ -109,7 +107,7 @@ mod tests {
     }
 
     /// Verifies that pull command fails when package is not found
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_invalid_command() -> Result<(), Error> {
         let (m, _temp_dir) = Model::from_temp_dir()?;
         if let Std::Err(error_str) = command(

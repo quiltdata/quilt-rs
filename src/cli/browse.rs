@@ -106,6 +106,7 @@ pub async fn model(
 ) -> Result<Output, Error> {
     let remote = local_domain.get_remote();
     let uri: quilt_rs::uri::S3PackageUri = uri.parse()?;
+
     let manifest_uri =
         quilt_rs::io::manifest::resolve_manifest_uri(remote, &uri.catalog, &uri).await?;
 
@@ -128,37 +129,26 @@ mod tests {
 
     use std::path::PathBuf;
 
+    use test_log::test;
+
+    use crate::cli::fixtures::packages::default as pkg;
     use crate::cli::model::Model;
 
-    const BROWSE_OUTPUT: &str = r#"+----------------------------+---------------------------------------------------+----------+
-| Remote manifest header                                                                    |
-+----------------------------+---------------------------------------------------+----------+
-| message                    | user_meta                                         | workflow |
-+----------------------------+---------------------------------------------------+----------+
-| test_spec_write 1697916638 | {"Author":"Ernest","Count":1,"Date":"2023-07-12"} | ∅        |
-+----------------------------+---------------------------------------------------+----------+
-+---------------+---------------------------------------------------------------------------------------+------+
-| Remote manifest entries                                                                                      |
-+---------------+---------------------------------------------------------------------------------------+------+
-| name          | place                                                                                 | size |
-+---------------+---------------------------------------------------------------------------------------+------+
-| READ ME.md    | s3://udp-spec/spec/quiltcore/READ%20ME.md?versionId=.l3tAGbfEBC4c.L2ywTpWbnweSpYLe8a  | 33   |
-+---------------+---------------------------------------------------------------------------------------+------+
-| timestamp.txt | s3://udp-spec/spec/quiltcore/timestamp.txt?versionId=lifktjQgrgewg1FGXxls3UKtJSjl2shy | 10   |
-+---------------+---------------------------------------------------------------------------------------+------+"#;
+    pub fn get_browse_output() -> Result<String, std::io::Error> {
+        let path = std::env::current_dir()?.join("fixtures/reference-quilt-rs-browse-output.txt");
+        std::fs::read_to_string(path)
+    }
 
     /// Verifies that the remote Quilt registry has the expected manifest.
     /// Test actually fetch the manifest from Quilt, without mocks.
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_model() -> Result<(), Error> {
-        let uri = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md".to_string();
+        let uri = pkg::URI_LATEST.to_string();
 
-        let readme_logical_key = PathBuf::from("READ ME.md");
-        let readme_uri =
-            "s3://udp-spec/spec/quiltcore/READ%20ME.md?versionId=.l3tAGbfEBC4c.L2ywTpWbnweSpYLe8a";
-        let timestamp_logical_key = PathBuf::from("timestamp.txt");
-        let timestamp_uri =
-            "s3://udp-spec/spec/quiltcore/timestamp.txt?versionId=lifktjQgrgewg1FGXxls3UKtJSjl2shy";
+        let readme_logical_key = PathBuf::from(pkg::README_LK);
+        let readme_uri = pkg::README_PK;
+        let timestamp_logical_key = PathBuf::from(pkg::TIMESTAMP_LK);
+        let timestamp_uri = pkg::TIMESTAMP_PK;
 
         let (m, _temp_dir) = Model::from_temp_dir()?;
         {
@@ -167,11 +157,11 @@ mod tests {
             let output = model(local_domain, Input { uri }).await?;
 
             let output_str = format!("{}", output);
-            assert_eq!(output_str, BROWSE_OUTPUT);
+            assert_eq!(output_str, get_browse_output()?);
 
             assert_eq!(
                 output.manifest.header.get_message()?,
-                Some("test_spec_write 1697916638".to_string()),
+                Some("Test message".to_string()),
             );
             assert_eq!(
                 output
@@ -196,16 +186,25 @@ mod tests {
     }
 
     /// Verifies that CLI throws error if `quilt+s3` URI is invalid.
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_if_uri_is_invalid() -> Result<(), Error> {
-        let uri = "quilt+s3://some-nonsense".to_string();
+        use crate::cli::fixtures::packages::invalid as pkg;
+
+        let uri = pkg::URI;
 
         let (model, _temp_dir) = Model::from_temp_dir()?;
 
-        if let Std::Err(error_str) = command(model, Input { uri }).await {
+        if let Std::Err(error_str) = command(
+            model,
+            Input {
+                uri: uri.to_string(),
+            },
+        )
+        .await
+        {
             assert_eq!(
                 format!("{}", error_str),
-                "quilt_rs error: Invalid package URI: S3 package URI must contain a fragment: quilt+s3://some-nonsense".to_string()
+                format!("quilt_rs error: Invalid package URI: S3 package URI must contain a fragment: {}", uri)
             );
         } else {
             return Err(Error::Test("Failed to fail".to_string()));
@@ -214,14 +213,14 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_command() -> Result<(), Error> {
-        let uri = "quilt+s3://udp-spec#package=spec/quiltcore&path=READ%20ME.md".to_string();
+        let uri = format!("{}&path={}", pkg::URI_LATEST, pkg::README_LK_ESCAPED);
 
         let (model, _temp_dir) = Model::from_temp_dir()?;
 
         if let Std::Out(output_str) = command(model, Input { uri }).await {
-            assert_eq!(output_str, BROWSE_OUTPUT);
+            assert_eq!(output_str, get_browse_output()?);
         } else {
             return Err(Error::Test("Failed to browse".to_string()));
         }

@@ -29,12 +29,12 @@ pub async fn certify_latest(
 mod tests {
     use super::*;
 
-    use crate::mocks;
+    use crate::io::remote::mocks::MockRemote;
     use crate::uri::S3Uri;
 
     #[tokio::test]
     async fn test_certifying_latest() -> Res {
-        let remote = mocks::remote::MockRemote::default();
+        let remote = MockRemote::default();
         remote
             .put_object(
                 &None,
@@ -42,12 +42,17 @@ mod tests {
                 b"OUTDATED_HASH".to_vec(),
             )
             .await?;
-        let source_lineage = mocks::lineage::with_remote(ManifestUri {
+
+        let source_manifest_uri = ManifestUri {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
             hash: "LATEST_HASH".to_string(),
             catalog: None,
-        });
+        };
+        let source_lineage = PackageLineage {
+            remote: source_manifest_uri,
+            ..PackageLineage::default()
+        };
         let resolved_lineage = certify_latest(
             source_lineage.clone(),
             &remote,

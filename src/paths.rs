@@ -65,6 +65,7 @@ impl DomainPaths {
         self.installed_manifests(namespace).join(hash)
     }
 
+    // TODO: rename to `installed_manifests_dir`
     /// Directory for storing installed manifests
     pub fn installed_manifests(&self, namespace: &Namespace) -> PathBuf {
         self.root_dir
@@ -77,10 +78,16 @@ impl DomainPaths {
         self.root_dir.join(LINEAGE_FILE)
     }
 
+    // TODO: rename to `cached_manifest`
     /// Path to the manifest cached in semi-temporary directory
     // TODO: pass `ManifestUri`
     pub fn manifest_cache(&self, bucket: &str, hash: &str) -> PathBuf {
         self.root_dir.join(MANIFEST_DIR).join(bucket).join(hash)
+    }
+
+    /// Directory for storing cached manifests for a bucket
+    pub fn manifest_cache_dir(&self, bucket: &str) -> PathBuf {
+        self.root_dir.join(MANIFEST_DIR).join(bucket)
     }
 
     /// Directory for storing pristine hashed files
@@ -94,7 +101,7 @@ impl DomainPaths {
     }
 
     /// What directories are essential when we initiate `LocalDomain`
-    pub fn required_local_domain_paths(&self) -> Vec<PathBuf> {
+    fn required(&self) -> Vec<PathBuf> {
         vec![
             self.root_dir.join(INSTALLED_DIR),
             self.objects_dir(),
@@ -103,14 +110,34 @@ impl DomainPaths {
     }
 
     /// What directories are essential when we initiate `InstalledPackage`
-    pub fn required_installed_package_paths(&self, namespace: &Namespace) -> Vec<PathBuf> {
+    fn required_for_installing(&self, namespace: &Namespace) -> Vec<PathBuf> {
         let mut paths = vec![];
-        paths.extend(self.required_local_domain_paths());
+        paths.extend(self.required());
         paths.extend(vec![
             self.working_dir(namespace),
             self.installed_manifests(namespace),
         ]);
         paths
+    }
+
+    pub async fn scaffold_for_installing(
+        &self,
+        storage: &impl Storage,
+        namespace: &Namespace,
+    ) -> Res {
+        scaffold_paths(storage, self.required_for_installing(namespace)).await
+    }
+
+    /// What directories are essential when we work with cached manifests
+    fn required_for_caching(&self, bucket: &str) -> Vec<PathBuf> {
+        let mut paths = vec![];
+        paths.extend(self.required());
+        paths.extend(vec![self.manifest_cache_dir(bucket)]);
+        paths
+    }
+
+    pub async fn scaffold_for_caching(&self, storage: &impl Storage, bucket: &str) -> Res {
+        scaffold_paths(storage, self.required_for_caching(bucket)).await
     }
 
     /// Directory for storing installed files that can be modified
@@ -134,7 +161,7 @@ pub async fn copy_cached_to_installed(
 }
 
 /// Takes list of the required paths and create directories
-pub async fn scaffold_paths(storage: &impl Storage, paths: Vec<PathBuf>) -> Res {
+async fn scaffold_paths(storage: &impl Storage, paths: Vec<PathBuf>) -> Res {
     for path in paths {
         storage.create_dir_all(&path).await?
     }
@@ -148,7 +175,7 @@ mod tests {
     #[test]
     fn test_required_paths() {
         let paths = DomainPaths::new(PathBuf::from("foo/bar"));
-        let scaffolded_paths = paths.required_local_domain_paths();
+        let scaffolded_paths = paths.required();
         assert_eq!(
             scaffolded_paths,
             vec![

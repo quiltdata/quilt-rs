@@ -344,12 +344,12 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::checksum::MULTIHASH_SHA256;
+    use crate::fixtures;
     use crate::io::storage::mocks::MockStorage;
     use crate::io::storage::LocalStorage;
     use crate::io::storage::Storage;
     use crate::manifest::Row;
     use crate::manifest::Table;
-    use crate::mocks;
 
     #[test]
     fn test_equality_of_strictly_equal() {
@@ -505,7 +505,7 @@ mod tests {
     #[tokio::test]
     async fn test_manifest_from_reader_valid() -> Res {
         let storage = LocalStorage::default();
-        let file = storage.open_file(mocks::manifest::jsonl()).await?;
+        let file = storage.open_file(fixtures::manifest::jsonl()?).await?;
 
         assert_eq!(
             Manifest::from_reader(file).await?,

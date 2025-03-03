@@ -50,10 +50,9 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 async fn install_package(
     local_domain: &quilt_rs::LocalDomain,
     uri: &quilt_rs::uri::S3PackageUri,
-    namespace: Option<Namespace>,
+    namespace: Namespace,
 ) -> Result<quilt_rs::InstalledPackage, Error> {
     let remote = local_domain.get_remote();
-    let namespace = namespace.unwrap_or(uri.namespace.clone());
     if let Some(installed_package) = local_domain.get_installed_package(&namespace).await? {
         // FIXME: check the actual remote_manifest
         return Ok(installed_package);
@@ -97,6 +96,8 @@ pub async fn model(
 ) -> Result<Output, Error> {
     let uri: quilt_rs::uri::S3PackageUri = uri.parse()?;
     let path = uri.path.clone();
+
+    let namespace = namespace.unwrap_or(uri.namespace.clone());
     let installed_package = install_package(local_domain, &uri, namespace).await?;
     let paths = get_entries(path, paths);
 
@@ -116,9 +117,12 @@ mod tests {
 
     use std::path::PathBuf;
 
+    use test_log::test;
+
     use quilt_rs::io::storage::LocalStorage;
     use quilt_rs::io::storage::Storage;
 
+    use crate::cli::fixtures::packages::default as pkg;
     use crate::cli::model::Model;
 
     /// Verifies the installation process in CLI with valid data:
@@ -128,15 +132,15 @@ mod tests {
     ///   * `.quilt/installed` contains the installed manifest under the namespace directory
     ///   * `.quilt/packages` contains the cached manifest under the bucket directory
     /// Uses an actual manifest from Quilt without mocks.
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_model() -> Result<(), Error> {
-        let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c&path=READ%20ME.md".to_string();
+        let uri = format!("{}&path={}", pkg::URI, pkg::README_LK_ESCAPED);
 
-        let readme_logical_key = PathBuf::from("READ ME.md");
-        let timestamp_logical_key = PathBuf::from("timestamp.txt");
+        let readme_logical_key = PathBuf::from(pkg::README_LK);
+        let timestamp_logical_key = PathBuf::from(pkg::TIMESTAMP_LK);
 
         let (m, temp_dir) = Model::from_temp_dir()?;
-        let working_dir = temp_dir.path().join("spec/quiltcore");
+        let working_dir = temp_dir.path().join(pkg::NAMESPACE_STR);
         {
             let local_domain = m.get_local_domain();
 
@@ -151,15 +155,19 @@ mod tests {
             .await?;
 
             assert_eq!(
-            format!("{}", output),
-            format!(
-                "Installed package \"spec/quiltcore\" at {}/spec/quiltcore\nPath: \"READ ME.md\"\nPath: \"timestamp.txt\"",
-                temp_dir.path().display()
-            )
-        );
+                format!("{}", output),
+                format!(
+                    "Installed package \"{}\" at {}/{}\nPath: \"{}\"\nPath: \"{}\"",
+                    pkg::NAMESPACE_STR,
+                    temp_dir.path().display(),
+                    pkg::NAMESPACE_STR,
+                    pkg::README_LK,
+                    pkg::TIMESTAMP_LK,
+                )
+            );
 
             let installed_package = output.installed_package;
-            assert_eq!(installed_package.namespace, ("spec", "quiltcore").into());
+            assert_eq!(installed_package.namespace, (pkg::NAMESPACE).into());
             assert!(installed_package
                 .lineage()
                 .await?
@@ -168,7 +176,7 @@ mod tests {
 
             assert_eq!(
                 installed_package.working_folder(),
-                PathBuf::from(temp_dir.as_ref()).join("spec/quiltcore")
+                PathBuf::from(temp_dir.as_ref()).join(pkg::NAMESPACE_STR)
             );
             assert_eq!(
                 output.paths,
@@ -186,14 +194,18 @@ mod tests {
 
         assert!(
             storage
-                .exists(temp_dir.path().join(".quilt/installed/spec/quiltcore/44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c"))
+                .exists(temp_dir.path().join(format!(
+                    ".quilt/installed/{}/{}",
+                    pkg::NAMESPACE_STR,
+                    pkg::TOP_HASH
+                )))
                 .await
         );
 
         assert!(
             storage
                 .exists(
-                    temp_dir.path().join(".quilt/packages/udp-spec/44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c")
+                    temp_dir.path().join(".quilt/packages/data-yaml-spec-tests/a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7")
                 )
                 .await
         );
@@ -202,7 +214,7 @@ mod tests {
         assert!(
             storage
                 .exists(
-                    temp_dir.path().join(".quilt/objects/e1181788c8a77224d98bb3a2de256bfea1d2f128019d5d378406522c03b5db07")
+                    temp_dir.path().join(".quilt/objects/3e5e75033079a0b5bfaeff79c8f10dbc3f461e283ad8126c333cd74792e62ea7")
                 )
                 .await
         );
@@ -210,7 +222,7 @@ mod tests {
         assert!(
             storage
                 .exists(
-                    temp_dir.path().join(".quilt/objects/1f580d4f3e2545b95054993a6d66e802dc81140a9a42702c8aa088f00091cab2")
+                    temp_dir.path().join(".quilt/objects/dc3ea61d9a4aaf7d822eed1de089db83d46aa29f3fbdd99466f7e5e216c91c8a")
                 )
                 .await
         );
@@ -218,27 +230,29 @@ mod tests {
         {
             let local_domain = m.get_local_domain();
             let install_once_more = model(
-            local_domain,
-            Input {
-                namespace: None,
-                paths: None,
-                uri: "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c".to_string(),
-            },
-        )
-        .await?;
+                local_domain,
+                Input {
+                    namespace: None,
+                    paths: None,
+                    uri: pkg::URI.to_string(),
+                },
+            )
+            .await?;
 
             // No paths installed during this call
             assert_eq!(
                 format!("{}", install_once_more),
                 format!(
-                    "Installed package \"spec/quiltcore\" at {}/spec/quiltcore\nNo paths installed",
-                    temp_dir.path().display()
+                    "Installed package \"{}\" at {}/{}\nNo paths installed",
+                    pkg::NAMESPACE_STR,
+                    temp_dir.path().display(),
+                    pkg::NAMESPACE_STR,
                 )
             );
 
             assert_eq!(
                 install_once_more.installed_package.namespace,
-                ("spec", "quiltcore").into(),
+                pkg::NAMESPACE.into(),
             );
 
             // However paths are still tracked, because we didn't install a package anew,
@@ -251,9 +265,9 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_valid_command() -> Result<(), Error> {
-        let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c".to_string();
+        let uri = pkg::URI.to_string();
 
         let (model, temp_dir) = Model::from_temp_dir()?;
 
@@ -270,8 +284,10 @@ mod tests {
             assert_eq!(
                 output_str,
                 format!(
-                    "Installed package \"spec/quiltcore\" at {}/spec/quiltcore\nNo paths installed",
-                    temp_dir.path().display()
+                    "Installed package \"{}\" at {}/{}\nNo paths installed",
+                    pkg::NAMESPACE_STR,
+                    temp_dir.path().display(),
+                    pkg::NAMESPACE_STR,
                 )
             );
         } else {
@@ -281,9 +297,11 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_invalid_command() -> Result<(), Error> {
-        let uri = "quilt+s3://some-nonsense".to_string();
+        use crate::cli::fixtures::packages::invalid as pkg;
+
+        let uri = pkg::URI;
 
         let (model, _temp_dir) = Model::from_temp_dir()?;
 
@@ -292,14 +310,14 @@ mod tests {
             Input {
                 namespace: None,
                 paths: None,
-                uri,
+                uri: uri.to_string(),
             },
         )
         .await
         {
             assert_eq!(
                 format!("{}", error_str),
-                "quilt_rs error: Invalid package URI: S3 package URI must contain a fragment: quilt+s3://some-nonsense".to_string()
+                format!("quilt_rs error: Invalid package URI: S3 package URI must contain a fragment: {}", uri)
             );
         } else {
             return Err(Error::Test("Failed to fail".to_string()));

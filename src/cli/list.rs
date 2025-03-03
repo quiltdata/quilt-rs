@@ -27,8 +27,9 @@ pub async fn command(m: impl Commands) -> Std {
 }
 
 pub async fn model(local_domain: &quilt_rs::LocalDomain) -> Result<Output, Error> {
+    let installed_packages_list = local_domain.list_installed_packages().await?;
     Ok(Output {
-        installed_packages_list: local_domain.list_installed_packages().await?,
+        installed_packages_list,
     })
 }
 
@@ -38,12 +39,15 @@ mod tests {
 
     use std::fs::Permissions;
     use std::os::unix::fs::PermissionsExt;
-    use tempfile::Builder;
 
+    use tempfile::Builder;
+    use test_log::test;
+
+    use crate::cli::fixtures::packages::default as pkg;
     use crate::cli::model::install_package_into_temp_dir;
     use crate::cli::model::Model;
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_empty_list() -> Result<(), Error> {
         let (m, _temp_dir) = Model::from_temp_dir()?;
         {
@@ -58,27 +62,30 @@ mod tests {
     /// Verifies that list model returns correct output for both empty and populated states:
     ///   * empty list shows "No installed packages" message
     ///   * after installing a package, shows the package namespace
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_model() -> Result<(), Error> {
         // Test with one installed package
-        let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c&path=READ%20ME.md";
-        let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
+        let uri = format!("{}&path={}", pkg::URI, pkg::README_LK_ESCAPED);
+        let (m, _, _temp_dir) = install_package_into_temp_dir(&uri).await?;
         {
             let local_domain = m.get_local_domain();
             let output = model(local_domain).await?;
 
             assert_eq!(
                 output.installed_packages_list[0].namespace,
-                ("spec", "quiltcore").into()
+                pkg::NAMESPACE.into()
             );
-            assert_eq!(format!("{}", output), "InstalledPackage<spec/quiltcore>");
+            assert_eq!(
+                format!("{}", output),
+                format!("InstalledPackage<{}>", pkg::NAMESPACE_STR)
+            );
         }
 
         Ok(())
     }
 
     /// Verifies that list command returns correct output when no packages are installed
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_command_empty() -> Result<(), Error> {
         let (m, _temp_dir) = Model::from_temp_dir()?;
 
@@ -95,13 +102,13 @@ mod tests {
     ///   * shows the installed package namespace
     ///   * formats output according to display implementation
     // TODO: install and list multiple packages
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_command_with_package() -> Result<(), Error> {
-        let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c&path=READ%20ME.md";
-        let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
+        let uri = format!("{}&path={}", pkg::URI, pkg::README_LK_ESCAPED);
+        let (m, _, _temp_dir) = install_package_into_temp_dir(&uri).await?;
 
         if let Std::Out(output) = command(m).await {
-            assert_eq!(output, "InstalledPackage<spec/quiltcore>");
+            assert_eq!(output, format!("InstalledPackage<{}>", pkg::NAMESPACE_STR));
         } else {
             return Err(Error::Test("Failed to list packages".to_string()));
         }
@@ -111,7 +118,7 @@ mod tests {
 
     /// Verifies that list command returns appropriate error when command fails
     /// (no permissions to the domain directory):
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_invalid_command() -> Result<(), Error> {
         let write_only = Permissions::from_mode(0o200);
         let temp_dir = Builder::new().permissions(write_only).tempdir()?;
