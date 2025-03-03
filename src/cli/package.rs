@@ -90,8 +90,10 @@ mod tests {
     /// Verifies that CLI throws error if target `quilt+s3://` URI is invalid:
     #[test(tokio::test)]
     async fn test_invalid_target() -> Result<(), Error> {
-        let uri = "s3://any/thing".to_string();
-        let target = "quilt+s3://some-nonsense".to_string();
+        use crate::cli::fixtures::packages::invalid as pkg;
+
+        let uri = pkg::SOURCE_PK.to_string();
+        let target = pkg::URI.to_string();
 
         let (m, _) = Model::from_temp_dir()?;
 

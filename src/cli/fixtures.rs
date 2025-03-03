@@ -51,4 +51,9 @@ pub mod packages {
         pub const LATEST_TOP_HASH: &str =
             "ae239090f2a01de382e8af719fe4a451ef1d1fa4a3ef7b21c6b36513d42c6630";
     }
+
+    pub mod invalid {
+        pub const URI: &str = "quilt+s3://some-nonsense";
+        pub const SOURCE_PK: &str = "s3://any/thing";
+    }
 }

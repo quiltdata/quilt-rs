@@ -187,14 +187,23 @@ mod tests {
     /// Verifies that CLI throws error if `quilt+s3` URI is invalid.
     #[test(tokio::test)]
     async fn test_if_uri_is_invalid() -> Result<(), Error> {
-        let uri = "quilt+s3://some-nonsense".to_string();
+        use crate::cli::fixtures::packages::invalid as pkg;
+
+        let uri = pkg::URI;
 
         let (model, _temp_dir) = Model::from_temp_dir()?;
 
-        if let Std::Err(error_str) = command(model, Input { uri }).await {
+        if let Std::Err(error_str) = command(
+            model,
+            Input {
+                uri: uri.to_string(),
+            },
+        )
+        .await
+        {
             assert_eq!(
                 format!("{}", error_str),
-                "quilt_rs error: Invalid package URI: S3 package URI must contain a fragment: quilt+s3://some-nonsense".to_string()
+                format!("quilt_rs error: Invalid package URI: S3 package URI must contain a fragment: {}", uri)
             );
         } else {
             return Err(Error::Test("Failed to fail".to_string()));
