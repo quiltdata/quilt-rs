@@ -1,8 +1,10 @@
 pub mod sample_file_1 {
     use std::path::PathBuf;
 
+    use crate::lineage::PackageFileFingerprint;
     use crate::lineage::PathState;
     use crate::manifest::Row;
+    use crate::Res;
 
     pub fn row_hash() -> multihash::Multihash<256> {
         multihash::Multihash::wrap(0xb510, b"pedestrian").expect("Unexpected")
@@ -15,11 +17,11 @@ pub mod sample_file_1 {
         }
     }
 
-    pub fn fingerprint() -> crate::lineage::PackageFileFingerprint {
-        crate::lineage::PackageFileFingerprint {
+    pub fn fingerprint() -> Res<PackageFileFingerprint> {
+        Ok(PackageFileFingerprint {
             size: 0,
             hash: row_hash(),
-        }
+        })
     }
 
     pub fn row(name: PathBuf) -> Row {

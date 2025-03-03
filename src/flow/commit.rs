@@ -388,7 +388,7 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("bar"),
-                Change::Added(sample_file_1::fingerprint()),
+                Change::Added(sample_file_1::fingerprint()?),
             )]),
             ..InstalledPackageStatus::default()
         };
