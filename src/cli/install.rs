@@ -263,7 +263,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_valid_command() -> Result<(), Error> {
-        let uri = fixtures::DEFAULT_PACKAGE_URI_LATEST.to_string();
+        let uri = fixtures::DEFAULT_PACKAGE_URI.to_string();
 
         let (model, temp_dir) = Model::from_temp_dir()?;
 
