@@ -24,13 +24,13 @@ pub mod sample_file_1 {
         })
     }
 
-    pub fn row(name: PathBuf) -> Row {
-        Row {
+    pub fn row(name: PathBuf) -> Res<Row> {
+        Ok(Row {
             name,
             place: "file:///z/x/y".into(),
             hash: row_hash(),
             ..Row::default()
-        }
+        })
     }
 }
 

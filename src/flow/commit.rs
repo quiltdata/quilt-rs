@@ -336,7 +336,7 @@ mod tests {
         };
         let mut manifest = Table::default();
         manifest
-            .insert_record(sample_file_1::row(PathBuf::from("foo")))
+            .insert_record(sample_file_1::row(PathBuf::from("foo"))?)
             .await?;
 
         assert!(
