@@ -228,7 +228,7 @@ mod tests {
         // Simulate the existence of a reference manifest remotely.
         // This is done by "writing" the reference manifest to a mocked remote location.
         // Technically, it is written to a temporary directory with an URI as a path.
-        let parquet = std::fs::read(fixtures::manifest::parquet())?;
+        let parquet = std::fs::read(fixtures::manifest::parquet()?)?;
         let remote = MockRemote::default();
         let remote_uri = S3Uri::from_str(&format!(
             "s3://{}/.quilt/packages/1220{}.parquet",

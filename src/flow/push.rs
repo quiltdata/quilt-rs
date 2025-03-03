@@ -284,7 +284,7 @@ mod tests {
             remote: manifest_uri,
             ..PackageLineage::default()
         };
-        let jsonl = std::fs::read(fixtures::manifest::parquet_checksummed())?;
+        let jsonl = std::fs::read(fixtures::manifest::parquet_checksummed()?)?;
         let manifest_key =
             ".quilt/packages/b/475af395ee2856548851913bfd803de4fcc7cdbb3d1d2c13bf0dc221ed6bc68b";
         let storage = MockStorage::default();
@@ -308,7 +308,7 @@ mod tests {
             .await?;
 
         let file_path = PathBuf::from("/b/a/r");
-        let manifest_file = std::fs::read(fixtures::manifest::parquet_checksummed())?;
+        let manifest_file = std::fs::read(fixtures::manifest::parquet_checksummed()?)?;
         remote
             .storage
             .write_file(&file_path, &manifest_file)
