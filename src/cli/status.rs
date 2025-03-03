@@ -96,10 +96,10 @@ mod tests {
     use quilt_rs::io::storage::LocalStorage;
     use quilt_rs::io::storage::Storage;
 
-    use crate::cli::fixtures::packages::default as pkg;
-
     #[test(tokio::test)]
     async fn test_model() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::default as pkg;
+
         let uri = pkg::URI;
 
         let (m, installed_package, _temp_dir) = install_package_into_temp_dir(uri).await?;
@@ -222,7 +222,7 @@ mod tests {
     #[test(tokio::test)]
     async fn test_model_when_latest_is_outdated() -> Result<(), Error> {
         use crate::cli::fixtures::packages::outdated as pkg;
-        
+
         let uri = pkg::URI;
 
         let (m, installed_package, _temp_dir) = install_package_into_temp_dir(uri).await?;
