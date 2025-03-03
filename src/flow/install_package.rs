@@ -185,7 +185,7 @@ mod tests {
         };
 
         // Load the reference manifest from `./fixtures`
-        let parquet = std::fs::read(fixtures::manifest::parquet())?;
+        let parquet = std::fs::read(fixtures::manifest::parquet()?)?;
         let remote = MockRemote::default();
 
         // Simulate the remote storage containing the Parquet manifest

@@ -269,7 +269,7 @@ mod tests {
             .path()
             .to_path_buf()
             .join(".quilt/installed/test/history/abc123");
-        storage.copy(reference_manifest, test_manifest).await?;
+        storage.copy(reference_manifest?, test_manifest).await?;
 
         let package = InstalledPackage {
             lineage: PackageLineageIo::new(

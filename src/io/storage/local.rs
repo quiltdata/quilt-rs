@@ -232,13 +232,13 @@ mod tests {
 
         let storage = LocalStorage::default();
         let stream = storage
-            .read_byte_stream(fixtures::manifest::jsonl())
+            .read_byte_stream(fixtures::manifest::jsonl()?)
             .await?;
         let bytes = stream.collect().await?.to_vec();
 
         // Verify we can read the known test file
         assert!(!bytes.is_empty());
-        assert_eq!(bytes, fs::read(fixtures::manifest::jsonl()).await?);
+        assert_eq!(bytes, fs::read(fixtures::manifest::jsonl()?).await?);
 
         Ok(())
     }
