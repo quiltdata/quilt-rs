@@ -45,21 +45,19 @@ pub mod manifest {
 
     pub const JSONL_HASH: &str = "3af08e839fec032c6804596d32932f6f0550abe8b9696c56ed15fe7f8e853ebd";
 
-    fn local_uri(key: &str) -> PathBuf {
-        std::env::current_dir()
-            .expect("Failed to get current directory")
-            .join(key)
+    fn local_uri(key: &str) -> Res<PathBuf> {
+        Ok(std::env::current_dir()?.join(key))
     }
 
     pub fn parquet() -> Res<PathBuf> {
-        Ok(local_uri(TEST_LOCAL_PARQUET))
+        local_uri(TEST_LOCAL_PARQUET)
     }
 
     pub fn jsonl() -> Res<PathBuf> {
-        Ok(local_uri(TEST_LOCAL_JSONL))
+        local_uri(TEST_LOCAL_JSONL)
     }
 
     pub fn parquet_checksummed() -> Res<PathBuf> {
-        Ok(local_uri(TEST_LOCAL_PARQUET_CHECKSUMMED))
+        local_uri(TEST_LOCAL_PARQUET_CHECKSUMMED)
     }
 }

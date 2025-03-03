@@ -228,8 +228,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_byte_stream() -> Res {
-        use crate::fixtures;
-
         let storage = LocalStorage::default();
         let stream = storage
             .read_byte_stream(fixtures::manifest::jsonl()?)
