@@ -396,7 +396,7 @@ mod tests {
         let lineage = PackageLineage::default();
         let mut manifest = Table::default();
         manifest
-            .insert_record(sample_file_1::row(PathBuf::from("foo")))
+            .insert_record(sample_file_1::row(PathBuf::from("foo"))?)
             .await?;
 
         assert!(
@@ -469,7 +469,7 @@ mod tests {
         };
         let mut manifest = Table::default();
         manifest
-            .insert_record(sample_file_1::row(PathBuf::from("foo")))
+            .insert_record(sample_file_1::row(PathBuf::from("foo"))?)
             .await?;
 
         let result = commit_package(
@@ -518,7 +518,7 @@ mod tests {
         };
         let mut manifest = Table::default();
         manifest
-            .insert_record(sample_file_1::row(PathBuf::from("bar")))
+            .insert_record(sample_file_1::row(PathBuf::from("bar"))?)
             .await?;
 
         assert!(
