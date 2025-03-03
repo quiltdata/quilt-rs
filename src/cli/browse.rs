@@ -130,7 +130,7 @@ mod tests {
 
     use test_log::test;
 
-    use crate::cli::fixtures;
+    use crate::cli::fixtures::packages::default as pkg;
     use crate::cli::model::Model;
 
     pub fn get_browse_output() -> Result<String, std::io::Error> {
@@ -142,12 +142,12 @@ mod tests {
     /// Test actually fetch the manifest from Quilt, without mocks.
     #[test(tokio::test)]
     async fn test_model() -> Result<(), Error> {
-        let uri = fixtures::DEFAULT_PACKAGE_URI_LATEST.to_string();
+        let uri = pkg::URI_LATEST.to_string();
 
-        let readme_logical_key = PathBuf::from(fixtures::DEFAULT_PACKAGE_README_LK);
-        let readme_uri = fixtures::DEFAULT_PACKAGE_README_PK;
-        let timestamp_logical_key = PathBuf::from(fixtures::DEFAULT_PACKAGE_TIMESTAMP_LK);
-        let timestamp_uri = fixtures::DEFAULT_PACKAGE_TIMESTAMP_PK;
+        let readme_logical_key = PathBuf::from(pkg::README_LK);
+        let readme_uri = pkg::README_PK;
+        let timestamp_logical_key = PathBuf::from(pkg::TIMESTAMP_LK);
+        let timestamp_uri = pkg::TIMESTAMP_PK;
 
         let (m, _temp_dir) = Model::from_temp_dir()?;
         {
@@ -205,11 +205,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_command() -> Result<(), Error> {
-        let uri = format!(
-            "{}&path={}",
-            fixtures::DEFAULT_PACKAGE_URI_LATEST,
-            fixtures::DEFAULT_PACKAGE_README_LK_ESCAPED
-        );
+        let uri = format!("{}&path={}", pkg::URI_LATEST, pkg::README_LK_ESCAPED);
 
         let (model, _temp_dir) = Model::from_temp_dir()?;
 
