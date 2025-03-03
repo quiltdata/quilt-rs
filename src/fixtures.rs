@@ -35,9 +35,9 @@ pub mod sample_file_1 {
 pub mod manifest {
     use std::path::PathBuf;
 
-    static TEST_LOCAL_PARQUET: &str = "fixtures/manifest.parquet";
-    static TEST_LOCAL_PARQUET_CHECKSUMMED: &str = "fixtures/checksummed.parquet";
-    static TEST_LOCAL_JSONL: &str = "fixtures/manifest.jsonl";
+    const TEST_LOCAL_PARQUET: &str = "fixtures/manifest.parquet";
+    const TEST_LOCAL_PARQUET_CHECKSUMMED: &str = "fixtures/checksummed.parquet";
+    const TEST_LOCAL_JSONL: &str = "fixtures/manifest.jsonl";
 
     pub const JSONL_HASH: &str = "3af08e839fec032c6804596d32932f6f0550abe8b9696c56ed15fe7f8e853ebd";
 
