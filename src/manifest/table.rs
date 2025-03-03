@@ -125,7 +125,7 @@ pub struct Table {
 
 impl Table {
     // TODO: new creates empty records, from(header, records) creates full Table
-    fn new(header: Header, records: BTreeMap<PathBuf, Row>) -> Self {
+    pub fn new(header: Header, records: BTreeMap<PathBuf, Row>) -> Self {
         Table { header, records }
     }
 

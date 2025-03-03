@@ -1,9 +1,8 @@
-pub fn row_hash_sample1() -> multihash::Multihash<256> {
-    multihash::Multihash::wrap(0xb510, b"pedestrian").expect("Unexpected")
-}
-
 pub mod sample_file_1 {
+    use std::path::PathBuf;
+
     use crate::lineage::PathState;
+    use crate::manifest::Row;
 
     pub fn row_hash() -> multihash::Multihash<256> {
         multihash::Multihash::wrap(0xb510, b"pedestrian").expect("Unexpected")
@@ -15,29 +14,26 @@ pub mod sample_file_1 {
             ..PathState::default()
         }
     }
-}
 
-pub mod status {
-    use super::row_hash_sample1;
-
-    use crate::lineage::PackageFileFingerprint;
-
-    pub fn package_file_fingerprint() -> PackageFileFingerprint {
-        PackageFileFingerprint {
+    pub fn fingerprint() -> crate::lineage::PackageFileFingerprint {
+        crate::lineage::PackageFileFingerprint {
             size: 0,
-            hash: row_hash_sample1(),
+            hash: row_hash(),
+        }
+    }
+
+    pub fn row(name: PathBuf) -> Row {
+        Row {
+            name,
+            place: "file:///z/x/y".into(),
+            hash: row_hash(),
+            ..Row::default()
         }
     }
 }
 
 pub mod manifest {
-    use super::row_hash_sample1;
-
-    use std::collections::BTreeMap;
     use std::path::PathBuf;
-
-    use crate::manifest::Row;
-    use crate::manifest::Table;
 
     static TEST_LOCAL_PARQUET: &str = "fixtures/manifest.parquet";
     static TEST_LOCAL_PARQUET_CHECKSUMMED: &str = "fixtures/checksummed.parquet";
@@ -59,34 +55,5 @@ pub mod manifest {
 
     pub fn parquet_checksummed() -> PathBuf {
         local_uri(TEST_LOCAL_PARQUET_CHECKSUMMED)
-    }
-
-    pub fn row_with_name(name: PathBuf) -> Row {
-        Row {
-            name,
-            place: "file:///z/x/y".to_string(),
-            hash: row_hash_sample1(),
-            ..Row::default()
-        }
-    }
-
-    pub fn with_record_keys(keys: Vec<PathBuf>) -> Table {
-        let mut table = Table::default();
-        let mut records = BTreeMap::new();
-        for key in &keys {
-            records.insert(key.clone(), row_with_name(key.clone()));
-        }
-        table.set_records(records);
-        table
-    }
-
-    pub fn with_rows(rows: Vec<Row>) -> Table {
-        let mut table = Table::default();
-        let mut records = BTreeMap::new();
-        for row in &rows {
-            records.insert(row.name.clone(), row.clone());
-        }
-        table.set_records(records);
-        table
     }
 }

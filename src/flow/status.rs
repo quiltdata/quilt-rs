@@ -304,11 +304,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_removed_files() -> Res {
+        let sample_file_path = PathBuf::from("a/a");
         let lineage = PackageLineage {
-            paths: BTreeMap::from([(PathBuf::from("a/a"), sample_file_1::path_state())]),
+            paths: BTreeMap::from([(sample_file_path.clone(), sample_file_1::path_state())]),
             ..PackageLineage::default()
         };
-        let manifest = fixtures::manifest::with_record_keys(vec![PathBuf::from("a/a")]);
+        let mut manifest = Table::default();
+        manifest
+            .insert_record(sample_file_1::row(sample_file_path.clone()))
+            .await?;
         let (_, status) = create_status(
             lineage,
             &MockStorage::default(),

@@ -267,7 +267,6 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::fixtures;
     use crate::fixtures::sample_file_1;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::Change;
@@ -335,7 +334,10 @@ mod tests {
             paths: BTreeMap::from([(PathBuf::from("foo"), sample_file_1::path_state())]),
             ..PackageLineage::default()
         };
-        let mut manifest = fixtures::manifest::with_record_keys(vec![PathBuf::from("foo")]);
+        let mut manifest = Table::default();
+        manifest
+            .insert_record(sample_file_1::row(PathBuf::from("foo")))
+            .await?;
 
         assert!(
             lineage.commit.is_none(),
@@ -386,13 +388,16 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("bar"),
-                Change::Added(fixtures::status::package_file_fingerprint()),
+                Change::Added(sample_file_1::fingerprint()),
             )]),
             ..InstalledPackageStatus::default()
         };
 
         let lineage = PackageLineage::default();
-        let mut manifest = fixtures::manifest::with_record_keys(vec![PathBuf::from("foo")]);
+        let mut manifest = Table::default();
+        manifest
+            .insert_record(sample_file_1::row(PathBuf::from("foo")))
+            .await?;
 
         assert!(
             lineage.commit.is_none(),
@@ -462,7 +467,10 @@ mod tests {
             paths: BTreeMap::from([(PathBuf::from("foo"), sample_file_1::path_state())]),
             ..PackageLineage::default()
         };
-        let mut manifest = fixtures::manifest::with_record_keys(vec![PathBuf::from("foo")]);
+        let mut manifest = Table::default();
+        manifest
+            .insert_record(sample_file_1::row(PathBuf::from("foo")))
+            .await?;
 
         let result = commit_package(
             lineage,
@@ -508,7 +516,10 @@ mod tests {
             paths: BTreeMap::from([(PathBuf::from("bar"), sample_file_1::path_state())]),
             ..PackageLineage::default()
         };
-        let mut manifest = fixtures::manifest::with_record_keys(vec![PathBuf::from("bar")]);
+        let mut manifest = Table::default();
+        manifest
+            .insert_record(sample_file_1::row(PathBuf::from("bar")))
+            .await?;
 
         assert!(
             lineage.commit.is_none(),

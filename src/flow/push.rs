@@ -170,7 +170,6 @@ pub async fn push_package(
 mod tests {
     use super::*;
 
-    use crate::uri::S3Uri;
     use std::path::PathBuf;
 
     use crate::fixtures;
@@ -180,6 +179,7 @@ mod tests {
     use crate::lineage::PackageLineage;
     use crate::manifest::Row;
     use crate::uri::ManifestUri;
+    use crate::uri::S3Uri;
 
     #[tokio::test]
     async fn test_no_push_if_no_commit() -> Res {
@@ -313,11 +313,15 @@ mod tests {
             .storage
             .write_file(&file_path, &manifest_file)
             .await?;
-        let manifest = fixtures::manifest::with_rows(vec![Row {
-            name: PathBuf::from("bar"),
-            place: format!("file://{}", file_path.display()),
-            ..Row::default()
-        }]);
+
+        let mut manifest = Table::default();
+        manifest
+            .insert_record(Row {
+                name: PathBuf::from("bar"),
+                place: format!("file://{}", file_path.display()),
+                ..Row::default()
+            })
+            .await?;
 
         let lineage = push_package(
             lineage,
