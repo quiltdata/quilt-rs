@@ -172,7 +172,7 @@ mod tests {
             let status_file_removed = model(
                 local_domain,
                 Input {
-                    namespace: ("reference", "quilt-rs").into(),
+                    namespace: pkg::NAMESPACE.into(),
                 },
             )
             .await?;
@@ -206,7 +206,7 @@ mod tests {
             let status_ahead = model(
                 local_domain,
                 Input {
-                    namespace: ("reference", "quilt-rs").into(),
+                    namespace: pkg::NAMESPACE.into(),
                 },
             )
             .await?;
