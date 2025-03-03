@@ -24,6 +24,9 @@ mod push;
 mod status;
 mod uninstall;
 
+#[cfg(test)]
+mod fixtures;
+
 use model::Model;
 use output::print;
 use output::Std;

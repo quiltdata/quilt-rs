@@ -121,6 +121,7 @@ mod tests {
     use quilt_rs::io::storage::LocalStorage;
     use quilt_rs::io::storage::Storage;
 
+    use crate::cli::fixtures;
     use crate::cli::model::Model;
 
     /// Verifies the installation process in CLI with valid data:
@@ -161,7 +162,10 @@ mod tests {
         );
 
             let installed_package = output.installed_package;
-            assert_eq!(installed_package.namespace, ("reference", "quilt-rs").into());
+            assert_eq!(
+                installed_package.namespace,
+                ("reference", "quilt-rs").into()
+            );
             assert!(installed_package
                 .lineage()
                 .await?
@@ -188,7 +192,11 @@ mod tests {
 
         assert!(
             storage
-                .exists(temp_dir.path().join(".quilt/installed/reference/quilt-rs/a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7"))
+                .exists(temp_dir.path().join(format!(
+                    ".quilt/installed/{}/{}",
+                    fixtures::DEFAULT_NAMESPACE,
+                    fixtures::DEFAULT_TOP_HASH
+                )))
                 .await
         );
 
@@ -255,7 +263,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_valid_command() -> Result<(), Error> {
-        let uri = "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7".to_string();
+        let uri = fixtures::DEFAULT_PACKAGE_URI.to_string();
 
         let (model, temp_dir) = Model::from_temp_dir()?;
 
@@ -272,8 +280,10 @@ mod tests {
             assert_eq!(
                 output_str,
                 format!(
-                    "Installed package \"reference/quilt-rs\" at {}/reference/quilt-rs\nNo paths installed",
-                    temp_dir.path().display()
+                    "Installed package \"{}\" at {}/{}\nNo paths installed",
+                    fixtures::DEFAULT_NAMESPACE,
+                    temp_dir.path().display(),
+                    fixtures::DEFAULT_NAMESPACE,
                 )
             );
         } else {
