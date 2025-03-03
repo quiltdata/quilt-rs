@@ -176,7 +176,7 @@ mod tests {
     async fn test_throwing_error_when_workflow_set_but_no_workflows_config() -> Result<(), Error> {
         use crate::cli::fixtures::packages::no_workflows_message_only as pkg;
 
-        let uri= "quilt+s3://data-yaml-spec-tests#package=reference/message-only@ce2ca6a39eb02725b24e3ccf158022dc80c2ab96b066e5660d87abafdbaee768";
+        let uri = pkg::URI;
         let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
         {
             let local_domain = m.get_local_domain();
