@@ -116,6 +116,8 @@ mod tests {
 
     use std::path::PathBuf;
 
+    use test_log::test;
+
     use quilt_rs::io::storage::LocalStorage;
     use quilt_rs::io::storage::Storage;
 
@@ -128,15 +130,15 @@ mod tests {
     ///   * `.quilt/installed` contains the installed manifest under the namespace directory
     ///   * `.quilt/packages` contains the cached manifest under the bucket directory
     /// Uses an actual manifest from Quilt without mocks.
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_model() -> Result<(), Error> {
-        let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c&path=READ%20ME.md".to_string();
+        let uri = "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs&path=one/two%20two/three%20three%20three/READ%20ME.md".to_string();
 
-        let readme_logical_key = PathBuf::from("READ ME.md");
+        let readme_logical_key = PathBuf::from("one/two two/three three three/READ ME.md");
         let timestamp_logical_key = PathBuf::from("timestamp.txt");
 
         let (m, temp_dir) = Model::from_temp_dir()?;
-        let working_dir = temp_dir.path().join("spec/quiltcore");
+        let working_dir = temp_dir.path().join("reference/quilt-rs");
         {
             let local_domain = m.get_local_domain();
 
@@ -153,13 +155,13 @@ mod tests {
             assert_eq!(
             format!("{}", output),
             format!(
-                "Installed package \"spec/quiltcore\" at {}/spec/quiltcore\nPath: \"READ ME.md\"\nPath: \"timestamp.txt\"",
+                "Installed package \"reference/quilt-rs\" at {}/reference/quilt-rs\nPath: \"one/two two/three three three/READ ME.md\"\nPath: \"timestamp.txt\"",
                 temp_dir.path().display()
             )
         );
 
             let installed_package = output.installed_package;
-            assert_eq!(installed_package.namespace, ("spec", "quiltcore").into());
+            assert_eq!(installed_package.namespace, ("reference", "quilt-rs").into());
             assert!(installed_package
                 .lineage()
                 .await?
@@ -168,7 +170,7 @@ mod tests {
 
             assert_eq!(
                 installed_package.working_folder(),
-                PathBuf::from(temp_dir.as_ref()).join("spec/quiltcore")
+                PathBuf::from(temp_dir.as_ref()).join("reference/quilt-rs")
             );
             assert_eq!(
                 output.paths,
@@ -186,14 +188,14 @@ mod tests {
 
         assert!(
             storage
-                .exists(temp_dir.path().join(".quilt/installed/spec/quiltcore/44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c"))
+                .exists(temp_dir.path().join(".quilt/installed/reference/quilt-rs/a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7"))
                 .await
         );
 
         assert!(
             storage
                 .exists(
-                    temp_dir.path().join(".quilt/packages/udp-spec/44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c")
+                    temp_dir.path().join(".quilt/packages/data-yaml-spec-tests/a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7")
                 )
                 .await
         );
@@ -202,7 +204,7 @@ mod tests {
         assert!(
             storage
                 .exists(
-                    temp_dir.path().join(".quilt/objects/e1181788c8a77224d98bb3a2de256bfea1d2f128019d5d378406522c03b5db07")
+                    temp_dir.path().join(".quilt/objects/3e5e75033079a0b5bfaeff79c8f10dbc3f461e283ad8126c333cd74792e62ea7")
                 )
                 .await
         );
@@ -210,7 +212,7 @@ mod tests {
         assert!(
             storage
                 .exists(
-                    temp_dir.path().join(".quilt/objects/1f580d4f3e2545b95054993a6d66e802dc81140a9a42702c8aa088f00091cab2")
+                    temp_dir.path().join(".quilt/objects/dc3ea61d9a4aaf7d822eed1de089db83d46aa29f3fbdd99466f7e5e216c91c8a")
                 )
                 .await
         );
@@ -222,7 +224,7 @@ mod tests {
             Input {
                 namespace: None,
                 paths: None,
-                uri: "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c".to_string(),
+                uri: "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7".to_string(),
             },
         )
         .await?;
@@ -231,14 +233,14 @@ mod tests {
             assert_eq!(
                 format!("{}", install_once_more),
                 format!(
-                    "Installed package \"spec/quiltcore\" at {}/spec/quiltcore\nNo paths installed",
+                    "Installed package \"reference/quilt-rs\" at {}/reference/quilt-rs\nNo paths installed",
                     temp_dir.path().display()
                 )
             );
 
             assert_eq!(
                 install_once_more.installed_package.namespace,
-                ("spec", "quiltcore").into(),
+                ("reference", "quilt-rs").into(),
             );
 
             // However paths are still tracked, because we didn't install a package anew,
@@ -251,9 +253,9 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_valid_command() -> Result<(), Error> {
-        let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c".to_string();
+        let uri = "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7".to_string();
 
         let (model, temp_dir) = Model::from_temp_dir()?;
 
@@ -270,7 +272,7 @@ mod tests {
             assert_eq!(
                 output_str,
                 format!(
-                    "Installed package \"spec/quiltcore\" at {}/spec/quiltcore\nNo paths installed",
+                    "Installed package \"reference/quilt-rs\" at {}/reference/quilt-rs\nNo paths installed",
                     temp_dir.path().display()
                 )
             );
@@ -281,7 +283,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_invalid_command() -> Result<(), Error> {
         let uri = "quilt+s3://some-nonsense".to_string();
 

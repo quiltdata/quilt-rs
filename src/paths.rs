@@ -65,6 +65,7 @@ impl DomainPaths {
         self.installed_manifests(namespace).join(hash)
     }
 
+    // TODO: rename to `installed_manifests_dir`
     /// Directory for storing installed manifests
     pub fn installed_manifests(&self, namespace: &Namespace) -> PathBuf {
         self.root_dir
@@ -77,6 +78,7 @@ impl DomainPaths {
         self.root_dir.join(LINEAGE_FILE)
     }
 
+    // TODO: rename to `cached_manifest`
     /// Path to the manifest cached in semi-temporary directory
     // TODO: pass `ManifestUri`
     pub fn manifest_cache(&self, bucket: &str, hash: &str) -> PathBuf {
@@ -115,6 +117,14 @@ impl DomainPaths {
             self.working_dir(namespace),
             self.installed_manifests(namespace),
         ]);
+        paths
+    }
+
+    /// What directories are essential when we work with cached manifests
+    pub fn required_for_caching(&self, bucket: &str) -> Vec<PathBuf> {
+        let mut paths = vec![];
+        paths.extend(self.required_local_domain_paths());
+        paths.extend(vec![self.manifest_cache_dir(bucket)]);
         paths
     }
 

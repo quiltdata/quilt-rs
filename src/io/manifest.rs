@@ -310,7 +310,7 @@ pub async fn build_manifest_from_rows_stream(
 
     let top_hash = top_hasher.finalize();
     let dest_path = dest_dir.join(&top_hash);
-    storage.create_dir_all(&dest_path.parent().unwrap()).await?;
+    storage.create_dir_all(&dest_dir).await?;
     storage.rename(temp_path, &dest_path).await?;
 
     Ok((dest_path, top_hash))

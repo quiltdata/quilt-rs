@@ -39,6 +39,8 @@ pub async fn model(
 mod tests {
     use super::*;
 
+    use test_log::test;
+
     use crate::cli::model::install_package_into_temp_dir;
     use crate::cli::model::Model;
 
@@ -46,9 +48,9 @@ mod tests {
     ///   * installs a package
     ///   * uninstalls it
     ///   * verifies it's no longer present
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_model() -> Result<(), Error> {
-        let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c";
+        let uri = "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7";
         let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
 
         {
@@ -56,12 +58,12 @@ mod tests {
             let output = model(
                 local_domain,
                 Input {
-                    namespace: ("spec", "quiltcore").into(),
+                    namespace: ("reference", "quilt-rs").into(),
                 },
             )
             .await?;
 
-            assert_eq!(output.namespace, ("spec", "quiltcore").into());
+            assert_eq!(output.namespace, ("reference", "quilt-rs").into());
         }
 
         {
@@ -70,14 +72,14 @@ mod tests {
             if let Err(error_str) = model(
                 local_domain,
                 Input {
-                    namespace: ("spec", "quiltcore").into(),
+                    namespace: ("reference", "quilt-rs").into(),
                 },
             )
             .await
             {
                 assert_eq!(
                     error_str.to_string(),
-                    "quilt_rs error: The given package is not installed: spec/quiltcore"
+                    "quilt_rs error: The given package is not installed: reference/quilt-rs"
                 );
             } else {
                 return Err(Error::Test("Expected package not found error".to_string()));
@@ -88,22 +90,22 @@ mod tests {
     }
 
     /// Verifies that uninstall command returns correct output after uninstalling a package
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_valid_command() -> Result<(), Error> {
-        let uri = "quilt+s3://udp-spec#package=spec/quiltcore@44c3143c0964d26707651d06b9c3d4c98749b0f0044483fba45388693d227e4c";
+        let uri = "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7";
         let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
 
         if let Std::Out(output_str) = command(
             m,
             Input {
-                namespace: ("spec", "quiltcore").into(),
+                namespace: ("reference", "quilt-rs").into(),
             },
         )
         .await
         {
             assert_eq!(
                 output_str,
-                "Package spec/quiltcore successfully uninstalled"
+                "Package reference/quilt-rs successfully uninstalled"
             );
         } else {
             return Err(Error::Test("Failed to uninstall".to_string()));
@@ -113,7 +115,7 @@ mod tests {
     }
 
     /// Verifies that uninstall command fails when package is not found
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_invalid_command() -> Result<(), Error> {
         let (m, _temp_dir) = Model::from_temp_dir()?;
 

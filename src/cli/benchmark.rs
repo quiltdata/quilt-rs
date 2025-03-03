@@ -13,7 +13,7 @@ use crate::perf::Measure;
 
 #[derive(Debug)]
 pub struct Input {
-    pub dest: PathBuf,
+    pub dest_dir: PathBuf,
     pub number: i32,
 }
 
@@ -79,10 +79,10 @@ async fn benchmark(
 
 pub async fn model(
     local_domain: &quilt_rs::LocalDomain,
-    Input { dest, number }: Input,
+    Input { dest_dir, number }: Input,
 ) -> Result<Output, Error> {
     let perf = Measure::start();
-    let (dest, top_hash) = benchmark(local_domain, dest, number).await?;
+    let (dest, top_hash) = benchmark(local_domain, dest_dir, number).await?;
     Ok(Output {
         dest,
         perf,

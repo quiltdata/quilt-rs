@@ -69,6 +69,8 @@ mod tests {
 
     use std::path::PathBuf;
 
+    use test_log::test;
+
     use crate::cli::model::install_package_into_temp_dir;
 
     use quilt_rs::io::storage::LocalStorage;
@@ -78,7 +80,7 @@ mod tests {
     ///  * workflow/config.yml exists
     ///  * workflow id is not set
     ///  * no files to commit,
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_commit_package_with_message_and_null_workflow() -> Result<(), Error> {
         let uri= "quilt+s3://udp-spec#package=reference/message-only@095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f";
         let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
@@ -105,7 +107,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_commit_package_with_workflow_and_meta() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=reference/with-workflow@4a9a3d39f655a03659333aad787b182e477e335e0fa78dd4d029521a9ca18dad";
         let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
@@ -146,7 +148,7 @@ mod tests {
     ///  * workflow/config.yml DOESN'T exists
     ///  * workflow id is not set
     ///  * no files to commit,
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_commit_package_with_message_only() -> Result<(), Error> {
         let uri= "quilt+s3://data-yaml-spec-tests#package=reference/message-only@ce2ca6a39eb02725b24e3ccf158022dc80c2ab96b066e5660d87abafdbaee768";
         let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
@@ -173,7 +175,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_throwing_error_when_workflow_set_but_no_workflows_config() -> Result<(), Error> {
         let uri= "quilt+s3://data-yaml-spec-tests#package=reference/message-only@ce2ca6a39eb02725b24e3ccf158022dc80c2ab96b066e5660d87abafdbaee768";
         let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
@@ -200,7 +202,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_commit_package_with_meta_only() -> Result<(), Error> {
         let uri= "quilt+s3://data-yaml-spec-tests#package=reference/meta@a0e161c9a281f38382007f4775e7d6ecbb50f929a197ba3e84443ec911ab6388";
         let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
@@ -240,7 +242,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_model() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quilt-rs@11c5f6dbd1bf1d8675c18aaaa963b2f0dced2f892c7406fa36c9cd17d3d31b73";
 
@@ -361,7 +363,7 @@ mod tests {
 
     /// Verifies that valid command returns correct output after committing a new version
     /// which is the same as the previous one because message and user_meta left the same.
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_valid_command() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=reference/message-only@095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f";
         let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
@@ -389,7 +391,7 @@ mod tests {
     }
 
     /// Verifies that invalid command returns appropriate error when package is not installed
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_invalid_command() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=reference/message-only@095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f";
         let (m, _, _) = install_package_into_temp_dir(uri).await?;
