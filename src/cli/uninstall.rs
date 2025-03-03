@@ -41,6 +41,7 @@ mod tests {
 
     use test_log::test;
 
+    use crate::cli::fixtures::packages::default as pkg;
     use crate::cli::model::install_package_into_temp_dir;
     use crate::cli::model::Model;
 
@@ -50,7 +51,7 @@ mod tests {
     ///   * verifies it's no longer present
     #[test(tokio::test)]
     async fn test_model() -> Result<(), Error> {
-        let uri = "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7";
+        let uri = pkg::URI;
         let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
 
         {
@@ -58,7 +59,7 @@ mod tests {
             let output = model(
                 local_domain,
                 Input {
-                    namespace: ("reference", "quilt-rs").into(),
+                    namespace: pkg::NAMESPACE.into(),
                 },
             )
             .await?;
@@ -72,7 +73,7 @@ mod tests {
             if let Err(error_str) = model(
                 local_domain,
                 Input {
-                    namespace: ("reference", "quilt-rs").into(),
+                    namespace: pkg::NAMESPACE.into(),
                 },
             )
             .await
@@ -92,20 +93,20 @@ mod tests {
     /// Verifies that uninstall command returns correct output after uninstalling a package
     #[test(tokio::test)]
     async fn test_valid_command() -> Result<(), Error> {
-        let uri = "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7";
+        let uri = pkg::URI;
         let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
 
         if let Std::Out(output_str) = command(
             m,
             Input {
-                namespace: ("reference", "quilt-rs").into(),
+                namespace: pkg::NAMESPACE.into(),
             },
         )
         .await
         {
             assert_eq!(
                 output_str,
-                "Package reference/quilt-rs successfully uninstalled"
+                format!("Package {} successfully uninstalled", pkg::NAMESPACE_STR)
             );
         } else {
             return Err(Error::Test("Failed to uninstall".to_string()));
