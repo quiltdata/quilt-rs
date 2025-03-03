@@ -44,7 +44,7 @@ pub mod manifest {
     pub const JSONL_HASH: &str = "3af08e839fec032c6804596d32932f6f0550abe8b9696c56ed15fe7f8e853ebd";
 
     fn local_uri(key: &str) -> PathBuf {
-        std::env::current_dir().unwrap().join(key)
+        std::env::current_dir().expect("Failed to get current directory").join(key)
     }
 
     pub fn parquet() -> PathBuf {
