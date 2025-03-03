@@ -127,7 +127,6 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::fixtures;
     use crate::fixtures::sample_file_1;
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
@@ -142,6 +141,11 @@ mod tests {
             paths: BTreeMap::from([(PathBuf::from("a/a"), sample_file_1::path_state())]),
             ..PackageLineage::default()
         };
+        let sample_file_path = PathBuf::from("a/a");
+        let mut manifest = Table::default();
+        manifest
+            .insert_record(sample_file_1::row(sample_file_path.clone()))
+            .await?;
 
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
@@ -153,7 +157,7 @@ mod tests {
         let remote = MockRemote::default();
         let error = pull_package(
             lineage,
-            &mut fixtures::manifest::with_record_keys(vec![PathBuf::from("a/a")]),
+            &mut manifest,
             &DomainPaths::default(),
             &storage,
             &remote,

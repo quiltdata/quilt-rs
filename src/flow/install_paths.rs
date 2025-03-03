@@ -198,7 +198,7 @@ mod tests {
     use std::str::FromStr;
     use tempfile;
 
-    use crate::fixtures;
+    use crate::fixtures::sample_file_1;
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::manifest::Row;
@@ -219,7 +219,7 @@ mod tests {
         let storage = MockStorage::default();
         // The same hash is used in `mocks::manifest::with_record_keys`
         // So, it's not completely random.
-        let hash = fixtures::row_hash_sample1();
+        let hash = sample_file_1::row_hash();
         let object_path = domain_paths.object(hash.digest());
         let absolute_path = domain_working_dir.path().join(object_path);
         // Path is `.quilt/objects/HASH`
@@ -229,7 +229,10 @@ mod tests {
         let lineage = PackageLineage::default();
         let single_object_path = PathBuf::from("a/a");
         let entries_paths = vec![single_object_path.clone()];
-        let mut manifest = fixtures::manifest::with_record_keys(entries_paths.clone());
+        let mut manifest = Table::default();
+        manifest
+            .insert_record(sample_file_1::row(single_object_path.clone()))
+            .await?;
 
         // Lineage does not track anything before the installation
         assert!(lineage.paths.is_empty());
@@ -286,12 +289,15 @@ mod tests {
 
         // Create the manifest with a single remote row with a random hash
         let hash: multihash::Multihash<256> = multihash::Multihash::wrap(0x16, b"anything")?;
-        let mut manifest = fixtures::manifest::with_rows(vec![Row {
-            name: single_object_path.clone(),
-            hash,
-            place: remote_file_url,
-            ..Row::default()
-        }]);
+        let mut manifest = Table::default();
+        manifest
+            .insert_record(Row {
+                name: single_object_path.clone(),
+                hash,
+                place: remote_file_url,
+                ..Row::default()
+            })
+            .await?;
 
         assert!(lineage.paths.is_empty());
 
@@ -356,8 +362,11 @@ mod tests {
             hash: multihash::Multihash::wrap(0x16, b"four")?,
             ..Row::default()
         };
-        let rows = vec![row_1.clone(), row_2.clone(), row_3.clone(), row_4.clone()];
-        let mut manifest = fixtures::manifest::with_rows(rows);
+        let mut manifest = Table::default();
+        manifest.insert_record(row_1.clone()).await?;
+        manifest.insert_record(row_2.clone()).await?;
+        manifest.insert_record(row_3.clone()).await?;
+        manifest.insert_record(row_4.clone()).await?;
 
         // Simulate two of three files (1 and 3) are already exist in `.quilt/objects/HASH`
         // We trust that the hash is correct, so we can skip the actual file content
@@ -426,7 +435,11 @@ mod tests {
         // We want to install z/z
         let entries_paths = vec![PathBuf::from("z/z")];
         // But manifest clearly doens't contain it. It contain different path
-        let mut manifest = fixtures::manifest::with_record_keys(vec![PathBuf::from("a/a")]);
+        let sample_file_path = PathBuf::from("a/a");
+        let mut manifest = Table::default();
+        manifest
+            .insert_record(sample_file_1::row(sample_file_path.clone()))
+            .await?;
 
         // Assert we don't track anything
         assert!(lineage.paths.is_empty());
