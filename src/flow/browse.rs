@@ -95,7 +95,8 @@ pub async fn cache_remote_manifest(
                 return Err(Error::ManifestPath(format!(
                     "Top hash mismatch: expected {}, got {}",
                     manifest_uri.hash, top_hash
-                )));
+                ))
+                .into());
             }
             debug!(
                 "✔️ Manifest has converted to Parquet and written to {}",
@@ -136,7 +137,7 @@ mod tests {
 
     use test_log::test;
 
-    use crate::mocks;
+    use crate::fixtures;
     use crate::paths::scaffold_paths;
 
     /// Verifies that when a manifest is already cached,
@@ -157,13 +158,13 @@ mod tests {
 
         // Prepare the reference manifest file.
         // It is copied into the cache path to simulate a cached manifest.
-        let parquet = std::fs::read(mocks::manifest::parquet())?;
-        let storage = mocks::storage::MockStorage::default();
+        let parquet = std::fs::read(fixtures::manifest::parquet())?;
+        let storage = fixtures::storage::MockStorage::default();
         storage.write_file(&cache_path, &parquet).await?;
 
         // Although there is no direct assertion for `remote.expect_get_object().never()`,
         // we know the remote is not called because a missing key would throw an error.
-        let remote = mocks::remote::MockRemote::default();
+        let remote = fixtures::remote::MockRemote::default();
 
         // Since the manifest is cached, it should be retrieved from the cache
         // without any remote interaction.
@@ -194,10 +195,10 @@ mod tests {
             catalog: None,
         };
         let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
-        let storage = mocks::storage::MockStorage::default();
+        let storage = fixtures::storage::MockStorage::default();
         storage.write_file(cache_path, &Vec::new()).await?;
 
-        let remote = mocks::remote::MockRemote::default();
+        let remote = fixtures::remote::MockRemote::default();
 
         let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await;
 
@@ -226,8 +227,8 @@ mod tests {
         // Simulate the existence of a reference manifest remotely.
         // This is done by "writing" the reference manifest to a mocked remote location.
         // Technically, it is written to a temporary directory with an URI as a path.
-        let parquet = std::fs::read(mocks::manifest::parquet())?;
-        let remote = mocks::remote::MockRemote::default();
+        let parquet = std::fs::read(fixtures::manifest::parquet())?;
+        let remote = fixtures::remote::MockRemote::default();
         let remote_uri = S3Uri::from_str(&format!(
             "s3://{}/.quilt/packages/1220{}.parquet",
             manifest.bucket, manifest.hash
@@ -236,7 +237,7 @@ mod tests {
             .put_object(&manifest.catalog, &remote_uri, parquet.clone())
             .await?;
 
-        let storage = mocks::storage::MockStorage::default();
+        let storage = fixtures::storage::MockStorage::default();
 
         // Fetch the manifest from the remote location.
         let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
@@ -272,8 +273,8 @@ mod tests {
 
         // Simulate the remote JSONL manifest.
         // The JSONL data is loaded from a mocked fixture and placed in the remote location.
-        let jsonl = std::fs::read(mocks::manifest::jsonl())?;
-        let remote = mocks::remote::MockRemote::default();
+        let jsonl = std::fs::read(fixtures::manifest::jsonl())?;
+        let remote = fixtures::remote::MockRemote::default();
         let remote_uri = S3Uri::from_str(&format!(
             "s3://{}/.quilt/packages/{}",
             manifest.bucket, manifest.hash
@@ -282,7 +283,7 @@ mod tests {
             .put_object(&manifest.catalog, &remote_uri, jsonl.clone())
             .await?;
 
-        let storage = mocks::storage::MockStorage::default();
+        let storage = fixtures::storage::MockStorage::default();
         scaffold_paths(&storage, paths.required_for_caching(&manifest.bucket)).await?;
 
         // Fetch the manifest from the remote location.

@@ -268,13 +268,13 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::lineage::Change;
-    use crate::mocks;
+    use crate::fixtures;
 
     // NOTE: Tests use "/" path for working directory, because it then parsed with Url and have to be absolute path
 
     #[tokio::test]
     async fn test_commit() -> Res {
-        let storage = mocks::storage::MockStorage::default();
+        let storage = fixtures::storage::MockStorage::default();
 
         let commit_message = "Lorem ipsum".to_string();
         let mut user_meta = serde_json::Map::new();
@@ -310,7 +310,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_removing_and_commit() -> Res {
-        let storage = mocks::storage::MockStorage::default();
+        let storage = fixtures::storage::MockStorage::default();
 
         let commit_message = "Lorem ipsum".to_string();
         let mut user_meta = serde_json::Map::new();
@@ -329,8 +329,8 @@ mod tests {
             ..InstalledPackageStatus::default()
         };
 
-        let lineage = mocks::lineage::with_paths(vec![PathBuf::from("foo")]);
-        let mut manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("foo")]);
+        let lineage = fixtures::lineage::with_paths(vec![PathBuf::from("foo")]);
+        let mut manifest = fixtures::manifest::with_record_keys(vec![PathBuf::from("foo")]);
 
         assert!(
             lineage.commit.is_none(),
@@ -373,7 +373,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_adding_and_commit() -> Res {
-        let storage = mocks::storage::MockStorage::default();
+        let storage = fixtures::storage::MockStorage::default();
         storage
             .write_file(PathBuf::from("/working-dir/bar"), &Vec::new())
             .await?;
@@ -381,13 +381,13 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("bar"),
-                Change::Added(mocks::status::package_file_fingerprint()),
+                Change::Added(fixtures::status::package_file_fingerprint()),
             )]),
             ..InstalledPackageStatus::default()
         };
 
         let lineage = PackageLineage::default();
-        let mut manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("foo")]);
+        let mut manifest = fixtures::manifest::with_record_keys(vec![PathBuf::from("foo")]);
 
         assert!(
             lineage.commit.is_none(),
@@ -440,7 +440,7 @@ mod tests {
     #[ignore]
     #[tokio::test]
     async fn test_adding_manifest_already_has_it() -> Res {
-        let storage = mocks::storage::MockStorage::default();
+        let storage = fixtures::storage::MockStorage::default();
         storage
             .write_file(PathBuf::from("foo"), &Vec::new())
             .await?;
@@ -453,8 +453,8 @@ mod tests {
             ..InstalledPackageStatus::default()
         };
 
-        let lineage = mocks::lineage::with_paths(vec![PathBuf::from("foo")]);
-        let mut manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("foo")]);
+        let lineage = fixtures::lineage::with_paths(vec![PathBuf::from("foo")]);
+        let mut manifest = fixtures::manifest::with_record_keys(vec![PathBuf::from("foo")]);
 
         let result = commit_package(
             lineage,
@@ -480,7 +480,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_modifying_and_commit() -> Res {
-        let storage = mocks::storage::MockStorage::default();
+        let storage = fixtures::storage::MockStorage::default();
         storage
             .write_file(PathBuf::from("/working-dir/bar"), &Vec::new())
             .await?;
@@ -496,8 +496,8 @@ mod tests {
             ..InstalledPackageStatus::default()
         };
 
-        let lineage = mocks::lineage::with_paths(vec![PathBuf::from("bar")]);
-        let mut manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("bar")]);
+        let lineage = fixtures::lineage::with_paths(vec![PathBuf::from("bar")]);
+        let mut manifest = fixtures::manifest::with_record_keys(vec![PathBuf::from("bar")]);
 
         assert!(
             lineage.commit.is_none(),

@@ -264,7 +264,7 @@ mod tests {
             .await?;
 
         // Copy manifest to the expected path
-        let reference_manifest = crate::mocks::manifest::parquet_checksummed();
+        let reference_manifest = crate::fixtures::manifest::parquet_checksummed();
         let test_manifest = temp_dir
             .path()
             .to_path_buf()

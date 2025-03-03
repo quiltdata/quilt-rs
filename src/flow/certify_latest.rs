@@ -29,12 +29,12 @@ pub async fn certify_latest(
 mod tests {
     use super::*;
 
-    use crate::mocks;
+    use crate::fixtures;
     use crate::uri::S3Uri;
 
     #[tokio::test]
     async fn test_certifying_latest() -> Res {
-        let remote = mocks::remote::MockRemote::default();
+        let remote = fixtures::remote::MockRemote::default();
         remote
             .put_object(
                 &None,
@@ -42,7 +42,7 @@ mod tests {
                 b"OUTDATED_HASH".to_vec(),
             )
             .await?;
-        let source_lineage = mocks::lineage::with_remote(ManifestUri {
+        let source_lineage = fixtures::lineage::with_remote(ManifestUri {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
             hash: "LATEST_HASH".to_string(),

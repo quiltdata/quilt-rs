@@ -5,13 +5,13 @@ use super::CommitState;
 use super::LineagePaths;
 use super::PackageLineage;
 use crate::lineage::PathState;
-use crate::mocks;
+use crate::fixtures;
 use crate::uri::ManifestUri;
 
 pub fn path_state() -> PathState {
     PathState {
         timestamp: chrono::DateTime::default(),
-        hash: mocks::row_hash_sample1(),
+        hash: fixtures::row_hash_sample1(),
     }
 }
 

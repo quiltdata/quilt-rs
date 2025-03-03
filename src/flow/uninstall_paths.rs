@@ -54,11 +54,11 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::mocks;
+    use crate::fixtures;
 
     #[tokio::test]
     async fn uninstall_not_installed_path() -> Res {
-        let storage = mocks::storage::MockStorage::default();
+        let storage = fixtures::storage::MockStorage::default();
         let lineage = PackageLineage::default();
         let paths = vec![PathBuf::from("test folde/r")];
 
@@ -77,9 +77,9 @@ mod tests {
             PathBuf::from("test folde/r"),
             PathBuf::from("b/b"),
         ];
-        let lineage = mocks::lineage::with_paths(installed_paths);
+        let lineage = fixtures::lineage::with_paths(installed_paths);
 
-        let storage = mocks::storage::MockStorage::default();
+        let storage = fixtures::storage::MockStorage::default();
         storage
             .write_file(PathBuf::from("a/a"), &Vec::new())
             .await?;
@@ -102,8 +102,8 @@ mod tests {
         assert_eq!(
             modified_lineage.paths,
             BTreeMap::from([
-                (PathBuf::from("a/a"), mocks::lineage::path_state()),
-                (PathBuf::from("b/b"), mocks::lineage::path_state()),
+                (PathBuf::from("a/a"), fixtures::lineage::path_state()),
+                (PathBuf::from("b/b"), fixtures::lineage::path_state()),
             ])
         );
         Ok(())
@@ -111,9 +111,9 @@ mod tests {
 
     #[tokio::test]
     async fn uninstall_multiple_paths() -> Res {
-        let lineage = mocks::lineage::with_paths(vec![PathBuf::from("a/a"), PathBuf::from("b/b")]);
+        let lineage = fixtures::lineage::with_paths(vec![PathBuf::from("a/a"), PathBuf::from("b/b")]);
         let paths = vec![PathBuf::from("b/b"), PathBuf::from("a/a")];
-        let storage = mocks::storage::MockStorage::default();
+        let storage = fixtures::storage::MockStorage::default();
         let modified_lineage = uninstall_paths(lineage, PathBuf::new(), &storage, &paths).await?;
         assert!(modified_lineage.paths.is_empty());
         Ok(())

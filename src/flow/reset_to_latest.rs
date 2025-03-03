@@ -103,7 +103,7 @@ mod tests {
     use super::*;
 
     use crate::lineage::PackageLineage;
-    use crate::mocks;
+    use crate::fixtures;
     use crate::paths::scaffold_paths;
     use crate::uri::S3Uri;
 
@@ -111,14 +111,14 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_if_already_latest() -> Res {
-        let source_lineage = mocks::lineage::with_remote(ManifestUri {
+        let source_lineage = fixtures::lineage::with_remote(ManifestUri {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
             hash: "foo".to_string(),
             catalog: None,
         });
 
-        let remote = mocks::remote::MockRemote::default();
+        let remote = fixtures::remote::MockRemote::default();
         remote
             .put_object(
                 &None,
@@ -131,7 +131,7 @@ mod tests {
             source_lineage.clone(),
             &mut Table::default(),
             &DomainPaths::default(),
-            &mocks::storage::MockStorage::default(),
+            &fixtures::storage::MockStorage::default(),
             &remote,
             PathBuf::default(),
             Namespace::default(),
@@ -151,14 +151,14 @@ mod tests {
         };
 
         let paths = DomainPaths::default();
-        let storage = mocks::storage::MockStorage::default();
+        let storage = fixtures::storage::MockStorage::default();
         scaffold_paths(&storage, paths.required_for_caching(&manifest_uri.bucket)).await?;
 
-        let source_lineage = mocks::lineage::with_remote(manifest_uri);
+        let source_lineage = fixtures::lineage::with_remote(manifest_uri);
 
-        let jsonl = std::fs::read(mocks::manifest::jsonl())?;
-        let hash = mocks::manifest::JSONL_HASH;
-        let remote = mocks::remote::MockRemote::default();
+        let jsonl = std::fs::read(fixtures::manifest::jsonl())?;
+        let hash = fixtures::manifest::JSONL_HASH;
+        let remote = fixtures::remote::MockRemote::default();
         remote
             .put_object(
                 &None,

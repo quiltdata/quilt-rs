@@ -199,7 +199,7 @@ mod tests {
     use tempfile;
 
     use crate::manifest::Row;
-    use crate::mocks;
+    use crate::fixtures;
 
     // Verify installing the path that is already fetched to the `.quilt/objects`
     // Practically it is useful when we try to install identical files. Then we can re-use cache (because files are located by hash).
@@ -214,10 +214,10 @@ mod tests {
 
         // Simulate the file already exists in `.quilt/objects/HASH`
         // We trust that the hash is correct, so we can skip the actual file content
-        let storage = mocks::storage::MockStorage::default();
+        let storage = fixtures::storage::MockStorage::default();
         // The same hash is used in `mocks::manifest::with_record_keys`
         // So, it's not completely random.
-        let hash = mocks::row_hash_sample1();
+        let hash = fixtures::row_hash_sample1();
         let object_path = domain_paths.object(hash.digest());
         let absolute_path = domain_working_dir.path().join(object_path);
         // Path is `.quilt/objects/HASH`
@@ -227,14 +227,14 @@ mod tests {
         let lineage = PackageLineage::default();
         let single_object_path = PathBuf::from("a/a");
         let entries_paths = vec![single_object_path.clone()];
-        let mut manifest = mocks::manifest::with_record_keys(entries_paths.clone());
+        let mut manifest = fixtures::manifest::with_record_keys(entries_paths.clone());
 
         // Lineage does not track anything before the installation
         assert!(lineage.paths.is_empty());
 
         // We deal with cached file, so remote is "empty" and doesn't make any HTTP calls,
         // since it doesn't throw "key not found"
-        let remote = mocks::remote::MockRemote::default();
+        let remote = fixtures::remote::MockRemote::default();
         let lineage = install_paths(
             lineage,
             &mut manifest,
@@ -266,8 +266,8 @@ mod tests {
         let working_dir = domain_paths.working_dir(&namespace.into());
 
         // Simulate the manifest with rows containing an object path
-        let remote = mocks::remote::MockRemote::default();
-        let storage = mocks::storage::MockStorage::default();
+        let remote = fixtures::remote::MockRemote::default();
+        let storage = fixtures::storage::MockStorage::default();
         let single_object_path = PathBuf::from("a/a");
         let entries_paths = vec![single_object_path.clone()];
 
@@ -284,7 +284,7 @@ mod tests {
 
         // Create the manifest with a single remote row with a random hash
         let hash: multihash::Multihash<256> = multihash::Multihash::wrap(0x16, b"anything")?;
-        let mut manifest = mocks::manifest::with_rows(vec![Row {
+        let mut manifest = fixtures::manifest::with_rows(vec![Row {
             name: single_object_path.clone(),
             hash,
             place: remote_file_url,
@@ -355,11 +355,11 @@ mod tests {
             ..Row::default()
         };
         let rows = vec![row_1.clone(), row_2.clone(), row_3.clone(), row_4.clone()];
-        let mut manifest = mocks::manifest::with_rows(rows);
+        let mut manifest = fixtures::manifest::with_rows(rows);
 
         // Simulate two of three files (1 and 3) are already exist in `.quilt/objects/HASH`
         // We trust that the hash is correct, so we can skip the actual file content
-        let storage = mocks::storage::MockStorage::default();
+        let storage = fixtures::storage::MockStorage::default();
         let parent = domain_working_dir.path();
         let object_path_1 = parent.join(domain_paths.object(row_1.hash.digest()));
         storage.write_file(object_path_1, &Vec::new()).await?;
@@ -367,7 +367,7 @@ mod tests {
         storage.write_file(object_path_3, &Vec::new()).await?;
 
         // Simulate the remote object
-        let remote = mocks::remote::MockRemote::default();
+        let remote = fixtures::remote::MockRemote::default();
         let remote_object_uri_2 = S3Uri::from_str(&row_2.place)?;
         remote
             .put_object(&lineage.remote.catalog, &remote_object_uri_2, Vec::new())
@@ -418,13 +418,13 @@ mod tests {
     #[tokio::test]
     async fn test_installing_path_that_doesnt_exists_in_manifest() -> Res {
         let lineage = PackageLineage::default();
-        let remote = mocks::remote::MockRemote::default();
-        let storage = mocks::storage::MockStorage::default();
+        let remote = fixtures::remote::MockRemote::default();
+        let storage = fixtures::storage::MockStorage::default();
 
         // We want to install z/z
         let entries_paths = vec![PathBuf::from("z/z")];
         // But manifest clearly doens't contain it. It contain different path
-        let mut manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("a/a")]);
+        let mut manifest = fixtures::manifest::with_record_keys(vec![PathBuf::from("a/a")]);
 
         // Assert we don't track anything
         assert!(lineage.paths.is_empty());

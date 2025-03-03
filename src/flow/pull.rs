@@ -129,12 +129,12 @@ mod tests {
 
     use crate::lineage::Change;
     use crate::lineage::PackageFileFingerprint;
-    use crate::mocks;
+    use crate::fixtures;
 
     #[tokio::test]
     async fn test_no_pull_if_changes() -> Res {
-        let storage = mocks::storage::MockStorage::default();
-        let lineage = mocks::lineage::with_paths(vec![PathBuf::from("a/a")]);
+        let storage = fixtures::storage::MockStorage::default();
+        let lineage = fixtures::lineage::with_paths(vec![PathBuf::from("a/a")]);
 
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
@@ -143,10 +143,10 @@ mod tests {
             )]),
             ..InstalledPackageStatus::default()
         };
-        let remote = mocks::remote::MockRemote::default();
+        let remote = fixtures::remote::MockRemote::default();
         let error = pull_package(
             lineage,
-            &mut mocks::manifest::with_record_keys(vec![PathBuf::from("a/a")]),
+            &mut fixtures::manifest::with_record_keys(vec![PathBuf::from("a/a")]),
             &DomainPaths::default(),
             &storage,
             &remote,
@@ -164,9 +164,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_pull_if_commit() {
-        let storage = mocks::storage::MockStorage::default();
-        let remote = mocks::remote::MockRemote::default();
-        let lineage = mocks::lineage::with_commit();
+        let storage = fixtures::storage::MockStorage::default();
+        let remote = fixtures::remote::MockRemote::default();
+        let lineage = fixtures::lineage::with_commit();
         let error = pull_package(
             lineage,
             &mut Table::default(),
@@ -186,8 +186,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_pull_if_diverged() {
-        let storage = mocks::storage::MockStorage::default();
-        let remote = mocks::remote::MockRemote::default();
+        let storage = fixtures::storage::MockStorage::default();
+        let remote = fixtures::remote::MockRemote::default();
         let lineage = PackageLineage {
             remote: ManifestUri {
                 hash: "a".to_string(),
@@ -215,8 +215,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_pull_if_up_to_date() {
-        let storage = mocks::storage::MockStorage::default();
-        let remote = mocks::remote::MockRemote::default();
+        let storage = fixtures::storage::MockStorage::default();
+        let remote = fixtures::remote::MockRemote::default();
         let lineage = PackageLineage {
             remote: ManifestUri {
                 hash: "a".to_string(),
