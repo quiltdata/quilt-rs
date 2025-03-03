@@ -37,6 +37,8 @@ pub mod sample_file_1 {
 pub mod manifest {
     use std::path::PathBuf;
 
+    use crate::Res;
+
     const TEST_LOCAL_PARQUET: &str = "fixtures/manifest.parquet";
     const TEST_LOCAL_PARQUET_CHECKSUMMED: &str = "fixtures/checksummed.parquet";
     const TEST_LOCAL_JSONL: &str = "fixtures/manifest.jsonl";
@@ -44,18 +46,20 @@ pub mod manifest {
     pub const JSONL_HASH: &str = "3af08e839fec032c6804596d32932f6f0550abe8b9696c56ed15fe7f8e853ebd";
 
     fn local_uri(key: &str) -> PathBuf {
-        std::env::current_dir().expect("Failed to get current directory").join(key)
+        std::env::current_dir()
+            .expect("Failed to get current directory")
+            .join(key)
     }
 
-    pub fn parquet() -> PathBuf {
-        local_uri(TEST_LOCAL_PARQUET)
+    pub fn parquet() -> Res<PathBuf> {
+        Ok(local_uri(TEST_LOCAL_PARQUET))
     }
 
-    pub fn jsonl() -> PathBuf {
-        local_uri(TEST_LOCAL_JSONL)
+    pub fn jsonl() -> Res<PathBuf> {
+        Ok(local_uri(TEST_LOCAL_JSONL))
     }
 
-    pub fn parquet_checksummed() -> PathBuf {
-        local_uri(TEST_LOCAL_PARQUET_CHECKSUMMED)
+    pub fn parquet_checksummed() -> Res<PathBuf> {
+        Ok(local_uri(TEST_LOCAL_PARQUET_CHECKSUMMED))
     }
 }
