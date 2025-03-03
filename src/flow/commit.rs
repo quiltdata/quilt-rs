@@ -269,13 +269,14 @@ mod tests {
 
     use crate::fixtures;
     use crate::fixtures::sample_file_1;
+    use crate::io::storage::mocks::MockStorage;
     use crate::lineage::Change;
 
     // NOTE: Tests use "/" path for working directory, because it then parsed with Url and have to be absolute path
 
     #[tokio::test]
     async fn test_commit() -> Res {
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
 
         let commit_message = "Lorem ipsum".to_string();
         let mut user_meta = serde_json::Map::new();
@@ -311,7 +312,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_removing_and_commit() -> Res {
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
 
         let commit_message = "Lorem ipsum".to_string();
         let mut user_meta = serde_json::Map::new();
@@ -377,7 +378,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_adding_and_commit() -> Res {
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
         storage
             .write_file(PathBuf::from("/working-dir/bar"), &Vec::new())
             .await?;
@@ -444,7 +445,7 @@ mod tests {
     #[ignore]
     #[tokio::test]
     async fn test_adding_manifest_already_has_it() -> Res {
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
         storage
             .write_file(PathBuf::from("foo"), &Vec::new())
             .await?;
@@ -487,7 +488,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_modifying_and_commit() -> Res {
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
         storage
             .write_file(PathBuf::from("/working-dir/bar"), &Vec::new())
             .await?;

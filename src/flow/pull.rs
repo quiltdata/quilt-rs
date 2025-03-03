@@ -129,13 +129,14 @@ mod tests {
 
     use crate::fixtures;
     use crate::fixtures::sample_file_1;
+    use crate::io::storage::mocks::MockStorage;
     use crate::lineage::Change;
     use crate::lineage::CommitState;
     use crate::lineage::PackageFileFingerprint;
 
     #[tokio::test]
     async fn test_no_pull_if_changes() -> Res {
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
         let lineage = PackageLineage {
             paths: BTreeMap::from([(PathBuf::from("a/a"), sample_file_1::path_state())]),
             ..PackageLineage::default()
@@ -169,7 +170,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_pull_if_commit() {
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
         let remote = fixtures::remote::MockRemote::default();
         let lineage = PackageLineage {
             commit: Some(CommitState::default()),
@@ -195,7 +196,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_pull_if_diverged() {
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
         let remote = fixtures::remote::MockRemote::default();
         let lineage = PackageLineage {
             remote: ManifestUri {
@@ -224,7 +225,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_pull_if_up_to_date() {
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
         let remote = fixtures::remote::MockRemote::default();
         let lineage = PackageLineage {
             remote: ManifestUri {

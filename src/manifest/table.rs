@@ -289,12 +289,13 @@ mod tests {
     use multihash::Multihash;
 
     use crate::checksum::MULTIHASH_SHA256;
-    use crate::manifest::Row;
     use crate::fixtures;
+    use crate::io::storage::mocks::MockStorage;
+    use crate::manifest::Row;
 
     #[tokio::test]
     async fn read_existing_local() -> Res {
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
         storage
             .write_file(
                 fixtures::manifest::parquet(),

@@ -148,7 +148,9 @@ mod tests {
     #[ignore] // It doesn't work in CI. In CI file has `now` date
     async fn test_getting_file_modified_ts() -> Res {
         let storage = LocalStorage::default();
-        let timestamp = storage.modified_timestamp(fixtures::manifest::jsonl()).await?;
+        let timestamp = storage
+            .modified_timestamp(fixtures::manifest::jsonl())
+            .await?;
         assert_eq!(
             timestamp.to_string(),
             "2024-01-15 11:31:00.615186989 UTC".to_string()
@@ -229,7 +231,9 @@ mod tests {
         use crate::fixtures;
 
         let storage = LocalStorage::default();
-        let stream = storage.read_byte_stream(fixtures::manifest::jsonl()).await?;
+        let stream = storage
+            .read_byte_stream(fixtures::manifest::jsonl())
+            .await?;
         let bytes = stream.collect().await?.to_vec();
 
         // Verify we can read the known test file

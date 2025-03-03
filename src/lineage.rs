@@ -143,7 +143,7 @@ mod tests {
     use base64::Engine;
 
     use crate::checksum::calculate_sha256_chunked_checksum;
-    use crate::fixtures;
+    use crate::io::storage::mocks::MockStorage;
     use crate::uri::ManifestUri;
 
     #[test]
@@ -198,7 +198,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_domain_lineage_from_file() -> Res {
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
         let file_path = PathBuf::from("foo");
         storage
             .write_file(&file_path, br###"{"packages":{}}"###.as_ref())
@@ -210,7 +210,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_domain_lineage_from_nothing() -> Res {
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
         let lineage = DomainLineageIo::new(PathBuf::from("does-not-exist"))
             .read(&storage)
             .await?;
@@ -220,7 +220,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_domain_lineage_write() -> Res {
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
         let file_path = PathBuf::from("foo");
         assert!(!storage.exists(&file_path).await);
         let bytes = "0123456789abcdef".as_bytes();

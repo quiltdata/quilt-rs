@@ -103,6 +103,7 @@ mod tests {
     use super::*;
 
     use crate::fixtures;
+    use crate::io::storage::mocks::MockStorage;
     use crate::lineage::PackageLineage;
     use crate::paths::scaffold_paths;
     use crate::uri::S3Uri;
@@ -135,7 +136,7 @@ mod tests {
             source_lineage.clone(),
             &mut Table::default(),
             &DomainPaths::default(),
-            &fixtures::storage::MockStorage::default(),
+            &MockStorage::default(),
             &remote,
             PathBuf::default(),
             Namespace::default(),
@@ -155,7 +156,7 @@ mod tests {
         };
 
         let paths = DomainPaths::default();
-        let storage = fixtures::storage::MockStorage::default();
+        let storage = MockStorage::default();
         scaffold_paths(&storage, paths.required_for_caching(&manifest_uri.bucket)).await?;
 
         let source_lineage = PackageLineage {
