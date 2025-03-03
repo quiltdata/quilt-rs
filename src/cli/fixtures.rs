@@ -2,7 +2,7 @@ pub mod packages {
     pub mod default {
         pub const URI_LATEST: &str = "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs";
         pub const URI: &str =
-    "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7";
+            "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7";
         pub const README_LK: &str = "one/two two/three three three/READ ME.md";
         pub const README_LK_ESCAPED: &str = "one/two%20two/three%20three%20three/READ%20ME.md";
         pub const README_PK: &str = "s3://data-yaml-spec-tests/reference/quilt-rs/one/two%20two/three%20three%20three/READ%20ME.md?versionId=aIOyttmoQaE2cMcwEEoRod5G_3TZEHAW";
