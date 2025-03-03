@@ -121,7 +121,7 @@ mod tests {
     use quilt_rs::io::storage::LocalStorage;
     use quilt_rs::io::storage::Storage;
 
-    use crate::cli::fixtures;
+    use crate::cli::fixtures::packages::default as pkg;
     use crate::cli::model::Model;
 
     /// Verifies the installation process in CLI with valid data:
@@ -133,13 +133,13 @@ mod tests {
     /// Uses an actual manifest from Quilt without mocks.
     #[test(tokio::test)]
     async fn test_model() -> Result<(), Error> {
-        let uri = format!("{}&path={}", fixtures::DEFAULT_PACKAGE_URI, fixtures::DEFAULT_PACKAGE_README_LK_ESCAPED);
+        let uri = format!("{}&path={}", pkg::URI, pkg::README_LK_ESCAPED);
 
-        let readme_logical_key = PathBuf::from(fixtures::DEFAULT_PACKAGE_README_LK);
-        let timestamp_logical_key = PathBuf::from(fixtures::DEFAULT_PACKAGE_TIMESTAMP_LK);
+        let readme_logical_key = PathBuf::from(pkg::README_LK);
+        let timestamp_logical_key = PathBuf::from(pkg::TIMESTAMP_LK);
 
         let (m, temp_dir) = Model::from_temp_dir()?;
-        let working_dir = temp_dir.path().join("reference/quilt-rs");
+        let working_dir = temp_dir.path().join(pkg::NAMESPACE_STR);
         {
             let local_domain = m.get_local_domain();
 
@@ -154,18 +154,19 @@ mod tests {
             .await?;
 
             assert_eq!(
-            format!("{}", output),
-            format!(
-                "Installed package \"reference/quilt-rs\" at {}/reference/quilt-rs\nPath: \"one/two two/three three three/READ ME.md\"\nPath: \"timestamp.txt\"",
-                temp_dir.path().display()
-            )
-        );
+                format!("{}", output),
+                format!(
+                    "Installed package \"{}\" at {}/{}\nPath: \"{}\"\nPath: \"{}\"",
+                    pkg::NAMESPACE_STR,
+                    temp_dir.path().display(),
+                    pkg::NAMESPACE_STR,
+                    pkg::README_LK,
+                    pkg::TIMESTAMP_LK,
+                )
+            );
 
             let installed_package = output.installed_package;
-            assert_eq!(
-                installed_package.namespace,
-                ("reference", "quilt-rs").into()
-            );
+            assert_eq!(installed_package.namespace, (pkg::NAMESPACE).into());
             assert!(installed_package
                 .lineage()
                 .await?
@@ -174,7 +175,7 @@ mod tests {
 
             assert_eq!(
                 installed_package.working_folder(),
-                PathBuf::from(temp_dir.as_ref()).join("reference/quilt-rs")
+                PathBuf::from(temp_dir.as_ref()).join(pkg::NAMESPACE_STR)
             );
             assert_eq!(
                 output.paths,
@@ -194,8 +195,8 @@ mod tests {
             storage
                 .exists(temp_dir.path().join(format!(
                     ".quilt/installed/{}/{}",
-                    fixtures::DEFAULT_NAMESPACE,
-                    fixtures::DEFAULT_TOP_HASH
+                    pkg::NAMESPACE_STR,
+                    pkg::TOP_HASH
                 )))
                 .await
         );
@@ -228,27 +229,29 @@ mod tests {
         {
             let local_domain = m.get_local_domain();
             let install_once_more = model(
-            local_domain,
-            Input {
-                namespace: None,
-                paths: None,
-                uri: fixtures::DEFAULT_PACKAGE_URI.to_string(),
-            },
-        )
-        .await?;
+                local_domain,
+                Input {
+                    namespace: None,
+                    paths: None,
+                    uri: pkg::URI.to_string(),
+                },
+            )
+            .await?;
 
             // No paths installed during this call
             assert_eq!(
                 format!("{}", install_once_more),
                 format!(
-                    "Installed package \"reference/quilt-rs\" at {}/reference/quilt-rs\nNo paths installed",
-                    temp_dir.path().display()
+                    "Installed package \"{}\" at {}/{}\nNo paths installed",
+                    pkg::NAMESPACE_STR,
+                    temp_dir.path().display(),
+                    pkg::NAMESPACE_STR,
                 )
             );
 
             assert_eq!(
                 install_once_more.installed_package.namespace,
-                ("reference", "quilt-rs").into(),
+                pkg::NAMESPACE.into(),
             );
 
             // However paths are still tracked, because we didn't install a package anew,
@@ -263,7 +266,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_valid_command() -> Result<(), Error> {
-        let uri = fixtures::DEFAULT_PACKAGE_URI.to_string();
+        let uri = pkg::URI.to_string();
 
         let (model, temp_dir) = Model::from_temp_dir()?;
 
@@ -281,9 +284,9 @@ mod tests {
                 output_str,
                 format!(
                     "Installed package \"{}\" at {}/{}\nNo paths installed",
-                    fixtures::DEFAULT_NAMESPACE,
+                    pkg::NAMESPACE_STR,
                     temp_dir.path().display(),
-                    fixtures::DEFAULT_NAMESPACE,
+                    pkg::NAMESPACE_STR,
                 )
             );
         } else {
