@@ -231,7 +231,7 @@ mod tests {
         let entries_paths = vec![single_object_path.clone()];
         let mut manifest = Table::default();
         manifest
-            .insert_record(sample_file_1::row(single_object_path.clone()))
+            .insert_record(sample_file_1::row(single_object_path.clone())?)
             .await?;
 
         // Lineage does not track anything before the installation

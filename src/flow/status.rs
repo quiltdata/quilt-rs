@@ -311,7 +311,7 @@ mod tests {
         };
         let mut manifest = Table::default();
         manifest
-            .insert_record(sample_file_1::row(sample_file_path.clone()))
+            .insert_record(sample_file_1::row(sample_file_path.clone())?)
             .await?;
         let (_, status) = create_status(
             lineage,
