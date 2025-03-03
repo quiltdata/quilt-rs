@@ -298,11 +298,11 @@ mod tests {
         let storage = MockStorage::default();
         storage
             .write_file(
-                fixtures::manifest::parquet(),
-                &std::fs::read(fixtures::manifest::parquet())?,
+                fixtures::manifest::parquet()?,
+                &std::fs::read(fixtures::manifest::parquet()?)?,
             )
             .await?;
-        let table = Table::read_from_path(&storage, &fixtures::manifest::parquet())
+        let table = Table::read_from_path(&storage, &fixtures::manifest::parquet()?)
             .await
             .unwrap();
         assert_eq!(table.records_len().await, 2);
