@@ -320,12 +320,12 @@ pub async fn build_manifest_from_rows_stream(
 mod tests {
     use super::*;
 
-    use crate::mocks;
+    use crate::fixtures;
 
     #[tokio::test]
     async fn test_resolve_existing_hash() -> Res {
         let uri = S3PackageUri::try_from("quilt+s3://b#package=foo/bar@hjknlmn")?;
-        let remote = mocks::remote::MockRemote::default();
+        let remote = fixtures::remote::MockRemote::default();
         let top_hash = resolve_top_hash(&remote, &None, &uri).await?;
         assert_eq!(top_hash, "hjknlmn".to_string(),);
         Ok(())
@@ -334,7 +334,7 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_remote_hash() -> Res {
         let uri = S3PackageUri::try_from("quilt+s3://b#package=foo/bar")?;
-        let remote = mocks::remote::MockRemote::default();
+        let remote = fixtures::remote::MockRemote::default();
         remote
             .put_object(
                 &None,

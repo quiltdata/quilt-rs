@@ -290,18 +290,18 @@ mod tests {
 
     use crate::checksum::MULTIHASH_SHA256;
     use crate::manifest::Row;
-    use crate::mocks;
+    use crate::fixtures;
 
     #[tokio::test]
     async fn read_existing_local() -> Res {
-        let storage = mocks::storage::MockStorage::default();
+        let storage = fixtures::storage::MockStorage::default();
         storage
             .write_file(
-                mocks::manifest::parquet(),
-                &std::fs::read(mocks::manifest::parquet())?,
+                fixtures::manifest::parquet(),
+                &std::fs::read(fixtures::manifest::parquet())?,
             )
             .await?;
-        let table = Table::read_from_path(&storage, &mocks::manifest::parquet())
+        let table = Table::read_from_path(&storage, &fixtures::manifest::parquet())
             .await
             .unwrap();
         assert_eq!(table.records_len().await, 2);

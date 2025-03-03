@@ -213,11 +213,11 @@ mod tests {
     use crate::lineage::CommitState;
     use crate::lineage::PackageFileFingerprint;
     use crate::lineage::UpstreamState;
-    use crate::mocks;
+    use crate::fixtures;
 
     #[tokio::test]
     async fn test_default_status() -> Res {
-        let storage = mocks::storage::MockStorage::default();
+        let storage = fixtures::storage::MockStorage::default();
         let (_lineage, status) = create_status(
             PackageLineage::default(),
             &storage,
@@ -234,11 +234,11 @@ mod tests {
         let base_hash = "AAA";
         let latest_hash = "BBB";
         let commit_hash = "AAA";
-        let lineage = mocks::lineage::with_commit_hashes(base_hash, latest_hash, commit_hash);
+        let lineage = fixtures::lineage::with_commit_hashes(base_hash, latest_hash, commit_hash);
 
         let (_lineage, status) = create_status(
             lineage,
-            &mocks::storage::MockStorage::default(),
+            &fixtures::storage::MockStorage::default(),
             &Table::default(),
             PathBuf::default(),
         )
@@ -252,11 +252,11 @@ mod tests {
         let base_hash = "AAA";
         let latest_hash = "AAA";
         let commit_hash = "BBB";
-        let lineage = mocks::lineage::with_commit_hashes(base_hash, latest_hash, commit_hash);
+        let lineage = fixtures::lineage::with_commit_hashes(base_hash, latest_hash, commit_hash);
 
         let (_, status) = create_status(
             lineage,
-            &mocks::storage::MockStorage::default(),
+            &fixtures::storage::MockStorage::default(),
             &Table::default(),
             PathBuf::default(),
         )
@@ -279,7 +279,7 @@ mod tests {
 
         let (_, status) = create_status(
             lineage,
-            &mocks::storage::MockStorage::default(),
+            &fixtures::storage::MockStorage::default(),
             &Table::default(),
             PathBuf::default(),
         )
@@ -290,11 +290,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_removed_files() -> Res {
-        let lineage = mocks::lineage::with_paths(vec![PathBuf::from("a/a")]);
-        let manifest = mocks::manifest::with_record_keys(vec![PathBuf::from("a/a")]);
+        let lineage = fixtures::lineage::with_paths(vec![PathBuf::from("a/a")]);
+        let manifest = fixtures::manifest::with_record_keys(vec![PathBuf::from("a/a")]);
         let (_, status) = create_status(
             lineage,
-            &mocks::storage::MockStorage::default(),
+            &fixtures::storage::MockStorage::default(),
             &manifest,
             PathBuf::default(),
         )
@@ -312,13 +312,13 @@ mod tests {
         let lineage = PackageLineage::default();
         let manifest = Table::default();
 
-        let storage = mocks::storage::MockStorage::default();
+        let storage = fixtures::storage::MockStorage::default();
         let working_dir = storage.temp_dir.as_ref().join(PathBuf::from("foo/bar"));
         let file_path = PathBuf::from("inside/package/file.pq");
         storage
             .write_file(
                 working_dir.join(&file_path),
-                &std::fs::read(mocks::manifest::parquet())?,
+                &std::fs::read(fixtures::manifest::parquet())?,
             )
             .await?;
 

@@ -70,7 +70,7 @@ mod tests {
     use std::str::FromStr;
 
     use crate::io::storage::LocalStorage;
-    use crate::mocks;
+    use crate::fixtures;
     use crate::uri::S3Uri;
 
     /// Verify that attempting to install a package that is already installed results in an error.
@@ -84,8 +84,8 @@ mod tests {
         let result = install_package(
             lineage,
             &paths::DomainPaths::default(),
-            &mocks::storage::MockStorage::default(),
-            &mocks::remote::MockRemote::default(),
+            &fixtures::storage::MockStorage::default(),
+            &fixtures::remote::MockRemote::default(),
             &ManifestUri {
                 namespace: namespace.into(),
                 ..ManifestUri::default()
@@ -112,8 +112,8 @@ mod tests {
         };
 
         // Load the reference manifest from `./fixtures`
-        let parquet = std::fs::read(mocks::manifest::parquet())?;
-        let remote = mocks::remote::MockRemote::default();
+        let parquet = std::fs::read(fixtures::manifest::parquet())?;
+        let remote = fixtures::remote::MockRemote::default();
 
         // Simulate the remote storage containing the Parquet manifest
         let remote_uri = S3Uri::from_str(&format!(
@@ -137,7 +137,7 @@ mod tests {
             )
             .await?;
 
-        let storage = mocks::storage::MockStorage::default();
+        let storage = fixtures::storage::MockStorage::default();
         let result = install_package(
             DomainLineage::default(),
             &paths::DomainPaths::default(),
@@ -183,8 +183,8 @@ mod tests {
         };
 
         // Load the reference manifest from `./fixtures`
-        let parquet = std::fs::read(mocks::manifest::parquet())?;
-        let remote = mocks::remote::MockRemote::default();
+        let parquet = std::fs::read(fixtures::manifest::parquet())?;
+        let remote = fixtures::remote::MockRemote::default();
 
         // Simulate the remote storage containing the Parquet manifest
         let remote_uri = S3Uri::from_str(&format!(
