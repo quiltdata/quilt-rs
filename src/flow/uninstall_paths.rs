@@ -116,8 +116,8 @@ mod tests {
     async fn uninstall_multiple_paths() -> Res {
         let lineage = PackageLineage {
             paths: BTreeMap::from([
-                (PathBuf::from("a/a"), sample_file_1::path_state()),
-                (PathBuf::from("b/b"), sample_file_1::path_state()),
+                (PathBuf::from("a/a"), sample_file_1::path_state()?),
+                (PathBuf::from("b/b"), sample_file_1::path_state()?),
             ]),
             ..PackageLineage::default()
         };
