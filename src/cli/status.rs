@@ -96,14 +96,16 @@ mod tests {
     use quilt_rs::io::storage::LocalStorage;
     use quilt_rs::io::storage::Storage;
 
+    use crate::cli::fixtures::packages::default as pkg;
+
     #[test(tokio::test)]
     async fn test_model() -> Result<(), Error> {
-        let uri = "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7";
+        let uri = pkg::URI;
 
         let (m, installed_package, _temp_dir) = install_package_into_temp_dir(uri).await?;
 
-        let readme_logical_key = PathBuf::from("one/two two/three three three/READ ME.md");
-        let timestamp_logical_key = PathBuf::from("timestamp.txt");
+        let readme_logical_key = PathBuf::from(pkg::README_LK);
+        let timestamp_logical_key = PathBuf::from(pkg::TIMESTAMP_LK);
         installed_package
             .install_paths(&vec![
                 readme_logical_key.clone(),
@@ -116,7 +118,7 @@ mod tests {
             let output = model(
                 local_domain,
                 Input {
-                    namespace: ("reference", "quilt-rs").into(),
+                    namespace: pkg::NAMESPACE.into(),
                 },
             )
             .await?;
@@ -146,7 +148,7 @@ mod tests {
             let status_new_files = model(
                 local_domain,
                 Input {
-                    namespace: ("reference", "quilt-rs").into(),
+                    namespace: pkg::NAMESPACE.into(),
                 },
             )
             .await?;
@@ -219,7 +221,9 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_model_when_latest_is_outdated() -> Result<(), Error> {
-        let uri = "quilt+s3://data-yaml-spec-tests#package=scale/10u@f8216f57739c9824f22f1f7a1f8ded59fd50791c92bf9c317d06376811ecbfef";
+        use crate::cli::fixtures::packages::outdated as pkg;
+        
+        let uri = pkg::URI;
 
         let (m, installed_package, _temp_dir) = install_package_into_temp_dir(uri).await?;
 
@@ -228,7 +232,7 @@ mod tests {
             let output = model(
                 local_domain,
                 Input {
-                    namespace: ("scale", "10u").into(),
+                    namespace: pkg::NAMESPACE.into(),
                 },
             )
             .await?;
@@ -248,7 +252,7 @@ mod tests {
             let output = model(
                 local_domain,
                 Input {
-                    namespace: ("scale", "10u").into(),
+                    namespace: pkg::NAMESPACE.into(),
                 },
             )
             .await?;
