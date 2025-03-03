@@ -505,7 +505,7 @@ mod tests {
     #[tokio::test]
     async fn test_manifest_from_reader_valid() -> Res {
         let storage = LocalStorage::default();
-        let file = storage.open_file(fixtures::manifest::jsonl()).await?;
+        let file = storage.open_file(fixtures::manifest::jsonl()?).await?;
 
         assert_eq!(
             Manifest::from_reader(file).await?,

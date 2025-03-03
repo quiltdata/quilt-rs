@@ -339,7 +339,7 @@ mod tests {
         storage
             .write_file(
                 working_dir.join(&file_path),
-                &std::fs::read(fixtures::manifest::parquet())?,
+                &std::fs::read(fixtures::manifest::parquet()?)?,
             )
             .await?;
 

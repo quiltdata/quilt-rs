@@ -165,7 +165,7 @@ mod tests {
             ..PackageLineage::default()
         };
 
-        let jsonl = std::fs::read(fixtures::manifest::jsonl())?;
+        let jsonl = std::fs::read(fixtures::manifest::jsonl()?)?;
         let hash = fixtures::manifest::JSONL_HASH;
         let remote = MockRemote::default();
         remote

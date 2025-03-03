@@ -149,7 +149,7 @@ mod tests {
     async fn test_getting_file_modified_ts() -> Res {
         let storage = LocalStorage::default();
         let timestamp = storage
-            .modified_timestamp(fixtures::manifest::jsonl())
+            .modified_timestamp(fixtures::manifest::jsonl()?)
             .await?;
         assert_eq!(
             timestamp.to_string(),
@@ -166,7 +166,7 @@ mod tests {
         let storage = LocalStorage::default();
 
         assert!(fs::metadata(&dest).await.is_err());
-        storage.copy(fixtures::manifest::jsonl(), &dest).await?;
+        storage.copy(fixtures::manifest::jsonl()?, &dest).await?;
         assert!(fs::metadata(dest).await.is_ok());
 
         Ok(())
