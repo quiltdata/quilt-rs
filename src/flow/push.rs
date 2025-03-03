@@ -174,6 +174,7 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::fixtures;
+    use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::CommitState;
     use crate::lineage::PackageLineage;
@@ -183,7 +184,7 @@ mod tests {
     #[tokio::test]
     async fn test_no_push_if_no_commit() -> Res {
         let storage = MockStorage::default();
-        let remote = fixtures::remote::MockRemote::default();
+        let remote = MockRemote::default();
         let lineage = push_package(
             PackageLineage::default(),
             Table::default(),
@@ -223,7 +224,7 @@ mod tests {
             .write_file(PathBuf::from(manifest_key), &jsonl)
             .await?;
 
-        let remote = fixtures::remote::MockRemote::default();
+        let remote = MockRemote::default();
         remote
             .put_object(
                 &None,
@@ -290,7 +291,7 @@ mod tests {
         storage
             .write_file(PathBuf::from(manifest_key), &jsonl)
             .await?;
-        let remote = fixtures::remote::MockRemote::default();
+        let remote = MockRemote::default();
         remote
             .put_object(
                 &None,

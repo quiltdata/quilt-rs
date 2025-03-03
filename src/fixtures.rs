@@ -1,5 +1,3 @@
-pub use crate::io::remote::mocks as remote;
-
 pub fn row_hash_sample1() -> multihash::Multihash<256> {
     multihash::Multihash::wrap(0xb510, b"pedestrian").expect("Unexpected")
 }

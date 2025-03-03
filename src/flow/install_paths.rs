@@ -199,6 +199,7 @@ mod tests {
     use tempfile;
 
     use crate::fixtures;
+    use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::manifest::Row;
 
@@ -235,7 +236,7 @@ mod tests {
 
         // We deal with cached file, so remote is "empty" and doesn't make any HTTP calls,
         // since it doesn't throw "key not found"
-        let remote = fixtures::remote::MockRemote::default();
+        let remote = MockRemote::default();
         let lineage = install_paths(
             lineage,
             &mut manifest,
@@ -267,7 +268,7 @@ mod tests {
         let working_dir = domain_paths.working_dir(&namespace.into());
 
         // Simulate the manifest with rows containing an object path
-        let remote = fixtures::remote::MockRemote::default();
+        let remote = MockRemote::default();
         let storage = MockStorage::default();
         let single_object_path = PathBuf::from("a/a");
         let entries_paths = vec![single_object_path.clone()];
@@ -368,7 +369,7 @@ mod tests {
         storage.write_file(object_path_3, &Vec::new()).await?;
 
         // Simulate the remote object
-        let remote = fixtures::remote::MockRemote::default();
+        let remote = MockRemote::default();
         let remote_object_uri_2 = S3Uri::from_str(&row_2.place)?;
         remote
             .put_object(&lineage.remote.catalog, &remote_object_uri_2, Vec::new())
@@ -419,7 +420,7 @@ mod tests {
     #[tokio::test]
     async fn test_installing_path_that_doesnt_exists_in_manifest() -> Res {
         let lineage = PackageLineage::default();
-        let remote = fixtures::remote::MockRemote::default();
+        let remote = MockRemote::default();
         let storage = MockStorage::default();
 
         // We want to install z/z
