@@ -77,10 +77,7 @@ mod tests {
             )
             .await?;
 
-            assert_eq!(
-                output.hash,
-                pkg::LATEST_TOP_HASH
-            );
+            assert_eq!(output.hash, pkg::LATEST_TOP_HASH);
         }
 
         Ok(())
