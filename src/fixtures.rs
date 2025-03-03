@@ -6,13 +6,13 @@ pub mod sample_file_1 {
     use crate::manifest::Row;
     use crate::Res;
 
-    pub fn row_hash() -> multihash::Multihash<256> {
-        multihash::Multihash::wrap(0xb510, b"pedestrian").expect("Unexpected")
+    pub fn row_hash() -> Res<multihash::Multihash<256>> {
+        Ok(multihash::Multihash::wrap(0xb510, b"pedestrian")?)
     }
 
     pub fn path_state() -> Res<PathState> {
         Ok(PathState {
-            hash: row_hash(),
+            hash: row_hash()?,
             ..PathState::default()
         })
     }
@@ -20,7 +20,7 @@ pub mod sample_file_1 {
     pub fn fingerprint() -> Res<PackageFileFingerprint> {
         Ok(PackageFileFingerprint {
             size: 0,
-            hash: row_hash(),
+            hash: row_hash()?,
         })
     }
 
@@ -28,7 +28,7 @@ pub mod sample_file_1 {
         Ok(Row {
             name,
             place: "file:///z/x/y".into(),
-            hash: row_hash(),
+            hash: row_hash()?,
             ..Row::default()
         })
     }

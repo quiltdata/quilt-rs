@@ -219,7 +219,7 @@ mod tests {
         let storage = MockStorage::default();
         // The same hash is used in `mocks::manifest::with_record_keys`
         // So, it's not completely random.
-        let hash = sample_file_1::row_hash();
+        let hash = sample_file_1::row_hash()?;
         let object_path = domain_paths.object(hash.digest());
         let absolute_path = domain_working_dir.path().join(object_path);
         // Path is `.quilt/objects/HASH`
