@@ -267,8 +267,9 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::lineage::Change;
     use crate::fixtures;
+    use crate::fixtures::sample_file_1;
+    use crate::lineage::Change;
 
     // NOTE: Tests use "/" path for working directory, because it then parsed with Url and have to be absolute path
 
@@ -329,7 +330,10 @@ mod tests {
             ..InstalledPackageStatus::default()
         };
 
-        let lineage = fixtures::lineage::with_paths(vec![PathBuf::from("foo")]);
+        let lineage = PackageLineage {
+            paths: BTreeMap::from([(PathBuf::from("foo"), sample_file_1::path_state())]),
+            ..PackageLineage::default()
+        };
         let mut manifest = fixtures::manifest::with_record_keys(vec![PathBuf::from("foo")]);
 
         assert!(
@@ -453,7 +457,10 @@ mod tests {
             ..InstalledPackageStatus::default()
         };
 
-        let lineage = fixtures::lineage::with_paths(vec![PathBuf::from("foo")]);
+        let lineage = PackageLineage {
+            paths: BTreeMap::from([(PathBuf::from("foo"), sample_file_1::path_state())]),
+            ..PackageLineage::default()
+        };
         let mut manifest = fixtures::manifest::with_record_keys(vec![PathBuf::from("foo")]);
 
         let result = commit_package(
@@ -496,7 +503,10 @@ mod tests {
             ..InstalledPackageStatus::default()
         };
 
-        let lineage = fixtures::lineage::with_paths(vec![PathBuf::from("bar")]);
+        let lineage = PackageLineage {
+            paths: BTreeMap::from([(PathBuf::from("bar"), sample_file_1::path_state())]),
+            ..PackageLineage::default()
+        };
         let mut manifest = fixtures::manifest::with_record_keys(vec![PathBuf::from("bar")]);
 
         assert!(

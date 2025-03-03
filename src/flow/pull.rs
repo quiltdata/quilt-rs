@@ -127,14 +127,19 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::lineage::Change;
-    use crate::lineage::PackageFileFingerprint;
     use crate::fixtures;
+    use crate::fixtures::sample_file_1;
+    use crate::lineage::Change;
+    use crate::lineage::CommitState;
+    use crate::lineage::PackageFileFingerprint;
 
     #[tokio::test]
     async fn test_no_pull_if_changes() -> Res {
         let storage = fixtures::storage::MockStorage::default();
-        let lineage = fixtures::lineage::with_paths(vec![PathBuf::from("a/a")]);
+        let lineage = PackageLineage {
+            paths: BTreeMap::from([(PathBuf::from("a/a"), sample_file_1::path_state())]),
+            ..PackageLineage::default()
+        };
 
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
@@ -166,7 +171,11 @@ mod tests {
     async fn test_no_pull_if_commit() {
         let storage = fixtures::storage::MockStorage::default();
         let remote = fixtures::remote::MockRemote::default();
-        let lineage = fixtures::lineage::with_commit();
+        let lineage = PackageLineage {
+            commit: Some(CommitState::default()),
+            ..PackageLineage::default()
+        };
+
         let error = pull_package(
             lineage,
             &mut Table::default(),

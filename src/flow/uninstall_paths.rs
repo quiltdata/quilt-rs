@@ -55,6 +55,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::fixtures;
+    use crate::fixtures::sample_file_1;
 
     #[tokio::test]
     async fn uninstall_not_installed_path() -> Res {
@@ -72,12 +73,14 @@ mod tests {
 
     #[tokio::test]
     async fn uninstall_single_path() -> Res {
-        let installed_paths = vec![
-            PathBuf::from("a/a"),
-            PathBuf::from("test folde/r"),
-            PathBuf::from("b/b"),
-        ];
-        let lineage = fixtures::lineage::with_paths(installed_paths);
+        let lineage = PackageLineage {
+            paths: BTreeMap::from([
+                (PathBuf::from("a/a"), sample_file_1::path_state()),
+                (PathBuf::from("test folde/r"), sample_file_1::path_state()),
+                (PathBuf::from("b/b"), sample_file_1::path_state()),
+            ]),
+            ..PackageLineage::default()
+        };
 
         let storage = fixtures::storage::MockStorage::default();
         storage
@@ -102,8 +105,8 @@ mod tests {
         assert_eq!(
             modified_lineage.paths,
             BTreeMap::from([
-                (PathBuf::from("a/a"), fixtures::lineage::path_state()),
-                (PathBuf::from("b/b"), fixtures::lineage::path_state()),
+                (PathBuf::from("a/a"), sample_file_1::path_state()),
+                (PathBuf::from("b/b"), sample_file_1::path_state()),
             ])
         );
         Ok(())
@@ -111,7 +114,14 @@ mod tests {
 
     #[tokio::test]
     async fn uninstall_multiple_paths() -> Res {
-        let lineage = fixtures::lineage::with_paths(vec![PathBuf::from("a/a"), PathBuf::from("b/b")]);
+        let lineage = PackageLineage {
+            paths: BTreeMap::from([
+                (PathBuf::from("a/a"), sample_file_1::path_state()),
+                (PathBuf::from("b/b"), sample_file_1::path_state()),
+            ]),
+            ..PackageLineage::default()
+        };
+
         let paths = vec![PathBuf::from("b/b"), PathBuf::from("a/a")];
         let storage = fixtures::storage::MockStorage::default();
         let modified_lineage = uninstall_paths(lineage, PathBuf::new(), &storage, &paths).await?;

@@ -8,9 +8,6 @@ use serde::Deserialize;
 use serde::Serialize;
 use tracing::log;
 
-#[cfg(test)]
-pub mod mocks;
-
 use crate::io::storage::Storage;
 use crate::uri::Namespace;
 use crate::Error;
