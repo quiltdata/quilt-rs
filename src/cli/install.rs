@@ -133,10 +133,10 @@ mod tests {
     /// Uses an actual manifest from Quilt without mocks.
     #[test(tokio::test)]
     async fn test_model() -> Result<(), Error> {
-        let uri = "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs&path=one/two%20two/three%20three%20three/READ%20ME.md".to_string();
+        let uri = format!("{}&path={}", fixtures::DEFAULT_PACKAGE_URI, fixtures::DEFAULT_PACKAGE_README_LK_ESCAPED);
 
-        let readme_logical_key = PathBuf::from("one/two two/three three three/READ ME.md");
-        let timestamp_logical_key = PathBuf::from("timestamp.txt");
+        let readme_logical_key = PathBuf::from(fixtures::DEFAULT_PACKAGE_README_LK);
+        let timestamp_logical_key = PathBuf::from(fixtures::DEFAULT_PACKAGE_TIMESTAMP_LK);
 
         let (m, temp_dir) = Model::from_temp_dir()?;
         let working_dir = temp_dir.path().join("reference/quilt-rs");
@@ -232,7 +232,7 @@ mod tests {
             Input {
                 namespace: None,
                 paths: None,
-                uri: "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7".to_string(),
+                uri: fixtures::DEFAULT_PACKAGE_URI.to_string(),
             },
         )
         .await?;
@@ -263,7 +263,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_valid_command() -> Result<(), Error> {
-        let uri = fixtures::DEFAULT_PACKAGE_URI.to_string();
+        let uri = fixtures::DEFAULT_PACKAGE_URI_LATEST.to_string();
 
         let (model, temp_dir) = Model::from_temp_dir()?;
 
