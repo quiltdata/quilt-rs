@@ -331,7 +331,7 @@ mod tests {
         };
 
         let lineage = PackageLineage {
-            paths: BTreeMap::from([(PathBuf::from("foo"), sample_file_1::path_state())]),
+            paths: BTreeMap::from([(PathBuf::from("foo"), sample_file_1::path_state()?)]),
             ..PackageLineage::default()
         };
         let mut manifest = Table::default();

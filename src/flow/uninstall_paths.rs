@@ -75,9 +75,9 @@ mod tests {
     async fn uninstall_single_path() -> Res {
         let lineage = PackageLineage {
             paths: BTreeMap::from([
-                (PathBuf::from("a/a"), sample_file_1::path_state()),
-                (PathBuf::from("test folde/r"), sample_file_1::path_state()),
-                (PathBuf::from("b/b"), sample_file_1::path_state()),
+                (PathBuf::from("a/a"), sample_file_1::path_state()?),
+                (PathBuf::from("test folde/r"), sample_file_1::path_state()?),
+                (PathBuf::from("b/b"), sample_file_1::path_state()?),
             ]),
             ..PackageLineage::default()
         };
@@ -105,8 +105,8 @@ mod tests {
         assert_eq!(
             modified_lineage.paths,
             BTreeMap::from([
-                (PathBuf::from("a/a"), sample_file_1::path_state()),
-                (PathBuf::from("b/b"), sample_file_1::path_state()),
+                (PathBuf::from("a/a"), sample_file_1::path_state()?),
+                (PathBuf::from("b/b"), sample_file_1::path_state()?),
             ])
         );
         Ok(())

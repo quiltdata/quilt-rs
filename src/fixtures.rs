@@ -10,11 +10,11 @@ pub mod sample_file_1 {
         multihash::Multihash::wrap(0xb510, b"pedestrian").expect("Unexpected")
     }
 
-    pub fn path_state() -> PathState {
-        PathState {
+    pub fn path_state() -> Res<PathState> {
+        Ok(PathState {
             hash: row_hash(),
             ..PathState::default()
-        }
+        })
     }
 
     pub fn fingerprint() -> Res<PackageFileFingerprint> {
