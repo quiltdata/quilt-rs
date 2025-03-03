@@ -42,10 +42,8 @@ pub async fn model(
     local_domain: &quilt_rs::LocalDomain,
     Input { namespace }: Input,
 ) -> Result<Output, Error> {
-    let manifest_uri = pull_package(local_domain, namespace).await?;
-    Ok(Output {
-        hash: manifest_uri.hash,
-    })
+    let ManifestUri { hash, .. } = pull_package(local_domain, namespace).await?;
+    Ok(Output { hash })
 }
 
 #[cfg(test)]

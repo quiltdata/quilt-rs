@@ -101,7 +101,7 @@ impl DomainPaths {
     }
 
     /// What directories are essential when we initiate `LocalDomain`
-    pub fn required_local_domain_paths(&self) -> Vec<PathBuf> {
+    fn required(&self) -> Vec<PathBuf> {
         vec![
             self.root_dir.join(INSTALLED_DIR),
             self.objects_dir(),
@@ -110,9 +110,9 @@ impl DomainPaths {
     }
 
     /// What directories are essential when we initiate `InstalledPackage`
-    pub fn required_installed_package_paths(&self, namespace: &Namespace) -> Vec<PathBuf> {
+    pub fn required_for_installing(&self, namespace: &Namespace) -> Vec<PathBuf> {
         let mut paths = vec![];
-        paths.extend(self.required_local_domain_paths());
+        paths.extend(self.required());
         paths.extend(vec![
             self.working_dir(namespace),
             self.installed_manifests(namespace),
@@ -123,7 +123,7 @@ impl DomainPaths {
     /// What directories are essential when we work with cached manifests
     pub fn required_for_caching(&self, bucket: &str) -> Vec<PathBuf> {
         let mut paths = vec![];
-        paths.extend(self.required_local_domain_paths());
+        paths.extend(self.required());
         paths.extend(vec![self.manifest_cache_dir(bucket)]);
         paths
     }
@@ -163,7 +163,7 @@ mod tests {
     #[test]
     fn test_required_paths() {
         let paths = DomainPaths::new(PathBuf::from("foo/bar"));
-        let scaffolded_paths = paths.required_local_domain_paths();
+        let scaffolded_paths = paths.required();
         assert_eq!(
             scaffolded_paths,
             vec![

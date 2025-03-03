@@ -172,6 +172,7 @@ pub async fn create_status(
         "⏳ Creating status for working directory: {}",
         working_dir.display()
     );
+
     // compute the status based on the following sources:
     //   - the cached manifest
     //   - paths

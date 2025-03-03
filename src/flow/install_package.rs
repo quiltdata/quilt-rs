@@ -7,7 +7,9 @@ use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::DomainLineage;
 use crate::lineage::PackageLineage;
-use crate::paths;
+use crate::paths::copy_cached_to_installed;
+use crate::paths::scaffold_paths;
+use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::Error;
 use crate::Res;
@@ -18,12 +20,19 @@ use crate::Res;
 /// DOES NOT install any paths!
 pub async fn install_package(
     lineage: DomainLineage,
-    paths: &paths::DomainPaths,
+    paths: &DomainPaths,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
 ) -> Res<DomainLineage> {
     info!("⏳ Installing package: {}", manifest_uri.display());
+
+    scaffold_paths(
+        storage,
+        paths.required_for_installing(&manifest_uri.namespace),
+    )
+    .await?;
+    scaffold_paths(storage, paths.required_for_caching(&manifest_uri.bucket)).await?;
 
     // TODO: if compatible (same remote), just return the installed package
     if lineage.packages.contains_key(&manifest_uri.namespace) {
@@ -39,7 +48,7 @@ pub async fn install_package(
     debug!("⏳ Creating installed copy of manifest");
     let installed_manifest_path =
         paths.installed_manifest(&manifest_uri.namespace, &manifest_uri.hash);
-    paths::copy_cached_to_installed(paths, storage, manifest_uri).await?;
+    copy_cached_to_installed(paths, storage, manifest_uri).await?;
     debug!(
         "✔️ Manifest installed at: {}",
         installed_manifest_path.display()
@@ -85,7 +94,7 @@ mod tests {
         };
         let result = install_package(
             lineage,
-            &paths::DomainPaths::default(),
+            &DomainPaths::default(),
             &MockStorage::default(),
             &MockRemote::default(),
             &ManifestUri {
@@ -142,7 +151,7 @@ mod tests {
         let storage = MockStorage::default();
         let result = install_package(
             DomainLineage::default(),
-            &paths::DomainPaths::default(),
+            &DomainPaths::default(),
             &storage,
             &remote,
             &manifest_uri,
@@ -200,7 +209,7 @@ mod tests {
         let storage = LocalStorage::new();
         let result = install_package(
             DomainLineage::default(),
-            &paths::DomainPaths::new(PathBuf::from("/")),
+            &DomainPaths::new(PathBuf::from("/")),
             &storage,
             &remote,
             &manifest_uri,

@@ -27,8 +27,9 @@ pub async fn command(m: impl Commands) -> Std {
 }
 
 pub async fn model(local_domain: &quilt_rs::LocalDomain) -> Result<Output, Error> {
+    let installed_packages_list = local_domain.list_installed_packages().await?;
     Ok(Output {
-        installed_packages_list: local_domain.list_installed_packages().await?,
+        installed_packages_list,
     })
 }
 

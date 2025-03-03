@@ -50,19 +50,7 @@ impl LocalDomain {
         }
     }
 
-    pub async fn scaffold_paths(&self, namespace: Option<&Namespace>) -> Res {
-        let required_paths = match namespace {
-            Some(namespace) => self.paths.required_installed_package_paths(namespace),
-            None => self.paths.required_local_domain_paths(),
-        };
-        paths::scaffold_paths(&self.storage, required_paths).await?;
-        Ok(())
-    }
-
     pub async fn browse_remote_manifest(&self, uri: &ManifestUri) -> Res<Table> {
-        let required_paths = self.paths.required_for_caching(&uri.bucket);
-        paths::scaffold_paths(&self.storage, required_paths).await?;
-
         flow::browse(&self.paths, &self.storage, &self.remote, uri).await
     }
 
@@ -78,11 +66,6 @@ impl LocalDomain {
     }
 
     pub async fn install_package(&self, manifest_uri: &ManifestUri) -> Res<InstalledPackage> {
-        // TODO: we can call namespaced scaffold in model
-        let required_paths = self.paths.required_for_caching(&manifest_uri.bucket);
-        paths::scaffold_paths(&self.storage, required_paths).await?;
-
-        self.scaffold_paths(Some(&manifest_uri.namespace)).await?;
         let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
         let lineage = flow::install_package(
             lineage,
@@ -135,8 +118,6 @@ impl LocalDomain {
         message: Option<String>,
         user_meta: Option<JsonObject>,
     ) -> Res<ManifestUri> {
-        let required_paths = self.paths.required_for_caching(&dest_uri.bucket);
-        paths::scaffold_paths(&self.storage, required_paths).await?;
         flow::package_s3_prefix(
             &self.paths,
             &self.storage,
