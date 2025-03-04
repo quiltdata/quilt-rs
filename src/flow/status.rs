@@ -15,7 +15,6 @@ use crate::io::storage::Storage;
 use crate::lineage::Change;
 use crate::lineage::ChangeSet;
 use crate::lineage::InstalledPackageStatus;
-use crate::lineage::PackageFileFingerprint;
 use crate::lineage::PackageLineage;
 use crate::manifest::Row;
 use crate::manifest::Table;
@@ -124,16 +123,16 @@ async fn fingerprint_files(files: Vec<(PathBuf, WorkdirFile)>) -> Res<ChangeSet>
         match location {
             WorkdirFile::Tracked(file, row) => {
                 if let Some((size, hash)) = verify_hash(file, row.hash).await? {
-                    let fingerprint = PackageFileFingerprint { size, hash };
-                    changes.insert(logical_key, Change::Modified(fingerprint));
+                    let row = Row { hash, size, ..row };
+                    changes.insert(logical_key, Change::Modified(row));
                 } else {
                     // the file is tracked (in lineage "paths") and has not been modified
                 }
             }
             WorkdirFile::NotTracked(file, row) => {
                 if let Some((size, hash)) = verify_hash(file, row.hash).await? {
-                    let fingerprint = PackageFileFingerprint { size, hash };
-                    changes.insert(logical_key, Change::Modified(fingerprint));
+                    let row = Row { hash, size, ..row };
+                    changes.insert(logical_key, Change::Modified(row));
                 } else {
                     debug!(
                         "✔️ File {} matches remote manifest but is not tracked locally",
@@ -144,8 +143,13 @@ async fn fingerprint_files(files: Vec<(PathBuf, WorkdirFile)>) -> Res<ChangeSet>
             WorkdirFile::New(file) => {
                 let size = file.metadata().await?.len();
                 let hash = calculate_sha256_chunked_checksum(file, size).await?;
-                let fingerprint = PackageFileFingerprint { size, hash };
-                changes.insert(logical_key, Change::Added(fingerprint));
+                let row = Row {
+                    name: logical_key.clone(),
+                    size,
+                    hash,
+                    ..Row::default()
+                };
+                changes.insert(logical_key, Change::Added(row));
             }
             WorkdirFile::Removed(row) => {
                 changes.insert(logical_key, Change::Removed(row));
@@ -217,7 +221,6 @@ mod tests {
     use crate::fixtures::sample_file_1;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::CommitState;
-    use crate::lineage::PackageFileFingerprint;
     use crate::lineage::UpstreamState;
 
     #[tokio::test]
@@ -348,17 +351,17 @@ mod tests {
             create_status(lineage, &storage, &manifest, working_dir.to_path_buf()).await?;
 
         let added_file = status.changes.get(&file_path).unwrap();
-        if let Change::Added(fingerprint) = added_file {
-            assert_eq!(
-                *fingerprint,
-                PackageFileFingerprint {
-                    size: 5324,
-                    hash: ContentHash::SHA256Chunked(
-                        "EfrtXWeClWPJ/IVKjQeAmMKhJV45/GcpjDm1IhvhJAY=".to_string()
-                    )
-                    .try_into()?,
-                }
-            );
+        if let Change::Added(added_row) = added_file {
+            let reference_row = Row {
+                name: PathBuf::from("inside/package/file.pq"),
+                size: 5324,
+                hash: ContentHash::SHA256Chunked(
+                    "EfrtXWeClWPJ/IVKjQeAmMKhJV45/GcpjDm1IhvhJAY=".to_string(),
+                )
+                .try_into()?,
+                ..Row::default()
+            };
+            assert_eq!(added_row, &reference_row);
             Ok(())
         } else {
             panic!()

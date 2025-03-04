@@ -16,7 +16,6 @@ use crate::io::storage::Storage;
 use crate::lineage::Change;
 use crate::lineage::CommitState;
 use crate::lineage::InstalledPackageStatus;
-use crate::lineage::PackageFileFingerprint;
 use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
 use crate::manifest::Header;
@@ -62,7 +61,7 @@ async fn create_immutable_object_copy(
     working_dir: &Path,
     lineage: &mut PackageLineage,
     logical_key: &PathBuf,
-    current: PackageFileFingerprint,
+    current: Row,
 ) -> Res<Row> {
     debug!(
         "⏳ Creating immutable object copy for: {}",
@@ -77,10 +76,7 @@ async fn create_immutable_object_copy(
     let row = Row {
         name: logical_key.clone(),
         place: new_physical_key,
-        size: current.size,
-        hash: current.hash,
-        info: serde_json::Value::default(),
-        meta: serde_json::Value::default(),
+        ..current
     };
 
     let work_dest = working_dir.join(logical_key);
@@ -389,7 +385,7 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("bar"),
-                Change::Added(sample_file_1::fingerprint()?),
+                Change::Added(sample_file_1::row(PathBuf::from("bar"))?),
             )]),
             ..InstalledPackageStatus::default()
         };
@@ -457,10 +453,7 @@ mod tests {
             .await?;
 
         let status = InstalledPackageStatus {
-            changes: BTreeMap::from([(
-                PathBuf::from("foo"),
-                Change::Added(PackageFileFingerprint::default()),
-            )]),
+            changes: BTreeMap::from([(PathBuf::from("foo"), Change::Added(Row::default()))]),
             ..InstalledPackageStatus::default()
         };
 
@@ -505,9 +498,9 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("bar"),
-                Change::Modified(PackageFileFingerprint {
-                    size: 0,
+                Change::Modified(Row {
                     hash: multihash::Multihash::wrap(0xb510, b"walker")?,
+                    ..Row::default()
                 }),
             )]),
             ..InstalledPackageStatus::default()

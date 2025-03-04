@@ -1,7 +1,6 @@
 pub mod sample_file_1 {
     use std::path::PathBuf;
 
-    use crate::lineage::PackageFileFingerprint;
     use crate::lineage::PathState;
     use crate::manifest::Row;
     use crate::Res;
@@ -14,13 +13,6 @@ pub mod sample_file_1 {
         Ok(PathState {
             hash: row_hash()?,
             ..PathState::default()
-        })
-    }
-
-    pub fn fingerprint() -> Res<PackageFileFingerprint> {
-        Ok(PackageFileFingerprint {
-            size: 0,
-            hash: row_hash()?,
         })
     }
 

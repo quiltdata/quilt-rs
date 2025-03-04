@@ -17,7 +17,6 @@ mod status;
 pub use status::Change;
 pub use status::ChangeSet;
 pub use status::InstalledPackageStatus;
-pub use status::PackageFileFingerprint;
 pub use status::UpstreamState;
 
 mod package;
