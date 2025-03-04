@@ -1,12 +1,19 @@
 pub mod sample_file_1 {
     use std::path::PathBuf;
 
+    use multihash::Multihash;
+
+    use crate::checksum::ContentHash;
     use crate::lineage::PathState;
     use crate::manifest::Row;
     use crate::Res;
 
-    pub fn row_hash() -> Res<multihash::Multihash<256>> {
-        Ok(multihash::Multihash::wrap(0xb510, b"pedestrian")?)
+    pub fn row_hash() -> Res<Multihash<256>> {
+        // This is a hash of fixtures/manifest.jsonl file
+        Ok(
+            ContentHash::SHA256Chunked("4ssEkl5yUwi0LCjnsOl3pJ6ZgtgD8o5a6K9ayFtKDQE=".to_string())
+                .try_into()?,
+        )
     }
 
     pub fn path_state() -> Res<PathState> {

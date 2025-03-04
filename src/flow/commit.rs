@@ -419,7 +419,8 @@ mod tests {
         )
         .await?;
 
-        let hash = "7065646573747269616e";
+        // This is a hash of fixtures/manifest.jsonl file
+        let hash = "e2cb04925e725308b42c28e7b0e977a49e9982d803f28e5ae8af5ac85b4a0d01";
         assert!(
             lineage.paths.contains_key(&PathBuf::from("bar")),
             "Commited lineage doesn't have path, but should have. We added new file and it should be there."
@@ -434,7 +435,7 @@ mod tests {
             lineage.commit.unwrap().hash,
             // NOTE: I copied this hash from the test result itself.
             //       I don't know what is the right hash
-            "5819856fad67101036f115a273d7444059f403e37d51a9e3e4afa92d7d12786f"
+            "76f49be15e381c7ccac59c1b1c5376f8f632a64d709f7f20755194848cb8b9af"
         );
 
         Ok(())

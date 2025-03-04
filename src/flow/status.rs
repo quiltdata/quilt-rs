@@ -218,9 +218,9 @@ mod tests {
 
     use crate::checksum::ContentHash;
     use crate::fixtures;
-    use crate::fixtures::sample_file_1;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::CommitState;
+    use crate::lineage::PathState;
     use crate::lineage::UpstreamState;
 
     #[tokio::test]
@@ -308,29 +308,48 @@ mod tests {
 
     #[tokio::test]
     async fn test_removed_files() -> Res {
-        let sample_file_path = PathBuf::from("a/a");
+        let logical_key = PathBuf::from("a/a");
+        let storage = MockStorage::default();
         let lineage = PackageLineage {
-            paths: BTreeMap::from([(sample_file_path.clone(), sample_file_1::path_state()?)]),
+            paths: BTreeMap::from([(
+                logical_key.clone(),
+                PathState {
+                    hash: fixtures::sample_file_1::row_hash()?,
+                    ..PathState::default()
+                },
+            )]),
             ..PackageLineage::default()
         };
         let mut manifest = Table::default();
         manifest
-            .insert_record(sample_file_1::row(sample_file_path.clone())?)
+            .insert_record(Row {
+                name: logical_key.clone(),
+                hash: fixtures::sample_file_1::row_hash()?,
+                ..Row::default()
+            })
             .await?;
-        let (_, status) = create_status(
-            lineage,
-            &MockStorage::default(),
-            &manifest,
-            PathBuf::default(),
-        )
-        .await?;
+        let working_dir = storage.temp_dir.as_ref().join(PathBuf::from("foo/bar"));
+        storage
+            .write_file(
+                working_dir.join(&logical_key),
+                &std::fs::read(fixtures::manifest::jsonl()?)?,
+            )
+            .await?;
 
+        // First, we create a status and see the file is not changed
+        let (_, status) =
+            create_status(lineage.clone(), &storage, &manifest, working_dir.clone()).await?;
+        let file_not_removed_yet = status.changes.get(&logical_key);
+        assert!(matches!(file_not_removed_yet, None));
+
+        // Then we remove the file and create a status again
+        storage.remove_file(working_dir.join(&logical_key)).await?;
+        let (_, status) = create_status(lineage, &storage, &manifest, working_dir).await?;
         // It's "removed", because it's present in lineage and manifest,
-        // but absent from file system (FIXME)
-        let file_path = PathBuf::from("a/a");
-        let removed_file = status.changes.get(&file_path).unwrap();
+        // but absent from file system
+        let removed_file = status.changes.get(&logical_key).unwrap();
         assert!(matches!(removed_file, Change::Removed(_)));
-        assert!(!storage.exists(&file_path).await);
+        assert!(!storage.exists(&logical_key).await);
         Ok(())
     }
 
