@@ -10,10 +10,8 @@ pub mod sample_file_1 {
 
     pub fn row_hash() -> Res<Multihash<256>> {
         // This is a hash of fixtures/manifest.jsonl file
-        Ok(
-            ContentHash::SHA256Chunked("4ssEkl5yUwi0LCjnsOl3pJ6ZgtgD8o5a6K9ayFtKDQE=".to_string())
-                .try_into()?,
-        )
+        ContentHash::SHA256Chunked("4ssEkl5yUwi0LCjnsOl3pJ6ZgtgD8o5a6K9ayFtKDQE=".to_string())
+            .try_into()
     }
 
     pub fn path_state() -> Res<PathState> {

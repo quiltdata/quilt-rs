@@ -340,7 +340,7 @@ mod tests {
         let (_, status) =
             create_status(lineage.clone(), &storage, &manifest, working_dir.clone()).await?;
         let file_not_removed_yet = status.changes.get(&logical_key);
-        assert!(matches!(file_not_removed_yet, None));
+        assert!(file_not_removed_yet.is_none());
 
         // Then we remove the file and create a status again
         storage.remove_file(working_dir.join(&logical_key)).await?;
