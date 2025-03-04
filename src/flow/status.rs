@@ -327,8 +327,10 @@ mod tests {
 
         // It's "removed", because it's present in lineage and manifest,
         // but absent from file system (FIXME)
-        let removed_file = status.changes.get(&PathBuf::from("a/a")).unwrap();
+        let file_path = PathBuf::from("a/a");
+        let removed_file = status.changes.get(&file_path).unwrap();
         assert!(matches!(removed_file, Change::Removed(_)));
+        assert!(!storage.exists(&file_path).await);
         Ok(())
     }
 
