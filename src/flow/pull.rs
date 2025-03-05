@@ -132,7 +132,7 @@ mod tests {
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::Change;
     use crate::lineage::CommitState;
-    use crate::lineage::PackageFileFingerprint;
+    use crate::manifest::Row;
 
     #[tokio::test]
     async fn test_no_pull_if_changes() -> Res {
@@ -148,10 +148,7 @@ mod tests {
             .await?;
 
         let status = InstalledPackageStatus {
-            changes: BTreeMap::from([(
-                PathBuf::from("foo"),
-                Change::Added(PackageFileFingerprint::default()),
-            )]),
+            changes: BTreeMap::from([(PathBuf::from("foo"), Change::Added(Row::default()))]),
             ..InstalledPackageStatus::default()
         };
         let remote = MockRemote::default();

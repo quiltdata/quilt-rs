@@ -37,10 +37,6 @@ pub async fn model(local_domain: &quilt_rs::LocalDomain) -> Result<Output, Error
 mod tests {
     use super::*;
 
-    use std::fs::Permissions;
-    use std::os::unix::fs::PermissionsExt;
-
-    use tempfile::Builder;
     use test_log::test;
 
     use crate::cli::fixtures::packages::default as pkg;
@@ -84,20 +80,6 @@ mod tests {
         Ok(())
     }
 
-    /// Verifies that list command returns correct output when no packages are installed
-    #[test(tokio::test)]
-    async fn test_command_empty() -> Result<(), Error> {
-        let (m, _temp_dir) = Model::from_temp_dir()?;
-
-        if let Std::Out(output) = command(m).await {
-            assert_eq!(output, "No installed packages");
-        } else {
-            return Err(Error::Test("Failed to list packages".to_string()));
-        }
-
-        Ok(())
-    }
-
     /// Verifies that list command returns correct output after installing a package:
     ///   * shows the installed package namespace
     ///   * formats output according to display implementation
@@ -111,24 +93,6 @@ mod tests {
             assert_eq!(output, format!("InstalledPackage<{}>", pkg::NAMESPACE_STR));
         } else {
             return Err(Error::Test("Failed to list packages".to_string()));
-        }
-
-        Ok(())
-    }
-
-    /// Verifies that list command returns appropriate error when command fails
-    /// (no permissions to the domain directory):
-    #[test(tokio::test)]
-    async fn test_invalid_command() -> Result<(), Error> {
-        let write_only = Permissions::from_mode(0o200);
-        let temp_dir = Builder::new().permissions(write_only).tempdir()?;
-
-        let m = Model::from(&temp_dir);
-
-        if let Std::Err(Error::Quilt(quilt_rs::Error::Io(orig_err))) = command(m).await {
-            assert_eq!(orig_err.kind(), std::io::ErrorKind::PermissionDenied);
-        } else {
-            return Err(Error::Test("Expected permission error".to_string()));
         }
 
         Ok(())

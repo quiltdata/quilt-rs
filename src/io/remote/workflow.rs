@@ -60,9 +60,9 @@ async fn get_schema_url<R: Remote>(
 async fn fetch_workflows_config<R: Remote>(
     remote: &R,
     host: &Option<Host>,
-    uri: S3Uri,
+    uri: &S3Uri,
 ) -> Res<(S3Uri, Option<YamlValue>)> {
-    match remote.get_object_stream(host, &uri).await {
+    match remote.get_object_stream(host, uri).await {
         Ok(stream) => {
             let mut bytes = Vec::new();
             stream
@@ -103,7 +103,7 @@ pub async fn resolve_workflow<R: Remote>(
     remote: &R,
     host: &Option<Host>,
     workflow_id: Option<String>,
-    uri: S3Uri,
+    uri: &S3Uri,
 ) -> Res<Option<Workflow>> {
     let (config, yaml) = fetch_workflows_config(remote, host, uri).await?;
     match yaml {
@@ -139,11 +139,11 @@ mod tests {
         let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
 
         // Case 1.a: No config.yaml and workflow_id is None
-        let result = resolve_workflow(&remote, &host, None, uri.clone()).await?;
+        let result = resolve_workflow(&remote, &host, None, &uri).await?;
         assert!(result.is_none());
 
         // Case 1.b: No config.yaml but workflow_id is set
-        let err = resolve_workflow(&remote, &host, Some("test-workflow".to_string()), uri)
+        let err = resolve_workflow(&remote, &host, Some("test-workflow".to_string()), &uri)
             .await
             .unwrap_err();
         assert!(matches!(err, Error::Workflow(_)));
@@ -177,7 +177,7 @@ schemas:
             .await?;
 
         // Case 2.a: Config exists, workflow_id is set and valid
-        let result = resolve_workflow(&remote, &host, Some("foo".to_string()), uri.clone())
+        let result = resolve_workflow(&remote, &host, Some("foo".to_string()), &uri)
             .await?
             .unwrap();
         assert_eq!(result.config, uri);
@@ -190,26 +190,23 @@ schemas:
         );
 
         // Case 2.b: Config exists but workflow_id is None
-        let result = resolve_workflow(&remote, &host, None, uri.clone())
-            .await?
-            .unwrap();
+        let result = resolve_workflow(&remote, &host, None, &uri).await?.unwrap();
         assert_eq!(result.config, uri);
         assert!(result.id.is_none());
 
-        // FIXME
-        // // Case 2.c: Config exists but workflow_id is not found
-        // let err = resolve_workflow(&remote, &host, Some("non-existent".to_string()), uri.clone())
-        //     .await
-        //     .unwrap_err();
-        // assert!(matches!(err, Error::Workflow(_)));
-        // assert!(err.to_string().contains("Workflow non-existent not found"));
+        // Case 2.c: Config exists but workflow_id is not found
+        let err = resolve_workflow(&remote, &host, Some("non-existent".to_string()), &uri)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::Workflow(_)));
+        assert!(err.to_string().contains("Workflow non-existent not found"));
 
-        // // Case 2.d: Config exists but workflow_id is empty
-        // let err = resolve_workflow(&remote, &host, Some("".to_string()), uri)
-        //     .await
-        //     .unwrap_err();
-        // assert!(matches!(err, Error::Workflow(_)));
-        // assert!(err.to_string().contains("Workflow not found"));
+        // Case 2.d: Config exists but workflow_id is empty
+        let err = resolve_workflow(&remote, &host, Some("".to_string()), &uri)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::Workflow(_)));
+        assert!(err.to_string().contains("Workflow  not found"));
 
         Ok(())
     }

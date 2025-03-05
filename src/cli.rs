@@ -28,8 +28,8 @@ mod uninstall;
 mod fixtures;
 
 use model::Model;
-use output::print;
-use output::Std;
+pub use output::print;
+pub use output::Std;
 
 const DOMAIN_DIR_NAMESPACE: &str = "com.quiltdata.quilt-rs";
 
@@ -52,7 +52,7 @@ fn get_domain_dir(dir_arg: Option<PathBuf>) -> Result<PathBuf, Error> {
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
-struct Args {
+pub struct Args {
     #[command(subcommand)]
     command: Commands,
 }
@@ -195,10 +195,7 @@ enum Commands {
     },
 }
 
-// TODO: pass args as an argument, so we can test it
-pub async fn init() -> Result<(), Error> {
-    let args = Args::parse();
-
+pub async fn init(args: Args) -> Result<Std, Error> {
     // NOTE: every command should have some domain,
     //       because domain stores credentials
     //       It's optional for user, but we use one anyway.
@@ -220,9 +217,7 @@ pub async fn init() -> Result<(), Error> {
             let args = benchmark::Input { number, dest_dir };
 
             log::info!("Benchmark manifest creation {:?}", args,);
-            print(benchmark::command(m, args).await);
-
-            Ok(())
+            Ok(benchmark::command(m, args).await)
         }
         Commands::Browse { domain, uri } => {
             let root_dir = get_domain_dir(domain)?;
@@ -230,9 +225,7 @@ pub async fn init() -> Result<(), Error> {
             let args = browse::Input { uri };
 
             log::info!("Browsing {:?}", args);
-            print(browse::command(m, args).await);
-
-            Ok(())
+            Ok(browse::command(m, args).await)
         }
         Commands::Commit {
             domain,
@@ -261,9 +254,7 @@ pub async fn init() -> Result<(), Error> {
             };
 
             log::info!("Committing {:?}", args);
-            print(commit::command(m, args).await);
-
-            Ok(())
+            Ok(commit::command(m, args).await)
         }
         Commands::Install {
             path,
@@ -280,9 +271,7 @@ pub async fn init() -> Result<(), Error> {
             };
 
             log::info!("Installing {:?}", args);
-            print(install::command(m, args).await);
-
-            Ok(())
+            Ok(install::command(m, args).await)
         }
         Commands::Login { code, domain, host } => {
             if let Some(code) = code {
@@ -291,21 +280,18 @@ pub async fn init() -> Result<(), Error> {
                 let args = login::Input { code, host };
 
                 log::info!("Logging in {:?}", args);
-                print(login::command(m, args).await);
+                Ok(login::command(m, args).await)
             } else {
                 // TODO: Check the lineage, if there are some `package.remote.catalog`
-                print(Std::Err(Error::LoginRequired(host)));
+                Ok(Std::Err(Error::LoginRequired(host)))
             }
-            Ok(())
         }
         Commands::List { domain } => {
             let root_dir = get_domain_dir(domain)?;
             let m = Model::from(root_dir);
 
             log::info!("Listing installed packages");
-            print(list::command(m).await);
-
-            Ok(())
+            Ok(list::command(m).await)
         }
         Commands::Package {
             domain,
@@ -333,9 +319,7 @@ pub async fn init() -> Result<(), Error> {
             };
 
             log::info!("Packaging {:?}", args);
-            print(package::command(m, args).await);
-
-            Ok(())
+            Ok(package::command(m, args).await)
         }
         Commands::Pull { domain, namespace } => {
             let root_dir = get_domain_dir(domain)?;
@@ -345,9 +329,7 @@ pub async fn init() -> Result<(), Error> {
             };
 
             log::info!("Pull {:?}", args);
-            print(pull::command(m, args).await);
-
-            Ok(())
+            Ok(pull::command(m, args).await)
         }
         Commands::Push { domain, namespace } => {
             let root_dir = get_domain_dir(domain)?;
@@ -357,9 +339,7 @@ pub async fn init() -> Result<(), Error> {
             };
 
             log::info!("Pushing {:?}", args);
-            print(push::command(m, args).await);
-
-            Ok(())
+            Ok(push::command(m, args).await)
         }
         Commands::Status { domain, namespace } => {
             let root_dir = get_domain_dir(domain)?;
@@ -369,9 +349,7 @@ pub async fn init() -> Result<(), Error> {
             };
 
             log::info!("Status {:?}", args);
-            print(status::command(m, args).await);
-
-            Ok(())
+            Ok(status::command(m, args).await)
         }
         Commands::Uninstall { domain, namespace } => {
             let root_dir = get_domain_dir(domain)?;
@@ -381,9 +359,7 @@ pub async fn init() -> Result<(), Error> {
             };
 
             log::info!("Uninstalling {:?}", args);
-            print(uninstall::command(m, args).await);
-
-            Ok(())
+            Ok(uninstall::command(m, args).await)
         }
     }
 }
@@ -424,5 +400,366 @@ Then run:
 impl From<quilt_rs::Error> for Error {
     fn from(err: quilt_rs::Error) -> Error {
         Error::Quilt(err)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::cli::model::install_package_into_temp_dir;
+
+    #[test]
+    fn test_parse_optional_namespace() -> Result<(), Error> {
+        // Test None case
+        assert!(parse_optional_namespace(None)?.is_none());
+
+        // Test Some valid namespace
+        let ns = parse_optional_namespace(Some("foo/bar".to_string()))?.unwrap();
+        assert_eq!(ns.to_string(), "foo/bar");
+
+        // Test Some invalid namespace
+        let err = parse_optional_namespace(Some("invalid".to_string())).unwrap_err();
+        assert!(matches!(err, Error::Quilt(_)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_domain_dir() -> Result<(), Error> {
+        // Test with provided directory
+        let test_dir = PathBuf::from("/test/path");
+        assert_eq!(get_domain_dir(Some(test_dir.clone()))?, test_dir);
+
+        // Test with None (should use default location)
+        if let Some(local_dir) = dirs::data_local_dir() {
+            let expected = local_dir.join(DOMAIN_DIR_NAMESPACE);
+            assert_eq!(get_domain_dir(None)?, expected);
+        } else {
+            // If data_local_dir() returns None, get_domain_dir should return Error::Domain
+            assert!(matches!(get_domain_dir(None), Err(Error::Domain)));
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_install() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::workflow_null as pkg;
+
+        // Create temporary directory for domain
+        let temp_dir = tempfile::tempdir()?;
+        let domain_path = temp_dir.path().to_path_buf();
+
+        // First install the package
+        let install_args = Args {
+            command: Commands::Install {
+                domain: Some(domain_path.clone()),
+                namespace: Some(Namespace::from(pkg::NAMESPACE).to_string()),
+                uri: pkg::URI.to_string(),
+                path: None,
+            },
+        };
+        let mut output = Vec::new();
+        let result = init(install_args).await?;
+        print(result, &mut output, &mut Vec::new())?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert_eq!(
+            output_str,
+            format!(
+                "Installed package \"{}\" at {}/{}\nNo paths installed\n",
+                pkg::NAMESPACE_STR,
+                temp_dir.path().display(),
+                pkg::NAMESPACE_STR,
+            )
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_commit_valid() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::workflow_null as pkg;
+
+        let (_, _, temp_dir) = install_package_into_temp_dir(pkg::URI).await?;
+
+        let commit_args = Args {
+            command: Commands::Commit {
+                domain: Some(temp_dir.path().to_path_buf()),
+                message: pkg::MESSAGE.to_string(),
+                namespace: pkg::NAMESPACE_STR.to_string(),
+                user_meta: None,
+                workflow: None,
+            },
+        };
+
+        // Test init with valid arguments
+        let mut output = Vec::new();
+        let result = init(commit_args).await?;
+        print(result, &mut output, &mut Vec::new())?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert_eq!(
+            output_str,
+            "New commit \"095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f\" created\n".to_string()
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_commit_invalid() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::workflow_null as pkg;
+
+        let (_, _, temp_dir) = install_package_into_temp_dir(pkg::URI).await?;
+
+        let commit_args = Args {
+            command: Commands::Commit {
+                domain: Some(temp_dir.path().to_path_buf()),
+                message: "Any message".to_string(),
+                namespace: "in/valid".to_string(),
+                user_meta: None,
+                workflow: None,
+            },
+        };
+
+        // Test init with valid arguments
+        let mut output = Vec::new();
+        let result = init(commit_args).await?;
+        print(result, &mut Vec::new(), &mut output)?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert_eq!(output_str, "Package in/valid not found\n".to_string());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_pull_valid() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::outdated as pkg;
+
+        let (_, _, temp_dir) = install_package_into_temp_dir(pkg::URI).await?;
+
+        let pull_args = Args {
+            command: Commands::Pull {
+                domain: Some(temp_dir.path().to_path_buf()),
+                namespace: pkg::NAMESPACE_STR.to_string(),
+            },
+        };
+
+        // Test init with valid arguments
+        let mut output = Vec::new();
+        let result = init(pull_args).await?;
+        print(result, &mut output, &mut Vec::new())?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert_eq!(
+            output_str,
+            format!("Revision \"{}\" pulled\n", pkg::LATEST_TOP_HASH)
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_pull_invalid() -> Result<(), Error> {
+        // Create temporary directory for domain
+        let temp_dir = tempfile::tempdir()?;
+
+        let pull_args = Args {
+            command: Commands::Pull {
+                domain: Some(temp_dir.path().to_path_buf()),
+                namespace: "in/valid".to_string(),
+            },
+        };
+
+        // Test init with invalid namespace
+        let mut output = Vec::new();
+        let result = init(pull_args).await?;
+        print(result, &mut Vec::new(), &mut output)?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert_eq!(output_str, "Package in/valid not found\n");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_uninstall_valid() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::default as pkg;
+
+        let (_, _, temp_dir) = install_package_into_temp_dir(pkg::URI).await?;
+
+        let uninstall_args = Args {
+            command: Commands::Uninstall {
+                domain: Some(temp_dir.path().to_path_buf()),
+                namespace: pkg::NAMESPACE_STR.to_string(),
+            },
+        };
+
+        // Test init with valid arguments
+        let mut output = Vec::new();
+        let result = init(uninstall_args).await?;
+        print(result, &mut output, &mut Vec::new())?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert_eq!(
+            output_str,
+            format!("Package {} successfully uninstalled\n", pkg::NAMESPACE_STR)
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_uninstall_invalid() -> Result<(), Error> {
+        // Create temporary directory for domain
+        let temp_dir = tempfile::tempdir()?;
+
+        let uninstall_args = Args {
+            command: Commands::Uninstall {
+                domain: Some(temp_dir.path().to_path_buf()),
+                namespace: "in/valid".to_string(),
+            },
+        };
+
+        // Test init with invalid namespace
+        let mut output = Vec::new();
+        let result = init(uninstall_args).await?;
+        print(result, &mut Vec::new(), &mut output)?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(output_str.ends_with("The given package is not installed: in/valid\n"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_list_invalid() -> Result<(), Error> {
+        use std::fs::Permissions;
+        use std::os::unix::fs::PermissionsExt;
+        use tempfile::Builder;
+
+        // Create write-only temporary directory to trigger permission error
+        let write_only = Permissions::from_mode(0o200);
+        let temp_dir = Builder::new().permissions(write_only).tempdir()?;
+
+        let list_args = Args {
+            command: Commands::List {
+                domain: Some(temp_dir.path().to_path_buf()),
+            },
+        };
+
+        // Test init with invalid permissions
+        let mut output = Vec::new();
+        let result = init(list_args).await?;
+        print(result, &mut Vec::new(), &mut output)?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(output_str.contains("Permission denied"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_list_valid() -> Result<(), Error> {
+        // Create temporary directory for domain
+        let temp_dir = tempfile::tempdir()?;
+
+        let list_args = Args {
+            command: Commands::List {
+                domain: Some(temp_dir.path().to_path_buf()),
+            },
+        };
+
+        // Test init with empty domain
+        let mut output = Vec::new();
+        let result = init(list_args).await?;
+        print(result, &mut output, &mut Vec::new())?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert_eq!(output_str, "No installed packages\n");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_install_invalid() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::invalid as pkg;
+
+        // Create temporary directory for domain
+        let temp_dir = tempfile::tempdir()?;
+
+        let install_args = Args {
+            command: Commands::Install {
+                domain: Some(temp_dir.path().to_path_buf()),
+                namespace: None,
+                uri: pkg::URI.to_string(),
+                path: None,
+            },
+        };
+
+        // Test init with invalid URI
+        let mut output = Vec::new();
+        let result = init(install_args).await?;
+        print(result, &mut Vec::new(), &mut output)?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert_eq!(
+            output_str,
+            format!(
+                "quilt_rs error: Invalid package URI: S3 package URI must contain a fragment: {}\n",
+                pkg::URI
+            )
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_browse_valid() -> Result<(), Error> {
+        use crate::cli::fixtures::get_browse_output;
+        use crate::cli::fixtures::packages::default as pkg;
+
+        // Create temporary directory for domain
+        let temp_dir = tempfile::tempdir()?;
+        let uri = format!("{}&path={}", pkg::URI_LATEST, pkg::README_LK_ESCAPED);
+
+        let browse_args = Args {
+            command: Commands::Browse {
+                domain: Some(temp_dir.path().to_path_buf()),
+                uri,
+            },
+        };
+
+        // Test init with valid URI
+        let mut output = Vec::new();
+        let result = init(browse_args).await?;
+        print(result, &mut output, &mut Vec::new())?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert_eq!(output_str, format!("{}\n", get_browse_output()?));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_browse_invalid() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::invalid as pkg;
+
+        // Create temporary directory for domain
+        let temp_dir = tempfile::tempdir()?;
+
+        let browse_args = Args {
+            command: Commands::Browse {
+                domain: Some(temp_dir.path().to_path_buf()),
+                uri: pkg::URI.to_string(),
+            },
+        };
+
+        // Test init with invalid URI
+        let mut output = Vec::new();
+        let result = init(browse_args).await?;
+        print(result, &mut Vec::new(), &mut output)?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert_eq!(
+            output_str,
+            format!(
+                "quilt_rs error: Invalid package URI: S3 package URI must contain a fragment: {}\n",
+                pkg::URI
+            )
+        );
+
+        Ok(())
     }
 }

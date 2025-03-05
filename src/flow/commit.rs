@@ -16,7 +16,6 @@ use crate::io::storage::Storage;
 use crate::lineage::Change;
 use crate::lineage::CommitState;
 use crate::lineage::InstalledPackageStatus;
-use crate::lineage::PackageFileFingerprint;
 use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
 use crate::manifest::Header;
@@ -62,7 +61,7 @@ async fn create_immutable_object_copy(
     working_dir: &Path,
     lineage: &mut PackageLineage,
     logical_key: &PathBuf,
-    current: PackageFileFingerprint,
+    current: Row,
 ) -> Res<Row> {
     debug!(
         "⏳ Creating immutable object copy for: {}",
@@ -77,10 +76,7 @@ async fn create_immutable_object_copy(
     let row = Row {
         name: logical_key.clone(),
         place: new_physical_key,
-        size: current.size,
-        hash: current.hash,
-        info: serde_json::Value::default(),
-        meta: serde_json::Value::default(),
+        ..current
     };
 
     let work_dest = working_dir.join(logical_key);
@@ -389,7 +385,7 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("bar"),
-                Change::Added(sample_file_1::fingerprint()?),
+                Change::Added(sample_file_1::row(PathBuf::from("bar"))?),
             )]),
             ..InstalledPackageStatus::default()
         };
@@ -423,7 +419,8 @@ mod tests {
         )
         .await?;
 
-        let hash = "7065646573747269616e";
+        // This is a hash of fixtures/manifest.jsonl file
+        let hash = "e2cb04925e725308b42c28e7b0e977a49e9982d803f28e5ae8af5ac85b4a0d01";
         assert!(
             lineage.paths.contains_key(&PathBuf::from("bar")),
             "Commited lineage doesn't have path, but should have. We added new file and it should be there."
@@ -438,7 +435,7 @@ mod tests {
             lineage.commit.unwrap().hash,
             // NOTE: I copied this hash from the test result itself.
             //       I don't know what is the right hash
-            "5819856fad67101036f115a273d7444059f403e37d51a9e3e4afa92d7d12786f"
+            "76f49be15e381c7ccac59c1b1c5376f8f632a64d709f7f20755194848cb8b9af"
         );
 
         Ok(())
@@ -457,10 +454,7 @@ mod tests {
             .await?;
 
         let status = InstalledPackageStatus {
-            changes: BTreeMap::from([(
-                PathBuf::from("foo"),
-                Change::Added(PackageFileFingerprint::default()),
-            )]),
+            changes: BTreeMap::from([(PathBuf::from("foo"), Change::Added(Row::default()))]),
             ..InstalledPackageStatus::default()
         };
 
@@ -505,9 +499,9 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("bar"),
-                Change::Modified(PackageFileFingerprint {
-                    size: 0,
+                Change::Modified(Row {
                     hash: multihash::Multihash::wrap(0xb510, b"walker")?,
+                    ..Row::default()
                 }),
             )]),
             ..InstalledPackageStatus::default()

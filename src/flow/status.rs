@@ -15,7 +15,6 @@ use crate::io::storage::Storage;
 use crate::lineage::Change;
 use crate::lineage::ChangeSet;
 use crate::lineage::InstalledPackageStatus;
-use crate::lineage::PackageFileFingerprint;
 use crate::lineage::PackageLineage;
 use crate::manifest::Row;
 use crate::manifest::Table;
@@ -124,16 +123,16 @@ async fn fingerprint_files(files: Vec<(PathBuf, WorkdirFile)>) -> Res<ChangeSet>
         match location {
             WorkdirFile::Tracked(file, row) => {
                 if let Some((size, hash)) = verify_hash(file, row.hash).await? {
-                    let fingerprint = PackageFileFingerprint { size, hash };
-                    changes.insert(logical_key, Change::Modified(fingerprint));
+                    let row = Row { hash, size, ..row };
+                    changes.insert(logical_key, Change::Modified(row));
                 } else {
                     // the file is tracked (in lineage "paths") and has not been modified
                 }
             }
             WorkdirFile::NotTracked(file, row) => {
                 if let Some((size, hash)) = verify_hash(file, row.hash).await? {
-                    let fingerprint = PackageFileFingerprint { size, hash };
-                    changes.insert(logical_key, Change::Modified(fingerprint));
+                    let row = Row { hash, size, ..row };
+                    changes.insert(logical_key, Change::Modified(row));
                 } else {
                     debug!(
                         "✔️ File {} matches remote manifest but is not tracked locally",
@@ -144,8 +143,13 @@ async fn fingerprint_files(files: Vec<(PathBuf, WorkdirFile)>) -> Res<ChangeSet>
             WorkdirFile::New(file) => {
                 let size = file.metadata().await?.len();
                 let hash = calculate_sha256_chunked_checksum(file, size).await?;
-                let fingerprint = PackageFileFingerprint { size, hash };
-                changes.insert(logical_key, Change::Added(fingerprint));
+                let row = Row {
+                    name: logical_key.clone(),
+                    size,
+                    hash,
+                    ..Row::default()
+                };
+                changes.insert(logical_key, Change::Added(row));
             }
             WorkdirFile::Removed(row) => {
                 changes.insert(logical_key, Change::Removed(row));
@@ -214,10 +218,9 @@ mod tests {
 
     use crate::checksum::ContentHash;
     use crate::fixtures;
-    use crate::fixtures::sample_file_1;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::CommitState;
-    use crate::lineage::PackageFileFingerprint;
+    use crate::lineage::PathState;
     use crate::lineage::UpstreamState;
 
     #[tokio::test]
@@ -305,27 +308,48 @@ mod tests {
 
     #[tokio::test]
     async fn test_removed_files() -> Res {
-        let sample_file_path = PathBuf::from("a/a");
+        let logical_key = PathBuf::from("a/a");
+        let storage = MockStorage::default();
         let lineage = PackageLineage {
-            paths: BTreeMap::from([(sample_file_path.clone(), sample_file_1::path_state()?)]),
+            paths: BTreeMap::from([(
+                logical_key.clone(),
+                PathState {
+                    hash: fixtures::sample_file_1::row_hash()?,
+                    ..PathState::default()
+                },
+            )]),
             ..PackageLineage::default()
         };
         let mut manifest = Table::default();
         manifest
-            .insert_record(sample_file_1::row(sample_file_path.clone())?)
+            .insert_record(Row {
+                name: logical_key.clone(),
+                hash: fixtures::sample_file_1::row_hash()?,
+                ..Row::default()
+            })
             .await?;
-        let (_, status) = create_status(
-            lineage,
-            &MockStorage::default(),
-            &manifest,
-            PathBuf::default(),
-        )
-        .await?;
+        let working_dir = storage.temp_dir.as_ref().join(PathBuf::from("foo/bar"));
+        storage
+            .write_file(
+                working_dir.join(&logical_key),
+                &std::fs::read(fixtures::manifest::jsonl()?)?,
+            )
+            .await?;
 
+        // First, we create a status and see the file is not changed
+        let (_, status) =
+            create_status(lineage.clone(), &storage, &manifest, working_dir.clone()).await?;
+        let file_not_removed_yet = status.changes.get(&logical_key);
+        assert!(file_not_removed_yet.is_none());
+
+        // Then we remove the file and create a status again
+        storage.remove_file(working_dir.join(&logical_key)).await?;
+        let (_, status) = create_status(lineage, &storage, &manifest, working_dir).await?;
         // It's "removed", because it's present in lineage and manifest,
-        // but absent from file system (FIXME)
-        let removed_file = status.changes.get(&PathBuf::from("a/a")).unwrap();
+        // but absent from file system
+        let removed_file = status.changes.get(&logical_key).unwrap();
         assert!(matches!(removed_file, Change::Removed(_)));
+        assert!(!storage.exists(&logical_key).await);
         Ok(())
     }
 
@@ -348,17 +372,17 @@ mod tests {
             create_status(lineage, &storage, &manifest, working_dir.to_path_buf()).await?;
 
         let added_file = status.changes.get(&file_path).unwrap();
-        if let Change::Added(fingerprint) = added_file {
-            assert_eq!(
-                *fingerprint,
-                PackageFileFingerprint {
-                    size: 5324,
-                    hash: ContentHash::SHA256Chunked(
-                        "EfrtXWeClWPJ/IVKjQeAmMKhJV45/GcpjDm1IhvhJAY=".to_string()
-                    )
-                    .try_into()?,
-                }
-            );
+        if let Change::Added(added_row) = added_file {
+            let reference_row = Row {
+                name: PathBuf::from("inside/package/file.pq"),
+                size: 5324,
+                hash: ContentHash::SHA256Chunked(
+                    "EfrtXWeClWPJ/IVKjQeAmMKhJV45/GcpjDm1IhvhJAY=".to_string(),
+                )
+                .try_into()?,
+                ..Row::default()
+            };
+            assert_eq!(added_row, &reference_row);
             Ok(())
         } else {
             panic!()

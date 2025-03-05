@@ -54,7 +54,6 @@ mod tests {
 
     use crate::cli::fixtures::packages::outdated as pkg;
     use crate::cli::model::install_package_into_temp_dir;
-    use crate::cli::model::Model;
 
     /// Verifies that pull updates an outdated package to the latest version:
     ///   * installs an outdated package version
@@ -76,51 +75,6 @@ mod tests {
             .await?;
 
             assert_eq!(output.hash, pkg::LATEST_TOP_HASH);
-        }
-
-        Ok(())
-    }
-
-    /// Verifies that pull command returns correct output after pulling latest version
-    #[test(tokio::test)]
-    async fn test_valid_command() -> Result<(), Error> {
-        let uri = pkg::URI;
-        let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
-
-        if let Std::Out(output_str) = command(
-            m,
-            Input {
-                namespace: pkg::NAMESPACE.into(),
-            },
-        )
-        .await
-        {
-            assert_eq!(
-                output_str,
-                format!(r#"Revision "{}" pulled"#, pkg::LATEST_TOP_HASH)
-            );
-        } else {
-            return Err(Error::Test("Failed to pull".to_string()));
-        }
-
-        Ok(())
-    }
-
-    /// Verifies that pull command fails when package is not found
-    #[test(tokio::test)]
-    async fn test_invalid_command() -> Result<(), Error> {
-        let (m, _temp_dir) = Model::from_temp_dir()?;
-        if let Std::Err(error_str) = command(
-            m,
-            Input {
-                namespace: ("in", "valid").into(),
-            },
-        )
-        .await
-        {
-            assert_eq!(error_str.to_string(), "Package in/valid not found");
-        } else {
-            return Err(Error::Test("Expected package not found error".to_string()));
         }
 
         Ok(())

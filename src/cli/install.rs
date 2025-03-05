@@ -54,7 +54,7 @@ async fn install_package(
 ) -> Result<quilt_rs::InstalledPackage, Error> {
     let remote = local_domain.get_remote();
     if let Some(installed_package) = local_domain.get_installed_package(&namespace).await? {
-        // FIXME: check the actual remote_manifest
+        // TODO: check the actual remote_manifest
         return Ok(installed_package);
     }
     let manifest_uri =
@@ -260,67 +260,6 @@ mod tests {
             let paths = install_once_more.installed_package.lineage().await?.paths;
             assert!(paths.contains_key(&readme_logical_key));
             assert!(paths.contains_key(&timestamp_logical_key));
-        }
-
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn test_valid_command() -> Result<(), Error> {
-        let uri = pkg::URI.to_string();
-
-        let (model, temp_dir) = Model::from_temp_dir()?;
-
-        if let Std::Out(output_str) = command(
-            model,
-            Input {
-                namespace: None,
-                paths: None,
-                uri,
-            },
-        )
-        .await
-        {
-            assert_eq!(
-                output_str,
-                format!(
-                    "Installed package \"{}\" at {}/{}\nNo paths installed",
-                    pkg::NAMESPACE_STR,
-                    temp_dir.path().display(),
-                    pkg::NAMESPACE_STR,
-                )
-            );
-        } else {
-            return Err(Error::Test("Failed to install".to_string()));
-        }
-
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn test_invalid_command() -> Result<(), Error> {
-        use crate::cli::fixtures::packages::invalid as pkg;
-
-        let uri = pkg::URI;
-
-        let (model, _temp_dir) = Model::from_temp_dir()?;
-
-        if let Std::Err(error_str) = command(
-            model,
-            Input {
-                namespace: None,
-                paths: None,
-                uri: uri.to_string(),
-            },
-        )
-        .await
-        {
-            assert_eq!(
-                format!("{}", error_str),
-                format!("quilt_rs error: Invalid package URI: S3 package URI must contain a fragment: {}", uri)
-            );
-        } else {
-            return Err(Error::Test("Failed to fail".to_string()));
         }
 
         Ok(())

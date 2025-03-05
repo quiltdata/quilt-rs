@@ -42,7 +42,6 @@ mod tests {
 
     use crate::cli::fixtures::packages::default as pkg;
     use crate::cli::model::install_package_into_temp_dir;
-    use crate::cli::model::Model;
 
     /// Verifies that uninstall removes an installed package:
     ///   * installs a package
@@ -84,54 +83,6 @@ mod tests {
             } else {
                 return Err(Error::Test("Expected package not found error".to_string()));
             }
-        }
-
-        Ok(())
-    }
-
-    /// Verifies that uninstall command returns correct output after uninstalling a package
-    #[test(tokio::test)]
-    async fn test_valid_command() -> Result<(), Error> {
-        let uri = pkg::URI;
-        let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
-
-        if let Std::Out(output_str) = command(
-            m,
-            Input {
-                namespace: pkg::NAMESPACE.into(),
-            },
-        )
-        .await
-        {
-            assert_eq!(
-                output_str,
-                format!("Package {} successfully uninstalled", pkg::NAMESPACE_STR)
-            );
-        } else {
-            return Err(Error::Test("Failed to uninstall".to_string()));
-        }
-
-        Ok(())
-    }
-
-    /// Verifies that uninstall command fails when package is not found
-    #[test(tokio::test)]
-    async fn test_invalid_command() -> Result<(), Error> {
-        let (m, _temp_dir) = Model::from_temp_dir()?;
-
-        if let Std::Err(error_str) = command(
-            m,
-            Input {
-                namespace: ("in", "valid").into(),
-            },
-        )
-        .await
-        {
-            assert!(error_str
-                .to_string()
-                .ends_with("The given package is not installed: in/valid"),);
-        } else {
-            return Err(Error::Test("Expected package not found error".to_string()));
         }
 
         Ok(())

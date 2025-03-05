@@ -214,26 +214,8 @@ pub async fn upload_row(
     Ok(Row { hash, place, ..row })
 }
 
-enum ManifestTarget {
-    Table(Table),
-    File(File),
-}
-
-// This is
 struct WritableManifest {
     writer: ParquetWriter,
-}
-
-impl From<File> for ManifestTarget {
-    fn from(file: File) -> Self {
-        ManifestTarget::File(file)
-    }
-}
-
-impl From<Table> for ManifestTarget {
-    fn from(manifest: Table) -> Self {
-        ManifestTarget::Table(manifest)
-    }
 }
 
 impl TryFrom<File> for WritableManifest {
@@ -247,14 +229,6 @@ impl TryFrom<File> for WritableManifest {
 }
 
 impl WritableManifest {
-    pub async fn try_new(storage: &impl Storage, target: ManifestTarget) -> Res<Self> {
-        let file = match target {
-            ManifestTarget::Table(_table) => storage.open_file(PathBuf::new()).await?, // FIXME
-            ManifestTarget::File(file) => file,
-        };
-        file.try_into()
-    }
-
     pub async fn insert_header(&mut self, header: Header) -> Res {
         let header_chunk: StreamRowsChunk = vec![Ok(header.into())];
         self.writer.insert(header_chunk).await
@@ -291,7 +265,7 @@ pub async fn build_manifest_from_rows_stream(
     let temp_path = temp_dir.path().join("manifest.pq");
     log::info!("Temp path for creating manifest {:?}", temp_path);
     let file = storage.create_file(&temp_path).await?;
-    let mut manifest = WritableManifest::try_new(storage, file.into()).await?;
+    let mut manifest = WritableManifest::try_from(file)?;
 
     let mut top_hasher = TopHasher::new();
     top_hasher.append_header(&header)?;

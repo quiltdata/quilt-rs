@@ -252,7 +252,7 @@ impl InstalledPackage {
             &self.remote,
             &remote_uri.catalog,
             workflow_id,
-            workflows_config_uri,
+            &workflows_config_uri,
         )
         .await
     }
