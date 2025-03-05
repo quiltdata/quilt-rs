@@ -25,27 +25,6 @@ mod status;
 mod uninstall;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_optional_namespace() -> Result<(), Error> {
-        // Test None case
-        assert!(parse_optional_namespace(None)?.is_none());
-
-        // Test Some valid namespace
-        let ns = parse_optional_namespace(Some("foo/bar".to_string()))?.unwrap();
-        assert_eq!(ns.to_string(), "foo/bar");
-
-        // Test Some invalid namespace
-        let err = parse_optional_namespace(Some("invalid".to_string())).unwrap_err();
-        assert!(matches!(err, Error::Quilt(_)));
-
-        Ok(())
-    }
-}
-
-#[cfg(test)]
 mod fixtures;
 
 use model::Model;
@@ -445,5 +424,26 @@ Then run:
 impl From<quilt_rs::Error> for Error {
     fn from(err: quilt_rs::Error) -> Error {
         Error::Quilt(err)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_optional_namespace() -> Result<(), Error> {
+        // Test None case
+        assert!(parse_optional_namespace(None)?.is_none());
+
+        // Test Some valid namespace
+        let ns = parse_optional_namespace(Some("foo/bar".to_string()))?.unwrap();
+        assert_eq!(ns.to_string(), "foo/bar");
+
+        // Test Some invalid namespace
+        let err = parse_optional_namespace(Some("invalid".to_string())).unwrap_err();
+        assert!(matches!(err, Error::Quilt(_)));
+
+        Ok(())
     }
 }
