@@ -257,9 +257,11 @@ impl WritableManifest {
                 // Write header
                 writer.insert_header(table.header).await?;
                 
-                // Write all records
-                let chunk: StreamRowsChunk = table.records.values().cloned().map(Ok).collect();
-                writer.insert(chunk).await?;
+                // Write all records from stream
+                let mut stream = table.records_stream().await;
+                while let Some(chunk) = stream.next().await {
+                    writer.insert(chunk?).await?;
+                }
                 
                 // Close the writer and reopen the file for reading
                 writer.flush().await?;
