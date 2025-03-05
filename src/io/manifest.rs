@@ -214,25 +214,8 @@ pub async fn upload_row(
     Ok(Row { hash, place, ..row })
 }
 
-enum ManifestTarget {
-    Table(Table),
-    File(File),
-}
-
 struct WritableManifest {
     writer: ParquetWriter,
-}
-
-impl From<File> for ManifestTarget {
-    fn from(file: File) -> Self {
-        ManifestTarget::File(file)
-    }
-}
-
-impl From<Table> for ManifestTarget {
-    fn from(manifest: Table) -> Self {
-        ManifestTarget::Table(manifest)
-    }
 }
 
 impl TryFrom<File> for WritableManifest {
@@ -246,31 +229,6 @@ impl TryFrom<File> for WritableManifest {
 }
 
 impl WritableManifest {
-    pub async fn try_new(storage: &impl Storage, target: ManifestTarget) -> Res<Self> {
-        match target {
-            ManifestTarget::Table(table) => {
-                let temp_dir = tempfile::tempdir()?;
-                let temp_path = temp_dir.path().join("manifest.pq");
-                let file = storage.create_file(&temp_path).await?;
-                let mut writer: WritableManifest = file.try_into()?;
-
-                // Write header
-                writer.insert_header(table.header.clone()).await?;
-
-                // Write all records from stream
-                let mut stream = table.records_stream().await;
-                while let Some(chunk) = stream.next().await {
-                    writer.insert(chunk?).await?;
-                }
-
-                // Close the writer and reopen the file for reading
-                writer.flush().await?;
-                storage.open_file(&temp_path).await?.try_into()
-            }
-            ManifestTarget::File(file) => file.try_into(),
-        }
-    }
-
     pub async fn insert_header(&mut self, header: Header) -> Res {
         let header_chunk: StreamRowsChunk = vec![Ok(header.into())];
         self.writer.insert(header_chunk).await
@@ -307,7 +265,7 @@ pub async fn build_manifest_from_rows_stream(
     let temp_path = temp_dir.path().join("manifest.pq");
     log::info!("Temp path for creating manifest {:?}", temp_path);
     let file = storage.create_file(&temp_path).await?;
-    let mut manifest = WritableManifest::try_new(storage, file.into()).await?;
+    let mut manifest = WritableManifest::try_from(file)?;
 
     let mut top_hasher = TopHasher::new();
     top_hasher.append_header(&header)?;
@@ -337,54 +295,6 @@ mod tests {
     use super::*;
 
     use crate::io::remote::mocks::MockRemote;
-    use crate::io::storage::mocks::MockStorage;
-    use crate::manifest::Header;
-    use crate::manifest::Row;
-    use std::collections::BTreeMap;
-    use multihash::Multihash;
-
-    #[tokio::test]
-    async fn test_writable_manifest_try_new_table() -> Res {
-        let storage = MockStorage::default();
-        let mut table = Table::default();
-        
-        // Add a test header
-        let header = Header {
-            info: serde_json::json!({"message": "test", "version": "v0"}),
-            meta: serde_json::Value::Null,
-        };
-        table.header = header.clone();
-
-        // Add a test record
-        let row = Row {
-            name: PathBuf::from("test.txt"),
-            place: "s3://test-bucket/test.txt".to_string(),
-            size: 42,
-            hash: Multihash::wrap(0, b"test")?,
-            info: serde_json::Value::Null,
-            meta: serde_json::Value::Null,
-        };
-        table.insert_record(row.clone()).await?;
-
-        // Create WritableManifest from table
-        let manifest = WritableManifest::try_new(&storage, table.into()).await?;
-        manifest.flush().await?;
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_writable_manifest_try_new_file() -> Res {
-        let storage = MockStorage::default();
-        let temp_dir = tempfile::tempdir()?;
-        let file_path = temp_dir.path().join("test.parquet");
-        
-        let file = storage.create_file(&file_path).await?;
-        let manifest = WritableManifest::try_new(&storage, file.into()).await?;
-        manifest.flush().await?;
-
-        Ok(())
-    }
 
     #[tokio::test]
     async fn test_resolve_existing_hash() -> Res {
