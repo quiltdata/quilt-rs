@@ -407,6 +407,8 @@ impl From<quilt_rs::Error> for Error {
 mod tests {
     use super::*;
 
+    use crate::cli::model::install_package_into_temp_dir;
+
     #[test]
     fn test_parse_optional_namespace() -> Result<(), Error> {
         // Test None case
@@ -442,7 +444,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_init() -> Result<(), Error> {
+    async fn test_install() -> Result<(), Error> {
         use crate::cli::fixtures::packages::workflow_null as pkg;
 
         // Create temporary directory for domain
@@ -472,10 +474,18 @@ mod tests {
             )
         );
 
-        // Then commit changes
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_commit_valid() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::workflow_null as pkg;
+
+        let (_, _, temp_dir) = install_package_into_temp_dir(pkg::URI).await?;
+
         let commit_args = Args {
             command: Commands::Commit {
-                domain: Some(domain_path),
+                domain: Some(temp_dir.path().to_path_buf()),
                 message: pkg::MESSAGE.to_string(),
                 namespace: pkg::NAMESPACE_STR.to_string(),
                 user_meta: None,
@@ -492,6 +502,32 @@ mod tests {
             output_str,
             "New commit \"095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f\" created\n".to_string()
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_commit_invalid() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::workflow_null as pkg;
+
+        let (_, _, temp_dir) = install_package_into_temp_dir(pkg::URI).await?;
+
+        let commit_args = Args {
+            command: Commands::Commit {
+                domain: Some(temp_dir.path().to_path_buf()),
+                message: "Any message".to_string(),
+                namespace: "in/valid".to_string(),
+                user_meta: None,
+                workflow: None,
+            },
+        };
+
+        // Test init with valid arguments
+        let mut output = Vec::new();
+        let result = init(commit_args).await?;
+        print(result, &mut Vec::new(), &mut output)?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert_eq!(output_str, "Package in/valid not found\n".to_string());
 
         Ok(())
     }

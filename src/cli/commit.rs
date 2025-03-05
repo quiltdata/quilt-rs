@@ -357,32 +357,4 @@ mod tests {
 
         Ok(())
     }
-
-
-    /// Verifies that invalid command returns appropriate error when package is not installed
-    #[test(tokio::test)]
-    async fn test_invalid_command() -> Result<(), Error> {
-        use crate::cli::fixtures::packages::workflow_null as pkg;
-
-        let uri = pkg::URI;
-        let (m, _, _) = install_package_into_temp_dir(uri).await?;
-
-        if let Std::Err(error) = command(
-            m,
-            Input {
-                message: "Any message".to_string(),
-                namespace: ("in", "valid").into(),
-                user_meta: None,
-                workflow: None,
-            },
-        )
-        .await
-        {
-            assert_eq!(error.to_string(), "Package in/valid not found");
-        } else {
-            return Err(Error::Test("Expected package not found error".to_string()));
-        }
-
-        Ok(())
-    }
 }
