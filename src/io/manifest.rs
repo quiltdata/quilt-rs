@@ -247,29 +247,28 @@ impl TryFrom<File> for WritableManifest {
 
 impl WritableManifest {
     pub async fn try_new(storage: &impl Storage, target: ManifestTarget) -> Res<Self> {
-        let file = match target {
+        match target {
             ManifestTarget::Table(table) => {
                 let temp_dir = tempfile::tempdir()?;
                 let temp_path = temp_dir.path().join("manifest.pq");
                 let file = storage.create_file(&temp_path).await?;
                 let mut writer: WritableManifest = file.try_into()?;
-                
+
                 // Write header
-                writer.insert_header(table.header).await?;
-                
+                writer.insert_header(table.header.clone()).await?;
+
                 // Write all records from stream
                 let mut stream = table.records_stream().await;
                 while let Some(chunk) = stream.next().await {
                     writer.insert(chunk?).await?;
                 }
-                
+
                 // Close the writer and reopen the file for reading
                 writer.flush().await?;
-                storage.open_file(&temp_path).await?
-            },
-            ManifestTarget::File(file) => file,
-        };
-        file.try_into()
+                storage.open_file(&temp_path).await?.try_into()
+            }
+            ManifestTarget::File(file) => file.try_into(),
+        }
     }
 
     pub async fn insert_header(&mut self, header: Header) -> Res {
