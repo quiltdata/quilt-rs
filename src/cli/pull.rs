@@ -54,7 +54,6 @@ mod tests {
 
     use crate::cli::fixtures::packages::outdated as pkg;
     use crate::cli::model::install_package_into_temp_dir;
-    use crate::cli::model::Model;
 
     /// Verifies that pull updates an outdated package to the latest version:
     ///   * installs an outdated package version
@@ -80,5 +79,4 @@ mod tests {
 
         Ok(())
     }
-
 }
