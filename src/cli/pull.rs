@@ -81,23 +81,4 @@ mod tests {
         Ok(())
     }
 
-    /// Verifies that pull command fails when package is not found
-    #[test(tokio::test)]
-    async fn test_invalid_command() -> Result<(), Error> {
-        let (m, _temp_dir) = Model::from_temp_dir()?;
-        if let Std::Err(error_str) = command(
-            m,
-            Input {
-                namespace: ("in", "valid").into(),
-            },
-        )
-        .await
-        {
-            assert_eq!(error_str.to_string(), "Package in/valid not found");
-        } else {
-            return Err(Error::Test("Expected package not found error".to_string()));
-        }
-
-        Ok(())
-    }
 }

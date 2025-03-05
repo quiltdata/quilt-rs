@@ -557,4 +557,26 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_pull_invalid() -> Result<(), Error> {
+        // Create temporary directory for domain
+        let temp_dir = tempfile::tempdir()?;
+        
+        let pull_args = Args {
+            command: Commands::Pull {
+                domain: Some(temp_dir.path().to_path_buf()),
+                namespace: "in/valid".to_string(),
+            },
+        };
+
+        // Test init with invalid namespace
+        let mut output = Vec::new();
+        let result = init(pull_args).await?;
+        print(result, &mut Vec::new(), &mut output)?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert_eq!(output_str, "Package in/valid not found\n");
+
+        Ok(())
+    }
 }
