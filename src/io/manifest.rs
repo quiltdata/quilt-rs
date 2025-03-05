@@ -219,7 +219,6 @@ enum ManifestTarget {
     File(File),
 }
 
-// This is
 struct WritableManifest {
     writer: ParquetWriter,
 }
@@ -249,7 +248,12 @@ impl TryFrom<File> for WritableManifest {
 impl WritableManifest {
     pub async fn try_new(storage: &impl Storage, target: ManifestTarget) -> Res<Self> {
         let file = match target {
-            ManifestTarget::Table(_table) => storage.open_file(PathBuf::new()).await?, // FIXME
+            ManifestTarget::Table(_table) => {
+                // TODO: write the table to the file and return that file
+                // However, it is not used anywhere,
+                // and I don't recall what was the plan to use it for.
+                storage.open_file(PathBuf::new()).await?
+            },
             ManifestTarget::File(file) => file,
         };
         file.try_into()

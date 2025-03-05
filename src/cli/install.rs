@@ -54,7 +54,7 @@ async fn install_package(
 ) -> Result<quilt_rs::InstalledPackage, Error> {
     let remote = local_domain.get_remote();
     if let Some(installed_package) = local_domain.get_installed_package(&namespace).await? {
-        // FIXME: check the actual remote_manifest
+        // TODO: check the actual remote_manifest
         return Ok(installed_package);
     }
     let manifest_uri =
