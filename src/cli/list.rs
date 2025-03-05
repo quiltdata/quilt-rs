@@ -37,10 +37,6 @@ pub async fn model(local_domain: &quilt_rs::LocalDomain) -> Result<Output, Error
 mod tests {
     use super::*;
 
-    use std::fs::Permissions;
-    use std::os::unix::fs::PermissionsExt;
-
-    use tempfile::Builder;
     use test_log::test;
 
     use crate::cli::fixtures::packages::default as pkg;
