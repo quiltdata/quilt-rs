@@ -627,4 +627,30 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_list_invalid() -> Result<(), Error> {
+        use std::fs::Permissions;
+        use std::os::unix::fs::PermissionsExt;
+        use tempfile::Builder;
+
+        // Create write-only temporary directory to trigger permission error
+        let write_only = Permissions::from_mode(0o200);
+        let temp_dir = Builder::new().permissions(write_only).tempdir()?;
+
+        let list_args = Args {
+            command: Commands::List {
+                domain: Some(temp_dir.path().to_path_buf()),
+            },
+        };
+
+        // Test init with invalid permissions
+        let mut output = Vec::new();
+        let result = init(list_args).await?;
+        print(result, &mut Vec::new(), &mut output)?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(output_str.contains("Permission denied"));
+
+        Ok(())
+    }
 }

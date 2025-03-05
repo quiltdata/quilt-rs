@@ -116,21 +116,4 @@ mod tests {
         Ok(())
     }
 
-    /// Verifies that list command returns appropriate error when command fails
-    /// (no permissions to the domain directory):
-    #[test(tokio::test)]
-    async fn test_invalid_command() -> Result<(), Error> {
-        let write_only = Permissions::from_mode(0o200);
-        let temp_dir = Builder::new().permissions(write_only).tempdir()?;
-
-        let m = Model::from(&temp_dir);
-
-        if let Std::Err(Error::Quilt(quilt_rs::Error::Io(orig_err))) = command(m).await {
-            assert_eq!(orig_err.kind(), std::io::ErrorKind::PermissionDenied);
-        } else {
-            return Err(Error::Test("Expected permission error".to_string()));
-        }
-
-        Ok(())
-    }
 }
