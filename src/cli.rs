@@ -446,4 +446,22 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_get_domain_dir() -> Result<(), Error> {
+        // Test with provided directory
+        let test_dir = PathBuf::from("/test/path");
+        assert_eq!(get_domain_dir(Some(test_dir.clone()))?, test_dir);
+
+        // Test with None (should use default location)
+        if let Some(local_dir) = dirs::data_local_dir() {
+            let expected = local_dir.join(DOMAIN_DIR_NAMESPACE);
+            assert_eq!(get_domain_dir(None)?, expected);
+        } else {
+            // If data_local_dir() returns None, get_domain_dir should return Error::Domain
+            assert!(matches!(get_domain_dir(None), Err(Error::Domain)));
+        }
+
+        Ok(())
+    }
 }
