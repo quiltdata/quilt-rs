@@ -49,6 +49,7 @@ pub mod packages {
     pub mod outdated {
         pub const URI: &str = "quilt+s3://data-yaml-spec-tests#package=scale/10u@f8216f57739c9824f22f1f7a1f8ded59fd50791c92bf9c317d06376811ecbfef";
         pub const NAMESPACE: (&str, &str) = ("scale", "10u");
+        pub const NAMESPACE_STR: &str = "scale/10u";
         pub const LATEST_TOP_HASH: &str =
             "ae239090f2a01de382e8af719fe4a451ef1d1fa4a3ef7b21c6b36513d42c6630";
     }

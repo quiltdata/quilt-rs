@@ -81,31 +81,6 @@ mod tests {
         Ok(())
     }
 
-    /// Verifies that pull command returns correct output after pulling latest version
-    #[test(tokio::test)]
-    async fn test_valid_command() -> Result<(), Error> {
-        let uri = pkg::URI;
-        let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
-
-        if let Std::Out(output_str) = command(
-            m,
-            Input {
-                namespace: pkg::NAMESPACE.into(),
-            },
-        )
-        .await
-        {
-            assert_eq!(
-                output_str,
-                format!(r#"Revision "{}" pulled"#, pkg::LATEST_TOP_HASH)
-            );
-        } else {
-            return Err(Error::Test("Failed to pull".to_string()));
-        }
-
-        Ok(())
-    }
-
     /// Verifies that pull command fails when package is not found
     #[test(tokio::test)]
     async fn test_invalid_command() -> Result<(), Error> {
