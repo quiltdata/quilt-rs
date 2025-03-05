@@ -674,4 +674,33 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_install_invalid() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::invalid as pkg;
+
+        // Create temporary directory for domain
+        let temp_dir = tempfile::tempdir()?;
+
+        let install_args = Args {
+            command: Commands::Install {
+                domain: Some(temp_dir.path().to_path_buf()),
+                namespace: None,
+                uri: pkg::URI.to_string(),
+                path: None,
+            },
+        };
+
+        // Test init with invalid URI
+        let mut output = Vec::new();
+        let result = init(install_args).await?;
+        print(result, &mut Vec::new(), &mut output)?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert_eq!(
+            output_str,
+            format!("quilt_rs error: Invalid package URI: S3 package URI must contain a fragment: {}\n", pkg::URI)
+        );
+
+        Ok(())
+    }
 }

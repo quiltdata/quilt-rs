@@ -265,32 +265,4 @@ mod tests {
         Ok(())
     }
 
-    #[test(tokio::test)]
-    async fn test_invalid_command() -> Result<(), Error> {
-        use crate::cli::fixtures::packages::invalid as pkg;
-
-        let uri = pkg::URI;
-
-        let (model, _temp_dir) = Model::from_temp_dir()?;
-
-        if let Std::Err(error_str) = command(
-            model,
-            Input {
-                namespace: None,
-                paths: None,
-                uri: uri.to_string(),
-            },
-        )
-        .await
-        {
-            assert_eq!(
-                format!("{}", error_str),
-                format!("quilt_rs error: Invalid package URI: S3 package URI must contain a fragment: {}", uri)
-            );
-        } else {
-            return Err(Error::Test("Failed to fail".to_string()));
-        }
-
-        Ok(())
-    }
 }
