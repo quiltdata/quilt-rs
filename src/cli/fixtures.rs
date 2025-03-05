@@ -59,3 +59,8 @@ pub mod packages {
         pub const SOURCE_PK: &str = "s3://any/thing";
     }
 }
+
+pub fn get_browse_output() -> Result<String, std::io::Error> {
+    let path = std::env::current_dir()?.join("fixtures/reference-quilt-rs-browse-output.txt");
+    std::fs::read_to_string(path)
+}

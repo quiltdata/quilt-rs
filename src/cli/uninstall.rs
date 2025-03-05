@@ -42,7 +42,6 @@ mod tests {
 
     use crate::cli::fixtures::packages::default as pkg;
     use crate::cli::model::install_package_into_temp_dir;
-    use crate::cli::model::Model;
 
     /// Verifies that uninstall removes an installed package:
     ///   * installs a package

@@ -132,12 +132,8 @@ mod tests {
     use test_log::test;
 
     use crate::cli::fixtures::packages::default as pkg;
+    use crate::cli::fixtures::get_browse_output;
     use crate::cli::model::Model;
-
-    pub fn get_browse_output() -> Result<String, std::io::Error> {
-        let path = std::env::current_dir()?.join("fixtures/reference-quilt-rs-browse-output.txt");
-        std::fs::read_to_string(path)
-    }
 
     /// Verifies that the remote Quilt registry has the expected manifest.
     /// Test actually fetch the manifest from Quilt, without mocks.
