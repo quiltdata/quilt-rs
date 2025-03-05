@@ -531,4 +531,30 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_pull_valid() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::outdated as pkg;
+
+        let (_, _, temp_dir) = install_package_into_temp_dir(pkg::URI).await?;
+
+        let pull_args = Args {
+            command: Commands::Pull {
+                domain: Some(temp_dir.path().to_path_buf()),
+                namespace: pkg::NAMESPACE_STR.to_string(),
+            },
+        };
+
+        // Test init with valid arguments
+        let mut output = Vec::new();
+        let result = init(pull_args).await?;
+        print(result, &mut output, &mut Vec::new())?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert_eq!(
+            output_str,
+            format!(r#"Revision "{}" pulled"#, pkg::LATEST_TOP_HASH) + "\n"
+        );
+
+        Ok(())
+    }
 }
