@@ -195,7 +195,7 @@ enum Commands {
     },
 }
 
-pub async fn init(args: Args) -> Result<(), Error> {
+pub async fn init(args: Args) -> Std {
     // NOTE: every command should have some domain,
     //       because domain stores credentials
     //       It's optional for user, but we use one anyway.
@@ -217,9 +217,7 @@ pub async fn init(args: Args) -> Result<(), Error> {
             let args = benchmark::Input { number, dest_dir };
 
             log::info!("Benchmark manifest creation {:?}", args,);
-            print(benchmark::command(m, args).await);
-
-            Ok(())
+            benchmark::command(m, args).await
         }
         Commands::Browse { domain, uri } => {
             let root_dir = get_domain_dir(domain)?;
@@ -227,9 +225,7 @@ pub async fn init(args: Args) -> Result<(), Error> {
             let args = browse::Input { uri };
 
             log::info!("Browsing {:?}", args);
-            print(browse::command(m, args).await);
-
-            Ok(())
+            browse::command(m, args).await
         }
         Commands::Commit {
             domain,
@@ -258,9 +254,7 @@ pub async fn init(args: Args) -> Result<(), Error> {
             };
 
             log::info!("Committing {:?}", args);
-            print(commit::command(m, args).await);
-
-            Ok(())
+            commit::command(m, args).await
         }
         Commands::Install {
             path,
@@ -277,9 +271,7 @@ pub async fn init(args: Args) -> Result<(), Error> {
             };
 
             log::info!("Installing {:?}", args);
-            print(install::command(m, args).await);
-
-            Ok(())
+            install::command(m, args).await
         }
         Commands::Login { code, domain, host } => {
             if let Some(code) = code {
@@ -288,21 +280,18 @@ pub async fn init(args: Args) -> Result<(), Error> {
                 let args = login::Input { code, host };
 
                 log::info!("Logging in {:?}", args);
-                print(login::command(m, args).await);
+                login::command(m, args).await
             } else {
                 // TODO: Check the lineage, if there are some `package.remote.catalog`
-                print(Std::Err(Error::LoginRequired(host)));
+                Std::Err(Error::LoginRequired(host))
             }
-            Ok(())
         }
         Commands::List { domain } => {
             let root_dir = get_domain_dir(domain)?;
             let m = Model::from(root_dir);
 
             log::info!("Listing installed packages");
-            print(list::command(m).await);
-
-            Ok(())
+            list::command(m).await
         }
         Commands::Package {
             domain,
@@ -330,9 +319,7 @@ pub async fn init(args: Args) -> Result<(), Error> {
             };
 
             log::info!("Packaging {:?}", args);
-            print(package::command(m, args).await);
-
-            Ok(())
+            package::command(m, args).await
         }
         Commands::Pull { domain, namespace } => {
             let root_dir = get_domain_dir(domain)?;
@@ -342,9 +329,7 @@ pub async fn init(args: Args) -> Result<(), Error> {
             };
 
             log::info!("Pull {:?}", args);
-            print(pull::command(m, args).await);
-
-            Ok(())
+            pull::command(m, args).await
         }
         Commands::Push { domain, namespace } => {
             let root_dir = get_domain_dir(domain)?;
@@ -354,9 +339,7 @@ pub async fn init(args: Args) -> Result<(), Error> {
             };
 
             log::info!("Pushing {:?}", args);
-            print(push::command(m, args).await);
-
-            Ok(())
+            push::command(m, args).await
         }
         Commands::Status { domain, namespace } => {
             let root_dir = get_domain_dir(domain)?;
@@ -366,9 +349,7 @@ pub async fn init(args: Args) -> Result<(), Error> {
             };
 
             log::info!("Status {:?}", args);
-            print(status::command(m, args).await);
-
-            Ok(())
+            status::command(m, args).await
         }
         Commands::Uninstall { domain, namespace } => {
             let root_dir = get_domain_dir(domain)?;
@@ -378,9 +359,7 @@ pub async fn init(args: Args) -> Result<(), Error> {
             };
 
             log::info!("Uninstalling {:?}", args);
-            print(uninstall::command(m, args).await);
-
-            Ok(())
+            uninstall::command(m, args).await
         }
     }
 }

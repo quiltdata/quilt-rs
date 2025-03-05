@@ -8,7 +8,8 @@ mod perf;
 async fn main() {
     tracing_subscriber::fmt::init();
     let args = cli::Args::parse();
-    if let Err(err) = cli::init(args).await {
-        log::error!("{}", err);
+    let result = cli::init(args).await;
+    if let Err(err) = cli::output::print(result) {
+        log::error!("Failed to print output: {}", err);
     }
 }

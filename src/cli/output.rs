@@ -7,18 +7,19 @@ pub enum Std {
     Err(Error),
 }
 
-pub fn print(output: Std) {
+pub fn print(output: Std) -> Result<(), std::io::Error> {
     let stdout = std::io::stdout();
     let stderr = std::io::stderr();
     
     match output {
         Std::Out(str) => {
             let mut handle = stdout.lock();
-            writeln!(handle, "{}", str).expect("Failed to write to stdout");
+            writeln!(handle, "{}", str)?;
         }
         Std::Err(err) => {
             let mut handle = stderr.lock();
-            writeln!(handle, "{}", err).expect("Failed to write to stderr");
+            writeln!(handle, "{}", err)?;
         }
     }
+    Ok(())
 }
