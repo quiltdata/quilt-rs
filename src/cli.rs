@@ -448,22 +448,34 @@ mod tests {
         use crate::cli::fixtures::packages::workflow_null as pkg;
 
         // Create temporary directory for domain
-        let (_, _, temp_dir) = install_package_into_temp_dir(pkg::URI).await?;
+        let temp_dir = tempfile::tempdir()?;
+        let domain_path = temp_dir.path().to_path_buf();
 
-        // Create Args for testing
-        let args = Args {
+        // First install the package
+        let install_args = Args {
+            command: Commands::Install {
+                domain: Some(domain_path.clone()),
+                namespace: Some(pkg::NAMESPACE.to_string()),
+                uri: pkg::URI.to_string(),
+                path: None,
+            },
+        };
+        init(install_args).await;
+
+        // Then commit changes
+        let commit_args = Args {
             command: Commands::Commit {
-                domain: Some(temp_dir.path().to_path_buf()),
+                domain: Some(domain_path),
                 message: pkg::MESSAGE.to_string(),
-                namespace: Namespace::from(pkg::NAMESPACE).to_string(),
+                namespace: pkg::NAMESPACE.to_string(),
                 user_meta: None,
                 workflow: None,
             },
         };
 
         // Test init with valid arguments
-        let result = init(args).await;
-        assert!(matches!(result, Err(Error::NamespaceNotFound(_))));
+        let result = init(commit_args).await;
+        assert!(matches!(result, Std::Out(msg) if msg == r#"New commit "095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f" created"#));
 
         Ok(())
     }
