@@ -29,6 +29,8 @@ pub async fn certify_latest(
 mod tests {
     use super::*;
 
+    use tokio::io::AsyncReadExt;
+
     use crate::io::remote::mocks::MockRemote;
     use crate::uri::S3Uri;
 
@@ -67,13 +69,13 @@ mod tests {
                 ..source_lineage
             }
         );
-        // FIXME: read_to_end
-        // assert_eq!(
-        //     remote
-        //         .get_object(&S3Uri::try_from("s3://b/.quilt/named_packages/a/latest")?)
-        //         .await?,
-        //     b"LATEST_HASH",
-        // );
+
+        let latest_uri = S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?;
+        let mut latest_file = remote.get_object(&None, &latest_uri).await?;
+        let mut latest_bytes = Vec::new();
+        latest_file.read_to_end(&mut latest_bytes).await?;
+
+        assert_eq!(latest_bytes, b"LATEST_HASH",);
         Ok(())
     }
 }
