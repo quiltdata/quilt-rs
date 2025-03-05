@@ -248,11 +248,22 @@ impl TryFrom<File> for WritableManifest {
 impl WritableManifest {
     pub async fn try_new(storage: &impl Storage, target: ManifestTarget) -> Res<Self> {
         let file = match target {
-            ManifestTarget::Table(_table) => {
-                // TODO: write the table to the file and return that file
-                // However, it is not used anywhere,
-                // and I don't recall what was the plan to use it for.
-                storage.open_file(PathBuf::new()).await?
+            ManifestTarget::Table(table) => {
+                let temp_dir = tempfile::tempdir()?;
+                let temp_path = temp_dir.path().join("manifest.pq");
+                let file = storage.create_file(&temp_path).await?;
+                let mut writer: WritableManifest = file.try_into()?;
+                
+                // Write header
+                writer.insert_header(table.header).await?;
+                
+                // Write all records
+                let chunk: StreamRowsChunk = table.records.values().cloned().map(Ok).collect();
+                writer.insert(chunk).await?;
+                
+                // Close the writer and reopen the file for reading
+                writer.flush().await?;
+                storage.open_file(&temp_path).await?
             },
             ManifestTarget::File(file) => file,
         };
