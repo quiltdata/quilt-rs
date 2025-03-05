@@ -195,9 +195,7 @@ enum Commands {
     },
 }
 
-// TODO: pass args as an argument, so we can test it
-pub async fn init() -> Result<(), Error> {
-    let args = Args::parse();
+pub async fn init(args: Args) -> Result<(), Error> {
 
     // NOTE: every command should have some domain,
     //       because domain stores credentials
@@ -461,6 +459,32 @@ mod tests {
             // If data_local_dir() returns None, get_domain_dir should return Error::Domain
             assert!(matches!(get_domain_dir(None), Err(Error::Domain)));
         }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_init() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::workflow_null as pkg;
+
+        // Create temporary directory for domain
+        let temp_dir = tempfile::tempdir()?;
+        
+        // Create Args for testing
+        let args = Args {
+            command: Commands::Commit {
+                domain: Some(temp_dir.path().to_path_buf()),
+                message: pkg::MESSAGE.to_string(),
+                namespace: pkg::NAMESPACE.to_string(),
+                user_meta: None,
+                workflow: None,
+            },
+        };
+
+        // Test init with valid arguments
+        let result = init(args).await;
+        assert!(result.is_err()); // Should fail because package is not installed yet
+        assert!(matches!(result, Err(Error::NamespaceNotFound(_))));
 
         Ok(())
     }

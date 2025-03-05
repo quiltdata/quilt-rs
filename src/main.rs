@@ -6,7 +6,8 @@ mod perf;
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
-    if let Err(err) = cli::init().await {
+    let args = cli::Args::parse();
+    if let Err(err) = cli::init(args).await {
         log::error!("{}", err);
     }
 }
