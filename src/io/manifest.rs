@@ -337,6 +337,54 @@ mod tests {
     use super::*;
 
     use crate::io::remote::mocks::MockRemote;
+    use crate::io::storage::mocks::MockStorage;
+    use crate::manifest::Header;
+    use crate::manifest::Row;
+    use std::collections::BTreeMap;
+    use multihash::Multihash;
+
+    #[tokio::test]
+    async fn test_writable_manifest_try_new_table() -> Res {
+        let storage = MockStorage::default();
+        let mut table = Table::default();
+        
+        // Add a test header
+        let header = Header {
+            info: serde_json::json!({"message": "test", "version": "v0"}),
+            meta: serde_json::Value::Null,
+        };
+        table.header = header.clone();
+
+        // Add a test record
+        let row = Row {
+            name: PathBuf::from("test.txt"),
+            place: "s3://test-bucket/test.txt".to_string(),
+            size: 42,
+            hash: Multihash::wrap(0, b"test")?,
+            info: serde_json::Value::Null,
+            meta: serde_json::Value::Null,
+        };
+        table.insert_record(row.clone()).await?;
+
+        // Create WritableManifest from table
+        let manifest = WritableManifest::try_new(&storage, table.into()).await?;
+        manifest.flush().await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_writable_manifest_try_new_file() -> Res {
+        let storage = MockStorage::default();
+        let temp_dir = tempfile::tempdir()?;
+        let file_path = temp_dir.path().join("test.parquet");
+        
+        let file = storage.create_file(&file_path).await?;
+        let manifest = WritableManifest::try_new(&storage, file.into()).await?;
+        manifest.flush().await?;
+
+        Ok(())
+    }
 
     #[tokio::test]
     async fn test_resolve_existing_hash() -> Res {
