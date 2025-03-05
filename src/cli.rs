@@ -579,4 +579,52 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_uninstall_valid() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::default as pkg;
+
+        let (_, _, temp_dir) = install_package_into_temp_dir(pkg::URI).await?;
+
+        let uninstall_args = Args {
+            command: Commands::Uninstall {
+                domain: Some(temp_dir.path().to_path_buf()),
+                namespace: pkg::NAMESPACE_STR.to_string(),
+            },
+        };
+
+        // Test init with valid arguments
+        let mut output = Vec::new();
+        let result = init(uninstall_args).await?;
+        print(result, &mut output, &mut Vec::new())?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert_eq!(
+            output_str,
+            format!("Package {} successfully uninstalled\n", pkg::NAMESPACE_STR)
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_uninstall_invalid() -> Result<(), Error> {
+        // Create temporary directory for domain
+        let temp_dir = tempfile::tempdir()?;
+
+        let uninstall_args = Args {
+            command: Commands::Uninstall {
+                domain: Some(temp_dir.path().to_path_buf()),
+                namespace: "in/valid".to_string(),
+            },
+        };
+
+        // Test init with invalid namespace
+        let mut output = Vec::new();
+        let result = init(uninstall_args).await?;
+        print(result, &mut Vec::new(), &mut output)?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(output_str.ends_with("The given package is not installed: in/valid\n"));
+
+        Ok(())
+    }
 }
