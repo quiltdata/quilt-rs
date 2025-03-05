@@ -131,8 +131,8 @@ mod tests {
 
     use test_log::test;
 
-    use crate::cli::fixtures::packages::default as pkg;
     use crate::cli::fixtures::get_browse_output;
+    use crate::cli::fixtures::packages::default as pkg;
     use crate::cli::model::Model;
 
     /// Verifies that the remote Quilt registry has the expected manifest.
@@ -180,5 +180,4 @@ mod tests {
         }
         Ok(())
     }
-
 }

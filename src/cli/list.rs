@@ -80,7 +80,6 @@ mod tests {
         Ok(())
     }
 
-
     /// Verifies that list command returns correct output after installing a package:
     ///   * shows the installed package namespace
     ///   * formats output according to display implementation
@@ -98,5 +97,4 @@ mod tests {
 
         Ok(())
     }
-
 }
