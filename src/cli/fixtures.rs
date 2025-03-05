@@ -19,6 +19,7 @@ pub mod packages {
         pub const TOP_HASH: &str =
             "095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f";
         pub const NAMESPACE: (&str, &str) = ("reference", "message-only");
+        pub const NAMESPACE_STR: &str = "reference/message-only";
         pub const MESSAGE: &str = "#Test message 1234!?#";
     }
 

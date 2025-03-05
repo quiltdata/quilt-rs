@@ -358,36 +358,6 @@ mod tests {
         Ok(())
     }
 
-    /// Verifies that valid command returns correct output after committing a new version
-    /// which is the same as the previous one because message and user_meta left the same.
-    #[test(tokio::test)]
-    async fn test_valid_command() -> Result<(), Error> {
-        use crate::cli::fixtures::packages::workflow_null as pkg;
-
-        let uri = pkg::URI;
-        let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
-
-        if let Std::Out(output) = command(
-            m,
-            Input {
-                message: pkg::MESSAGE.to_string(),
-                namespace: pkg::NAMESPACE.into(),
-                user_meta: None,
-                workflow: None,
-            },
-        )
-        .await
-        {
-            assert_eq!(
-                output,
-                r#"New commit "095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f" created"#
-            );
-        } else {
-            return Err(Error::Test("Failed to commit".to_string()));
-        }
-
-        Ok(())
-    }
 
     /// Verifies that invalid command returns appropriate error when package is not installed
     #[test(tokio::test)]

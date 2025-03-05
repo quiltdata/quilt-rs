@@ -1,5 +1,5 @@
-use std::io::Write;
 use crate::cli::Error;
+use std::io::Write;
 
 #[derive(Debug)]
 pub enum Std {
@@ -7,7 +7,11 @@ pub enum Std {
     Err(Error),
 }
 
-pub fn print(output: Std, stdout: &mut impl Write, stderr: &mut impl Write) -> Result<(), std::io::Error> {
+pub fn print(
+    output: Std,
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) -> Result<(), std::io::Error> {
     match output {
         Std::Out(str) => writeln!(stdout, "{}", str)?,
         Std::Err(err) => writeln!(stderr, "{}", err)?,

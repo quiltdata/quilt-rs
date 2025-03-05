@@ -266,38 +266,6 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_valid_command() -> Result<(), Error> {
-        let uri = pkg::URI.to_string();
-
-        let (model, temp_dir) = Model::from_temp_dir()?;
-
-        if let Std::Out(output_str) = command(
-            model,
-            Input {
-                namespace: None,
-                paths: None,
-                uri,
-            },
-        )
-        .await
-        {
-            assert_eq!(
-                output_str,
-                format!(
-                    "Installed package \"{}\" at {}/{}\nNo paths installed",
-                    pkg::NAMESPACE_STR,
-                    temp_dir.path().display(),
-                    pkg::NAMESPACE_STR,
-                )
-            );
-        } else {
-            return Err(Error::Test("Failed to install".to_string()));
-        }
-
-        Ok(())
-    }
-
-    #[test(tokio::test)]
     async fn test_invalid_command() -> Result<(), Error> {
         use crate::cli::fixtures::packages::invalid as pkg;
 

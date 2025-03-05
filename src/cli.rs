@@ -28,8 +28,8 @@ mod uninstall;
 mod fixtures;
 
 use model::Model;
-use output::print;
-use output::Std;
+pub use output::print;
+pub use output::Std;
 
 const DOMAIN_DIR_NAMESPACE: &str = "com.quiltdata.quilt-rs";
 
@@ -195,7 +195,7 @@ enum Commands {
     },
 }
 
-pub async fn init(args: Args) -> Std {
+pub async fn init(args: Args) -> Result<Std, Error> {
     // NOTE: every command should have some domain,
     //       because domain stores credentials
     //       It's optional for user, but we use one anyway.
@@ -217,7 +217,7 @@ pub async fn init(args: Args) -> Std {
             let args = benchmark::Input { number, dest_dir };
 
             log::info!("Benchmark manifest creation {:?}", args,);
-            benchmark::command(m, args).await
+            Ok(benchmark::command(m, args).await)
         }
         Commands::Browse { domain, uri } => {
             let root_dir = get_domain_dir(domain)?;
@@ -225,7 +225,7 @@ pub async fn init(args: Args) -> Std {
             let args = browse::Input { uri };
 
             log::info!("Browsing {:?}", args);
-            browse::command(m, args).await
+            Ok(browse::command(m, args).await)
         }
         Commands::Commit {
             domain,
@@ -254,7 +254,7 @@ pub async fn init(args: Args) -> Std {
             };
 
             log::info!("Committing {:?}", args);
-            commit::command(m, args).await
+            Ok(commit::command(m, args).await)
         }
         Commands::Install {
             path,
@@ -271,7 +271,7 @@ pub async fn init(args: Args) -> Std {
             };
 
             log::info!("Installing {:?}", args);
-            install::command(m, args).await
+            Ok(install::command(m, args).await)
         }
         Commands::Login { code, domain, host } => {
             if let Some(code) = code {
@@ -280,10 +280,10 @@ pub async fn init(args: Args) -> Std {
                 let args = login::Input { code, host };
 
                 log::info!("Logging in {:?}", args);
-                login::command(m, args).await
+                Ok(login::command(m, args).await)
             } else {
                 // TODO: Check the lineage, if there are some `package.remote.catalog`
-                Std::Err(Error::LoginRequired(host))
+                Ok(Std::Err(Error::LoginRequired(host)))
             }
         }
         Commands::List { domain } => {
@@ -291,7 +291,7 @@ pub async fn init(args: Args) -> Std {
             let m = Model::from(root_dir);
 
             log::info!("Listing installed packages");
-            list::command(m).await
+            Ok(list::command(m).await)
         }
         Commands::Package {
             domain,
@@ -319,7 +319,7 @@ pub async fn init(args: Args) -> Std {
             };
 
             log::info!("Packaging {:?}", args);
-            package::command(m, args).await
+            Ok(package::command(m, args).await)
         }
         Commands::Pull { domain, namespace } => {
             let root_dir = get_domain_dir(domain)?;
@@ -329,7 +329,7 @@ pub async fn init(args: Args) -> Std {
             };
 
             log::info!("Pull {:?}", args);
-            pull::command(m, args).await
+            Ok(pull::command(m, args).await)
         }
         Commands::Push { domain, namespace } => {
             let root_dir = get_domain_dir(domain)?;
@@ -339,7 +339,7 @@ pub async fn init(args: Args) -> Std {
             };
 
             log::info!("Pushing {:?}", args);
-            push::command(m, args).await
+            Ok(push::command(m, args).await)
         }
         Commands::Status { domain, namespace } => {
             let root_dir = get_domain_dir(domain)?;
@@ -349,7 +349,7 @@ pub async fn init(args: Args) -> Std {
             };
 
             log::info!("Status {:?}", args);
-            status::command(m, args).await
+            Ok(status::command(m, args).await)
         }
         Commands::Uninstall { domain, namespace } => {
             let root_dir = get_domain_dir(domain)?;
@@ -359,7 +359,7 @@ pub async fn init(args: Args) -> Std {
             };
 
             log::info!("Uninstalling {:?}", args);
-            uninstall::command(m, args).await
+            Ok(uninstall::command(m, args).await)
         }
     }
 }
@@ -407,8 +407,6 @@ impl From<quilt_rs::Error> for Error {
 mod tests {
     use super::*;
 
-    use crate::cli::model::install_package_into_temp_dir;
-
     #[test]
     fn test_parse_optional_namespace() -> Result<(), Error> {
         // Test None case
@@ -455,27 +453,45 @@ mod tests {
         let install_args = Args {
             command: Commands::Install {
                 domain: Some(domain_path.clone()),
-                namespace: Some(pkg::NAMESPACE.to_string()),
+                namespace: Some(Namespace::from(pkg::NAMESPACE).to_string()),
                 uri: pkg::URI.to_string(),
                 path: None,
             },
         };
-        init(install_args).await;
+        let mut output = Vec::new();
+        let result = init(install_args).await?;
+        print(result, &mut output, &mut Vec::new())?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert_eq!(
+            output_str,
+            format!(
+                "Installed package \"{}\" at {}/{}\nNo paths installed\n",
+                pkg::NAMESPACE_STR,
+                temp_dir.path().display(),
+                pkg::NAMESPACE_STR,
+            )
+        );
 
         // Then commit changes
         let commit_args = Args {
             command: Commands::Commit {
                 domain: Some(domain_path),
                 message: pkg::MESSAGE.to_string(),
-                namespace: pkg::NAMESPACE.to_string(),
+                namespace: pkg::NAMESPACE_STR.to_string(),
                 user_meta: None,
                 workflow: None,
             },
         };
 
         // Test init with valid arguments
-        let result = init(commit_args).await;
-        assert!(matches!(result, Std::Out(msg) if msg == r#"New commit "095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f" created"#));
+        let mut output = Vec::new();
+        let result = init(commit_args).await?;
+        print(result, &mut output, &mut Vec::new())?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert_eq!(
+            output_str,
+            "New commit \"095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f\" created\n".to_string()
+        );
 
         Ok(())
     }
