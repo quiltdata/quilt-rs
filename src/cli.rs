@@ -52,7 +52,7 @@ fn get_domain_dir(dir_arg: Option<PathBuf>) -> Result<PathBuf, Error> {
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
-struct Args {
+pub struct Args {
     #[command(subcommand)]
     command: Commands,
 }
@@ -196,7 +196,6 @@ enum Commands {
 }
 
 pub async fn init(args: Args) -> Result<(), Error> {
-
     // NOTE: every command should have some domain,
     //       because domain stores credentials
     //       It's optional for user, but we use one anyway.
@@ -429,6 +428,8 @@ impl From<quilt_rs::Error> for Error {
 mod tests {
     use super::*;
 
+    use crate::cli::model::install_package_into_temp_dir;
+
     #[test]
     fn test_parse_optional_namespace() -> Result<(), Error> {
         // Test None case
@@ -468,14 +469,14 @@ mod tests {
         use crate::cli::fixtures::packages::workflow_null as pkg;
 
         // Create temporary directory for domain
-        let temp_dir = tempfile::tempdir()?;
-        
+        let (_, _, temp_dir) = install_package_into_temp_dir(pkg::URI).await?;
+
         // Create Args for testing
         let args = Args {
             command: Commands::Commit {
                 domain: Some(temp_dir.path().to_path_buf()),
                 message: pkg::MESSAGE.to_string(),
-                namespace: pkg::NAMESPACE.to_string(),
+                namespace: Namespace::from(pkg::NAMESPACE).to_string(),
                 user_meta: None,
                 workflow: None,
             },
@@ -483,7 +484,6 @@ mod tests {
 
         // Test init with valid arguments
         let result = init(args).await;
-        assert!(result.is_err()); // Should fail because package is not installed yet
         assert!(matches!(result, Err(Error::NamespaceNotFound(_))));
 
         Ok(())
