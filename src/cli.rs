@@ -703,4 +703,57 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_browse_valid() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::default as pkg;
+        use crate::cli::browse::get_browse_output;
+
+        // Create temporary directory for domain
+        let temp_dir = tempfile::tempdir()?;
+        let uri = format!("{}&path={}", pkg::URI_LATEST, pkg::README_LK_ESCAPED);
+
+        let browse_args = Args {
+            command: Commands::Browse {
+                domain: Some(temp_dir.path().to_path_buf()),
+                uri,
+            },
+        };
+
+        // Test init with valid URI
+        let mut output = Vec::new();
+        let result = init(browse_args).await?;
+        print(result, &mut output, &mut Vec::new())?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert_eq!(output_str, format!("{}\n", get_browse_output()?));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_browse_invalid() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::invalid as pkg;
+
+        // Create temporary directory for domain
+        let temp_dir = tempfile::tempdir()?;
+
+        let browse_args = Args {
+            command: Commands::Browse {
+                domain: Some(temp_dir.path().to_path_buf()),
+                uri: pkg::URI.to_string(),
+            },
+        };
+
+        // Test init with invalid URI
+        let mut output = Vec::new();
+        let result = init(browse_args).await?;
+        print(result, &mut Vec::new(), &mut output)?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert_eq!(
+            output_str,
+            format!("quilt_rs error: Invalid package URI: S3 package URI must contain a fragment: {}\n", pkg::URI)
+        );
+
+        Ok(())
+    }
 }
