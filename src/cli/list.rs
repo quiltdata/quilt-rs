@@ -80,19 +80,6 @@ mod tests {
         Ok(())
     }
 
-    /// Verifies that list command returns correct output when no packages are installed
-    #[test(tokio::test)]
-    async fn test_command_empty() -> Result<(), Error> {
-        let (m, _temp_dir) = Model::from_temp_dir()?;
-
-        if let Std::Out(output) = command(m).await {
-            assert_eq!(output, "No installed packages");
-        } else {
-            return Err(Error::Test("Failed to list packages".to_string()));
-        }
-
-        Ok(())
-    }
 
     /// Verifies that list command returns correct output after installing a package:
     ///   * shows the installed package namespace

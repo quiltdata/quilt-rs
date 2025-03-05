@@ -653,4 +653,25 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_list_valid() -> Result<(), Error> {
+        // Create temporary directory for domain
+        let temp_dir = tempfile::tempdir()?;
+
+        let list_args = Args {
+            command: Commands::List {
+                domain: Some(temp_dir.path().to_path_buf()),
+            },
+        };
+
+        // Test init with empty domain
+        let mut output = Vec::new();
+        let result = init(list_args).await?;
+        print(result, &mut output, &mut Vec::new())?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert_eq!(output_str, "No installed packages\n");
+
+        Ok(())
+    }
 }
