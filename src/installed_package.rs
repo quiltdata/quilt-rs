@@ -38,19 +38,7 @@ pub struct InstalledPackage<S: Storage = LocalStorage, R: Remote = RemoteS3> {
 
 impl std::fmt::Display for InstalledPackage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.working_folder().await {
-            Ok(path) => write!(
-                f,
-                r##"Installed package "{}" at {}"##,
-                self.namespace,
-                path.display()
-            ),
-            Err(_) => write!(
-                f,
-                r##"Failed to locate working_directory for the "{}" package"##,
-                self.namespace
-            ),
-        }
+        write!(f, r##"Installed package "{}""##, self.namespace,)
     }
 }
 
@@ -79,8 +67,7 @@ impl InstalledPackage {
     }
 
     pub async fn working_folder(&self) -> Res<PathBuf> {
-        let (working_dir, _) = self.lineage.read(&self.storage).await?;
-        Ok(working_dir)
+        self.lineage.working_directory(&self.storage).await
     }
 
     pub async fn status(&self) -> Res<InstalledPackageStatus> {
@@ -123,8 +110,7 @@ impl InstalledPackage {
 
     pub async fn uninstall_paths(&self, paths: &Vec<PathBuf>) -> Res<LineagePaths> {
         let (working_folder, lineage) = self.lineage.read(&self.storage).await?;
-        let lineage =
-            flow::uninstall_paths(lineage, working_folder, &self.storage, paths).await?;
+        let lineage = flow::uninstall_paths(lineage, working_folder, &self.storage, paths).await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(lineage.paths)
     }
@@ -320,10 +306,7 @@ mod tests {
         let domain_lineage_io = DomainLineageIo::new(paths.lineage());
 
         let package = InstalledPackage {
-            lineage: PackageLineageIo::new(
-                domain_lineage_io,
-                namespace.clone(),
-            ),
+            lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
             paths,
             remote,
             storage,

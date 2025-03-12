@@ -30,9 +30,12 @@ pub async fn uninstall_package(
     debug!("✔️ Removed manifests at: {}", manifest_path.display());
 
     debug!("⏳ Removing working directory");
-    let working_dir = paths.working_dir(&namespace);
-    storage.remove_dir_all(&working_dir).await?;
-    debug!("✔️ Removed working directory: {}", working_dir.display());
+    if let Some(working_dir) = &lineage.working_directory {
+        storage.remove_dir_all(&working_dir).await?;
+        debug!("✔️ Removed working directory: {}", working_dir.display());
+    } else {
+        return Err(Error::DomainLineageMissingWorkingDirectory);
+    }
 
     // TODO: Remove object files? But need to make sure no other manifest uses them.
     debug!("ℹ️ Skipping object files cleanup - may be used by other packages");
@@ -45,11 +48,12 @@ pub async fn uninstall_package(
 mod tests {
     use std::collections::BTreeMap;
 
+    use tempfile::TempDir;
+
     use super::*;
 
-    use crate::lineage::PackageLineage;
-
     use crate::io::storage::mocks::MockStorage;
+    use crate::lineage::PackageLineage;
 
     #[tokio::test]
     async fn test_panic_if_no_installed_package() {
@@ -66,7 +70,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_uninstall_package() -> Res {
+        let temp_dir = TempDir::new()?;
+        let working_directory = temp_dir.path().to_path_buf();
         let lineage = DomainLineage {
+            working_directory: Some(working_directory),
             packages: BTreeMap::from([(("foo", "bar").into(), PackageLineage::default())]),
         };
         let paths = paths::DomainPaths::default();

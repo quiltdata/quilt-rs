@@ -134,9 +134,17 @@ impl PackageLineageIo {
             (Some(ns), Some(working_dir)) => {
                 let package_working_dir = working_dir.join(self.namespace.to_string());
                 Ok((package_working_dir, ns.clone()))
-            },
+            }
             (None, _) => Err(Error::PackageNotInstalled(self.namespace.clone())),
             (_, None) => Err(Error::DomainLineageMissingWorkingDirectory),
+        }
+    }
+
+    pub async fn working_directory(&self, storage: &impl Storage) -> Res<PathBuf> {
+        let domain_lineage = self.domain_lineage.read(storage).await?;
+        match domain_lineage.working_directory {
+            Some(working_dir) => Ok(working_dir.join(self.namespace.to_string())),
+            None => return Err(Error::DomainLineageMissingWorkingDirectory),
         }
     }
 
