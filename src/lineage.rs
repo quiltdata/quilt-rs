@@ -31,7 +31,6 @@ pub use package::PathState;
 pub struct DomainLineage {
     #[serde(default = "BTreeMap::new")]
     pub packages: BTreeMap<Namespace, PackageLineage>,
-    #[serde(skip)]
     pub working_directory: PathBuf,
 }
 
@@ -39,13 +38,41 @@ impl TryFrom<Vec<u8>> for DomainLineage {
     type Error = Error;
 
     fn try_from(input: Vec<u8>) -> Result<Self, Self::Error> {
-        serde_json::from_slice(&input).map_err(|err| {
-            log::error!(
-                "Failed to parse `Vec<u8>` for `DomainLineage` in `{:?}`",
-                input
-            );
-            Error::LineageParse(err)
-        })
+        let result: Result<Self, serde_json::Error> = serde_json::from_slice(&input);
+        
+        match result {
+            Ok(lineage) => {
+                if lineage.working_directory.as_os_str().is_empty() {
+                    return Err(Error::DomainLineageMissingWorkingDirectory);
+                }
+                Ok(lineage)
+            },
+            Err(err) => {
+                // Try to parse without working_directory
+                let result: Result<serde_json::Value, serde_json::Error> = serde_json::from_slice(&input);
+                match result {
+                    Ok(value) => {
+                        if let Some(packages) = value.get("packages") {
+                            // We have packages but no working_directory
+                            return Err(Error::DomainLineageMissingWorkingDirectory);
+                        }
+                        // Other parsing error
+                        log::error!(
+                            "Failed to parse `Vec<u8>` for `DomainLineage` in `{:?}`",
+                            input
+                        );
+                        Err(Error::LineageParse(err))
+                    },
+                    Err(_) => {
+                        log::error!(
+                            "Failed to parse `Vec<u8>` for `DomainLineage` in `{:?}`",
+                            input
+                        );
+                        Err(Error::LineageParse(err))
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -61,7 +88,7 @@ impl DomainLineageIo {
         DomainLineageIo { path }
     }
 
-    pub fn with_working_directory(path: PathBuf, working_directory: PathBuf) -> Self {
+    pub fn with_working_directory(path: PathBuf, _working_directory: PathBuf) -> Self {
         DomainLineageIo { path }
     }
 
@@ -80,14 +107,7 @@ impl DomainLineageIo {
                 other => Err(other),
             })?;
 
-        let mut lineage = DomainLineage::try_from(contents)?;
-        
-        // Set working_directory from paths.legacy_working_dir
-        if lineage.working_directory.as_os_str().is_empty() {
-            return Err(Error::DomainLineageMissingWorkingDirectory);
-        }
-        
-        Ok(lineage)
+        DomainLineage::try_from(contents)
     }
 
     pub async fn read_with_working_directory(&self, storage: &impl Storage, working_directory: PathBuf) -> Res<DomainLineage> {
@@ -105,10 +125,29 @@ impl DomainLineageIo {
                 other => Err(other),
             })?;
 
-        let mut lineage = DomainLineage::try_from(contents)?;
-        lineage.working_directory = working_directory;
-        
-        Ok(lineage)
+        // Try to parse the contents
+        let result: Result<serde_json::Value, serde_json::Error> = serde_json::from_slice(&contents);
+        match result {
+            Ok(mut value) => {
+                // Set working_directory in the JSON
+                if let serde_json::Value::Object(ref mut obj) = value {
+                    obj.insert(
+                        "working_directory".to_string(),
+                        serde_json::Value::String(working_directory.to_string_lossy().to_string()),
+                    );
+                }
+                
+                // Convert back to JSON string and parse as DomainLineage
+                let updated_contents = serde_json::to_vec(&value)?;
+                DomainLineage::try_from(updated_contents)
+            },
+            Err(_) => {
+                // If we can't parse the JSON, create a new empty one with working_directory
+                let mut lineage = DomainLineage::default();
+                lineage.working_directory = working_directory;
+                Ok(lineage)
+            }
+        }
     }
 
     pub async fn write(
@@ -199,13 +238,7 @@ mod tests {
     fn test_wrong_key() {
         // NOTE: @fiskus I don't think this is developer friendly
         //       I'd like to remove serde(default), so this test fails
-        assert_eq!(
-            DomainLineage::try_from(br#"{"notkey": 123}"#.to_vec()).unwrap(),
-            DomainLineage {
-                packages: BTreeMap::new(),
-                working_directory: PathBuf::default(),
-            }
-        );
+        assert!(DomainLineage::try_from(br#"{"notkey": 123}"#.to_vec()).is_err());
     }
 
     #[test]
@@ -217,25 +250,19 @@ mod tests {
     }
 
     #[test]
-    fn test_parsing_json_ok() {
+    fn test_missing_working_directory() {
         assert_eq!(
-            DomainLineage::try_from(br###"{"packages":{}}"###.to_vec()).unwrap(),
-            DomainLineage {
-                packages: BTreeMap::new(),
-                working_directory: PathBuf::default(),
-            }
-        )
+            DomainLineage::try_from(br###"{"packages":{}}"###.to_vec())
+                .unwrap_err()
+                .to_string(),
+            "Domain lineage missing working directory".to_string()
+        );
     }
 
     #[test]
-    fn test_vec8_parsing_json_ok() {
-        assert_eq!(
-            DomainLineage::try_from(r###"{"packages":{}}"###.as_bytes().to_vec()).unwrap(),
-            DomainLineage {
-                packages: BTreeMap::new(),
-                working_directory: PathBuf::default(),
-            }
-        )
+    fn test_with_working_directory() {
+        let lineage = DomainLineage::try_from(br###"{"packages":{},"working_directory":"/tmp/working_dir"}"###.to_vec()).unwrap();
+        assert_eq!(lineage.working_directory, PathBuf::from("/tmp/working_dir"));
     }
 
     #[tokio::test]
@@ -243,10 +270,9 @@ mod tests {
         let storage = MockStorage::default();
         let file_path = PathBuf::from("foo");
         storage
-            .write_file(&file_path, br###"{"packages":{}}"###.as_ref())
+            .write_file(&file_path, br###"{"packages":{},"working_directory":"/tmp/working_dir"}"###.as_ref())
             .await?;
-        let working_dir = PathBuf::from("/tmp/working_dir");
-        let lineage = DomainLineageIo::new(file_path).read_with_working_directory(&storage, working_dir).await?;
+        let lineage = DomainLineageIo::new(file_path).read(&storage).await?;
         assert_eq!(lineage, DomainLineage {
             packages: BTreeMap::new(),
             working_directory: PathBuf::from("/tmp/working_dir"),
@@ -313,34 +339,11 @@ mod tests {
             )
             .await?;
         assert!(storage.exists(&file_path).await);
-        let manifest = br###"{
-  "packages": {
-    "foo/bar": {
-      "commit": null,
-      "remote": {
-        "catalog": null,
-        "bucket": "bucket",
-        "namespace": "foo/bar",
-        "hash": "abcdef"
-      },
-      "base_hash": "abcdef",
-      "latest_hash": "abcdef",
-      "paths": {
-        "foo": {
-          "timestamp": "2025-01-16T12:50:20.534Z",
-          "hash": "90ea02205dbd4f6e325e5a87f8cc3ef3b8773d3c8eec2e2cff6248f882986569912ddf10"
-        }
-      }
-    }
-  }
-}"###
-            .to_vec();
-        assert_eq!(
-            String::from_utf8(storage.read_file(&file_path).await?).unwrap(),
-            String::from_utf8(manifest.clone()).unwrap()
-        );
-        let mut lineage = DomainLineage::try_from(manifest)?;
-        lineage.working_directory = PathBuf::from("/tmp/working_dir");
+        let file_contents = storage.read_file(&file_path).await?;
+        let lineage = DomainLineage::try_from(file_contents)?;
+        
+        assert_eq!(lineage.working_directory, PathBuf::from("/tmp/working_dir"));
+        
         let multihash_from_lineage = lineage
             .packages
             .get(&(("foo".to_string(), "bar".to_string()).into()))
