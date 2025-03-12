@@ -175,7 +175,7 @@ mod tests {
                 .contains_key(&readme_logical_key));
 
             assert_eq!(
-                installed_package.working_folder(),
+                installed_package.working_folder().await?,
                 PathBuf::from(temp_dir.as_ref()).join(pkg::NAMESPACE_STR)
             );
             assert_eq!(

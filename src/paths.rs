@@ -3,7 +3,11 @@
 
 use std::path::PathBuf;
 
+#[cfg(test)]
+use tempfile::TempDir;
+
 use crate::io::storage::Storage;
+use crate::lineage::DomainWorkingDir;
 use crate::uri::Host;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
@@ -110,22 +114,32 @@ impl DomainPaths {
     }
 
     /// What directories are essential when we initiate `InstalledPackage`
-    fn required_for_installing(&self, namespace: &Namespace) -> Vec<PathBuf> {
+    fn required_for_installing(
+        &self,
+        working_directory: &DomainWorkingDir,
+        namespace: &Namespace,
+    ) -> Res<Vec<PathBuf>> {
         let mut paths = vec![];
         paths.extend(self.required());
         paths.extend(vec![
+            working_directory.join(namespace.to_string())?,
             self.legacy_working_dir(namespace),
             self.installed_manifests(namespace),
         ]);
-        paths
+        Ok(paths)
     }
 
     pub async fn scaffold_for_installing(
         &self,
         storage: &impl Storage,
+        working_directory: &DomainWorkingDir,
         namespace: &Namespace,
     ) -> Res {
-        scaffold_paths(storage, self.required_for_installing(namespace)).await
+        scaffold_paths(
+            storage,
+            self.required_for_installing(working_directory, namespace)?,
+        )
+        .await
     }
 
     /// What directories are essential when we work with cached manifests
@@ -143,6 +157,12 @@ impl DomainPaths {
     /// Directory for storing installed files that can be modified
     pub fn legacy_working_dir(&self, namespace: &Namespace) -> PathBuf {
         self.root_dir.join(namespace.to_string())
+    }
+
+    #[cfg(test)]
+    pub fn from_temp_dir() -> Res<(Self, TempDir)> {
+        let temp_dir = TempDir::new()?;
+        Ok((DomainPaths::new(temp_dir.path().to_path_buf()), temp_dir))
     }
 }
 

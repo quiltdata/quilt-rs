@@ -27,7 +27,7 @@ pub async fn install_package(
     info!("⏳ Installing package: {}", manifest_uri.display());
 
     paths
-        .scaffold_for_installing(storage, &manifest_uri.namespace)
+        .scaffold_for_installing(storage, &lineage.working_directory, &manifest_uri.namespace)
         .await?;
     paths
         .scaffold_for_caching(storage, &manifest_uri.bucket)
@@ -81,15 +81,18 @@ mod tests {
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::io::storage::LocalStorage;
+    use crate::lineage::DomainWorkingDir;
     use crate::uri::S3Uri;
 
     /// Verify that attempting to install a package that is already installed results in an error.
     /// A package is considered installed if it is present in the lineage.
     #[tokio::test]
     async fn test_if_already_installed() -> Res {
+        let (working_directory, _temp_dir) = DomainWorkingDir::from_temp_dir()?;
         let namespace = ("foo", "bar");
         let lineage = DomainLineage {
             packages: BTreeMap::from([(namespace.into(), PackageLineage::default())]),
+            working_directory,
         };
         let result = install_package(
             lineage,
@@ -114,6 +117,12 @@ mod tests {
     /// Package files are installed separately using `install_paths`.
     #[tokio::test]
     async fn test_installing() -> Res {
+        let (working_directory, _temp_dir) = DomainWorkingDir::from_temp_dir()?;
+        let lineage = DomainLineage {
+            packages: BTreeMap::default(),
+            working_directory,
+        };
+
         let manifest_uri = ManifestUri {
             bucket: "a".to_string(),
             hash: "abcdef1234".to_string(),
@@ -149,7 +158,7 @@ mod tests {
 
         let storage = MockStorage::default();
         let result = install_package(
-            DomainLineage::default(),
+            lineage,
             &DomainPaths::default(),
             &storage,
             &remote,
@@ -205,9 +214,15 @@ mod tests {
             .put_object(&manifest_uri.catalog, &remote_uri, parquet)
             .await?;
 
+        let (working_directory, _temp_dir) = DomainWorkingDir::from_temp_dir()?;
+        let lineage = DomainLineage {
+            packages: BTreeMap::default(),
+            working_directory,
+        };
+
         let storage = LocalStorage::new();
         let result = install_package(
-            DomainLineage::default(),
+            lineage,
             &DomainPaths::new(PathBuf::from("/")),
             &storage,
             &remote,

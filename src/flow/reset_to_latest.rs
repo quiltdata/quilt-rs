@@ -24,10 +24,12 @@ pub async fn reset_to_latest(
 ) -> Res<PackageLineage> {
     info!("⏳ Starting reset to latest for package {}", namespace);
 
-    paths.scaffold_for_installing(storage, &namespace).await?;
-    paths
-        .scaffold_for_caching(storage, &lineage.remote.bucket)
-        .await?;
+    // paths
+    //     .scaffold_for_installing(storage, &lineage.working_directory, &namespace)
+    //     .await?;
+    // paths
+    //     .scaffold_for_caching(storage, &lineage.remote.bucket)
+    //     .await?;
 
     debug!(
         "⏳ Resolving latest manifest hash for {}",

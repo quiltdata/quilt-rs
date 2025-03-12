@@ -4,6 +4,9 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+#[cfg(test)]
+use tempfile::TempDir;
+
 use serde::Deserialize;
 use serde::Serialize;
 use tracing::log;
@@ -36,8 +39,10 @@ impl DomainWorkingDir {
         DomainWorkingDir { inner: Some(path) }
     }
 
-    pub fn get(&self) -> Option<&PathBuf> {
-        self.inner.as_ref()
+    pub fn get(&self) -> Res<&PathBuf> {
+        self.inner
+            .as_ref()
+            .ok_or(Error::DomainLineageMissingWorkingDirectory)
     }
 
     pub fn join(&self, path: impl AsRef<std::path::Path>) -> Result<PathBuf, Error> {
@@ -45,6 +50,17 @@ impl DomainWorkingDir {
             Some(dir) => Ok(dir.join(path)),
             None => Err(Error::DomainLineageMissingWorkingDirectory),
         }
+    }
+
+    #[cfg(test)]
+    pub fn from_temp_dir() -> Res<(Self, TempDir)> {
+        let temp_dir = TempDir::new()?;
+        Ok((
+            DomainWorkingDir {
+                inner: Some(temp_dir.path().to_path_buf()),
+            },
+            temp_dir,
+        ))
     }
 }
 
@@ -90,7 +106,8 @@ impl TryFrom<Vec<u8>> for DomainLineage {
 
         match result {
             Ok(lineage) => {
-                if lineage.working_directory.get().is_none() {
+                let working_dir = lineage.working_directory.get()?;
+                if working_dir.as_os_str().is_empty() {
                     return Err(Error::DomainLineageMissingWorkingDirectory);
                 }
                 Ok(lineage)
@@ -115,10 +132,6 @@ pub struct DomainLineageIo {
 // TODO impl std::io::Write and std::io::Read for DomainLineageIo
 impl DomainLineageIo {
     pub fn new(path: PathBuf) -> Self {
-        DomainLineageIo { path }
-    }
-
-    pub fn with_working_directory(path: PathBuf, _working_directory: PathBuf) -> Self {
         DomainLineageIo { path }
     }
 
@@ -179,7 +192,9 @@ impl PackageLineageIo {
 
         match namespace {
             Some(ns) => {
-                let package_working_dir = domain_lineage.working_directory.join(self.namespace.to_string())?;
+                let package_working_dir = domain_lineage
+                    .working_directory
+                    .join(self.namespace.to_string())?;
                 Ok((package_working_dir, ns.clone()))
             }
             None => Err(Error::PackageNotInstalled(self.namespace.clone())),
@@ -187,8 +202,14 @@ impl PackageLineageIo {
     }
 
     pub async fn working_directory(&self, storage: &impl Storage) -> Res<PathBuf> {
+        self.domain_working_directory(storage)
+            .await?
+            .join(self.namespace.to_string())
+    }
+
+    pub async fn domain_working_directory(&self, storage: &impl Storage) -> Res<DomainWorkingDir> {
         let domain_lineage = self.domain_lineage.read(storage).await?;
-        domain_lineage.working_directory.join(self.namespace.to_string())
+        Ok(domain_lineage.working_directory)
     }
 
     pub async fn write(
@@ -252,15 +273,16 @@ mod tests {
     }
 
     #[test]
-    fn test_with_working_directory() {
+    fn test_with_working_directory() -> Res {
         let lineage = DomainLineage::try_from(
             br###"{"packages":{},"working_directory":"/tmp/working_dir"}"###.to_vec(),
         )
         .unwrap();
         assert_eq!(
-            lineage.working_directory.get(),
-            Some(&PathBuf::from("/tmp/working_dir"))
+            lineage.working_directory.get()?,
+            &PathBuf::from("/tmp/working_dir")
         );
+        Ok(())
     }
 
     #[tokio::test]
@@ -289,9 +311,12 @@ mod tests {
         let storage = MockStorage::default();
         let lineage = DomainLineageIo::new(PathBuf::from("does-not-exist"))
             .read(&storage)
-            .await?;
-        // TODO: should return Error::DomainLineageMissingWorkingDirectory
-        assert_eq!(lineage, DomainLineage::default());
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            lineage,
+            Error::DomainLineageMissingWorkingDirectory
+        ));
         Ok(())
     }
 
@@ -344,8 +369,8 @@ mod tests {
         let lineage = DomainLineage::try_from(file_contents)?;
 
         assert_eq!(
-            lineage.working_directory.get(),
-            Some(&PathBuf::from("/tmp/working_dir"))
+            lineage.working_directory.get()?,
+            &PathBuf::from("/tmp/working_dir")
         );
 
         let multihash_from_lineage = lineage

@@ -38,26 +38,15 @@ pub struct InstalledPackage<S: Storage = LocalStorage, R: Remote = RemoteS3> {
 
 impl std::fmt::Display for InstalledPackage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.working_folder().await {
-            Ok(path) => write!(
-                f,
-                r##"Installed package "{}" at {}"##,
-                self.namespace,
-                path.display()
-            ),
-            Err(_) => write!(
-                f,
-                r##"Failed to locate working_directory for the "{}" package"##,
-                self.namespace
-            ),
-        }
+        write!(f, r##"Installed package "{}""##, self.namespace)
     }
 }
 
 impl InstalledPackage {
     pub async fn scaffold_paths(&self) -> Res {
+        let working_directory = self.lineage.domain_working_directory(&self.storage).await?;
         self.paths
-            .scaffold_for_installing(&self.storage, &self.namespace)
+            .scaffold_for_installing(&self.storage, &working_directory, &self.namespace)
             .await
     }
 
@@ -269,21 +258,24 @@ impl InstalledPackage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     use crate::lineage::DomainLineageIo;
+    use crate::lineage::DomainWorkingDir;
     use crate::lineage::PackageLineageIo;
+    use crate::paths::DomainPaths;
 
     #[tokio::test]
     async fn test_spamming_commit_writes() -> Res {
-        let temp_dir = TempDir::new()?;
-        let paths = paths::DomainPaths::new(temp_dir.path().to_path_buf());
+        let (working_directory, _temp_dir1) = DomainWorkingDir::from_temp_dir()?;
+        let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
 
         let storage = LocalStorage::new();
         let remote = RemoteS3::new(paths.clone(), storage.clone());
         let namespace: Namespace = ("test", "history").into();
 
-        paths.scaffold_for_installing(&storage, &namespace).await?;
+        paths
+            .scaffold_for_installing(&storage, &working_directory, &namespace)
+            .await?;
         // Initialize domain lineage file
         storage
             .write_file(
@@ -309,10 +301,7 @@ mod tests {
 
         // Copy manifest to the expected path
         let reference_manifest = crate::fixtures::manifest::parquet_checksummed();
-        let test_manifest = temp_dir
-            .path()
-            .to_path_buf()
-            .join(".quilt/installed/test/history/abc123");
+        let test_manifest = paths.installed_manifest(&namespace, "abc123");
         storage.copy(reference_manifest?, test_manifest).await?;
 
         let domain_lineage_io = DomainLineageIo::new(paths.lineage());

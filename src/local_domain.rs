@@ -51,8 +51,9 @@ impl LocalDomain {
     }
 
     pub async fn scaffold_paths_for_installing(&self, namespace: &Namespace) -> Res {
+        let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
         self.paths
-            .scaffold_for_installing(&self.storage, namespace)
+            .scaffold_for_installing(&self.storage, &lineage.working_directory, namespace)
             .await
     }
 

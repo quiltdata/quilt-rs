@@ -30,12 +30,9 @@ pub async fn uninstall_package(
     debug!("✔️ Removed manifests at: {}", manifest_path.display());
 
     debug!("⏳ Removing working directory");
-    if let Some(working_dir) = &lineage.working_directory {
-        storage.remove_dir_all(&working_dir).await?;
-        debug!("✔️ Removed working directory: {}", working_dir.display());
-    } else {
-        return Err(Error::DomainLineageMissingWorkingDirectory);
-    }
+    let working_dir = lineage.working_directory.get()?;
+    storage.remove_dir_all(working_dir).await?;
+    debug!("✔️ Removed working directory: {}", working_dir.display());
 
     // TODO: Remove object files? But need to make sure no other manifest uses them.
     debug!("ℹ️ Skipping object files cleanup - may be used by other packages");
@@ -48,11 +45,10 @@ pub async fn uninstall_package(
 mod tests {
     use std::collections::BTreeMap;
 
-    use tempfile::TempDir;
-
     use super::*;
 
     use crate::io::storage::mocks::MockStorage;
+    use crate::lineage::DomainWorkingDir;
     use crate::lineage::PackageLineage;
 
     #[tokio::test]
@@ -70,18 +66,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_uninstall_package() -> Res {
-        let temp_dir = TempDir::new()?;
-        let working_directory = temp_dir.path().to_path_buf();
-        let lineage = DomainLineage {
-            working_directory: Some(working_directory),
-            packages: BTreeMap::from([(("foo", "bar").into(), PackageLineage::default())]),
-        };
-        let paths = paths::DomainPaths::default();
-        let storage = MockStorage::default();
+        let (working_directory, _temp_dir) = DomainWorkingDir::from_temp_dir()?;
 
         let namespace = Namespace::from(("foo", "bar"));
 
-        paths.scaffold_for_installing(&storage, &namespace).await?;
+        let paths = paths::DomainPaths::default();
+        let storage = MockStorage::default();
+
+        paths
+            .scaffold_for_installing(&storage, &working_directory, &namespace)
+            .await?;
+
+        let lineage = DomainLineage {
+            working_directory,
+            packages: BTreeMap::from([(namespace.clone(), PackageLineage::default())]),
+        };
 
         let lineage = uninstall_package(lineage, &paths, &storage, namespace).await?;
         assert!(lineage.packages.is_empty());
