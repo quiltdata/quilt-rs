@@ -126,13 +126,17 @@ impl PackageLineageIo {
         }
     }
 
-    pub async fn read(&self, storage: &impl Storage) -> Res<PackageLineage> {
+    pub async fn read(&self, storage: &impl Storage) -> Res<(PathBuf, PackageLineage)> {
         let domain_lineage = self.domain_lineage.read(storage).await?;
         let namespace = domain_lineage.packages.get(&self.namespace);
 
-        match namespace {
-            Some(ns) => Ok(ns.clone()),
-            None => Err(Error::PackageNotInstalled(self.namespace.clone())),
+        match (namespace, &domain_lineage.working_directory) {
+            (Some(ns), Some(working_dir)) => {
+                let package_working_dir = working_dir.join(self.namespace.to_string());
+                Ok((package_working_dir, ns.clone()))
+            },
+            (None, _) => Err(Error::PackageNotInstalled(self.namespace.clone())),
+            (_, None) => Err(Error::DomainLineageMissingWorkingDirectory),
         }
     }
 
