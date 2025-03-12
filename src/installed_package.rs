@@ -38,12 +38,19 @@ pub struct InstalledPackage<S: Storage = LocalStorage, R: Remote = RemoteS3> {
 
 impl std::fmt::Display for InstalledPackage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            r##"Installed package "{}" at {}"##,
-            self.namespace,
-            self.working_folder().await.unwrap().display()
-        )
+        match self.working_folder().await {
+            Ok(path) => write!(
+                f,
+                r##"Installed package "{}" at {}"##,
+                self.namespace,
+                path.display()
+            ),
+            Err(_) => write!(
+                f,
+                r##"Failed to locate working_directory for the "{}" package"##,
+                self.namespace
+            ),
+        }
     }
 }
 

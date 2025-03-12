@@ -49,29 +49,11 @@ impl TryFrom<Vec<u8>> for DomainLineage {
                 Ok(lineage)
             },
             Err(err) => {
-                // Try to parse without working_directory
-                let result: Result<serde_json::Value, serde_json::Error> = serde_json::from_slice(&input);
-                match result {
-                    Ok(value) => {
-                        if let Some(packages) = value.get("packages") {
-                            // We have packages but no working_directory
-                            return Err(Error::DomainLineageMissingWorkingDirectory);
-                        }
-                        // Other parsing error
-                        log::error!(
-                            "Failed to parse `Vec<u8>` for `DomainLineage` in `{:?}`",
-                            input
-                        );
-                        Err(Error::LineageParse(err))
-                    },
-                    Err(_) => {
-                        log::error!(
-                            "Failed to parse `Vec<u8>` for `DomainLineage` in `{:?}`",
-                            input
-                        );
-                        Err(Error::LineageParse(err))
-                    }
-                }
+                log::error!(
+                    "Failed to parse `Vec<u8>` for `DomainLineage` in `{:?}`",
+                    input
+                );
+                Err(Error::LineageParse(err))
             }
         }
     }
