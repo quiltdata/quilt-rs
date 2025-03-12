@@ -307,15 +307,13 @@ mod tests {
         storage.copy(reference_manifest?, test_manifest).await?;
 
         let working_dir = temp_dir.path().to_path_buf().join(namespace.to_string());
-        let domain_lineage_io = DomainLineageIo::with_working_directory(
-            paths.lineage(),
-            working_dir,
-        );
+        let domain_lineage_io = DomainLineageIo::new(paths.lineage());
 
         let package = InstalledPackage {
             lineage: PackageLineageIo::new(
                 domain_lineage_io,
                 namespace.clone(),
+                working_dir,
             ),
             paths,
             remote,

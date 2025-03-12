@@ -26,6 +26,9 @@ pub enum Error {
     #[error("Commit error: {0}")]
     Commit(String),
 
+    #[error("Domain lineage missing working directory")]
+    DomainLineageMissingWorkingDirectory,
+
     #[error("Invalid file:// URI: {0}")]
     FileUri(Url),
 

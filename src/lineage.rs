@@ -31,6 +31,8 @@ pub use package::PathState;
 pub struct DomainLineage {
     #[serde(default = "BTreeMap::new")]
     pub packages: BTreeMap<Namespace, PackageLineage>,
+    #[serde(skip)]
+    pub working_directory: PathBuf,
 }
 
 impl TryFrom<Vec<u8>> for DomainLineage {
@@ -51,23 +53,16 @@ impl TryFrom<Vec<u8>> for DomainLineage {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DomainLineageIo {
     path: PathBuf,
-    working_directory: PathBuf,
 }
 
 // TODO impl std::io::Write and std::io::Read for DomainLineageIo
 impl DomainLineageIo {
     pub fn new(path: PathBuf) -> Self {
-        DomainLineageIo { 
-            path,
-            working_directory: PathBuf::default(),
-        }
+        DomainLineageIo { path }
     }
 
     pub fn with_working_directory(path: PathBuf, working_directory: PathBuf) -> Self {
-        DomainLineageIo {
-            path,
-            working_directory,
-        }
+        DomainLineageIo { path }
     }
 
     pub async fn read(&self, storage: &impl Storage) -> Res<DomainLineage> {
@@ -85,7 +80,35 @@ impl DomainLineageIo {
                 other => Err(other),
             })?;
 
-        DomainLineage::try_from(contents)
+        let mut lineage = DomainLineage::try_from(contents)?;
+        
+        // Set working_directory from paths.legacy_working_dir
+        if lineage.working_directory.as_os_str().is_empty() {
+            return Err(Error::DomainLineageMissingWorkingDirectory);
+        }
+        
+        Ok(lineage)
+    }
+
+    pub async fn read_with_working_directory(&self, storage: &impl Storage, working_directory: PathBuf) -> Res<DomainLineage> {
+        let contents = storage
+            .read_file(&self.path)
+            .await
+            .or_else(|err| match err {
+                Error::Io(inner_err) => {
+                    if inner_err.kind() == std::io::ErrorKind::NotFound {
+                        Ok("{}".into())
+                    } else {
+                        Err(Error::Io(inner_err))
+                    }
+                }
+                other => Err(other),
+            })?;
+
+        let mut lineage = DomainLineage::try_from(contents)?;
+        lineage.working_directory = working_directory;
+        
+        Ok(lineage)
     }
 
     pub async fn write(
@@ -100,12 +123,8 @@ impl DomainLineageIo {
         Ok(lineage)
     }
 
-    pub fn create_package_lineage(&self, namespace: Namespace) -> PackageLineageIo {
-        PackageLineageIo::new(self.clone(), namespace)
-    }
-    
-    pub fn working_directory(&self) -> &PathBuf {
-        &self.working_directory
+    pub fn create_package_lineage(&self, namespace: Namespace, working_directory: PathBuf) -> PackageLineageIo {
+        PackageLineageIo::new(self.clone(), namespace, working_directory)
     }
 }
 
@@ -115,18 +134,20 @@ impl DomainLineageIo {
 pub struct PackageLineageIo {
     domain_lineage: DomainLineageIo,
     namespace: Namespace,
+    working_directory: PathBuf,
 }
 
 impl PackageLineageIo {
-    pub fn new(domain_lineage: DomainLineageIo, namespace: Namespace) -> Self {
+    pub fn new(domain_lineage: DomainLineageIo, namespace: Namespace, working_directory: PathBuf) -> Self {
         PackageLineageIo {
             domain_lineage,
             namespace,
+            working_directory,
         }
     }
 
     pub async fn read(&self, storage: &impl Storage) -> Res<PackageLineage> {
-        let domain_lineage = self.domain_lineage.read(storage).await?;
+        let domain_lineage = self.domain_lineage.read_with_working_directory(storage, self.working_directory.clone()).await?;
         let namespace = domain_lineage.packages.get(&self.namespace);
 
         match namespace {
@@ -140,7 +161,7 @@ impl PackageLineageIo {
         storage: &impl Storage,
         lineage: PackageLineage,
     ) -> Res<PackageLineage> {
-        let mut domain_lineage = self.domain_lineage.read(storage).await?;
+        let mut domain_lineage = self.domain_lineage.read_with_working_directory(storage, self.working_directory.clone()).await?;
         domain_lineage
             .packages
             .insert(self.namespace.clone(), lineage.clone());
@@ -149,7 +170,7 @@ impl PackageLineageIo {
     }
     
     pub fn working_directory(&self) -> &PathBuf {
-        self.domain_lineage.working_directory()
+        &self.working_directory
     }
 }
 
@@ -182,6 +203,7 @@ mod tests {
             DomainLineage::try_from(br#"{"notkey": 123}"#.to_vec()).unwrap(),
             DomainLineage {
                 packages: BTreeMap::new(),
+                working_directory: PathBuf::default(),
             }
         );
     }
@@ -200,6 +222,7 @@ mod tests {
             DomainLineage::try_from(br###"{"packages":{}}"###.to_vec()).unwrap(),
             DomainLineage {
                 packages: BTreeMap::new(),
+                working_directory: PathBuf::default(),
             }
         )
     }
@@ -210,6 +233,7 @@ mod tests {
             DomainLineage::try_from(r###"{"packages":{}}"###.as_bytes().to_vec()).unwrap(),
             DomainLineage {
                 packages: BTreeMap::new(),
+                working_directory: PathBuf::default(),
             }
         )
     }
@@ -221,18 +245,26 @@ mod tests {
         storage
             .write_file(&file_path, br###"{"packages":{}}"###.as_ref())
             .await?;
-        let lineage = DomainLineageIo::new(file_path).read(&storage).await?;
-        assert_eq!(lineage, DomainLineage::default());
+        let working_dir = PathBuf::from("/tmp/working_dir");
+        let lineage = DomainLineageIo::new(file_path).read_with_working_directory(&storage, working_dir).await?;
+        assert_eq!(lineage, DomainLineage {
+            packages: BTreeMap::new(),
+            working_directory: PathBuf::from("/tmp/working_dir"),
+        });
         Ok(())
     }
 
     #[tokio::test]
     async fn test_domain_lineage_from_nothing() -> Res {
         let storage = MockStorage::default();
+        let working_dir = PathBuf::from("/tmp/working_dir");
         let lineage = DomainLineageIo::new(PathBuf::from("does-not-exist"))
-            .read(&storage)
+            .read_with_working_directory(&storage, working_dir)
             .await?;
-        assert_eq!(lineage, DomainLineage::default());
+        assert_eq!(lineage, DomainLineage {
+            packages: BTreeMap::new(),
+            working_directory: PathBuf::from("/tmp/working_dir"),
+        });
         Ok(())
     }
 
@@ -242,10 +274,12 @@ mod tests {
         let file_path = PathBuf::from("foo");
         assert!(!storage.exists(&file_path).await);
         let bytes = "0123456789abcdef".as_bytes();
+        let working_dir = PathBuf::from("/tmp/working_dir");
         DomainLineageIo::new(file_path.clone())
             .write(
                 &storage,
                 DomainLineage {
+                    working_directory: working_dir,
                     packages: BTreeMap::from([(
                         ("foo", "bar").into(),
                         PackageLineage {
@@ -305,7 +339,8 @@ mod tests {
             String::from_utf8(storage.read_file(&file_path).await?).unwrap(),
             String::from_utf8(manifest.clone()).unwrap()
         );
-        let lineage = DomainLineage::try_from(manifest)?;
+        let mut lineage = DomainLineage::try_from(manifest)?;
+        lineage.working_directory = PathBuf::from("/tmp/working_dir");
         let multihash_from_lineage = lineage
             .packages
             .get(&(("foo".to_string(), "bar".to_string()).into()))
@@ -326,12 +361,14 @@ mod tests {
     async fn test_domain_lineage_create_package_lineage() -> Res {
         let namespace = ("foo", "bar");
         let domain_lineage = DomainLineageIo::default();
-        let lineage = domain_lineage.create_package_lineage(namespace.into());
+        let working_dir = PathBuf::from("/tmp/working_dir");
+        let lineage = domain_lineage.create_package_lineage(namespace.into(), working_dir.clone());
         assert_eq!(
             lineage,
             PackageLineageIo {
                 namespace: namespace.into(),
                 domain_lineage,
+                working_directory: working_dir,
             }
         );
         Ok(())
