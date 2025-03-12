@@ -42,7 +42,7 @@ impl std::fmt::Display for InstalledPackage {
             f,
             r##"Installed package "{}" at {}"##,
             self.namespace,
-            self.working_folder().display()
+            self.working_folder().await.unwrap().display()
         )
     }
 }
@@ -70,16 +70,21 @@ impl InstalledPackage {
         self.lineage.read(&self.storage).await
     }
 
-    pub fn working_folder(&self) -> PathBuf {
-        self.lineage.working_directory().clone()
+    pub async fn working_folder(&self) -> Res<PathBuf> {
+        let domain_lineage = self.lineage.domain_lineage.read(&self.storage).await?;
+        match &domain_lineage.working_directory {
+            Some(dir) => Ok(dir.clone()),
+            None => Err(Error::DomainLineageMissingWorkingDirectory),
+        }
     }
 
     pub async fn status(&self) -> Res<InstalledPackageStatus> {
         let lineage = self.lineage.read(&self.storage).await?;
         let lineage = flow::refresh_latest_hash(lineage, &self.remote).await?;
         let manifest = self.manifest().await?;
+        let working_folder = self.working_folder().await?;
         let (lineage, status) =
-            flow::status(lineage, &self.storage, &manifest, self.working_folder()).await?;
+            flow::status(lineage, &self.storage, &manifest, working_folder).await?;
         self.lineage.write(&self.storage, lineage).await?;
         Ok(status)
     }
@@ -97,11 +102,12 @@ impl InstalledPackage {
             .await?;
 
         let mut manifest = self.manifest().await?;
+        let working_folder = self.working_folder().await?;
         let lineage = flow::install_paths(
             lineage,
             &mut manifest,
             &self.paths,
-            self.working_folder(),
+            working_folder,
             self.namespace.clone(),
             &self.storage,
             &self.remote,
@@ -114,8 +120,9 @@ impl InstalledPackage {
 
     pub async fn uninstall_paths(&self, paths: &Vec<PathBuf>) -> Res<LineagePaths> {
         let lineage = self.lineage.read(&self.storage).await?;
+        let working_folder = self.working_folder().await?;
         let lineage =
-            flow::uninstall_paths(lineage, self.working_folder(), &self.storage, paths).await?;
+            flow::uninstall_paths(lineage, working_folder, &self.storage, paths).await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(lineage.paths)
     }
@@ -135,16 +142,17 @@ impl InstalledPackage {
 
         let lineage = self.lineage.read(&self.storage).await?;
         let mut manifest = self.manifest().await?;
+        let working_folder = self.working_folder().await?;
 
         let (lineage, status) =
-            flow::status(lineage, &self.storage, &manifest, self.working_folder()).await?;
+            flow::status(lineage, &self.storage, &manifest, working_folder.clone()).await?;
 
         let lineage = flow::commit(
             lineage,
             &mut manifest,
             &self.paths,
             &self.storage,
-            self.working_folder(),
+            working_folder,
             status,
             self.namespace.clone(),
             message,
@@ -194,15 +202,16 @@ impl InstalledPackage {
             .await?;
 
         let mut manifest = self.manifest().await?;
+        let working_folder = self.working_folder().await?;
         let (lineage, status) =
-            flow::status(lineage, &self.storage, &manifest, self.working_folder()).await?;
+            flow::status(lineage, &self.storage, &manifest, working_folder.clone()).await?;
         let lineage = flow::pull(
             lineage,
             &mut manifest,
             &self.paths,
             &self.storage,
             &self.remote,
-            self.working_folder(),
+            working_folder,
             status,
             self.namespace.clone(),
         )
@@ -228,13 +237,14 @@ impl InstalledPackage {
             .await?;
 
         let mut manifest = self.manifest().await?;
+        let working_folder = self.working_folder().await?;
         let lineage = flow::reset_to_latest(
             lineage,
             &mut manifest,
             &self.paths,
             &self.storage,
             &self.remote,
-            self.working_folder(),
+            working_folder,
             self.namespace.clone(),
         )
         .await?;
@@ -293,7 +303,8 @@ mod tests {
                         "base_hash": "abc123",
                         "latest_hash": "abc123",
                         "paths": {}
-                    }}
+                    }},
+                "working_directory": "/tmp/working_dir"
                 }"#,
             )
             .await?;
@@ -306,14 +317,12 @@ mod tests {
             .join(".quilt/installed/test/history/abc123");
         storage.copy(reference_manifest?, test_manifest).await?;
 
-        let working_dir = temp_dir.path().to_path_buf().join(namespace.to_string());
         let domain_lineage_io = DomainLineageIo::new(paths.lineage());
 
         let package = InstalledPackage {
             lineage: PackageLineageIo::new(
                 domain_lineage_io,
                 namespace.clone(),
-                working_dir,
             ),
             paths,
             remote,
