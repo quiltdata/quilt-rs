@@ -71,7 +71,7 @@ impl InstalledPackage {
     }
 
     pub fn working_folder(&self) -> PathBuf {
-        self.paths.working_dir(&self.namespace)
+        self.lineage.working_directory().clone()
     }
 
     pub async fn status(&self) -> Res<InstalledPackageStatus> {
@@ -306,9 +306,15 @@ mod tests {
             .join(".quilt/installed/test/history/abc123");
         storage.copy(reference_manifest?, test_manifest).await?;
 
+        let working_dir = temp_dir.path().to_path_buf().join(namespace.to_string());
+        let domain_lineage_io = DomainLineageIo::with_working_directory(
+            paths.lineage(),
+            working_dir,
+        );
+
         let package = InstalledPackage {
             lineage: PackageLineageIo::new(
-                DomainLineageIo::new(paths.lineage()),
+                domain_lineage_io,
                 namespace.clone(),
             ),
             paths,

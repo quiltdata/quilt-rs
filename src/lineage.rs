@@ -51,12 +51,23 @@ impl TryFrom<Vec<u8>> for DomainLineage {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DomainLineageIo {
     path: PathBuf,
+    working_directory: PathBuf,
 }
 
 // TODO impl std::io::Write and std::io::Read for DomainLineageIo
 impl DomainLineageIo {
     pub fn new(path: PathBuf) -> Self {
-        DomainLineageIo { path }
+        DomainLineageIo { 
+            path,
+            working_directory: PathBuf::default(),
+        }
+    }
+
+    pub fn with_working_directory(path: PathBuf, working_directory: PathBuf) -> Self {
+        DomainLineageIo {
+            path,
+            working_directory,
+        }
     }
 
     pub async fn read(&self, storage: &impl Storage) -> Res<DomainLineage> {
@@ -91,6 +102,10 @@ impl DomainLineageIo {
 
     pub fn create_package_lineage(&self, namespace: Namespace) -> PackageLineageIo {
         PackageLineageIo::new(self.clone(), namespace)
+    }
+    
+    pub fn working_directory(&self) -> &PathBuf {
+        &self.working_directory
     }
 }
 
@@ -131,6 +146,10 @@ impl PackageLineageIo {
             .insert(self.namespace.clone(), lineage.clone());
         self.domain_lineage.write(storage, domain_lineage).await?;
         Ok(lineage)
+    }
+    
+    pub fn working_directory(&self) -> &PathBuf {
+        self.domain_lineage.working_directory()
     }
 }
 

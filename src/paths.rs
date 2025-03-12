@@ -114,7 +114,7 @@ impl DomainPaths {
         let mut paths = vec![];
         paths.extend(self.required());
         paths.extend(vec![
-            self.working_dir(namespace),
+            self.legacy_working_dir(namespace),
             self.installed_manifests(namespace),
         ]);
         paths
@@ -141,7 +141,7 @@ impl DomainPaths {
     }
 
     /// Directory for storing installed files that can be modified
-    pub fn working_dir(&self, namespace: &Namespace) -> PathBuf {
+    pub fn legacy_working_dir(&self, namespace: &Namespace) -> PathBuf {
         self.root_dir.join(namespace.to_string())
     }
 }
