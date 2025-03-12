@@ -78,8 +78,8 @@ impl InstalledPackage {
     }
 
     pub async fn working_folder(&self) -> Res<PathBuf> {
-        let domain_lineage = self.lineage.domain_lineage.read(&self.storage).await?;
-        match &domain_lineage.working_directory {
+        let lineage = self.lineage.read(&self.storage).await?;
+        match &lineage.working_directory {
             Some(dir) => Ok(dir.clone()),
             None => Err(Error::DomainLineageMissingWorkingDirectory),
         }

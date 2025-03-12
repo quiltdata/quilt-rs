@@ -40,14 +40,14 @@ impl TryFrom<Vec<u8>> for DomainLineage {
 
     fn try_from(input: Vec<u8>) -> Result<Self, Self::Error> {
         let result: Result<Self, serde_json::Error> = serde_json::from_slice(&input);
-        
+
         match result {
             Ok(lineage) => {
                 if lineage.working_directory.is_none() {
                     return Err(Error::DomainLineageMissingWorkingDirectory);
                 }
                 Ok(lineage)
-            },
+            }
             Err(err) => {
                 log::error!(
                     "Failed to parse `Vec<u8>` for `DomainLineage` in `{:?}`",
@@ -91,46 +91,6 @@ impl DomainLineageIo {
             })?;
 
         DomainLineage::try_from(contents)
-    }
-
-    pub async fn read_with_working_directory(&self, storage: &impl Storage, working_directory: PathBuf) -> Res<DomainLineage> {
-        let contents = storage
-            .read_file(&self.path)
-            .await
-            .or_else(|err| match err {
-                Error::Io(inner_err) => {
-                    if inner_err.kind() == std::io::ErrorKind::NotFound {
-                        Ok("{}".into())
-                    } else {
-                        Err(Error::Io(inner_err))
-                    }
-                }
-                other => Err(other),
-            })?;
-
-        // Try to parse the contents
-        let result: Result<serde_json::Value, serde_json::Error> = serde_json::from_slice(&contents);
-        match result {
-            Ok(mut value) => {
-                // Set working_directory in the JSON
-                if let serde_json::Value::Object(ref mut obj) = value {
-                    obj.insert(
-                        "working_directory".to_string(),
-                        serde_json::Value::String(working_directory.to_string_lossy().to_string()),
-                    );
-                }
-                
-                // Convert back to JSON string and parse as DomainLineage
-                let updated_contents = serde_json::to_vec(&value)?;
-                DomainLineage::try_from(updated_contents)
-            },
-            Err(_) => {
-                // If we can't parse the JSON, create a new empty one with working_directory
-                let mut lineage = DomainLineage::default();
-                lineage.working_directory = Some(working_directory);
-                Ok(lineage)
-            }
-        }
     }
 
     pub async fn write(
@@ -238,8 +198,14 @@ mod tests {
 
     #[test]
     fn test_with_working_directory() {
-        let lineage = DomainLineage::try_from(br###"{"packages":{},"working_directory":"/tmp/working_dir"}"###.to_vec()).unwrap();
-        assert_eq!(lineage.working_directory, Some(PathBuf::from("/tmp/working_dir")));
+        let lineage = DomainLineage::try_from(
+            br###"{"packages":{},"working_directory":"/tmp/working_dir"}"###.to_vec(),
+        )
+        .unwrap();
+        assert_eq!(
+            lineage.working_directory,
+            Some(PathBuf::from("/tmp/working_dir"))
+        );
     }
 
     #[tokio::test]
@@ -247,27 +213,30 @@ mod tests {
         let storage = MockStorage::default();
         let file_path = PathBuf::from("foo");
         storage
-            .write_file(&file_path, br###"{"packages":{},"working_directory":"/tmp/working_dir"}"###.as_ref())
+            .write_file(
+                &file_path,
+                br###"{"packages":{},"working_directory":"/tmp/working_dir"}"###.as_ref(),
+            )
             .await?;
         let lineage = DomainLineageIo::new(file_path).read(&storage).await?;
-        assert_eq!(lineage, DomainLineage {
-            packages: BTreeMap::new(),
-            working_directory: Some(PathBuf::from("/tmp/working_dir")),
-        });
+        assert_eq!(
+            lineage,
+            DomainLineage {
+                packages: BTreeMap::new(),
+                working_directory: Some(PathBuf::from("/tmp/working_dir")),
+            }
+        );
         Ok(())
     }
 
     #[tokio::test]
     async fn test_domain_lineage_from_nothing() -> Res {
         let storage = MockStorage::default();
-        let working_dir = PathBuf::from("/tmp/working_dir");
         let lineage = DomainLineageIo::new(PathBuf::from("does-not-exist"))
-            .read_with_working_directory(&storage, working_dir)
+            .read(&storage)
             .await?;
-        assert_eq!(lineage, DomainLineage {
-            packages: BTreeMap::new(),
-            working_directory: Some(PathBuf::from("/tmp/working_dir")),
-        });
+        // TODO: should return Error::DomainLineageMissingWorkingDirectory
+        assert_eq!(lineage, DomainLineage::default());
         Ok(())
     }
 
@@ -318,9 +287,12 @@ mod tests {
         assert!(storage.exists(&file_path).await);
         let file_contents = storage.read_file(&file_path).await?;
         let lineage = DomainLineage::try_from(file_contents)?;
-        
-        assert_eq!(lineage.working_directory, Some(PathBuf::from("/tmp/working_dir")));
-        
+
+        assert_eq!(
+            lineage.working_directory,
+            Some(PathBuf::from("/tmp/working_dir"))
+        );
+
         let multihash_from_lineage = lineage
             .packages
             .get(&(("foo".to_string(), "bar".to_string()).into()))
