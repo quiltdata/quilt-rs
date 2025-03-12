@@ -25,6 +25,53 @@ pub use package::LineagePaths;
 pub use package::PackageLineage;
 pub use package::PathState;
 
+/// Wrapper for working directory path with proper serialization/deserialization
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct DomainWorkingDir {
+    inner: Option<PathBuf>,
+}
+
+impl DomainWorkingDir {
+    pub fn new(path: PathBuf) -> Self {
+        DomainWorkingDir { inner: Some(path) }
+    }
+
+    pub fn get(&self) -> Option<&PathBuf> {
+        self.inner.as_ref()
+    }
+
+    pub fn join(&self, path: impl AsRef<std::path::Path>) -> Result<PathBuf, Error> {
+        match &self.inner {
+            Some(dir) => Ok(dir.join(path)),
+            None => Err(Error::DomainLineageMissingWorkingDirectory),
+        }
+    }
+}
+
+impl Serialize for DomainWorkingDir {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match &self.inner {
+            Some(path) => serializer.serialize_str(&path.to_string_lossy()),
+            None => serializer.serialize_none(),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for DomainWorkingDir {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let path_str = String::deserialize(deserializer)?;
+        Ok(DomainWorkingDir {
+            inner: Some(PathBuf::from(path_str)),
+        })
+    }
+}
+
 /// It's essentially just a map of `PackageLineage`.
 /// Represents the contents of `.quilt/data.json`
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
@@ -32,7 +79,7 @@ pub struct DomainLineage {
     #[serde(default = "BTreeMap::new")]
     pub packages: BTreeMap<Namespace, PackageLineage>,
     #[serde(default)]
-    pub working_directory: Option<PathBuf>,
+    pub working_directory: DomainWorkingDir,
 }
 
 impl TryFrom<Vec<u8>> for DomainLineage {
@@ -43,7 +90,7 @@ impl TryFrom<Vec<u8>> for DomainLineage {
 
         match result {
             Ok(lineage) => {
-                if lineage.working_directory.is_none() {
+                if lineage.working_directory.get().is_none() {
                     return Err(Error::DomainLineageMissingWorkingDirectory);
                 }
                 Ok(lineage)
@@ -130,22 +177,18 @@ impl PackageLineageIo {
         let domain_lineage = self.domain_lineage.read(storage).await?;
         let namespace = domain_lineage.packages.get(&self.namespace);
 
-        match (namespace, &domain_lineage.working_directory) {
-            (Some(ns), Some(working_dir)) => {
-                let package_working_dir = working_dir.join(self.namespace.to_string());
+        match namespace {
+            Some(ns) => {
+                let package_working_dir = domain_lineage.working_directory.join(self.namespace.to_string())?;
                 Ok((package_working_dir, ns.clone()))
             }
-            (None, _) => Err(Error::PackageNotInstalled(self.namespace.clone())),
-            (_, None) => Err(Error::DomainLineageMissingWorkingDirectory),
+            None => Err(Error::PackageNotInstalled(self.namespace.clone())),
         }
     }
 
     pub async fn working_directory(&self, storage: &impl Storage) -> Res<PathBuf> {
         let domain_lineage = self.domain_lineage.read(storage).await?;
-        match domain_lineage.working_directory {
-            Some(working_dir) => Ok(working_dir.join(self.namespace.to_string())),
-            None => return Err(Error::DomainLineageMissingWorkingDirectory),
-        }
+        domain_lineage.working_directory.join(self.namespace.to_string())
     }
 
     pub async fn write(
@@ -215,8 +258,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            lineage.working_directory,
-            Some(PathBuf::from("/tmp/working_dir"))
+            lineage.working_directory.get(),
+            Some(&PathBuf::from("/tmp/working_dir"))
         );
     }
 
@@ -235,7 +278,7 @@ mod tests {
             lineage,
             DomainLineage {
                 packages: BTreeMap::new(),
-                working_directory: Some(PathBuf::from("/tmp/working_dir")),
+                working_directory: DomainWorkingDir::new(PathBuf::from("/tmp/working_dir")),
             }
         );
         Ok(())
@@ -263,7 +306,7 @@ mod tests {
             .write(
                 &storage,
                 DomainLineage {
-                    working_directory: Some(working_dir),
+                    working_directory: DomainWorkingDir::new(working_dir),
                     packages: BTreeMap::from([(
                         ("foo", "bar").into(),
                         PackageLineage {
@@ -301,8 +344,8 @@ mod tests {
         let lineage = DomainLineage::try_from(file_contents)?;
 
         assert_eq!(
-            lineage.working_directory,
-            Some(PathBuf::from("/tmp/working_dir"))
+            lineage.working_directory.get(),
+            Some(&PathBuf::from("/tmp/working_dir"))
         );
 
         let multihash_from_lineage = lineage
