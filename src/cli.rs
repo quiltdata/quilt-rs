@@ -285,9 +285,9 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             let args = home::Input { path, migrate };
 
             if is_setting {
-                log::info!("Setting working directory {:?}", args);
+                log::info!("Setting Home directory {:?}", args);
             } else {
-                log::info!("Getting working directory {:?}", args);
+                log::info!("Getting Home directory {:?}", args);
             }
             Ok(home::command(m, args).await)
         }
