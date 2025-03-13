@@ -178,6 +178,15 @@ enum Commands {
         namespace: String,
         // FIXME: add workflow?
     },
+    WorkingDir {
+        /// Path to local domain
+        #[arg(short, long)]
+        domain: Option<PathBuf>,
+        #[arg(short, long)]
+        path: Option<PathBuf>,
+        #[arg(short, long)]
+        migrate: Option<bool>,
+    },
     /// Status of the package: modified, up-to-date, outdated
     Status {
         /// Path to local domain
@@ -272,7 +281,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
 
             if let Some(dir) = working_dir {
                 m.set_working_directory(dir).await?;
-            } else if !m.has_working_directory().await? {
+            } else if m.get_working_directory().await?.is_none() {
                 return Ok(Std::Err(Error::WorkingDir));
             }
 
@@ -352,6 +361,21 @@ pub async fn init(args: Args) -> Result<Std, Error> {
 
             log::info!("Pushing {:?}", args);
             Ok(push::command(m, args).await)
+        }
+        Commands::WorkingDir {
+            domain,
+            path: _path,
+            migrate: _migrate,
+        } => {
+            let root_dir = get_domain_dir(domain)?;
+            let m = Model::from(root_dir);
+            match m.get_working_directory().await {
+                Ok(dir) => Ok(Std::Out(dir.get().unwrap().display().to_string())),
+                Err(err) => {
+                    println!("{:?}", err);
+                    Ok(Std::Err(Error::WorkingDir))
+                }
+            }
         }
         Commands::Status { domain, namespace } => {
             let root_dir = get_domain_dir(domain)?;

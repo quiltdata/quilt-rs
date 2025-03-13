@@ -49,6 +49,10 @@ impl DomainWorkingDir {
         self.inner.is_some()
     }
 
+    pub fn is_none(&self) -> bool {
+        self.inner.is_none()
+    }
+
     pub fn join(&self, path: impl AsRef<std::path::Path>) -> Result<PathBuf, Error> {
         match &self.inner {
             Some(dir) => Ok(dir.join(path)),

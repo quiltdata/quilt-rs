@@ -3,6 +3,8 @@ use std::path::PathBuf;
 
 use tempfile::TempDir;
 
+use quilt_rs::lineage::DomainWorkingDir;
+
 use crate::cli::benchmark;
 use crate::cli::browse;
 use crate::cli::commit;
@@ -90,14 +92,15 @@ impl Model {
         Model { local_domain }
     }
 
-    pub async fn has_working_directory(&self) -> Result<bool, Error> {
-        let working_dir = self.local_domain.working_directory().await?;
-        Ok(working_dir.is_some())
+    pub async fn get_working_directory(&self) -> Result<DomainWorkingDir, Error> {
+        Ok(self.local_domain.working_directory().await?)
     }
 
-    pub async fn set_working_directory(&self, dir: impl AsRef<Path>) -> Result<(), Error> {
-        self.local_domain.set_working_directory(dir).await?;
-        Ok(())
+    pub async fn set_working_directory(
+        &self,
+        dir: impl AsRef<Path>,
+    ) -> Result<DomainWorkingDir, Error> {
+        Ok(self.local_domain.set_working_directory(dir).await?)
     }
 
     #[cfg(test)]
