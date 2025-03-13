@@ -13,6 +13,7 @@ use quilt_rs::uri::Namespace;
 mod benchmark;
 mod browse;
 mod commit;
+mod home;
 mod install;
 mod list;
 mod login;
@@ -369,24 +370,18 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         } => {
             let root_dir = get_domain_dir(domain)?;
             let m = Model::from(root_dir);
-            
+
             // If path is provided, set the working directory
             if let Some(dir_path) = path {
                 match m.set_working_directory(dir_path).await {
                     Ok(dir) => Ok(Std::Out(dir.get().unwrap().display().to_string())),
-                    Err(err) => {
-                        println!("{:?}", err);
-                        Ok(Std::Err(Error::WorkingDir))
-                    }
+                    Err(err) => Ok(Std::Err(Error::WorkingDir)),
                 }
             } else {
                 // Otherwise, get the current working directory
                 match m.get_working_directory().await {
                     Ok(dir) => Ok(Std::Out(dir.get().unwrap().display().to_string())),
-                    Err(err) => {
-                        println!("{:?}", err);
-                        Ok(Std::Err(Error::WorkingDir))
-                    }
+                    Err(err) => Ok(Std::Err(Error::WorkingDir)),
                 }
             }
         }
