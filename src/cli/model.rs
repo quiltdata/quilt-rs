@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use tempfile::TempDir;
 
-use quilt_rs::lineage::DomainWorkingDir;
+use quilt_rs::lineage::Home;
 
 use crate::cli::benchmark;
 use crate::cli::browse;
@@ -36,7 +36,7 @@ pub trait Commands {
         commit::model(local_domain, args).await
     }
 
-    async fn home(&self, args: home::Input) -> Result<home::Output, Error> {
+    async fn home(&self, args: home::Input)  -> Result<home::Output, Error> {
         let local_domain = self.get_local_domain();
         home::model(local_domain, args).await
     }
@@ -98,14 +98,14 @@ impl Model {
         Model { local_domain }
     }
 
-    pub async fn get_working_directory(&self) -> Result<DomainWorkingDir, Error> {
+    pub async fn get_working_directory(&self) -> Result<Home, Error> {
         Ok(self.local_domain.working_directory().await?)
     }
 
     pub async fn set_working_directory(
         &self,
         dir: impl AsRef<Path>,
-    ) -> Result<DomainWorkingDir, Error> {
+    ) -> Result<Home, Error> {
         Ok(self.local_domain.set_working_directory(dir).await?)
     }
 

@@ -30,13 +30,13 @@ pub use package::PathState;
 
 /// Wrapper for working directory path with proper serialization/deserialization
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
-pub struct DomainWorkingDir {
+pub struct Home {
     inner: Option<PathBuf>,
 }
 
-impl DomainWorkingDir {
+impl Home {
     pub fn new(path: PathBuf) -> Self {
-        DomainWorkingDir { inner: Some(path) }
+        Home { inner: Some(path) }
     }
 
     pub fn get(&self) -> Res<&PathBuf> {
@@ -64,7 +64,7 @@ impl DomainWorkingDir {
     pub fn from_temp_dir() -> Res<(Self, TempDir)> {
         let temp_dir = TempDir::new()?;
         Ok((
-            DomainWorkingDir {
+            Home {
                 inner: Some(temp_dir.path().to_path_buf()),
             },
             temp_dir,
@@ -72,7 +72,7 @@ impl DomainWorkingDir {
     }
 }
 
-impl Serialize for DomainWorkingDir {
+impl Serialize for Home {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -84,13 +84,13 @@ impl Serialize for DomainWorkingDir {
     }
 }
 
-impl<'de> Deserialize<'de> for DomainWorkingDir {
+impl<'de> Deserialize<'de> for Home {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         let path_str = String::deserialize(deserializer)?;
-        Ok(DomainWorkingDir {
+        Ok(Home {
             inner: Some(PathBuf::from(path_str)),
         })
     }
@@ -103,7 +103,7 @@ pub struct DomainLineage {
     #[serde(default = "BTreeMap::new")]
     pub packages: BTreeMap<Namespace, PackageLineage>,
     #[serde(default)]
-    pub working_directory: DomainWorkingDir,
+    pub home: Home,
 }
 
 impl TryFrom<Vec<u8>> for DomainLineage {
@@ -114,8 +114,8 @@ impl TryFrom<Vec<u8>> for DomainLineage {
 
         match result {
             Ok(lineage) => {
-                let working_dir = lineage.working_directory.get()?;
-                if working_dir.as_os_str().is_empty() {
+                let home = lineage.home.get()?;
+                if home.as_os_str().is_empty() {
                     return Err(Error::DomainLineageMissingWorkingDirectory);
                 }
                 Ok(lineage)
@@ -161,22 +161,22 @@ impl DomainLineageIo {
         DomainLineage::try_from(contents)
     }
 
-    pub async fn set_working_directory(
+    pub async fn set_home(
         &self,
         storage: &impl Storage,
-        working_directory: DomainWorkingDir,
+        home: Home,
     ) -> Res<DomainLineage> {
         match storage.read_file(&self.path).await {
             Ok(contents) => {
                 let mut lineage: DomainLineage = serde_json::from_slice(&contents)?;
-                lineage.working_directory = working_directory.clone();
+                lineage.home = home.clone();
                 self.write(storage, lineage.clone()).await
             }
             Err(Error::Io(e)) => match e.kind() {
                 std::io::ErrorKind::NotFound => {
                     let lineage = DomainLineage {
                         packages: BTreeMap::new(),
-                        working_directory,
+                        home,
                     };
                     self.write(storage, lineage.clone()).await
                 }
@@ -226,7 +226,7 @@ impl PackageLineageIo {
         match namespace {
             Some(ns) => {
                 let package_working_dir = domain_lineage
-                    .working_directory
+                    .home
                     .join(self.namespace.to_string())?;
                 Ok((package_working_dir, ns.clone()))
             }
@@ -235,14 +235,14 @@ impl PackageLineageIo {
     }
 
     pub async fn working_directory(&self, storage: &impl Storage) -> Res<PathBuf> {
-        self.domain_working_directory(storage)
+        self.domain_home(storage)
             .await?
             .join(self.namespace.to_string())
     }
 
-    pub async fn domain_working_directory(&self, storage: &impl Storage) -> Res<DomainWorkingDir> {
+    pub async fn domain_home(&self, storage: &impl Storage) -> Res<Home> {
         let domain_lineage = self.domain_lineage.read(storage).await?;
-        Ok(domain_lineage.working_directory)
+        Ok(domain_lineage.home)
     }
 
     pub async fn write(
@@ -308,11 +308,11 @@ mod tests {
     #[test]
     fn test_with_working_directory() -> Res {
         let lineage = DomainLineage::try_from(
-            br###"{"packages":{},"working_directory":"/tmp/working_dir"}"###.to_vec(),
+            br###"{"packages":{},"home":"/tmp/working_dir"}"###.to_vec(),
         )
         .unwrap();
         assert_eq!(
-            lineage.working_directory.get()?,
+            lineage.home.get()?,
             &PathBuf::from("/tmp/working_dir")
         );
         Ok(())
@@ -325,7 +325,7 @@ mod tests {
         storage
             .write_file(
                 &file_path,
-                br###"{"packages":{},"working_directory":"/tmp/working_dir"}"###.as_ref(),
+                br###"{"packages":{},"home":"/tmp/working_dir"}"###.as_ref(),
             )
             .await?;
         let lineage = DomainLineageIo::new(file_path).read(&storage).await?;
@@ -333,7 +333,7 @@ mod tests {
             lineage,
             DomainLineage {
                 packages: BTreeMap::new(),
-                working_directory: DomainWorkingDir::new(PathBuf::from("/tmp/working_dir")),
+                home: Home::new(PathBuf::from("/tmp/working_dir")),
             }
         );
         Ok(())
@@ -364,7 +364,7 @@ mod tests {
             .write(
                 &storage,
                 DomainLineage {
-                    working_directory: DomainWorkingDir::new(working_dir),
+                    home: Home::new(working_dir),
                     packages: BTreeMap::from([(
                         ("foo", "bar").into(),
                         PackageLineage {
@@ -402,7 +402,7 @@ mod tests {
         let lineage = DomainLineage::try_from(file_contents)?;
 
         assert_eq!(
-            lineage.working_directory.get()?,
+            lineage.home.get()?,
             &PathBuf::from("/tmp/working_dir")
         );
 

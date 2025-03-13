@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 
 use crate::io::storage::Storage;
-use crate::lineage::DomainWorkingDir;
+use crate::lineage::Home;
 use crate::uri::Host;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
@@ -116,13 +116,13 @@ impl DomainPaths {
     /// What directories are essential when we initiate `InstalledPackage`
     fn required_for_installing(
         &self,
-        working_directory: &DomainWorkingDir,
+        home: &Home,
         namespace: &Namespace,
     ) -> Res<Vec<PathBuf>> {
         let mut paths = vec![];
         paths.extend(self.required());
         paths.extend(vec![
-            working_directory.join(namespace.to_string())?,
+            home.join(namespace.to_string())?,
             self.legacy_working_dir(namespace),
             self.installed_manifests(namespace),
         ]);
@@ -132,12 +132,12 @@ impl DomainPaths {
     pub async fn scaffold_for_installing(
         &self,
         storage: &impl Storage,
-        working_directory: &DomainWorkingDir,
+        home: &Home,
         namespace: &Namespace,
     ) -> Res {
         scaffold_paths(
             storage,
-            self.required_for_installing(working_directory, namespace)?,
+            self.required_for_installing(home, namespace)?,
         )
         .await
     }

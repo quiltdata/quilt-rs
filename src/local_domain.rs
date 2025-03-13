@@ -12,7 +12,7 @@ use crate::io::storage::LocalStorage;
 use crate::io::storage::Storage;
 use crate::lineage;
 use crate::lineage::DomainLineage;
-use crate::lineage::DomainWorkingDir;
+use crate::lineage::Home;
 use crate::manifest::Header;
 use crate::manifest::JsonObject;
 use crate::manifest::Table;
@@ -51,26 +51,26 @@ impl LocalDomain {
         }
     }
 
-    pub async fn working_directory(&self) -> Res<DomainWorkingDir> {
+    pub async fn working_directory(&self) -> Res<Home> {
         let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
-        Ok(lineage.working_directory)
+        Ok(lineage.home)
     }
 
-    pub async fn set_working_directory(&self, dir: impl AsRef<Path>) -> Res<DomainWorkingDir> {
+    pub async fn set_working_directory(&self, dir: impl AsRef<Path>) -> Res<Home> {
         Ok(self
             .lineage
-            .set_working_directory(
+            .set_home(
                 &self.storage,
-                DomainWorkingDir::new(dir.as_ref().to_path_buf()),
+                Home::new(dir.as_ref().to_path_buf()),
             )
             .await?
-            .working_directory)
+            .home)
     }
 
     pub async fn scaffold_paths_for_installing(&self, namespace: &Namespace) -> Res {
-        let working_directory = self.working_directory().await?;
+        let home = self.working_directory().await?;
         self.paths
-            .scaffold_for_installing(&self.storage, &working_directory, namespace)
+            .scaffold_for_installing(&self.storage, &home, namespace)
             .await
     }
 
