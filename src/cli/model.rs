@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::path::PathBuf;
 
 use tempfile::TempDir;
@@ -89,6 +90,16 @@ impl Model {
         Model { local_domain }
     }
 
+    pub async fn has_working_directory(&self) -> Result<bool, Error> {
+        let working_dir = self.local_domain.working_directory().await?;
+        Ok(working_dir.is_some())
+    }
+
+    pub async fn set_working_directory(&self, dir: impl AsRef<Path>) -> Result<(), Error> {
+        self.local_domain.set_working_directory(dir).await?;
+        Ok(())
+    }
+
     #[cfg(test)]
     pub fn from_temp_dir() -> Result<(Self, TempDir), Error> {
         let temp_dir = TempDir::new()?;
@@ -116,6 +127,8 @@ pub async fn install_package_into_temp_dir(
 ) -> Result<(Model, quilt_rs::InstalledPackage, TempDir), Error> {
     let (model, temp_dir) = Model::from_temp_dir()?;
 
+    model.set_working_directory(temp_dir.path()).await?;
+
     let output = model
         .install(install::Input {
             namespace: None,
@@ -133,4 +146,11 @@ pub async fn install_package_into_temp_dir(
 
     // We must return `temp_dir` because otherwise it will be dropped and removed
     Ok((model, installed_package, temp_dir))
+}
+
+#[cfg(test)]
+pub async fn create_model_in_temp_dir() -> Result<(Model, TempDir), Error> {
+    let (model, temp_dir) = Model::from_temp_dir()?;
+    model.set_working_directory(temp_dir.path()).await?;
+    Ok((model, temp_dir))
 }

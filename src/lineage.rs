@@ -45,6 +45,10 @@ impl DomainWorkingDir {
             .ok_or(Error::DomainLineageMissingWorkingDirectory)
     }
 
+    pub fn is_some(&self) -> bool {
+        self.inner.is_some()
+    }
+
     pub fn join(&self, path: impl AsRef<std::path::Path>) -> Result<PathBuf, Error> {
         match &self.inner {
             Some(dir) => Ok(dir.join(path)),
@@ -151,6 +155,31 @@ impl DomainLineageIo {
             })?;
 
         DomainLineage::try_from(contents)
+    }
+
+    pub async fn set_working_directory(
+        &self,
+        storage: &impl Storage,
+        working_directory: DomainWorkingDir,
+    ) -> Res<DomainLineage> {
+        match storage.read_file(&self.path).await {
+            Ok(contents) => {
+                let mut lineage: DomainLineage = serde_json::from_slice(&contents)?;
+                lineage.working_directory = working_directory.clone();
+                self.write(storage, lineage.clone()).await
+            }
+            Err(Error::Io(e)) => match e.kind() {
+                std::io::ErrorKind::NotFound => {
+                    let lineage = DomainLineage {
+                        packages: BTreeMap::new(),
+                        working_directory,
+                    };
+                    self.write(storage, lineage.clone()).await
+                }
+                _ => return Err(Error::Io(e)),
+            },
+            Err(e) => return Err(e),
+        }
     }
 
     pub async fn write(

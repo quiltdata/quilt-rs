@@ -116,6 +116,10 @@ enum Commands {
         /// You can provide multiple paths.
         #[arg(short, long)]
         path: Option<Vec<PathBuf>>,
+        /// Absolute path for the directory, where all packages will store their mutable files.
+        /// Ex. /home/user/QuiltSync
+        #[arg(short, long)]
+        working_dir: Option<PathBuf>,
     },
     /// List installed packages
     Login {
@@ -257,13 +261,21 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             Ok(commit::command(m, args).await)
         }
         Commands::Install {
-            path,
             domain,
             namespace,
+            path,
             uri,
+            working_dir,
         } => {
             let root_dir = get_domain_dir(domain)?;
             let m = Model::from(root_dir);
+
+            if let Some(dir) = working_dir {
+                m.set_working_directory(dir).await?;
+            } else if !m.has_working_directory().await? {
+                return Ok(Std::Err(Error::WorkingDir));
+            }
+
             let args = install::Input {
                 namespace: parse_optional_namespace(namespace)?,
                 paths: path,
@@ -395,6 +407,9 @@ Then run:
 
     #[error("Failed to write or read: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("Working directory is required. We store mutable files there")]
+    WorkingDir,
 }
 
 impl From<quilt_rs::Error> for Error {
@@ -407,6 +422,7 @@ impl From<quilt_rs::Error> for Error {
 mod tests {
     use super::*;
 
+    use crate::cli::model::create_model_in_temp_dir;
     use crate::cli::model::install_package_into_temp_dir;
 
     #[test]
@@ -448,16 +464,20 @@ mod tests {
         use crate::cli::fixtures::packages::workflow_null as pkg;
 
         // Create temporary directory for domain
-        let temp_dir = tempfile::tempdir()?;
-        let domain_path = temp_dir.path().to_path_buf();
+        let domain_temp_dir = tempfile::tempdir()?;
+        let domain = Some(domain_temp_dir.path().to_path_buf());
+
+        let working_temp_dir = tempfile::tempdir()?;
+        let working_dir = Some(working_temp_dir.path().to_path_buf());
 
         // First install the package
         let install_args = Args {
             command: Commands::Install {
-                domain: Some(domain_path.clone()),
+                domain,
                 namespace: Some(Namespace::from(pkg::NAMESPACE).to_string()),
                 uri: pkg::URI.to_string(),
                 path: None,
+                working_dir,
             },
         };
         let mut output = Vec::new();
@@ -467,9 +487,7 @@ mod tests {
         assert_eq!(
             output_str,
             format!(
-                "Installed package \"{}\" at {}/{}\nNo paths installed\n",
-                pkg::NAMESPACE_STR,
-                temp_dir.path().display(),
+                "Installed package \"{}\"\nNo paths installed\n",
                 pkg::NAMESPACE_STR,
             )
         );
@@ -561,7 +579,7 @@ mod tests {
     #[tokio::test]
     async fn test_pull_invalid() -> Result<(), Error> {
         // Create temporary directory for domain
-        let temp_dir = tempfile::tempdir()?;
+        let (_, temp_dir) = create_model_in_temp_dir().await?;
 
         let pull_args = Args {
             command: Commands::Pull {
@@ -609,7 +627,7 @@ mod tests {
     #[tokio::test]
     async fn test_uninstall_invalid() -> Result<(), Error> {
         // Create temporary directory for domain
-        let temp_dir = tempfile::tempdir()?;
+        let (_, temp_dir) = create_model_in_temp_dir().await?;
 
         let uninstall_args = Args {
             command: Commands::Uninstall {
@@ -657,7 +675,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_valid() -> Result<(), Error> {
         // Create temporary directory for domain
-        let temp_dir = tempfile::tempdir()?;
+        let (_, temp_dir) = create_model_in_temp_dir().await?;
 
         let list_args = Args {
             command: Commands::List {
@@ -681,13 +699,16 @@ mod tests {
 
         // Create temporary directory for domain
         let temp_dir = tempfile::tempdir()?;
+        let domain = Some(temp_dir.path().to_path_buf());
+        let working_dir = domain.clone();
 
         let install_args = Args {
             command: Commands::Install {
-                domain: Some(temp_dir.path().to_path_buf()),
+                domain,
                 namespace: None,
                 uri: pkg::URI.to_string(),
                 path: None,
+                working_dir,
             },
         };
 
