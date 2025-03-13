@@ -27,7 +27,7 @@ pub async fn install_package(
     info!("⏳ Installing package: {}", manifest_uri.display());
 
     paths
-        .scaffold_for_installing(storage, &lineage.working_directory, &manifest_uri.namespace)
+        .scaffold_for_installing(storage, &lineage.home, &manifest_uri.namespace)
         .await?;
     paths
         .scaffold_for_caching(storage, &manifest_uri.bucket)
@@ -81,18 +81,18 @@ mod tests {
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::io::storage::LocalStorage;
-    use crate::lineage::DomainWorkingDir;
+    use crate::lineage::Home;
     use crate::uri::S3Uri;
 
     /// Verify that attempting to install a package that is already installed results in an error.
     /// A package is considered installed if it is present in the lineage.
     #[tokio::test]
     async fn test_if_already_installed() -> Res {
-        let (working_directory, _temp_dir) = DomainWorkingDir::from_temp_dir()?;
+        let (home, _temp_dir) = Home::from_temp_dir()?;
         let namespace = ("foo", "bar");
         let lineage = DomainLineage {
             packages: BTreeMap::from([(namespace.into(), PackageLineage::default())]),
-            working_directory,
+            home,
         };
         let result = install_package(
             lineage,
@@ -117,10 +117,10 @@ mod tests {
     /// Package files are installed separately using `install_paths`.
     #[tokio::test]
     async fn test_installing() -> Res {
-        let (working_directory, _temp_dir) = DomainWorkingDir::from_temp_dir()?;
+        let (home, _temp_dir) = Home::from_temp_dir()?;
         let lineage = DomainLineage {
             packages: BTreeMap::default(),
-            working_directory,
+            home,
         };
 
         let manifest_uri = ManifestUri {
@@ -214,10 +214,10 @@ mod tests {
             .put_object(&manifest_uri.catalog, &remote_uri, parquet)
             .await?;
 
-        let (working_directory, _temp_dir) = DomainWorkingDir::from_temp_dir()?;
+        let (home, _temp_dir) = Home::from_temp_dir()?;
         let lineage = DomainLineage {
             packages: BTreeMap::default(),
-            working_directory,
+            home,
         };
 
         let storage = LocalStorage::new();

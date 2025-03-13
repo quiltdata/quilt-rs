@@ -40,9 +40,7 @@ impl Home {
     }
 
     pub fn get(&self) -> Res<&PathBuf> {
-        self.inner
-            .as_ref()
-            .ok_or(Error::DomainLineageMissingWorkingDirectory)
+        self.inner.as_ref().ok_or(Error::LineageHome)
     }
 
     pub fn is_some(&self) -> bool {
@@ -56,7 +54,7 @@ impl Home {
     pub fn join(&self, path: impl AsRef<std::path::Path>) -> Result<PathBuf, Error> {
         match &self.inner {
             Some(dir) => Ok(dir.join(path)),
-            None => Err(Error::DomainLineageMissingWorkingDirectory),
+            None => Err(Error::LineageHome),
         }
     }
 
@@ -116,7 +114,7 @@ impl TryFrom<Vec<u8>> for DomainLineage {
             Ok(lineage) => {
                 let home = lineage.home.get()?;
                 if home.as_os_str().is_empty() {
-                    return Err(Error::DomainLineageMissingWorkingDirectory);
+                    return Err(Error::LineageHome);
                 }
                 Ok(lineage)
             }
@@ -161,11 +159,7 @@ impl DomainLineageIo {
         DomainLineage::try_from(contents)
     }
 
-    pub async fn set_home(
-        &self,
-        storage: &impl Storage,
-        home: Home,
-    ) -> Res<DomainLineage> {
+    pub async fn set_home(&self, storage: &impl Storage, home: Home) -> Res<DomainLineage> {
         match storage.read_file(&self.path).await {
             Ok(contents) => {
                 let mut lineage: DomainLineage = serde_json::from_slice(&contents)?;
@@ -225,16 +219,14 @@ impl PackageLineageIo {
 
         match namespace {
             Some(ns) => {
-                let package_working_dir = domain_lineage
-                    .home
-                    .join(self.namespace.to_string())?;
-                Ok((package_working_dir, ns.clone()))
+                let package_home = domain_lineage.home.join(self.namespace.to_string())?;
+                Ok((package_home, ns.clone()))
             }
             None => Err(Error::PackageNotInstalled(self.namespace.clone())),
         }
     }
 
-    pub async fn working_directory(&self, storage: &impl Storage) -> Res<PathBuf> {
+    pub async fn home(&self, storage: &impl Storage) -> Res<PathBuf> {
         self.domain_home(storage)
             .await?
             .join(self.namespace.to_string())
@@ -301,20 +293,16 @@ mod tests {
             DomainLineage::try_from(br###"{"packages":{}}"###.to_vec())
                 .unwrap_err()
                 .to_string(),
-            "Domain lineage missing working directory".to_string()
+            "Domain lineage missing working directory aka Home".to_string()
         );
     }
 
     #[test]
     fn test_with_working_directory() -> Res {
-        let lineage = DomainLineage::try_from(
-            br###"{"packages":{},"home":"/tmp/working_dir"}"###.to_vec(),
-        )
-        .unwrap();
-        assert_eq!(
-            lineage.home.get()?,
-            &PathBuf::from("/tmp/working_dir")
-        );
+        let lineage =
+            DomainLineage::try_from(br###"{"packages":{},"home":"/tmp/working_dir"}"###.to_vec())
+                .unwrap();
+        assert_eq!(lineage.home.get()?, &PathBuf::from("/tmp/working_dir"));
         Ok(())
     }
 
@@ -346,10 +334,7 @@ mod tests {
             .read(&storage)
             .await
             .unwrap_err();
-        assert!(matches!(
-            lineage,
-            Error::DomainLineageMissingWorkingDirectory
-        ));
+        assert!(matches!(lineage, Error::LineageHome));
         Ok(())
     }
 
@@ -401,10 +386,7 @@ mod tests {
         let file_contents = storage.read_file(&file_path).await?;
         let lineage = DomainLineage::try_from(file_contents)?;
 
-        assert_eq!(
-            lineage.home.get()?,
-            &PathBuf::from("/tmp/working_dir")
-        );
+        assert_eq!(lineage.home.get()?, &PathBuf::from("/tmp/working_dir"));
 
         let multihash_from_lineage = lineage
             .packages

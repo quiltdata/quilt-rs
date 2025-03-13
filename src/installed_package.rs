@@ -44,9 +44,9 @@ impl std::fmt::Display for InstalledPackage {
 
 impl InstalledPackage {
     pub async fn scaffold_paths(&self) -> Res {
-        let working_directory = self.lineage.domain_working_directory(&self.storage).await?;
+        let home = self.lineage.domain_home(&self.storage).await?;
         self.paths
-            .scaffold_for_installing(&self.storage, &working_directory, &self.namespace)
+            .scaffold_for_installing(&self.storage, &home, &self.namespace)
             .await
     }
 
@@ -68,15 +68,15 @@ impl InstalledPackage {
     }
 
     pub async fn working_folder(&self) -> Res<PathBuf> {
-        self.lineage.working_directory(&self.storage).await
+        self.lineage.home(&self.storage).await
     }
 
     pub async fn status(&self) -> Res<InstalledPackageStatus> {
-        let (working_folder, lineage) = self.lineage.read(&self.storage).await?;
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
         let lineage = flow::refresh_latest_hash(lineage, &self.remote).await?;
         let manifest = self.manifest().await?;
         let (lineage, status) =
-            flow::status(lineage, &self.storage, &manifest, working_folder).await?;
+            flow::status(lineage, &self.storage, &manifest, package_home).await?;
         self.lineage.write(&self.storage, lineage).await?;
         Ok(status)
     }
@@ -88,7 +88,7 @@ impl InstalledPackage {
 
         self.scaffold_paths().await?;
 
-        let (working_folder, lineage) = self.lineage.read(&self.storage).await?;
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
 
         self.scaffold_paths_for_caching(&lineage.remote.bucket)
             .await?;
@@ -98,7 +98,7 @@ impl InstalledPackage {
             lineage,
             &mut manifest,
             &self.paths,
-            working_folder,
+            package_home,
             self.namespace.clone(),
             &self.storage,
             &self.remote,
@@ -110,8 +110,8 @@ impl InstalledPackage {
     }
 
     pub async fn uninstall_paths(&self, paths: &Vec<PathBuf>) -> Res<LineagePaths> {
-        let (working_folder, lineage) = self.lineage.read(&self.storage).await?;
-        let lineage = flow::uninstall_paths(lineage, working_folder, &self.storage, paths).await?;
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        let lineage = flow::uninstall_paths(lineage, package_home, &self.storage, paths).await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(lineage.paths)
     }
@@ -129,18 +129,18 @@ impl InstalledPackage {
     ) -> Res<CommitState> {
         self.scaffold_paths().await?;
 
-        let (working_folder, lineage) = self.lineage.read(&self.storage).await?;
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
         let mut manifest = self.manifest().await?;
 
         let (lineage, status) =
-            flow::status(lineage, &self.storage, &manifest, working_folder.clone()).await?;
+            flow::status(lineage, &self.storage, &manifest, package_home.clone()).await?;
 
         let lineage = flow::commit(
             lineage,
             &mut manifest,
             &self.paths,
             &self.storage,
-            working_folder,
+            package_home,
             status,
             self.namespace.clone(),
             message,
@@ -184,21 +184,21 @@ impl InstalledPackage {
     pub async fn pull(&self) -> Res<ManifestUri> {
         self.scaffold_paths().await?;
 
-        let (working_folder, lineage) = self.lineage.read(&self.storage).await?;
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
 
         self.scaffold_paths_for_caching(&lineage.remote.bucket)
             .await?;
 
         let mut manifest = self.manifest().await?;
         let (lineage, status) =
-            flow::status(lineage, &self.storage, &manifest, working_folder.clone()).await?;
+            flow::status(lineage, &self.storage, &manifest, package_home.clone()).await?;
         let lineage = flow::pull(
             lineage,
             &mut manifest,
             &self.paths,
             &self.storage,
             &self.remote,
-            working_folder,
+            package_home,
             status,
             self.namespace.clone(),
         )
@@ -218,7 +218,7 @@ impl InstalledPackage {
     pub async fn reset_to_latest(&self) -> Res<ManifestUri> {
         self.scaffold_paths().await?;
 
-        let (working_folder, lineage) = self.lineage.read(&self.storage).await?;
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
 
         self.scaffold_paths_for_caching(&lineage.remote.bucket)
             .await?;
@@ -230,7 +230,7 @@ impl InstalledPackage {
             &self.paths,
             &self.storage,
             &self.remote,
-            working_folder,
+            package_home,
             self.namespace.clone(),
         )
         .await?;
@@ -260,13 +260,13 @@ mod tests {
     use super::*;
 
     use crate::lineage::DomainLineageIo;
-    use crate::lineage::DomainWorkingDir;
+    use crate::lineage::Home;
     use crate::lineage::PackageLineageIo;
     use crate::paths::DomainPaths;
 
     #[tokio::test]
     async fn test_spamming_commit_writes() -> Res {
-        let (working_directory, _temp_dir1) = DomainWorkingDir::from_temp_dir()?;
+        let (home, _temp_dir1) = Home::from_temp_dir()?;
         let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
 
         let storage = LocalStorage::new();
@@ -274,7 +274,7 @@ mod tests {
         let namespace: Namespace = ("test", "history").into();
 
         paths
-            .scaffold_for_installing(&storage, &working_directory, &namespace)
+            .scaffold_for_installing(&storage, &home, &namespace)
             .await?;
         // Initialize domain lineage file
         storage
@@ -294,7 +294,7 @@ mod tests {
                         "latest_hash": "abc123",
                         "paths": {}
                     }},
-                "working_directory": "/tmp/working_dir"
+                "home": "/tmp/working_dir"
                 }"#,
             )
             .await?;

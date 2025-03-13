@@ -197,7 +197,7 @@ mod tests {
     use crate::fixtures::sample_file_1;
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
-    use crate::lineage::DomainWorkingDir;
+    use crate::lineage::Home;
     use crate::manifest::Row;
 
     // Verify installing the path that is already fetched to the `.quilt/objects`
@@ -205,11 +205,11 @@ mod tests {
     // In other cases, it tests implementation details.
     #[tokio::test]
     async fn test_installing_one_cached_path() -> Res {
-        let (working_directory, _temp_dir1) = DomainWorkingDir::from_temp_dir()?;
+        let (home, _temp_dir1) = Home::from_temp_dir()?;
         let (domain_paths, _temp_dir2) = &DomainPaths::from_temp_dir()?;
 
         let namespace = Namespace::from(("foo", "bar"));
-        let working_dir = working_directory.join(&namespace.to_string())?;
+        let package_home = home.join(&namespace.to_string())?;
 
         // Simulate the file already exists in `.quilt/objects/HASH`
         // We trust that the hash is correct, so we can skip the actual file content
@@ -218,7 +218,7 @@ mod tests {
         // So, it's not completely random.
         let hash = sample_file_1::row_hash()?;
         let object_path = domain_paths.object(hash.digest());
-        let absolute_path = working_directory.join(object_path)?;
+        let absolute_path = home.join(object_path)?;
         // Path is `.quilt/objects/HASH`
         storage.write_file(absolute_path, &Vec::new()).await?;
 
@@ -241,7 +241,7 @@ mod tests {
             lineage,
             &mut manifest,
             domain_paths,
-            working_dir.clone(),
+            package_home.clone(),
             namespace.into(),
             &storage,
             &remote,
@@ -252,7 +252,7 @@ mod tests {
         // Now lineage tracks the file in the working directory
         assert!(lineage.paths.contains_key(&single_object_path));
         // And working directory of the package contains the file
-        assert!(storage.exists(&working_dir.join(single_object_path)).await);
+        assert!(storage.exists(&package_home.join(single_object_path)).await);
 
         Ok(())
     }
@@ -261,11 +261,11 @@ mod tests {
     /// The path should be downloaded from the remote storage, cached locally, and then installed into the working directory.
     #[tokio::test]
     async fn test_installing_one_uncached_path() -> Res {
-        let (working_directory, _temp_dir1) = DomainWorkingDir::from_temp_dir()?;
+        let (home, _temp_dir1) = Home::from_temp_dir()?;
         let (domain_paths, _temp_dir2) = &DomainPaths::from_temp_dir()?;
 
         let namespace = Namespace::from(("foo", "bar"));
-        let working_dir = working_directory.join(&namespace.to_string())?;
+        let package_home = home.join(&namespace.to_string())?;
 
         // Simulate the manifest with rows containing an object path
         let remote = MockRemote::default();
@@ -274,7 +274,7 @@ mod tests {
         let entries_paths = vec![single_object_path.clone()];
 
         domain_paths
-            .scaffold_for_installing(&storage, &working_directory, &namespace)
+            .scaffold_for_installing(&storage, &home, &namespace)
             .await?;
 
         let remote_file_url = "s3://any/valid-url.md".to_string();
@@ -307,7 +307,7 @@ mod tests {
             lineage,
             &mut manifest,
             domain_paths,
-            working_dir.clone(),
+            package_home.clone(),
             namespace,
             &storage,
             &remote,
@@ -318,7 +318,7 @@ mod tests {
         // Verify the path is now tracked in lineage
         assert!(lineage.paths.contains_key(&single_object_path));
         // Verify the working directory contains the installed file
-        assert!(storage.exists(&working_dir.join(single_object_path)).await);
+        assert!(storage.exists(&package_home.join(single_object_path)).await);
         // Verify the object is cached locally in `.quilt/objects`
         // Note, that we don't verify the hash and trust the manifest
         let object_path = domain_paths.object(hash.digest());
@@ -331,11 +331,11 @@ mod tests {
     // so we're sure that single file is not a special case.
     #[tokio::test]
     async fn test_installing_multiple_paths() -> Res {
-        let (working_directory, _temp_dir1) = DomainWorkingDir::from_temp_dir()?;
+        let (home, _temp_dir1) = Home::from_temp_dir()?;
         let (domain_paths, _temp_dir2) = &DomainPaths::from_temp_dir()?;
 
         let namespace = Namespace::from(("foo", "bar"));
-        let working_dir = working_directory.join(&namespace.to_string())?;
+        let package_home = home.join(&namespace.to_string())?;
 
         // Simulate the manifest with rows containing objects
         let lineage = PackageLineage::default();
@@ -372,7 +372,7 @@ mod tests {
         // Simulate two of three files (1 and 3) are already exist in `.quilt/objects/HASH`
         // We trust that the hash is correct, so we can skip the actual file content
         let storage = MockStorage::default();
-        let parent = working_directory.get()?;
+        let parent = home.get()?;
         let object_path_1 = parent.join(domain_paths.object(row_1.hash.digest()));
         storage.write_file(object_path_1, &Vec::new()).await?;
         let object_path_3 = parent.join(domain_paths.object(row_3.hash.digest()));
@@ -403,7 +403,7 @@ mod tests {
             lineage,
             &mut manifest,
             domain_paths,
-            working_dir.clone(),
+            package_home.clone(),
             namespace.into(),
             &storage,
             &remote,
@@ -417,10 +417,10 @@ mod tests {
         assert!(lineage.paths.contains_key(&row_3.name));
         assert!(lineage.paths.contains_key(&row_4.name));
         // And working directory of the package contains the files
-        assert!(storage.exists(&working_dir.join(row_1.name)).await);
-        assert!(storage.exists(&working_dir.join(row_2.name)).await);
-        assert!(storage.exists(&working_dir.join(row_3.name)).await);
-        assert!(storage.exists(&working_dir.join(row_4.name)).await);
+        assert!(storage.exists(&package_home.join(row_1.name)).await);
+        assert!(storage.exists(&package_home.join(row_2.name)).await);
+        assert!(storage.exists(&package_home.join(row_3.name)).await);
+        assert!(storage.exists(&package_home.join(row_4.name)).await);
 
         Ok(())
     }

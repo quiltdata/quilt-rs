@@ -26,9 +26,6 @@ pub enum Error {
     #[error("Commit error: {0}")]
     Commit(String),
 
-    #[error("Domain lineage missing working directory")]
-    DomainLineageMissingWorkingDirectory,
-
     #[error("Invalid file:// URI: {0}")]
     FileUri(Url),
 
@@ -49,6 +46,9 @@ pub enum Error {
 
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
+
+    #[error("Domain lineage missing working directory aka Home")]
+    LineageHome,
 
     #[error("Failed to get access token: {0:?}")]
     LoginRequired(Option<Host>),
