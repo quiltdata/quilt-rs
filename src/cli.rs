@@ -364,16 +364,29 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         }
         Commands::WorkingDir {
             domain,
-            path: _path,
+            path,
             migrate: _migrate,
         } => {
             let root_dir = get_domain_dir(domain)?;
             let m = Model::from(root_dir);
-            match m.get_working_directory().await {
-                Ok(dir) => Ok(Std::Out(dir.get().unwrap().display().to_string())),
-                Err(err) => {
-                    println!("{:?}", err);
-                    Ok(Std::Err(Error::WorkingDir))
+            
+            // If path is provided, set the working directory
+            if let Some(dir_path) = path {
+                match m.set_working_directory(dir_path).await {
+                    Ok(dir) => Ok(Std::Out(dir.get().unwrap().display().to_string())),
+                    Err(err) => {
+                        println!("{:?}", err);
+                        Ok(Std::Err(Error::WorkingDir))
+                    }
+                }
+            } else {
+                // Otherwise, get the current working directory
+                match m.get_working_directory().await {
+                    Ok(dir) => Ok(Std::Out(dir.get().unwrap().display().to_string())),
+                    Err(err) => {
+                        println!("{:?}", err);
+                        Ok(Std::Err(Error::WorkingDir))
+                    }
                 }
             }
         }
