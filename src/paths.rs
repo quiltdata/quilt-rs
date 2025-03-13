@@ -114,11 +114,7 @@ impl DomainPaths {
     }
 
     /// What directories are essential when we initiate `InstalledPackage`
-    fn required_for_installing(
-        &self,
-        home: &Home,
-        namespace: &Namespace,
-    ) -> Res<Vec<PathBuf>> {
+    fn required_for_installing(&self, home: &Home, namespace: &Namespace) -> Res<Vec<PathBuf>> {
         let mut paths = vec![];
         paths.extend(self.required());
         paths.extend(vec![
@@ -135,11 +131,7 @@ impl DomainPaths {
         home: &Home,
         namespace: &Namespace,
     ) -> Res {
-        scaffold_paths(
-            storage,
-            self.required_for_installing(home, namespace)?,
-        )
-        .await
+        scaffold_paths(storage, self.required_for_installing(home, namespace)?).await
     }
 
     /// What directories are essential when we work with cached manifests

@@ -108,9 +108,9 @@ impl DomainLineageIo {
                     };
                     self.write(storage, lineage.clone()).await
                 }
-                _ => return Err(Error::Io(e)),
+                _ => Err(Error::Io(e)),
             },
-            Err(e) => return Err(e),
+            Err(e) => Err(e),
         }
     }
 

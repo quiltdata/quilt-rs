@@ -57,11 +57,7 @@ impl LocalDomain {
     }
 
     pub async fn set_home(&self, dir: impl AsRef<Path>) -> Res<Home> {
-        Ok(self
-            .lineage
-            .set_home(&self.storage, dir.into())
-            .await?
-            .home)
+        Ok(self.lineage.set_home(&self.storage, dir.into()).await?.home)
     }
 
     pub async fn scaffold_paths_for_installing(&self, namespace: &Namespace) -> Res {
