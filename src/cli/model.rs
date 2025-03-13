@@ -36,7 +36,7 @@ pub trait Commands {
         commit::model(local_domain, args).await
     }
 
-    async fn home(&self, args: home::Input)  -> Result<home::Output, Error> {
+    async fn home(&self, args: home::Input) -> Result<home::Output, Error> {
         let local_domain = self.get_local_domain();
         home::model(local_domain, args).await
     }
@@ -98,15 +98,12 @@ impl Model {
         Model { local_domain }
     }
 
-    pub async fn get_working_directory(&self) -> Result<Home, Error> {
-        Ok(self.local_domain.working_directory().await?)
+    pub async fn get_home(&self) -> Result<Home, Error> {
+        Ok(self.local_domain.get_home().await?)
     }
 
-    pub async fn set_working_directory(
-        &self,
-        dir: impl AsRef<Path>,
-    ) -> Result<Home, Error> {
-        Ok(self.local_domain.set_working_directory(dir).await?)
+    pub async fn set_home(&self, dir: impl AsRef<Path>) -> Result<Home, Error> {
+        Ok(self.local_domain.set_home(dir).await?)
     }
 
     #[cfg(test)]
@@ -136,7 +133,7 @@ pub async fn install_package_into_temp_dir(
 ) -> Result<(Model, quilt_rs::InstalledPackage, TempDir), Error> {
     let (model, temp_dir) = Model::from_temp_dir()?;
 
-    model.set_working_directory(temp_dir.path()).await?;
+    model.set_home(temp_dir.path()).await?;
 
     let output = model
         .install(install::Input {
@@ -160,6 +157,6 @@ pub async fn install_package_into_temp_dir(
 #[cfg(test)]
 pub async fn create_model_in_temp_dir() -> Result<(Model, TempDir), Error> {
     let (model, temp_dir) = Model::from_temp_dir()?;
-    model.set_working_directory(temp_dir.path()).await?;
+    model.set_home(temp_dir.path()).await?;
     Ok((model, temp_dir))
 }

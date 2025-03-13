@@ -51,24 +51,21 @@ impl LocalDomain {
         }
     }
 
-    pub async fn working_directory(&self) -> Res<Home> {
+    pub async fn get_home(&self) -> Res<Home> {
         let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
         Ok(lineage.home)
     }
 
-    pub async fn set_working_directory(&self, dir: impl AsRef<Path>) -> Res<Home> {
+    pub async fn set_home(&self, dir: impl AsRef<Path>) -> Res<Home> {
         Ok(self
             .lineage
-            .set_home(
-                &self.storage,
-                Home::new(dir.as_ref().to_path_buf()),
-            )
+            .set_home(&self.storage, Home::new(dir.as_ref().to_path_buf()))
             .await?
             .home)
     }
 
     pub async fn scaffold_paths_for_installing(&self, namespace: &Namespace) -> Res {
-        let home = self.working_directory().await?;
+        let home = self.get_home().await?;
         self.paths
             .scaffold_for_installing(&self.storage, &home, namespace)
             .await

@@ -302,8 +302,8 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             let m = Model::from(root_dir);
 
             if let Some(dir) = home {
-                m.set_working_directory(dir).await?;
-            } else if m.get_working_directory().await?.is_none() {
+                m.set_home(dir).await?;
+            } else if m.get_home().await?.is_none() {
                 return Ok(Std::Err(Error::WorkingDir));
             }
 

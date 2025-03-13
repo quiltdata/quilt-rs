@@ -36,13 +36,13 @@ pub async fn model(
 ) -> Result<Output, Error> {
     if let Some(dir_path) = path {
         // Set the working directory
-        let dir = local_domain.set_working_directory(dir_path).await?;
+        let dir = local_domain.set_home(dir_path).await?;
         Ok(Output {
             path: dir.get()?.clone(),
         })
     } else {
         // Get the current working directory
-        let dir = local_domain.working_directory().await?;
+        let dir = local_domain.get_home().await?;
         Ok(Output {
             path: dir.get()?.clone(),
         })
