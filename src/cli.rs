@@ -366,24 +366,14 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         Commands::WorkingDir {
             domain,
             path,
-            migrate: _migrate,
+            migrate,
         } => {
             let root_dir = get_domain_dir(domain)?;
             let m = Model::from(root_dir);
-
-            // If path is provided, set the working directory
-            if let Some(dir_path) = path {
-                match m.set_working_directory(dir_path).await {
-                    Ok(dir) => Ok(Std::Out(dir.get().unwrap().display().to_string())),
-                    Err(err) => Ok(Std::Err(Error::WorkingDir)),
-                }
-            } else {
-                // Otherwise, get the current working directory
-                match m.get_working_directory().await {
-                    Ok(dir) => Ok(Std::Out(dir.get().unwrap().display().to_string())),
-                    Err(err) => Ok(Std::Err(Error::WorkingDir)),
-                }
-            }
+            let args = home::Input { path, migrate };
+            
+            log::info!("Working directory operation {:?}", args);
+            Ok(home::command(m, args).await)
         }
         Commands::Status { domain, namespace } => {
             let root_dir = get_domain_dir(domain)?;
@@ -813,6 +803,47 @@ mod tests {
             )
         );
 
+        Ok(())
+    }
+    
+    #[tokio::test]
+    async fn test_working_dir() -> Result<(), Error> {
+        // Create temporary directory for domain
+        let temp_dir = tempfile::tempdir()?;
+        let domain_path = temp_dir.path().to_path_buf();
+        let working_dir_path = temp_dir.path().join("working_dir");
+        std::fs::create_dir_all(&working_dir_path)?;
+        
+        // First set the working directory
+        let set_args = Args {
+            command: Commands::WorkingDir {
+                domain: Some(domain_path.clone()),
+                path: Some(working_dir_path.clone()),
+                migrate: None,
+            },
+        };
+        
+        let mut output = Vec::new();
+        let result = init(set_args).await?;
+        print(result, &mut output, &mut Vec::new())?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert_eq!(output_str, format!("{}\n", working_dir_path.display()));
+        
+        // Then get the working directory
+        let get_args = Args {
+            command: Commands::WorkingDir {
+                domain: Some(domain_path),
+                path: None,
+                migrate: None,
+            },
+        };
+        
+        let mut output = Vec::new();
+        let result = init(get_args).await?;
+        print(result, &mut output, &mut Vec::new())?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert_eq!(output_str, format!("{}\n", working_dir_path.display()));
+        
         Ok(())
     }
 }
