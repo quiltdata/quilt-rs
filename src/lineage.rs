@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::path::Path;
 
 #[cfg(test)]
 use tempfile::TempDir;
@@ -67,6 +68,12 @@ impl Home {
             },
             temp_dir,
         ))
+    }
+}
+
+impl<P: AsRef<Path>> From<P> for Home {
+    fn from(path: P) -> Self {
+        Home { inner: Some(path.as_ref().to_path_buf()) }
     }
 }
 
@@ -417,5 +424,16 @@ mod tests {
             }
         );
         Ok(())
+    }
+    
+    #[test]
+    fn test_home_from_path() {
+        let path = PathBuf::from("/tmp/home");
+        let home = Home::from(&path);
+        assert_eq!(home.inner, Some(path));
+        
+        let path_str = "/tmp/home";
+        let home = Home::from(path_str);
+        assert_eq!(home.inner, Some(PathBuf::from(path_str)));
     }
 }

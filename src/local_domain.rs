@@ -59,7 +59,7 @@ impl LocalDomain {
     pub async fn set_home(&self, dir: impl AsRef<Path>) -> Res<Home> {
         Ok(self
             .lineage
-            .set_home(&self.storage, Home::new(dir.as_ref().to_path_buf()))
+            .set_home(&self.storage, dir.into())
             .await?
             .home)
     }
