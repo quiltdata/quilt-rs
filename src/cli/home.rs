@@ -29,7 +29,10 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 
 pub async fn model(
     local_domain: &quilt_rs::LocalDomain,
-    Input { path, migrate: _migrate }: Input,
+    Input {
+        path,
+        migrate: _migrate,
+    }: Input,
 ) -> Result<Output, Error> {
     if let Some(dir_path) = path {
         // Set the working directory
@@ -49,17 +52,17 @@ pub async fn model(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use test_log::test;
     use crate::cli::model::create_model_in_temp_dir;
+    use test_log::test;
 
     #[test(tokio::test)]
     async fn test_model_get() -> Result<(), Error> {
         let (m, temp_dir) = create_model_in_temp_dir().await?;
-        
+
         // Set working directory first
         let working_dir = temp_dir.path().join("working_dir");
         std::fs::create_dir_all(&working_dir)?;
-        
+
         {
             let local_domain = m.get_local_domain();
             let set_output = model(
@@ -68,11 +71,12 @@ mod tests {
                     path: Some(working_dir.clone()),
                     migrate: None,
                 },
-            ).await?;
-            
+            )
+            .await?;
+
             assert_eq!(set_output.path, working_dir);
         }
-        
+
         // Now test getting the working directory
         {
             let local_domain = m.get_local_domain();
@@ -82,22 +86,23 @@ mod tests {
                     path: None,
                     migrate: None,
                 },
-            ).await?;
-            
+            )
+            .await?;
+
             assert_eq!(get_output.path, working_dir);
         }
-        
+
         Ok(())
     }
-    
+
     #[test(tokio::test)]
     async fn test_model_set() -> Result<(), Error> {
         let (m, temp_dir) = create_model_in_temp_dir().await?;
-        
+
         // Create a new working directory
         let working_dir = temp_dir.path().join("new_working_dir");
         std::fs::create_dir_all(&working_dir)?;
-        
+
         let local_domain = m.get_local_domain();
         let output = model(
             local_domain,
@@ -105,10 +110,11 @@ mod tests {
                 path: Some(working_dir.clone()),
                 migrate: None,
             },
-        ).await?;
-        
+        )
+        .await?;
+
         assert_eq!(output.path, working_dir);
-        
+
         Ok(())
     }
 }

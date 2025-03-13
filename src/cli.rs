@@ -368,11 +368,17 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             path,
             migrate,
         } => {
+            let is_setting = path.is_some();
+
             let root_dir = get_domain_dir(domain)?;
             let m = Model::from(root_dir);
             let args = home::Input { path, migrate };
-            
-            log::info!("Working directory operation {:?}", args);
+
+            if is_setting {
+                log::info!("Setting working directory {:?}", args);
+            } else {
+                log::info!("Getting working directory {:?}", args);
+            }
             Ok(home::command(m, args).await)
         }
         Commands::Status { domain, namespace } => {
@@ -805,7 +811,7 @@ mod tests {
 
         Ok(())
     }
-    
+
     #[tokio::test]
     async fn test_working_dir() -> Result<(), Error> {
         // Create temporary directory for domain
@@ -813,7 +819,7 @@ mod tests {
         let domain_path = temp_dir.path().to_path_buf();
         let working_dir_path = temp_dir.path().join("working_dir");
         std::fs::create_dir_all(&working_dir_path)?;
-        
+
         // First set the working directory
         let set_args = Args {
             command: Commands::WorkingDir {
@@ -822,13 +828,13 @@ mod tests {
                 migrate: None,
             },
         };
-        
+
         let mut output = Vec::new();
         let result = init(set_args).await?;
         print(result, &mut output, &mut Vec::new())?;
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(output_str, format!("{}\n", working_dir_path.display()));
-        
+
         // Then get the working directory
         let get_args = Args {
             command: Commands::WorkingDir {
@@ -837,13 +843,13 @@ mod tests {
                 migrate: None,
             },
         };
-        
+
         let mut output = Vec::new();
         let result = init(get_args).await?;
         print(result, &mut output, &mut Vec::new())?;
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(output_str, format!("{}\n", working_dir_path.display()));
-        
+
         Ok(())
     }
 }
