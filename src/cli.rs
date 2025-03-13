@@ -101,6 +101,18 @@ enum Commands {
         #[arg(short, long)]
         workflow: Option<String>,
     },
+    /// Get or set working directory for packages
+    Home {
+        /// Path to local domain
+        #[arg(short, long)]
+        domain: Option<PathBuf>,
+        /// Path to set as working directory
+        #[arg(short, long)]
+        path: Option<PathBuf>,
+        /// Migrate files from old working directory
+        #[arg(short, long)]
+        migrate: Option<bool>,
+    },
     /// Install package locally
     Install {
         /// Path to local domain
@@ -120,7 +132,7 @@ enum Commands {
         /// Absolute path for the directory, where all packages will store their mutable files.
         /// Ex. /home/user/QuiltSync
         #[arg(short, long)]
-        working_dir: Option<PathBuf>,
+        home: Option<PathBuf>,
     },
     /// List installed packages
     Login {
@@ -178,15 +190,6 @@ enum Commands {
         #[arg(short, long)]
         namespace: String,
         // FIXME: add workflow?
-    },
-    WorkingDir {
-        /// Path to local domain
-        #[arg(short, long)]
-        domain: Option<PathBuf>,
-        #[arg(short, long)]
-        path: Option<PathBuf>,
-        #[arg(short, long)]
-        migrate: Option<bool>,
     },
     /// Status of the package: modified, up-to-date, outdated
     Status {
@@ -270,17 +273,35 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::info!("Committing {:?}", args);
             Ok(commit::command(m, args).await)
         }
+        Commands::Home {
+            domain,
+            path,
+            migrate,
+        } => {
+            let is_setting = path.is_some();
+
+            let root_dir = get_domain_dir(domain)?;
+            let m = Model::from(root_dir);
+            let args = home::Input { path, migrate };
+
+            if is_setting {
+                log::info!("Setting working directory {:?}", args);
+            } else {
+                log::info!("Getting working directory {:?}", args);
+            }
+            Ok(home::command(m, args).await)
+        }
         Commands::Install {
             domain,
             namespace,
             path,
             uri,
-            working_dir,
+            home,
         } => {
             let root_dir = get_domain_dir(domain)?;
             let m = Model::from(root_dir);
 
-            if let Some(dir) = working_dir {
+            if let Some(dir) = home {
                 m.set_working_directory(dir).await?;
             } else if m.get_working_directory().await?.is_none() {
                 return Ok(Std::Err(Error::WorkingDir));
@@ -362,24 +383,6 @@ pub async fn init(args: Args) -> Result<Std, Error> {
 
             log::info!("Pushing {:?}", args);
             Ok(push::command(m, args).await)
-        }
-        Commands::WorkingDir {
-            domain,
-            path,
-            migrate,
-        } => {
-            let is_setting = path.is_some();
-
-            let root_dir = get_domain_dir(domain)?;
-            let m = Model::from(root_dir);
-            let args = home::Input { path, migrate };
-
-            if is_setting {
-                log::info!("Setting working directory {:?}", args);
-            } else {
-                log::info!("Getting working directory {:?}", args);
-            }
-            Ok(home::command(m, args).await)
         }
         Commands::Status { domain, namespace } => {
             let root_dir = get_domain_dir(domain)?;
@@ -496,7 +499,7 @@ mod tests {
         let domain = Some(domain_temp_dir.path().to_path_buf());
 
         let working_temp_dir = tempfile::tempdir()?;
-        let working_dir = Some(working_temp_dir.path().to_path_buf());
+        let home = Some(working_temp_dir.path().to_path_buf());
 
         // First install the package
         let install_args = Args {
@@ -505,7 +508,7 @@ mod tests {
                 namespace: Some(Namespace::from(pkg::NAMESPACE).to_string()),
                 uri: pkg::URI.to_string(),
                 path: None,
-                working_dir,
+                home,
             },
         };
         let mut output = Vec::new();
@@ -728,7 +731,7 @@ mod tests {
         // Create temporary directory for domain
         let temp_dir = tempfile::tempdir()?;
         let domain = Some(temp_dir.path().to_path_buf());
-        let working_dir = domain.clone();
+        let home = domain.clone();
 
         let install_args = Args {
             command: Commands::Install {
@@ -736,7 +739,7 @@ mod tests {
                 namespace: None,
                 uri: pkg::URI.to_string(),
                 path: None,
-                working_dir,
+                home,
             },
         };
 
@@ -822,7 +825,7 @@ mod tests {
 
         // First set the working directory
         let set_args = Args {
-            command: Commands::WorkingDir {
+            command: Commands::Home {
                 domain: Some(domain_path.clone()),
                 path: Some(working_dir_path.clone()),
                 migrate: None,
@@ -837,7 +840,7 @@ mod tests {
 
         // Then get the working directory
         let get_args = Args {
-            command: Commands::WorkingDir {
+            command: Commands::Home {
                 domain: Some(domain_path),
                 path: None,
                 migrate: None,
