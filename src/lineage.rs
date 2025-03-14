@@ -45,6 +45,12 @@ impl DomainLineage {
             home,
         }
     }
+    
+    #[cfg(test)]
+    pub fn from_temp_dir() -> Res<(Self, tempfile::TempDir)> {
+        let (home, temp_dir) = Home::from_temp_dir()?;
+        Ok((DomainLineage::new(home), temp_dir))
+    }
 }
 
 // TODO: implement From<PathBuf> for DomainLineage
@@ -241,6 +247,14 @@ mod tests {
             DomainLineage::try_from(br###"{"packages":{},"home":"/tmp/working_dir"}"###.to_vec())
                 .unwrap();
         assert_eq!(lineage.home.get()?, &PathBuf::from("/tmp/working_dir"));
+        Ok(())
+    }
+    
+    #[test]
+    fn test_domain_lineage_from_temp_dir() -> Res {
+        let (lineage, temp_dir) = DomainLineage::from_temp_dir()?;
+        assert_eq!(lineage.home.get()?, &temp_dir.path().to_path_buf());
+        assert!(lineage.packages.is_empty());
         Ok(())
     }
 

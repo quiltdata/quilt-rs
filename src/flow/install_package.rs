@@ -117,9 +117,7 @@ mod tests {
     /// Package files are installed separately using `install_paths`.
     #[tokio::test]
     async fn test_installing() -> Res {
-        let (home, _temp_dir) = Home::from_temp_dir()?;
-        // TODO: DomainLineage::from_temp_dir()?
-        let lineage = DomainLineage::new(home);
+        let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
 
         let manifest_uri = ManifestUri {
             bucket: "a".to_string(),
@@ -212,9 +210,7 @@ mod tests {
             .put_object(&manifest_uri.catalog, &remote_uri, parquet)
             .await?;
 
-        // TODO: DomainLineage::from_temp_dir()?
-        let (home, _temp_dir) = Home::from_temp_dir()?;
-        let lineage = DomainLineage::new(home);
+        let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
 
         let storage = LocalStorage::new();
         let result = install_package(
