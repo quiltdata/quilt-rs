@@ -72,7 +72,9 @@ impl LocalDomain {
             return Ok(());
         }
 
-        let target_path = new_home_dir.as_ref().join(namespace.to_string());
+        let target_path = self
+            .paths
+            .package_home(&Home::from(new_home_dir), namespace)?;
         self.storage.create_dir_all(&target_path).await?;
 
         let mut entries = self.storage.read_dir(&legacy_dir).await?;
@@ -199,12 +201,9 @@ impl LocalDomain {
 
 #[cfg(test)]
 mod tests {
-    use std::fs::File;
-    use std::io::Write;
-    use tempfile::TempDir;
+    use super::*;
 
-    use crate::uri::Namespace;
-    use crate::Res;
+    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_home_migration() -> Res<()> {
@@ -217,11 +216,13 @@ mod tests {
 
         // Create a legacy working directory with a test file
         let legacy_dir = temp_dir.path().join(namespace.to_string());
-        std::fs::create_dir_all(&legacy_dir)?;
+        local_domain.storage.create_dir_all(&legacy_dir).await?;
 
         let test_file_path = legacy_dir.join("test_file.txt");
-        let mut file = File::create(&test_file_path)?;
-        file.write_all(b"Test content")?;
+        local_domain
+            .storage
+            .write_file(&test_file_path, b"Test content")
+            .await?;
 
         // Install the package to make it appear in the list
         let manifest_uri = crate::uri::ManifestUri {
@@ -252,7 +253,7 @@ mod tests {
 
         // Create a new home directory
         let new_home = temp_dir.path().join("new_home");
-        std::fs::create_dir_all(&new_home)?;
+        local_domain.storage.create_dir_all(&new_home).await?;
 
         // Set the new home directory
         local_domain.set_home(&new_home).await?;
@@ -263,7 +264,10 @@ mod tests {
             .await?;
 
         // Check if the file was migrated
-        let migrated_file = new_home.join(namespace.to_string()).join("test_file.txt");
+        let migrated_file = local_domain
+            .paths
+            .package_home(&Home::from(&new_home), &namespace)?
+            .join("test_file.txt");
         assert!(std::path::Path::exists(&migrated_file));
 
         // Check the content of the migrated file

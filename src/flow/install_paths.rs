@@ -209,7 +209,7 @@ mod tests {
         let (domain_paths, _temp_dir2) = &DomainPaths::from_temp_dir()?;
 
         let namespace = Namespace::from(("foo", "bar"));
-        let package_home = home.join(namespace.to_string())?;
+        let package_home = domain_paths.package_home(&home, &namespace)?;
 
         // Simulate the file already exists in `.quilt/objects/HASH`
         // We trust that the hash is correct, so we can skip the actual file content
@@ -265,7 +265,7 @@ mod tests {
         let (domain_paths, _temp_dir2) = &DomainPaths::from_temp_dir()?;
 
         let namespace = Namespace::from(("foo", "bar"));
-        let package_home = home.join(namespace.to_string())?;
+        let package_home = domain_paths.package_home(&home, &namespace)?;
 
         // Simulate the manifest with rows containing an object path
         let remote = MockRemote::default();
@@ -335,7 +335,7 @@ mod tests {
         let (domain_paths, _temp_dir2) = &DomainPaths::from_temp_dir()?;
 
         let namespace = Namespace::from(("foo", "bar"));
-        let package_home = home.join(namespace.to_string())?;
+        let package_home = domain_paths.package_home(&home, &namespace)?;
 
         // Simulate the manifest with rows containing objects
         let lineage = PackageLineage::default();
