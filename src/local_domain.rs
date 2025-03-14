@@ -196,3 +196,80 @@ impl LocalDomain {
         build_manifest_from_rows_stream(&self.storage, dest_dir, Header::default(), stream).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs::File;
+    use std::io::Write;
+    use tempfile::TempDir;
+
+    use crate::uri::Namespace;
+    use crate::Res;
+
+    #[tokio::test]
+    async fn test_home_migration() -> Res<()> {
+        // Create a temporary directory for testing
+        let temp_dir = TempDir::new()?;
+        let local_domain = super::LocalDomain::new(temp_dir.path());
+
+        // Create a namespace
+        let namespace = Namespace::from(("test", "package"));
+
+        // Create a legacy working directory with a test file
+        let legacy_dir = temp_dir.path().join(namespace.to_string());
+        std::fs::create_dir_all(&legacy_dir)?;
+
+        let test_file_path = legacy_dir.join("test_file.txt");
+        let mut file = File::create(&test_file_path)?;
+        file.write_all(b"Test content")?;
+
+        // Install the package to make it appear in the list
+        let manifest_uri = crate::uri::ManifestUri {
+            bucket: "test-bucket".to_string(),
+            namespace: namespace.clone(),
+            hash: "abcdef".to_string(),
+            catalog: None,
+        };
+
+        local_domain.set_home(&temp_dir.path()).await?;
+
+        // Mock the installation by directly manipulating the lineage
+        let mut lineage = local_domain.lineage.read(&local_domain.storage).await?;
+        lineage.packages.insert(
+            namespace.clone(),
+            crate::lineage::PackageLineage {
+                commit: None,
+                remote: manifest_uri,
+                base_hash: "abcdef".to_string(),
+                latest_hash: "abcdef".to_string(),
+                paths: std::collections::BTreeMap::new(),
+            },
+        );
+        local_domain
+            .lineage
+            .write(&local_domain.storage, lineage)
+            .await?;
+
+        // Create a new home directory
+        let new_home = temp_dir.path().join("new_home");
+        std::fs::create_dir_all(&new_home)?;
+
+        // Set the new home directory
+        local_domain.set_home(&new_home).await?;
+
+        // Migrate files from legacy working directory
+        local_domain
+            .migrate_from_legacy_working_dir(&namespace, &new_home)
+            .await?;
+
+        // Check if the file was migrated
+        let migrated_file = new_home.join(namespace.to_string()).join("test_file.txt");
+        assert!(std::path::Path::exists(&migrated_file));
+
+        // Check the content of the migrated file
+        let content = std::fs::read_to_string(migrated_file)?;
+        assert_eq!(content, "Test content");
+
+        Ok(())
+    }
+}

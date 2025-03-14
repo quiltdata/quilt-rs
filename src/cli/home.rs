@@ -67,14 +67,9 @@ pub async fn model(
 
 #[cfg(test)]
 mod tests {
-    use std::fs::File;
-    use std::io::Write;
-
     use super::*;
 
     use test_log::test;
-
-    use quilt_rs::uri::Namespace;
 
     use crate::cli::model::create_model_in_temp_dir;
 
@@ -137,72 +132,6 @@ mod tests {
         .await?;
 
         assert_eq!(output.path, working_dir);
-
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn test_model_migrate() -> Result<(), Error> {
-        let (m, temp_dir) = create_model_in_temp_dir().await?;
-        let local_domain = m.get_local_domain();
-
-        // Create a namespace
-        let namespace = Namespace::from(("test", "package"));
-
-        // Create a legacy working directory with a test file
-        let legacy_dir = temp_dir.path().join(namespace.to_string());
-        std::fs::create_dir_all(&legacy_dir)?;
-
-        let test_file_path = legacy_dir.join("test_file.txt");
-        let mut file = File::create(&test_file_path)?;
-        file.write_all(b"Test content")?;
-
-        // Install the package to make it appear in the list
-        let uri = "quilt+s3://test-bucket#package=test/package";
-        let manifest_uri = quilt_rs::uri::ManifestUri {
-            bucket: "test-bucket".to_string(),
-            namespace: namespace.clone(),
-            hash: "abcdef".to_string(),
-            catalog: None,
-        };
-
-        // Mock the installation by directly manipulating the lineage
-        let mut lineage = local_domain.lineage.read(&local_domain.storage).await?;
-        lineage.packages.insert(
-            namespace.clone(),
-            quilt_rs::lineage::PackageLineage {
-                commit: None,
-                remote: manifest_uri,
-                base_hash: "abcdef".to_string(),
-                latest_hash: "abcdef".to_string(),
-                paths: std::collections::BTreeMap::new(),
-            },
-        );
-        lineage.write(&local_domain.storage, lineage).await?;
-
-        // Create a new home directory
-        let new_home = temp_dir.path().join("new_home");
-        std::fs::create_dir_all(&new_home)?;
-
-        // Set the new home directory with migration
-        let output = model(
-            local_domain,
-            Input {
-                path: Some(new_home.clone()),
-                migrate: Some(true),
-            },
-        )
-        .await?;
-
-        assert_eq!(output.path, new_home);
-
-        // Check if the file was migrated
-        let migrated_file = new_home.join(namespace.to_string()).join("test_file.txt");
-        assert!(std::path::Path::exists(&migrated_file));
-
-        // Check the content of the migrated file
-        let content = std::fs::read_to_string(migrated_file)?;
-        assert_eq!(content, "Test content");
 
         Ok(())
     }
