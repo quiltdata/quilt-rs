@@ -44,6 +44,11 @@ pub fn get_manifest_key_legacy(hash: &str) -> String {
     format!("{}/{}", MANIFEST_DIR, hash)
 }
 
+/// Path to the package home directory within the home directory
+pub fn package_home(home: &Home, namespace: &Namespace) -> Res<PathBuf> {
+    home.join(namespace.to_string())
+}
+
 /// Helper for getting paths.
 /// We heavily rely on where we put files,
 /// and this struct contains info of the directory structure .
@@ -104,11 +109,6 @@ impl DomainPaths {
         self.objects_dir().join(hex::encode(hash))
     }
 
-    /// Path to the package home directory within the home directory
-    pub fn package_home(&self, home: &Home, namespace: &Namespace) -> Res<PathBuf> {
-        home.join(namespace.to_string())
-    }
-
     /// What directories are essential when we initiate `LocalDomain`
     fn required(&self) -> Vec<PathBuf> {
         vec![
@@ -123,7 +123,7 @@ impl DomainPaths {
         let mut paths = vec![];
         paths.extend(self.required());
         paths.extend(vec![
-            self.package_home(home, namespace)?,
+            package_home(home, namespace)?,
             self.legacy_working_dir(namespace),
             self.installed_manifests(namespace),
         ]);
@@ -205,12 +205,11 @@ mod tests {
 
     #[test]
     fn test_package_home() -> Res {
-        let paths = DomainPaths::new(PathBuf::from("foo/bar"));
         let home = Home::from("/home/user/quilt");
         let namespace = Namespace::from(("test", "package"));
         
-        let package_home = paths.package_home(&home, &namespace)?;
-        assert_eq!(package_home, PathBuf::from("/home/user/quilt/test/package"));
+        let pkg_home = package_home(&home, &namespace)?;
+        assert_eq!(pkg_home, PathBuf::from("/home/user/quilt/test/package"));
         
         Ok(())
     }
