@@ -2,11 +2,15 @@
 //! Module that contains various structs and helpers to work with `.quilt/lineage.json`.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::path::PathBuf;
 
 use serde::Deserialize;
 use serde::Serialize;
 use tracing::log;
+
+#[cfg(test)]
+use tempfile::TempDir;
 
 use crate::io::storage::Storage;
 use crate::uri::Namespace;
@@ -39,17 +43,17 @@ pub struct DomainLineage {
 }
 
 impl DomainLineage {
-    pub fn new(home: Home) -> Self {
+    pub fn new(home_dir: impl AsRef<Path>) -> Self {
         DomainLineage {
             packages: BTreeMap::new(),
-            home,
+            home: Home::from(home_dir),
         }
     }
-    
+
     #[cfg(test)]
     pub fn from_temp_dir() -> Res<(Self, tempfile::TempDir)> {
-        let (home, temp_dir) = Home::from_temp_dir()?;
-        Ok((DomainLineage::new(home), temp_dir))
+        let temp_dir = TempDir::new()?;
+        Ok((DomainLineage::new(temp_dir.path()), temp_dir))
     }
 }
 
@@ -109,11 +113,15 @@ impl DomainLineageIo {
         DomainLineage::try_from(contents)
     }
 
-    pub async fn set_home(&self, storage: &impl Storage, home: Home) -> Res<DomainLineage> {
+    pub async fn set_home(
+        &self,
+        storage: &impl Storage,
+        home: impl AsRef<Path>,
+    ) -> Res<DomainLineage> {
         match storage.read_file(&self.path).await {
             Ok(contents) => {
                 let mut lineage: DomainLineage = serde_json::from_slice(&contents)?;
-                lineage.home = home.clone();
+                lineage.home = home.into();
                 self.write(storage, lineage).await
             }
             Err(Error::Io(e)) => match e.kind() {
@@ -249,7 +257,7 @@ mod tests {
         assert_eq!(lineage.home.get()?, &PathBuf::from("/tmp/working_dir"));
         Ok(())
     }
-    
+
     #[test]
     fn test_domain_lineage_from_temp_dir() -> Res {
         let (lineage, temp_dir) = DomainLineage::from_temp_dir()?;
@@ -265,14 +273,11 @@ mod tests {
         storage
             .write_file(
                 &file_path,
-                br###"{"packages":{},"home":"/tmp/working_dir"}"###.as_ref(),
+                br###"{"packages":{},"home":"/home/directory"}"###.as_ref(),
             )
             .await?;
         let lineage = DomainLineageIo::new(file_path).read(&storage).await?;
-        assert_eq!(
-            lineage,
-            DomainLineage::new(Home::new(PathBuf::from("/tmp/working_dir")))
-        );
+        assert_eq!(lineage, DomainLineage::new("/home/directory"));
         Ok(())
     }
 
