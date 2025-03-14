@@ -2,39 +2,27 @@ use std::path::Path;
 use std::path::PathBuf;
 
 #[cfg(test)]
+use crate::Res;
+
+#[cfg(test)]
 use tempfile::TempDir;
 
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::Error;
-use crate::Res;
-
 /// Wrapper for working directory path with proper serialization/deserialization
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Home {
-    inner: Option<PathBuf>,
+    inner: PathBuf,
 }
 
 impl Home {
     pub fn new(path: PathBuf) -> Self {
-        Home { inner: Some(path) }
+        Home { inner: path }
     }
 
-    pub fn get(&self) -> Res<&PathBuf> {
-        self.inner.as_ref().ok_or(Error::LineageHome)
-    }
-
-    pub fn is_some(&self) -> bool {
-        self.inner.is_some()
-    }
-
-    pub fn is_none(&self) -> bool {
-        self.inner.is_none()
-    }
-
-    pub fn join(&self, path: impl AsRef<std::path::Path>) -> Result<PathBuf, Error> {
-        Ok(self.get()?.join(path))
+    pub fn join(&self, path: impl AsRef<Path>) -> PathBuf {
+        self.inner.join(path)
     }
 
     #[cfg(test)]
@@ -44,10 +32,16 @@ impl Home {
     }
 }
 
+impl AsRef<PathBuf> for Home {
+    fn as_ref(&self) -> &PathBuf {
+        &self.inner
+    }
+}
+
 impl<P: AsRef<Path>> From<P> for Home {
     fn from(path: P) -> Self {
         Home {
-            inner: Some(path.as_ref().to_path_buf()),
+            inner: path.as_ref().to_path_buf(),
         }
     }
 }
@@ -57,10 +51,7 @@ impl Serialize for Home {
     where
         S: serde::Serializer,
     {
-        match &self.inner {
-            Some(path) => serializer.serialize_str(&path.to_string_lossy()),
-            None => serializer.serialize_none(),
-        }
+        serializer.serialize_str(&self.inner.to_string_lossy())
     }
 }
 
@@ -71,7 +62,7 @@ impl<'de> Deserialize<'de> for Home {
     {
         let path_str = String::deserialize(deserializer)?;
         Ok(Home {
-            inner: Some(PathBuf::from(path_str)),
+            inner: PathBuf::from(path_str),
         })
     }
 }
@@ -84,10 +75,10 @@ mod tests {
     fn test_home_from_path() {
         let path = PathBuf::from("/tmp/home");
         let home = Home::from(&path);
-        assert_eq!(home.inner, Some(path));
+        assert_eq!(home.inner, path);
 
         let path_str = "/tmp/home";
         let home = Home::from(path_str);
-        assert_eq!(home.inner, Some(PathBuf::from(path_str)));
+        assert_eq!(home.inner, PathBuf::from(path_str));
     }
 }

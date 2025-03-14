@@ -210,7 +210,7 @@ mod tests {
         let (domain_paths, _temp_dir2) = &DomainPaths::from_temp_dir()?;
 
         let namespace = Namespace::from(("foo", "bar"));
-        let package_home = paths::package_home(&home, &namespace)?;
+        let package_home = paths::package_home(&home, &namespace);
 
         // Simulate the file already exists in `.quilt/objects/HASH`
         // We trust that the hash is correct, so we can skip the actual file content
@@ -219,7 +219,7 @@ mod tests {
         // So, it's not completely random.
         let hash = sample_file_1::row_hash()?;
         let object_path = domain_paths.object(hash.digest());
-        let absolute_path = home.join(object_path)?;
+        let absolute_path = home.join(object_path);
         // Path is `.quilt/objects/HASH`
         storage.write_file(absolute_path, &Vec::new()).await?;
 
@@ -266,7 +266,7 @@ mod tests {
         let (domain_paths, _temp_dir2) = &DomainPaths::from_temp_dir()?;
 
         let namespace = Namespace::from(("foo", "bar"));
-        let package_home = paths::package_home(&home, &namespace)?;
+        let package_home = paths::package_home(&home, &namespace);
 
         // Simulate the manifest with rows containing an object path
         let remote = MockRemote::default();
@@ -336,7 +336,7 @@ mod tests {
         let (domain_paths, _temp_dir2) = &DomainPaths::from_temp_dir()?;
 
         let namespace = Namespace::from(("foo", "bar"));
-        let package_home = paths::package_home(&home, &namespace)?;
+        let package_home = paths::package_home(&home, &namespace);
 
         // Simulate the manifest with rows containing objects
         let lineage = PackageLineage::default();
@@ -373,10 +373,9 @@ mod tests {
         // Simulate two of three files (1 and 3) are already exist in `.quilt/objects/HASH`
         // We trust that the hash is correct, so we can skip the actual file content
         let storage = MockStorage::default();
-        let parent = home.get()?;
-        let object_path_1 = parent.join(domain_paths.object(row_1.hash.digest()));
+        let object_path_1 = home.join(domain_paths.object(row_1.hash.digest()));
         storage.write_file(object_path_1, &Vec::new()).await?;
-        let object_path_3 = parent.join(domain_paths.object(row_3.hash.digest()));
+        let object_path_3 = home.join(domain_paths.object(row_3.hash.digest()));
         storage.write_file(object_path_3, &Vec::new()).await?;
 
         // Simulate the remote object

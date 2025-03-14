@@ -13,7 +13,6 @@ use quilt_rs::uri::Namespace;
 mod benchmark;
 mod browse;
 mod commit;
-mod home;
 mod install;
 mod list;
 mod login;
@@ -56,15 +55,21 @@ fn get_domain_dir(dir_arg: Option<PathBuf>) -> Result<PathBuf, Error> {
 pub struct Args {
     #[command(subcommand)]
     command: Commands,
+
+    /// Absolute path for the directory, where all packages will store their mutable files.
+    /// Ex. /home/user/QuiltSync
+    #[arg(long)]
+    home: Option<PathBuf>,
+
+    /// Path to local domain
+    #[arg(short, long)]
+    domain: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
 enum Commands {
     /// Test and benchmark creating manifest with large number of rows
     Benchmark {
-        /// Path to local domain
-        #[arg(short, long)]
-        domain: Option<PathBuf>,
         /// How many rows in manifest?
         /// Ex. 1000000
         #[arg(short, long)]
@@ -75,17 +80,11 @@ enum Commands {
     },
     /// Browse remote manifest
     Browse {
-        /// Path to local domain
-        #[arg(short, long)]
-        domain: Option<PathBuf>,
         #[arg(value_name = "PKG_URI")]
         uri: String,
     },
     /// Commit new package revision
     Commit {
-        /// Path to local domain
-        #[arg(short, long)]
-        domain: Option<PathBuf>,
         /// Commit message
         #[arg(short, long)]
         message: String,
@@ -101,23 +100,8 @@ enum Commands {
         #[arg(short, long)]
         workflow: Option<String>,
     },
-    /// Get or set working directory for packages
-    Home {
-        /// Path to local domain
-        #[arg(short, long)]
-        domain: Option<PathBuf>,
-        /// Path to set as working directory
-        #[arg(short, long)]
-        path: Option<PathBuf>,
-        /// Migrate files from old working directory
-        #[arg(short, long)]
-        migrate: Option<bool>,
-    },
     /// Install package locally
     Install {
-        /// Path to local domain
-        #[arg(short, long)]
-        domain: Option<PathBuf>,
         /// Source URI for the package.
         /// Ex. quilt+s3://bucket#package=foo/bar
         #[arg(value_name = "PKG_URI")]
@@ -129,16 +113,9 @@ enum Commands {
         /// You can provide multiple paths.
         #[arg(short, long)]
         path: Option<Vec<PathBuf>>,
-        /// Absolute path for the directory, where all packages will store their mutable files.
-        /// Ex. /home/user/QuiltSync
-        #[arg(short, long)]
-        home: Option<PathBuf>,
     },
     /// List installed packages
     Login {
-        /// Path to local domain
-        #[arg(short, long)]
-        domain: Option<PathBuf>,
         /// Code from the https://QUILT_STACK/code page
         #[arg(short, long)]
         code: Option<String>,
@@ -146,16 +123,9 @@ enum Commands {
         host: Host,
     },
     /// List installed packages
-    List {
-        /// Path to local domain
-        #[arg(short, long)]
-        domain: Option<PathBuf>,
-    },
+    List,
     /// Create and install manifest to S3
     Package {
-        /// Path to local domain
-        #[arg(short, long)]
-        domain: Option<PathBuf>,
         /// Commit message
         #[arg(short, long)]
         message: Option<String>,
@@ -172,9 +142,6 @@ enum Commands {
     },
     /// Pull
     Pull {
-        /// Path to local domain
-        #[arg(short, long)]
-        domain: Option<PathBuf>,
         /// Namespace of the package to pull
         /// Ex. foo/bar
         #[arg(short, long)]
@@ -182,9 +149,6 @@ enum Commands {
     },
     /// Push
     Push {
-        /// Path to local domain
-        #[arg(short, long)]
-        domain: Option<PathBuf>,
         /// Namespace of the package to push
         /// Ex. foo/bar
         #[arg(short, long)]
@@ -193,18 +157,12 @@ enum Commands {
     },
     /// Status of the package: modified, up-to-date, outdated
     Status {
-        /// Path to local domain
-        #[arg(short, long)]
-        domain: Option<PathBuf>,
         /// Namespace of the package. Ex. foo/bar
         #[arg(short, long)]
         namespace: String,
     },
     /// Uninstall package from local domain
     Uninstall {
-        /// Path to local domain
-        #[arg(short, long)]
-        domain: Option<PathBuf>,
         /// Namespace of the package to uninstall.
         /// Ex. foo/bar
         #[arg(short, long)]
@@ -219,14 +177,23 @@ pub async fn init(args: Args) -> Result<Std, Error> {
     //       If it is None, we use:
     //         * home directory ~/.local/share/com.quiltdata.quilt-rs`
     //         * or temporary directory
+    let root_dir = get_domain_dir(args.domain)?;
+    let m = Model::from(root_dir);
+
+    if let Some(dir) = args.home {
+        if let Err(err) = m.set_home(dir).await {
+            log::error!("Failed to set home directory: {}", err);
+            return Ok(Std::Err(err));
+        }
+    }
+
+    // Validate the lineage
+    if let Err(err) = m.get_home().await {
+        return Ok(Std::Err(err));
+    }
+
     match args.command {
-        Commands::Benchmark {
-            domain,
-            number,
-            dest,
-        } => {
-            let root_dir = get_domain_dir(domain)?;
-            let m = Model::from(root_dir);
+        Commands::Benchmark { number, dest } => {
             let dest_dir = match dest {
                 Some(dir) => dir,
                 None => tempfile::tempdir()?.path().to_path_buf(),
@@ -236,24 +203,18 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::info!("Benchmark manifest creation {:?}", args,);
             Ok(benchmark::command(m, args).await)
         }
-        Commands::Browse { domain, uri } => {
-            let root_dir = get_domain_dir(domain)?;
-            let m = Model::from(root_dir);
+        Commands::Browse { uri } => {
             let args = browse::Input { uri };
 
             log::info!("Browsing {:?}", args);
             Ok(browse::command(m, args).await)
         }
         Commands::Commit {
-            domain,
             namespace,
             message,
             user_meta,
             workflow,
         } => {
-            let root_dir = get_domain_dir(domain)?;
-            let m = Model::from(root_dir);
-
             let user_meta = match &user_meta {
                 Some(object) => match serde_json::from_str(object)? {
                     serde_json::Value::Object(object) => Some(object),
@@ -273,40 +234,28 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::info!("Committing {:?}", args);
             Ok(commit::command(m, args).await)
         }
-        Commands::Home {
-            domain,
-            path,
-            migrate,
-        } => {
-            let is_setting = path.is_some();
+        // Commands::Home {
+        //     path,
+        //     migrate,
+        // } => {
+        //     let is_setting = path.is_some();
 
-            let root_dir = get_domain_dir(domain)?;
-            let m = Model::from(root_dir);
-            let args = home::Input { path, migrate };
+        //     let root_dir = get_domain_dir(domain)?;
+        //     let m = Model::from(root_dir);
+        //     let args = home::Input { path, migrate };
 
-            if is_setting {
-                log::info!("Setting Home directory {:?}", args);
-            } else {
-                log::info!("Getting Home directory {:?}", args);
-            }
-            Ok(home::command(m, args).await)
-        }
+        //     if is_setting {
+        //         log::info!("Setting Home directory {:?}", args);
+        //     } else {
+        //         log::info!("Getting Home directory {:?}", args);
+        //     }
+        //     Ok(home::command(m, args).await)
+        // }
         Commands::Install {
-            domain,
             namespace,
             path,
             uri,
-            home,
         } => {
-            let root_dir = get_domain_dir(domain)?;
-            let m = Model::from(root_dir);
-
-            if let Some(dir) = home {
-                m.set_home(dir).await?;
-            } else if m.get_home().await?.is_none() {
-                return Ok(Std::Err(Error::WorkingDir));
-            }
-
             let args = install::Input {
                 namespace: parse_optional_namespace(namespace)?,
                 paths: path,
@@ -316,10 +265,8 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::info!("Installing {:?}", args);
             Ok(install::command(m, args).await)
         }
-        Commands::Login { code, domain, host } => {
+        Commands::Login { code, host } => {
             if let Some(code) = code {
-                let root_dir = get_domain_dir(domain)?;
-                let m = Model::from(root_dir);
                 let args = login::Input { code, host };
 
                 log::info!("Logging in {:?}", args);
@@ -329,22 +276,16 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 Ok(Std::Err(Error::LoginRequired(host)))
             }
         }
-        Commands::List { domain } => {
-            let root_dir = get_domain_dir(domain)?;
-            let m = Model::from(root_dir);
-
+        Commands::List => {
             log::info!("Listing installed packages");
             Ok(list::command(m).await)
         }
         Commands::Package {
-            domain,
             message,
             target,
             uri,
             user_meta,
         } => {
-            let root_dir = get_domain_dir(domain)?;
-            let m = Model::from(root_dir);
             let user_meta = match &user_meta {
                 Some(object) => match serde_json::from_str(object)? {
                     serde_json::Value::Object(object) => Some(object),
@@ -364,9 +305,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::info!("Packaging {:?}", args);
             Ok(package::command(m, args).await)
         }
-        Commands::Pull { domain, namespace } => {
-            let root_dir = get_domain_dir(domain)?;
-            let m = Model::from(root_dir);
+        Commands::Pull { namespace } => {
             let args = pull::Input {
                 namespace: namespace.try_into()?,
             };
@@ -374,9 +313,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::info!("Pull {:?}", args);
             Ok(pull::command(m, args).await)
         }
-        Commands::Push { domain, namespace } => {
-            let root_dir = get_domain_dir(domain)?;
-            let m = Model::from(root_dir);
+        Commands::Push { namespace } => {
             let args = push::Input {
                 namespace: namespace.try_into()?,
             };
@@ -384,9 +321,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::info!("Pushing {:?}", args);
             Ok(push::command(m, args).await)
         }
-        Commands::Status { domain, namespace } => {
-            let root_dir = get_domain_dir(domain)?;
-            let m = Model::from(root_dir);
+        Commands::Status { namespace } => {
             let args = status::Input {
                 namespace: namespace.try_into()?,
             };
@@ -394,9 +329,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::info!("Status {:?}", args);
             Ok(status::command(m, args).await)
         }
-        Commands::Uninstall { domain, namespace } => {
-            let root_dir = get_domain_dir(domain)?;
-            let m = Model::from(root_dir);
+        Commands::Uninstall { namespace } => {
             let args = uninstall::Input {
                 namespace: namespace.try_into()?,
             };
@@ -438,9 +371,8 @@ Then run:
 
     #[error("Failed to write or read: {0}")]
     Io(#[from] std::io::Error),
-
-    #[error("Working directory is required. We store mutable files there")]
-    WorkingDir,
+    // #[error("Working directory is required. We store mutable files there")]
+    // WorkingDir,
 }
 
 impl From<quilt_rs::Error> for Error {
@@ -503,12 +435,12 @@ mod tests {
 
         // First install the package
         let install_args = Args {
+            home,
+            domain,
             command: Commands::Install {
-                domain,
                 namespace: Some(Namespace::from(pkg::NAMESPACE).to_string()),
                 uri: pkg::URI.to_string(),
                 path: None,
-                home,
             },
         };
         let mut output = Vec::new();
@@ -533,8 +465,9 @@ mod tests {
         let (_, _, temp_dir) = install_package_into_temp_dir(pkg::URI).await?;
 
         let commit_args = Args {
+            home: Some(temp_dir.path().to_path_buf()),
+            domain: Some(temp_dir.path().to_path_buf()),
             command: Commands::Commit {
-                domain: Some(temp_dir.path().to_path_buf()),
                 message: pkg::MESSAGE.to_string(),
                 namespace: pkg::NAMESPACE_STR.to_string(),
                 user_meta: None,
@@ -562,8 +495,9 @@ mod tests {
         let (_, _, temp_dir) = install_package_into_temp_dir(pkg::URI).await?;
 
         let commit_args = Args {
+            domain: Some(temp_dir.path().to_path_buf()),
+            home: Some(temp_dir.path().to_path_buf()),
             command: Commands::Commit {
-                domain: Some(temp_dir.path().to_path_buf()),
                 message: "Any message".to_string(),
                 namespace: "in/valid".to_string(),
                 user_meta: None,
@@ -588,8 +522,9 @@ mod tests {
         let (_, _, temp_dir) = install_package_into_temp_dir(pkg::URI).await?;
 
         let pull_args = Args {
+            domain: Some(temp_dir.path().to_path_buf()),
+            home: Some(temp_dir.path().to_path_buf()),
             command: Commands::Pull {
-                domain: Some(temp_dir.path().to_path_buf()),
                 namespace: pkg::NAMESPACE_STR.to_string(),
             },
         };
@@ -613,8 +548,9 @@ mod tests {
         let (_, temp_dir) = create_model_in_temp_dir().await?;
 
         let pull_args = Args {
+            domain: Some(temp_dir.path().to_path_buf()),
+            home: Some(temp_dir.path().to_path_buf()),
             command: Commands::Pull {
-                domain: Some(temp_dir.path().to_path_buf()),
                 namespace: "in/valid".to_string(),
             },
         };
@@ -636,8 +572,9 @@ mod tests {
         let (_, _, temp_dir) = install_package_into_temp_dir(pkg::URI).await?;
 
         let uninstall_args = Args {
+            domain: Some(temp_dir.path().to_path_buf()),
+            home: Some(temp_dir.path().to_path_buf()),
             command: Commands::Uninstall {
-                domain: Some(temp_dir.path().to_path_buf()),
                 namespace: pkg::NAMESPACE_STR.to_string(),
             },
         };
@@ -661,8 +598,9 @@ mod tests {
         let (_, temp_dir) = create_model_in_temp_dir().await?;
 
         let uninstall_args = Args {
+            domain: Some(temp_dir.path().to_path_buf()),
+            home: Some(temp_dir.path().to_path_buf()),
             command: Commands::Uninstall {
-                domain: Some(temp_dir.path().to_path_buf()),
                 namespace: "in/valid".to_string(),
             },
         };
@@ -688,9 +626,9 @@ mod tests {
         let temp_dir = Builder::new().permissions(write_only).tempdir()?;
 
         let list_args = Args {
-            command: Commands::List {
-                domain: Some(temp_dir.path().to_path_buf()),
-            },
+            domain: Some(temp_dir.path().to_path_buf()),
+            home: Some(temp_dir.path().to_path_buf()),
+            command: Commands::List,
         };
 
         // Test init with invalid permissions
@@ -709,9 +647,9 @@ mod tests {
         let (_, temp_dir) = create_model_in_temp_dir().await?;
 
         let list_args = Args {
-            command: Commands::List {
-                domain: Some(temp_dir.path().to_path_buf()),
-            },
+            domain: Some(temp_dir.path().to_path_buf()),
+            home: Some(temp_dir.path().to_path_buf()),
+            command: Commands::List {},
         };
 
         // Test init with empty domain
@@ -734,12 +672,12 @@ mod tests {
         let home = domain.clone();
 
         let install_args = Args {
+            domain,
+            home,
             command: Commands::Install {
-                domain,
                 namespace: None,
                 uri: pkg::URI.to_string(),
                 path: None,
-                home,
             },
         };
 
@@ -769,10 +707,9 @@ mod tests {
         let uri = format!("{}&path={}", pkg::URI_LATEST, pkg::README_LK_ESCAPED);
 
         let browse_args = Args {
-            command: Commands::Browse {
-                domain: Some(temp_dir.path().to_path_buf()),
-                uri,
-            },
+            domain: Some(temp_dir.path().to_path_buf()),
+            home: Some(temp_dir.path().to_path_buf()),
+            command: Commands::Browse { uri },
         };
 
         // Test init with valid URI
@@ -793,8 +730,9 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
 
         let browse_args = Args {
+            domain: Some(temp_dir.path().to_path_buf()),
+            home: Some(temp_dir.path().to_path_buf()),
             command: Commands::Browse {
-                domain: Some(temp_dir.path().to_path_buf()),
                 uri: pkg::URI.to_string(),
             },
         };
@@ -815,44 +753,44 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_working_dir() -> Result<(), Error> {
-        // Create temporary directory for domain
-        let temp_dir = tempfile::tempdir()?;
-        let domain_path = temp_dir.path().to_path_buf();
-        let working_dir_path = temp_dir.path().join("working_dir");
-        std::fs::create_dir_all(&working_dir_path)?;
+    // #[tokio::test]
+    // async fn test_working_dir() -> Result<(), Error> {
+    //     // Create temporary directory for domain
+    //     let temp_dir = tempfile::tempdir()?;
+    //     let domain_path = temp_dir.path().to_path_buf();
+    //     let working_dir_path = temp_dir.path().join("working_dir");
+    //     std::fs::create_dir_all(&working_dir_path)?;
 
-        // First set the working directory
-        let set_args = Args {
-            command: Commands::Home {
-                domain: Some(domain_path.clone()),
-                path: Some(working_dir_path.clone()),
-                migrate: None,
-            },
-        };
+    //     // First set the working directory
+    //     let set_args = Args {
+    //         command: Commands::Home {
+    //             domain: Some(domain_path.clone()),
+    //             path: Some(working_dir_path.clone()),
+    //             migrate: None,
+    //         },
+    //     };
 
-        let mut output = Vec::new();
-        let result = init(set_args).await?;
-        print(result, &mut output, &mut Vec::new())?;
-        let output_str = String::from_utf8(output).unwrap();
-        assert_eq!(output_str, format!("{}\n", working_dir_path.display()));
+    //     let mut output = Vec::new();
+    //     let result = init(set_args).await?;
+    //     print(result, &mut output, &mut Vec::new())?;
+    //     let output_str = String::from_utf8(output).unwrap();
+    //     assert_eq!(output_str, format!("{}\n", working_dir_path.display()));
 
-        // Then get the working directory
-        let get_args = Args {
-            command: Commands::Home {
-                domain: Some(domain_path),
-                path: None,
-                migrate: None,
-            },
-        };
+    //     // Then get the working directory
+    //     let get_args = Args {
+    //         command: Commands::Home {
+    //             domain: Some(domain_path),
+    //             path: None,
+    //             migrate: None,
+    //         },
+    //     };
 
-        let mut output = Vec::new();
-        let result = init(get_args).await?;
-        print(result, &mut output, &mut Vec::new())?;
-        let output_str = String::from_utf8(output).unwrap();
-        assert_eq!(output_str, format!("{}\n", working_dir_path.display()));
+    //     let mut output = Vec::new();
+    //     let result = init(get_args).await?;
+    //     print(result, &mut output, &mut Vec::new())?;
+    //     let output_str = String::from_utf8(output).unwrap();
+    //     assert_eq!(output_str, format!("{}\n", working_dir_path.display()));
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 }

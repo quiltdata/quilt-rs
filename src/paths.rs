@@ -45,7 +45,7 @@ pub fn get_manifest_key_legacy(hash: &str) -> String {
 }
 
 /// Path to the package home directory within the home directory
-pub fn package_home(home: &Home, namespace: &Namespace) -> Res<PathBuf> {
+pub fn package_home(home: &Home, namespace: &Namespace) -> PathBuf {
     home.join(namespace.to_string())
 }
 
@@ -123,7 +123,7 @@ impl DomainPaths {
         let mut paths = vec![];
         paths.extend(self.required());
         paths.extend(vec![
-            package_home(home, namespace)?,
+            package_home(home, namespace),
             self.legacy_working_dir(namespace),
             self.installed_manifests(namespace),
         ]);
@@ -208,7 +208,7 @@ mod tests {
         let home = Home::from("/home/user/quilt");
         let namespace = Namespace::from(("test", "package"));
 
-        let pkg_home = package_home(&home, &namespace)?;
+        let pkg_home = package_home(&home, &namespace);
         assert_eq!(pkg_home, PathBuf::from("/home/user/quilt/test/package"));
 
         Ok(())

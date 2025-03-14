@@ -72,7 +72,7 @@ impl LocalDomain {
             return Ok(());
         }
 
-        let target_path = paths::package_home(&Home::from(new_home_dir), namespace)?;
+        let target_path = paths::package_home(&Home::from(new_home_dir), namespace);
         self.storage.create_dir_all(&target_path).await?;
 
         let mut entries = self.storage.read_dir(&legacy_dir).await?;
@@ -262,7 +262,7 @@ mod tests {
 
         // Check if the file was migrated
         let migrated_file =
-            paths::package_home(&Home::from(&new_home), &namespace)?.join("test_file.txt");
+            paths::package_home(&Home::from(&new_home), &namespace).join("test_file.txt");
         assert!(std::path::Path::exists(&migrated_file));
 
         // Check the content of the migrated file

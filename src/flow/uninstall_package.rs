@@ -30,7 +30,7 @@ pub async fn uninstall_package(
     debug!("✔️ Removed manifests at: {}", manifest_path.display());
 
     debug!("⏳ Removing working directory");
-    let package_home = paths::package_home(&lineage.home, &namespace)?;
+    let package_home = paths::package_home(&lineage.home, &namespace);
     storage.remove_dir_all(&package_home).await?;
     debug!("✔️ Removed working directory: {}", package_home.display());
 
