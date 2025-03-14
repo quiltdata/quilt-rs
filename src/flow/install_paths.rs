@@ -199,6 +199,7 @@ mod tests {
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::Home;
     use crate::manifest::Row;
+    use crate::paths;
 
     // Verify installing the path that is already fetched to the `.quilt/objects`
     // Practically it is useful when we try to install identical files. Then we can re-use cache (because files are located by hash).
@@ -209,7 +210,7 @@ mod tests {
         let (domain_paths, _temp_dir2) = &DomainPaths::from_temp_dir()?;
 
         let namespace = Namespace::from(("foo", "bar"));
-        let package_home = domain_paths.package_home(&home, &namespace)?;
+        let package_home = paths::package_home(&home, &namespace)?;
 
         // Simulate the file already exists in `.quilt/objects/HASH`
         // We trust that the hash is correct, so we can skip the actual file content
@@ -265,7 +266,7 @@ mod tests {
         let (domain_paths, _temp_dir2) = &DomainPaths::from_temp_dir()?;
 
         let namespace = Namespace::from(("foo", "bar"));
-        let package_home = domain_paths.package_home(&home, &namespace)?;
+        let package_home = paths::package_home(&home, &namespace)?;
 
         // Simulate the manifest with rows containing an object path
         let remote = MockRemote::default();
@@ -335,7 +336,7 @@ mod tests {
         let (domain_paths, _temp_dir2) = &DomainPaths::from_temp_dir()?;
 
         let namespace = Namespace::from(("foo", "bar"));
-        let package_home = domain_paths.package_home(&home, &namespace)?;
+        let package_home = paths::package_home(&home, &namespace)?;
 
         // Simulate the manifest with rows containing objects
         let lineage = PackageLineage::default();
