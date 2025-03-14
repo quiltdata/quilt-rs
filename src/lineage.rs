@@ -13,6 +13,7 @@ use tracing::log;
 use tempfile::TempDir;
 
 use crate::io::storage::Storage;
+use crate::paths;
 use crate::uri::Namespace;
 use crate::Error;
 use crate::Res;
@@ -166,13 +167,11 @@ impl PackageLineageIo {
     }
 
     pub async fn read(&self, storage: &impl Storage) -> Res<(PathBuf, PackageLineage)> {
-        let domain_lineage = self.domain_lineage.read(storage).await?;
-        let namespace = domain_lineage.packages.get(&self.namespace);
-
-        match namespace {
-            Some(ns) => {
-                let package_home = domain_lineage.home.join(self.namespace.to_string())?;
-                Ok((package_home, ns.clone()))
+        let mut domain_lineage = self.domain_lineage.read(storage).await?;
+        match domain_lineage.packages.remove(&self.namespace) {
+            Some(package_lineage) => {
+                let package_home = paths::package_home(&domain_lineage.home, &self.namespace)?;
+                Ok((package_home, package_lineage))
             }
             None => Err(Error::PackageNotInstalled(self.namespace.clone())),
         }
