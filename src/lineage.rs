@@ -121,6 +121,23 @@ impl DomainLineageIo {
         DomainLineage::try_from(contents)
     }
 
+    /// Read a specific package lineage from the domain lineage
+    pub async fn read_package_lineage(
+        &self,
+        storage: &impl Storage,
+        namespace: &Namespace,
+    ) -> Res<(PathBuf, PackageLineage)> {
+        let domain_lineage = self.read(storage).await?;
+        
+        match domain_lineage.packages.get(namespace) {
+            Some(package_lineage) => {
+                let package_home = paths::package_home(&domain_lineage.home, namespace)?;
+                Ok((package_home, package_lineage.clone()))
+            }
+            None => Err(Error::PackageNotInstalled(namespace.clone())),
+        }
+    }
+
     pub async fn set_home(
         &self,
         storage: &impl Storage,
@@ -174,14 +191,7 @@ impl PackageLineageIo {
     }
 
     pub async fn read(&self, storage: &impl Storage) -> Res<(PathBuf, PackageLineage)> {
-        let mut domain_lineage = self.domain_lineage.read(storage).await?;
-        match domain_lineage.packages.remove(&self.namespace) {
-            Some(package_lineage) => {
-                let package_home = paths::package_home(&domain_lineage.home, &self.namespace)?;
-                Ok((package_home, package_lineage))
-            }
-            None => Err(Error::PackageNotInstalled(self.namespace.clone())),
-        }
+        self.domain_lineage.read_package_lineage(storage, &self.namespace).await
     }
 
     pub async fn home(&self, storage: &impl Storage) -> Res<PathBuf> {
@@ -390,6 +400,53 @@ mod tests {
             hash_from_lineage,
             "Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="
         );
+        Ok(())
+    }
+    
+    #[tokio::test]
+    async fn test_read_package_lineage() -> Res {
+        let storage = MockStorage::default();
+        let file_path = PathBuf::from("lineage.json");
+        let namespace = Namespace::from(("foo", "bar"));
+        let package_lineage = PackageLineage {
+            commit: None,
+            remote: ManifestUri {
+                bucket: "bucket".to_string(),
+                namespace: namespace.clone(),
+                hash: "abcdef".to_string(),
+                catalog: None,
+            },
+            base_hash: "abcdef".to_string(),
+            latest_hash: "abcdef".to_string(),
+            paths: BTreeMap::new(),
+        };
+        
+        // Create a domain lineage with a package
+        let lineage = DomainLineage {
+            home: Home::from("/home/user/quilt"),
+            packages: BTreeMap::from([(namespace.clone(), package_lineage.clone())]),
+        };
+        
+        // Write it to storage
+        let lineage_io = DomainLineageIo::new(file_path.clone());
+        lineage_io.write(&storage, lineage).await?;
+        
+        // Read the package lineage
+        let (package_home, read_package_lineage) = lineage_io.read_package_lineage(&storage, &namespace).await?;
+        
+        // Verify the results
+        assert_eq!(package_home, PathBuf::from("/home/user/quilt/foo/bar"));
+        assert_eq!(read_package_lineage, package_lineage);
+        
+        // Try reading a non-existent package
+        let non_existent = Namespace::from(("does", "notexist"));
+        let result = lineage_io.read_package_lineage(&storage, &non_existent).await;
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "The given package is not installed: does/notexist"
+        );
+        
         Ok(())
     }
 
