@@ -104,6 +104,11 @@ impl DomainPaths {
         self.objects_dir().join(hex::encode(hash))
     }
 
+    /// Path to the package home directory within the home directory
+    pub fn package_home(&self, home: &Home, namespace: &Namespace) -> Res<PathBuf> {
+        home.join(namespace.to_string())
+    }
+
     /// What directories are essential when we initiate `LocalDomain`
     fn required(&self) -> Vec<PathBuf> {
         vec![
@@ -118,7 +123,7 @@ impl DomainPaths {
         let mut paths = vec![];
         paths.extend(self.required());
         paths.extend(vec![
-            home.join(namespace.to_string())?,
+            self.package_home(home, namespace)?,
             self.legacy_working_dir(namespace),
             self.installed_manifests(namespace),
         ]);
@@ -196,5 +201,17 @@ mod tests {
                 PathBuf::from("foo/bar/.quilt/packages"),
             ]
         )
+    }
+
+    #[test]
+    fn test_package_home() -> Res {
+        let paths = DomainPaths::new(PathBuf::from("foo/bar"));
+        let home = Home::from("/home/user/quilt");
+        let namespace = Namespace::from(("test", "package"));
+        
+        let package_home = paths.package_home(&home, &namespace)?;
+        assert_eq!(package_home, PathBuf::from("/home/user/quilt/test/package"));
+        
+        Ok(())
     }
 }
