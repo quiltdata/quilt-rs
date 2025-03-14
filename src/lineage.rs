@@ -38,6 +38,19 @@ pub struct DomainLineage {
     pub home: Home,
 }
 
+impl DomainLineage {
+    pub fn new(home: Home) -> Self {
+        DomainLineage {
+            packages: BTreeMap::new(),
+            home,
+        }
+    }
+}
+
+// TODO: implement From<PathBuf> for DomainLineage
+// TODO: implement `from_temp_dir() -> Res<Lineage, TempDir>` for DomainLineage,
+//       visible only in tests
+
 impl TryFrom<Vec<u8>> for DomainLineage {
     type Error = Error;
 
@@ -80,13 +93,10 @@ impl DomainLineageIo {
             .read_file(&self.path)
             .await
             .or_else(|err| match err {
-                Error::Io(inner_err) => {
-                    if inner_err.kind() == std::io::ErrorKind::NotFound {
-                        Ok("{}".into())
-                    } else {
-                        Err(Error::Io(inner_err))
-                    }
-                }
+                Error::Io(inner_err) => match inner_err.kind() {
+                    std::io::ErrorKind::NotFound => Err(Error::LineageHome),
+                    _ => Err(Error::Io(inner_err)),
+                },
                 other => Err(other),
             })?;
 
@@ -101,13 +111,7 @@ impl DomainLineageIo {
                 self.write(storage, lineage).await
             }
             Err(Error::Io(e)) => match e.kind() {
-                std::io::ErrorKind::NotFound => {
-                    let lineage = DomainLineage {
-                        packages: BTreeMap::new(),
-                        home,
-                    };
-                    self.write(storage, lineage).await
-                }
+                std::io::ErrorKind::NotFound => self.write(storage, DomainLineage::new(home)).await,
                 _ => Err(Error::Io(e)),
             },
             Err(e) => Err(e),
@@ -253,10 +257,7 @@ mod tests {
         let lineage = DomainLineageIo::new(file_path).read(&storage).await?;
         assert_eq!(
             lineage,
-            DomainLineage {
-                packages: BTreeMap::new(),
-                home: Home::new(PathBuf::from("/tmp/working_dir")),
-            }
+            DomainLineage::new(Home::new(PathBuf::from("/tmp/working_dir")))
         );
         Ok(())
     }

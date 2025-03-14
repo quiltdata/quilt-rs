@@ -172,7 +172,7 @@ mod tests {
             latest_hash: "abcdef".to_string(),
             paths: std::collections::BTreeMap::new(),
         });
-        local_domain.lineage.write(&local_domain.storage, lineage).await?;
+        lineage.write(&local_domain.storage, lineage).await?;
         
         // Create a new home directory
         let new_home = temp_dir.path().join("new_home");

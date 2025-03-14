@@ -118,10 +118,8 @@ mod tests {
     #[tokio::test]
     async fn test_installing() -> Res {
         let (home, _temp_dir) = Home::from_temp_dir()?;
-        let lineage = DomainLineage {
-            packages: BTreeMap::default(),
-            home,
-        };
+        // TODO: DomainLineage::from_temp_dir()?
+        let lineage = DomainLineage::new(home);
 
         let manifest_uri = ManifestUri {
             bucket: "a".to_string(),
@@ -214,11 +212,9 @@ mod tests {
             .put_object(&manifest_uri.catalog, &remote_uri, parquet)
             .await?;
 
+        // TODO: DomainLineage::from_temp_dir()?
         let (home, _temp_dir) = Home::from_temp_dir()?;
-        let lineage = DomainLineage {
-            packages: BTreeMap::default(),
-            home,
-        };
+        let lineage = DomainLineage::new(home);
 
         let storage = LocalStorage::new();
         let result = install_package(

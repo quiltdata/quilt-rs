@@ -64,7 +64,7 @@ impl LocalDomain {
     pub async fn migrate_from_legacy_working_dir(
         &self,
         namespace: &Namespace,
-        home_dir: impl AsRef<Path>,
+        new_home_dir: impl AsRef<Path>,
     ) -> Res {
         let legacy_dir = self.paths.legacy_working_dir(namespace);
 
@@ -72,7 +72,7 @@ impl LocalDomain {
             return Ok(());
         }
 
-        let target_path = home_dir.as_ref().join(namespace.to_string());
+        let target_path = new_home_dir.as_ref().join(namespace.to_string());
         self.storage.create_dir_all(&target_path).await?;
 
         let mut entries = self.storage.read_dir(&legacy_dir).await?;
