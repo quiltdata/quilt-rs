@@ -146,9 +146,8 @@ impl LocalDomain {
 
     pub async fn list_installed_packages(&self) -> Res<Vec<InstalledPackage>> {
         let lineage = self.lineage.read(&self.storage).await?;
-        let mut namespaces: Vec<Namespace> = lineage.packages.into_keys().collect();
-        namespaces.sort();
-        let mut packages = Vec::new();
+        let namespaces = lineage.namespaces();
+        let mut packages = Vec::with_capacity(namespaces.len());
         for namespace in namespaces {
             packages.push(self.create_installed_package(namespace)?);
         }
@@ -269,6 +268,60 @@ mod tests {
         let content = std::fs::read_to_string(migrated_file)?;
         assert_eq!(content, "Test content");
 
+        Ok(())
+    }
+    
+    #[tokio::test]
+    async fn test_list_installed_packages() -> Res<()> {
+        // Create a temporary directory for testing
+        let temp_dir = TempDir::new()?;
+        let local_domain = super::LocalDomain::new(temp_dir.path());
+        
+        // Set home directory
+        local_domain.set_home(&temp_dir.path()).await?;
+        
+        // Initially there should be no packages
+        let packages = local_domain.list_installed_packages().await?;
+        assert!(packages.is_empty());
+        
+        // Add some packages to the lineage
+        let mut lineage = local_domain.lineage.read(&local_domain.storage).await?;
+        
+        let namespaces = vec![
+            Namespace::from(("foo", "bar")),
+            Namespace::from(("test", "package")),
+            Namespace::from(("abc", "xyz")),
+        ];
+        
+        for namespace in &namespaces {
+            lineage.packages.insert(
+                namespace.clone(),
+                crate::lineage::PackageLineage {
+                    commit: None,
+                    remote: crate::uri::ManifestUri {
+                        bucket: "test-bucket".to_string(),
+                        namespace: namespace.clone(),
+                        hash: "abcdef".to_string(),
+                        catalog: None,
+                    },
+                    base_hash: "abcdef".to_string(),
+                    latest_hash: "abcdef".to_string(),
+                    paths: std::collections::BTreeMap::new(),
+                },
+            );
+        }
+        
+        local_domain.lineage.write(&local_domain.storage, lineage).await?;
+        
+        // Now list_installed_packages should return packages in sorted order
+        let packages = local_domain.list_installed_packages().await?;
+        assert_eq!(packages.len(), 3);
+        
+        // Check that packages are returned in sorted order by namespace
+        assert_eq!(packages[0].namespace, Namespace::from(("abc", "xyz")));
+        assert_eq!(packages[1].namespace, Namespace::from(("foo", "bar")));
+        assert_eq!(packages[2].namespace, Namespace::from(("test", "package")));
+        
         Ok(())
     }
 }

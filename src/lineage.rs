@@ -51,6 +51,13 @@ impl DomainLineage {
         }
     }
 
+    /// Returns a sorted vector of all namespaces in the lineage
+    pub fn namespaces(&self) -> Vec<Namespace> {
+        let mut namespaces: Vec<Namespace> = self.packages.keys().cloned().collect();
+        namespaces.sort();
+        namespaces
+    }
+
     #[cfg(test)]
     pub fn from_temp_dir() -> Res<(Self, tempfile::TempDir)> {
         let temp_dir = TempDir::new()?;
@@ -262,6 +269,37 @@ mod tests {
         let (lineage, temp_dir) = DomainLineage::from_temp_dir()?;
         assert_eq!(lineage.home.get()?, &temp_dir.path().to_path_buf());
         assert!(lineage.packages.is_empty());
+        Ok(())
+    }
+    
+    #[test]
+    fn test_namespaces() -> Res {
+        let mut lineage = DomainLineage::new("/tmp/home");
+        
+        // Empty lineage should return empty vector
+        assert!(lineage.namespaces().is_empty());
+        
+        // Add some packages
+        lineage.packages.insert(
+            Namespace::from(("foo", "bar")),
+            PackageLineage::default()
+        );
+        lineage.packages.insert(
+            Namespace::from(("abc", "xyz")),
+            PackageLineage::default()
+        );
+        lineage.packages.insert(
+            Namespace::from(("test", "package")),
+            PackageLineage::default()
+        );
+        
+        // Check that namespaces are returned in sorted order
+        let namespaces = lineage.namespaces();
+        assert_eq!(namespaces.len(), 3);
+        assert_eq!(namespaces[0], Namespace::from(("abc", "xyz")));
+        assert_eq!(namespaces[1], Namespace::from(("foo", "bar")));
+        assert_eq!(namespaces[2], Namespace::from(("test", "package")));
+        
         Ok(())
     }
 
