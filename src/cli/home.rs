@@ -34,6 +34,10 @@ pub async fn model(
         migrate: _migrate,
     }: Input,
 ) -> Result<Output, Error> {
+    // FIXME: migrate from legacy working directory if exists (paths.legacy_working_dir())
+    //        to new home directory
+    //
+    //        storage.read_dir in paths.legacy_working_dir()
     if let Some(dir_path) = path {
         // Set the working directory
         let dir = local_domain.set_home(dir_path).await?;
