@@ -60,6 +60,34 @@ impl LocalDomain {
         Ok(self.lineage.set_home(&self.storage, dir.into()).await?.home)
     }
 
+    /// Migrate files from legacy working directory to the new home directory
+    pub async fn migrate_from_legacy_working_dir(
+        &self,
+        namespace: &Namespace,
+        home_dir: impl AsRef<Path>,
+    ) -> Res {
+        let legacy_dir = self.paths.legacy_working_dir(namespace);
+
+        if !self.storage.exists(&legacy_dir).await {
+            return Ok(());
+        }
+
+        let target_path = home_dir.as_ref().join(namespace.to_string());
+        self.storage.create_dir_all(&target_path).await?;
+
+        let mut entries = self.storage.read_dir(&legacy_dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let file_path = entry.path();
+            if entry.metadata().await?.is_file() {
+                let file_name = file_path.file_name().unwrap();
+                let target_file = target_path.join(file_name);
+                self.storage.copy(&file_path, &target_file).await?;
+            }
+        }
+
+        Ok(())
+    }
+
     pub async fn scaffold_paths_for_installing(&self, namespace: &Namespace) -> Res {
         let home = self.get_home().await?;
         self.paths
