@@ -138,6 +138,19 @@ impl DomainLineageIo {
         }
     }
 
+    /// Write a specific package lineage to the domain lineage
+    pub async fn write_package_lineage(
+        &self,
+        storage: &impl Storage,
+        namespace: &Namespace,
+        package_lineage: PackageLineage,
+    ) -> Res<PackageLineage> {
+        let mut domain_lineage = self.read(storage).await?;
+        domain_lineage.packages.insert(namespace.clone(), package_lineage.clone());
+        self.write(storage, domain_lineage).await?;
+        Ok(package_lineage)
+    }
+
     pub async fn set_home(
         &self,
         storage: &impl Storage,
@@ -210,12 +223,7 @@ impl PackageLineageIo {
         storage: &impl Storage,
         lineage: PackageLineage,
     ) -> Res<PackageLineage> {
-        let mut domain_lineage = self.domain_lineage.read(storage).await?;
-        domain_lineage
-            .packages
-            .insert(self.namespace.clone(), lineage.clone());
-        self.domain_lineage.write(storage, domain_lineage).await?;
-        Ok(lineage)
+        self.domain_lineage.write_package_lineage(storage, &self.namespace, lineage).await
     }
 }
 
@@ -446,6 +454,71 @@ mod tests {
             result.unwrap_err().to_string(),
             "The given package is not installed: does/notexist"
         );
+        
+        Ok(())
+    }
+    
+    #[tokio::test]
+    async fn test_write_package_lineage() -> Res {
+        let storage = MockStorage::default();
+        let file_path = PathBuf::from("lineage.json");
+        let lineage_io = DomainLineageIo::new(file_path.clone());
+        
+        // Create an initial domain lineage with home directory
+        let initial_lineage = DomainLineage {
+            home: Home::from("/home/user/quilt"),
+            packages: BTreeMap::new(),
+        };
+        
+        // Write the initial lineage
+        lineage_io.write(&storage, initial_lineage).await?;
+        
+        // Create a package lineage to write
+        let namespace = Namespace::from(("foo", "bar"));
+        let package_lineage = PackageLineage {
+            commit: None,
+            remote: ManifestUri {
+                bucket: "bucket".to_string(),
+                namespace: namespace.clone(),
+                hash: "abcdef".to_string(),
+                catalog: None,
+            },
+            base_hash: "abcdef".to_string(),
+            latest_hash: "abcdef".to_string(),
+            paths: BTreeMap::new(),
+        };
+        
+        // Write the package lineage
+        let written_lineage = lineage_io.write_package_lineage(&storage, &namespace, package_lineage.clone()).await?;
+        
+        // Verify the written lineage matches what we provided
+        assert_eq!(written_lineage, package_lineage);
+        
+        // Read the domain lineage to verify the package was added
+        let domain_lineage = lineage_io.read(&storage).await?;
+        assert_eq!(domain_lineage.packages.len(), 1);
+        assert!(domain_lineage.packages.contains_key(&namespace));
+        assert_eq!(domain_lineage.packages.get(&namespace).unwrap(), &package_lineage);
+        
+        // Update the package lineage
+        let updated_package_lineage = PackageLineage {
+            commit: Some(CommitState {
+                message: "Test commit".to_string(),
+                timestamp: chrono::Utc::now(),
+                workflow: None,
+                user_meta: None,
+            }),
+            ..package_lineage.clone()
+        };
+        
+        // Write the updated package lineage
+        lineage_io.write_package_lineage(&storage, &namespace, updated_package_lineage.clone()).await?;
+        
+        // Read the domain lineage again to verify the update
+        let updated_domain_lineage = lineage_io.read(&storage).await?;
+        assert_eq!(updated_domain_lineage.packages.len(), 1);
+        assert!(updated_domain_lineage.packages.contains_key(&namespace));
+        assert_eq!(updated_domain_lineage.packages.get(&namespace).unwrap(), &updated_package_lineage);
         
         Ok(())
     }
