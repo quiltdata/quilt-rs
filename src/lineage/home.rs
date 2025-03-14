@@ -34,10 +34,7 @@ impl Home {
     }
 
     pub fn join(&self, path: impl AsRef<std::path::Path>) -> Result<PathBuf, Error> {
-        match &self.inner {
-            Some(dir) => Ok(dir.join(path)),
-            None => Err(Error::LineageHome),
-        }
+        Ok(self.get()?.join(path))
     }
 
     #[cfg(test)]

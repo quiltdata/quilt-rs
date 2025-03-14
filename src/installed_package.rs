@@ -76,7 +76,7 @@ impl InstalledPackage {
         let lineage = flow::refresh_latest_hash(lineage, &self.remote).await?;
         let manifest = self.manifest().await?;
         let (lineage, status) =
-            flow::status(lineage, &self.storage, &manifest, package_home).await?;
+            flow::status(lineage, &self.storage, &manifest, &package_home).await?;
         self.lineage.write(&self.storage, lineage).await?;
         Ok(status)
     }
@@ -133,7 +133,7 @@ impl InstalledPackage {
         let mut manifest = self.manifest().await?;
 
         let (lineage, status) =
-            flow::status(lineage, &self.storage, &manifest, package_home.clone()).await?;
+            flow::status(lineage, &self.storage, &manifest, &package_home).await?;
 
         let lineage = flow::commit(
             lineage,
@@ -191,7 +191,7 @@ impl InstalledPackage {
 
         let mut manifest = self.manifest().await?;
         let (lineage, status) =
-            flow::status(lineage, &self.storage, &manifest, package_home.clone()).await?;
+            flow::status(lineage, &self.storage, &manifest, &package_home).await?;
         let lineage = flow::pull(
             lineage,
             &mut manifest,

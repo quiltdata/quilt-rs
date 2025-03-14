@@ -1,6 +1,7 @@
 use multihash::Multihash;
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::path::Path;
 use std::path::PathBuf;
 use tokio::fs::File;
 
@@ -67,11 +68,11 @@ enum WorkdirFile {
 async fn locate_files_in_working_dir(
     storage: &(impl Storage + Sync),
     manifest: &Table,
-    working_dir: PathBuf,
+    working_dir: impl AsRef<Path>,
     mut tracked_paths: HashMap<PathBuf, Row>,
 ) -> Res<Vec<(PathBuf, WorkdirFile)>> {
     let mut queue = VecDeque::new();
-    queue.push_back(working_dir.clone());
+    queue.push_back(working_dir.as_ref().to_path_buf());
 
     let mut files = Vec::new();
 
@@ -170,11 +171,11 @@ pub async fn create_status(
     lineage: PackageLineage,
     storage: &(impl Storage + Sync),
     manifest: &Table,
-    working_dir: PathBuf,
+    working_dir: impl AsRef<Path>,
 ) -> Res<(PackageLineage, InstalledPackageStatus)> {
     info!(
         "⏳ Creating status for working directory: {}",
-        working_dir.display()
+        working_dir.as_ref().display()
     );
 
     // compute the status based on the following sources:
@@ -337,8 +338,7 @@ mod tests {
             .await?;
 
         // First, we create a status and see the file is not changed
-        let (_, status) =
-            create_status(lineage.clone(), &storage, &manifest, working_dir.clone()).await?;
+        let (_, status) = create_status(lineage.clone(), &storage, &manifest, &working_dir).await?;
         let file_not_removed_yet = status.changes.get(&logical_key);
         assert!(file_not_removed_yet.is_none());
 
@@ -368,8 +368,7 @@ mod tests {
             )
             .await?;
 
-        let (_, status) =
-            create_status(lineage, &storage, &manifest, working_dir.to_path_buf()).await?;
+        let (_, status) = create_status(lineage, &storage, &manifest, working_dir).await?;
 
         let added_file = status.changes.get(&file_path).unwrap();
         if let Change::Added(added_row) = added_file {

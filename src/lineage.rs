@@ -98,7 +98,7 @@ impl DomainLineageIo {
             Ok(contents) => {
                 let mut lineage: DomainLineage = serde_json::from_slice(&contents)?;
                 lineage.home = home.clone();
-                self.write(storage, lineage.clone()).await
+                self.write(storage, lineage).await
             }
             Err(Error::Io(e)) => match e.kind() {
                 std::io::ErrorKind::NotFound => {
@@ -106,7 +106,7 @@ impl DomainLineageIo {
                         packages: BTreeMap::new(),
                         home,
                     };
-                    self.write(storage, lineage.clone()).await
+                    self.write(storage, lineage).await
                 }
                 _ => Err(Error::Io(e)),
             },
