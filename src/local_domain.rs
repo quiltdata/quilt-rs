@@ -261,7 +261,8 @@ mod tests {
             .await?;
 
         // Check if the file was migrated
-        let migrated_file = paths::package_home(&Home::from(&new_home), &namespace)?.join("test_file.txt");
+        let migrated_file =
+            paths::package_home(&Home::from(&new_home), &namespace)?.join("test_file.txt");
         assert!(std::path::Path::exists(&migrated_file));
 
         // Check the content of the migrated file
@@ -270,29 +271,29 @@ mod tests {
 
         Ok(())
     }
-    
+
     #[tokio::test]
     async fn test_list_installed_packages() -> Res<()> {
         // Create a temporary directory for testing
         let temp_dir = TempDir::new()?;
         let local_domain = super::LocalDomain::new(temp_dir.path());
-        
+
         // Set home directory
         local_domain.set_home(&temp_dir.path()).await?;
-        
+
         // Initially there should be no packages
         let packages = local_domain.list_installed_packages().await?;
         assert!(packages.is_empty());
-        
+
         // Add some packages to the lineage
         let mut lineage = local_domain.lineage.read(&local_domain.storage).await?;
-        
+
         let namespaces = vec![
             Namespace::from(("foo", "bar")),
             Namespace::from(("test", "package")),
             Namespace::from(("abc", "xyz")),
         ];
-        
+
         for namespace in &namespaces {
             lineage.packages.insert(
                 namespace.clone(),
@@ -310,18 +311,21 @@ mod tests {
                 },
             );
         }
-        
-        local_domain.lineage.write(&local_domain.storage, lineage).await?;
-        
+
+        local_domain
+            .lineage
+            .write(&local_domain.storage, lineage)
+            .await?;
+
         // Now list_installed_packages should return packages in sorted order
         let packages = local_domain.list_installed_packages().await?;
         assert_eq!(packages.len(), 3);
-        
+
         // Check that packages are returned in sorted order by namespace
         assert_eq!(packages[0].namespace, Namespace::from(("abc", "xyz")));
         assert_eq!(packages[1].namespace, Namespace::from(("foo", "bar")));
         assert_eq!(packages[2].namespace, Namespace::from(("test", "package")));
-        
+
         Ok(())
     }
 }

@@ -207,10 +207,10 @@ mod tests {
     fn test_package_home() -> Res {
         let home = Home::from("/home/user/quilt");
         let namespace = Namespace::from(("test", "package"));
-        
+
         let pkg_home = package_home(&home, &namespace)?;
         assert_eq!(pkg_home, PathBuf::from("/home/user/quilt/test/package"));
-        
+
         Ok(())
     }
 }

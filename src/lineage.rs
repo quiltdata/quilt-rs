@@ -110,12 +110,12 @@ impl DomainLineageIo {
         let contents = storage
             .read_file(&self.path)
             .await
-            .or_else(|err| match err {
+            .map_err(|err| match err {
                 Error::Io(inner_err) => match inner_err.kind() {
-                    std::io::ErrorKind::NotFound => Err(Error::LineageHome),
-                    _ => Err(Error::Io(inner_err)),
+                    std::io::ErrorKind::NotFound => Error::LineageHome,
+                    _ => Error::Io(inner_err),
                 },
-                other => Err(other),
+                other => other,
             })?;
 
         DomainLineage::try_from(contents)
@@ -271,35 +271,33 @@ mod tests {
         assert!(lineage.packages.is_empty());
         Ok(())
     }
-    
+
     #[test]
     fn test_namespaces() -> Res {
         let mut lineage = DomainLineage::new("/tmp/home");
-        
+
         // Empty lineage should return empty vector
         assert!(lineage.namespaces().is_empty());
-        
+
         // Add some packages
-        lineage.packages.insert(
-            Namespace::from(("foo", "bar")),
-            PackageLineage::default()
-        );
-        lineage.packages.insert(
-            Namespace::from(("abc", "xyz")),
-            PackageLineage::default()
-        );
+        lineage
+            .packages
+            .insert(Namespace::from(("foo", "bar")), PackageLineage::default());
+        lineage
+            .packages
+            .insert(Namespace::from(("abc", "xyz")), PackageLineage::default());
         lineage.packages.insert(
             Namespace::from(("test", "package")),
-            PackageLineage::default()
+            PackageLineage::default(),
         );
-        
+
         // Check that namespaces are returned in sorted order
         let namespaces = lineage.namespaces();
         assert_eq!(namespaces.len(), 3);
         assert_eq!(namespaces[0], Namespace::from(("abc", "xyz")));
         assert_eq!(namespaces[1], Namespace::from(("foo", "bar")));
         assert_eq!(namespaces[2], Namespace::from(("test", "package")));
-        
+
         Ok(())
     }
 
