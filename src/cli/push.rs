@@ -22,10 +22,7 @@ impl std::fmt::Display for Output {
 }
 
 pub async fn command(m: impl Commands, args: Input) -> Std {
-    match m.push(args).await {
-        Ok(output) => Std::Out(output.to_string()),
-        Err(err) => Std::Err(err),
-    }
+    Std::from_result(m.push(args).await)
 }
 
 async fn push_package(
@@ -60,7 +57,7 @@ mod tests {
 
     /// Verifies that push command returns error when push a non-existent package
     #[test(tokio::test)]
-    async fn test_namespace_not_found() -> Result<(), Error> {
+    async fn test_namespace_not_found()  -> Result<(), Error> {
         let (m, _temp_dir) = create_model_in_temp_dir().await?;
 
         if let Std::Err(error_str) = command(

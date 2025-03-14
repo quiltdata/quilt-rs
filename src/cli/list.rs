@@ -20,10 +20,7 @@ impl std::fmt::Display for Output {
 }
 
 pub async fn command(m: impl Commands) -> Std {
-    match m.list().await {
-        Ok(output) => Std::Out(output.to_string()),
-        Err(err) => Std::Err(err),
-    }
+    Std::from_result(m.list().await)
 }
 
 pub async fn model(local_domain: &quilt_rs::LocalDomain) -> Result<Output, Error> {
