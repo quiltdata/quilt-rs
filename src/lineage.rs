@@ -65,9 +65,11 @@ impl DomainLineage {
     }
 }
 
-// TODO: implement From<PathBuf> for DomainLineage
-// TODO: implement `from_temp_dir() -> Res<Lineage, TempDir>` for DomainLineage,
-//       visible only in tests
+impl AsRef<PathBuf> for DomainLineage {
+    fn as_ref(&self) -> &PathBuf {
+        &self.home.as_ref()
+    }
+}
 
 impl TryFrom<Vec<u8>> for DomainLineage {
     type Error = Error;
@@ -77,8 +79,7 @@ impl TryFrom<Vec<u8>> for DomainLineage {
 
         match result {
             Ok(lineage) => {
-                let home = lineage.home.as_ref();
-                if home.as_os_str().is_empty() {
+                if lineage.as_ref().as_os_str().is_empty() {
                     return Err(Error::LineageMissingHome);
                 }
                 Ok(lineage)
@@ -285,14 +286,14 @@ mod tests {
         let lineage =
             DomainLineage::try_from(br###"{"packages":{},"home":"/tmp/working_dir"}"###.to_vec())
                 .unwrap();
-        assert_eq!(lineage.home.as_ref(), &PathBuf::from("/tmp/working_dir"));
+        assert_eq!(lineage.as_ref(), &PathBuf::from("/tmp/working_dir"));
         Ok(())
     }
 
     #[test]
     fn test_domain_lineage_from_temp_dir() -> Res {
         let (lineage, temp_dir) = DomainLineage::from_temp_dir()?;
-        assert_eq!(lineage.home.as_ref(), &temp_dir.path().to_path_buf());
+        assert_eq!(lineage.as_ref(), &temp_dir.path().to_path_buf());
         assert!(lineage.packages.is_empty());
         Ok(())
     }
@@ -400,7 +401,7 @@ mod tests {
         let file_contents = storage.read_file(&file_path).await?;
         let lineage = DomainLineage::try_from(file_contents)?;
 
-        assert_eq!(lineage.home.as_ref(), &PathBuf::from("/tmp/working_dir"));
+        assert_eq!(lineage.as_ref(), &PathBuf::from("/tmp/working_dir"));
 
         let multihash_from_lineage = lineage
             .packages
