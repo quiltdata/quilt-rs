@@ -87,7 +87,6 @@ impl HttpClient for ReqwestClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::Value;
 
     #[tokio::test]
     async fn test_get_config() {
@@ -97,7 +96,19 @@ mod tests {
         }
 
         let client = ReqwestClient::new();
-        let result: Result<Value, _> = client.get("https://open.quilt.bio/config.js", None).await;
+        
+        // Get the raw text content first to check for the QUILT_CATALOG_CONFIG string
+        let response = reqwest::get("https://open.quilt.bio/config.js")
+            .await
+            .expect("Failed to fetch config.js");
+        let text = response.text().await.expect("Failed to get response text");
+        
+        // Check that the config.js contains the QUILT_CATALOG_CONFIG string
+        assert!(text.contains("QUILT_CATALOG_CONFIG"), 
+                "Config.js should contain QUILT_CATALOG_CONFIG string");
+        
+        // Now test the actual HttpClient.get method with JSON parsing
+        let result = client.get::<serde_json::Value>("https://open.quilt.bio/config.json", None).await;
         
         // Verify that we can successfully make the request and parse the JSON
         assert!(result.is_ok(), "Failed to get config: {:?}", result.err());
