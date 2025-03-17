@@ -34,10 +34,7 @@ impl std::fmt::Display for Output {
 }
 
 pub async fn command(m: impl Commands, args: Input) -> Std {
-    match m.benchmark(args).await {
-        Ok(output) => Std::Out(output.to_string()),
-        Err(err) => Std::Err(err),
-    }
+    Std::from_result(m.benchmark(args).await)
 }
 
 async fn benchmark(
@@ -88,4 +85,25 @@ pub async fn model(
         perf,
         top_hash,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_output_display() {
+        let dest = PathBuf::from("/path/to/manifest");
+        let top_hash = "abc123".to_string();
+
+        let output = Output {
+            dest,
+            perf: Measure::start(),
+            top_hash,
+        };
+
+        let display_string = format!("{}", output);
+        let expected = "Manifest written to \"/path/to/manifest\"\nWith hash abc123\nAnd it took";
+        assert!(display_string.starts_with(expected));
+    }
 }

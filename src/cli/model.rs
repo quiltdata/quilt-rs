@@ -1,5 +1,9 @@
+use std::path::Path;
 use std::path::PathBuf;
+
 use tempfile::TempDir;
+
+use quilt_rs::lineage::Home;
 
 use crate::cli::benchmark;
 use crate::cli::browse;
@@ -88,6 +92,14 @@ impl Model {
         Model { local_domain }
     }
 
+    pub async fn get_home(&self) -> Result<Home, Error> {
+        Ok(self.local_domain.get_home().await?)
+    }
+
+    pub async fn set_home(&self, dir: impl AsRef<Path>) -> Result<Home, Error> {
+        Ok(self.local_domain.set_home(dir).await?)
+    }
+
     #[cfg(test)]
     pub fn from_temp_dir() -> Result<(Self, TempDir), Error> {
         let temp_dir = TempDir::new()?;
@@ -115,6 +127,8 @@ pub async fn install_package_into_temp_dir(
 ) -> Result<(Model, quilt_rs::InstalledPackage, TempDir), Error> {
     let (model, temp_dir) = Model::from_temp_dir()?;
 
+    model.set_home(temp_dir.path()).await?;
+
     let output = model
         .install(install::Input {
             namespace: None,
@@ -132,4 +146,11 @@ pub async fn install_package_into_temp_dir(
 
     // We must return `temp_dir` because otherwise it will be dropped and removed
     Ok((model, installed_package, temp_dir))
+}
+
+#[cfg(test)]
+pub async fn create_model_in_temp_dir() -> Result<(Model, TempDir), Error> {
+    let (model, temp_dir) = Model::from_temp_dir()?;
+    model.set_home(temp_dir.path()).await?;
+    Ok((model, temp_dir))
 }

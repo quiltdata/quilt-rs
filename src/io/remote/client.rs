@@ -83,3 +83,31 @@ impl HttpClient for ReqwestClient {
         Ok(response.json().await?)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use serde::Deserialize;
+    use serde::Serialize;
+
+    #[tokio::test]
+    async fn test_get_config() -> Res {
+        let client = ReqwestClient::new();
+
+        #[derive(Deserialize, Serialize)]
+        struct Config {
+            mode: String,
+        }
+
+        // Get the raw text content first to check for the QUILT_CATALOG_CONFIG string
+        let response: Config = client
+            .get("https://open.quilt.bio/config.json", None)
+            .await?;
+
+        // Check that the config.js contains the QUILT_CATALOG_CONFIG string
+        assert_eq!(response.mode, "OPEN");
+
+        Ok(())
+    }
+}

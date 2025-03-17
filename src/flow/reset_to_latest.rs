@@ -19,15 +19,10 @@ pub async fn reset_to_latest(
     paths: &DomainPaths,
     storage: &(impl Storage + std::marker::Sync),
     remote: &impl Remote,
-    working_dir: PathBuf,
+    package_home: PathBuf,
     namespace: Namespace,
 ) -> Res<PackageLineage> {
     info!("⏳ Starting reset to latest for package {}", namespace);
-
-    paths.scaffold_for_installing(storage, &namespace).await?;
-    paths
-        .scaffold_for_caching(storage, &lineage.remote.bucket)
-        .await?;
 
     debug!(
         "⏳ Resolving latest manifest hash for {}",
@@ -49,7 +44,7 @@ pub async fn reset_to_latest(
     let installed_paths: Vec<PathBuf> = lineage.paths.clone().into_keys().collect();
     debug!("⏳ Uninstalling {} paths", installed_paths.len());
     let mut lineage =
-        flow::uninstall_paths(lineage, working_dir.clone(), storage, &installed_paths).await?;
+        flow::uninstall_paths(lineage, package_home.clone(), storage, &installed_paths).await?;
 
     debug!("⏳ Updating lineage hashes");
     // TODO: Should be a method of lineage
@@ -91,7 +86,7 @@ pub async fn reset_to_latest(
         lineage,
         manifest,
         paths,
-        working_dir,
+        package_home,
         namespace,
         storage,
         remote,

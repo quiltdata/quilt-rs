@@ -625,3 +625,67 @@ impl Remote for RemoteS3 {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_get_object_attributes() -> Res {
+        let listing_uri = S3Uri {
+            bucket: "data-yaml-spec-tests".to_string(),
+            ..S3Uri::default()
+        };
+
+        let object = Object::builder()
+            .key("scale/10u/e0-0.txt")
+            .size(1024)
+            .build();
+
+        let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::default());
+        let result = remote
+            .get_object_attributes(&None, &listing_uri, &object)
+            .await?;
+
+        assert_eq!(
+            result.object_uri,
+            S3Uri {
+                key: object.key().unwrap().to_string(),
+                version: Some("jHb6DGN43Ex7EhbxZc2G9JnAkWSeTfEY".to_string()),
+                ..listing_uri
+            }
+        );
+        assert_eq!(
+            result.hash,
+            ContentHash::SHA256Chunked("/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=".to_string())
+                .try_into()?
+        );
+        assert_eq!(result.size, 29);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_object_attributes_missing_checksum() {
+        let listing_uri = S3Uri {
+            bucket: "allencell".to_string(),
+            key: "".to_string(),
+            version: None,
+        };
+        let object = Object::builder().key("README.md").size(1024).build();
+
+        let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::default());
+        let result = remote
+            .get_object_attributes(&None, &listing_uri, &object)
+            .await;
+
+        match result {
+            Err(Error::Checksum(msg)) => {
+                assert_eq!(msg, "missing checksum");
+            }
+            _ => panic!(
+                "Expected Error::Checksum(\"missing checksum\"), got {:?}",
+                result
+            ),
+        }
+    }
+}

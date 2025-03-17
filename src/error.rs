@@ -47,6 +47,12 @@ pub enum Error {
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
+    #[error("Domain lineage missing, including missing Home directory")]
+    LineageMissing,
+
+    #[error("Domain lineage missing Home directory")]
+    LineageMissingHome,
+
     #[error("Failed to get access token: {0:?}")]
     LoginRequired(Option<Host>),
 

@@ -1,6 +1,7 @@
 use multihash::Multihash;
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::path::Path;
 use std::path::PathBuf;
 use tokio::fs::File;
 
@@ -64,14 +65,14 @@ enum WorkdirFile {
     UnSupported,
 }
 
-async fn locate_files_in_working_dir(
+async fn locate_files_in_package_home(
     storage: &(impl Storage + Sync),
     manifest: &Table,
-    working_dir: PathBuf,
+    package_home: impl AsRef<Path>,
     mut tracked_paths: HashMap<PathBuf, Row>,
 ) -> Res<Vec<(PathBuf, WorkdirFile)>> {
     let mut queue = VecDeque::new();
-    queue.push_back(working_dir.clone());
+    queue.push_back(package_home.as_ref().to_path_buf());
 
     let mut files = Vec::new();
 
@@ -99,7 +100,7 @@ async fn locate_files_in_working_dir(
             }
 
             let file = storage.open_file(&file_path).await?;
-            let logical_key = file_path.strip_prefix(&working_dir)?.to_path_buf();
+            let logical_key = file_path.strip_prefix(&package_home)?.to_path_buf();
             if let Some(row) = tracked_paths.remove(&logical_key) {
                 files.push((logical_key, WorkdirFile::Tracked(file, row)));
             } else if let Some(row) = manifest.get_record(&logical_key).await? {
@@ -170,11 +171,11 @@ pub async fn create_status(
     lineage: PackageLineage,
     storage: &(impl Storage + Sync),
     manifest: &Table,
-    working_dir: PathBuf,
+    package_home: impl AsRef<Path>,
 ) -> Res<(PackageLineage, InstalledPackageStatus)> {
     info!(
         "⏳ Creating status for working directory: {}",
-        working_dir.display()
+        package_home.as_ref().display()
     );
 
     // compute the status based on the following sources:
@@ -199,7 +200,7 @@ pub async fn create_status(
     }
     debug!("✔️ Found {} paths in lineage", orig_paths.len());
 
-    let files = locate_files_in_working_dir(storage, manifest, working_dir, orig_paths).await?;
+    let files = locate_files_in_package_home(storage, manifest, package_home, orig_paths).await?;
     debug!("✔️ Locatd files in working directory {:?}", files);
     let changes = fingerprint_files(files).await?;
     debug!("✔️ Computed file fingerprints {:?}", changes);
@@ -337,8 +338,7 @@ mod tests {
             .await?;
 
         // First, we create a status and see the file is not changed
-        let (_, status) =
-            create_status(lineage.clone(), &storage, &manifest, working_dir.clone()).await?;
+        let (_, status) = create_status(lineage.clone(), &storage, &manifest, &working_dir).await?;
         let file_not_removed_yet = status.changes.get(&logical_key);
         assert!(file_not_removed_yet.is_none());
 
@@ -368,8 +368,7 @@ mod tests {
             )
             .await?;
 
-        let (_, status) =
-            create_status(lineage, &storage, &manifest, working_dir.to_path_buf()).await?;
+        let (_, status) = create_status(lineage, &storage, &manifest, working_dir).await?;
 
         let added_file = status.changes.get(&file_path).unwrap();
         if let Change::Added(added_row) = added_file {
