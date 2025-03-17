@@ -3,7 +3,11 @@
 
 use std::path::PathBuf;
 
+#[cfg(test)]
+use tempfile::TempDir;
+
 use crate::io::storage::Storage;
+use crate::lineage::Home;
 use crate::uri::Host;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
@@ -38,6 +42,11 @@ pub fn get_manifest_key(hash: &str) -> String {
 /// What is the path to the JSONL manifest based on its `hash`
 pub fn get_manifest_key_legacy(hash: &str) -> String {
     format!("{}/{}", MANIFEST_DIR, hash)
+}
+
+/// Path to the package home directory within the home directory
+pub fn package_home(home: &Home, namespace: &Namespace) -> PathBuf {
+    home.join(namespace.to_string())
 }
 
 /// Helper for getting paths.
@@ -110,22 +119,23 @@ impl DomainPaths {
     }
 
     /// What directories are essential when we initiate `InstalledPackage`
-    fn required_for_installing(&self, namespace: &Namespace) -> Vec<PathBuf> {
+    fn required_for_installing(&self, home: &Home, namespace: &Namespace) -> Res<Vec<PathBuf>> {
         let mut paths = vec![];
         paths.extend(self.required());
         paths.extend(vec![
-            self.working_dir(namespace),
+            package_home(home, namespace),
             self.installed_manifests(namespace),
         ]);
-        paths
+        Ok(paths)
     }
 
     pub async fn scaffold_for_installing(
         &self,
         storage: &impl Storage,
+        home: &Home,
         namespace: &Namespace,
     ) -> Res {
-        scaffold_paths(storage, self.required_for_installing(namespace)).await
+        scaffold_paths(storage, self.required_for_installing(home, namespace)?).await
     }
 
     /// What directories are essential when we work with cached manifests
@@ -140,9 +150,10 @@ impl DomainPaths {
         scaffold_paths(storage, self.required_for_caching(bucket)).await
     }
 
-    /// Directory for storing installed files that can be modified
-    pub fn working_dir(&self, namespace: &Namespace) -> PathBuf {
-        self.root_dir.join(namespace.to_string())
+    #[cfg(test)]
+    pub fn from_temp_dir() -> Res<(Self, TempDir)> {
+        let temp_dir = TempDir::new()?;
+        Ok((DomainPaths::new(temp_dir.path().to_path_buf()), temp_dir))
     }
 }
 
@@ -184,5 +195,16 @@ mod tests {
                 PathBuf::from("foo/bar/.quilt/packages"),
             ]
         )
+    }
+
+    #[test]
+    fn test_package_home() -> Res {
+        let home = Home::from("/home/user/quilt");
+        let namespace = Namespace::from(("test", "package"));
+
+        let pkg_home = package_home(&home, &namespace);
+        assert_eq!(pkg_home, PathBuf::from("/home/user/quilt/test/package"));
+
+        Ok(())
     }
 }

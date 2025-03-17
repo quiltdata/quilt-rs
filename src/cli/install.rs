@@ -41,10 +41,7 @@ impl std::fmt::Display for Output {
 }
 
 pub async fn command(m: impl Commands, args: Input) -> Std {
-    match m.install(args).await {
-        Ok(output) => Std::Out(output.to_string()),
-        Err(err) => Std::Err(err),
-    }
+    Std::from_result(m.install(args).await)
 }
 
 async fn install_package(
@@ -123,7 +120,7 @@ mod tests {
     use quilt_rs::io::storage::Storage;
 
     use crate::cli::fixtures::packages::default as pkg;
-    use crate::cli::model::Model;
+    use crate::cli::model::create_model_in_temp_dir;
 
     /// Verifies the installation process in CLI with valid data:
     ///   * lineage is updated with the installed package and tracked paths
@@ -139,7 +136,7 @@ mod tests {
         let readme_logical_key = PathBuf::from(pkg::README_LK);
         let timestamp_logical_key = PathBuf::from(pkg::TIMESTAMP_LK);
 
-        let (m, temp_dir) = Model::from_temp_dir()?;
+        let (m, temp_dir) = create_model_in_temp_dir().await?;
         let working_dir = temp_dir.path().join(pkg::NAMESPACE_STR);
         {
             let local_domain = m.get_local_domain();
@@ -157,9 +154,7 @@ mod tests {
             assert_eq!(
                 format!("{}", output),
                 format!(
-                    "Installed package \"{}\" at {}/{}\nPath: \"{}\"\nPath: \"{}\"",
-                    pkg::NAMESPACE_STR,
-                    temp_dir.path().display(),
+                    "Installed package \"{}\"\nPath: \"{}\"\nPath: \"{}\"",
                     pkg::NAMESPACE_STR,
                     pkg::README_LK,
                     pkg::TIMESTAMP_LK,
@@ -175,7 +170,7 @@ mod tests {
                 .contains_key(&readme_logical_key));
 
             assert_eq!(
-                installed_package.working_folder(),
+                installed_package.package_home().await?,
                 PathBuf::from(temp_dir.as_ref()).join(pkg::NAMESPACE_STR)
             );
             assert_eq!(
@@ -243,9 +238,7 @@ mod tests {
             assert_eq!(
                 format!("{}", install_once_more),
                 format!(
-                    "Installed package \"{}\" at {}/{}\nNo paths installed",
-                    pkg::NAMESPACE_STR,
-                    temp_dir.path().display(),
+                    "Installed package \"{}\"\nNo paths installed",
                     pkg::NAMESPACE_STR,
                 )
             );

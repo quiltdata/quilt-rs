@@ -28,10 +28,7 @@ impl std::fmt::Display for Output {
 }
 
 pub async fn command(m: impl Commands, args: Input) -> Std {
-    match m.package(args).await {
-        Ok(output) => Std::Out(output.to_string()),
-        Err(err) => Std::Err(err),
-    }
+    Std::from_result(m.package(args).await)
 }
 
 pub async fn model(
@@ -59,6 +56,7 @@ mod tests {
     use test_log::test;
 
     use crate::cli::model::Model;
+    use quilt_rs::uri::ManifestUri;
 
     /// Verifies that CLI throws error if source `s3://` URI is invalid:
     #[test(tokio::test)]
@@ -117,5 +115,23 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn test_output_display() {
+        let manifest_uri = ManifestUri {
+            bucket: "foo".to_string(),
+            namespace: ("bar", "baz").into(),
+            hash: "abc123".to_string(),
+            catalog: None,
+        };
+
+        let output = Output { manifest_uri };
+
+        let display_string = format!("{}", output);
+        assert_eq!(
+            display_string,
+            "Manifest s3://foo/.quilt/packages/1220abc123.parquet created"
+        );
     }
 }

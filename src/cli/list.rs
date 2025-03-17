@@ -20,10 +20,7 @@ impl std::fmt::Display for Output {
 }
 
 pub async fn command(m: impl Commands) -> Std {
-    match m.list().await {
-        Ok(output) => Std::Out(output.to_string()),
-        Err(err) => Std::Err(err),
-    }
+    Std::from_result(m.list().await)
 }
 
 pub async fn model(local_domain: &quilt_rs::LocalDomain) -> Result<Output, Error> {
@@ -40,12 +37,12 @@ mod tests {
     use test_log::test;
 
     use crate::cli::fixtures::packages::default as pkg;
+    use crate::cli::model::create_model_in_temp_dir;
     use crate::cli::model::install_package_into_temp_dir;
-    use crate::cli::model::Model;
 
     #[test(tokio::test)]
     async fn test_empty_list() -> Result<(), Error> {
-        let (m, _temp_dir) = Model::from_temp_dir()?;
+        let (m, _temp_dir) = create_model_in_temp_dir().await?;
         {
             let local_domain = m.get_local_domain();
             let empty_output = model(local_domain).await?;

@@ -38,19 +38,15 @@ pub struct InstalledPackage<S: Storage = LocalStorage, R: Remote = RemoteS3> {
 
 impl std::fmt::Display for InstalledPackage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            r##"Installed package "{}" at {}"##,
-            self.namespace,
-            self.working_folder().display()
-        )
+        write!(f, r##"Installed package "{}""##, self.namespace)
     }
 }
 
 impl InstalledPackage {
     pub async fn scaffold_paths(&self) -> Res {
+        let home = self.lineage.domain_home(&self.storage).await?;
         self.paths
-            .scaffold_for_installing(&self.storage, &self.namespace)
+            .scaffold_for_installing(&self.storage, &home, &self.namespace)
             .await
     }
 
@@ -59,7 +55,7 @@ impl InstalledPackage {
     }
 
     pub async fn manifest(&self) -> Res<Table> {
-        let lineage = self.lineage.read(&self.storage).await?;
+        let (_, lineage) = self.lineage.read(&self.storage).await?;
         let pathbuf = self
             .paths
             .installed_manifest(&self.namespace, lineage.current_hash());
@@ -67,19 +63,20 @@ impl InstalledPackage {
     }
 
     pub async fn lineage(&self) -> Res<lineage::PackageLineage> {
-        self.lineage.read(&self.storage).await
+        let (_, lineage) = self.lineage.read(&self.storage).await?;
+        Ok(lineage)
     }
 
-    pub fn working_folder(&self) -> PathBuf {
-        self.paths.working_dir(&self.namespace)
+    pub async fn package_home(&self) -> Res<PathBuf> {
+        self.lineage.package_home(&self.storage).await
     }
 
     pub async fn status(&self) -> Res<InstalledPackageStatus> {
-        let lineage = self.lineage.read(&self.storage).await?;
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
         let lineage = flow::refresh_latest_hash(lineage, &self.remote).await?;
         let manifest = self.manifest().await?;
         let (lineage, status) =
-            flow::status(lineage, &self.storage, &manifest, self.working_folder()).await?;
+            flow::status(lineage, &self.storage, &manifest, &package_home).await?;
         self.lineage.write(&self.storage, lineage).await?;
         Ok(status)
     }
@@ -91,7 +88,7 @@ impl InstalledPackage {
 
         self.scaffold_paths().await?;
 
-        let lineage = self.lineage.read(&self.storage).await?;
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
 
         self.scaffold_paths_for_caching(&lineage.remote.bucket)
             .await?;
@@ -101,7 +98,7 @@ impl InstalledPackage {
             lineage,
             &mut manifest,
             &self.paths,
-            self.working_folder(),
+            package_home,
             self.namespace.clone(),
             &self.storage,
             &self.remote,
@@ -113,9 +110,8 @@ impl InstalledPackage {
     }
 
     pub async fn uninstall_paths(&self, paths: &Vec<PathBuf>) -> Res<LineagePaths> {
-        let lineage = self.lineage.read(&self.storage).await?;
-        let lineage =
-            flow::uninstall_paths(lineage, self.working_folder(), &self.storage, paths).await?;
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        let lineage = flow::uninstall_paths(lineage, package_home, &self.storage, paths).await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(lineage.paths)
     }
@@ -133,18 +129,18 @@ impl InstalledPackage {
     ) -> Res<CommitState> {
         self.scaffold_paths().await?;
 
-        let lineage = self.lineage.read(&self.storage).await?;
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
         let mut manifest = self.manifest().await?;
 
         let (lineage, status) =
-            flow::status(lineage, &self.storage, &manifest, self.working_folder()).await?;
+            flow::status(lineage, &self.storage, &manifest, &package_home).await?;
 
         let lineage = flow::commit(
             lineage,
             &mut manifest,
             &self.paths,
             &self.storage,
-            self.working_folder(),
+            package_home,
             status,
             self.namespace.clone(),
             message,
@@ -162,7 +158,7 @@ impl InstalledPackage {
     pub async fn push(&self) -> Res<ManifestUri> {
         self.scaffold_paths().await?;
 
-        let lineage = self.lineage.read(&self.storage).await?;
+        let (_, lineage) = self.lineage.read(&self.storage).await?;
 
         if lineage.commit.is_none() {
             return Err(Error::Push("No commits to push".to_string()));
@@ -188,21 +184,21 @@ impl InstalledPackage {
     pub async fn pull(&self) -> Res<ManifestUri> {
         self.scaffold_paths().await?;
 
-        let lineage = self.lineage.read(&self.storage).await?;
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
 
         self.scaffold_paths_for_caching(&lineage.remote.bucket)
             .await?;
 
         let mut manifest = self.manifest().await?;
         let (lineage, status) =
-            flow::status(lineage, &self.storage, &manifest, self.working_folder()).await?;
+            flow::status(lineage, &self.storage, &manifest, &package_home).await?;
         let lineage = flow::pull(
             lineage,
             &mut manifest,
             &self.paths,
             &self.storage,
             &self.remote,
-            self.working_folder(),
+            package_home,
             status,
             self.namespace.clone(),
         )
@@ -212,7 +208,7 @@ impl InstalledPackage {
     }
 
     pub async fn certify_latest(&self) -> Res<ManifestUri> {
-        let lineage = self.lineage.read(&self.storage).await?;
+        let (_, lineage) = self.lineage.read(&self.storage).await?;
         let latest_manifest_uri = lineage.remote.clone();
         let lineage = flow::certify_latest(lineage, &self.remote, latest_manifest_uri).await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
@@ -222,7 +218,7 @@ impl InstalledPackage {
     pub async fn reset_to_latest(&self) -> Res<ManifestUri> {
         self.scaffold_paths().await?;
 
-        let lineage = self.lineage.read(&self.storage).await?;
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
 
         self.scaffold_paths_for_caching(&lineage.remote.bucket)
             .await?;
@@ -234,7 +230,7 @@ impl InstalledPackage {
             &self.paths,
             &self.storage,
             &self.remote,
-            self.working_folder(),
+            package_home,
             self.namespace.clone(),
         )
         .await?;
@@ -243,7 +239,8 @@ impl InstalledPackage {
     }
 
     pub async fn resolve_workflow(&self, workflow_id: Option<String>) -> Res<Option<Workflow>> {
-        let remote_uri = self.lineage.read(&self.storage).await?.remote;
+        let (_, lineage) = self.lineage.read(&self.storage).await?;
+        let remote_uri = lineage.remote;
         let workflows_config_uri = S3Uri {
             key: ".quilt/workflows/config.yml".to_string(),
             ..S3Uri::from(&remote_uri)
@@ -261,21 +258,24 @@ impl InstalledPackage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     use crate::lineage::DomainLineageIo;
+    use crate::lineage::Home;
     use crate::lineage::PackageLineageIo;
+    use crate::paths::DomainPaths;
 
     #[tokio::test]
     async fn test_spamming_commit_writes() -> Res {
-        let temp_dir = TempDir::new()?;
-        let paths = paths::DomainPaths::new(temp_dir.path().to_path_buf());
+        let (home, _temp_dir1) = Home::from_temp_dir()?;
+        let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
 
         let storage = LocalStorage::new();
         let remote = RemoteS3::new(paths.clone(), storage.clone());
         let namespace: Namespace = ("test", "history").into();
 
-        paths.scaffold_for_installing(&storage, &namespace).await?;
+        paths
+            .scaffold_for_installing(&storage, &home, &namespace)
+            .await?;
         // Initialize domain lineage file
         storage
             .write_file(
@@ -293,24 +293,21 @@ mod tests {
                         "base_hash": "abc123",
                         "latest_hash": "abc123",
                         "paths": {}
-                    }}
+                    }},
+                "home": "/tmp/working_dir"
                 }"#,
             )
             .await?;
 
         // Copy manifest to the expected path
         let reference_manifest = crate::fixtures::manifest::parquet_checksummed();
-        let test_manifest = temp_dir
-            .path()
-            .to_path_buf()
-            .join(".quilt/installed/test/history/abc123");
+        let test_manifest = paths.installed_manifest(&namespace, "abc123");
         storage.copy(reference_manifest?, test_manifest).await?;
 
+        let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+
         let package = InstalledPackage {
-            lineage: PackageLineageIo::new(
-                DomainLineageIo::new(paths.lineage()),
-                namespace.clone(),
-            ),
+            lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
             paths,
             remote,
             storage,

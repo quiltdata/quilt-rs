@@ -59,10 +59,7 @@ impl std::fmt::Display for Output {
 }
 
 pub async fn command(m: impl Commands, args: Input) -> Std {
-    match m.status(args).await {
-        Ok(output) => Std::Out(output.to_string()),
-        Err(err) => Std::Err(err),
-    }
+    Std::from_result(m.status(args).await)
 }
 
 async fn get_status(
@@ -131,7 +128,7 @@ mod tests {
 
         let new_key = PathBuf::from("foo/bar.md");
 
-        let working_dir = installed_package.working_folder();
+        let working_dir = installed_package.package_home().await?;
         let storage = LocalStorage::new();
 
         let empty_content = Vec::new();

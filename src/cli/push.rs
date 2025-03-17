@@ -22,10 +22,7 @@ impl std::fmt::Display for Output {
 }
 
 pub async fn command(m: impl Commands, args: Input) -> Std {
-    match m.push(args).await {
-        Ok(output) => Std::Out(output.to_string()),
-        Err(err) => Std::Err(err),
-    }
+    Std::from_result(m.push(args).await)
 }
 
 async fn push_package(
@@ -55,13 +52,13 @@ mod tests {
     use test_log::test;
 
     use crate::cli::fixtures::packages::default as pkg;
+    use crate::cli::model::create_model_in_temp_dir;
     use crate::cli::model::install_package_into_temp_dir;
-    use crate::cli::model::Model;
 
     /// Verifies that push command returns error when push a non-existent package
     #[test(tokio::test)]
     async fn test_namespace_not_found() -> Result<(), Error> {
-        let (m, _temp_dir) = Model::from_temp_dir()?;
+        let (m, _temp_dir) = create_model_in_temp_dir().await?;
 
         if let Std::Err(error_str) = command(
             m,

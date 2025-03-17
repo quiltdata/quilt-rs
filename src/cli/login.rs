@@ -23,10 +23,7 @@ impl std::fmt::Display for Output {
 }
 
 pub async fn command(m: impl Commands, args: Input) -> Std {
-    match m.login(args).await {
-        Ok(output) => Std::Out(output.to_string()),
-        Err(err) => Std::Err(err),
-    }
+    Std::from_result(m.login(args).await)
 }
 
 pub async fn model(
@@ -36,4 +33,19 @@ pub async fn model(
     let remote = local_domain.get_remote();
     remote.login(&host, code).await?;
     Ok(Output { host })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_output_display() {
+        let host = Host::from_str("example.com").unwrap();
+        let output = Output { host };
+
+        let display_string = format!("{}", output);
+        assert_eq!(display_string, "Successfully logged in to example.com");
+    }
 }

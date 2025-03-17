@@ -30,9 +30,9 @@ pub async fn uninstall_package(
     debug!("✔️ Removed manifests at: {}", manifest_path.display());
 
     debug!("⏳ Removing working directory");
-    let working_dir = paths.working_dir(&namespace);
-    storage.remove_dir_all(&working_dir).await?;
-    debug!("✔️ Removed working directory: {}", working_dir.display());
+    let package_home = paths::package_home(&lineage.home, &namespace);
+    storage.remove_dir_all(&package_home).await?;
+    debug!("✔️ Removed working directory: {}", package_home.display());
 
     // TODO: Remove object files? But need to make sure no other manifest uses them.
     debug!("ℹ️ Skipping object files cleanup - may be used by other packages");
@@ -47,9 +47,9 @@ mod tests {
 
     use super::*;
 
-    use crate::lineage::PackageLineage;
-
     use crate::io::storage::mocks::MockStorage;
+    use crate::lineage::Home;
+    use crate::lineage::PackageLineage;
 
     #[tokio::test]
     async fn test_panic_if_no_installed_package() {
@@ -66,15 +66,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_uninstall_package() -> Res {
-        let lineage = DomainLineage {
-            packages: BTreeMap::from([(("foo", "bar").into(), PackageLineage::default())]),
-        };
-        let paths = paths::DomainPaths::default();
-        let storage = MockStorage::default();
+        let (home, _temp_dir) = Home::from_temp_dir()?;
 
         let namespace = Namespace::from(("foo", "bar"));
 
-        paths.scaffold_for_installing(&storage, &namespace).await?;
+        let paths = paths::DomainPaths::default();
+        let storage = MockStorage::default();
+
+        paths
+            .scaffold_for_installing(&storage, &home, &namespace)
+            .await?;
+
+        let lineage = DomainLineage {
+            home,
+            packages: BTreeMap::from([(namespace.clone(), PackageLineage::default())]),
+        };
 
         let lineage = uninstall_package(lineage, &paths, &storage, namespace).await?;
         assert!(lineage.packages.is_empty());
