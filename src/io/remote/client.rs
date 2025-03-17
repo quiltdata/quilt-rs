@@ -88,36 +88,26 @@ impl HttpClient for ReqwestClient {
 mod tests {
     use super::*;
 
+    use serde::Deserialize;
+    use serde::Serialize;
+
     #[tokio::test]
-    async fn test_get_config() {
-        // Skip this test in CI environments where network access might be limited
-        if std::env::var("CI").is_ok() {
-            return;
+    async fn test_get_config() -> Res {
+        let client = ReqwestClient::new();
+
+        #[derive(Deserialize, Serialize)]
+        struct Config {
+            mode: String,
         }
 
-        let client = ReqwestClient::new();
-        
         // Get the raw text content first to check for the QUILT_CATALOG_CONFIG string
-        let response = reqwest::get("https://open.quilt.bio/config.js")
-            .await
-            .expect("Failed to fetch config.js");
-        let text = response.text().await.expect("Failed to get response text");
-        
+        let response: Config = client
+            .get("https://open.quilt.bio/config.json", None)
+            .await?;
+
         // Check that the config.js contains the QUILT_CATALOG_CONFIG string
-        assert!(text.contains("QUILT_CATALOG_CONFIG"), 
-                "Config.js should contain QUILT_CATALOG_CONFIG string");
-        
-        // Now test the actual HttpClient.get method with JSON parsing
-        let result = client.get::<serde_json::Value>("https://open.quilt.bio/config.json", None).await;
-        
-        // Verify that we can successfully make the request and parse the JSON
-        assert!(result.is_ok(), "Failed to get config: {:?}", result.err());
-        
-        // Verify that the response contains expected fields
-        let config = result.unwrap();
-        assert!(config.is_object(), "Expected JSON object response");
-        
-        // The config should have a registry_url field
-        assert!(config.get("registry_url").is_some(), "Missing registry_url field in config");
+        assert_eq!(response.mode, "OPEN");
+
+        Ok(())
     }
 }
