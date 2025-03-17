@@ -180,6 +180,10 @@ pub async fn init(args: Args) -> Result<Std, Error> {
     let root_dir = get_domain_dir(args.domain)?;
     let m = Model::from(root_dir);
 
+    // NOTE: Lineage must have home
+    //       It should come either from the lineage file itself,
+    //       or provided by user (when installing first time)
+
     if let Some(dir) = args.home {
         if let Err(err) = m.set_home(dir).await {
             log::error!("Failed to set home directory: {}", err);
@@ -189,6 +193,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
 
     // Validate the lineage
     if let Err(err) = m.get_home().await {
+        log::error!("Failed to get home directory: {}", err);
         return Ok(Std::Err(err));
     }
 
@@ -234,23 +239,6 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::info!("Committing {:?}", args);
             Ok(commit::command(m, args).await)
         }
-        // Commands::Home {
-        //     path,
-        //     migrate,
-        // } => {
-        //     let is_setting = path.is_some();
-
-        //     let root_dir = get_domain_dir(domain)?;
-        //     let m = Model::from(root_dir);
-        //     let args = home::Input { path, migrate };
-
-        //     if is_setting {
-        //         log::info!("Setting Home directory {:?}", args);
-        //     } else {
-        //         log::info!("Getting Home directory {:?}", args);
-        //     }
-        //     Ok(home::command(m, args).await)
-        // }
         Commands::Install {
             namespace,
             path,
@@ -371,8 +359,6 @@ Then run:
 
     #[error("Failed to write or read: {0}")]
     Io(#[from] std::io::Error),
-    // #[error("Working directory is required. We store mutable files there")]
-    // WorkingDir,
 }
 
 impl From<quilt_rs::Error> for Error {
