@@ -83,3 +83,30 @@ impl HttpClient for ReqwestClient {
         Ok(response.json().await?)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Value;
+
+    #[tokio::test]
+    async fn test_get_config() {
+        // Skip this test in CI environments where network access might be limited
+        if std::env::var("CI").is_ok() {
+            return;
+        }
+
+        let client = ReqwestClient::new();
+        let result: Result<Value, _> = client.get("https://open.quilt.bio/config.js", None).await;
+        
+        // Verify that we can successfully make the request and parse the JSON
+        assert!(result.is_ok(), "Failed to get config: {:?}", result.err());
+        
+        // Verify that the response contains expected fields
+        let config = result.unwrap();
+        assert!(config.is_object(), "Expected JSON object response");
+        
+        // The config should have a registry_url field
+        assert!(config.get("registry_url").is_some(), "Missing registry_url field in config");
+    }
+}
