@@ -56,6 +56,8 @@ mod tests {
     use test_log::test;
 
     use crate::cli::model::Model;
+    use quilt_rs::uri::{ManifestUri, S3Uri};
+    use std::str::FromStr;
 
     /// Verifies that CLI throws error if source `s3://` URI is invalid:
     #[test(tokio::test)]
@@ -114,5 +116,22 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn test_output_display() {
+        // Create a test ManifestUri
+        let s3_uri = S3Uri::from_str("s3://bucket/key").unwrap();
+        let manifest_uri = ManifestUri {
+            bucket: "bucket".to_string(),
+            key: "key".to_string(),
+            hash: "abc123".to_string(),
+            version: None,
+        };
+        
+        let output = Output { manifest_uri };
+        
+        let display_string = format!("{}", output);
+        assert_eq!(display_string, "Manifest s3://bucket/key created");
     }
 }

@@ -86,3 +86,28 @@ pub async fn model(
         top_hash,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn test_output_display() {
+        let dest = PathBuf::from("/path/to/manifest");
+        let mut perf = Measure::start();
+        // Set a fixed duration for testing
+        perf.0 = Duration::from_secs(5);
+        let top_hash = "abc123".to_string();
+        
+        let output = Output {
+            dest,
+            perf,
+            top_hash,
+        };
+        
+        let display_string = format!("{}", output);
+        let expected = "Manifest written to \"/path/to/manifest\"\nWith hash abc123\nAnd it took 5s";
+        assert_eq!(display_string, expected);
+    }
+}
