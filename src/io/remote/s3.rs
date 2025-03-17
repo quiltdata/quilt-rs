@@ -667,38 +667,26 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_object_attributes_missing_checksum() {
-        // Skip this test in CI environments
-        if std::env::var("CI").is_ok() {
-            return;
-        }
-
-        // Create a listing URI for the test with "allencell" bucket
         let listing_uri = S3Uri {
             bucket: "allencell".to_string(),
             key: "".to_string(),
             version: None,
         };
+        let object = Object::builder().key("README.md").size(1024).build();
 
-        // Create an Object with key "README.md"
-        let object = Object::builder()
-            .key("README.md")
-            .size(1024)
-            .build();
-
-        // Create a RemoteS3 instance
         let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::default());
-        
-        // Test the get_object_attributes method
         let result = remote
             .get_object_attributes(&None, &listing_uri, &object)
             .await;
-            
-        // Verify that we get the expected error
+
         match result {
             Err(Error::Checksum(msg)) => {
                 assert_eq!(msg, "missing checksum");
-            },
-            _ => panic!("Expected Error::Checksum(\"missing checksum\"), got {:?}", result),
+            }
+            _ => panic!(
+                "Expected Error::Checksum(\"missing checksum\"), got {:?}",
+                result
+            ),
         }
     }
 }
