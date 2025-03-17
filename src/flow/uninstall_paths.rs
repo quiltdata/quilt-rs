@@ -14,10 +14,10 @@ fn not_found_error(path: &PathBuf) -> Error {
     Error::Uninstall(format!("path {:?} not found. Cannot uninstall.", path))
 }
 
-/// Uninstalls paths: remote files from working directory and stop tracking in `.quilt/lineage.json`.
+/// Uninstalls paths: remote files from home directory and stop tracking in `.quilt/lineage.json`.
 pub async fn uninstall_paths(
     mut lineage: PackageLineage,
-    working_dir: PathBuf,
+    package_home: PathBuf,
     storage: &impl Storage,
     paths: &Vec<PathBuf>,
 ) -> Res<PackageLineage> {
@@ -30,9 +30,9 @@ pub async fn uninstall_paths(
         lineage.paths.remove(path).ok_or(not_found_error(path))?;
         debug!("✔️ Path removed from lineage");
 
-        let working_path = working_dir.join(path);
-        debug!("⏳ Removing file from {}", working_path.display());
-        if let Err(err) = storage.remove_file(working_path).await {
+        let object_home_path = package_home.join(path);
+        debug!("⏳ Removing file from {}", object_home_path.display());
+        if let Err(err) = storage.remove_file(object_home_path).await {
             if err.kind() != ErrorKind::NotFound {
                 return Err(Error::Io(err));
             }

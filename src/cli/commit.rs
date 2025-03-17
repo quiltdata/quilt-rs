@@ -327,7 +327,7 @@ mod tests {
             assert_eq!(not_found.unwrap_err().to_string(), "Package a/b not found");
         }
 
-        let working_dir = installed_package.working_folder().await?;
+        let working_dir = installed_package.package_home().await?;
         let storage = LocalStorage::new();
         storage
             .write_file(working_dir.join(timestamp_logical_key), b"1697916638")

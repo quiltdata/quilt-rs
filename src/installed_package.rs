@@ -67,8 +67,8 @@ impl InstalledPackage {
         Ok(lineage)
     }
 
-    pub async fn working_folder(&self) -> Res<PathBuf> {
-        self.lineage.home(&self.storage).await
+    pub async fn package_home(&self) -> Res<PathBuf> {
+        self.lineage.package_home(&self.storage).await
     }
 
     pub async fn status(&self) -> Res<InstalledPackageStatus> {

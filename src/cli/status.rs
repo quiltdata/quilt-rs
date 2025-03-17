@@ -128,7 +128,7 @@ mod tests {
 
         let new_key = PathBuf::from("foo/bar.md");
 
-        let working_dir = installed_package.working_folder().await?;
+        let working_dir = installed_package.package_home().await?;
         let storage = LocalStorage::new();
 
         let empty_content = Vec::new();

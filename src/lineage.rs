@@ -212,7 +212,7 @@ impl PackageLineageIo {
             .await
     }
 
-    pub async fn home(&self, storage: &impl Storage) -> Res<PathBuf> {
+    pub async fn package_home(&self, storage: &impl Storage) -> Res<PathBuf> {
         Ok(self
             .domain_home(storage)
             .await?
