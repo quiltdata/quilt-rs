@@ -629,66 +629,39 @@ impl Remote for RemoteS3 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aws_sdk_s3::types::ObjectAttributes;
 
     #[tokio::test]
-    async fn test_get_object_attributes() {
-        // Skip this test in CI environments
-        if std::env::var("CI").is_ok() {
-            return;
-        }
-
+    async fn test_get_object_attributes() -> Res {
         // Create a listing URI for the test
-        let listing_uri = S3Uri {
-            bucket: "allencell".to_string(),
-            key: "".to_string(),
-            version: None,
+        let listing_uri = {
+            let mut uri = S3Uri::default();
+            uri.bucket = "allencell".to_string();
+            uri
         };
 
         // Create an Object with key "README.md"
-        let object = Object::builder()
-            .key("README.md")
-            .size(1024)
-            .build();
+        let object = Object::builder().key("README.md").size(1024).build();
+
+        let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::default());
 
         // Load AWS config from environment
-        let config = aws_config::load_from_env().await;
-        let client = aws_sdk_s3::Client::new(&config);
-        
+        // let config = aws_config::load_from_env().await;
+        // let client = aws_sdk_s3::Client::new(&config);
+
         // Make a real request to get object attributes
-        let result = client
-            .get_object_attributes()
-            .bucket("allencell")
-            .key("README.md")
-            .object_attributes(ObjectAttributes::Checksum)
-            .object_attributes(ObjectAttributes::ObjectParts)
-            .object_attributes(ObjectAttributes::ObjectSize)
-            .max_parts(MPU_MAX_PARTS as i32)
-            .send()
-            .await;
-            
-        // Log the result for debugging
-        match &result {
-            Ok(attrs) => {
-                println!("Successfully retrieved attributes for README.md");
-                println!("Size: {:?}", attrs.object_size());
-                println!("Checksum: {:?}", attrs.checksum());
-                println!("Version ID: {:?}", attrs.version_id());
-                
-                // Verify we have the expected data
-                assert!(attrs.object_size().is_some(), "Object size should be present");
-                assert!(attrs.version_id().is_some(), "Version ID should be present");
-                
-                // For public objects in allencell bucket, we should be able to get attributes
-                let size = attrs.object_size().unwrap();
-                assert!(size > 0, "README.md should not be empty");
-            },
-            Err(e) => {
-                println!("Failed to retrieve attributes: {}", e);
+        let result = remote
+            .get_object_attributes(&None, &listing_uri, &object)
+            .await?;
+
+        println!("RESULT {:?}", result);
+        assert_eq!(
+            result.object_uri,
+            S3Uri {
+                key: object.key().unwrap().to_string(),
+                ..listing_uri
             }
-        }
-        
-        // Assert that we can get attributes for a public object
-        assert!(result.is_ok(), "Should be able to get attributes for a public object in allencell bucket");
+        );
+        assert_eq!(result.size, 0);
+        Ok(())
     }
 }
