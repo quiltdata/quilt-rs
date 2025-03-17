@@ -57,7 +57,7 @@ mod tests {
 
     /// Verifies that push command returns error when push a non-existent package
     #[test(tokio::test)]
-    async fn test_namespace_not_found()  -> Result<(), Error> {
+    async fn test_namespace_not_found() -> Result<(), Error> {
         let (m, _temp_dir) = create_model_in_temp_dir().await?;
 
         if let Std::Err(error_str) = command(

@@ -67,7 +67,7 @@ impl DomainLineage {
 
 impl AsRef<PathBuf> for DomainLineage {
     fn as_ref(&self) -> &PathBuf {
-        &self.home.as_ref()
+        self.home.as_ref()
     }
 }
 

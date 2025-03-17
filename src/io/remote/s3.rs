@@ -632,10 +632,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_object_attributes() -> Res {
-        let listing_uri = {
-            let mut uri = S3Uri::default();
-            uri.bucket = "data-yaml-spec-tests".to_string();
-            uri
+        let listing_uri = S3Uri {
+            bucket: "data-yaml-spec-tests".to_string(),
+            ..S3Uri::default()
         };
 
         let object = Object::builder()
