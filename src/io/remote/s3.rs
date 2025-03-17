@@ -632,36 +632,36 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_object_attributes() -> Res {
-        // Create a listing URI for the test
         let listing_uri = {
             let mut uri = S3Uri::default();
-            uri.bucket = "allencell".to_string();
+            uri.bucket = "data-yaml-spec-tests".to_string();
             uri
         };
 
-        // Create an Object with key "README.md"
-        let object = Object::builder().key("README.md").size(1024).build();
+        let object = Object::builder()
+            .key("scale/10u/e0-0.txt")
+            .size(1024)
+            .build();
 
         let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::default());
-
-        // Load AWS config from environment
-        // let config = aws_config::load_from_env().await;
-        // let client = aws_sdk_s3::Client::new(&config);
-
-        // Make a real request to get object attributes
         let result = remote
             .get_object_attributes(&None, &listing_uri, &object)
             .await?;
 
-        println!("RESULT {:?}", result);
         assert_eq!(
             result.object_uri,
             S3Uri {
                 key: object.key().unwrap().to_string(),
+                version: Some("jHb6DGN43Ex7EhbxZc2G9JnAkWSeTfEY".to_string()),
                 ..listing_uri
             }
         );
-        assert_eq!(result.size, 0);
+        assert_eq!(
+            result.hash,
+            ContentHash::SHA256Chunked("/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=".to_string())
+                .try_into()?
+        );
+        assert_eq!(result.size, 29);
         Ok(())
     }
 }
