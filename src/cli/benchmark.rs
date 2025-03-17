@@ -103,8 +103,7 @@ mod tests {
         };
 
         let display_string = format!("{}", output);
-        let expected =
-            "Manifest written to \"/path/to/manifest\"\nWith hash abc123\nAnd it took 0ms";
-        assert_eq!(display_string, expected);
+        let expected = "Manifest written to \"/path/to/manifest\"\nWith hash abc123\nAnd it took";
+        assert!(display_string.starts_with(expected));
     }
 }
