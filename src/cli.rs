@@ -738,45 +738,4 @@ mod tests {
 
         Ok(())
     }
-
-    // #[tokio::test]
-    // async fn test_working_dir() -> Result<(), Error> {
-    //     // Create temporary directory for domain
-    //     let temp_dir = tempfile::tempdir()?;
-    //     let domain_path = temp_dir.path().to_path_buf();
-    //     let working_dir_path = temp_dir.path().join("working_dir");
-    //     std::fs::create_dir_all(&working_dir_path)?;
-
-    //     // First set the working directory
-    //     let set_args = Args {
-    //         command: Commands::Home {
-    //             domain: Some(domain_path.clone()),
-    //             path: Some(working_dir_path.clone()),
-    //             migrate: None,
-    //         },
-    //     };
-
-    //     let mut output = Vec::new();
-    //     let result = init(set_args).await?;
-    //     print(result, &mut output, &mut Vec::new())?;
-    //     let output_str = String::from_utf8(output).unwrap();
-    //     assert_eq!(output_str, format!("{}\n", working_dir_path.display()));
-
-    //     // Then get the working directory
-    //     let get_args = Args {
-    //         command: Commands::Home {
-    //             domain: Some(domain_path),
-    //             path: None,
-    //             migrate: None,
-    //         },
-    //     };
-
-    //     let mut output = Vec::new();
-    //     let result = init(get_args).await?;
-    //     print(result, &mut output, &mut Vec::new())?;
-    //     let output_str = String::from_utf8(output).unwrap();
-    //     assert_eq!(output_str, format!("{}\n", working_dir_path.display()));
-
-    //     Ok(())
-    // }
 }

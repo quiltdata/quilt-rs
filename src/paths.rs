@@ -124,7 +124,6 @@ impl DomainPaths {
         paths.extend(self.required());
         paths.extend(vec![
             package_home(home, namespace),
-            self.legacy_working_dir(namespace),
             self.installed_manifests(namespace),
         ]);
         Ok(paths)
@@ -149,11 +148,6 @@ impl DomainPaths {
 
     pub async fn scaffold_for_caching(&self, storage: &impl Storage, bucket: &str) -> Res {
         scaffold_paths(storage, self.required_for_caching(bucket)).await
-    }
-
-    /// Directory for storing installed files that can be modified
-    pub fn legacy_working_dir(&self, namespace: &Namespace) -> PathBuf {
-        self.root_dir.join(namespace.to_string())
     }
 
     #[cfg(test)]

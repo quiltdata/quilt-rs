@@ -60,34 +60,6 @@ impl LocalDomain {
         Ok(self.lineage.set_home(&self.storage, dir).await?.home)
     }
 
-    /// Migrate files from legacy working directory to the new home directory
-    pub async fn migrate_from_legacy_working_dir(
-        &self,
-        namespace: &Namespace,
-        new_home_dir: impl AsRef<Path>,
-    ) -> Res {
-        let legacy_dir = self.paths.legacy_working_dir(namespace);
-
-        if !self.storage.exists(&legacy_dir).await {
-            return Ok(());
-        }
-
-        let target_path = paths::package_home(&Home::from(new_home_dir), namespace);
-        self.storage.create_dir_all(&target_path).await?;
-
-        let mut entries = self.storage.read_dir(&legacy_dir).await?;
-        while let Some(entry) = entries.next_entry().await? {
-            let file_path = entry.path();
-            if entry.metadata().await?.is_file() {
-                let file_name = file_path.file_name().unwrap();
-                let target_file = target_path.join(file_name);
-                self.storage.copy(&file_path, &target_file).await?;
-            }
-        }
-
-        Ok(())
-    }
-
     pub async fn scaffold_paths_for_installing(&self, namespace: &Namespace) -> Res {
         let home = self.get_home().await?;
         self.paths
@@ -201,76 +173,6 @@ mod tests {
     use super::*;
 
     use tempfile::TempDir;
-
-    #[tokio::test]
-    async fn test_home_migration() -> Res<()> {
-        // Create a temporary directory for testing
-        let temp_dir = TempDir::new()?;
-        let local_domain = super::LocalDomain::new(temp_dir.path());
-
-        // Create a namespace
-        let namespace = Namespace::from(("test", "package"));
-
-        // Create a legacy working directory with a test file
-        let legacy_dir = temp_dir.path().join(namespace.to_string());
-        local_domain.storage.create_dir_all(&legacy_dir).await?;
-
-        let test_file_path = legacy_dir.join("test_file.txt");
-        local_domain
-            .storage
-            .write_file(&test_file_path, b"Test content")
-            .await?;
-
-        // Install the package to make it appear in the list
-        let manifest_uri = crate::uri::ManifestUri {
-            bucket: "test-bucket".to_string(),
-            namespace: namespace.clone(),
-            hash: "abcdef".to_string(),
-            catalog: None,
-        };
-
-        local_domain.set_home(&temp_dir.path()).await?;
-
-        // Mock the installation by directly manipulating the lineage
-        let mut lineage = local_domain.lineage.read(&local_domain.storage).await?;
-        lineage.packages.insert(
-            namespace.clone(),
-            crate::lineage::PackageLineage {
-                commit: None,
-                remote: manifest_uri,
-                base_hash: "abcdef".to_string(),
-                latest_hash: "abcdef".to_string(),
-                paths: std::collections::BTreeMap::new(),
-            },
-        );
-        local_domain
-            .lineage
-            .write(&local_domain.storage, lineage)
-            .await?;
-
-        // Create a new home directory
-        let new_home = temp_dir.path().join("new_home");
-        local_domain.storage.create_dir_all(&new_home).await?;
-
-        // Set the new home directory
-        local_domain.set_home(&new_home).await?;
-
-        // Migrate files from legacy working directory
-        local_domain
-            .migrate_from_legacy_working_dir(&namespace, &new_home)
-            .await?;
-
-        // Check if the file was migrated
-        let migrated_file =
-            paths::package_home(&Home::from(&new_home), &namespace).join("test_file.txt");
-        assert!(std::path::Path::exists(&migrated_file));
-
-        // Check the content of the migrated file
-        let content = std::fs::read_to_string(migrated_file)?;
-        assert_eq!(content, "Test content");
-
-        Ok(())
-    }
 
     #[tokio::test]
     async fn test_list_installed_packages() -> Res<()> {
