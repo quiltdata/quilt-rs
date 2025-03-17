@@ -3,18 +3,18 @@
 ## [0.10.0](https://crates.io/crates/quilt-rs/0.10.0) - 2025-03-17
 
 - Add `"home"` directory in lineage `data.json` and make it required.
-  Home directory is a place where to put mutable files. Previously, they stored in the root alongside the `.quilt` directory.
+  Home directory is a place where to put mutable files. Previously, they were stored in the root alongside the `.quilt` directory.
 
 ## [0.9.1](https://crates.io/crates/quilt-rs/0.9.1) - 2025-03-03
 
 ### Fixed
 
-- Fix hashing the `user_meta` when caching the package by soring the keys.
+- Fix hashing the `user_meta` when caching the package by sorting the keys.
   The bug didn't affect the workflow, because the manifests were written to the correct place anyway (by hash derived from the remote location).
 
 ### Changed
 
-- Refactor derectories scaffolding: paths are now scaffolded before every operation, and we imply the file structure is correct during the operation.
+- Refactor directories scaffolding: paths are now scaffolded before every operation, and we imply the file structure is correct during the operation.
 - Refactor mocks and fixtures. They are more organized now.
 
 ## [0.9.0](https://crates.io/crates/quilt-rs/0.9.0) - 2025-02-27
