@@ -629,24 +629,7 @@ impl Remote for RemoteS3 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aws_sdk_s3::types::{ChecksumAlgorithm, ObjectAttributes, ObjectPart, ObjectParts};
-    use aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput;
-    use mockall::predicate::*;
-    use mockall::mock;
-    use std::sync::Arc;
-
-    // Mock the AWS S3 client for testing
-    mock! {
-        S3Client {}
-        impl Clone for S3Client {
-            fn clone(&self) -> Self;
-        }
-        
-        #[async_trait::async_trait]
-        trait S3ClientTrait {
-            async fn get_object_attributes(&self) -> Result<GetObjectAttributesOutput, SdkError<aws_sdk_s3::error::GetObjectAttributesError>>;
-        }
-    }
+    use aws_sdk_s3::types::ObjectAttributes;
 
     #[tokio::test]
     async fn test_get_object_attributes() {
@@ -668,14 +651,11 @@ mod tests {
             .size(1024)
             .build();
 
-        // Create a RemoteS3 instance with real AWS credentials
-        // This test requires AWS credentials to be configured
+        // Load AWS config from environment
         let config = aws_config::load_from_env().await;
         let client = aws_sdk_s3::Client::new(&config);
         
-        // Test the get_object_attributes method
-        // Note: This is an integration test that will make a real AWS API call
-        // It will fail if the object doesn't exist or if credentials aren't configured
+        // Make a real request to get object attributes
         let result = client
             .get_object_attributes()
             .bucket("allencell")
@@ -694,6 +674,14 @@ mod tests {
                 println!("Size: {:?}", attrs.object_size());
                 println!("Checksum: {:?}", attrs.checksum());
                 println!("Version ID: {:?}", attrs.version_id());
+                
+                // Verify we have the expected data
+                assert!(attrs.object_size().is_some(), "Object size should be present");
+                assert!(attrs.version_id().is_some(), "Version ID should be present");
+                
+                // For public objects in allencell bucket, we should be able to get attributes
+                let size = attrs.object_size().unwrap();
+                assert!(size > 0, "README.md should not be empty");
             },
             Err(e) => {
                 println!("Failed to retrieve attributes: {}", e);
@@ -701,6 +689,6 @@ mod tests {
         }
         
         // Assert that we can get attributes for a public object
-        assert!(result.is_ok(), "Should be able to get attributes for a public object");
+        assert!(result.is_ok(), "Should be able to get attributes for a public object in allencell bucket");
     }
 }
