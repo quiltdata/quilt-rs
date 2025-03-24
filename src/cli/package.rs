@@ -9,7 +9,7 @@ pub struct Input {
     pub message: Option<String>,
     pub target: String,
     pub uri: String,
-    pub user_meta: Option<quilt_rs::manifest::JsonObject>,
+    pub user_meta: Option<serde_json::Value>,
 }
 
 #[derive(Debug)]

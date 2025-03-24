@@ -13,7 +13,6 @@ use crate::lineage;
 use crate::lineage::CommitState;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::LineagePaths;
-use crate::manifest::JsonObject;
 use crate::manifest::Table;
 use crate::manifest::Workflow;
 use crate::paths;
@@ -124,7 +123,7 @@ impl InstalledPackage {
     pub async fn commit(
         &self,
         message: String,
-        user_meta: Option<JsonObject>,
+        user_meta: Option<serde_json::Value>,
         workflow: Option<Workflow>,
     ) -> Res<CommitState> {
         self.scaffold_paths().await?;
@@ -320,12 +319,7 @@ mod tests {
             let commit = package
                 .commit(
                     format!("Commit new1 {}", i),
-                    Some(
-                        serde_json::json!({ "count": i })
-                            .as_object()
-                            .unwrap()
-                            .clone(),
-                    ),
+                    Some(serde_json::json!({ "count": i })),
                     None,
                 )
                 .await?;

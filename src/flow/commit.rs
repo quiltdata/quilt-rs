@@ -19,7 +19,6 @@ use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
 use crate::manifest::Header;
-use crate::manifest::JsonObject;
 use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::manifest::Workflow;
@@ -107,7 +106,7 @@ async fn create_immutable_object_copy(
 // TODO
 // pub struct Commit {
 //[     message: Option<String>,
-//     user_meta: Option<JsonObject>,
+//     user_meta: Option<serde_json::Value>,
 //     workflow: Option<Workflow>,
 // }
 
@@ -123,7 +122,7 @@ pub async fn commit_package(
     status: InstalledPackageStatus,
     namespace: Namespace,
     message: String,
-    user_meta: Option<JsonObject>,
+    user_meta: Option<serde_json::Value>,
     workflow: Option<Workflow>,
 ) -> Res<PackageLineage> {
     info!(
@@ -212,11 +211,16 @@ pub async fn commit_package(
             "version": "v0",
             "workflow": workflow,
         }),
-        meta: if let Some(mut u) = user_meta {
-            u.sort_keys();
-            u.into()
+        meta: if let Some(u) = user_meta {
+            match u {
+                serde_json::Value::Object(mut m) => {
+                    m.sort_keys();
+                    Some(m.into())
+                }
+                _ => u.into(),
+            }
         } else {
-            serde_json::Value::Null
+            None
         },
     };
 
@@ -264,6 +268,11 @@ mod tests {
 
     use std::collections::BTreeMap;
 
+    use base64::prelude::BASE64_STANDARD;
+    use base64::Engine;
+
+    use crate::checksum::MULTIHASH_SHA256_CHUNKED;
+    use crate::fixtures::manifest::PARQUEST_CHECKSUMMED_HASH;
     use crate::fixtures::sample_file_1;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::Change;
@@ -292,7 +301,7 @@ mod tests {
             InstalledPackageStatus::default(),
             ("foo", "bar").into(),
             commit_message,
-            Some(user_meta),
+            Some(serde_json::Value::Object(user_meta)),
             None,
         )
         .await?;
@@ -354,7 +363,7 @@ mod tests {
             status,
             ("foo", "bar").into(),
             commit_message,
-            Some(user_meta),
+            Some(serde_json::Value::Object(user_meta)),
             None,
         )
         .await?;
@@ -392,6 +401,7 @@ mod tests {
 
         let lineage = PackageLineage::default();
         let mut manifest = Table::default();
+        // NOTE: another file, not added, already in the manifest
         manifest
             .insert_record(sample_file_1::row(PathBuf::from("foo"))?)
             .await?;
@@ -414,13 +424,13 @@ mod tests {
             status,
             ("foo", "bar").into(),
             "Lorem ipsum".to_string(),
-            None,
+            Some(serde_json::Value::Null),
             None,
         )
         .await?;
 
         // This is a hash of fixtures/manifest.jsonl file
-        let hash = "e2cb04925e725308b42c28e7b0e977a49e9982d803f28e5ae8af5ac85b4a0d01";
+        let hash = hex::encode(sample_file_1::row_hash()?.digest());
         assert!(
             lineage.paths.contains_key(&PathBuf::from("bar")),
             "Commited lineage doesn't have path, but should have. We added new file and it should be there."
@@ -433,9 +443,7 @@ mod tests {
         );
         assert_eq!(
             lineage.commit.unwrap().hash,
-            // NOTE: I copied this hash from the test result itself.
-            //       I don't know what is the right hash
-            "76f49be15e381c7ccac59c1b1c5376f8f632a64d709f7f20755194848cb8b9af"
+            "0a9fcc1ad17228a796d95c47581357565f214bc91070b49f07859b4a0bf2d03d"
         );
 
         Ok(())
@@ -500,7 +508,13 @@ mod tests {
             changes: BTreeMap::from([(
                 PathBuf::from("bar"),
                 Change::Modified(Row {
-                    hash: multihash::Multihash::wrap(0xb510, b"walker")?,
+                    // This is base64 of fixtures::manifest::PARQUEST_CHECKSUMMED_HASH
+                    // I don't know how to convert hex to this
+                    hash: multihash::Multihash::wrap(
+                        MULTIHASH_SHA256_CHUNKED,
+                        &BASE64_STANDARD
+                            .decode("nE2xFDfxHDu+JbOWAQabjtCbOfXxisKaE99DYSQIWdk=".to_string())?,
+                    )?,
                     ..Row::default()
                 }),
             )]),
@@ -534,27 +548,27 @@ mod tests {
             status,
             ("foo", "bar").into(),
             "Lorem ipsum".to_string(),
-            None,
+            Some(serde_json::Value::Null),
             None,
         )
         .await?;
 
-        let hash = "77616c6b6572";
         assert!(
             lineage.paths.contains_key(&PathBuf::from("bar")),
             "Commited lineage doesn't have path, but should have. We added new file and it should be there."
         );
         assert!(
             storage
-                .exists(&PathBuf::from(format!("/.quilt/objects/{}", hash)))
+                .exists(&PathBuf::from(format!(
+                    "/.quilt/objects/{}",
+                    PARQUEST_CHECKSUMMED_HASH
+                )))
                 .await,
             "Registry doesn't have installed path"
         );
         assert_eq!(
             lineage.commit.unwrap().hash,
-            // NOTE: I copied this hash from the test result itself.
-            //       I don't know what is the right hash
-            "48e56751fda714b87fd3e5cb0a496cd0daa6d76ac45f0a89c5dc4c3fbbfe522e"
+            "944b4c9c30ab2876bc91014dd248ac3cb5ab922de1efb305dc8c1a963b4eb95b"
         );
 
         Ok(())

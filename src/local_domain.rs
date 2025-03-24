@@ -14,7 +14,6 @@ use crate::lineage;
 use crate::lineage::DomainLineage;
 use crate::lineage::Home;
 use crate::manifest::Header;
-use crate::manifest::JsonObject;
 use crate::manifest::Table;
 use crate::paths;
 use crate::uri::ManifestUri;
@@ -143,7 +142,7 @@ impl LocalDomain {
         source_uri: &S3Uri,
         dest_uri: S3PackageUri,
         message: Option<String>,
-        user_meta: Option<JsonObject>,
+        user_meta: Option<serde_json::Value>,
     ) -> Res<ManifestUri> {
         self.scaffold_paths_for_caching(&dest_uri.bucket).await?;
         flow::package_s3_prefix(

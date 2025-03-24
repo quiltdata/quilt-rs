@@ -5,7 +5,6 @@ use multihash::Multihash;
 // use url::Url;
 
 use crate::io::remote::S3Attributes;
-use crate::manifest::JsonObject;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
 use crate::manifest::Workflow;
@@ -43,8 +42,8 @@ const HEADER_ROW: &str = ".";
 /// Represents the header row in Parquet manifest
 #[derive(Clone, Debug, PartialEq)]
 pub struct Header {
-    pub(crate) info: serde_json::Value, // system metadata
-    pub(crate) meta: serde_json::Value, // user metadata
+    pub(crate) info: serde_json::Value,         // system metadata
+    pub(crate) meta: Option<serde_json::Value>, // user metadata
 }
 
 // There is some confusion between `display_*` and `get_*` methods :(
@@ -54,9 +53,10 @@ pub struct Header {
 impl Header {
     pub fn new(
         message: Option<String>,
-        user_meta: Option<JsonObject>,
+        user_meta: Option<serde_json::Value>,
         workflow: Option<Workflow>,
     ) -> Header {
+        println!("NEW HEADER {:?}", user_meta);
         Header {
             info: serde_json::json!({
                 "message": message.unwrap_or_default(),
@@ -67,8 +67,8 @@ impl Header {
                 },
             }),
             meta: match user_meta {
-                Some(meta) => meta.into(),
-                None => serde_json::Value::Null,
+                Some(meta) => Some(meta.into()),
+                None => None,
             },
         }
     }
@@ -80,8 +80,9 @@ impl Header {
         }
     }
 
-    pub fn get_user_meta(&self) -> Res<Option<JsonObject>> {
-        Ok(self.meta.as_object().cloned())
+    pub fn get_user_meta(&self) -> Res<Option<serde_json::Value>> {
+        println!("get_user_meta {:?}", self.meta.clone());
+        Ok(self.meta.clone())
     }
 
     pub fn get_version(&self) -> Res<String> {
@@ -107,7 +108,7 @@ impl Default for Header {
                 "message": String::default(),
                 "version": "v0",
             }),
-            meta: serde_json::Value::Null,
+            meta: None,
         }
     }
 }
@@ -133,7 +134,7 @@ pub struct Row {
     pub size: u64,
     pub hash: Multihash<256>,
     pub info: serde_json::Value, // system metadata
-    pub meta: serde_json::Value, // user metadata
+    pub meta: Option<serde_json::Value>, // user metadata
 }
 
 impl Row {
@@ -200,6 +201,7 @@ impl fmt::Display for Row {
 
 impl From<&Manifest> for Header {
     fn from(quilt3_manifest: &Manifest) -> Self {
+        println!("quilt3_manifest {:?}", quilt3_manifest);
         Header {
             info: serde_json::json!({
                 "message": quilt3_manifest.header.message,
@@ -207,8 +209,8 @@ impl From<&Manifest> for Header {
                 "workflow": quilt3_manifest.header.workflow,
             }),
             meta: match quilt3_manifest.header.user_meta.clone() {
-                Some(meta) => meta.into(),
-                None => serde_json::Value::Null,
+                Some(meta) => Some(meta.into()),
+                None => None,
             },
         }
     }
@@ -223,10 +225,7 @@ impl TryFrom<ManifestRow> for Row {
             place: manifest_row.physical_key,
             hash: manifest_row.hash.try_into()?,
             size: manifest_row.size,
-            meta: match manifest_row.meta {
-                None => serde_json::Value::Null,
-                Some(json) => serde_json::Value::Object(json),
-            },
+            meta: manifest_row.meta,
             info: serde_json::Value::Null,
         })
     }
@@ -243,7 +242,7 @@ impl From<S3Attributes> for Row {
             size: attrs.size,
             hash: attrs.hash,
             info: serde_json::Value::Null, // XXX: is this right?
-            meta: serde_json::Value::Null, // XXX: is this right?
+            meta: None, // XXX: is this right?
         }
     }
 }
@@ -261,7 +260,7 @@ mod tests {
             size: 123,
             hash: Multihash::wrap(345, b"hello world")?,
             info: serde_json::Value::Bool(false),
-            meta: serde_json::json!({"foo":"bar"}),
+            meta: Some(serde_json::json!({"foo":"bar"})),
         };
         assert_eq!(
             row.to_string(),
@@ -305,7 +304,7 @@ mod tests {
                 size: 42,
                 hash: Multihash::wrap(345, b"test hash")?,
                 info: serde_json::Value::Null,
-                meta: serde_json::Value::Null,
+                meta: None,
             }
         );
         Ok(())
@@ -321,7 +320,7 @@ mod tests {
     #[test]
     fn test_display_workflow_null() -> Res {
         let header = Header {
-            meta: serde_json::Value::Null,
+            meta: None,
             info: serde_json::json!({
                 "message": "",
                 "version": "v0",
@@ -335,7 +334,7 @@ mod tests {
     #[test]
     fn test_display_workflow_invalid() -> Res {
         let header = Header {
-            meta: serde_json::Value::Null,
+            meta: None,
             info: serde_json::json!({
                 "message": "",
                 "version": "v0",

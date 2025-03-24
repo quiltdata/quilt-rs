@@ -9,7 +9,7 @@ use crate::cli::Error;
 pub struct Input {
     pub message: String,
     pub namespace: Namespace,
-    pub user_meta: Option<quilt_rs::manifest::JsonObject>,
+    pub user_meta: Option<serde_json::Value>,
     pub workflow: Option<String>,
 }
 
@@ -32,7 +32,7 @@ async fn commit_package(
     local_domain: &quilt_rs::LocalDomain,
     namespace: Namespace,
     message: String,
-    user_meta: Option<quilt_rs::manifest::JsonObject>,
+    user_meta: Option<serde_json::Value>,
     workflow_id: Option<String>,
 ) -> Result<CommitState, Error> {
     match local_domain.get_installed_package(&namespace).await? {
@@ -116,17 +116,12 @@ mod tests {
                 Input {
                     message: pkg::MESSAGE.to_string(),
                     namespace: pkg::NAMESPACE.into(),
-                    user_meta: Some(
-                        serde_json::json!({
-                            "Date": "2025-12-31",
-                            "Name": "Foo",
-                            "Owner": "Kevin",
-                            "Type": "NGS"
-                        })
-                        .as_object()
-                        .unwrap()
-                        .clone(),
-                    ),
+                    user_meta: Some(serde_json::json!({
+                        "Date": "2025-12-31",
+                        "Name": "Foo",
+                        "Owner": "Kevin",
+                        "Type": "NGS"
+                    })),
                     workflow: Some("my-workflow".to_string()),
                 },
             )
@@ -211,20 +206,15 @@ mod tests {
                 Input {
                     message: "Initial".to_string(),
                     namespace: pkg::NAMESPACE.into(),
-                    user_meta: Some(
-                        serde_json::json!({
-                            // NOTE: will be sorted
-                            "C": "D",
-                            "c": "d",
-                            "a": "b",
-                            "A": "B",
-                            "e": 123,
-                            "f": null
-                        })
-                        .as_object()
-                        .unwrap()
-                        .clone(),
-                    ),
+                    user_meta: Some(serde_json::json!({
+                        // NOTE: will be sorted
+                        "C": "D",
+                        "c": "d",
+                        "a": "b",
+                        "A": "B",
+                        "e": 123,
+                        "f": null
+                    })),
                     workflow: None,
                 },
             )
@@ -289,12 +279,7 @@ mod tests {
                 Input {
                     message: "New commit message".to_string(),
                     namespace: ("spec", "quilt-rs").into(),
-                    user_meta: Some(
-                        serde_json::json!({"key": "value"})
-                            .as_object()
-                            .unwrap()
-                            .clone(),
-                    ),
+                    user_meta: Some(serde_json::json!({"key": "value"})),
                     workflow: None,
                 },
             )

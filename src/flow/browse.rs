@@ -86,6 +86,7 @@ pub async fn cache_remote_manifest(
                 manifest_uri.display()
             );
             let manifest = fetch_jsonl(remote, manifest_uri).await?;
+            println!("FLOW:::: MANIFEST: {:?}", manifest);
             debug!("✔️ Fetched JSONL manifest");
             let header = Header::from(&manifest);
             let stream = stream_jsonl_rows(manifest).await;
@@ -267,7 +268,7 @@ mod tests {
         let manifest = ManifestUri {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
-            hash: "0428ab8c8b0fe83d9e57fb6b26ff190173caad00ed7aeb683ce26cc4b56ea4bb".to_string(),
+            hash: fixtures::manifest::JSONL_HASH.to_string(),
             catalog: None,
         };
 
