@@ -36,6 +36,8 @@ fn serialize_table_header(header: &Header) -> Res<serde_json::Map<String, serde_
     let mut header_meta = serde_json::Map::new();
     if let Some(message) = header.get_message()? {
         header_meta.insert("message".to_string(), serde_json::to_value(message)?);
+    } else {
+        header_meta.insert("message".to_string(), serde_json::Value::Null);
     }
     if let Some(mut user_meta) = header.get_user_meta()? {
         user_meta.sort_keys();
