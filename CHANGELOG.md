@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## [0.11.0](https://crates.io/crates/quilt-rs/0.10.0) - 2025-03-24
+
+- Handle `user_meta: null` and `message: null`
+
 ## [0.10.0](https://crates.io/crates/quilt-rs/0.10.0) - 2025-03-17
 
 - Add `"home"` directory in lineage `data.json` and make it required.
