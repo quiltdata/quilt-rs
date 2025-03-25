@@ -406,8 +406,8 @@ mod tests {
             place: "s3://test-bucket/test.txt".to_string(),
             size: 42,
             hash,
-            info: serde_json::json!({"foo": "bar"}),
-            meta: None,
+            info: serde_json::Value::Null,
+            meta: Some(serde_json::json!({"foo": "bar"})),
         };
 
         let serialized = serialize_row_entry(&row);
