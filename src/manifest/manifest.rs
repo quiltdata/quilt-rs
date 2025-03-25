@@ -126,14 +126,6 @@ pub struct ManifestHeader {
     pub workflow: Option<Workflow>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
-pub struct ManifestHeaderWithNull {
-    pub version: String,
-    pub message: Option<String>,
-    pub user_meta: serde_json::Value,
-    pub workflow: Option<Workflow>,
-}
-
 impl TryFrom<&Header> for ManifestHeader {
     type Error = Error;
 
@@ -237,20 +229,21 @@ impl Manifest {
             Error::ManifestHeader(format!("Failed to read the manifest header: {}", err))
         })?;
 
-        let Some(header) = header else {
+        let Some(header_str) = header else {
             return Err(Error::ManifestHeader("Empty manifest".into()));
         };
 
-        let header_with_null_res: Result<ManifestHeaderWithNull, serde_json::Error> =
-            serde_json::from_str(&header);
-        let is_user_meta_null = match header_with_null_res {
-            Ok(header_with_null) => header_with_null.user_meta.is_null(),
-            _ => false,
-        };
+        // Parse the raw JSON to check if user_meta is explicitly null
+        let raw_value: serde_json::Value = serde_json::from_str(&header_str)?;
 
-        let mut header: ManifestHeader = serde_json::from_str(&header)?;
-        if is_user_meta_null {
-            header.user_meta = Some(serde_json::Value::Null);
+        // Parse the header normally
+        let mut header: ManifestHeader = serde_json::from_str(&header_str)?;
+
+        // Handle user_meta field based on the raw JSON
+        if let Some(user_meta) = raw_value.get("user_meta") {
+            if user_meta.is_null() {
+                header.user_meta = Some(serde_json::Value::Null);
+            }
         }
 
         if header.version != "v0" {
