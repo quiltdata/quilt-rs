@@ -102,21 +102,20 @@ impl TopHasher {
 
 // TODO: fix return type to Map<String, serde_json::Value>
 fn serialize_row_entry(row: &Row) -> serde_json::Value {
-    let row_meta = match row.info.as_object() {
-        Some(meta) => {
-            // TODO: if object is present but empty don't include it `user_meta`
-            // TODO: `meta.sort_keys()`?
-            serde_json::Map::from_iter([("user_meta".to_string(), meta.to_owned().into())])
-        }
+    let mut meta = match row.info.as_object() {
+        Some(meta) => meta.clone(),
         None => serde_json::Map::default(),
     };
+    if let Some(m) = &row.meta {
+        meta.insert("user_meta".into(), m.clone());
+    }
 
     let content_hash: ContentHash = row.hash.try_into().unwrap();
 
     serde_json::json!({
         "hash": content_hash,
         "logical_key": row.name,
-        "meta": row_meta,
+        "meta": meta,
         "size": row.size,
     })
 }
