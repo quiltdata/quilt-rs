@@ -268,9 +268,6 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use base64::prelude::BASE64_STANDARD;
-    use base64::Engine;
-
     use crate::checksum::MULTIHASH_SHA256_CHUNKED;
     use crate::fixtures::manifest::PARQUEST_CHECKSUMMED_HASH;
     use crate::fixtures::sample_file_1;
@@ -508,11 +505,9 @@ mod tests {
             changes: BTreeMap::from([(
                 PathBuf::from("bar"),
                 Change::Modified(Row {
-                    // This is base64 of fixtures::manifest::PARQUEST_CHECKSUMMED_HASH
-                    // I don't know how to convert hex to this
                     hash: multihash::Multihash::wrap(
                         MULTIHASH_SHA256_CHUNKED,
-                        &BASE64_STANDARD.decode("nE2xFDfxHDu+JbOWAQabjtCbOfXxisKaE99DYSQIWdk=")?,
+                        &hex::decode(PARQUEST_CHECKSUMMED_HASH).expect("Failed to decode hash"),
                     )?,
                     ..Row::default()
                 }),
