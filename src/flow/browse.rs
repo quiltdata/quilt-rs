@@ -267,7 +267,7 @@ mod tests {
         let manifest = ManifestUri {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
-            hash: "3af08e839fec032c6804596d32932f6f0550abe8b9696c56ed15fe7f8e853ebd".to_string(),
+            hash: fixtures::manifest::JSONL_HASH.to_string(),
             catalog: None,
         };
 

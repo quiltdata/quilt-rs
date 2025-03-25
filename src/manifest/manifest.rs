@@ -16,8 +16,6 @@ use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
 
-pub type JsonObject = serde_json::Map<String, serde_json::Value>;
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorkflowId {
     pub id: String,
@@ -123,7 +121,7 @@ pub struct ManifestHeader {
     pub version: String,
     pub message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")] // Attempt to be quilt3-compatible.
-    pub user_meta: Option<JsonObject>,
+    pub user_meta: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workflow: Option<Workflow>,
 }
@@ -159,7 +157,7 @@ struct Quilt3ManifestRow {
     //      is quite unlikely ATM, given S3 limitations of 5TB per object.
     #[serde(deserialize_with = "number_to_u64")]
     pub size: u64,
-    pub meta: Option<JsonObject>,
+    pub meta: Option<serde_json::Value>,
 }
 
 fn number_to_u64<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
@@ -186,7 +184,7 @@ pub struct ManifestRow {
     pub physical_key: String,
     pub hash: ContentHash,
     pub size: u64,
-    pub meta: Option<JsonObject>,
+    pub meta: Option<serde_json::Value>,
 }
 
 impl std::cmp::PartialEq for ManifestRow {
@@ -231,11 +229,22 @@ impl Manifest {
             Error::ManifestHeader(format!("Failed to read the manifest header: {}", err))
         })?;
 
-        let Some(header) = header else {
+        let Some(header_str) = header else {
             return Err(Error::ManifestHeader("Empty manifest".into()));
         };
 
-        let header: ManifestHeader = serde_json::from_str(&header)?;
+        // Parse the raw JSON to check if user_meta is explicitly null
+        let raw_value: serde_json::Value = serde_json::from_str(&header_str)?;
+
+        // Parse the header normally
+        let mut header: ManifestHeader = serde_json::from_str(&header_str)?;
+
+        // Handle user_meta field based on the raw JSON
+        if let Some(user_meta) = raw_value.get("user_meta") {
+            if user_meta.is_null() {
+                header.user_meta = Some(serde_json::Value::Null);
+            }
+        }
 
         if header.version != "v0" {
             return Err(Error::ManifestHeader(format!(
@@ -316,15 +325,15 @@ impl Manifest {
                     Some(meta) => meta.clone(),
                     None => serde_json::Map::default(),
                 };
-                if row.meta.is_object() {
-                    meta.insert("user_meta".into(), row.meta.clone());
+                if let Some(m) = row.meta {
+                    meta.insert("user_meta".into(), m.clone());
                 }
                 manifest_rows.push(ManifestRow {
                     logical_key: row.name.clone(),
                     physical_key: row.place.clone(),
                     hash: row.hash.try_into().unwrap(),
                     size: row.size,
-                    meta: Some(meta),
+                    meta: Some(serde_json::Value::Object(meta)),
                 })
             }
         }
@@ -379,7 +388,7 @@ mod tests {
             physical_key: "FOO".to_string(),
             hash: ContentHash::SHA256("C".to_string()),
             size: 1,
-            meta: Some(meta),
+            meta: Some(serde_json::Value::Object(meta)),
         };
         let right = ManifestRow {
             logical_key: PathBuf::from("A"),
@@ -513,7 +522,7 @@ mod tests {
                 header: ManifestHeader {
                     version: "v0".to_string(),
                     message: None,
-                    user_meta: None,
+                    user_meta: Some(serde_json::Value::Null),
                     workflow: None,
                 },
                 rows: vec![
@@ -522,7 +531,7 @@ mod tests {
                         physical_key: "s3://udp-spec/test_run/test_push/README.md?versionId=Rv.GfYdUWkLfeTT73Rodm3aBUrTIcC1X".to_string(),
                         size: 26,
                         hash: ContentHash::SHA256("bc2f10e72e751ea6cc1e0b9bdbbb531d437ccbba684b9fef90e1cc228318e112".to_string()),
-                        meta: Some(serde_json::Map::new()),
+                        meta: Some(serde_json::Value::Object(serde_json::Map::new())),
                     }
                 ],
             }
@@ -542,7 +551,7 @@ mod tests {
                 size: 42,
                 hash,
                 info: serde_json::json!({"foo": "bar"}),
-                meta: serde_json::json!({"baz": "qux"}),
+                meta: Some(serde_json::json!({"baz": "qux"})),
             },
         )]));
         let manifest = Manifest::from_table(&table).await?;
@@ -561,10 +570,10 @@ mod tests {
                     physical_key: "s3://test-bucket/test.txt".to_string(),
                     size: 42,
                     hash: ContentHash::try_from(hash)?,
-                    meta: Some(serde_json::Map::from_iter(vec![
+                    meta: Some(serde_json::Value::Object(serde_json::Map::from_iter(vec![
                         ("user_meta".to_string(), serde_json::json!({"baz": "qux"})),
                         ("foo".to_string(), serde_json::json!("bar")),
-                    ])),
+                    ]))),
                 }],
             }
         );
@@ -578,7 +587,7 @@ mod tests {
                 "message": "test message",
                 "version": "v0",
             }),
-            meta: serde_json::json!({"user": "meta"}),
+            meta: Some(serde_json::json!({"user": "meta"})),
         };
 
         assert_eq!(
@@ -586,10 +595,9 @@ mod tests {
             ManifestHeader {
                 version: "v0".to_string(),
                 message: Some("test message".to_string()),
-                user_meta: Some(serde_json::Map::from_iter(vec![(
-                    "user".to_string(),
-                    serde_json::json!("meta")
-                ),])),
+                user_meta: Some(serde_json::Value::Object(serde_json::Map::from_iter(vec![
+                    ("user".to_string(), serde_json::json!("meta")),
+                ]))),
                 workflow: None,
             }
         );

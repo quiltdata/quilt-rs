@@ -50,7 +50,7 @@ fn get_domain_dir(dir_arg: Option<PathBuf>) -> Result<PathBuf, Error> {
     }
 }
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 pub struct Args {
     #[command(subcommand)]
@@ -66,7 +66,7 @@ pub struct Args {
     domain: Option<PathBuf>,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum Commands {
     /// Test and benchmark creating manifest with large number of rows
     Benchmark {
@@ -222,7 +222,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         } => {
             let user_meta = match &user_meta {
                 Some(object) => match serde_json::from_str(object)? {
-                    serde_json::Value::Object(object) => Some(object),
+                    serde_json::Value::Object(object) => Some(serde_json::Value::Object(object)),
                     _ => {
                         return Err(Error::CommitMetaInvalid(object.to_string()));
                     }
@@ -276,7 +276,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         } => {
             let user_meta = match &user_meta {
                 Some(object) => match serde_json::from_str(object)? {
-                    serde_json::Value::Object(object) => Some(object),
+                    serde_json::Value::Object(object) => Some(serde_json::Value::Object(object)),
                     _ => {
                         return Err(Error::CommitMetaInvalid(object.to_string()));
                     }

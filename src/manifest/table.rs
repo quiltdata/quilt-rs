@@ -36,10 +36,18 @@ fn serialize_table_header(header: &Header) -> Res<serde_json::Map<String, serde_
     let mut header_meta = serde_json::Map::new();
     if let Some(message) = header.get_message()? {
         header_meta.insert("message".to_string(), serde_json::to_value(message)?);
+    } else {
+        header_meta.insert("message".to_string(), serde_json::Value::Null);
     }
-    if let Some(mut user_meta) = header.get_user_meta()? {
-        user_meta.sort_keys();
-        header_meta.insert("user_meta".into(), serde_json::to_value(user_meta)?);
+    if let Some(user_meta) = header.get_user_meta()? {
+        let u = match user_meta {
+            serde_json::Value::Object(mut m) => {
+                m.sort_keys();
+                serde_json::Value::Object(m)
+            }
+            _ => user_meta,
+        };
+        header_meta.insert("user_meta".into(), u);
     }
     header_meta.insert(
         "version".to_string(),
@@ -359,7 +367,7 @@ mod tests {
                         size: 100,
                         hash: Multihash::wrap(100, b"A")?,
                         info: serde_json::Value::Null,
-                        meta: serde_json::Value::Null,
+                        meta: None,
                     },
                 ),
                 (
@@ -370,7 +378,7 @@ mod tests {
                         size: 200,
                         hash: Multihash::wrap(200, b"B")?,
                         info: serde_json::Value::Null,
-                        meta: serde_json::Value::Null,
+                        meta: None,
                     },
                 ),
             ]),
@@ -400,7 +408,7 @@ mod tests {
             size: 42,
             hash,
             info: serde_json::json!({"foo": "bar"}),
-            meta: serde_json::Value::Null,
+            meta: None,
         };
 
         let serialized = serialize_row_entry(&row);
@@ -431,7 +439,7 @@ mod tests {
             size: 42,
             hash: Multihash::wrap(0, b"test")?,
             info: serde_json::Value::Null,
-            meta: serde_json::Value::Null,
+            meta: None,
         };
         table.insert_record(row.clone()).await?;
         assert!(table.contains_record(&path).await);
@@ -457,9 +465,9 @@ mod tests {
     async fn test_top_hash() -> Res {
         let manifest = Table::new(
             Header {
-                meta: serde_json::json!({
+                meta: Some(serde_json::json!({
                        "1234567890": "a",
-                }),
+                })),
                 info: serde_json::json!({
                        "message": "Second revision",
                        "version": "v0",
@@ -476,7 +484,7 @@ mod tests {
                     )
                     .try_into()?,
                     info: serde_json::Value::Null,
-                    meta: serde_json::Value::Null,
+                    meta: None,
                 },
             )]),
         );

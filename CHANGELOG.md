@@ -1,6 +1,14 @@
 # CHANGELOG
 
+## [0.11.0](https://crates.io/crates/quilt-rs/0.11.0) - 2025-03-25
+
+### Fixed
+
+- Handle `user_meta: null` and `message: null`
+
 ## [0.10.0](https://crates.io/crates/quilt-rs/0.10.0) - 2025-03-17
+
+### Changed
 
 - Add `"home"` directory in lineage `data.json` and make it required.
   Home directory is a place where to put mutable files. Previously, they were stored in the root alongside the `.quilt` directory.

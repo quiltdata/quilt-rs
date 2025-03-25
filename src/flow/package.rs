@@ -14,7 +14,6 @@ use crate::io::remote::S3Attributes;
 use crate::io::remote::StreamItem;
 use crate::io::storage::Storage;
 use crate::manifest::Header;
-use crate::manifest::JsonObject;
 use crate::manifest::Row;
 use crate::paths::DomainPaths;
 use crate::perf::Measure;
@@ -102,7 +101,7 @@ pub async fn package_s3_prefix(
     source_uri: &S3Uri,
     dest_uri: S3PackageUri,
     message: Option<String>,
-    user_meta: Option<JsonObject>,
+    user_meta: Option<serde_json::Value>,
 ) -> Res<ManifestUri> {
     info!(
         "⏳ Creating package from {} S3 prefix at {}",
@@ -209,7 +208,6 @@ mod tests {
 
         let result =
             get_object_attributes_inner(&storage, &remote, &None, &s3_uri, Ok(object)).await;
-        println!("RESULT {:?}", result);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("NoSuchKey"));
         Ok(())

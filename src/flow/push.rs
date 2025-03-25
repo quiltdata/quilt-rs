@@ -211,16 +211,17 @@ mod tests {
         let lineage = PackageLineage {
             commit: Some(CommitState {
                 timestamp: chrono::Utc::now(),
-                hash: "770459d4230273fd44b272c552d1204458175e7d7cb26fcd601c662cf5f72d05"
-                    .to_string(),
+                hash: fixtures::manifest::PARQUET_CHECKSUMMED_HEADER_ONLY_HASH.to_string(),
                 prev_hashes: Vec::new(),
             }),
             remote: manifest_uri,
             ..PackageLineage::default()
         };
         let jsonl = std::fs::read(fixtures::manifest::parquet_checksummed()?)?;
-        let manifest_key =
-            ".quilt/packages/b/770459d4230273fd44b272c552d1204458175e7d7cb26fcd601c662cf5f72d05";
+        let manifest_key = format!(
+            ".quilt/packages/b/{}",
+            fixtures::manifest::PARQUET_CHECKSUMMED_HEADER_ONLY_HASH
+        );
         let storage = MockStorage::default();
         storage
             .write_file(PathBuf::from(manifest_key), &jsonl)
@@ -241,9 +242,11 @@ mod tests {
                 b"abcdef".to_vec(),
             )
             .await?;
+        let mut table = Table::default();
+        table.header.meta = Some(serde_json::Value::Null);
         let lineage = push_package(
             lineage,
-            Table::default(),
+            table,
             &paths::DomainPaths::default(),
             &storage,
             &remote,
@@ -253,7 +256,7 @@ mod tests {
         let manifest_uri = ManifestUri {
             bucket: "b".to_string(),
             namespace: ("a", "c").into(),
-            hash: "770459d4230273fd44b272c552d1204458175e7d7cb26fcd601c662cf5f72d05".to_string(),
+            hash: fixtures::manifest::PARQUET_CHECKSUMMED_HEADER_ONLY_HASH.to_string(),
             catalog: None,
         };
         assert_eq!(
@@ -279,16 +282,17 @@ mod tests {
         let lineage = PackageLineage {
             commit: Some(CommitState {
                 timestamp: chrono::Utc::now(),
-                hash: "475af395ee2856548851913bfd803de4fcc7cdbb3d1d2c13bf0dc221ed6bc68b"
-                    .to_string(),
+                hash: fixtures::manifest::PARQUEST_CHECKSUMMED_HASH.to_string(),
                 prev_hashes: Vec::new(),
             }),
             remote: manifest_uri,
             ..PackageLineage::default()
         };
         let jsonl = std::fs::read(fixtures::manifest::parquet_checksummed()?)?;
-        let manifest_key =
-            ".quilt/packages/b/475af395ee2856548851913bfd803de4fcc7cdbb3d1d2c13bf0dc221ed6bc68b";
+        let manifest_key = format!(
+            ".quilt/packages/b/{}",
+            fixtures::manifest::PARQUEST_CHECKSUMMED_HASH
+        );
         let storage = MockStorage::default();
         storage
             .write_file(PathBuf::from(manifest_key), &jsonl)
@@ -317,6 +321,7 @@ mod tests {
             .await?;
 
         let mut manifest = Table::default();
+        manifest.header.meta = Some(serde_json::Value::Null);
         manifest
             .insert_record(Row {
                 name: PathBuf::from("bar"),
@@ -337,7 +342,7 @@ mod tests {
         let manifest_uri = ManifestUri {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
-            hash: "475af395ee2856548851913bfd803de4fcc7cdbb3d1d2c13bf0dc221ed6bc68b".to_string(),
+            hash: fixtures::manifest::PARQUEST_CHECKSUMMED_HASH.to_string(),
             catalog: None,
         };
         assert_eq!(
