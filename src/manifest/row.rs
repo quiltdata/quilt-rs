@@ -226,13 +226,31 @@ impl TryFrom<ManifestRow> for Row {
     type Error = Error;
 
     fn try_from(manifest_row: ManifestRow) -> Result<Self, Self::Error> {
+        // Extract user_meta from manifest_row.meta if it exists
+        let (meta, info) = match manifest_row.meta {
+            Some(serde_json::Value::Object(mut obj)) => {
+                // Extract user_meta if it exists
+                let user_meta = obj.remove("user_meta");
+                // The rest of the object becomes info
+                (user_meta, serde_json::Value::Object(obj))
+            }
+            Some(other_value) => {
+                // If meta is not an object or doesn't have user_meta, use it as info
+                (None, other_value)
+            }
+            None => {
+                // If no meta, both are null
+                (None, serde_json::Value::Null)
+            }
+        };
+
         Ok(Row {
             name: manifest_row.logical_key,
             place: manifest_row.physical_key,
             hash: manifest_row.hash.try_into()?,
             size: manifest_row.size,
-            meta: manifest_row.meta,
-            info: serde_json::Value::Null,
+            meta,
+            info,
         })
     }
 }
