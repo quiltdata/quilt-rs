@@ -82,7 +82,6 @@ impl TopHasher {
     pub fn append_header(&mut self, header: &Header) -> Res {
         let value = serialize_table_header(header)?;
         let value_str = serde_json::to_string(&value)?;
-        println!("HEADER {}", value_str);
         self.hasher.update(value_str);
         Ok(())
     }
@@ -91,7 +90,6 @@ impl TopHasher {
     pub fn append(&mut self, row: &Row) -> Res {
         let value = serialize_row_entry(row);
         let value_str = serde_json::to_string(&value)?;
-        println!("ROW {}", value_str);
         self.hasher.update(value_str);
         Ok(())
     }

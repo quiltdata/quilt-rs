@@ -86,7 +86,6 @@ pub async fn cache_remote_manifest(
                 manifest_uri.display()
             );
             let manifest = fetch_jsonl(remote, manifest_uri).await?;
-            println!("FLOW:::: MANIFEST: {:?}", manifest);
             debug!("✔️ Fetched JSONL manifest");
             let header = Header::from(&manifest);
             let stream = stream_jsonl_rows(manifest).await;

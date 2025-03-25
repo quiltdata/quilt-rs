@@ -430,9 +430,7 @@ mod tests {
             },
         };
         let mut output = Vec::new();
-        println!("{:?}", install_args);
         let result = init(install_args).await?;
-        println!("{:?}", result);
         print(result, &mut output, &mut Vec::new())?;
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(

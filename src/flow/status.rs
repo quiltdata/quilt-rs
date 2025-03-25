@@ -30,7 +30,6 @@ async fn verify_hash(file: File, hash: Multihash<256>) -> Res<Option<(u64, Multi
     } else {
         calculate_sha256_checksum(file).await?
     };
-    println!("VERIFYING HASH {:?} {:?}", hash, calculated_hash);
 
     if calculated_hash == hash {
         Ok(None)
@@ -122,7 +121,6 @@ async fn locate_files_in_package_home(
 async fn fingerprint_files(files: Vec<(PathBuf, WorkdirFile)>) -> Res<ChangeSet> {
     let mut changes = ChangeSet::new();
     for (logical_key, location) in files {
-        println!("FINGERPRINT {:?} {:?}", logical_key, location);
         match location {
             WorkdirFile::Tracked(file, row) => {
                 if let Some((size, hash)) = verify_hash(file, row.hash).await? {
@@ -341,7 +339,6 @@ mod tests {
 
         // First, we create a status and see the file is not changed
         let (_, status) = create_status(lineage.clone(), &storage, &manifest, &working_dir).await?;
-        println!("CHANGES {:?}", status.changes);
         let file_not_removed_yet = status.changes.get(&logical_key);
         assert!(file_not_removed_yet.is_none());
 

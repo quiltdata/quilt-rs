@@ -208,7 +208,6 @@ mod tests {
 
         let result =
             get_object_attributes_inner(&storage, &remote, &None, &s3_uri, Ok(object)).await;
-        println!("RESULT {:?}", result);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("NoSuchKey"));
         Ok(())
