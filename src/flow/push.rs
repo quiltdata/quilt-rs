@@ -363,6 +363,92 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_pushing_installed_single_chunk() -> Res {
+        let manifest_uri = ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("f", "a").into(),
+            hash: "__FOO__".to_string(),
+            catalog: None,
+        };
+        let lineage = PackageLineage {
+            commit: Some(CommitState {
+                timestamp: chrono::Utc::now(),
+                hash: fixtures::manifest::PARQUEST_CHECKSUMMED_HASH.to_string(),
+                prev_hashes: Vec::new(),
+            }),
+            remote: manifest_uri,
+            ..PackageLineage::default()
+        };
+        let jsonl = std::fs::read(fixtures::manifest::parquet_checksummed()?)?;
+        let manifest_key = format!(
+            ".quilt/packages/b/{}",
+            fixtures::manifest::PARQUEST_CHECKSUMMED_HASH
+        );
+        let storage = MockStorage::default();
+        storage
+            .write_file(PathBuf::from(manifest_key), &jsonl)
+            .await?;
+        let remote = MockRemote::default();
+        remote
+            .put_object(
+                &None,
+                &S3Uri::try_from("s3://b/.quilt/packages/1220__FOO__.parquet")?,
+                jsonl,
+            )
+            .await?;
+        remote
+            .put_object(
+                &None,
+                &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
+                b"abcdef".to_vec(),
+            )
+            .await?;
+
+        let file_path = PathBuf::from("/b/a/r");
+        let manifest_file = std::fs::read(fixtures::manifest::parquet_checksummed()?)?;
+        remote
+            .storage
+            .write_file(&file_path, &manifest_file)
+            .await?;
+
+        let mut manifest = Table::default();
+        manifest.header.meta = Some(serde_json::Value::Null);
+        manifest
+            .insert_record(Row {
+                name: PathBuf::from("e0-9.txt"),
+                place: format!("file://{}", file_path.display()),
+                ..Row::default()
+            })
+            .await?;
+
+        let lineage = push_package(
+            lineage,
+            manifest,
+            &paths::DomainPaths::default(),
+            &storage,
+            &remote,
+            None,
+        )
+        .await?;
+        let manifest_uri = ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("f", "a").into(),
+            hash: fixtures::manifest::PARQUEST_CHECKSUMMED_HASH.to_string(),
+            catalog: None,
+        };
+        assert_eq!(
+            lineage,
+            PackageLineage {
+                remote: manifest_uri,
+                base_hash: "".to_string(), // Huh?
+                latest_hash: "abcdef".to_string(),
+                ..PackageLineage::default()
+            }
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     #[ignore]
     async fn test_multichunk_push() -> Res {
         // TODO
