@@ -44,7 +44,7 @@ pub mod manifest {
     pub const PARQUEST_CHECKSUMMED_HASH: &str =
         "9c4db11437f11c3bbe25b39601069b8ed09b39f5f18ac29a13df4361240859d9";
 
-    pub const PAQUET_CHECKSUMMED_HEADER_ONLY_HASH: &str =
+    pub const PARQUET_CHECKSUMMED_HEADER_ONLY_HASH: &str =
         "39ee9fb46019db2d8373c991d7881ba90bbb6a6c65417e108c295363794dec3c";
 
     fn local_uri(key: &str) -> Res<PathBuf> {
