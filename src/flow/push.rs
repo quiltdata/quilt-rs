@@ -42,6 +42,11 @@ async fn use_existing_row_or_upload(
                     place: remote_row.place.to_owned(),
                     ..row.clone()
                 }));
+            } else {
+                Err(Error::Push(format!(
+                    "Row {} already exists in the remote manifest, but with different content",
+                    row.name.display()
+                )))?;
             }
         } else {
             debug!("⏳ Uploading new row for: {}", row.name.display());

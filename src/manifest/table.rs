@@ -123,7 +123,7 @@ fn serialize_row_entry(row: &Row) -> serde_json::Value {
 /// Helper for reading Parquet manifest and get `Row`s
 // TODO: use PathBuf and iterator of records,
 // don't store records in memory
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Table {
     pub header: Header,
     // path: PathBuf, // TODO

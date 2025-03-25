@@ -122,7 +122,7 @@ impl From<Header> for Row {
 }
 
 /// Represents the row in Parquet manifest
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct Row {
     pub name: PathBuf,
     pub place: String,
@@ -130,6 +130,20 @@ pub struct Row {
     pub hash: Multihash<256>,
     pub info: serde_json::Value,         // system metadata
     pub meta: Option<serde_json::Value>, // user metadata
+}
+
+impl PartialEq for Row {
+    fn eq(&self, other: &Self) -> bool {
+        // Not: self.place == other.place
+        // because we
+        //   1. change the place for local files
+        //   2. place is not hashed
+        self.name == other.name
+            && self.size == other.size
+            && self.hash == other.hash
+            && self.info == other.info
+            && self.meta == other.meta
+    }
 }
 
 impl Row {
