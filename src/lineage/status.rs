@@ -6,7 +6,7 @@ use serde::Serialize;
 use crate::manifest::Row;
 
 /// Describes modified states of a file
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub enum Change {
     Modified(Row), // modified to what
     Added(Row),    // added what
@@ -27,7 +27,7 @@ pub enum UpstreamState {
 }
 
 /// Status of the package and working directory of the package
-#[derive(Debug, PartialEq, Default)]
+#[derive(Debug, Default)]
 pub struct InstalledPackageStatus {
     /// Current commit vs upstream state
     pub upstream_state: UpstreamState,

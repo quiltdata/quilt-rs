@@ -234,7 +234,8 @@ mod tests {
             PathBuf::default(),
         )
         .await?;
-        assert_eq!(status, InstalledPackageStatus::default());
+        assert_eq!(status.upstream_state, UpstreamState::default());
+        assert!(status.changes.is_empty());
         Ok(())
     }
 

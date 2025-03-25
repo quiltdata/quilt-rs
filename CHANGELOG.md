@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## [0.12.0](https://crates.io/crates/quilt-rs/0.11.0) - 2025-03-25
+
+### Fixed
+
+- Fix validating hash while pushing installed files
+- Fix entry meta
+
 ## [0.11.0](https://crates.io/crates/quilt-rs/0.11.0) - 2025-03-25
 
 ### Fixed
