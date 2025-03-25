@@ -512,8 +512,7 @@ mod tests {
                     // I don't know how to convert hex to this
                     hash: multihash::Multihash::wrap(
                         MULTIHASH_SHA256_CHUNKED,
-                        &BASE64_STANDARD
-                            .decode("nE2xFDfxHDu+JbOWAQabjtCbOfXxisKaE99DYSQIWdk=".to_string())?,
+                        &BASE64_STANDARD.decode("nE2xFDfxHDu+JbOWAQabjtCbOfXxisKaE99DYSQIWdk=")?,
                     )?,
                     ..Row::default()
                 }),
