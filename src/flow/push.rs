@@ -43,10 +43,8 @@ async fn use_existing_row_or_upload(
                     ..row.clone()
                 }));
             } else {
-                Err(Error::Push(format!(
-                    "Row {} already exists in the remote manifest, but with different content",
-                    row.name.display()
-                )))?;
+                debug!("⏳ Uploading modified row for: {}", row.name.display());
+                output.push(upload_row(remote, host, package_handle.clone(), row).await)
             }
         } else {
             debug!("⏳ Uploading new row for: {}", row.name.display());

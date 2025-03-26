@@ -1,6 +1,12 @@
 # CHANGELOG
 
-## [0.12.0](https://crates.io/crates/quilt-rs/0.11.0) - 2025-03-25
+## [0.13.0](https://crates.io/crates/quilt-rs/0.13.0) - 2025-03-26
+
+### Fixed
+
+- Fix missing files when pushing modified files
+
+## [0.12.0](https://crates.io/crates/quilt-rs/0.12.0) - 2025-03-25
 
 ### Fixed
 
