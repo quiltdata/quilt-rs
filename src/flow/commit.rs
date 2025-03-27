@@ -33,40 +33,39 @@ async fn stream_local_with_changes(
     modified: BTreeMap<PathBuf, Row>,
     new_files: StreamRowsChunk,
 ) -> impl RowsStream {
-    let changes_stream = local_manifest.records_stream().await.map(move |rows| {
-        rows.map(|rows| {
-            let mut result: Vec<Res<Row>> = rows.iter()
-                .filter_map(|row_res| match row_res {
-                    Ok(row) => {
-                        if removed.contains(&row.name) {
-                            return None;
-                        }
-                        if let Some(modified_row) = modified.get(&row.name) {
-                            return Some(Ok(modified_row.clone()));
-                        }
-                        Some(Ok(row.clone()))
-                    }
-                    Err(err) => Some(Err(Error::Table(err.to_string()))),
-                })
-                .collect();
-            
-            // Sort the rows by name
-            result.sort_by(|a, b| {
-                match (a, b) {
-                    (Ok(row_a), Ok(row_b)) => row_a.name.cmp(&row_b.name),
-                    (Ok(_), Err(_)) => std::cmp::Ordering::Less,
-                    (Err(_), Ok(_)) => std::cmp::Ordering::Greater,
-                    (Err(_), Err(_)) => std::cmp::Ordering::Equal,
-                }
-            });
-            
-            result
-        })
-    });
+    // Collect all rows from the local manifest stream
+    let mut all_rows: Vec<Res<Row>> = Vec::new();
     
-    // Sort new_files by name as well
-    let mut sorted_new_files = new_files;
-    sorted_new_files.sort_by(|a, b| {
+    // Add new files to the collection
+    all_rows.extend(new_files);
+    
+    // Process and add existing rows from the manifest
+    let mut stream = local_manifest.records_stream().await;
+    while let Some(chunk_result) = stream.next().await {
+        if let Ok(chunk) = chunk_result {
+            for row_res in chunk {
+                match row_res {
+                    Ok(row) => {
+                        // Skip removed rows
+                        if removed.contains(&row.name) {
+                            continue;
+                        }
+                        
+                        // Use modified version if available, otherwise use original
+                        if let Some(modified_row) = modified.get(&row.name) {
+                            all_rows.push(Ok(modified_row.clone()));
+                        } else {
+                            all_rows.push(Ok(row.clone()));
+                        }
+                    }
+                    Err(err) => all_rows.push(Err(Error::Table(err.to_string()))),
+                }
+            }
+        }
+    }
+    
+    // Sort all rows by name
+    all_rows.sort_by(|a, b| {
         match (a, b) {
             (Ok(row_a), Ok(row_b)) => row_a.name.cmp(&row_b.name),
             (Ok(_), Err(_)) => std::cmp::Ordering::Less,
@@ -75,7 +74,8 @@ async fn stream_local_with_changes(
         }
     });
     
-    tokio_stream::iter(vec![Ok(sorted_new_files)]).chain(changes_stream)
+    // Convert back to a stream
+    tokio_stream::iter(vec![Ok(all_rows)])
 }
 
 async fn create_immutable_object_copy(
