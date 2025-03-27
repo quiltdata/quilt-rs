@@ -293,7 +293,7 @@ pub mod objects {
     pub const EQUAL_TO_8MB_HASH_HEX: &str =
         "ed5deb67743f0260186b1db0b100596dcecdd44308c65c51c8c88cb611917708";
 
-    pub fn equal_to_8mb<'a>() -> Vec<u8> {
+    pub fn equal_to_8mb() -> Vec<u8> {
         "12345678".as_bytes().repeat(1024 * 1024)
     }
 

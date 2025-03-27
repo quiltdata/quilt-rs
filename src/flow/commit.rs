@@ -35,10 +35,10 @@ async fn stream_local_with_changes(
 ) -> impl RowsStream {
     // Collect all rows from the local manifest stream
     let mut all_rows: Vec<Res<Row>> = Vec::new();
-    
+
     // Add new files to the collection
     all_rows.extend(new_files);
-    
+
     // Process and add existing rows from the manifest
     let mut stream = local_manifest.records_stream().await;
     while let Some(chunk_result) = stream.next().await {
@@ -50,7 +50,7 @@ async fn stream_local_with_changes(
                         if removed.contains(&row.name) {
                             continue;
                         }
-                        
+
                         // Use modified version if available, otherwise use original
                         if let Some(modified_row) = modified.get(&row.name) {
                             all_rows.push(Ok(modified_row.clone()));
@@ -63,17 +63,15 @@ async fn stream_local_with_changes(
             }
         }
     }
-    
+
     // Sort all rows by name
-    all_rows.sort_by(|a, b| {
-        match (a, b) {
-            (Ok(row_a), Ok(row_b)) => row_a.name.cmp(&row_b.name),
-            (Ok(_), Err(_)) => std::cmp::Ordering::Less,
-            (Err(_), Ok(_)) => std::cmp::Ordering::Greater,
-            (Err(_), Err(_)) => std::cmp::Ordering::Equal,
-        }
+    all_rows.sort_by(|a, b| match (a, b) {
+        (Ok(row_a), Ok(row_b)) => row_a.name.cmp(&row_b.name),
+        (Ok(_), Err(_)) => std::cmp::Ordering::Less,
+        (Err(_), Ok(_)) => std::cmp::Ordering::Greater,
+        (Err(_), Err(_)) => std::cmp::Ordering::Equal,
     });
-    
+
     // Convert back to a stream
     tokio_stream::iter(vec![Ok(all_rows)])
 }
@@ -513,7 +511,7 @@ mod tests {
                 .await?
                 .unwrap()
         };
-        let hash = added_file.hash.clone();
+        let hash = added_file.hash;
 
         let storage = MockStorage::default();
         storage
@@ -577,7 +575,7 @@ mod tests {
         storage
             .write_file(
                 PathBuf::from("/working-dir/one/two two/three three three/READ ME.md"),
-                &fixtures::objects::less_than_8mb(),
+                fixtures::objects::less_than_8mb(),
             )
             .await?;
 
