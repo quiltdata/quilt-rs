@@ -232,7 +232,7 @@ pub mod objects {
     pub const MORE_THAN_8MB_HASH_HEX: &str =
         "4feaedfc729124e8809041972af73e0e10b045cad9883ac59232a89c34f5ce0b";
 
-    pub fn more_than_8mb<'a>() -> Vec<u8> {
+    pub fn more_than_8mb() -> Vec<u8> {
         "1234567890abcdefgh".as_bytes().repeat(1024 * 1024)
     }
 }

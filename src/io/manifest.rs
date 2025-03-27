@@ -417,10 +417,7 @@ mod tests {
             tokio_stream::empty(),
         )
         .await?;
-        assert_eq!(
-            dest_path,
-            dest_dir.join(manifest_empty::NULL_NONE_TOP_HASH)
-        );
+        assert_eq!(dest_path, dest_dir.join(manifest_empty::NULL_NONE_TOP_HASH));
         assert_eq!(top_hash, manifest_empty::NULL_NONE_TOP_HASH);
         Ok(())
     }
@@ -437,10 +434,7 @@ mod tests {
             tokio_stream::empty(),
         )
         .await?;
-        assert_eq!(
-            dest_path,
-            dest_dir.join(manifest_empty::NULL_NULL_TOP_HASH)
-        );
+        assert_eq!(dest_path, dest_dir.join(manifest_empty::NULL_NULL_TOP_HASH));
         assert_eq!(top_hash, manifest_empty::NULL_NULL_TOP_HASH);
         Ok(())
     }
