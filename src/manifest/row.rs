@@ -58,7 +58,7 @@ impl Header {
     ) -> Header {
         Header {
             info: serde_json::json!({
-                "message": message.unwrap_or_default(),
+                "message": message,
                 "version": "v0",
                 "workflow": match workflow {
                     Some(w) => serde_json::json!(w),

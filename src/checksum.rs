@@ -187,47 +187,49 @@ mod tests {
     use base64::prelude::BASE64_STANDARD;
     use base64::Engine;
 
+    use crate::fixtures;
+
     #[tokio::test]
     async fn test_files_less_8mb() -> Res {
-        let bytes = "0123456789abcdef".as_bytes();
+        let bytes = fixtures::objects::less_than_8mb();
         let hash = calculate_sha256_chunked_checksum(bytes, bytes.len() as u64).await?;
         assert_eq!(hash.code(), MULTIHASH_SHA256_CHUNKED);
         assert_eq!(
             BASE64_STANDARD.encode(hash.digest()),
-            "Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="
+            fixtures::objects::LESS_THAN_8MB_HASH_B64
         );
         Ok(())
     }
 
     #[tokio::test]
     async fn test_files_equal_to_8mb() -> Res {
-        let bytes = "12345678".as_bytes().repeat(1024 * 1024);
+        let bytes = fixtures::objects::equal_to_8mb();
         let hash = calculate_sha256_chunked_checksum(bytes.as_ref(), bytes.len() as u64).await?;
         assert_eq!(
             BASE64_STANDARD.encode(hash.digest()),
-            "7V3rZ3Q/AmAYax2wsQBZbc7N1EMIxlxRyMiMthGRdwg="
+            fixtures::objects::EQUAL_TO_8MB_HASH_B64
         );
         Ok(())
     }
 
     #[tokio::test]
     async fn test_sha256_chunked_empty() -> Res {
-        let bytes: &[u8] = &[];
+        let bytes = fixtures::objects::zero_bytes();
         let hash = calculate_sha256_chunked_checksum(bytes, bytes.len() as u64).await?;
         assert_eq!(
             BASE64_STANDARD.encode(hash.digest()),
-            "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+            fixtures::objects::ZERO_HASH_B64
         );
         Ok(())
     }
 
     #[tokio::test]
-    async fn test_files_bigger_then_8mb() -> Res {
-        let bytes = "1234567890abcdefgh".as_bytes().repeat(1024 * 1024);
+    async fn test_files_bigger_than_8mb() -> Res {
+        let bytes = fixtures::objects::more_than_8mb();
         let hash = calculate_sha256_chunked_checksum(bytes.as_ref(), bytes.len() as u64).await?;
         assert_eq!(
             BASE64_STANDARD.encode(hash.digest()),
-            "T+rt/HKRJOiAkEGXKvc+DhCwRcrZiDrFkjKonDT1zgs="
+            fixtures::objects::MORE_THAN_8MB_HASH_B64
         );
         Ok(())
     }

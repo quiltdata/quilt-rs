@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## [0.14.0](https://crates.io/crates/quilt-rs/0.14.0) - 2025-03-27
+
+### Fixed
+
+- Sort file entries in manifest by logical key
+
 ## [0.13.0](https://crates.io/crates/quilt-rs/0.13.0) - 2025-03-26
 
 ### Fixed

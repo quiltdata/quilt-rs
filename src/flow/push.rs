@@ -214,7 +214,7 @@ mod tests {
         let lineage = PackageLineage {
             commit: Some(CommitState {
                 timestamp: chrono::Utc::now(),
-                hash: fixtures::manifest::PARQUET_CHECKSUMMED_HEADER_ONLY_HASH.to_string(),
+                hash: fixtures::manifest_empty::EMPTY_NULL_TOP_HASH.to_string(),
                 prev_hashes: Vec::new(),
             }),
             remote: manifest_uri,
@@ -223,7 +223,7 @@ mod tests {
         let jsonl = std::fs::read(fixtures::manifest::parquet_checksummed()?)?;
         let manifest_key = format!(
             ".quilt/packages/b/{}",
-            fixtures::manifest::PARQUET_CHECKSUMMED_HEADER_ONLY_HASH
+            fixtures::manifest_empty::EMPTY_NULL_TOP_HASH
         );
         let storage = MockStorage::default();
         storage
@@ -245,8 +245,7 @@ mod tests {
                 b"abcdef".to_vec(),
             )
             .await?;
-        let mut table = Table::default();
-        table.header.meta = Some(serde_json::Value::Null);
+        let table = fixtures::manifest_empty::empty_null();
         let lineage = push_package(
             lineage,
             table,
@@ -259,7 +258,7 @@ mod tests {
         let manifest_uri = ManifestUri {
             bucket: "b".to_string(),
             namespace: ("a", "c").into(),
-            hash: fixtures::manifest::PARQUET_CHECKSUMMED_HEADER_ONLY_HASH.to_string(),
+            hash: fixtures::manifest_empty::EMPTY_NULL_TOP_HASH.to_string(),
             catalog: None,
         };
         assert_eq!(
