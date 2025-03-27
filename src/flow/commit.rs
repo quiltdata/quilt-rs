@@ -179,6 +179,12 @@ pub async fn commit_package(
                 removed_keys.insert(row.name);
             }
             Change::Added(current) => {
+                if manifest.contains_record(&current.name).await {
+                    return Err(Error::Commit(format!(
+                        "Trying to add a file that is already in the manifest: \"{}\"",
+                        current.name.display()
+                    )));
+                }
                 let added = create_immutable_object_copy(
                     storage,
                     paths,
@@ -268,16 +274,42 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::checksum::MULTIHASH_SHA256_CHUNKED;
-    use crate::fixtures::manifest::PARQUEST_CHECKSUMMED_HASH;
-    use crate::fixtures::sample_file_1;
+    use crate::fixtures;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::Change;
 
     // NOTE: Tests use "/" path for working directory, because it then parsed with Url and have to be absolute path
 
     #[tokio::test]
-    async fn test_commit() -> Res {
+    async fn test_commit_empty() -> Res {
+        let storage = MockStorage::default();
+        let lineage = PackageLineage::default();
+        assert!(lineage.commit.is_none());
+        let lineage = commit_package(
+            lineage,
+            &mut Table::default(),
+            &DomainPaths::default(),
+            &storage,
+            PathBuf::default(),
+            InstalledPackageStatus::default(),
+            ("foo", "bar").into(),
+            String::default(),
+            None,
+            None,
+        )
+        .await?;
+        let hash = fixtures::manifest_empty::EMPTY_NONE_TOP_HASH;
+        assert!(
+            storage
+                .exists(&PathBuf::from(format!(".quilt/installed/foo/bar/{}", hash)))
+                .await
+        );
+        assert_eq!(lineage.commit.unwrap().hash, hash.to_string());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_commit_meta() -> Res {
         let storage = MockStorage::default();
 
         let commit_message = "Lorem ipsum".to_string();
@@ -316,17 +348,11 @@ mod tests {
     async fn test_removing_and_commit() -> Res {
         let storage = MockStorage::default();
 
-        let commit_message = "Lorem ipsum".to_string();
-        let mut user_meta = serde_json::Map::new();
-        user_meta.insert(
-            "lorem".to_string(),
-            serde_json::Value::String("ipsum".to_string()),
-        );
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
-                PathBuf::from("foo"),
+                PathBuf::from("one/two two/three three three/READ ME.md"),
                 Change::Removed(Row {
-                    name: PathBuf::from("foo"),
+                    name: PathBuf::from("one/two two/three three three/READ ME.md"),
                     ..Row::default()
                 }),
             )]),
@@ -334,20 +360,22 @@ mod tests {
         };
 
         let lineage = PackageLineage {
-            paths: BTreeMap::from([(PathBuf::from("foo"), sample_file_1::path_state()?)]),
+            paths: BTreeMap::from([(
+                PathBuf::from("one/two two/three three three/READ ME.md"),
+                PathState::default(),
+            )]),
             ..PackageLineage::default()
         };
-        let mut manifest = Table::default();
-        manifest
-            .insert_record(sample_file_1::row(PathBuf::from("foo"))?)
-            .await?;
+        let mut manifest = crate::fixtures::manifest_with_objects_all_sizes::manifest().await?;
 
         assert!(
             lineage.commit.is_none(),
             "Initial lineage has commit already"
         );
         assert!(
-            lineage.paths.contains_key(&PathBuf::from("foo")),
+            lineage
+                .paths
+                .contains_key(&PathBuf::from("one/two two/three three three/READ ME.md")),
             "Initial lineage doesn't have testing path"
         );
 
@@ -359,13 +387,13 @@ mod tests {
             PathBuf::default(),
             status,
             ("foo", "bar").into(),
-            commit_message,
-            Some(serde_json::Value::Object(user_meta)),
+            String::from("Initial"),
+            Some(serde_json::json!({"A": "b", "z": "Y", "a": "B", "Z": "y"})),
             None,
         )
         .await?;
 
-        let hash = "56c329d2390c9c6efedb698f47b75f096112c89a7751d55a426507ec6c432897";
+        let hash = "22590f2254e00b12f0c141117969172e925d6b8e9af26a04fa35658f1ad4e04c";
         assert!(
             !lineage.paths.contains_key(&PathBuf::from("foo")),
             "Commited lineage still has a path, that should be clear after commit"
@@ -383,32 +411,34 @@ mod tests {
 
     #[tokio::test]
     async fn test_adding_and_commit() -> Res {
+        let added_file = Row {
+            name: PathBuf::from("foo"),
+            ..fixtures::manifest_with_objects_all_sizes::manifest()
+                .await?
+                .get_record(&PathBuf::from("0mb.bin"))
+                .await?
+                .unwrap()
+        };
+
         let storage = MockStorage::default();
         storage
-            .write_file(PathBuf::from("/working-dir/bar"), &Vec::new())
+            .write_file(PathBuf::from("/working-dir/foo"), &Vec::new())
             .await?;
 
         let status = InstalledPackageStatus {
-            changes: BTreeMap::from([(
-                PathBuf::from("bar"),
-                Change::Added(sample_file_1::row(PathBuf::from("bar"))?),
-            )]),
+            changes: BTreeMap::from([(PathBuf::from("foo"), Change::Added(added_file.clone()))]),
             ..InstalledPackageStatus::default()
         };
 
         let lineage = PackageLineage::default();
-        let mut manifest = Table::default();
-        // NOTE: another file, not added, already in the manifest
-        manifest
-            .insert_record(sample_file_1::row(PathBuf::from("foo"))?)
-            .await?;
+        let mut manifest = crate::fixtures::manifest_with_objects_all_sizes::manifest().await?;
 
         assert!(
             lineage.commit.is_none(),
             "Initial lineage has commit already"
         );
         assert!(
-            !lineage.paths.contains_key(&PathBuf::from("bar")),
+            !lineage.paths.contains_key(&PathBuf::from("foo")),
             "Initial lineage has path, but shouldn't because we test _new_ file"
         );
 
@@ -420,16 +450,15 @@ mod tests {
             PathBuf::from("/working-dir"),
             status,
             ("foo", "bar").into(),
-            "Lorem ipsum".to_string(),
-            Some(serde_json::Value::Null),
+            String::from("Initial"),
+            Some(serde_json::json!({"A": "b", "z": "Y", "a": "B", "Z": "y"})),
             None,
         )
         .await?;
 
-        // This is a hash of fixtures/manifest.jsonl file
-        let hash = hex::encode(sample_file_1::row_hash()?.digest());
+        let hash = fixtures::objects::ZERO_HASH_HEX;
         assert!(
-            lineage.paths.contains_key(&PathBuf::from("bar")),
+            lineage.paths.contains_key(&PathBuf::from("foo")),
             "Commited lineage doesn't have path, but should have. We added new file and it should be there."
         );
         assert!(
@@ -440,7 +469,7 @@ mod tests {
         );
         assert_eq!(
             lineage.commit.unwrap().hash,
-            "0a9fcc1ad17228a796d95c47581357565f214bc91070b49f07859b4a0bf2d03d"
+            "bc937a84fa8ef20d6007f9561b3710651d3caf83792cbccd6b07c835b698d50f"
         );
 
         Ok(())
@@ -450,27 +479,51 @@ mod tests {
     // and I doubt it ever could be reproducible at all
     // TODO: anyway it makes sense to add some sanity checks
     //       even for imposible states
-    #[ignore]
     #[tokio::test]
     async fn test_adding_manifest_already_has_it() -> Res {
+        let added_file = Row {
+            name: PathBuf::from("one/two two/three three three/READ ME.md"),
+            ..fixtures::manifest_with_objects_all_sizes::manifest()
+                .await?
+                .get_record(&PathBuf::from("one/two two/three three three/READ ME.md"))
+                .await?
+                .unwrap()
+        };
+        let hash = added_file.hash.clone();
+
         let storage = MockStorage::default();
         storage
-            .write_file(PathBuf::from("foo"), &Vec::new())
+            .write_file(
+                PathBuf::from("one/two two/three three three/READ ME.md"),
+                "This is the README.".as_bytes(),
+            )
+            .await?;
+        storage
+            .write_file(
+                PathBuf::from(format!(".quilt/objects/{}", hex::encode(hash.digest()))),
+                "This is the README.".as_bytes(),
+            )
             .await?;
 
         let status = InstalledPackageStatus {
-            changes: BTreeMap::from([(PathBuf::from("foo"), Change::Added(Row::default()))]),
+            changes: BTreeMap::from([(
+                PathBuf::from("one/two two/three three three/READ ME.md"),
+                Change::Added(Row {
+                    name: PathBuf::from("one/two two/three three three/READ ME.md"),
+                    ..added_file.clone()
+                }),
+            )]),
             ..InstalledPackageStatus::default()
         };
 
         let lineage = PackageLineage {
-            paths: BTreeMap::from([(PathBuf::from("foo"), sample_file_1::path_state()?)]),
+            paths: BTreeMap::from([(
+                PathBuf::from("one/two two/three three three/READ ME.md"),
+                PathState::default(),
+            )]),
             ..PackageLineage::default()
         };
-        let mut manifest = Table::default();
-        manifest
-            .insert_record(sample_file_1::row(PathBuf::from("foo"))?)
-            .await?;
+        let mut manifest = crate::fixtures::manifest_with_objects_all_sizes::manifest().await?;
 
         let result = commit_package(
             lineage,
@@ -480,15 +533,15 @@ mod tests {
             PathBuf::default(),
             status,
             ("foo", "bar").into(),
-            "Lorem ipsum".to_string(),
-            None,
+            String::from("Initial"),
+            Some(serde_json::json!({"A": "b", "z": "Y", "a": "B", "Z": "y"})),
             None,
         )
         .await;
 
         assert_eq!(
             result.unwrap_err().to_string(),
-            r#"Commit error: cannot overwrite "foo""#
+            "Commit error: Trying to add a file that is already in the manifest: \"one/two two/three three three/READ ME.md\""
         );
 
         Ok(())
@@ -498,38 +551,43 @@ mod tests {
     async fn test_modifying_and_commit() -> Res {
         let storage = MockStorage::default();
         storage
-            .write_file(PathBuf::from("/working-dir/bar"), &Vec::new())
+            .write_file(
+                PathBuf::from("/working-dir/one/two two/three three three/READ ME.md"),
+                &fixtures::objects::less_than_8mb(),
+            )
             .await?;
 
+        let modified_file = Row {
+            name: PathBuf::from("one/two two/three three three/READ ME.md"),
+            ..fixtures::manifest_with_objects_all_sizes::manifest()
+                .await?
+                .get_record(&PathBuf::from("less-then-8mb.txt"))
+                .await?
+                .unwrap()
+        };
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
-                PathBuf::from("bar"),
-                Change::Modified(Row {
-                    hash: multihash::Multihash::wrap(
-                        MULTIHASH_SHA256_CHUNKED,
-                        &hex::decode(PARQUEST_CHECKSUMMED_HASH).expect("Failed to decode hash"),
-                    )?,
-                    ..Row::default()
-                }),
+                PathBuf::from("one/two two/three three three/READ ME.md"),
+                Change::Modified(modified_file),
             )]),
             ..InstalledPackageStatus::default()
         };
 
         let lineage = PackageLineage {
-            paths: BTreeMap::from([(PathBuf::from("bar"), sample_file_1::path_state()?)]),
+            paths: BTreeMap::from([(
+                PathBuf::from("one/two two/three three three/READ ME.md"),
+                PathState::default(),
+            )]),
             ..PackageLineage::default()
         };
-        let mut manifest = Table::default();
-        manifest
-            .insert_record(sample_file_1::row(PathBuf::from("bar"))?)
-            .await?;
+        let mut manifest = crate::fixtures::manifest_with_objects_all_sizes::manifest().await?;
 
         assert!(
             lineage.commit.is_none(),
             "Initial lineage has commit already"
         );
         assert!(
-            lineage.paths.contains_key(&PathBuf::from("bar")),
+            lineage.paths.contains_key(&PathBuf::from("one/two two/three three three/READ ME.md")),
             "Initial lineage doesn't have path, but should because we test installed and modified file"
         );
 
@@ -541,28 +599,28 @@ mod tests {
             PathBuf::from("/working-dir"),
             status,
             ("foo", "bar").into(),
-            "Lorem ipsum".to_string(),
-            Some(serde_json::Value::Null),
+            String::from("Initial"),
+            Some(serde_json::json!({"A": "b", "z": "Y", "a": "B", "Z": "y"})),
             None,
         )
         .await?;
 
         assert!(
-            lineage.paths.contains_key(&PathBuf::from("bar")),
+            lineage.paths.contains_key(&PathBuf::from("one/two two/three three three/READ ME.md")),
             "Commited lineage doesn't have path, but should have. We added new file and it should be there."
         );
         assert!(
             storage
                 .exists(&PathBuf::from(format!(
                     "/.quilt/objects/{}",
-                    PARQUEST_CHECKSUMMED_HASH
+                    fixtures::objects::LESS_THAN_8MB_HASH_HEX
                 )))
                 .await,
             "Registry doesn't have installed path"
         );
         assert_eq!(
             lineage.commit.unwrap().hash,
-            "944b4c9c30ab2876bc91014dd248ac3cb5ab922de1efb305dc8c1a963b4eb95b"
+            "39bbc9a95f787cd938fb5830abe5e25408f0aac4000528b8717130be5f7bc2b3"
         );
 
         Ok(())

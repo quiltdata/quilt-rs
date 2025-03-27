@@ -12,6 +12,7 @@ pub mod sample_file_1 {
     use crate::manifest::Row;
     use crate::Res;
 
+    //  FIXME: Use some hash from `objects` module
     pub fn row_hash() -> Res<Multihash<256>> {
         // This is a hash of fixtures/manifest.jsonl file
         ContentHash::SHA256Chunked("4ssEkl5yUwi0LCjnsOl3pJ6ZgtgD8o5a6K9ayFtKDQE=".to_string())
@@ -170,9 +171,18 @@ pub mod manifest_empty {
 }
 
 pub mod manifest_with_objects_all_sizes {
-    use super::local_uri;
     use std::path::PathBuf;
 
+    use base64::prelude::BASE64_STANDARD;
+    use base64::Engine;
+    use multihash::Multihash;
+
+    use super::local_uri;
+    use super::objects;
+
+    use crate::checksum::MULTIHASH_SHA256_CHUNKED;
+    use crate::manifest::Row;
+    use crate::manifest::Table;
     use crate::Res;
 
     const JSONL: &str = "fixtures/ref-manifest-sizes.jsonl";
@@ -195,6 +205,66 @@ pub mod manifest_with_objects_all_sizes {
 
     pub fn parquet_remote_path() -> Res<PathBuf> {
         local_uri(PARQUET_REMOTE)
+    }
+
+    pub async fn manifest() -> Res<Table> {
+        let mut manifest = Table::default();
+        manifest
+            .insert_record(Row {
+                name: PathBuf::from("0mb.bin"),
+                size: 0,
+                hash: Multihash::wrap(
+                    MULTIHASH_SHA256_CHUNKED,
+                    &BASE64_STANDARD.decode(objects::ZERO_HASH_B64)?,
+                )?,
+                ..Row::default()
+            })
+            .await?;
+        manifest
+            .insert_record(Row {
+                name: PathBuf::from("bigger-than-8mb.txt"),
+                size: 18874368,
+                hash: Multihash::wrap(
+                    MULTIHASH_SHA256_CHUNKED,
+                    &BASE64_STANDARD.decode(objects::MORE_THAN_8MB_HASH_B64)?,
+                )?,
+                ..Row::default()
+            })
+            .await?;
+        manifest
+            .insert_record(Row {
+                name: PathBuf::from("equal-to-8mb.txt"),
+                size: 8388608,
+                hash: Multihash::wrap(
+                    MULTIHASH_SHA256_CHUNKED,
+                    &BASE64_STANDARD.decode(objects::EQUAL_TO_8MB_HASH_B64)?,
+                )?,
+                ..Row::default()
+            })
+            .await?;
+        manifest
+            .insert_record(Row {
+                name: PathBuf::from("less-then-8mb.txt"),
+                size: 16,
+                hash: Multihash::wrap(
+                    MULTIHASH_SHA256_CHUNKED,
+                    &BASE64_STANDARD.decode(objects::LESS_THAN_8MB_HASH_B64)?,
+                )?,
+                ..Row::default()
+            })
+            .await?;
+        manifest
+            .insert_record(Row {
+                name: PathBuf::from("one/two two/three three three/READ ME.md"),
+                size: 20,
+                hash: Multihash::wrap(
+                    MULTIHASH_SHA256_CHUNKED,
+                    &BASE64_STANDARD.decode(objects::NESTED_HASH_B64)?,
+                )?,
+                ..Row::default()
+            })
+            .await?;
+        Ok(manifest)
     }
 }
 
@@ -234,5 +304,11 @@ pub mod objects {
 
     pub fn more_than_8mb() -> Vec<u8> {
         "1234567890abcdefgh".as_bytes().repeat(1024 * 1024)
+    }
+
+    pub const NESTED_HASH_B64: &str = "J6TS3FqxN+VOhVoaoPU5OsYMUsq6652ykBrlW7krP/k=";
+
+    pub fn nested<'a>() -> &'a [u8] {
+        "This is the README.".as_bytes()
     }
 }

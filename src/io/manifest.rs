@@ -252,6 +252,7 @@ pub trait RowsStream: Stream<Item = StreamItem> {}
 
 impl<T: Stream<Item = StreamItem>> RowsStream for T {}
 
+// TODO: should keys be sorted in stream?
 /// Builds the manifest from `Stream<Result<Row>>`
 /// It writes the manifest to temporary file using Parquet.
 /// Then it calclutates top_hash and move the temporary file to the destination path.
