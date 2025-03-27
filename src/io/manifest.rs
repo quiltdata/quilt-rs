@@ -344,4 +344,104 @@ mod tests {
         assert_eq!(top_hash, manifest_empty::EMPTY_EMPTY_TOP_HASH);
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_empty_manifest_header_empty_none() -> Res {
+        let temp_dir = tempfile::tempdir()?;
+        let dest_dir = temp_dir.path();
+        let storage = MockStorage::default();
+        let (dest_path, top_hash) = build_manifest_from_rows_stream(
+            &storage,
+            dest_dir.to_path_buf(),
+            manifest_empty::empty_none().header,
+            tokio_stream::empty(),
+        )
+        .await?;
+        assert_eq!(
+            dest_path,
+            dest_dir.join(manifest_empty::EMPTY_NONE_TOP_HASH)
+        );
+        assert_eq!(top_hash, manifest_empty::EMPTY_NONE_TOP_HASH);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_empty_manifest_header_empty_null() -> Res {
+        let temp_dir = tempfile::tempdir()?;
+        let dest_dir = temp_dir.path();
+        let storage = MockStorage::default();
+        let (dest_path, top_hash) = build_manifest_from_rows_stream(
+            &storage,
+            dest_dir.to_path_buf(),
+            manifest_empty::empty_null().header,
+            tokio_stream::empty(),
+        )
+        .await?;
+        assert_eq!(
+            dest_path,
+            dest_dir.join(manifest_empty::EMPTY_NULL_TOP_HASH)
+        );
+        assert_eq!(top_hash, manifest_empty::EMPTY_NULL_TOP_HASH);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_empty_manifest_header_null_empty() -> Res {
+        let temp_dir = tempfile::tempdir()?;
+        let dest_dir = temp_dir.path();
+        let storage = MockStorage::default();
+        let (dest_path, top_hash) = build_manifest_from_rows_stream(
+            &storage,
+            dest_dir.to_path_buf(),
+            manifest_empty::null_empty().header,
+            tokio_stream::empty(),
+        )
+        .await?;
+        assert_eq!(
+            dest_path,
+            dest_dir.join(manifest_empty::NULL_EMPTY_TOP_HASH)
+        );
+        assert_eq!(top_hash, manifest_empty::NULL_EMPTY_TOP_HASH);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_empty_manifest_header_null_none() -> Res {
+        let temp_dir = tempfile::tempdir()?;
+        let dest_dir = temp_dir.path();
+        let storage = MockStorage::default();
+        let (dest_path, top_hash) = build_manifest_from_rows_stream(
+            &storage,
+            dest_dir.to_path_buf(),
+            manifest_empty::null_none().header,
+            tokio_stream::empty(),
+        )
+        .await?;
+        assert_eq!(
+            dest_path,
+            dest_dir.join(manifest_empty::NULL_NONE_TOP_HASH)
+        );
+        assert_eq!(top_hash, manifest_empty::NULL_NONE_TOP_HASH);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_empty_manifest_header_null_null() -> Res {
+        let temp_dir = tempfile::tempdir()?;
+        let dest_dir = temp_dir.path();
+        let storage = MockStorage::default();
+        let (dest_path, top_hash) = build_manifest_from_rows_stream(
+            &storage,
+            dest_dir.to_path_buf(),
+            manifest_empty::null().header,
+            tokio_stream::empty(),
+        )
+        .await?;
+        assert_eq!(
+            dest_path,
+            dest_dir.join(manifest_empty::NULL_NULL_TOP_HASH)
+        );
+        assert_eq!(top_hash, manifest_empty::NULL_NULL_TOP_HASH);
+        Ok(())
+    }
 }
