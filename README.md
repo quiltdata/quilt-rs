@@ -48,6 +48,11 @@ cargo upgrades
 sha256sum ./FILE | xxd -r -p | base64
 ```
 
+Chunksum is stable:
+
+* 47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=
+* e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+
 ### <= 8Mb
 
 ```bash
