@@ -35,7 +35,7 @@ async fn stream_local_with_changes(
 ) -> impl RowsStream {
     let changes_stream = local_manifest.records_stream().await.map(move |rows| {
         rows.map(|rows| {
-            rows.iter()
+            let mut result: Vec<Res<Row>> = rows.iter()
                 .filter_map(|row_res| match row_res {
                     Ok(row) => {
                         if removed.contains(&row.name) {
@@ -48,10 +48,34 @@ async fn stream_local_with_changes(
                     }
                     Err(err) => Some(Err(Error::Table(err.to_string()))),
                 })
-                .collect()
+                .collect();
+            
+            // Sort the rows by name
+            result.sort_by(|a, b| {
+                match (a, b) {
+                    (Ok(row_a), Ok(row_b)) => row_a.name.cmp(&row_b.name),
+                    (Ok(_), Err(_)) => std::cmp::Ordering::Less,
+                    (Err(_), Ok(_)) => std::cmp::Ordering::Greater,
+                    (Err(_), Err(_)) => std::cmp::Ordering::Equal,
+                }
+            });
+            
+            result
         })
     });
-    tokio_stream::iter(vec![Ok(new_files)]).chain(changes_stream)
+    
+    // Sort new_files by name as well
+    let mut sorted_new_files = new_files;
+    sorted_new_files.sort_by(|a, b| {
+        match (a, b) {
+            (Ok(row_a), Ok(row_b)) => row_a.name.cmp(&row_b.name),
+            (Ok(_), Err(_)) => std::cmp::Ordering::Less,
+            (Err(_), Ok(_)) => std::cmp::Ordering::Greater,
+            (Err(_), Err(_)) => std::cmp::Ordering::Equal,
+        }
+    });
+    
+    tokio_stream::iter(vec![Ok(sorted_new_files)]).chain(changes_stream)
 }
 
 async fn create_immutable_object_copy(
