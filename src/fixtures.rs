@@ -82,7 +82,7 @@ pub mod manifest_empty {
     const EMPTY_NONE: &str = "fixtures/header-empty-none.jsonl";
     const EMPTY_NULL: &str = "fixtures/header-empty-null.jsonl";
     const NULL_EMPTY: &str = "fixtures/header-null-empty.jsonl";
-    const NULL_NONE: &str = "fixtures/header-null-null.jsonl";
+    const NULL_NONE: &str = "fixtures/header-null-none.jsonl";
     const NULL_NULL: &str = "fixtures/header-null-null.jsonl";
 
     pub const EMPTY_EMPTY_TOP_HASH: &str =
@@ -275,8 +275,7 @@ pub mod objects {
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
     pub fn zero_bytes<'a>() -> &'a [u8] {
-        let bytes: &[u8] = &[];
-        bytes
+        &[]
     }
 
     pub const LESS_THAN_8MB_HASH_B64: &str = "Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA=";

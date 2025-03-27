@@ -417,7 +417,7 @@ mod tests {
 
         let hash = "22590f2254e00b12f0c141117969172e925d6b8e9af26a04fa35658f1ad4e04c";
         assert!(
-            !lineage.paths.contains_key(&PathBuf::from("foo")),
+            !lineage.paths.contains_key(&PathBuf::from("one/two two/three three three/READ ME.md")),
             "Commited lineage still has a path, that should be clear after commit"
         );
         assert!(
