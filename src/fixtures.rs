@@ -204,7 +204,7 @@ pub mod objects {
     pub const ZERO_HASH_HEX: &str =
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
-    fn zero_bytes<'a>() -> &'a [u8] {
+    pub fn zero_bytes<'a>() -> &'a [u8] {
         let bytes: &[u8] = &[];
         bytes
     }
@@ -223,7 +223,7 @@ pub mod objects {
     pub const EQUAL_TO_8MB_HASH_HEX: &str =
         "ed5deb67743f0260186b1db0b100596dcecdd44308c65c51c8c88cb611917708";
 
-    fn equal_to_8mb<'a>() -> Vec<u8> {
+    pub fn equal_to_8mb<'a>() -> Vec<u8> {
         "12345678".as_bytes().repeat(1024 * 1024)
     }
 
@@ -232,7 +232,7 @@ pub mod objects {
     pub const MORE_THAN_8MB_HASH_HEX: &str =
         "4feaedfc729124e8809041972af73e0e10b045cad9883ac59232a89c34f5ce0b";
 
-    fn more_than_8mb<'a>() -> Vec<u8> {
+    pub fn more_than_8mb<'a>() -> Vec<u8> {
         "1234567890abcdefgh".as_bytes().repeat(1024 * 1024)
     }
 }
