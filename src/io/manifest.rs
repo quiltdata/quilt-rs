@@ -294,7 +294,11 @@ pub async fn build_manifest_from_rows_stream(
 mod tests {
     use super::*;
 
+    use tokio_stream;
+
+    use crate::fixtures::manifest_empty;
     use crate::io::remote::mocks::MockRemote;
+    use crate::io::storage::mocks::MockStorage;
 
     #[tokio::test]
     async fn test_resolve_existing_hash() -> Res {
@@ -318,6 +322,26 @@ mod tests {
             .await?;
         let top_hash = resolve_top_hash(&remote, &None, &uri).await?;
         assert_eq!(top_hash, "abcdef".to_string(),);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_empty_manifest_header_empty() -> Res {
+        let temp_dir = tempfile::tempdir()?;
+        let dest_dir = temp_dir.path();
+        let storage = MockStorage::default();
+        let (dest_path, top_hash) = build_manifest_from_rows_stream(
+            &storage,
+            dest_dir.to_path_buf(),
+            manifest_empty::empty().header,
+            tokio_stream::empty(),
+        )
+        .await?;
+        assert_eq!(
+            dest_path,
+            dest_dir.join(manifest_empty::EMPTY_EMPTY_TOP_HASH)
+        );
+        assert_eq!(top_hash, manifest_empty::EMPTY_EMPTY_TOP_HASH);
         Ok(())
     }
 }

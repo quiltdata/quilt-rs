@@ -222,7 +222,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_files_bigger_then_8mb() -> Res {
+    async fn test_files_bigger_than_8mb() -> Res {
         let bytes = "1234567890abcdefgh".as_bytes().repeat(1024 * 1024);
         let hash = calculate_sha256_chunked_checksum(bytes.as_ref(), bytes.len() as u64).await?;
         assert_eq!(
