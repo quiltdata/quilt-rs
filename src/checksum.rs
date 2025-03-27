@@ -187,14 +187,16 @@ mod tests {
     use base64::prelude::BASE64_STANDARD;
     use base64::Engine;
 
+    use crate::fixtures;
+
     #[tokio::test]
     async fn test_files_less_8mb() -> Res {
-        let bytes = "0123456789abcdef".as_bytes();
+        let bytes = fixtures::objects::less_than_8mb();
         let hash = calculate_sha256_chunked_checksum(bytes, bytes.len() as u64).await?;
         assert_eq!(hash.code(), MULTIHASH_SHA256_CHUNKED);
         assert_eq!(
             BASE64_STANDARD.encode(hash.digest()),
-            "Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="
+            fixtures::objects::LESS_THAN_8MB_HASH_B64
         );
         Ok(())
     }

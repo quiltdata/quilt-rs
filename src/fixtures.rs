@@ -214,7 +214,7 @@ pub mod objects {
     pub const LESS_THAN_8MB_HASH_HEX: &str =
         "5dbd4f6e325e5a87f8cc3ef3b8773d3c8eec2e2cff6248f882986569912ddf10";
 
-    fn less_than_8mb<'a>() -> &'a [u8] {
+    pub fn less_than_8mb<'a>() -> &'a [u8] {
         "0123456789abcdef".as_bytes()
     }
 
