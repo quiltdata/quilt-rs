@@ -493,7 +493,7 @@ mod tests {
         );
         assert_eq!(
             lineage.commit.unwrap().hash,
-            "bc937a84fa8ef20d6007f9561b3710651d3caf83792cbccd6b07c835b698d50f"
+            "e8fc7ccb96e87acd4ca02123e0c658ad92cdb2cc2822103d4f5bac79254cca08"
         );
 
         Ok(())
