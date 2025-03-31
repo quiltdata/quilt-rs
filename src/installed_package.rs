@@ -80,7 +80,7 @@ impl InstalledPackage {
         Ok(status)
     }
 
-    pub async fn install_paths(&self, paths: &Vec<PathBuf>) -> Res<LineagePaths> {
+    pub async fn install_paths(&self, paths: &[PathBuf]) -> Res<LineagePaths> {
         if paths.is_empty() {
             return Ok(BTreeMap::new());
         }
