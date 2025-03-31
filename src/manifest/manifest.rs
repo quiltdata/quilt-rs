@@ -62,6 +62,11 @@ impl<'de> Deserialize<'de> for Workflow {
         let helper = WorkflowHelper::deserialize(deserializer)?;
 
         let id = match (helper.id, helper.schemas) {
+            (None, _) => None,
+            (Some(id), None) => Some(WorkflowId {
+                id: id.clone(),
+                metadata: None,
+            }),
             (Some(id), Some(schemas)) => match schemas.iter().collect::<Vec<_>>().first() {
                 Some((schema_id, schema_url)) => match schema_url.parse() {
                     Ok(url) => Some(WorkflowId {
@@ -79,13 +84,6 @@ impl<'de> Deserialize<'de> for Workflow {
                 },
                 None => None,
             },
-            (None, _) => None,
-            (Some(id), None) => {
-                return Err(serde::de::Error::custom(format!(
-                    "Schema URL not found for workflow ID: {}",
-                    id
-                )))
-            }
         };
 
         Ok(Workflow {

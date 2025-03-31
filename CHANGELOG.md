@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## [0.16.0](https://crates.io/crates/quilt-rs/0.16.0) - 2025-03-31
+
+### Fixed
+
+- One more fix for optional schema in workflow
+
 ## [0.15.0](https://crates.io/crates/quilt-rs/0.15.0) - 2025-03-31
 
 ### Fixed

@@ -35,7 +35,7 @@ fn get_schema_id(yaml: &YamlValue, workflow_id: &str) -> Res<Option<String>> {
 async fn get_schema_url<R: Remote>(
     remote: &R,
     host: &Option<Host>,
-    yaml: YamlValue,
+    yaml: &YamlValue,
     workflow_id: &str,
 ) -> Res<Option<(String, S3Uri)>> {
     match get_schema_id(&yaml, workflow_id)? {
@@ -117,7 +117,7 @@ pub async fn resolve_workflow<R: Remote>(
         Some(yaml) => match workflow_id {
             Some(id) => {
                 if let Some((metadata_id, metadata_url)) =
-                    get_schema_url(remote, host, yaml, &id).await?
+                    get_schema_url(remote, host, &yaml, &id).await?
                 {
                     Ok(Some(Workflow {
                         config,
@@ -130,7 +130,10 @@ pub async fn resolve_workflow<R: Remote>(
                         }),
                     }))
                 } else {
-                    Ok(Some(Workflow { config, id: None }))
+                    Ok(Some(Workflow {
+                        config,
+                        id: Some(WorkflowId { id, metadata: None }),
+                    }))
                 }
             }
             None => Ok(Some(Workflow { config, id: None })),
