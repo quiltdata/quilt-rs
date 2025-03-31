@@ -19,7 +19,7 @@ use crate::Res;
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorkflowId {
     pub id: String,
-    pub url: S3Uri,
+    pub metadata_url: Option<S3Uri>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -36,7 +36,7 @@ impl<'de> Deserialize<'de> for WorkflowId {
         let s = String::deserialize(deserializer)?;
         Ok(WorkflowId {
             id: s,
-            url: S3Uri::default(), // This will be filled in from schemas
+            metadata_url: None, // This will be filled in from schemas
         })
     }
 }
@@ -60,7 +60,10 @@ impl<'de> Deserialize<'de> for Workflow {
                 // Look up the schema URL using the workflow ID as key
                 match schemas.get(&id) {
                     Some(url) => match url.parse() {
-                        Ok(url) => Some(WorkflowId { id, url }),
+                        Ok(url) => Some(WorkflowId {
+                            id,
+                            metadata_url: Some(url),
+                        }),
                         Err(_) => {
                             return Err(serde::de::Error::custom(Error::S3Uri(url.to_string())))
                         }
@@ -101,7 +104,10 @@ impl Serialize for Workflow {
                 state.serialize_field("config", &self.config.to_string())?;
                 state.serialize_field("id", &workflow_id.id)?;
                 let mut schemas = HashMap::new();
-                schemas.insert(workflow_id.id.clone(), workflow_id.url.to_string());
+                schemas.insert(
+                    workflow_id.id.clone(),
+                    workflow_id.metadata_url.clone().map(|u| u.to_string()),
+                );
                 state.serialize_field("schemas", &schemas)?;
                 state.end()
             }
@@ -631,7 +637,7 @@ mod tests {
             workflow.id,
             Some(WorkflowId {
                 id: "test-workflow".to_string(),
-                url: "s3://bucket/workflows/test.json".parse().unwrap()
+                metadata_url: Some("s3://bucket/workflows/test.json".parse()?)
             })
         );
         Ok(())
@@ -657,7 +663,7 @@ mod tests {
             config: "s3://workflow/config".parse()?,
             id: Some(WorkflowId {
                 id: "test-workflow".to_string(),
-                url: "s3://bucket/workflows/test.json".parse().unwrap(),
+                metadata_url: Some("s3://bucket/workflows/test.json".parse().unwrap()),
             }),
         };
 

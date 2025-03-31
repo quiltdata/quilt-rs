@@ -379,7 +379,7 @@ mod tests {
         let workflow = Workflow {
             id: Some(WorkflowId {
                 id: "test-id".to_string(),
-                url: "s3://test-url/workflows/schema.json".parse()?,
+                metadata_url: Some("s3://test-url/workflows/schema.json".parse()?),
             }),
             config: "s3://test/config".parse()?,
         };
