@@ -80,7 +80,7 @@ impl InstalledPackage {
         Ok(status)
     }
 
-    pub async fn install_paths(&self, paths: &Vec<PathBuf>) -> Res<LineagePaths> {
+    pub async fn install_paths(&self, paths: &[PathBuf]) -> Res<LineagePaths> {
         if paths.is_empty() {
             return Ok(BTreeMap::new());
         }
@@ -101,7 +101,7 @@ impl InstalledPackage {
             self.namespace.clone(),
             &self.storage,
             &self.remote,
-            paths,
+            &paths.iter().collect::<Vec<&PathBuf>>(),
         )
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;

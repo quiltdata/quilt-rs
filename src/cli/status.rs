@@ -104,10 +104,7 @@ mod tests {
         let readme_logical_key = PathBuf::from(pkg::README_LK);
         let timestamp_logical_key = PathBuf::from(pkg::TIMESTAMP_LK);
         installed_package
-            .install_paths(&vec![
-                readme_logical_key.clone(),
-                timestamp_logical_key.clone(),
-            ])
+            .install_paths(&[readme_logical_key.clone(), timestamp_logical_key.clone()])
             .await?;
 
         {
