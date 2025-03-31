@@ -151,6 +151,33 @@ mod tests {
     use crate::io::remote::mocks::MockRemote;
 
     #[tokio::test]
+    async fn test_missing_schemas_section() -> Res<()> {
+        let remote = MockRemote::default();
+        let host = None;
+        let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
+
+        // Put test config.yaml with workflow but no schemas section
+        let config = r#"
+workflows:
+  foo:
+    metadata_schema: bar
+"#;
+        remote
+            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .await?;
+
+        // Should error when trying to resolve a workflow with missing schema section
+        let err = resolve_workflow(&remote, &host, Some("foo".to_string()), &uri)
+            .await
+            .unwrap_err();
+        
+        assert!(matches!(err, Error::Workflow(_)));
+        assert!(err.to_string().contains("Schemas not found"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_no_config_yaml() -> Res<()> {
         let remote = MockRemote::default();
         let host = None;
