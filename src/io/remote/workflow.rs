@@ -2,6 +2,7 @@ use serde_yaml::Value as YamlValue;
 use tokio::io::AsyncReadExt;
 
 use crate::io::remote::Remote;
+use crate::manifest::MetadataSchema;
 use crate::manifest::Workflow;
 use crate::manifest::WorkflowId;
 use crate::uri::Host;
@@ -36,14 +37,15 @@ async fn get_schema_url<R: Remote>(
     host: &Option<Host>,
     yaml: YamlValue,
     workflow_id: &str,
-) -> Res<Option<S3Uri>> {
+) -> Res<Option<(String, S3Uri)>> {
     match get_schema_id(&yaml, workflow_id)? {
         Some(schema_id) => match &yaml.get("schemas") {
             Some(YamlValue::Mapping(schemas)) => match &schemas.get(&schema_id) {
                 Some(YamlValue::Mapping(schema)) => match &schema.get("url") {
-                    Some(YamlValue::String(url)) => {
-                        Ok(Some(remote.resolve_url(host, &url.parse()?).await?))
-                    }
+                    Some(YamlValue::String(url)) => Ok(Some((
+                        schema_id,
+                        remote.resolve_url(host, &url.parse()?).await?,
+                    ))),
                     _ => Err(Error::Workflow(format!(
                         "Schema {} doesn't have URL",
                         schema_id
@@ -114,11 +116,22 @@ pub async fn resolve_workflow<R: Remote>(
     match yaml {
         Some(yaml) => match workflow_id {
             Some(id) => {
-                let metadata_url = get_schema_url(remote, host, yaml, &id).await?;
-                Ok(Some(Workflow {
-                    config,
-                    id: Some(WorkflowId { id, metadata_url }),
-                }))
+                if let Some((metadata_id, metadata_url)) =
+                    get_schema_url(remote, host, yaml, &id).await?
+                {
+                    Ok(Some(Workflow {
+                        config,
+                        id: Some(WorkflowId {
+                            id,
+                            metadata: Some(MetadataSchema {
+                                id: metadata_id,
+                                url: metadata_url,
+                            }),
+                        }),
+                    }))
+                } else {
+                    Ok(Some(Workflow { config, id: None }))
+                }
             }
             None => Ok(Some(Workflow { config, id: None })),
         },
@@ -190,7 +203,10 @@ schemas:
             result.id.unwrap(),
             WorkflowId {
                 id: "foo".to_string(),
-                metadata_url: Some("s3://test-bucket/schemas/test.json".parse()?)
+                metadata: Some(MetadataSchema {
+                    id: "bar".to_string(),
+                    url: "s3://test-bucket/schemas/test.json".parse()?
+                })
             }
         );
 
