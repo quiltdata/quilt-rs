@@ -61,7 +61,7 @@ async fn install_package(
 
 async fn install_paths(
     installed_package: &quilt_rs::InstalledPackage,
-    paths: &[&PathBuf],
+    paths: &Vec<PathBuf>,
 ) -> Result<(), Error> {
     installed_package.install_paths(paths).await?;
     Ok(())
@@ -99,7 +99,7 @@ pub async fn model(
     let paths = get_entries(path, paths);
 
     if !paths.is_empty() {
-        install_paths(&installed_package, &paths.iter().collect::<Vec<_>>()).await?;
+        install_paths(&installed_package, &paths).await?;
     }
 
     Ok(Output {

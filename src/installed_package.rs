@@ -92,9 +92,6 @@ impl InstalledPackage {
         self.scaffold_paths_for_caching(&lineage.remote.bucket)
             .await?;
 
-        // Convert Vec<PathBuf> to Vec<&PathBuf> for compatibility with flow::install_paths
-        let path_refs: Vec<&PathBuf> = paths.iter().collect();
-
         let mut manifest = self.manifest().await?;
         let lineage = flow::install_paths(
             lineage,
@@ -104,7 +101,7 @@ impl InstalledPackage {
             self.namespace.clone(),
             &self.storage,
             &self.remote,
-            &path_refs,
+            &paths.iter().collect::<Vec<&PathBuf>>(),
         )
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
