@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## [0.15.0](https://crates.io/crates/quilt-rs/0.15.0) - 2025-03-31
+
+### Fixed
+
+- Make Metadata Schema optional in workflow
+- Schema id is different from workflow id
+
 ## [0.14.0](https://crates.io/crates/quilt-rs/0.14.0) - 2025-03-27
 
 ### Fixed
