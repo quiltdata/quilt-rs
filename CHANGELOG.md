@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## [0.17.0](https://crates.io/crates/quilt-rs/0.17.0) - 2025-03-31
+
+### Fixed
+
+- Sort metadata keys recursively
+
 ## [0.16.0](https://crates.io/crates/quilt-rs/0.16.0) - 2025-03-31
 
 ### Fixed
