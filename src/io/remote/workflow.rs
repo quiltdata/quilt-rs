@@ -38,7 +38,7 @@ async fn get_schema_url<R: Remote>(
     yaml: &YamlValue,
     workflow_id: &str,
 ) -> Res<Option<(String, S3Uri)>> {
-    match get_schema_id(&yaml, workflow_id)? {
+    match get_schema_id(yaml, workflow_id)? {
         Some(schema_id) => match &yaml.get("schemas") {
             Some(YamlValue::Mapping(schemas)) => match &schemas.get(&schema_id) {
                 Some(YamlValue::Mapping(schema)) => match &schema.get("url") {
