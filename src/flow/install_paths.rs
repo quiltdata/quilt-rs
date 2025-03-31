@@ -80,7 +80,7 @@ pub async fn install_paths(
     namespace: Namespace,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    entries_paths: &Vec<PathBuf>,
+    entries_paths: &[&PathBuf],
 ) -> Res<PackageLineage> {
     if entries_paths.is_empty() {
         info!("No paths to install");
@@ -96,7 +96,7 @@ pub async fn install_paths(
     debug!("🔍 Checking for already installed paths");
     // TODO: what happens if paths are already installed? Ignore, or error?
     // Fail early if path is already installed
-    if !HashSet::<PathBuf, RandomState>::from_iter(lineage.paths.keys().cloned())
+    if !HashSet::<&PathBuf, RandomState>::from_iter(lineage.paths.keys())
         .is_disjoint(&HashSet::from_iter(entries_paths.to_owned()))
     {
         debug!("❌ Found paths that are already installed");
@@ -226,7 +226,7 @@ mod tests {
         // Simulate the manifest with rows containing objects
         let lineage = PackageLineage::default();
         let single_object_path = PathBuf::from("a/a");
-        let entries_paths = vec![single_object_path.clone()];
+        let entries_paths = vec![&single_object_path];
         let mut manifest = Table::default();
         manifest
             .insert_record(sample_file_1::row(single_object_path.clone())?)
@@ -272,7 +272,7 @@ mod tests {
         let remote = MockRemote::default();
         let storage = MockStorage::default();
         let single_object_path = PathBuf::from("a/a");
-        let entries_paths = vec![single_object_path.clone()];
+        let entries_paths = vec![&single_object_path];
 
         domain_paths
             .scaffold_for_installing(&storage, &home, &namespace)
@@ -389,12 +389,7 @@ mod tests {
             .put_object(&lineage.remote.catalog, &remote_object_uri_4, Vec::new())
             .await?;
 
-        let entries_paths = vec![
-            row_1.name.clone(),
-            row_2.name.clone(),
-            row_3.name.clone(),
-            row_4.name.clone(),
-        ];
+        let entries_paths = vec![&row_1.name, &row_2.name, &row_3.name, &row_4.name];
 
         // Lineage does not track anything before the installation
         assert!(lineage.paths.is_empty());
@@ -433,8 +428,9 @@ mod tests {
         let remote = MockRemote::default();
         let storage = MockStorage::default();
 
+        let not_existed = PathBuf::from("z/z");
         // We want to install z/z
-        let entries_paths = vec![PathBuf::from("z/z")];
+        let entries_paths = vec![&not_existed];
         // But manifest clearly doens't contain it. It contain different path
         let sample_file_path = PathBuf::from("a/a");
         let mut manifest = Table::default();

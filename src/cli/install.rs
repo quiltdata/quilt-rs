@@ -61,7 +61,7 @@ async fn install_package(
 
 async fn install_paths(
     installed_package: &quilt_rs::InstalledPackage,
-    paths: &Vec<PathBuf>,
+    paths: &[PathBuf],
 ) -> Result<(), Error> {
     installed_package.install_paths(paths).await?;
     Ok(())

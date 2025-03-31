@@ -72,8 +72,8 @@ pub async fn reset_to_latest(
 
     debug!("⏳ Checking which paths to reinstall");
     let mut paths_to_install = Vec::new();
-    for x in installed_paths {
-        if manifest.contains_record(&x).await {
+    for x in &installed_paths {
+        if manifest.contains_record(x).await {
             debug!("✔️ Will reinstall path: {}", x.display());
             paths_to_install.push(x)
         } else {
