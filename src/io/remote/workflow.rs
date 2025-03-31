@@ -170,7 +170,7 @@ workflows:
         let err = resolve_workflow(&remote, &host, Some("foo".to_string()), &uri)
             .await
             .unwrap_err();
-        
+
         assert!(matches!(err, Error::Workflow(_)));
         assert!(err.to_string().contains("Schemas not found"));
 
