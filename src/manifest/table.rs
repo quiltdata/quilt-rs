@@ -42,6 +42,7 @@ fn serialize_table_header(header: &Header) -> Res<serde_json::Map<String, serde_
     if let Some(user_meta) = header.get_user_meta()? {
         let u = match user_meta {
             serde_json::Value::Object(mut m) => {
+                m.values_mut().for_each(serde_json::Value::sort_all_objects);
                 m.sort_keys();
                 serde_json::Value::Object(m)
             }
