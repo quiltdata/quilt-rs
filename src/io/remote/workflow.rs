@@ -2,6 +2,7 @@ use serde_yaml::Value as YamlValue;
 use tokio::io::AsyncReadExt;
 
 use crate::io::remote::Remote;
+use crate::manifest::MetadataSchema;
 use crate::manifest::Workflow;
 use crate::manifest::WorkflowId;
 use crate::uri::Host;
@@ -9,11 +10,12 @@ use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
 
-fn get_schema_id(yaml: &YamlValue, workflow_id: &str) -> Res<String> {
+fn get_schema_id(yaml: &YamlValue, workflow_id: &str) -> Res<Option<String>> {
     match &yaml.get("workflows") {
         Some(YamlValue::Mapping(workflows)) => match &workflows.get(workflow_id) {
             Some(YamlValue::Mapping(workflow)) => match &workflow.get("metadata_schema") {
-                Some(YamlValue::String(schema_id)) => Ok(schema_id.clone()),
+                Some(YamlValue::String(schema_id)) => Ok(Some(schema_id.clone())),
+                None => Ok(None),
                 _ => Err(Error::Workflow(format!(
                     "`metadata_schema` not found for workflow ID: {}",
                     workflow_id
@@ -35,25 +37,30 @@ async fn get_schema_url<R: Remote>(
     host: &Option<Host>,
     yaml: YamlValue,
     workflow_id: &str,
-) -> Res<S3Uri> {
-    let schema_id = get_schema_id(&yaml, workflow_id)?;
-    match &yaml.get("schemas") {
-        Some(YamlValue::Mapping(schemas)) => match &schemas.get(&schema_id) {
-            Some(YamlValue::Mapping(schema)) => match &schema.get("url") {
-                Some(YamlValue::String(url)) => Ok(remote.resolve_url(host, &url.parse()?).await?),
+) -> Res<Option<(String, S3Uri)>> {
+    match get_schema_id(&yaml, workflow_id)? {
+        Some(schema_id) => match &yaml.get("schemas") {
+            Some(YamlValue::Mapping(schemas)) => match &schemas.get(&schema_id) {
+                Some(YamlValue::Mapping(schema)) => match &schema.get("url") {
+                    Some(YamlValue::String(url)) => Ok(Some((
+                        schema_id,
+                        remote.resolve_url(host, &url.parse()?).await?,
+                    ))),
+                    _ => Err(Error::Workflow(format!(
+                        "Schema {} doesn't have URL",
+                        schema_id
+                    ))),
+                },
                 _ => Err(Error::Workflow(format!(
-                    "Schema {} doesn't have URL",
-                    schema_id
+                    "Schema {}, referenced by workflow {} not found in workflows/config.yaml",
+                    schema_id, workflow_id,
                 ))),
             },
-            _ => Err(Error::Workflow(format!(
-                "Schema {}, referenced by workflow {} not found in workflows/config.yaml",
-                schema_id, workflow_id,
-            ))),
+            _ => Err(Error::Workflow(
+                "Schemas not found in workflows/config.yaml".to_string(),
+            )),
         },
-        _ => Err(Error::Workflow(
-            "Schemas not found in workflows/config.yaml".to_string(),
-        )),
+        None => Ok(None),
     }
 }
 
@@ -109,11 +116,22 @@ pub async fn resolve_workflow<R: Remote>(
     match yaml {
         Some(yaml) => match workflow_id {
             Some(id) => {
-                let url = get_schema_url(remote, host, yaml, &id).await?;
-                Ok(Some(Workflow {
-                    config,
-                    id: Some(WorkflowId { id, url }),
-                }))
+                if let Some((metadata_id, metadata_url)) =
+                    get_schema_url(remote, host, yaml, &id).await?
+                {
+                    Ok(Some(Workflow {
+                        config,
+                        id: Some(WorkflowId {
+                            id,
+                            metadata: Some(MetadataSchema {
+                                id: metadata_id,
+                                url: metadata_url,
+                            }),
+                        }),
+                    }))
+                } else {
+                    Ok(Some(Workflow { config, id: None }))
+                }
             }
             None => Ok(Some(Workflow { config, id: None })),
         },
@@ -131,6 +149,33 @@ pub async fn resolve_workflow<R: Remote>(
 mod tests {
     use super::*;
     use crate::io::remote::mocks::MockRemote;
+
+    #[tokio::test]
+    async fn test_missing_schemas_section() -> Res<()> {
+        let remote = MockRemote::default();
+        let host = None;
+        let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
+
+        // Put test config.yaml with workflow but no schemas section
+        let config = r#"
+workflows:
+  foo:
+    metadata_schema: bar
+"#;
+        remote
+            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .await?;
+
+        // Should error when trying to resolve a workflow with missing schema section
+        let err = resolve_workflow(&remote, &host, Some("foo".to_string()), &uri)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, Error::Workflow(_)));
+        assert!(err.to_string().contains("Schemas not found"));
+
+        Ok(())
+    }
 
     #[tokio::test]
     async fn test_no_config_yaml() -> Res<()> {
@@ -185,7 +230,10 @@ schemas:
             result.id.unwrap(),
             WorkflowId {
                 id: "foo".to_string(),
-                url: "s3://test-bucket/schemas/test.json".parse()?
+                metadata: Some(MetadataSchema {
+                    id: "bar".to_string(),
+                    url: "s3://test-bucket/schemas/test.json".parse()?
+                })
             }
         );
 

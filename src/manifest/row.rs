@@ -274,6 +274,7 @@ impl From<S3Attributes> for Row {
 mod tests {
     use super::*;
 
+    use crate::manifest::MetadataSchema;
     use crate::manifest::WorkflowId;
 
     #[test]
@@ -379,7 +380,10 @@ mod tests {
         let workflow = Workflow {
             id: Some(WorkflowId {
                 id: "test-id".to_string(),
-                url: "s3://test-url/workflows/schema.json".parse()?,
+                metadata: Some(MetadataSchema {
+                    id: "test-id".to_string(),
+                    url: "s3://test-url/workflows/schema.json".parse()?,
+                }),
             }),
             config: "s3://test/config".parse()?,
         };
