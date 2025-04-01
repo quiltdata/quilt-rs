@@ -8,13 +8,10 @@ use multihash::Multihash;
 use crate::Res;
 
 pub mod sample_file_1 {
-    use std::path::PathBuf;
-
     use multihash::Multihash;
 
     use crate::checksum::ContentHash;
     use crate::lineage::PathState;
-    use crate::manifest::Row;
     use crate::Res;
 
     // FIXME: remove it
@@ -29,16 +26,6 @@ pub mod sample_file_1 {
         Ok(PathState {
             hash: row_hash()?,
             ..PathState::default()
-        })
-    }
-
-    // FIXME: remove it
-    pub fn row(name: PathBuf) -> Res<Row> {
-        Ok(Row {
-            name,
-            place: "file:///z/x/y".into(),
-            hash: row_hash()?,
-            ..Row::default()
         })
     }
 }

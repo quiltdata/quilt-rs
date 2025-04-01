@@ -127,7 +127,6 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::fixtures::sample_file_1;
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::Change;
@@ -137,15 +136,8 @@ mod tests {
     #[tokio::test]
     async fn test_no_pull_if_changes() -> Res {
         let storage = MockStorage::default();
-        let lineage = PackageLineage {
-            paths: BTreeMap::from([(PathBuf::from("a/a"), sample_file_1::path_state()?)]),
-            ..PackageLineage::default()
-        };
-        let sample_file_path = PathBuf::from("a/a");
+        let lineage = PackageLineage::default();
         let mut manifest = Table::default();
-        manifest
-            .insert_record(sample_file_1::row(sample_file_path)?)
-            .await?;
 
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(PathBuf::from("foo"), Change::Added(Row::default()))]),
