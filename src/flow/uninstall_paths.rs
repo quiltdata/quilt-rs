@@ -55,7 +55,6 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::fixtures;
-    use crate::fixtures::sample_file_1;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::PathState;
 
@@ -171,15 +170,35 @@ mod tests {
 
     #[tokio::test]
     async fn uninstall_multiple_paths() -> Res {
+        let manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
+
+        let logical_key_zero = PathBuf::from("0mb.bin");
+        let logical_key_nested = PathBuf::from("one/two two/three three three/READ ME.md");
         let lineage = PackageLineage {
             paths: BTreeMap::from([
-                (PathBuf::from("a/a"), sample_file_1::path_state()?),
-                (PathBuf::from("b/b"), sample_file_1::path_state()?),
+                (
+                    logical_key_zero.clone(),
+                    PathState {
+                        hash: manifest.get_record(&logical_key_zero).await?.unwrap().hash,
+                        ..PathState::default()
+                    },
+                ),
+                (
+                    logical_key_nested.clone(),
+                    PathState {
+                        hash: manifest
+                            .get_record(&logical_key_nested)
+                            .await?
+                            .unwrap()
+                            .hash,
+                        ..PathState::default()
+                    },
+                ),
             ]),
             ..PackageLineage::default()
         };
 
-        let paths = vec![PathBuf::from("b/b"), PathBuf::from("a/a")];
+        let paths = vec![logical_key_zero, logical_key_nested];
         let storage = MockStorage::default();
         let modified_lineage = uninstall_paths(lineage, PathBuf::new(), &storage, &paths).await?;
         assert!(modified_lineage.paths.is_empty());
