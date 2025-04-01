@@ -74,43 +74,15 @@ mod tests {
 
     #[tokio::test]
     async fn uninstall_single_path() -> Res {
-        let manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
-
         let logical_key_zero = PathBuf::from("0mb.bin");
         let logical_key_less_than_8mb = PathBuf::from("less-then-8mb.txt");
         let logical_key_nested = PathBuf::from("one/two two/three three three/READ ME.md");
 
         let lineage = PackageLineage {
             paths: BTreeMap::from([
-                (
-                    logical_key_zero.clone(),
-                    PathState {
-                        hash: manifest.get_record(&logical_key_zero).await?.unwrap().hash,
-                        ..PathState::default()
-                    },
-                ),
-                (
-                    logical_key_less_than_8mb.clone(),
-                    PathState {
-                        hash: manifest
-                            .get_record(&logical_key_less_than_8mb)
-                            .await?
-                            .unwrap()
-                            .hash,
-                        ..PathState::default()
-                    },
-                ),
-                (
-                    logical_key_nested.clone(),
-                    PathState {
-                        hash: manifest
-                            .get_record(&logical_key_nested)
-                            .await?
-                            .unwrap()
-                            .hash,
-                        ..PathState::default()
-                    },
-                ),
+                (logical_key_zero.clone(), PathState::default()),
+                (logical_key_less_than_8mb.clone(), PathState::default()),
+                (logical_key_nested.clone(), PathState::default()),
             ]),
             ..PackageLineage::default()
         };
@@ -145,24 +117,8 @@ mod tests {
         assert_eq!(
             modified_lineage.paths,
             BTreeMap::from([
-                (
-                    logical_key_zero.clone(),
-                    PathState {
-                        hash: manifest.get_record(&logical_key_zero).await?.unwrap().hash,
-                        ..PathState::default()
-                    },
-                ),
-                (
-                    logical_key_less_than_8mb.clone(),
-                    PathState {
-                        hash: manifest
-                            .get_record(&logical_key_less_than_8mb)
-                            .await?
-                            .unwrap()
-                            .hash,
-                        ..PathState::default()
-                    },
-                ),
+                (logical_key_zero.clone(), PathState::default()),
+                (logical_key_less_than_8mb.clone(), PathState::default()),
             ])
         );
         Ok(())
@@ -170,30 +126,12 @@ mod tests {
 
     #[tokio::test]
     async fn uninstall_multiple_paths() -> Res {
-        let manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
-
         let logical_key_zero = PathBuf::from("0mb.bin");
         let logical_key_nested = PathBuf::from("one/two two/three three three/READ ME.md");
         let lineage = PackageLineage {
             paths: BTreeMap::from([
-                (
-                    logical_key_zero.clone(),
-                    PathState {
-                        hash: manifest.get_record(&logical_key_zero).await?.unwrap().hash,
-                        ..PathState::default()
-                    },
-                ),
-                (
-                    logical_key_nested.clone(),
-                    PathState {
-                        hash: manifest
-                            .get_record(&logical_key_nested)
-                            .await?
-                            .unwrap()
-                            .hash,
-                        ..PathState::default()
-                    },
-                ),
+                (logical_key_zero.clone(), PathState::default()),
+                (logical_key_nested.clone(), PathState::default()),
             ]),
             ..PackageLineage::default()
         };
