@@ -194,7 +194,7 @@ mod tests {
     use std::path::PathBuf;
     use std::str::FromStr;
 
-    use crate::fixtures::sample_file_1;
+    use crate::fixtures;
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::Home;
@@ -215,22 +215,23 @@ mod tests {
         // Simulate the file already exists in `.quilt/objects/HASH`
         // We trust that the hash is correct, so we can skip the actual file content
         let storage = MockStorage::default();
-        // The same hash is used in `mocks::manifest::with_record_keys`
-        // So, it's not completely random.
-        let hash = sample_file_1::row_hash()?;
+
+        // Simulate the manifest with rows containing objects
+        let lineage = PackageLineage::default();
+        let single_object_path = PathBuf::from("less-then-8mb.txt");
+        let entries_paths = vec![&single_object_path];
+        let mut manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
+
+        let hash = manifest
+            .get_record(&single_object_path)
+            .await?
+            .unwrap()
+            .hash;
+        // let hash = fixtures::create_multihash(fixtures::objects::LESS_THAN_8MB_HASH_B64)?;
         let object_path = domain_paths.object(hash.digest());
         let absolute_path = home.join(object_path);
         // Path is `.quilt/objects/HASH`
         storage.write_file(absolute_path, &Vec::new()).await?;
-
-        // Simulate the manifest with rows containing objects
-        let lineage = PackageLineage::default();
-        let single_object_path = PathBuf::from("a/a");
-        let entries_paths = vec![&single_object_path];
-        let mut manifest = Table::default();
-        manifest
-            .insert_record(sample_file_1::row(single_object_path.clone())?)
-            .await?;
 
         // Lineage does not track anything before the installation
         assert!(lineage.paths.is_empty());
@@ -431,12 +432,8 @@ mod tests {
         let not_existed = PathBuf::from("z/z");
         // We want to install z/z
         let entries_paths = vec![&not_existed];
-        // But manifest clearly doens't contain it. It contain different path
-        let sample_file_path = PathBuf::from("a/a");
-        let mut manifest = Table::default();
-        manifest
-            .insert_record(sample_file_1::row(sample_file_path.clone())?)
-            .await?;
+        // But manifest clearly doens't contain it
+        let mut manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
 
         // Assert we don't track anything
         assert!(lineage.paths.is_empty());
