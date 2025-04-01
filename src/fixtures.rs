@@ -1,40 +1,11 @@
 use std::path::PathBuf;
 
+use crate::checksum::MULTIHASH_SHA256_CHUNKED;
+use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
+use multihash::Multihash;
+
 use crate::Res;
-
-pub mod sample_file_1 {
-    use std::path::PathBuf;
-
-    use multihash::Multihash;
-
-    use crate::checksum::ContentHash;
-    use crate::lineage::PathState;
-    use crate::manifest::Row;
-    use crate::Res;
-
-    //  FIXME: Use some hash from `objects` module
-    pub fn row_hash() -> Res<Multihash<256>> {
-        // This is a hash of fixtures/manifest.jsonl file
-        ContentHash::SHA256Chunked("4ssEkl5yUwi0LCjnsOl3pJ6ZgtgD8o5a6K9ayFtKDQE=".to_string())
-            .try_into()
-    }
-
-    pub fn path_state() -> Res<PathState> {
-        Ok(PathState {
-            hash: row_hash()?,
-            ..PathState::default()
-        })
-    }
-
-    pub fn row(name: PathBuf) -> Res<Row> {
-        Ok(Row {
-            name,
-            place: "file:///z/x/y".into(),
-            hash: row_hash()?,
-            ..Row::default()
-        })
-    }
-}
 
 fn local_uri(key: &str) -> Res<PathBuf> {
     Ok(std::env::current_dir()?.join(key))
@@ -170,17 +141,20 @@ pub mod manifest_empty {
     }
 }
 
+pub fn create_multihash(b64_str: &str) -> Res<Multihash<256>> {
+    Ok(Multihash::wrap(
+        MULTIHASH_SHA256_CHUNKED,
+        &BASE64_STANDARD.decode(b64_str)?,
+    )?)
+}
+
 pub mod manifest_with_objects_all_sizes {
     use std::path::PathBuf;
 
-    use base64::prelude::BASE64_STANDARD;
-    use base64::Engine;
-    use multihash::Multihash;
-
+    use super::create_multihash;
     use super::local_uri;
     use super::objects;
 
-    use crate::checksum::MULTIHASH_SHA256_CHUNKED;
     use crate::manifest::Row;
     use crate::manifest::Table;
     use crate::Res;
@@ -213,10 +187,7 @@ pub mod manifest_with_objects_all_sizes {
             .insert_record(Row {
                 name: PathBuf::from("0mb.bin"),
                 size: 0,
-                hash: Multihash::wrap(
-                    MULTIHASH_SHA256_CHUNKED,
-                    &BASE64_STANDARD.decode(objects::ZERO_HASH_B64)?,
-                )?,
+                hash: create_multihash(objects::ZERO_HASH_B64)?,
                 ..Row::default()
             })
             .await?;
@@ -224,10 +195,7 @@ pub mod manifest_with_objects_all_sizes {
             .insert_record(Row {
                 name: PathBuf::from("bigger-than-8mb.txt"),
                 size: 18874368,
-                hash: Multihash::wrap(
-                    MULTIHASH_SHA256_CHUNKED,
-                    &BASE64_STANDARD.decode(objects::MORE_THAN_8MB_HASH_B64)?,
-                )?,
+                hash: create_multihash(objects::MORE_THAN_8MB_HASH_B64)?,
                 ..Row::default()
             })
             .await?;
@@ -235,10 +203,7 @@ pub mod manifest_with_objects_all_sizes {
             .insert_record(Row {
                 name: PathBuf::from("equal-to-8mb.txt"),
                 size: 8388608,
-                hash: Multihash::wrap(
-                    MULTIHASH_SHA256_CHUNKED,
-                    &BASE64_STANDARD.decode(objects::EQUAL_TO_8MB_HASH_B64)?,
-                )?,
+                hash: create_multihash(objects::EQUAL_TO_8MB_HASH_B64)?,
                 ..Row::default()
             })
             .await?;
@@ -246,10 +211,7 @@ pub mod manifest_with_objects_all_sizes {
             .insert_record(Row {
                 name: PathBuf::from("less-then-8mb.txt"),
                 size: 16,
-                hash: Multihash::wrap(
-                    MULTIHASH_SHA256_CHUNKED,
-                    &BASE64_STANDARD.decode(objects::LESS_THAN_8MB_HASH_B64)?,
-                )?,
+                hash: create_multihash(objects::LESS_THAN_8MB_HASH_B64)?,
                 ..Row::default()
             })
             .await?;
@@ -257,10 +219,7 @@ pub mod manifest_with_objects_all_sizes {
             .insert_record(Row {
                 name: PathBuf::from("one/two two/three three three/READ ME.md"),
                 size: 20,
-                hash: Multihash::wrap(
-                    MULTIHASH_SHA256_CHUNKED,
-                    &BASE64_STANDARD.decode(objects::NESTED_HASH_B64)?,
-                )?,
+                hash: create_multihash(objects::NESTED_HASH_B64)?,
                 ..Row::default()
             })
             .await?;

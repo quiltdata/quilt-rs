@@ -54,8 +54,9 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::fixtures::sample_file_1;
+    use crate::fixtures;
     use crate::io::storage::mocks::MockStorage;
+    use crate::lineage::PathState;
 
     #[tokio::test]
     async fn uninstall_not_installed_path() -> Res {
@@ -73,40 +74,51 @@ mod tests {
 
     #[tokio::test]
     async fn uninstall_single_path() -> Res {
+        let logical_key_zero = PathBuf::from("0mb.bin");
+        let logical_key_less_than_8mb = PathBuf::from("less-then-8mb.txt");
+        let logical_key_nested = PathBuf::from("one/two two/three three three/READ ME.md");
+
         let lineage = PackageLineage {
             paths: BTreeMap::from([
-                (PathBuf::from("a/a"), sample_file_1::path_state()?),
-                (PathBuf::from("test folde/r"), sample_file_1::path_state()?),
-                (PathBuf::from("b/b"), sample_file_1::path_state()?),
+                (logical_key_zero.clone(), PathState::default()),
+                (logical_key_less_than_8mb.clone(), PathState::default()),
+                (logical_key_nested.clone(), PathState::default()),
             ]),
             ..PackageLineage::default()
         };
 
         let storage = MockStorage::default();
         storage
-            .write_file(PathBuf::from("a/a"), &Vec::new())
+            .write_file(&logical_key_zero, fixtures::objects::zero_bytes())
             .await?;
         storage
-            .write_file(PathBuf::from("test folde/r"), &Vec::new())
+            .write_file(
+                &logical_key_less_than_8mb,
+                fixtures::objects::less_than_8mb(),
+            )
             .await?;
         storage
-            .write_file(PathBuf::from("b/b"), &Vec::new())
+            .write_file(&logical_key_nested, fixtures::objects::nested())
             .await?;
 
-        let key = PathBuf::from("test folde/r");
-        assert!(storage.exists(&key).await);
+        assert!(storage.exists(&logical_key_nested).await);
 
-        let modified_lineage =
-            uninstall_paths(lineage, PathBuf::new(), &storage, &vec![key.clone()]).await?;
+        let modified_lineage = uninstall_paths(
+            lineage,
+            PathBuf::new(),
+            &storage,
+            &vec![logical_key_nested.clone()],
+        )
+        .await?;
 
         // Check that the key was removed
-        assert!(!storage.exists(&key).await);
+        assert!(!storage.exists(&logical_key_nested).await);
 
         assert_eq!(
             modified_lineage.paths,
             BTreeMap::from([
-                (PathBuf::from("a/a"), sample_file_1::path_state()?),
-                (PathBuf::from("b/b"), sample_file_1::path_state()?),
+                (logical_key_zero.clone(), PathState::default()),
+                (logical_key_less_than_8mb.clone(), PathState::default()),
             ])
         );
         Ok(())
@@ -114,15 +126,17 @@ mod tests {
 
     #[tokio::test]
     async fn uninstall_multiple_paths() -> Res {
+        let logical_key_zero = PathBuf::from("0mb.bin");
+        let logical_key_nested = PathBuf::from("one/two two/three three three/READ ME.md");
         let lineage = PackageLineage {
             paths: BTreeMap::from([
-                (PathBuf::from("a/a"), sample_file_1::path_state()?),
-                (PathBuf::from("b/b"), sample_file_1::path_state()?),
+                (logical_key_zero.clone(), PathState::default()),
+                (logical_key_nested.clone(), PathState::default()),
             ]),
             ..PackageLineage::default()
         };
 
-        let paths = vec![PathBuf::from("b/b"), PathBuf::from("a/a")];
+        let paths = vec![logical_key_zero, logical_key_nested];
         let storage = MockStorage::default();
         let modified_lineage = uninstall_paths(lineage, PathBuf::new(), &storage, &paths).await?;
         assert!(modified_lineage.paths.is_empty());

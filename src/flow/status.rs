@@ -310,31 +310,25 @@ mod tests {
 
     #[tokio::test]
     async fn test_removed_files() -> Res {
-        let logical_key = PathBuf::from("a/a");
+        let manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let logical_key = PathBuf::from("less-then-8mb.txt");
+        let record = manifest.get_record(&logical_key).await?.unwrap();
         let storage = MockStorage::default();
         let lineage = PackageLineage {
             paths: BTreeMap::from([(
                 logical_key.clone(),
                 PathState {
-                    hash: fixtures::sample_file_1::row_hash()?,
+                    hash: record.hash.clone(),
                     ..PathState::default()
                 },
             )]),
             ..PackageLineage::default()
         };
-        let mut manifest = Table::default();
-        manifest
-            .insert_record(Row {
-                name: logical_key.clone(),
-                hash: fixtures::sample_file_1::row_hash()?,
-                ..Row::default()
-            })
-            .await?;
         let working_dir = storage.temp_dir.as_ref().join(PathBuf::from("foo/bar"));
         storage
             .write_file(
                 working_dir.join(&logical_key),
-                &std::fs::read(fixtures::manifest::jsonl()?)?,
+                &fixtures::objects::less_than_8mb(),
             )
             .await?;
 

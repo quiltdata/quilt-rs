@@ -102,7 +102,7 @@ mod tests {
 
         // Get the raw text content first to check for the QUILT_CATALOG_CONFIG string
         let response: Config = client
-            .get("https://open.quilt.bio/config.json", None)
+            .get("https://open.quiltdata.com/config.json", None)
             .await?;
 
         // Check that the config.js contains the QUILT_CATALOG_CONFIG string
