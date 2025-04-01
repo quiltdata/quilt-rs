@@ -17,13 +17,14 @@ pub mod sample_file_1 {
     use crate::manifest::Row;
     use crate::Res;
 
-    //  FIXME: Use some hash from `objects` module
-    pub fn row_hash() -> Res<Multihash<256>> {
+    // FIXME: remove it
+    fn row_hash() -> Res<Multihash<256>> {
         // This is a hash of fixtures/manifest.jsonl file
         ContentHash::SHA256Chunked("4ssEkl5yUwi0LCjnsOl3pJ6ZgtgD8o5a6K9ayFtKDQE=".to_string())
             .try_into()
     }
 
+    // FIXME: remove it
     pub fn path_state() -> Res<PathState> {
         Ok(PathState {
             hash: row_hash()?,
@@ -31,6 +32,7 @@ pub mod sample_file_1 {
         })
     }
 
+    // FIXME: remove it
     pub fn row(name: PathBuf) -> Res<Row> {
         Ok(Row {
             name,
