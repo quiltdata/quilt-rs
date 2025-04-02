@@ -157,10 +157,10 @@ pub enum Error {
     /// Note that this uses a string for the underlying error type, because the AWS SDK
     /// uses generic error types that are difficult to work with for downstream users.
     #[error("S3 error: {0}")]
-    S3(String),
+    S3Raw(String),
 
     #[error("S3 error: {0}")]
-    S3V2(S3Error),
+    S3(S3Error),
 
     #[error("Invalid S3 URI: {0}")]
     S3Uri(String),

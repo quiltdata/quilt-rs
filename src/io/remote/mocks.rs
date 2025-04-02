@@ -46,7 +46,7 @@ impl Remote for MockRemote {
         self.storage.open_file(&key).await.map_err(|err| match err {
             Error::Io(inner_err) => {
                 if inner_err.kind() == std::io::ErrorKind::NotFound {
-                    Error::S3V2(S3Error::GetObject(
+                    Error::S3(S3Error::GetObject(
                         host.to_owned(),
                         "NoSuchKey: The specified key does not exist".to_string(),
                     ))
@@ -90,13 +90,13 @@ impl Remote for MockRemote {
             .await
             .map_err(|err| match err {
                 // TODO: made a similar finer error for the ByteStreamError
-                Error::ByteStreamError(_) => Error::S3V2(S3Error::GetObjectStream(
+                Error::ByteStreamError(_) => Error::S3(S3Error::GetObjectStream(
                     host.to_owned(),
                     "NoSuchKey: The specified key does not exist".to_string(),
                 )),
                 Error::Io(inner_err) => {
                     if inner_err.kind() == std::io::ErrorKind::NotFound {
-                        Error::S3V2(S3Error::GetObjectStream(
+                        Error::S3(S3Error::GetObjectStream(
                             host.to_owned(),
                             "NoSuchKey: The specified key does not exist".to_string(),
                         ))
@@ -134,7 +134,7 @@ impl Remote for MockRemote {
         if self.storage.exists(&key).await {
             Ok(s3_uri.clone())
         } else {
-            Err(Error::S3V2(S3Error::ResolveUrl(
+            Err(Error::S3(S3Error::ResolveUrl(
                 host.to_owned(),
                 "NoSuchKey: The specified key does not exist".to_string(),
             )))
@@ -176,7 +176,7 @@ mod tests {
             .await?;
         let s3_uri_not_found = S3Uri::try_from("s3://b/n?versionId=v")?;
         let not_found = remote.get_object(&None, &s3_uri_not_found).await;
-        if let Err(Error::S3V2(err)) = not_found {
+        if let Err(Error::S3(err)) = not_found {
             assert_eq!(
                 err,
                 S3Error::GetObject(
