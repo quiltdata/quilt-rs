@@ -318,7 +318,7 @@ mod tests {
             paths: BTreeMap::from([(
                 logical_key.clone(),
                 PathState {
-                    hash: record.hash.clone(),
+                    hash: record.hash,
                     ..PathState::default()
                 },
             )]),
@@ -328,7 +328,7 @@ mod tests {
         storage
             .write_file(
                 working_dir.join(&logical_key),
-                &fixtures::objects::less_than_8mb(),
+                fixtures::objects::less_than_8mb(),
             )
             .await?;
 
