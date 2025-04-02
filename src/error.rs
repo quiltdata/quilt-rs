@@ -26,6 +26,12 @@ pub enum Error {
     #[error("Commit error: {0}")]
     Commit(String),
 
+    #[error("Failed to read credentials for {}: {:?}", .0.0, .0.1)]
+    CredentialsRead((Host, String)),
+
+    #[error("Failed to refresh credentials for {}: {:?}", .0.0, .0.1)]
+    CredentialsRefresh((Host, String)),
+
     #[error("Invalid file:// URI: {0}")]
     FileUri(Url),
 
@@ -131,6 +137,12 @@ pub enum Error {
 
     #[error("Cannot convert to string: {0}")]
     ToString(#[from] ToStrError),
+
+    #[error("Failed to read tokens for {}: {:?}", .0.0, .0.1)]
+    TokensRead((Host, String)),
+
+    #[error("Failed to refresh tokens for {0}: {1}")]
+    TokensRefresh(Host, String),
 
     #[error("Integer conversion error: {0}")]
     TryFromIntError(#[from] std::num::TryFromIntError),

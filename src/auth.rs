@@ -16,6 +16,7 @@ use crate::io::storage::LocalStorage;
 use crate::io::storage::Storage;
 use crate::paths::DomainPaths;
 use crate::uri::Host;
+use crate::Error;
 use crate::Res;
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -229,7 +230,7 @@ impl<S: Storage + Clone> Auth<S> {
             }
             Err(e) => {
                 warn!("❌ Failed to read credentials for {}: {}", host, e);
-                return Err(e);
+                return Err(Error::CredentialsRead((host.to_owned(), e.to_string())));
             }
         }
 
@@ -249,7 +250,7 @@ impl<S: Storage + Clone> Auth<S> {
                     }
                     Err(e) => {
                         warn!("❌ Failed to refresh credentials for {}: {}", host, e);
-                        Err(e)
+                        Err(Error::CredentialsRefresh((host.to_owned(), e.to_string())))
                     }
                 }
             }
@@ -259,7 +260,7 @@ impl<S: Storage + Clone> Auth<S> {
             }
             Err(e) => {
                 warn!("❌ Failed to read tokens for {}: {}", host, e);
-                Err(e)
+                Err(Error::TokensRead((host.to_owned(), e.to_string())))
             }
         }
     }
