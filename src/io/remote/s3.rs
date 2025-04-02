@@ -32,6 +32,7 @@ use crate::checksum::get_compliant_chunked_checksum;
 use crate::checksum::ContentHash;
 use crate::checksum::MPU_MAX_PARTS;
 use crate::checksum::MULTIHASH_SHA256_CHUNKED;
+use crate::error::S3Error;
 use crate::io::remote::HttpClient;
 use crate::io::remote::ObjectsStream;
 use crate::io::remote::Remote;
@@ -447,7 +448,10 @@ impl Remote for RemoteS3 {
             }
             Err(err) => {
                 warn!("❌ Failed to check object existence at {}: {}", s3_uri, err);
-                Err(Error::S3(DisplayErrorContext(err).to_string()))
+                Err(Error::S3V2(S3Error::Exists(
+                    host.to_owned(),
+                    DisplayErrorContext(err).to_string(),
+                )))
             }
         }
     }

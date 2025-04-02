@@ -8,6 +8,12 @@ use url::Url;
 use crate::uri;
 use crate::uri::Host;
 
+#[derive(Error, Debug)]
+pub enum S3Error {
+    #[error("Failed to check object existence for {0:?}: {1}")]
+    Exists(Option<Host>, String),
+}
+
 /// The error type for this library
 #[derive(Error, Debug)]
 pub enum Error {
@@ -128,6 +134,9 @@ pub enum Error {
     /// uses generic error types that are difficult to work with for downstream users.
     #[error("S3 error: {0}")]
     S3(String),
+
+    #[error("S3 error: {0}")]
+    S3V2(S3Error),
 
     #[error("Invalid S3 URI: {0}")]
     S3Uri(String),
