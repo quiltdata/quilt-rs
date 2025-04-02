@@ -424,11 +424,11 @@ impl RemoteS3 {
         self.get_client_for_region(host, region)
             .await
             .map_err(|e| match e {
-                Error::LoginRequired(_) | Error::S3(_) => e,
-                _ => Error::S3(S3Error::Client(
+                Error::LoginRequired(_) | Error::S3(_, _) => e,
+                _ => Error::S3(
                     host.to_owned(),
-                    DisplayErrorContext(e).to_string(),
-                )),
+                    S3Error::Client(DisplayErrorContext(e).to_string()),
+                ),
             })
     }
 }
@@ -456,10 +456,10 @@ impl Remote for RemoteS3 {
             }
             Err(err) => {
                 warn!("❌ Failed to check object existence at {}: {}", s3_uri, err);
-                Err(Error::S3(S3Error::Exists(
+                Err(Error::S3(
                     host.to_owned(),
-                    DisplayErrorContext(err).to_string(),
-                )))
+                    S3Error::Exists(DisplayErrorContext(err).to_string()),
+                ))
             }
         }
     }
@@ -478,10 +478,10 @@ impl Remote for RemoteS3 {
             }
             Err(e) => {
                 warn!("❌ Failed to get object from {}: {}", s3_uri, e);
-                Err(Error::S3(S3Error::GetObject(
+                Err(Error::S3(
                     host.to_owned(),
-                    DisplayErrorContext(e).to_string(),
-                )))
+                    S3Error::GetObject(DisplayErrorContext(e).to_string()),
+                ))
             }
         }
     }
@@ -541,10 +541,10 @@ impl Remote for RemoteS3 {
                     "❌ Failed to get attributes for {}/{}: {}",
                     listing_uri.bucket, key, err
                 );
-                Err(Error::S3(S3Error::GetObjectAttributes(
+                Err(Error::S3(
                     host.to_owned(),
-                    DisplayErrorContext(err).to_string(),
-                )))
+                    S3Error::GetObjectAttributes(DisplayErrorContext(err).to_string()),
+                ))
             }
         }
     }
@@ -566,10 +566,10 @@ impl Remote for RemoteS3 {
             }
             Err(e) => {
                 warn!("❌ Failed to create stream for {}: {}", s3_uri, e);
-                Err(Error::S3(S3Error::GetObjectStream(
+                Err(Error::S3(
                     host.to_owned(),
-                    DisplayErrorContext(e).to_string(),
-                )))
+                    S3Error::GetObjectStream(DisplayErrorContext(e).to_string()),
+                ))
             }
         }
     }
@@ -586,7 +586,7 @@ impl Remote for RemoteS3 {
                 .send();
             while let Some(page) = paginated_stream.next().await {
                 yield page
-                    .map_err(|err| Error::S3(S3Error::ListObjects(host.to_owned(), DisplayErrorContext(err).to_string())))?
+                    .map_err(|err| Error::S3(host.to_owned(), S3Error::ListObjects(DisplayErrorContext(err).to_string())))?
                     .contents
                     .into_iter()
                     .flatten()
@@ -611,10 +611,10 @@ impl Remote for RemoteS3 {
             .send()
             .await
             .map_err(|err| {
-                Error::S3(S3Error::PutObject(
+                Error::S3(
                     host.to_owned(),
-                    DisplayErrorContext(err).to_string(),
-                ))
+                    S3Error::PutObject(DisplayErrorContext(err).to_string()),
+                )
             })?;
 
         Ok(())
@@ -632,10 +632,10 @@ impl Remote for RemoteS3 {
                 version: head.version_id,
                 ..s3_uri.clone()
             }),
-            Err(err) => Err(Error::S3(S3Error::ResolveUrl(
+            Err(err) => Err(Error::S3(
                 host.to_owned(),
-                DisplayErrorContext(err).to_string(),
-            ))),
+                S3Error::ResolveUrl(DisplayErrorContext(err).to_string()),
+            )),
         }
     }
 
@@ -655,10 +655,10 @@ impl Remote for RemoteS3 {
             }
         }
         .map_err(|err| {
-            Error::S3(S3Error::UploadFile(
+            Error::S3(
                 host.to_owned(),
-                DisplayErrorContext(err).to_string(),
-            ))
+                S3Error::UploadFile(DisplayErrorContext(err).to_string()),
+            )
         })
     }
 }

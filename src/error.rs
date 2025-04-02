@@ -10,32 +10,32 @@ use crate::uri::Host;
 
 #[derive(Error, Debug, PartialEq)]
 pub enum S3Error {
-    #[error("Failed to check object existence for {0:?}: {1}")]
-    Exists(Option<Host>, String),
+    #[error("Failed to check object existence: {0}")]
+    Exists(String),
 
-    #[error("Failed to get object for {0:?}: {1}")]
-    GetObject(Option<Host>, String),
+    #[error("Failed to get object: {0}")]
+    GetObject(String),
 
-    #[error("Failed to get object attributes for {0:?}: {1}")]
-    GetObjectAttributes(Option<Host>, String),
+    #[error("Failed to get object attributes: {0}")]
+    GetObjectAttributes(String),
 
-    #[error("Failed to get object stream for {0:?}: {1}")]
-    GetObjectStream(Option<Host>, String),
+    #[error("Failed to get object stream: {0}")]
+    GetObjectStream(String),
 
-    #[error("Failed to initialize S3 client for {0:?}: {1}")]
-    Client(Option<Host>, String),
+    #[error("Failed to initialize S3 client: {0}")]
+    Client(String),
 
-    #[error("Failed to list objects client for {0:?}: {1}")]
-    ListObjects(Option<Host>, String),
+    #[error("Failed to list objects client: {0}")]
+    ListObjects(String),
 
-    #[error("Failed to put object client for {0:?}: {1}")]
-    PutObject(Option<Host>, String),
+    #[error("Failed to put object client: {0}")]
+    PutObject(String),
 
-    #[error("Failed to resolve object URL for {0:?}: {1}")]
-    ResolveUrl(Option<Host>, String),
+    #[error("Failed to resolve object URL: {0}")]
+    ResolveUrl(String),
 
-    #[error("Failed to upload object for {0:?}: {1}")]
-    UploadFile(Option<Host>, String),
+    #[error("Failed to upload object: {0}")]
+    UploadFile(String),
 }
 
 /// The error type for this library
@@ -159,8 +159,8 @@ pub enum Error {
     #[error("S3 error: {0}")]
     S3Raw(String),
 
-    #[error("S3 error: {0}")]
-    S3(S3Error),
+    #[error("S3 error for {0:?}: {1}")]
+    S3(Option<Host>, S3Error),
 
     #[error("Invalid S3 URI: {0}")]
     S3Uri(String),
