@@ -8,10 +8,34 @@ use url::Url;
 use crate::uri;
 use crate::uri::Host;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq)]
 pub enum S3Error {
     #[error("Failed to check object existence for {0:?}: {1}")]
     Exists(Option<Host>, String),
+
+    #[error("Failed to get object for {0:?}: {1}")]
+    GetObject(Option<Host>, String),
+
+    #[error("Failed to get object attributes for {0:?}: {1}")]
+    GetObjectAttributes(Option<Host>, String),
+
+    #[error("Failed to get object stream for {0:?}: {1}")]
+    GetObjectStream(Option<Host>, String),
+
+    #[error("Failed to initialize S3 client for {0:?}: {1}")]
+    Client(Option<Host>, String),
+
+    #[error("Failed to list objects client for {0:?}: {1}")]
+    ListObjects(Option<Host>, String),
+
+    #[error("Failed to put object client for {0:?}: {1}")]
+    PutObject(Option<Host>, String),
+
+    #[error("Failed to resolve object URL for {0:?}: {1}")]
+    ResolveUrl(Option<Host>, String),
+
+    #[error("Failed to upload object for {0:?}: {1}")]
+    UploadFile(Option<Host>, String),
 }
 
 /// The error type for this library

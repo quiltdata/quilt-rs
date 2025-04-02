@@ -349,7 +349,7 @@ impl RemoteS3 {
                         }
                         Err(e) => {
                             warn!("❌ Failed to read credentials for {}: {}", host, e);
-                            return Err(e);
+                            return Err(Error::CredentialsRead((host.to_owned(), e.to_string())));
                         }
                     }
                     // Credentials expired or missing, will create new client with refreshed credentials
@@ -421,7 +421,15 @@ impl RemoteS3 {
         bucket: &str,
     ) -> Res<aws_sdk_s3::Client> {
         let region = self.get_region_for_bucket(bucket).await?.clone();
-        self.get_client_for_region(host, region).await
+        self.get_client_for_region(host, region)
+            .await
+            .map_err(|e| match e {
+                Error::LoginRequired(_) | Error::S3V2(_) => e,
+                _ => Error::S3V2(S3Error::Client(
+                    host.to_owned(),
+                    DisplayErrorContext(e).to_string(),
+                )),
+            })
     }
 }
 
@@ -470,7 +478,10 @@ impl Remote for RemoteS3 {
             }
             Err(e) => {
                 warn!("❌ Failed to get object from {}: {}", s3_uri, e);
-                Err(e)
+                Err(Error::S3V2(S3Error::GetObject(
+                    host.to_owned(),
+                    DisplayErrorContext(e).to_string(),
+                )))
             }
         }
     }
@@ -530,7 +541,10 @@ impl Remote for RemoteS3 {
                     "❌ Failed to get attributes for {}/{}: {}",
                     listing_uri.bucket, key, err
                 );
-                Err(Error::S3(DisplayErrorContext(err).to_string()))
+                Err(Error::S3V2(S3Error::GetObjectAttributes(
+                    host.to_owned(),
+                    DisplayErrorContext(err).to_string(),
+                )))
             }
         }
     }
@@ -552,7 +566,10 @@ impl Remote for RemoteS3 {
             }
             Err(e) => {
                 warn!("❌ Failed to create stream for {}: {}", s3_uri, e);
-                Err(e)
+                Err(Error::S3V2(S3Error::GetObjectStream(
+                    host.to_owned(),
+                    DisplayErrorContext(e).to_string(),
+                )))
             }
         }
     }
@@ -569,7 +586,7 @@ impl Remote for RemoteS3 {
                 .send();
             while let Some(page) = paginated_stream.next().await {
                 yield page
-                    .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?
+                    .map_err(|err| Error::S3V2(S3Error::ListObjects(host.to_owned(), DisplayErrorContext(err).to_string())))?
                     .contents
                     .into_iter()
                     .flatten()
@@ -593,7 +610,12 @@ impl Remote for RemoteS3 {
             .body(contents.into())
             .send()
             .await
-            .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
+            .map_err(|err| {
+                Error::S3V2(S3Error::PutObject(
+                    host.to_owned(),
+                    DisplayErrorContext(err).to_string(),
+                ))
+            })?;
 
         Ok(())
     }
@@ -610,7 +632,10 @@ impl Remote for RemoteS3 {
                 version: head.version_id,
                 ..s3_uri.clone()
             }),
-            Err(err) => Err(Error::S3(DisplayErrorContext(err).to_string())),
+            Err(err) => Err(Error::S3V2(S3Error::ResolveUrl(
+                host.to_owned(),
+                DisplayErrorContext(err).to_string(),
+            ))),
         }
     }
 
@@ -622,11 +647,19 @@ impl Remote for RemoteS3 {
         size: u64,
     ) -> Res<(S3Uri, Multihash<256>)> {
         let client = self.get_client_for_bucket(host, &dest_uri.bucket).await?;
-        if size == 0 {
-            put_object_and_checksum(client, source_path, dest_uri, size).await
-        } else {
-            multipart_upload_and_checksum(client, source_path, dest_uri, size).await
+        {
+            if size == 0 {
+                put_object_and_checksum(client, source_path, dest_uri, size).await
+            } else {
+                multipart_upload_and_checksum(client, source_path, dest_uri, size).await
+            }
         }
+        .map_err(|err| {
+            Error::S3V2(S3Error::UploadFile(
+                host.to_owned(),
+                DisplayErrorContext(err).to_string(),
+            ))
+        })
     }
 }
 
