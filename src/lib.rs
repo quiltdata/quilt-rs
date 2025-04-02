@@ -24,7 +24,7 @@ pub mod flow;
 
 pub mod auth;
 pub mod checksum;
-mod error;
+pub mod error;
 mod installed_package;
 pub mod io;
 pub mod lineage;
