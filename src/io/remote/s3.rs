@@ -32,6 +32,7 @@ use crate::checksum::get_compliant_chunked_checksum;
 use crate::checksum::ContentHash;
 use crate::checksum::MPU_MAX_PARTS;
 use crate::checksum::MULTIHASH_SHA256_CHUNKED;
+use crate::error::AuthError;
 use crate::error::S3Error;
 use crate::io::remote::HttpClient;
 use crate::io::remote::ObjectsStream;
@@ -349,7 +350,10 @@ impl RemoteS3 {
                         }
                         Err(e) => {
                             warn!("❌ Failed to read credentials for {}: {}", host, e);
-                            return Err(Error::CredentialsRead((host.to_owned(), e.to_string())));
+                            return Err(Error::Auth(
+                                host.to_owned(),
+                                AuthError::CredentialsRead(e.to_string()),
+                            ));
                         }
                     }
                     // Credentials expired or missing, will create new client with refreshed credentials

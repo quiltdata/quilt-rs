@@ -38,11 +38,29 @@ pub enum S3Error {
     UploadFile(String),
 }
 
+#[derive(Error, Debug, PartialEq)]
+pub enum AuthError {
+    #[error("Failed to read credentials: {0}")]
+    CredentialsRead(String),
+
+    #[error("Failed to refresh credentials: {0}")]
+    CredentialsRefresh(String),
+
+    #[error("Failed to read tokens: {0}")]
+    TokensRead(String),
+
+    #[error("Failed to refresh tokens: {0}")]
+    TokensRefresh(String),
+}
+
 /// The error type for this library
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("Arrow error: {0}")]
     Arrow(#[from] arrow::error::ArrowError),
+
+    #[error("Authentication failed for {0}: {1}")]
+    Auth(Host, AuthError),
 
     #[error("Base64 error: {0}")]
     Base64(#[from] base64::DecodeError),
@@ -55,12 +73,6 @@ pub enum Error {
 
     #[error("Commit error: {0}")]
     Commit(String),
-
-    #[error("Failed to read credentials for {}: {:?}", .0.0, .0.1)]
-    CredentialsRead((Host, String)),
-
-    #[error("Failed to refresh credentials for {}: {:?}", .0.0, .0.1)]
-    CredentialsRefresh((Host, String)),
 
     #[error("Invalid file:// URI: {0}")]
     FileUri(Url),
@@ -170,12 +182,6 @@ pub enum Error {
 
     #[error("Cannot convert to string: {0}")]
     ToString(#[from] ToStrError),
-
-    #[error("Failed to read tokens for {}: {:?}", .0.0, .0.1)]
-    TokensRead((Host, String)),
-
-    #[error("Failed to refresh tokens for {0}: {1}")]
-    TokensRefresh(Host, String),
 
     #[error("Integer conversion error: {0}")]
     TryFromIntError(#[from] std::num::TryFromIntError),
