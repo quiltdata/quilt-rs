@@ -69,6 +69,9 @@ async fn fetch_workflows_config<R: Remote>(
     host: &Option<Host>,
     uri: &S3Uri,
 ) -> Res<(S3Uri, Option<YamlValue>)> {
+    if !remote.exists(host, uri).await? {
+        return Ok((uri.clone(), None));
+    }
     match remote.get_object_stream(host, uri).await {
         Ok(stream) => {
             let mut bytes = Vec::new();
@@ -78,13 +81,6 @@ async fn fetch_workflows_config<R: Remote>(
                 .read_to_end(&mut bytes)
                 .await?;
             Ok((stream.uri, serde_yaml::from_slice(&bytes)?))
-        }
-        Err(Error::S3(err_str)) => {
-            if err_str.contains("NoSuchKey") {
-                Ok((uri.clone(), None))
-            } else {
-                Err(Error::S3(err_str))
-            }
         }
         Err(err) => Err(err),
     }

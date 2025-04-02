@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## [0.19.0](https://crates.io/crates/quilt-rs/0.19.0) - 2025-04-02
+
+### Changed
+
+* Group errors for local credentials under `AuthError` and specific S3 errors under `S3Error`
+* Add `Host` or `Option<Host>` for every such error
+
 ## [0.18.0](https://crates.io/crates/quilt-rs/0.18.0) - 2025-04-01
 
 ### Refactored

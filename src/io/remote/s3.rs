@@ -32,6 +32,8 @@ use crate::checksum::get_compliant_chunked_checksum;
 use crate::checksum::ContentHash;
 use crate::checksum::MPU_MAX_PARTS;
 use crate::checksum::MULTIHASH_SHA256_CHUNKED;
+use crate::error::AuthError;
+use crate::error::S3Error;
 use crate::io::remote::HttpClient;
 use crate::io::remote::ObjectsStream;
 use crate::io::remote::Remote;
@@ -59,7 +61,7 @@ impl TryFrom<GetObjectAttributesOutput> for S3AttributesWrapper {
     fn try_from(attrs: GetObjectAttributesOutput) -> Result<Self, Self::Error> {
         if attrs.delete_marker.is_some() {
             // Can happen if object is removed after it was listed but before attributes retrieved.
-            return Err(Error::S3("Object is a delete marker".to_string()));
+            return Err(Error::S3Raw("Object is a delete marker".to_string()));
         }
 
         let checksum = match get_compliant_chunked_checksum(&attrs) {
@@ -97,7 +99,7 @@ async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<R
     let result = result
         .send()
         .await
-        .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
+        .map_err(|err| Error::S3Raw(DisplayErrorContext(err).to_string()))?;
     let uri_versioned = S3Uri {
         version: result.version_id,
         ..s3_uri.clone()
@@ -129,7 +131,7 @@ async fn put_object_and_checksum(
         .checksum_algorithm(ChecksumAlgorithm::Sha256)
         .send()
         .await
-        .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
+        .map_err(|err| Error::S3Raw(DisplayErrorContext(err).to_string()))?;
     let s3_checksum_b64 = response
         .checksum_sha256
         .ok_or(Error::Checksum("missing checksum".to_string()))?;
@@ -170,7 +172,7 @@ async fn multipart_upload_and_checksum(
         .checksum_algorithm(ChecksumAlgorithm::Sha256)
         .send()
         .await
-        .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?
+        .map_err(|err| Error::S3Raw(DisplayErrorContext(err).to_string()))?
         .upload_id
         .ok_or(Error::UploadId("failed to get an UploadId".to_string()))?;
 
@@ -195,7 +197,7 @@ async fn multipart_upload_and_checksum(
             .body(chunk_body)
             .send()
             .await
-            .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
+            .map_err(|err| Error::S3Raw(DisplayErrorContext(err).to_string()))?;
         parts.push(
             CompletedPart::builder()
                 .part_number(part_number)
@@ -217,7 +219,7 @@ async fn multipart_upload_and_checksum(
         )
         .send()
         .await
-        .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
+        .map_err(|err| Error::S3Raw(DisplayErrorContext(err).to_string()))?;
 
     let s3_checksum = response
         .checksum_sha256
@@ -348,7 +350,10 @@ impl RemoteS3 {
                         }
                         Err(e) => {
                             warn!("❌ Failed to read credentials for {}: {}", host, e);
-                            return Err(e);
+                            return Err(Error::Auth(
+                                host.to_owned(),
+                                AuthError::CredentialsRead(e.to_string()),
+                            ));
                         }
                     }
                     // Credentials expired or missing, will create new client with refreshed credentials
@@ -420,7 +425,15 @@ impl RemoteS3 {
         bucket: &str,
     ) -> Res<aws_sdk_s3::Client> {
         let region = self.get_region_for_bucket(bucket).await?.clone();
-        self.get_client_for_region(host, region).await
+        self.get_client_for_region(host, region)
+            .await
+            .map_err(|e| match e {
+                Error::LoginRequired(_) | Error::S3(_, _) => e,
+                _ => Error::S3(
+                    host.to_owned(),
+                    S3Error::Client(DisplayErrorContext(e).to_string()),
+                ),
+            })
     }
 }
 
@@ -447,7 +460,10 @@ impl Remote for RemoteS3 {
             }
             Err(err) => {
                 warn!("❌ Failed to check object existence at {}: {}", s3_uri, err);
-                Err(Error::S3(DisplayErrorContext(err).to_string()))
+                Err(Error::S3(
+                    host.to_owned(),
+                    S3Error::Exists(DisplayErrorContext(err).to_string()),
+                ))
             }
         }
     }
@@ -466,7 +482,10 @@ impl Remote for RemoteS3 {
             }
             Err(e) => {
                 warn!("❌ Failed to get object from {}: {}", s3_uri, e);
-                Err(e)
+                Err(Error::S3(
+                    host.to_owned(),
+                    S3Error::GetObject(DisplayErrorContext(e).to_string()),
+                ))
             }
         }
     }
@@ -526,7 +545,10 @@ impl Remote for RemoteS3 {
                     "❌ Failed to get attributes for {}/{}: {}",
                     listing_uri.bucket, key, err
                 );
-                Err(Error::S3(DisplayErrorContext(err).to_string()))
+                Err(Error::S3(
+                    host.to_owned(),
+                    S3Error::GetObjectAttributes(DisplayErrorContext(err).to_string()),
+                ))
             }
         }
     }
@@ -548,7 +570,10 @@ impl Remote for RemoteS3 {
             }
             Err(e) => {
                 warn!("❌ Failed to create stream for {}: {}", s3_uri, e);
-                Err(e)
+                Err(Error::S3(
+                    host.to_owned(),
+                    S3Error::GetObjectStream(DisplayErrorContext(e).to_string()),
+                ))
             }
         }
     }
@@ -565,7 +590,7 @@ impl Remote for RemoteS3 {
                 .send();
             while let Some(page) = paginated_stream.next().await {
                 yield page
-                    .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?
+                    .map_err(|err| Error::S3(host.to_owned(), S3Error::ListObjects(DisplayErrorContext(err).to_string())))?
                     .contents
                     .into_iter()
                     .flatten()
@@ -589,7 +614,12 @@ impl Remote for RemoteS3 {
             .body(contents.into())
             .send()
             .await
-            .map_err(|err| Error::S3(DisplayErrorContext(err).to_string()))?;
+            .map_err(|err| {
+                Error::S3(
+                    host.to_owned(),
+                    S3Error::PutObject(DisplayErrorContext(err).to_string()),
+                )
+            })?;
 
         Ok(())
     }
@@ -606,7 +636,10 @@ impl Remote for RemoteS3 {
                 version: head.version_id,
                 ..s3_uri.clone()
             }),
-            Err(err) => Err(Error::S3(DisplayErrorContext(err).to_string())),
+            Err(err) => Err(Error::S3(
+                host.to_owned(),
+                S3Error::ResolveUrl(DisplayErrorContext(err).to_string()),
+            )),
         }
     }
 
@@ -618,11 +651,19 @@ impl Remote for RemoteS3 {
         size: u64,
     ) -> Res<(S3Uri, Multihash<256>)> {
         let client = self.get_client_for_bucket(host, &dest_uri.bucket).await?;
-        if size == 0 {
-            put_object_and_checksum(client, source_path, dest_uri, size).await
-        } else {
-            multipart_upload_and_checksum(client, source_path, dest_uri, size).await
+        {
+            if size == 0 {
+                put_object_and_checksum(client, source_path, dest_uri, size).await
+            } else {
+                multipart_upload_and_checksum(client, source_path, dest_uri, size).await
+            }
         }
+        .map_err(|err| {
+            Error::S3(
+                host.to_owned(),
+                S3Error::UploadFile(DisplayErrorContext(err).to_string()),
+            )
+        })
     }
 }
 

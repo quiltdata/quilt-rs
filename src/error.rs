@@ -8,11 +8,59 @@ use url::Url;
 use crate::uri;
 use crate::uri::Host;
 
+#[derive(Error, Debug, PartialEq)]
+pub enum S3Error {
+    #[error("Failed to check object existence: {0}")]
+    Exists(String),
+
+    #[error("Failed to get object: {0}")]
+    GetObject(String),
+
+    #[error("Failed to get object attributes: {0}")]
+    GetObjectAttributes(String),
+
+    #[error("Failed to get object stream: {0}")]
+    GetObjectStream(String),
+
+    #[error("Failed to initialize S3 client: {0}")]
+    Client(String),
+
+    #[error("Failed to list objects client: {0}")]
+    ListObjects(String),
+
+    #[error("Failed to put object client: {0}")]
+    PutObject(String),
+
+    #[error("Failed to resolve object URL: {0}")]
+    ResolveUrl(String),
+
+    #[error("Failed to upload object: {0}")]
+    UploadFile(String),
+}
+
+#[derive(Error, Debug, PartialEq)]
+pub enum AuthError {
+    #[error("Failed to read credentials: {0}")]
+    CredentialsRead(String),
+
+    #[error("Failed to refresh credentials: {0}")]
+    CredentialsRefresh(String),
+
+    #[error("Failed to read tokens: {0}")]
+    TokensRead(String),
+
+    #[error("Failed to refresh tokens: {0}")]
+    TokensRefresh(String),
+}
+
 /// The error type for this library
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("Arrow error: {0}")]
     Arrow(#[from] arrow::error::ArrowError),
+
+    #[error("Authentication failed for {0}: {1}")]
+    Auth(Host, AuthError),
 
     #[error("Base64 error: {0}")]
     Base64(#[from] base64::DecodeError),
@@ -121,7 +169,10 @@ pub enum Error {
     /// Note that this uses a string for the underlying error type, because the AWS SDK
     /// uses generic error types that are difficult to work with for downstream users.
     #[error("S3 error: {0}")]
-    S3(String),
+    S3Raw(String),
+
+    #[error("S3 error for {0:?}: {1}")]
+    S3(Option<Host>, S3Error),
 
     #[error("Invalid S3 URI: {0}")]
     S3Uri(String),

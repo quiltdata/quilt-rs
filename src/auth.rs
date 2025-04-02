@@ -9,6 +9,7 @@ use tracing::debug;
 use tracing::info;
 use tracing::warn;
 
+use crate::error::AuthError;
 use crate::io::storage::auth::AuthIo;
 use crate::io::storage::auth::Credentials;
 use crate::io::storage::auth::Tokens;
@@ -16,6 +17,7 @@ use crate::io::storage::LocalStorage;
 use crate::io::storage::Storage;
 use crate::paths::DomainPaths;
 use crate::uri::Host;
+use crate::Error;
 use crate::Res;
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -229,7 +231,10 @@ impl<S: Storage + Clone> Auth<S> {
             }
             Err(e) => {
                 warn!("❌ Failed to read credentials for {}: {}", host, e);
-                return Err(e);
+                return Err(Error::Auth(
+                    host.to_owned(),
+                    AuthError::CredentialsRead(e.to_string()),
+                ));
             }
         }
 
@@ -249,7 +254,10 @@ impl<S: Storage + Clone> Auth<S> {
                     }
                     Err(e) => {
                         warn!("❌ Failed to refresh credentials for {}: {}", host, e);
-                        Err(e)
+                        Err(Error::Auth(
+                            host.to_owned(),
+                            AuthError::CredentialsRefresh(e.to_string()),
+                        ))
                     }
                 }
             }
@@ -259,7 +267,10 @@ impl<S: Storage + Clone> Auth<S> {
             }
             Err(e) => {
                 warn!("❌ Failed to read tokens for {}: {}", host, e);
-                Err(e)
+                Err(Error::Auth(
+                    host.to_owned(),
+                    AuthError::TokensRead(e.to_string()),
+                ))
             }
         }
     }
