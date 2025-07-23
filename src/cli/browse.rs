@@ -149,7 +149,7 @@ mod tests {
 
             let output = model(local_domain, Input { uri }).await?;
 
-            let output_str = format!("{}", output);
+            let output_str = format!("{output}");
             assert_eq!(output_str, get_browse_output()?);
 
             assert_eq!(

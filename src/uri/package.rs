@@ -120,14 +120,14 @@ impl Visitor<'_> for NamespaceVisitor {
     where
         E: de::Error,
     {
-        Namespace::try_from(value).map_err(|e| E::custom(format!("Failed parse namespace {}", e)))
+        Namespace::try_from(value).map_err(|e| E::custom(format!("Failed parse namespace {e}")))
     }
 
     fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Namespace::try_from(value).map_err(|e| E::custom(format!("Failed parse namespace {}", e)))
+        Namespace::try_from(value).map_err(|e| E::custom(format!("Failed parse namespace {e}")))
     }
 }
 
@@ -206,8 +206,7 @@ impl TryFrom<&str> for S3PackageUri {
         }
 
         let fragment = parsed_url.fragment().ok_or(Error::PackageURI(format!(
-            "S3 package URI must contain a fragment: {}",
-            input
+            "S3 package URI must contain a fragment: {input}"
         )))?;
         let mut params: HashMap<_, _> = form_urlencoded::parse(fragment.as_bytes())
             .into_owned()
@@ -233,8 +232,7 @@ impl TryFrom<&str> for S3PackageUri {
 
         if !params.is_empty() {
             return Err(Error::PackageURI(format!(
-                "unexpected parameters in fragment: {:?}",
-                params
+                "unexpected parameters in fragment: {params:?}"
             )));
         }
 
@@ -268,7 +266,7 @@ impl S3PackageUri {
                 if h == "latest" {
                     "".to_string()
                 } else {
-                    format!("@{}", h)
+                    format!("@{h}")
                 }
             }
             RevisionPointer::Hash(h) => format!("@{}", Self::format_hash(h)),
@@ -278,7 +276,7 @@ impl S3PackageUri {
             None => "".to_string(),
         };
         let catalog_part = match &self.catalog {
-            Some(p) => format!("&catalog={}", p),
+            Some(p) => format!("&catalog={p}"),
             None => "".to_string(),
         };
         format!(
@@ -321,17 +319,17 @@ impl fmt::Display for S3PackageUri {
                 if h == "latest" {
                     "".to_string()
                 } else {
-                    format!("@{}", h)
+                    format!("@{h}")
                 }
             }
-            RevisionPointer::Hash(h) => format!("@{}", h),
+            RevisionPointer::Hash(h) => format!("@{h}"),
         };
         let path_part = match &self.path {
             Some(p) => format!("&path={}", p.display()),
             None => "".to_string(),
         };
         let catalog_part = match &self.catalog {
-            Some(p) => format!("&catalog={}", p),
+            Some(p) => format!("&catalog={p}"),
             None => "".to_string(),
         };
         write!(

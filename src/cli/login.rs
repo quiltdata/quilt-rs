@@ -45,7 +45,7 @@ mod tests {
         let host = Host::from_str("example.com").unwrap();
         let output = Output { host };
 
-        let display_string = format!("{}", output);
+        let display_string = format!("{output}");
         assert_eq!(display_string, "Successfully logged in to example.com");
     }
 }

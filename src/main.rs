@@ -19,12 +19,12 @@ async fn main() {
             let mut stderr_handle = stderr.lock();
 
             if let Err(err) = print(result, &mut stdout_handle, &mut stderr_handle) {
-                log::error!("Failed to print output: {}", err);
+                log::error!("Failed to print output: {err}");
                 std::process::exit(1);
             }
         }
         Err(err) => {
-            log::error!("Failed to run command: {}", err);
+            log::error!("Failed to run command: {err}");
             std::process::exit(1);
         }
     }

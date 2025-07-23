@@ -186,14 +186,14 @@ pub async fn init(args: Args) -> Result<Std, Error> {
 
     if let Some(dir) = args.home {
         if let Err(err) = m.set_home(dir).await {
-            log::error!("Failed to set home directory: {}", err);
+            log::error!("Failed to set home directory: {err}");
             return Ok(Std::Err(err));
         }
     }
 
     // Validate the lineage
     if let Err(err) = m.get_home().await {
-        log::error!("Failed to get home directory: {}", err);
+        log::error!("Failed to get home directory: {err}");
         return Ok(Std::Err(err));
     }
 
@@ -205,13 +205,13 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             };
             let args = benchmark::Input { number, dest_dir };
 
-            log::info!("Benchmark manifest creation {:?}", args,);
+            log::info!("Benchmark manifest creation {args:?}",);
             Ok(benchmark::command(m, args).await)
         }
         Commands::Browse { uri } => {
             let args = browse::Input { uri };
 
-            log::info!("Browsing {:?}", args);
+            log::info!("Browsing {args:?}");
             Ok(browse::command(m, args).await)
         }
         Commands::Commit {
@@ -236,7 +236,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 workflow,
             };
 
-            log::info!("Committing {:?}", args);
+            log::info!("Committing {args:?}");
             Ok(commit::command(m, args).await)
         }
         Commands::Install {
@@ -250,14 +250,14 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 uri,
             };
 
-            log::info!("Installing {:?}", args);
+            log::info!("Installing {args:?}");
             Ok(install::command(m, args).await)
         }
         Commands::Login { code, host } => {
             if let Some(code) = code {
                 let args = login::Input { code, host };
 
-                log::info!("Logging in {:?}", args);
+                log::info!("Logging in {args:?}");
                 Ok(login::command(m, args).await)
             } else {
                 // TODO: Check the lineage, if there are some `package.remote.catalog`
@@ -290,7 +290,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 user_meta,
             };
 
-            log::info!("Packaging {:?}", args);
+            log::info!("Packaging {args:?}");
             Ok(package::command(m, args).await)
         }
         Commands::Pull { namespace } => {
@@ -298,7 +298,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 namespace: namespace.try_into()?,
             };
 
-            log::info!("Pull {:?}", args);
+            log::info!("Pull {args:?}");
             Ok(pull::command(m, args).await)
         }
         Commands::Push { namespace } => {
@@ -306,7 +306,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 namespace: namespace.try_into()?,
             };
 
-            log::info!("Pushing {:?}", args);
+            log::info!("Pushing {args:?}");
             Ok(push::command(m, args).await)
         }
         Commands::Status { namespace } => {
@@ -314,7 +314,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 namespace: namespace.try_into()?,
             };
 
-            log::info!("Status {:?}", args);
+            log::info!("Status {args:?}");
             Ok(status::command(m, args).await)
         }
         Commands::Uninstall { namespace } => {
@@ -322,7 +322,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 namespace: namespace.try_into()?,
             };
 
-            log::info!("Uninstalling {:?}", args);
+            log::info!("Uninstalling {args:?}");
             Ok(uninstall::command(m, args).await)
         }
     }

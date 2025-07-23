@@ -128,7 +128,7 @@ mod tests {
 
         let output = Output { manifest_uri };
 
-        let display_string = format!("{}", output);
+        let display_string = format!("{output}");
         assert_eq!(
             display_string,
             "Manifest s3://foo/.quilt/packages/1220abc123.parquet created"

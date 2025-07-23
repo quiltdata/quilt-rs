@@ -232,7 +232,7 @@ impl Manifest {
         let mut lines = reader.lines();
 
         let header = lines.next_line().await.map_err(|err| {
-            Error::ManifestHeader(format!("Failed to read the manifest header: {}", err))
+            Error::ManifestHeader(format!("Failed to read the manifest header: {err}"))
         })?;
 
         let Some(header_str) = header else {
@@ -472,7 +472,7 @@ mod tests {
         if let Err(Error::ManifestHeader(error_string)) = result {
             assert_eq!(error_string, "Unsupported manifest version: v1");
         } else {
-            panic!("Expected ManifestHeader error, got: {:?}", result);
+            panic!("Expected ManifestHeader error, got: {result:?}");
         }
         Ok(())
     }

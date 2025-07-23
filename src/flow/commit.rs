@@ -323,7 +323,7 @@ mod tests {
         let hash = fixtures::manifest_empty::EMPTY_NONE_TOP_HASH;
         assert!(
             storage
-                .exists(&PathBuf::from(format!(".quilt/installed/foo/bar/{}", hash)))
+                .exists(&PathBuf::from(format!(".quilt/installed/foo/bar/{hash}")))
                 .await
         );
         assert_eq!(lineage.commit.unwrap().hash, hash.to_string());
@@ -359,7 +359,7 @@ mod tests {
         let hash = "56c329d2390c9c6efedb698f47b75f096112c89a7751d55a426507ec6c432897";
         assert!(
             storage
-                .exists(&PathBuf::from(format!(".quilt/installed/foo/bar/{}", hash)))
+                .exists(&PathBuf::from(format!(".quilt/installed/foo/bar/{hash}")))
                 .await
         );
         assert_eq!(lineage.commit.unwrap().hash, hash.to_string());
@@ -424,7 +424,7 @@ mod tests {
         );
         assert!(
             storage
-                .exists(&PathBuf::from(format!(".quilt/installed/foo/bar/{}", hash)))
+                .exists(&PathBuf::from(format!(".quilt/installed/foo/bar/{hash}")))
                 .await,
             "Registry doesn't have installed package with a new hash"
         );
@@ -487,7 +487,7 @@ mod tests {
         );
         assert!(
             storage
-                .exists(&PathBuf::from(format!("/.quilt/objects/{}", hash)))
+                .exists(&PathBuf::from(format!("/.quilt/objects/{hash}")))
                 .await,
             "Registry doesn't have installed path"
         );

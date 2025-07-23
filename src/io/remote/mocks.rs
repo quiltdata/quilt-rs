@@ -31,7 +31,7 @@ pub(crate) struct MockRemote {
 impl Remote for MockRemote {
     async fn exists(&self, _host: &Option<Host>, s3_uri: &S3Uri) -> Res<bool> {
         let key = s3_uri.to_string();
-        log::debug!("Mocking {} exists request", key);
+        log::debug!("Mocking {key} exists request");
         Ok(self.storage.exists(&key).await)
     }
 
@@ -41,7 +41,7 @@ impl Remote for MockRemote {
         s3_uri: &S3Uri,
     ) -> Res<impl AsyncRead + Send + Unpin> {
         let key = s3_uri.to_string();
-        log::debug!("Mocking {} get request", key);
+        log::debug!("Mocking {key} get request");
 
         self.storage.open_file(&key).await.map_err(|err| match err {
             Error::Io(inner_err) => {
@@ -84,7 +84,7 @@ impl Remote for MockRemote {
         s3_uri: &S3Uri,
     ) -> Res<RemoteObjectStream> {
         let key = s3_uri.to_string();
-        log::debug!("Mocking {} get request", key);
+        log::debug!("Mocking {key} get request");
 
         let body = self
             .storage
@@ -129,14 +129,14 @@ impl Remote for MockRemote {
         contents: impl Into<ByteStream>,
     ) -> Res {
         let key = s3_uri.to_string();
-        log::debug!("Mocking {} put request", key);
+        log::debug!("Mocking {key} put request");
         let contents_vec = contents.into().collect().await?.to_vec();
         self.storage.write_file(key, &contents_vec).await
     }
 
     async fn resolve_url(&self, host: &Option<Host>, s3_uri: &S3Uri) -> Res<S3Uri> {
         let key = s3_uri.to_string();
-        log::debug!("Mocking {} HEAD request", key);
+        log::debug!("Mocking {key} HEAD request");
         if self.storage.exists(&key).await {
             Ok(s3_uri.clone())
         } else {

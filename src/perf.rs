@@ -66,25 +66,25 @@ pub fn format_delta(d: TimeDelta) -> String {
 
     let (days, d) = cut_days(d);
     if let Some(days) = days {
-        output.push(format!("{}d", days));
+        output.push(format!("{days}d"));
     }
 
     let (hours, d) = cut_hours(d);
     if let Some(hours) = hours {
-        output.push(format!("{}h", hours));
+        output.push(format!("{hours}h"));
     }
 
     let (minutes, d) = cut_minutes(d);
     if let Some(minutes) = minutes {
-        output.push(format!("{}m", minutes));
+        output.push(format!("{minutes}m"));
     }
 
     let (seconds, d) = cut_seconds(d);
     if let Some(seconds) = seconds {
-        output.push(format!("{}s", seconds));
+        output.push(format!("{seconds}s"));
     } else {
         let milliseconds = d.num_milliseconds();
-        output.push(format!("{}ms", milliseconds));
+        output.push(format!("{milliseconds}ms"));
     }
 
     output.join(" ").to_string()

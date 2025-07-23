@@ -254,7 +254,7 @@ mod tests {
                 .expect("Failed to commit");
 
             assert_eq!(
-                format!("{}", output),
+                format!("{output}"),
                 format!("New commit \"{}\" created", hash_for_initial_test_commit)
             );
         }

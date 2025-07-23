@@ -118,7 +118,7 @@ mod tests {
             .await?;
 
             assert_eq!(
-                format!("{}", output),
+                format!("{output}"),
                 "Installed package is up to date\nNo changes"
             );
         }
@@ -147,7 +147,7 @@ mod tests {
             )
             .await?;
 
-            let status_new_files_str = format!("{}", status_new_files);
+            let status_new_files_str = format!("{status_new_files}");
             assert!(status_new_files_str.contains("Installed package is up to date"));
             assert!(
                 status_new_files_str.contains("foo/bar.md                               | Added")
@@ -159,7 +159,7 @@ mod tests {
         storage
             .remove_file(working_dir.join(readme_logical_key))
             .await
-            .map_err(|e| Error::Test(format!("Failed to remove file: {}", e)))?;
+            .map_err(|e| Error::Test(format!("Failed to remove file: {e}")))?;
 
         {
             let local_domain = m.get_local_domain();
@@ -171,7 +171,7 @@ mod tests {
             )
             .await?;
 
-            let file_removed_status_str = format!("{}", status_file_removed);
+            let file_removed_status_str = format!("{status_file_removed}");
             assert!(file_removed_status_str.contains("Installed package is up to date"));
             assert!(file_removed_status_str
                 .contains("foo/bar.md                               | Added"));
@@ -205,7 +205,7 @@ mod tests {
             )
             .await?;
             assert_eq!(
-                format!("{}", status_ahead),
+                format!("{status_ahead}"),
                 "Your commits are ahead of the remote\nNo changes"
             );
         }
@@ -232,7 +232,7 @@ mod tests {
             .await?;
 
             assert_eq!(
-                format!("{}", output),
+                format!("{output}"),
                 "Your commits are behind the remote\nNo changes"
             );
         }
@@ -252,7 +252,7 @@ mod tests {
             .await?;
 
             assert_eq!(
-                format!("{}", output),
+                format!("{output}"),
                 "Your commits are detached from the remote\nNo changes"
             );
         }

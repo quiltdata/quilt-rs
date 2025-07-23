@@ -33,7 +33,7 @@ impl std::fmt::Display for Output {
             output.push("No paths installed".to_string())
         } else {
             for path in &self.paths {
-                output.push(format!("Path: {:?}", path));
+                output.push(format!("Path: {path:?}"));
             }
         }
         write!(f, "{}", output.join("\n"))
@@ -152,7 +152,7 @@ mod tests {
             .await?;
 
             assert_eq!(
-                format!("{}", output),
+                format!("{output}"),
                 format!(
                     "Installed package \"{}\"\nPath: \"{}\"\nPath: \"{}\"",
                     pkg::NAMESPACE_STR,
@@ -236,7 +236,7 @@ mod tests {
 
             // No paths installed during this call
             assert_eq!(
-                format!("{}", install_once_more),
+                format!("{install_once_more}"),
                 format!(
                     "Installed package \"{}\"\nNo paths installed",
                     pkg::NAMESPACE_STR,
