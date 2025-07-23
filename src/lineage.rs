@@ -85,10 +85,7 @@ impl TryFrom<Vec<u8>> for DomainLineage {
                 Ok(lineage)
             }
             Err(err) => {
-                log::error!(
-                    "Failed to parse `Vec<u8>` for `DomainLineage` in `{:?}`",
-                    input
-                );
+                log::error!("Failed to parse `Vec<u8>` for `DomainLineage` in `{input:?}`");
                 Err(Error::LineageParse(err))
             }
         }

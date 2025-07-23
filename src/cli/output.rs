@@ -22,8 +22,8 @@ pub fn print(
     stderr: &mut impl Write,
 ) -> Result<(), std::io::Error> {
     match output {
-        Std::Out(str) => writeln!(stdout, "{}", str)?,
-        Std::Err(err) => writeln!(stderr, "{}", err)?,
+        Std::Out(str) => writeln!(stdout, "{str}")?,
+        Std::Err(err) => writeln!(stderr, "{err}")?,
     }
     Ok(())
 }

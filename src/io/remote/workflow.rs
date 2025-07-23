@@ -17,13 +17,11 @@ fn get_schema_id(yaml: &YamlValue, workflow_id: &str) -> Res<Option<String>> {
                 Some(YamlValue::String(schema_id)) => Ok(Some(schema_id.clone())),
                 None => Ok(None),
                 _ => Err(Error::Workflow(format!(
-                    "`metadata_schema` not found for workflow ID: {}",
-                    workflow_id
+                    "`metadata_schema` not found for workflow ID: {workflow_id}"
                 ))),
             },
             _ => Err(Error::Workflow(format!(
-                "Workflow {} not found in workflows/config.yaml",
-                workflow_id
+                "Workflow {workflow_id} not found in workflows/config.yaml"
             ))),
         },
         _ => Err(Error::Workflow(
@@ -47,13 +45,11 @@ async fn get_schema_url<R: Remote>(
                         remote.resolve_url(host, &url.parse()?).await?,
                     ))),
                     _ => Err(Error::Workflow(format!(
-                        "Schema {} doesn't have URL",
-                        schema_id
+                        "Schema {schema_id} doesn't have URL"
                     ))),
                 },
                 _ => Err(Error::Workflow(format!(
-                    "Schema {}, referenced by workflow {} not found in workflows/config.yaml",
-                    schema_id, workflow_id,
+                    "Schema {schema_id}, referenced by workflow {workflow_id} not found in workflows/config.yaml",
                 ))),
             },
             _ => Err(Error::Workflow(
@@ -136,8 +132,7 @@ pub async fn resolve_workflow<R: Remote>(
         },
         None => match workflow_id {
             Some(workflow_id) => Err(Error::Workflow(format!(
-                "There is no workflows config, but the workflow \"{}\" is set",
-                workflow_id
+                "There is no workflows config, but the workflow \"{workflow_id}\" is set"
             ))),
             None => Ok(None),
         },

@@ -226,7 +226,7 @@ mod tests {
         if let Error::Io(orig_err) = err {
             assert_eq!(orig_err.kind(), std::io::ErrorKind::PermissionDenied);
         } else {
-            panic!("Expected IO error, got: {:?}", err);
+            panic!("Expected IO error, got: {err:?}");
         }
 
         Ok(())

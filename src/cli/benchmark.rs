@@ -46,7 +46,7 @@ async fn benchmark(
     let stream = stream! {
         let mut chunk = Vec::new();
         while i < number {
-            let name = PathBuf::from(format!("file://{}", i));
+            let name = PathBuf::from(format!("file://{i}"));
             let row= Row {
                 name,
                 hash: Multihash::wrap(0xb510, b"pedestrian").expect("Unexpected"),
@@ -60,13 +60,13 @@ async fn benchmark(
             }
 
             if i > 0 && i % 10_000 == 0 && i < 100_000 {
-                log::debug!("Another 10k rows written, {}", i);
+                log::debug!("Another 10k rows written, {i}");
             }
             if i > 0 && i % 100_000 == 0 && i < 1_000_000 {
-                log::debug!("Another 100k rows written, {}", i);
+                log::debug!("Another 100k rows written, {i}");
             }
             if i > 0 && i % 1_000_000 == 0 {
-                log::debug!("Another million rows written, {}", i);
+                log::debug!("Another million rows written, {i}");
             }
             i += 1;
         }
@@ -102,7 +102,7 @@ mod tests {
             top_hash,
         };
 
-        let display_string = format!("{}", output);
+        let display_string = format!("{output}");
         let expected = "Manifest written to \"/path/to/manifest\"\nWith hash abc123\nAnd it took";
         assert!(display_string.starts_with(expected));
     }

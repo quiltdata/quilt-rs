@@ -27,11 +27,11 @@ const TAGS_DIR: &str = ".quilt/named_packages";
 
 /// Where do we store tagged "packages". Files that contain packages' hashes.
 pub fn tag_key(namespace: &Namespace, tag: &str) -> String {
-    format!("{}/{}/{}", TAGS_DIR, namespace, tag)
+    format!("{TAGS_DIR}/{namespace}/{tag}")
 }
 
 fn parquet_manifest_filename(top_hash: &str) -> String {
-    format!("1220{}.parquet", top_hash)
+    format!("1220{top_hash}.parquet")
 }
 
 /// What is the path to the PARQUET manifest based on its `hash`
@@ -41,7 +41,7 @@ pub fn get_manifest_key(hash: &str) -> String {
 
 /// What is the path to the JSONL manifest based on its `hash`
 pub fn get_manifest_key_legacy(hash: &str) -> String {
-    format!("{}/{}", MANIFEST_DIR, hash)
+    format!("{MANIFEST_DIR}/{hash}")
 }
 
 /// Path to the package home directory within the home directory

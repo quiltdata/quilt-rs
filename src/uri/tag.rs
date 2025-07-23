@@ -17,7 +17,7 @@ pub enum Tag {
 impl fmt::Display for Tag {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Tag::Timestamp(t) => write!(f, "{}", t),
+            Tag::Timestamp(t) => write!(f, "{t}"),
             Tag::Latest => write!(f, "latest"),
         }
     }

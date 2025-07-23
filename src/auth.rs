@@ -65,7 +65,7 @@ fn date_from_rfc3339<'de, D: Deserializer<'de>>(
     use serde::de::Error;
     String::deserialize(deserializer).and_then(|s| {
         chrono::DateTime::parse_from_rfc3339(&s)
-            .map_err(|e| Error::custom(format!("Invalid RFC3339 date: {}", e)))
+            .map_err(|e| Error::custom(format!("Invalid RFC3339 date: {e}")))
             .map(|dt| dt.with_timezone(&chrono::Utc))
     })
 }
@@ -78,7 +78,7 @@ struct QuiltStackConfig {
 
 async fn get_registry_url(http_client: &impl HttpClient, host: &Host) -> Res<url::Host> {
     let QuiltStackConfig { registry_url } = http_client
-        .get(&format!("https://{}/config.json", host), None)
+        .get(&format!("https://{host}/config.json"), None)
         .await?;
     Ok(url::Host::Domain(
         registry_url
@@ -98,7 +98,7 @@ async fn get_auth_tokens(
     let mut form_data: HashMap<String, String> = HashMap::new();
     form_data.insert("refresh_token".to_string(), refresh_token.to_string());
     let tokens_json: RemoteTokens = http_client
-        .post(&format!("https://{}/api/token", registry), &form_data)
+        .post(&format!("https://{registry}/api/token"), &form_data)
         .await?;
     let tokens = Tokens::from(tokens_json);
 
@@ -114,7 +114,7 @@ async fn refresh_credentials(
 
     let creds_json: RemoteCredentials = http_client
         .get(
-            &format!("https://{}/api/auth/get_credentials", registry),
+            &format!("https://{registry}/api/auth/get_credentials"),
             Some(access_token),
         )
         .await?;
@@ -308,11 +308,11 @@ mod tests {
             match url {
                 u if u == format!("https://{}/config.json", get_host()) => {
                     let config = QuiltStackConfig {
-                        registry_url: format!("https://{}", registry).parse()?,
+                        registry_url: format!("https://{registry}").parse()?,
                     };
                     Ok(serde_json::from_value(serde_json::to_value(config)?)?)
                 }
-                u if u == format!("https://{}/api/auth/get_credentials", registry) => {
+                u if u == format!("https://{registry}/api/auth/get_credentials") => {
                     assert_eq!(auth_token, Some(ACCESS_TOKEN));
                     let creds = RemoteCredentials {
                         access_key_id: "test-access-key".to_string(),
@@ -322,7 +322,7 @@ mod tests {
                     };
                     Ok(serde_json::from_value(serde_json::to_value(creds)?)?)
                 }
-                _ => panic!("Unexpected URL: {}", url),
+                _ => panic!("Unexpected URL: {url}"),
             }
         }
 

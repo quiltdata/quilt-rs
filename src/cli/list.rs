@@ -47,7 +47,7 @@ mod tests {
             let local_domain = m.get_local_domain();
             let empty_output = model(local_domain).await?;
             assert!(empty_output.installed_packages_list.is_empty());
-            assert_eq!(format!("{}", empty_output), "No installed packages");
+            assert_eq!(format!("{empty_output}"), "No installed packages");
         }
         Ok(())
     }
@@ -69,7 +69,7 @@ mod tests {
                 pkg::NAMESPACE.into()
             );
             assert_eq!(
-                format!("{}", output),
+                format!("{output}"),
                 format!("InstalledPackage<{}>", pkg::NAMESPACE_STR)
             );
         }

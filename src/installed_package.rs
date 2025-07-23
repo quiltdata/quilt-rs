@@ -116,7 +116,7 @@ impl InstalledPackage {
     }
 
     pub async fn revert_paths(&self, paths: &Vec<String>) -> Res {
-        log::debug!("revert_paths: {:?}", paths);
+        log::debug!("revert_paths: {paths:?}");
         unimplemented!()
     }
 
@@ -318,7 +318,7 @@ mod tests {
         for i in 0..10 {
             let commit = package
                 .commit(
-                    format!("Commit new1 {}", i),
+                    format!("Commit new1 {i}"),
                     Some(serde_json::json!({ "count": i })),
                     None,
                 )

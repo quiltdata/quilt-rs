@@ -11,7 +11,7 @@ use crate::Error;
 use crate::Res;
 
 fn not_found_error(path: &PathBuf) -> Error {
-    Error::Uninstall(format!("path {:?} not found. Cannot uninstall.", path))
+    Error::Uninstall(format!("path {path:?} not found. Cannot uninstall."))
 }
 
 /// Uninstalls paths: remote files from home directory and stop tracking in `.quilt/lineage.json`.

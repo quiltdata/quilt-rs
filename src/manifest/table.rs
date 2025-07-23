@@ -234,7 +234,7 @@ impl Table {
     pub fn remove_record(&mut self, path: &PathBuf) -> Res<Row> {
         self.records
             .remove(path)
-            .ok_or(Error::Table(format!("Cannot remove {:?}", path)))
+            .ok_or(Error::Table(format!("Cannot remove {path:?}")))
     }
 
     pub async fn records_len(&self) -> usize {

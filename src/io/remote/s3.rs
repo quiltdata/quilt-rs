@@ -80,7 +80,7 @@ impl TryFrom<GetObjectAttributesOutput> for S3AttributesWrapper {
 
 async fn find_bucket_region(client: &impl HttpClient, bucket: &str) -> Res<String> {
     match client
-        .head(&format!("https://s3.amazonaws.com/{}", bucket))
+        .head(&format!("https://s3.amazonaws.com/{bucket}"))
         .await?
         .get("x-amz-bucket-region")
     {
@@ -723,10 +723,7 @@ mod tests {
             Err(Error::Checksum(msg)) => {
                 assert_eq!(msg, "missing checksum");
             }
-            _ => panic!(
-                "Expected Error::Checksum(\"missing checksum\"), got {:?}",
-                result
-            ),
+            _ => panic!("Expected Error::Checksum(\"missing checksum\"), got {result:?}"),
         }
     }
 }

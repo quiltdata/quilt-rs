@@ -46,8 +46,7 @@ impl TryFrom<Multihash<256>> for ContentHash {
                 BASE64_STANDARD.encode(value.digest()),
             )),
             code => Err(Error::InvalidMultihash(format!(
-                "Unexpected code: {:#06x}",
-                code
+                "Unexpected code: {code:#06x}"
             ))),
         }
     }

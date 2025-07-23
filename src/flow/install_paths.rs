@@ -123,7 +123,7 @@ pub async fn install_paths(
         let row = table
             .get_record(path)
             .await?
-            .ok_or(Error::Table(format!("path {:?} not found", path)))?;
+            .ok_or(Error::Table(format!("path {path:?} not found")))?;
 
         let object_dest = paths.object(row.hash.digest());
 

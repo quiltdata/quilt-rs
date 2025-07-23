@@ -204,7 +204,7 @@ impl From<&Row> for RowDisplay {
 impl fmt::Display for Row {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let table = tabled::Table::new(vec![RowDisplay::from(self)]);
-        write!(f, "{}", table)
+        write!(f, "{table}")
     }
 }
 
