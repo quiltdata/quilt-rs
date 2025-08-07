@@ -14,7 +14,7 @@ path = "src/lib.rs"
 
 [dependencies]
 arrow = "55.2.0"
-arrow-array = "55.2.0"
+arrow-array = "56.0.0"
 async-stream = "0.3.6"
 async-trait = "0.1.88"
 aws-config = "1.8.2"
