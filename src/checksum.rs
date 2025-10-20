@@ -32,7 +32,7 @@ pub enum ContentHash {
 }
 
 /// Multihash code for legacy or single-chunked checksums
-pub const MULTIHASH_SHA256: u64 = 0x16;
+pub const MULTIHASH_SHA256: u64 = 0x12;
 /// Multihash code for chunksums
 pub const MULTIHASH_SHA256_CHUNKED: u64 = 0xb510;
 
@@ -187,6 +187,22 @@ mod tests {
     use base64::Engine;
 
     use crate::fixtures;
+
+    #[tokio::test]
+    async fn test_calculate_sha256_checksum() -> Res {
+        let bytes = fixtures::objects::less_than_8mb();
+        let hash = calculate_sha256_checksum(bytes).await?;
+
+        assert_eq!(hash.code(), MULTIHASH_SHA256);
+
+        let double_hash = Sha256::digest(hash.digest());
+        assert_eq!(
+            hex::encode(double_hash),
+            fixtures::objects::LESS_THAN_8MB_HASH_HEX
+        );
+
+        Ok(())
+    }
 
     #[tokio::test]
     async fn test_files_less_8mb() -> Res {
