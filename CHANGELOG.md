@@ -1,5 +1,7 @@
 # CHANGELOG
 
+## [0.20.0](https://crates.io/crates/quilt-rs/0.19.0) - 2025-10-20
+
 ### Changed
 
 * Fix the incorrect Multihash code for SHA256
