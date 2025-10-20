@@ -32,7 +32,7 @@ pub enum ContentHash {
 }
 
 /// Multihash code for legacy or single-chunked checksums
-pub const MULTIHASH_SHA256: u64 = 0x16;
+pub const MULTIHASH_SHA256: u64 = 0x12;
 /// Multihash code for chunksums
 pub const MULTIHASH_SHA256_CHUNKED: u64 = 0xb510;
 

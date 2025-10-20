@@ -291,7 +291,7 @@ mod tests {
             .await?;
 
         // Create the manifest with a single remote row with a random hash
-        let hash: multihash::Multihash<256> = multihash::Multihash::wrap(0x16, b"anything")?;
+        let hash: multihash::Multihash<256> = multihash::Multihash::wrap(0x12, b"anything")?;
         let mut manifest = Table::default();
         manifest
             .insert_record(Row {
@@ -344,25 +344,25 @@ mod tests {
         let row_1 = Row {
             name: PathBuf::from("a"),
             place: "file:///ignored".to_string(),
-            hash: multihash::Multihash::wrap(0x16, b"one")?,
+            hash: multihash::Multihash::wrap(0x12, b"one")?,
             ..Row::default()
         };
         let row_2 = Row {
             name: PathBuf::from("b/b"),
             place: "s3://bucket/foo/bar".to_string(),
-            hash: multihash::Multihash::wrap(0x16, b"two")?,
+            hash: multihash::Multihash::wrap(0x12, b"two")?,
             ..Row::default()
         };
         let row_3 = Row {
             name: PathBuf::from("c/c/c"),
             place: "file:///ignored".to_string(),
-            hash: multihash::Multihash::wrap(0x16, b"three")?,
+            hash: multihash::Multihash::wrap(0x12, b"three")?,
             ..Row::default()
         };
         let row_4 = Row {
             name: PathBuf::from("d/d/d/d"),
             place: "s3://bucket/foo/baz".to_string(),
-            hash: multihash::Multihash::wrap(0x16, b"four")?,
+            hash: multihash::Multihash::wrap(0x12, b"four")?,
             ..Row::default()
         };
         let mut manifest = Table::default();
