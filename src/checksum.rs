@@ -155,6 +155,7 @@ pub fn get_compliant_chunked_checksum(attrs: &GetObjectAttributesOutput) -> Opti
                 return Some(checksum_sha256_decoded);
             }
         }
+        #[allow(deprecated)]
         return Some(Sha256::digest(checksum_sha256_decoded).as_slice().into());
     } else if let Some(object_parts) = &attrs.object_parts {
         let parts = object_parts.parts();
