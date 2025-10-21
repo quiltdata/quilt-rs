@@ -1,6 +1,10 @@
 # CHANGELOG
 
-## [0.20.0](https://crates.io/crates/quilt-rs/0.19.0) - 2025-10-20
+## [0.21.0](https://crates.io/crates/quilt-rs/0.21.0) - 2025-10-21
+
+- Chores: update dependencies
+
+## [0.20.0](https://crates.io/crates/quilt-rs/0.20.0) - 2025-10-20
 
 ### Changed
 
