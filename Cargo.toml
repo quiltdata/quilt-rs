@@ -31,7 +31,7 @@ futures = "0.3.31"
 futures-util = "0.3.31"
 hex = "0.4.3"
 multihash = "0.19.3"
-parquet = { version = "55.2.0", features = ["async", "object_store"] }
+parquet = { version = "56.0.0", features = ["async", "object_store"] }
 percent-encoding = "2.3.2"
 reqwest = { version = "0.12.24", features = ["json"] }
 serde = { version = "1.0.228", features = ["derive", "serde_derive"] }
