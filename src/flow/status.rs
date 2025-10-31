@@ -201,7 +201,7 @@ pub async fn create_status(
     debug!("✔️ Found {} paths in lineage", orig_paths.len());
 
     let files = locate_files_in_package_home(storage, manifest, package_home, orig_paths).await?;
-    debug!("✔️ Locatd files in working directory {:?}", files);
+    debug!("✔️ Located files in working directory {:?}", files);
     let changes = fingerprint_files(files).await?;
     debug!("✔️ Computed file fingerprints {:?}", changes);
 
