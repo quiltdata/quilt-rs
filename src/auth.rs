@@ -8,6 +8,7 @@ use serde::Serialize;
 use tracing::debug;
 use tracing::info;
 use tracing::warn;
+use tracing::error;
 
 use crate::error::AuthError;
 use crate::io::storage::auth::AuthIo;
@@ -230,7 +231,7 @@ impl<S: Storage + Clone> Auth<S> {
                 info!("❌ No existing credentials found for {}", host);
             }
             Err(e) => {
-                warn!("❌ Failed to read credentials for {}: {}", host, e);
+                error!("❌ Failed to read credentials for {}: {}", host, e);
                 return Err(Error::Auth(
                     host.to_owned(),
                     AuthError::CredentialsRead(e.to_string()),
@@ -266,7 +267,7 @@ impl<S: Storage + Clone> Auth<S> {
                 Err(crate::Error::LoginRequired(Some(host.to_owned())))
             }
             Err(e) => {
-                warn!("❌ Failed to read tokens for {}: {}", host, e);
+                error!("❌ Failed to read tokens for {}: {}", host, e);
                 Err(Error::Auth(
                     host.to_owned(),
                     AuthError::TokensRead(e.to_string()),
