@@ -252,4 +252,34 @@ mod tests {
         );
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_write_permission_denied() -> Res {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = tempdir()?;
+        let readonly_dir = temp_dir.path().join("readonly");
+        let test_file = readonly_dir.join("test.txt");
+
+        // Create directory and make it read-only
+        fs::create_dir_all(&readonly_dir).await?;
+        let mut perms = fs::metadata(&readonly_dir).await?.permissions();
+        perms.set_mode(0o444); // Read-only for owner, group, and others
+        fs::set_permissions(&readonly_dir, perms).await?;
+
+        let storage = LocalStorage::default();
+        let result = storage.write_file(&test_file, b"test").await;
+
+        // Should fail with permission denied
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(matches!(error, Error::Io(_)));
+
+        // Restore permissions for cleanup
+        let mut perms = fs::metadata(&readonly_dir).await?.permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&readonly_dir, perms).await?;
+
+        Ok(())
+    }
 }
