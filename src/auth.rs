@@ -6,9 +6,9 @@ use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
 use tracing::debug;
+use tracing::error;
 use tracing::info;
 use tracing::warn;
-use tracing::error;
 
 use crate::error::AuthError;
 use crate::io::storage::auth::AuthIo;
