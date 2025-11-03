@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## [0.21.1](https://crates.io/crates/quilt-rs/0.21.1) - 2025-11-03
+
+- Make `AUTH_DIR` constant public
+- Fix typos, write tests
+
 ## [0.21.0](https://crates.io/crates/quilt-rs/0.21.0) - 2025-10-21
 
 - Chores: update dependencies
