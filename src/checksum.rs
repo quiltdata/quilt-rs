@@ -353,7 +353,7 @@ mod tests {
         }
 
         fn sha256(data: Vec<u8>) -> Vec<u8> {
-            Sha256::digest(data).as_slice().into()
+            Sha256::digest(data).to_vec()
         }
 
         let builder = GetObjectAttributesOutput::builder;
