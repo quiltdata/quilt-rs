@@ -254,6 +254,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(unix)]
     async fn test_write_permission_denied() -> Res {
         use std::os::unix::fs::PermissionsExt;
 
