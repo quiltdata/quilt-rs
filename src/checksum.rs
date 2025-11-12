@@ -29,12 +29,16 @@ pub enum ContentHash {
     /// Chunked checksum
     #[serde(rename = "sha2-256-chunked")]
     SHA256Chunked(String),
+    /// CRC64-NVMe checksum
+    CRC64NVME(String),
 }
 
 /// Multihash code for legacy or single-chunked checksums
 pub const MULTIHASH_SHA256: u64 = 0x12;
 /// Multihash code for chunksums
 pub const MULTIHASH_SHA256_CHUNKED: u64 = 0xb510;
+/// Multihash code for CRC64-NVMe
+pub const MULTIHASH_CRC64_NVME: u64 = 0x0165;
 
 impl TryFrom<Multihash<256>> for ContentHash {
     type Error = Error;
@@ -45,6 +49,7 @@ impl TryFrom<Multihash<256>> for ContentHash {
             MULTIHASH_SHA256_CHUNKED => Ok(ContentHash::SHA256Chunked(
                 BASE64_STANDARD.encode(value.digest()),
             )),
+            MULTIHASH_CRC64_NVME => Ok(ContentHash::CRC64NVME(BASE64_STANDARD.encode(value.digest()))),
             code => Err(Error::InvalidMultihash(format!(
                 "Unexpected code: {code:#06x}"
             ))),
@@ -68,6 +73,13 @@ impl TryFrom<ContentHash> for Multihash<256> {
                     .decode(hash)
                     .map_err(|err| Error::InvalidMultihash(err.to_string()))?;
                 Multihash::wrap(MULTIHASH_SHA256_CHUNKED, &hash_bytes)
+                    .map_err(|err| Error::InvalidMultihash(err.to_string()))
+            }
+            ContentHash::CRC64NVME(hash) => {
+                let hash_bytes = BASE64_STANDARD
+                    .decode(hash)
+                    .map_err(|err| Error::InvalidMultihash(err.to_string()))?;
+                Multihash::wrap(MULTIHASH_CRC64_NVME, &hash_bytes)
                     .map_err(|err| Error::InvalidMultihash(err.to_string()))
             }
         }
