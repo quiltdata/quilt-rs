@@ -49,7 +49,9 @@ impl TryFrom<Multihash<256>> for ContentHash {
             MULTIHASH_SHA256_CHUNKED => Ok(ContentHash::SHA256Chunked(
                 BASE64_STANDARD.encode(value.digest()),
             )),
-            MULTIHASH_CRC64_NVME => Ok(ContentHash::CRC64NVME(BASE64_STANDARD.encode(value.digest()))),
+            MULTIHASH_CRC64_NVME => Ok(ContentHash::CRC64NVME(
+                BASE64_STANDARD.encode(value.digest()),
+            )),
             code => Err(Error::InvalidMultihash(format!(
                 "Unexpected code: {code:#06x}"
             ))),
