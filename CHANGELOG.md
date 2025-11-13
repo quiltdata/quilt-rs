@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## [0.22.0](https://crates.io/crates/quilt-rs/0.22.0) - 2025-11-13
+
+- Support reading manifests with CRC64/NVMe hash/checksum types
+
 ## [0.21.1](https://crates.io/crates/quilt-rs/0.21.1) - 2025-11-03
 
 - Make `AUTH_DIR` constant public
