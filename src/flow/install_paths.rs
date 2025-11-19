@@ -456,6 +456,82 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn test_installing_more_than_1024_paths() -> Res {
+        let (home, _temp_dir1) = Home::from_temp_dir()?;
+        let (domain_paths, _temp_dir2) = &DomainPaths::from_temp_dir()?;
+
+        let namespace = Namespace::from(("foo", "bar"));
+        let package_home = paths::package_home(&home, &namespace);
+
+        let lineage = PackageLineage::default();
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+
+        let mut manifest = Table::default();
+        let mut entries_paths = Vec::new();
+        let mut path_refs = Vec::new();
+
+        // Create 1024 * 2 test paths and rows
+        for i in 0..2048 {
+            let path = PathBuf::from(format!("path_{}.txt", i));
+            let place = format!("s3://bucket/path_{}.txt", i);
+            let hash = multihash::Multihash::wrap(0x12, format!("hash_{}", i).as_bytes())?;
+
+            let row = Row {
+                name: path.clone(),
+                place: place.clone(),
+                hash,
+                ..Row::default()
+            };
+
+            manifest.insert_record(row).await?;
+            entries_paths.push(path);
+
+            // Simulate remote objects
+            let remote_uri = S3Uri::from_str(&place)?;
+            remote
+                .put_object(&lineage.remote.catalog, &remote_uri, Vec::new())
+                .await?;
+        }
+
+        // Create references for the function call
+        for path in &entries_paths {
+            path_refs.push(path);
+        }
+
+        domain_paths
+            .scaffold_for_installing(&storage, &home, &namespace)
+            .await?;
+
+        assert!(lineage.paths.is_empty());
+
+        let lineage = install_paths(
+            lineage,
+            &mut manifest,
+            domain_paths,
+            package_home.clone(),
+            namespace,
+            &storage,
+            &remote,
+            &path_refs,
+        )
+        .await?;
+
+        // Verify all 2048 paths are tracked in lineage
+        assert_eq!(lineage.paths.len(), 2048);
+        for path in &entries_paths {
+            assert!(lineage.paths.contains_key(path));
+        }
+
+        // Verify all files exist in working directory
+        for path in &entries_paths {
+            assert!(storage.exists(&package_home.join(path)).await);
+        }
+
+        Ok(())
+    }
+
     // TODO: fail if path is already installed
     // TODO: fail if manifest entry has invalid URL
 }
