@@ -15,9 +15,137 @@ use tokio::io::BufReader;
 use crate::Error;
 use crate::Res;
 
-// TODO: Introduce struct Chunksum {}, that
-//       * wraps `Multihash`
-//       * can be converted `Chunksum::from(GetObjectAttributesOutput)`
+/// SHA256 (legacy) checksum wrapper
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Sha256Hash(Multihash<256>);
+
+impl Sha256Hash {
+    /// Get the inner multihash
+    pub fn multihash(&self) -> &Multihash<256> {
+        &self.0
+    }
+
+    /// Get the algorithm code
+    pub fn algorithm(&self) -> u64 {
+        self.0.code()
+    }
+
+    /// Get the digest bytes
+    pub fn digest(&self) -> &[u8] {
+        self.0.digest()
+    }
+}
+
+/// SHA256 chunked checksum wrapper
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Sha256ChunkedHash(Multihash<256>);
+
+impl Sha256ChunkedHash {
+    /// Get the inner multihash
+    pub fn multihash(&self) -> &Multihash<256> {
+        &self.0
+    }
+
+    /// Get the algorithm code
+    pub fn algorithm(&self) -> u64 {
+        self.0.code()
+    }
+
+    /// Get the digest bytes
+    pub fn digest(&self) -> &[u8] {
+        self.0.digest()
+    }
+}
+
+/// CRC64-NVMe checksum wrapper
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Crc64Hash(Multihash<256>);
+
+impl Crc64Hash {
+    /// Get the inner multihash
+    pub fn multihash(&self) -> &Multihash<256> {
+        &self.0
+    }
+
+    /// Get the algorithm code
+    pub fn algorithm(&self) -> u64 {
+        self.0.code()
+    }
+
+    /// Get the digest bytes
+    pub fn digest(&self) -> &[u8] {
+        self.0.digest()
+    }
+}
+
+// From/TryFrom conversions for Sha256Hash
+impl From<Sha256Hash> for Multihash<256> {
+    fn from(sha256: Sha256Hash) -> Self {
+        sha256.0
+    }
+}
+
+impl TryFrom<Multihash<256>> for Sha256Hash {
+    type Error = Error;
+
+    fn try_from(hash: Multihash<256>) -> Result<Self, Self::Error> {
+        if hash.code() == MULTIHASH_SHA256 {
+            Ok(Self(hash))
+        } else {
+            Err(Error::InvalidMultihash(format!(
+                "Expected SHA256 hash (code {:#06x}), got code {:#06x}",
+                MULTIHASH_SHA256,
+                hash.code()
+            )))
+        }
+    }
+}
+
+// From/TryFrom conversions for Sha256ChunkedHash
+impl From<Sha256ChunkedHash> for Multihash<256> {
+    fn from(sha256_chunked: Sha256ChunkedHash) -> Self {
+        sha256_chunked.0
+    }
+}
+
+impl TryFrom<Multihash<256>> for Sha256ChunkedHash {
+    type Error = Error;
+
+    fn try_from(hash: Multihash<256>) -> Result<Self, Self::Error> {
+        if hash.code() == MULTIHASH_SHA256_CHUNKED {
+            Ok(Self(hash))
+        } else {
+            Err(Error::InvalidMultihash(format!(
+                "Expected SHA256 chunked hash (code {:#06x}), got code {:#06x}",
+                MULTIHASH_SHA256_CHUNKED,
+                hash.code()
+            )))
+        }
+    }
+}
+
+// From/TryFrom conversions for Crc64Hash
+impl From<Crc64Hash> for Multihash<256> {
+    fn from(crc64: Crc64Hash) -> Self {
+        crc64.0
+    }
+}
+
+impl TryFrom<Multihash<256>> for Crc64Hash {
+    type Error = Error;
+
+    fn try_from(hash: Multihash<256>) -> Result<Self, Self::Error> {
+        if hash.code() == MULTIHASH_CRC64_NVME {
+            Ok(Self(hash))
+        } else {
+            Err(Error::InvalidMultihash(format!(
+                "Expected CRC64-NVMe hash (code {:#06x}), got code {:#06x}",
+                MULTIHASH_CRC64_NVME,
+                hash.code()
+            )))
+        }
+    }
+}
 
 /// Container for object's checksum
 /// You can convert it to or from `Multihash<256>`.
@@ -114,7 +242,7 @@ pub fn get_checksum_chunksize_and_parts(file_size: u64) -> (u64, u64) {
 }
 
 /// Caclulates legacy or single-chunk checksum from file or from single chunk
-pub async fn calculate_sha256_checksum<F: AsyncRead + Unpin>(file: F) -> Res<Multihash<256>> {
+pub async fn sha256<F: AsyncRead + Unpin>(file: F) -> Res<Sha256Hash> {
     let mut sha256 = Sha256::new();
     let mut reader = BufReader::new(file);
     let mut buf = [0; 4096];
@@ -125,29 +253,31 @@ pub async fn calculate_sha256_checksum<F: AsyncRead + Unpin>(file: F) -> Res<Mul
         }
         sha256.update(&buf[0..n]);
     }
-    Ok(Multihash::wrap(MULTIHASH_SHA256, &sha256.finalize())?)
+    Ok(Sha256Hash(Multihash::wrap(
+        MULTIHASH_SHA256,
+        &sha256.finalize(),
+    )?))
 }
 
 /// Calculates chunksum from a file
-pub async fn calculate_sha256_chunked_checksum<F: AsyncRead + Unpin>(
+pub async fn sha256_chunked<F: AsyncRead + Unpin + Send>(
     file: F,
     length: u64,
-) -> Res<Multihash<256>> {
+) -> Res<Sha256ChunkedHash> {
     let (chunksize, num_parts) = get_checksum_chunksize_and_parts(length);
 
-    let mut sha256 = Sha256::new();
+    let mut sha256_hasher = Sha256::new();
 
     let mut chunk = file.take(0);
     for _ in 0..num_parts {
         chunk.set_limit(chunksize);
-        let chunk_hash = calculate_sha256_checksum(&mut chunk).await?;
-        sha256.update(chunk_hash.digest());
+        sha256_hasher.update(sha256(&mut chunk).await?.digest());
     }
 
-    Ok(Multihash::wrap(
+    Ok(Sha256ChunkedHash(Multihash::wrap(
         MULTIHASH_SHA256_CHUNKED,
-        &sha256.finalize(),
-    )?)
+        &sha256_hasher.finalize(),
+    )?))
 }
 
 /// Takes checksum got from S3 and convert it to Chunksum.
@@ -195,20 +325,20 @@ pub fn get_compliant_chunked_checksum(attrs: &GetObjectAttributesOutput) -> Opti
 mod tests {
     use super::*;
 
+    use crate::fixtures;
+
     use aws_sdk_s3::types::Checksum;
     use aws_sdk_s3::types::GetObjectAttributesParts;
     use aws_sdk_s3::types::ObjectPart;
     use base64::prelude::BASE64_STANDARD;
     use base64::Engine;
 
-    use crate::fixtures;
-
     #[tokio::test]
     async fn test_calculate_sha256_checksum() -> Res {
         let bytes = fixtures::objects::less_than_8mb();
-        let hash = calculate_sha256_checksum(bytes).await?;
+        let hash = sha256(bytes).await?;
 
-        assert_eq!(hash.code(), MULTIHASH_SHA256);
+        assert_eq!(hash.multihash().code(), MULTIHASH_SHA256);
 
         let double_hash = Sha256::digest(hash.digest());
         assert_eq!(
@@ -222,8 +352,8 @@ mod tests {
     #[tokio::test]
     async fn test_files_less_8mb() -> Res {
         let bytes = fixtures::objects::less_than_8mb();
-        let hash = calculate_sha256_chunked_checksum(bytes, bytes.len() as u64).await?;
-        assert_eq!(hash.code(), MULTIHASH_SHA256_CHUNKED);
+        let hash = sha256_chunked(bytes, bytes.len() as u64).await?;
+        assert_eq!(hash.multihash().code(), MULTIHASH_SHA256_CHUNKED);
         assert_eq!(
             BASE64_STANDARD.encode(hash.digest()),
             fixtures::objects::LESS_THAN_8MB_HASH_B64
@@ -234,7 +364,7 @@ mod tests {
     #[tokio::test]
     async fn test_files_equal_to_8mb() -> Res {
         let bytes = fixtures::objects::equal_to_8mb();
-        let hash = calculate_sha256_chunked_checksum(bytes.as_ref(), bytes.len() as u64).await?;
+        let hash = sha256_chunked(bytes.as_ref(), bytes.len() as u64).await?;
         assert_eq!(
             BASE64_STANDARD.encode(hash.digest()),
             fixtures::objects::EQUAL_TO_8MB_HASH_B64
@@ -245,7 +375,7 @@ mod tests {
     #[tokio::test]
     async fn test_sha256_chunked_empty() -> Res {
         let bytes = fixtures::objects::zero_bytes();
-        let hash = calculate_sha256_chunked_checksum(bytes, bytes.len() as u64).await?;
+        let hash = sha256_chunked(bytes, bytes.len() as u64).await?;
         assert_eq!(
             BASE64_STANDARD.encode(hash.digest()),
             fixtures::objects::ZERO_HASH_B64
@@ -256,7 +386,7 @@ mod tests {
     #[tokio::test]
     async fn test_files_bigger_than_8mb() -> Res {
         let bytes = fixtures::objects::more_than_8mb();
-        let hash = calculate_sha256_chunked_checksum(bytes.as_ref(), bytes.len() as u64).await?;
+        let hash = sha256_chunked(bytes.as_ref(), bytes.len() as u64).await?;
         assert_eq!(
             BASE64_STANDARD.encode(hash.digest()),
             fixtures::objects::MORE_THAN_8MB_HASH_B64
@@ -505,5 +635,80 @@ mod tests {
             assert_eq!(get_compliant_chunked_checksum(&attrs.build()), expected);
         }
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_sha256_chunked_from_bytes() -> Res {
+        let bytes = fixtures::objects::less_than_8mb();
+        let hash = sha256_chunked(bytes, bytes.len() as u64).await?;
+
+        assert_eq!(hash.algorithm(), MULTIHASH_SHA256_CHUNKED);
+        assert_eq!(
+            BASE64_STANDARD.encode(hash.digest()),
+            fixtures::objects::LESS_THAN_8MB_HASH_B64
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_sha256_from_bytes() -> Res {
+        let bytes = fixtures::objects::less_than_8mb();
+        let hash = sha256(&bytes[..]).await?;
+
+        assert_eq!(hash.algorithm(), MULTIHASH_SHA256);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_conversions() -> Res {
+        let bytes = fixtures::objects::less_than_8mb();
+
+        // Test Sha256ChunkedHash conversions
+        let sha256_chunked = sha256_chunked(bytes, bytes.len() as u64).await?;
+        let multihash: Multihash<256> = sha256_chunked.clone().into();
+        let back_to_sha256_chunked = Sha256ChunkedHash::try_from(multihash)?;
+        assert_eq!(sha256_chunked, back_to_sha256_chunked);
+
+        // Test Sha256Hash conversions
+        let sha256 = sha256(&bytes[..]).await?;
+        let multihash: Multihash<256> = sha256.clone().into();
+        let back_to_sha256 = Sha256Hash::try_from(multihash)?;
+        assert_eq!(sha256, back_to_sha256);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_conversion_errors() {
+        // Create a SHA256 hash and try to convert it to SHA256Chunked (should fail)
+        let sha256_hash = multihash::Multihash::wrap(MULTIHASH_SHA256, b"test").unwrap();
+        let result = Sha256ChunkedHash::try_from(sha256_hash);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Expected SHA256 chunked hash"));
+
+        // Create a SHA256Chunked hash and try to convert it to SHA256 (should fail)
+        let sha256_chunked_hash =
+            multihash::Multihash::wrap(MULTIHASH_SHA256_CHUNKED, b"test").unwrap();
+        let result = Sha256Hash::try_from(sha256_chunked_hash);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Expected SHA256 hash"));
+    }
+
+    #[test]
+    fn test_algorithm_identification() {
+        let sha256_hash = multihash::Multihash::wrap(MULTIHASH_SHA256, b"test").unwrap();
+        let sha256 = Sha256Hash::try_from(sha256_hash).unwrap();
+        assert_eq!(sha256.algorithm(), MULTIHASH_SHA256);
+
+        let sha256_chunked_hash =
+            multihash::Multihash::wrap(MULTIHASH_SHA256_CHUNKED, b"test").unwrap();
+        let sha256_chunked = Sha256ChunkedHash::try_from(sha256_chunked_hash).unwrap();
+        assert_eq!(sha256_chunked.algorithm(), MULTIHASH_SHA256_CHUNKED);
     }
 }

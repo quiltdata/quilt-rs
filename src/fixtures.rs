@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::checksum::MULTIHASH_SHA256_CHUNKED;
+use crate::checksum;
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
 use multihash::Multihash;
@@ -143,7 +143,7 @@ pub mod manifest_empty {
 
 pub fn create_multihash(b64_str: &str) -> Res<Multihash<256>> {
     Ok(Multihash::wrap(
-        MULTIHASH_SHA256_CHUNKED,
+        checksum::MULTIHASH_SHA256_CHUNKED,
         &BASE64_STANDARD.decode(b64_str)?,
     )?)
 }

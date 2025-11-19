@@ -9,7 +9,7 @@ use tokio::io::AsyncRead;
 use tokio::io::BufReader;
 use tokio_stream::StreamExt;
 
-use crate::checksum::ContentHash;
+use crate::checksum;
 use crate::manifest::Header;
 use crate::manifest::Table;
 use crate::uri::S3Uri;
@@ -156,7 +156,7 @@ impl TryFrom<Header> for ManifestHeader {
 struct Quilt3ManifestRow {
     pub logical_key: PathBuf,
     pub physical_keys: Vec<String>,
-    pub hash: ContentHash,
+    pub hash: checksum::ContentHash,
     // XXX: u64 cannot be safely deserialized by standard JS json parser,
     //      which treats numbers as 64-bit floats.
     //      However, having file size more than ~9PB (max safe/lossless integer - 53 bits)
@@ -188,7 +188,7 @@ pub struct ManifestRow {
     pub logical_key: PathBuf,
     // XXX: use Url to have validated string?
     pub physical_key: String,
-    pub hash: ContentHash,
+    pub hash: checksum::ContentHash,
     pub size: u64,
     pub meta: Option<serde_json::Value>,
 }
@@ -358,7 +358,6 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
-    use crate::checksum::MULTIHASH_SHA256;
     use crate::fixtures;
     use crate::io::storage::mocks::MockStorage;
     use crate::io::storage::LocalStorage;
@@ -371,14 +370,14 @@ mod tests {
         let left = ManifestRow {
             logical_key: PathBuf::from("A"),
             physical_key: "B".to_string(),
-            hash: ContentHash::SHA256("C".to_string()),
+            hash: checksum::ContentHash::SHA256("C".to_string()),
             size: 1,
             meta: None,
         };
         let right = ManifestRow {
             logical_key: PathBuf::from("A"),
             physical_key: "B".to_string(),
-            hash: ContentHash::SHA256("C".to_string()),
+            hash: checksum::ContentHash::SHA256("C".to_string()),
             size: 1,
             meta: None,
         };
@@ -392,14 +391,14 @@ mod tests {
         let left = ManifestRow {
             logical_key: PathBuf::from("A"),
             physical_key: "FOO".to_string(),
-            hash: ContentHash::SHA256("C".to_string()),
+            hash: checksum::ContentHash::SHA256("C".to_string()),
             size: 1,
             meta: Some(serde_json::Value::Object(meta)),
         };
         let right = ManifestRow {
             logical_key: PathBuf::from("A"),
             physical_key: "BAR".to_string(),
-            hash: ContentHash::SHA256("C".to_string()),
+            hash: checksum::ContentHash::SHA256("C".to_string()),
             size: 1,
             meta: None,
         };
@@ -536,7 +535,7 @@ mod tests {
                         logical_key: PathBuf::from("README.md"),
                         physical_key: "s3://udp-spec/test_run/test_push/README.md?versionId=Rv.GfYdUWkLfeTT73Rodm3aBUrTIcC1X".to_string(),
                         size: 26,
-                        hash: ContentHash::SHA256("bc2f10e72e751ea6cc1e0b9bdbbb531d437ccbba684b9fef90e1cc228318e112".to_string()),
+                        hash: checksum::ContentHash::SHA256("bc2f10e72e751ea6cc1e0b9bdbbb531d437ccbba684b9fef90e1cc228318e112".to_string()),
                         meta: Some(serde_json::Value::Object(serde_json::Map::new())),
                     }
                 ],
@@ -547,7 +546,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_manifest_from_table_with_metadata() -> Res {
-        let hash = Multihash::<256>::wrap(MULTIHASH_SHA256, b"test")?;
+        let hash = Multihash::<256>::wrap(checksum::MULTIHASH_SHA256, b"test")?;
         let mut table = Table::default();
         table.set_records(BTreeMap::from([(
             PathBuf::from("test.txt"),
@@ -575,7 +574,7 @@ mod tests {
                     logical_key: PathBuf::from("test.txt"),
                     physical_key: "s3://test-bucket/test.txt".to_string(),
                     size: 42,
-                    hash: ContentHash::try_from(hash)?,
+                    hash: checksum::ContentHash::try_from(hash)?,
                     meta: Some(serde_json::Value::Object(serde_json::Map::from_iter(vec![
                         ("user_meta".to_string(), serde_json::json!({"baz": "qux"})),
                         ("foo".to_string(), serde_json::json!("bar")),

@@ -7,9 +7,7 @@ use tokio::fs::File;
 
 use tracing::{debug, info, warn};
 
-use crate::checksum::calculate_sha256_checksum;
-use crate::checksum::calculate_sha256_chunked_checksum;
-use crate::checksum::MULTIHASH_SHA256_CHUNKED;
+use crate::checksum;
 use crate::io::manifest::resolve_latest;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
@@ -25,10 +23,10 @@ use crate::Res;
 async fn verify_hash(file: File, hash: Multihash<256>) -> Res<Option<(u64, Multihash<256>)>> {
     let file_metadata = file.metadata().await?;
     let size = file_metadata.len();
-    let calculated_hash = if hash.code() == MULTIHASH_SHA256_CHUNKED {
-        calculate_sha256_chunked_checksum(file, size).await?
+    let calculated_hash = if hash.code() == checksum::MULTIHASH_SHA256_CHUNKED {
+        checksum::sha256_chunked(file, size).await?.into()
     } else {
-        calculate_sha256_checksum(file).await?
+        checksum::sha256(file).await?.into()
     };
 
     if calculated_hash == hash {
@@ -143,7 +141,7 @@ async fn fingerprint_files(files: Vec<(PathBuf, WorkdirFile)>) -> Res<ChangeSet>
             }
             WorkdirFile::New(file) => {
                 let size = file.metadata().await?.len();
-                let hash = calculate_sha256_chunked_checksum(file, size).await?;
+                let hash = checksum::sha256_chunked(file, size).await?.into();
                 let row = Row {
                     name: logical_key.clone(),
                     size,
@@ -217,7 +215,6 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::checksum::ContentHash;
     use crate::fixtures;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::CommitState;
@@ -370,7 +367,7 @@ mod tests {
             let reference_row = Row {
                 name: PathBuf::from("inside/package/file.pq"),
                 size: 5324,
-                hash: ContentHash::SHA256Chunked(
+                hash: checksum::ContentHash::SHA256Chunked(
                     "EfrtXWeClWPJ/IVKjQeAmMKhJV45/GcpjDm1IhvhJAY=".to_string(),
                 )
                 .try_into()?,

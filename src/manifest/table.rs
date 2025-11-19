@@ -9,7 +9,7 @@ use std::fmt;
 use std::path::Path;
 use std::path::PathBuf;
 
-use crate::checksum::ContentHash;
+use crate::checksum;
 use crate::io::storage::Storage;
 use arrow::array::GenericByteArray;
 use arrow::array::UInt64Array;
@@ -111,7 +111,7 @@ fn serialize_row_entry(row: &Row) -> serde_json::Value {
         meta.insert("user_meta".into(), m.clone());
     }
 
-    let content_hash: ContentHash = row.hash.try_into().unwrap();
+    let content_hash: checksum::ContentHash = row.hash.try_into().unwrap();
 
     serde_json::json!({
         "hash": content_hash,
@@ -296,7 +296,6 @@ mod tests {
 
     use multihash::Multihash;
 
-    use crate::checksum::MULTIHASH_SHA256;
     use crate::fixtures;
     use crate::io::storage::mocks::MockStorage;
     use crate::manifest::Row;
@@ -401,7 +400,7 @@ mod tests {
 
     #[test]
     fn test_serialize_row_entry_with_info() -> Res {
-        let hash = Multihash::<256>::wrap(MULTIHASH_SHA256, b"test")?;
+        let hash = Multihash::<256>::wrap(checksum::MULTIHASH_SHA256, b"test")?;
         let row = Row {
             name: PathBuf::from("test.txt"),
             place: "s3://test-bucket/test.txt".to_string(),
@@ -479,7 +478,7 @@ mod tests {
                     name: PathBuf::from("test.md"),
                     place: "doesn't matter".to_string(),
                     size: 3568,
-                    hash: ContentHash::SHA256Chunked(
+                    hash: checksum::ContentHash::SHA256Chunked(
                         "MhntcZnyIL1AIPJNNh8LwzB68M5lFBW0pTEMFTeOSJo=".to_string(),
                     )
                     .try_into()?,

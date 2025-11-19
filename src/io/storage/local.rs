@@ -7,7 +7,7 @@ use chrono::Utc;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
-use crate::checksum::calculate_sha256_chunked_checksum;
+use crate::checksum;
 use crate::io::remote::RemoteObjectStream;
 use crate::io::remote::S3Attributes;
 use crate::uri::S3Uri;
@@ -60,7 +60,7 @@ impl Storage for LocalStorage {
     ) -> Res<S3Attributes> {
         let reader = stream.body.into_async_read();
         let size: u64 = object.size.unwrap_or(0).try_into()?;
-        let hash = calculate_sha256_chunked_checksum(reader, size).await?;
+        let hash = checksum::sha256_chunked(reader, size).await?.into();
         Ok(S3Attributes {
             listing_uri: listing_uri.clone(),
             object_uri: stream.uri,
