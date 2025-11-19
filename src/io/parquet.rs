@@ -71,7 +71,6 @@ fn create_columns(chunk: StreamRowsChunk) -> Res<Vec<ArrayRef>> {
 fn create_writer(file: File, schema: Arc<Schema>) -> Res<AsyncArrowWriter<File>> {
     let props = WriterProperties::builder()
         .set_compression(Compression::SNAPPY)
-        .set_max_row_group_size(1024)
         .build();
     Ok(AsyncArrowWriter::try_new(file, schema, Some(props))?)
 }
