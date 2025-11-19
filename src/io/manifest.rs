@@ -327,9 +327,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_manifest_header_empty() -> Res {
-        let temp_dir = tempfile::tempdir()?;
-        let dest_dir = temp_dir.path();
         let storage = MockStorage::default();
+        let dest_dir = storage.temp_dir.path();
         let (dest_path, top_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -347,9 +346,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_manifest_header_empty_none() -> Res {
-        let temp_dir = tempfile::tempdir()?;
-        let dest_dir = temp_dir.path();
         let storage = MockStorage::default();
+        let dest_dir = storage.temp_dir.path();
         let (dest_path, top_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -367,9 +365,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_manifest_header_empty_null() -> Res {
-        let temp_dir = tempfile::tempdir()?;
-        let dest_dir = temp_dir.path();
         let storage = MockStorage::default();
+        let dest_dir = storage.temp_dir.path();
         let (dest_path, top_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -387,9 +384,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_manifest_header_null_empty() -> Res {
-        let temp_dir = tempfile::tempdir()?;
-        let dest_dir = temp_dir.path();
         let storage = MockStorage::default();
+        let dest_dir = storage.temp_dir.path();
         let (dest_path, top_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -407,9 +403,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_manifest_header_null_none() -> Res {
-        let temp_dir = tempfile::tempdir()?;
-        let dest_dir = temp_dir.path();
         let storage = MockStorage::default();
+        let dest_dir = storage.temp_dir.path();
         let (dest_path, top_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -424,9 +419,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_manifest_header_null_null() -> Res {
-        let temp_dir = tempfile::tempdir()?;
-        let dest_dir = temp_dir.path();
         let storage = MockStorage::default();
+        let dest_dir = storage.temp_dir.path();
         let (dest_path, top_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),

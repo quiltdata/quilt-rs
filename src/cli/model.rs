@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::path::PathBuf;
 
+#[cfg(test)]
 use tempfile::TempDir;
 
 use quilt_rs::lineage::Home;
@@ -114,6 +115,7 @@ impl From<PathBuf> for Model {
     }
 }
 
+#[cfg(test)]
 impl From<&TempDir> for Model {
     fn from(temp_dir: &TempDir) -> Self {
         Model::from(temp_dir.path().to_path_buf())
