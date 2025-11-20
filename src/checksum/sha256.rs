@@ -33,7 +33,7 @@ impl Sha256Hash {
 
     /// Calculates legacy or single-chunk checksum from file or from single chunk
     pub async fn from_file<F: AsyncRead + Unpin>(file: F) -> Res<Self> {
-        let mut sha256 = Sha256::new();
+        let mut hasher = Sha256::new();
         let mut reader = BufReader::new(file);
         let mut buf = [0; 4096];
         loop {
@@ -41,9 +41,9 @@ impl Sha256Hash {
             if n == 0 {
                 break;
             }
-            sha256.update(&buf[0..n]);
+            hasher.update(&buf[0..n]);
         }
-        Sha256Hash::try_from(Multihash::wrap(MULTIHASH_SHA256, &sha256.finalize())?)
+        Ok(Self(Multihash::wrap(MULTIHASH_SHA256, &hasher.finalize())?))
     }
 }
 

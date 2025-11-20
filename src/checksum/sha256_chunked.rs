@@ -44,10 +44,10 @@ impl Sha256ChunkedHash {
             sha256_hasher.update(Sha256Hash::from_file(&mut chunk).await?.digest());
         }
 
-        Sha256ChunkedHash::try_from(Multihash::wrap(
+        Ok(Self(Multihash::wrap(
             MULTIHASH_SHA256_CHUNKED,
             &sha256_hasher.finalize(),
-        )?)
+        )?))
     }
 }
 

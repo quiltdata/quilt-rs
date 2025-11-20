@@ -1,9 +1,12 @@
 //! CRC64-NVMe checksum implementation
 
+use aws_smithy_checksums::ChecksumAlgorithm;
 use multihash::Multihash;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::fmt;
+use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
 
-use crate::Error;
+use crate::{Error, Res};
 
 /// Multihash code for CRC64-NVMe
 pub const MULTIHASH_CRC64_NVME: u64 = 0x0165;
@@ -26,6 +29,35 @@ impl Crc64Hash {
     /// Get the digest bytes
     pub fn digest(&self) -> &[u8] {
         self.0.digest()
+    }
+
+    /// Calculates CRC64-NVMe checksum from a file
+    pub async fn from_file<F: AsyncRead + Unpin>(file: F) -> Res<Self> {
+        let mut hasher = ChecksumAlgorithm::Crc64Nvme.into_impl();
+        let mut reader = BufReader::new(file);
+        let mut buf = [0; 4096];
+
+        loop {
+            let n = reader.read(&mut buf).await?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buf[0..n]);
+        }
+
+        Ok(Self(Multihash::wrap(
+            MULTIHASH_CRC64_NVME,
+            &hasher.finalize(),
+        )?))
+    }
+
+    /// Calculates CRC64-NVMe checksum from raw data
+    pub fn from_data(data: &[u8]) -> Res<Self> {
+        let mut hasher = ChecksumAlgorithm::Crc64Nvme.into_impl();
+        hasher.update(data);
+        let crc64_bytes = hasher.finalize();
+        let multihash = Multihash::wrap(MULTIHASH_CRC64_NVME, &crc64_bytes)?;
+        Ok(Self(multihash))
     }
 }
 
@@ -64,6 +96,15 @@ impl TryFrom<&str> for Crc64Hash {
     }
 }
 
+impl fmt::Display for Crc64Hash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Use multibase encoding but strip the prefix to get plain base64
+        let multibase_encoded = multibase::encode(multibase::Base::Base64Pad, self.digest());
+        let base64_value = &multibase_encoded[1..]; // Remove the multibase prefix
+        write!(f, "{}", base64_value)
+    }
+}
+
 impl Serialize for Crc64Hash {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -72,12 +113,16 @@ impl Serialize for Crc64Hash {
         use serde::ser::SerializeMap;
         let mut map = serializer.serialize_map(Some(2))?;
         map.serialize_entry("type", "CRC64NVME")?;
-        // Use multibase encoding but strip the prefix to maintain backward compatibility
-        let multibase_encoded = multibase::encode(multibase::Base::Base64Pad, self.digest());
-        let base64_value = &multibase_encoded[1..]; // Remove the multibase prefix
-        map.serialize_entry("value", base64_value)?;
+        map.serialize_entry("value", &self.to_string())?;
         map.end()
     }
+}
+
+#[derive(Deserialize)]
+struct Crc64HashJson {
+    #[serde(rename = "type")]
+    hash_type: String,
+    value: String,
 }
 
 impl<'de> Deserialize<'de> for Crc64Hash {
@@ -85,70 +130,20 @@ impl<'de> Deserialize<'de> for Crc64Hash {
     where
         D: Deserializer<'de>,
     {
-        use serde::de::{self, MapAccess, Visitor};
-        use std::fmt;
+        use serde::de::Error;
+        use serde::de::Unexpected;
 
-        struct Crc64HashVisitor;
+        let json = Crc64HashJson::deserialize(deserializer)?;
 
-        impl<'de> Visitor<'de> for Crc64HashVisitor {
-            type Value = Crc64Hash;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a map with type and value fields")
-            }
-
-            fn visit_map<V>(self, mut map: V) -> Result<Self::Value, V::Error>
-            where
-                V: MapAccess<'de>,
-            {
-                let mut type_field = None;
-                let mut value_field = None;
-
-                while let Some(key) = map.next_key::<String>()? {
-                    match key.as_str() {
-                        "type" => {
-                            if type_field.is_some() {
-                                return Err(de::Error::duplicate_field("type"));
-                            }
-                            let type_value: String = map.next_value()?;
-                            if type_value != "CRC64NVME" {
-                                return Err(de::Error::custom(format!(
-                                    "Expected type 'CRC64NVME', got '{}'",
-                                    type_value
-                                )));
-                            }
-                            type_field = Some(type_value);
-                        }
-                        "value" => {
-                            if value_field.is_some() {
-                                return Err(de::Error::duplicate_field("value"));
-                            }
-                            value_field = Some(map.next_value::<String>()?);
-                        }
-                        _ => {
-                            let _: serde::de::IgnoredAny = map.next_value()?;
-                        }
-                    }
-                }
-
-                if type_field.is_none() {
-                    return Err(de::Error::missing_field("type"));
-                }
-                let value_field = value_field.ok_or_else(|| de::Error::missing_field("value"))?;
-
-                // Add multibase prefix to plain base64 and decode with multibase
-                let prefixed_value =
-                    format!("{}{}", multibase::Base::Base64Pad.code(), value_field);
-                let (_, hash_bytes) = multibase::decode(&prefixed_value)
-                    .map_err(|e| de::Error::custom(format!("Invalid base64: {}", e)))?;
-                let multihash = Multihash::wrap(MULTIHASH_CRC64_NVME, &hash_bytes)
-                    .map_err(|e| de::Error::custom(format!("Invalid multihash: {}", e)))?;
-
-                Ok(Crc64Hash(multihash))
-            }
+        if json.hash_type != "CRC64NVME" {
+            return Err(Error::invalid_value(
+                Unexpected::Str(&json.hash_type),
+                &"CRC64NVME",
+            ));
         }
 
-        deserializer.deserialize_map(Crc64HashVisitor)
+        Crc64Hash::try_from(json.value.as_str())
+            .map_err(|_| Error::invalid_value(Unexpected::Str(&json.value), &"valid base64 string"))
     }
 }
 
@@ -225,6 +220,64 @@ mod tests {
         let expected_base64 = &multibase::encode(multibase::Base::Base64Pad, crc64.digest())[1..];
         assert!(serialized.contains("\"type\":\"CRC64NVME\""));
         assert!(serialized.contains(&format!("\"value\":\"{}\"", expected_base64)));
+    }
+
+    #[test]
+    fn test_crc64_hash_display() {
+        let original_hash = multihash::Multihash::wrap(MULTIHASH_CRC64_NVME, b"test_data").unwrap();
+        let crc64 = Crc64Hash::try_from(original_hash).unwrap();
+
+        // Test Display implementation
+        let display_string = format!("{}", crc64);
+
+        // Should be base64 without multibase prefix
+        let expected_base64 = &multibase::encode(multibase::Base::Base64Pad, b"test_data")[1..];
+        assert_eq!(display_string, expected_base64);
+
+        // Test that to_string() works (provided by Display)
+        assert_eq!(crc64.to_string(), expected_base64);
+    }
+
+    #[tokio::test]
+    async fn test_crc64_hash_from_file() -> crate::Res {
+        let test_data = b"test file content for CRC64";
+        let cursor = std::io::Cursor::new(test_data);
+
+        // Test from_file method
+        let hash_from_file = Crc64Hash::from_file(cursor).await?;
+        assert_eq!(hash_from_file.algorithm(), MULTIHASH_CRC64_NVME);
+
+        // Test that digest is 8 bytes (CRC64 size)
+        assert_eq!(hash_from_file.digest().len(), 8);
+
+        // Test from_data method for consistency
+        let hash_from_data = Crc64Hash::from_data(test_data)?;
+        assert_eq!(hash_from_file, hash_from_data);
+
+        // Test that different data produces different hashes
+        let different_data = b"different test data";
+        let different_hash = Crc64Hash::from_data(different_data)?;
+        assert_ne!(hash_from_file, different_hash);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_crc64_nvme_algorithm() {
+        // Test with known data to verify CRC64-NVMe implementation
+        let test_data = b"hello world";
+        let hash = Crc64Hash::from_data(test_data).unwrap();
+
+        // Verify it's exactly 8 bytes
+        assert_eq!(hash.digest().len(), 8);
+
+        // Test consistency - same input should give same output
+        let hash2 = Crc64Hash::from_data(test_data).unwrap();
+        assert_eq!(hash, hash2);
+
+        // Different input should give different output
+        let hash3 = Crc64Hash::from_data(b"hello world!").unwrap();
+        assert_ne!(hash, hash3);
     }
 
     #[test]
