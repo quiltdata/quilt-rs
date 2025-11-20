@@ -296,6 +296,7 @@ mod tests {
 
     use multihash::Multihash;
 
+    use crate::checksum::Sha256ChunkedHash;
     use crate::fixtures;
     use crate::io::storage::mocks::MockStorage;
     use crate::manifest::Row;
@@ -478,10 +479,10 @@ mod tests {
                     name: PathBuf::from("test.md"),
                     place: "doesn't matter".to_string(),
                     size: 3568,
-                    hash: checksum::ContentHash::SHA256Chunked(
-                        "MhntcZnyIL1AIPJNNh8LwzB68M5lFBW0pTEMFTeOSJo=".to_string(),
-                    )
-                    .try_into()?,
+                    hash: Sha256ChunkedHash::try_from(
+                        "MhntcZnyIL1AIPJNNh8LwzB68M5lFBW0pTEMFTeOSJo=",
+                    )?
+                    .into(),
                     info: serde_json::Value::Null,
                     meta: None,
                 },

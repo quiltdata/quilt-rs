@@ -215,6 +215,7 @@ mod tests {
 
     use std::collections::BTreeMap;
 
+    use crate::checksum::Sha256ChunkedHash;
     use crate::fixtures;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::CommitState;
@@ -367,10 +368,8 @@ mod tests {
             let reference_row = Row {
                 name: PathBuf::from("inside/package/file.pq"),
                 size: 5324,
-                hash: checksum::ContentHash::SHA256Chunked(
-                    "EfrtXWeClWPJ/IVKjQeAmMKhJV45/GcpjDm1IhvhJAY=".to_string(),
-                )
-                .try_into()?,
+                hash: Sha256ChunkedHash::try_from("EfrtXWeClWPJ/IVKjQeAmMKhJV45/GcpjDm1IhvhJAY=")?
+                    .into(),
                 ..Row::default()
             };
             assert_eq!(added_row, &reference_row);

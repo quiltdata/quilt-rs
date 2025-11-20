@@ -1,5 +1,9 @@
 //! This module contains helpers and structs for creating and managing checkums.
 
+mod crc64nvme;
+mod sha256;
+mod sha256_chunked;
+
 use aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput;
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
@@ -15,137 +19,12 @@ use tokio::io::BufReader;
 use crate::Error;
 use crate::Res;
 
-/// SHA256 (legacy) checksum wrapper
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Sha256Hash(Multihash<256>);
-
-impl Sha256Hash {
-    /// Get the inner multihash
-    pub fn multihash(&self) -> &Multihash<256> {
-        &self.0
-    }
-
-    /// Get the algorithm code
-    pub fn algorithm(&self) -> u64 {
-        self.0.code()
-    }
-
-    /// Get the digest bytes
-    pub fn digest(&self) -> &[u8] {
-        self.0.digest()
-    }
-}
-
-/// SHA256 chunked checksum wrapper
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Sha256ChunkedHash(Multihash<256>);
-
-impl Sha256ChunkedHash {
-    /// Get the inner multihash
-    pub fn multihash(&self) -> &Multihash<256> {
-        &self.0
-    }
-
-    /// Get the algorithm code
-    pub fn algorithm(&self) -> u64 {
-        self.0.code()
-    }
-
-    /// Get the digest bytes
-    pub fn digest(&self) -> &[u8] {
-        self.0.digest()
-    }
-}
-
-/// CRC64-NVMe checksum wrapper
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Crc64Hash(Multihash<256>);
-
-impl Crc64Hash {
-    /// Get the inner multihash
-    pub fn multihash(&self) -> &Multihash<256> {
-        &self.0
-    }
-
-    /// Get the algorithm code
-    pub fn algorithm(&self) -> u64 {
-        self.0.code()
-    }
-
-    /// Get the digest bytes
-    pub fn digest(&self) -> &[u8] {
-        self.0.digest()
-    }
-}
-
-// From/TryFrom conversions for Sha256Hash
-impl From<Sha256Hash> for Multihash<256> {
-    fn from(sha256: Sha256Hash) -> Self {
-        sha256.0
-    }
-}
-
-impl TryFrom<Multihash<256>> for Sha256Hash {
-    type Error = Error;
-
-    fn try_from(hash: Multihash<256>) -> Result<Self, Self::Error> {
-        if hash.code() == MULTIHASH_SHA256 {
-            Ok(Self(hash))
-        } else {
-            Err(Error::InvalidMultihash(format!(
-                "Expected SHA256 hash (code {:#06x}), got code {:#06x}",
-                MULTIHASH_SHA256,
-                hash.code()
-            )))
-        }
-    }
-}
-
-// From/TryFrom conversions for Sha256ChunkedHash
-impl From<Sha256ChunkedHash> for Multihash<256> {
-    fn from(sha256_chunked: Sha256ChunkedHash) -> Self {
-        sha256_chunked.0
-    }
-}
-
-impl TryFrom<Multihash<256>> for Sha256ChunkedHash {
-    type Error = Error;
-
-    fn try_from(hash: Multihash<256>) -> Result<Self, Self::Error> {
-        if hash.code() == MULTIHASH_SHA256_CHUNKED {
-            Ok(Self(hash))
-        } else {
-            Err(Error::InvalidMultihash(format!(
-                "Expected SHA256 chunked hash (code {:#06x}), got code {:#06x}",
-                MULTIHASH_SHA256_CHUNKED,
-                hash.code()
-            )))
-        }
-    }
-}
-
-// From/TryFrom conversions for Crc64Hash
-impl From<Crc64Hash> for Multihash<256> {
-    fn from(crc64: Crc64Hash) -> Self {
-        crc64.0
-    }
-}
-
-impl TryFrom<Multihash<256>> for Crc64Hash {
-    type Error = Error;
-
-    fn try_from(hash: Multihash<256>) -> Result<Self, Self::Error> {
-        if hash.code() == MULTIHASH_CRC64_NVME {
-            Ok(Self(hash))
-        } else {
-            Err(Error::InvalidMultihash(format!(
-                "Expected CRC64-NVMe hash (code {:#06x}), got code {:#06x}",
-                MULTIHASH_CRC64_NVME,
-                hash.code()
-            )))
-        }
-    }
-}
+// Re-export CRC64-NVMe related items
+pub use crc64nvme::{Crc64Hash, MULTIHASH_CRC64_NVME};
+// Re-export SHA256 related items
+pub use sha256::{Sha256Hash, MULTIHASH_SHA256};
+// Re-export SHA256 chunked related items
+pub use sha256_chunked::{Sha256ChunkedHash, MULTIHASH_SHA256_CHUNKED};
 
 /// Container for object's checksum
 /// You can convert it to or from `Multihash<256>`.
@@ -160,13 +39,6 @@ pub enum ContentHash {
     /// CRC64-NVMe checksum
     CRC64NVME(String),
 }
-
-/// Multihash code for legacy or single-chunked checksums
-pub const MULTIHASH_SHA256: u64 = 0x12;
-/// Multihash code for chunksums
-pub const MULTIHASH_SHA256_CHUNKED: u64 = 0xb510;
-/// Multihash code for CRC64-NVMe
-pub const MULTIHASH_CRC64_NVME: u64 = 0x0165;
 
 impl TryFrom<Multihash<256>> for ContentHash {
     type Error = Error;
@@ -253,10 +125,10 @@ pub async fn sha256<F: AsyncRead + Unpin>(file: F) -> Res<Sha256Hash> {
         }
         sha256.update(&buf[0..n]);
     }
-    Ok(Sha256Hash(Multihash::wrap(
+    Ok(Sha256Hash::try_from(Multihash::wrap(
         MULTIHASH_SHA256,
         &sha256.finalize(),
-    )?))
+    )?)?)
 }
 
 /// Calculates chunksum from a file
@@ -274,10 +146,10 @@ pub async fn sha256_chunked<F: AsyncRead + Unpin + Send>(
         sha256_hasher.update(sha256(&mut chunk).await?.digest());
     }
 
-    Ok(Sha256ChunkedHash(Multihash::wrap(
+    Ok(Sha256ChunkedHash::try_from(Multihash::wrap(
         MULTIHASH_SHA256_CHUNKED,
         &sha256_hasher.finalize(),
-    )?))
+    )?)?)
 }
 
 /// Takes checksum got from S3 and convert it to Chunksum.
@@ -698,17 +570,5 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("Expected SHA256 hash"));
-    }
-
-    #[test]
-    fn test_algorithm_identification() {
-        let sha256_hash = multihash::Multihash::wrap(MULTIHASH_SHA256, b"test").unwrap();
-        let sha256 = Sha256Hash::try_from(sha256_hash).unwrap();
-        assert_eq!(sha256.algorithm(), MULTIHASH_SHA256);
-
-        let sha256_chunked_hash =
-            multihash::Multihash::wrap(MULTIHASH_SHA256_CHUNKED, b"test").unwrap();
-        let sha256_chunked = Sha256ChunkedHash::try_from(sha256_chunked_hash).unwrap();
-        assert_eq!(sha256_chunked.algorithm(), MULTIHASH_SHA256_CHUNKED);
     }
 }

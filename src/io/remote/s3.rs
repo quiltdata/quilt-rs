@@ -27,6 +27,7 @@ use tracing::warn;
 
 use crate::auth;
 use crate::checksum;
+use crate::checksum::Sha256ChunkedHash;
 use crate::error::AuthError;
 use crate::error::S3Error;
 use crate::io::remote::HttpClient;
@@ -131,8 +132,7 @@ async fn put_object_and_checksum(
         .checksum_sha256
         .ok_or(Error::Checksum("missing checksum".to_string()))?;
     // let s3_checksum = BASE64_STANDARD.decode(s3_checksum_b64)?;
-    let hash: Multihash<256> =
-        checksum::ContentHash::SHA256Chunked(s3_checksum_b64.to_string()).try_into()?;
+    let hash: Multihash<256> = Sha256ChunkedHash::try_from(s3_checksum_b64.as_str())?.into();
     let checksum = if size == 0 {
         // Edge case: a 0-byte upload is treated as an empty list of chunks, rather than
         // a list of a 0-byte chunk. Its checksum is sha256(''), NOT sha256(sha256('')).
@@ -228,7 +228,7 @@ async fn multipart_upload_and_checksum(
             version: response.version_id,
             ..dest_uri.clone()
         },
-        checksum::ContentHash::SHA256Chunked(checksum_b64.to_string()).try_into()?,
+        Sha256ChunkedHash::try_from(checksum_b64)?.into(),
     ))
 }
 
@@ -693,10 +693,7 @@ mod tests {
         );
         assert_eq!(
             result.hash,
-            checksum::ContentHash::SHA256Chunked(
-                "/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=".to_string()
-            )
-            .try_into()?
+            Sha256ChunkedHash::try_from("/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=")?.into()
         );
         assert_eq!(result.size, 29);
         Ok(())
