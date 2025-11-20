@@ -1,9 +1,9 @@
 //! SHA256 checksum implementation
 
-use multibase;
 use multihash::Multihash;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
+use std::fmt;
 use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
 
 use crate::{Error, Res};
@@ -82,7 +82,7 @@ impl TryFrom<&str> for Sha256Hash {
     }
 }
 
-impl std::fmt::Display for Sha256Hash {
+impl fmt::Display for Sha256Hash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Use multibase encoding but strip the prefix to get plain hex
         let multibase_encoded = multibase::encode(multibase::Base::Base16Lower, self.digest());
@@ -104,68 +104,32 @@ impl Serialize for Sha256Hash {
     }
 }
 
+#[derive(Deserialize)]
+struct Sha256HashJson {
+    #[serde(rename = "type")]
+    hash_type: String,
+    value: String,
+}
+
 impl<'de> Deserialize<'de> for Sha256Hash {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        use serde::de::{self, MapAccess, Visitor};
-        use std::fmt;
+        use serde::de::Error;
+        use serde::de::Unexpected;
 
-        struct Sha256HashVisitor;
+        let json = Sha256HashJson::deserialize(deserializer)?;
 
-        impl<'de> Visitor<'de> for Sha256HashVisitor {
-            type Value = Sha256Hash;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a map with type and value fields")
-            }
-
-            fn visit_map<V>(self, mut map: V) -> Result<Self::Value, V::Error>
-            where
-                V: MapAccess<'de>,
-            {
-                let mut type_field = None;
-                let mut value_field = None;
-
-                while let Some(key) = map.next_key::<String>()? {
-                    match key.as_str() {
-                        "type" => {
-                            if type_field.is_some() {
-                                return Err(de::Error::duplicate_field("type"));
-                            }
-                            let type_value: String = map.next_value()?;
-                            if type_value != "SHA256" {
-                                return Err(de::Error::custom(format!(
-                                    "Expected type 'SHA256', got '{}'",
-                                    type_value
-                                )));
-                            }
-                            type_field = Some(type_value);
-                        }
-                        "value" => {
-                            if value_field.is_some() {
-                                return Err(de::Error::duplicate_field("value"));
-                            }
-                            value_field = Some(map.next_value::<String>()?);
-                        }
-                        _ => {
-                            let _: serde::de::IgnoredAny = map.next_value()?;
-                        }
-                    }
-                }
-
-                if type_field.is_none() {
-                    return Err(de::Error::missing_field("type"));
-                }
-                let value_field = value_field.ok_or_else(|| de::Error::missing_field("value"))?;
-
-                Sha256Hash::try_from(value_field.as_str())
-                    .map_err(|e| de::Error::custom(format!("Invalid SHA256 hash: {}", e)))
-            }
+        if json.hash_type != "SHA256" {
+            return Err(Error::invalid_value(
+                Unexpected::Str(&json.hash_type),
+                &"SHA256",
+            ));
         }
 
-        deserializer.deserialize_map(Sha256HashVisitor)
+        Sha256Hash::try_from(json.value.as_str())
+            .map_err(|_| Error::invalid_value(Unexpected::Str(&json.value), &"valid hex string"))
     }
 }
 
