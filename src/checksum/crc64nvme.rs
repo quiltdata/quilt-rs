@@ -1,7 +1,5 @@
 //! CRC64-NVMe checksum implementation
 
-use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
 use multihash::Multihash;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -58,11 +56,10 @@ impl TryFrom<&str> for Crc64Hash {
     type Error = Error;
 
     fn try_from(base64_str: &str) -> Result<Self, Self::Error> {
-        let hash_bytes = BASE64_STANDARD
-            .decode(base64_str)
-            .map_err(|err| Error::InvalidMultihash(err.to_string()))?;
-        let multihash = Multihash::wrap(MULTIHASH_CRC64_NVME, &hash_bytes)
-            .map_err(|err| Error::InvalidMultihash(err.to_string()))?;
+        // Add multibase prefix to plain base64 and decode with multibase
+        let prefixed_value = format!("{}{}", multibase::Base::Base64Pad.code(), base64_str);
+        let (_, hash_bytes) = multibase::decode(&prefixed_value)?;
+        let multihash = Multihash::wrap(MULTIHASH_CRC64_NVME, &hash_bytes)?;
         Ok(Self(multihash))
     }
 }
@@ -75,7 +72,10 @@ impl Serialize for Crc64Hash {
         use serde::ser::SerializeMap;
         let mut map = serializer.serialize_map(Some(2))?;
         map.serialize_entry("type", "CRC64NVME")?;
-        map.serialize_entry("value", &BASE64_STANDARD.encode(self.0.digest()))?;
+        // Use multibase encoding but strip the prefix to maintain backward compatibility
+        let multibase_encoded = multibase::encode(multibase::Base::Base64Pad, self.0.digest());
+        let base64_value = &multibase_encoded[1..]; // Remove the multibase prefix
+        map.serialize_entry("value", base64_value)?;
         map.end()
     }
 }
@@ -136,8 +136,10 @@ impl<'de> Deserialize<'de> for Crc64Hash {
                 }
                 let value_field = value_field.ok_or_else(|| de::Error::missing_field("value"))?;
 
-                let hash_bytes = BASE64_STANDARD
-                    .decode(&value_field)
+                // Add multibase prefix to plain base64 and decode with multibase
+                let prefixed_value =
+                    format!("{}{}", multibase::Base::Base64Pad.code(), value_field);
+                let (_, hash_bytes) = multibase::decode(&prefixed_value)
                     .map_err(|e| de::Error::custom(format!("Invalid base64: {}", e)))?;
                 let multihash = Multihash::wrap(MULTIHASH_CRC64_NVME, &hash_bytes)
                     .map_err(|e| de::Error::custom(format!("Invalid multihash: {}", e)))?;
@@ -169,7 +171,7 @@ mod tests {
         assert_eq!(hash.algorithm(), MULTIHASH_CRC64_NVME);
 
         // Test that we can convert back to base64
-        let encoded_back = BASE64_STANDARD.encode(hash.digest());
+        let encoded_back = &multibase::encode(multibase::Base::Base64Pad, hash.digest())[1..];
         assert_eq!(encoded_back, base64_str);
 
         // Test invalid base64 string
@@ -214,10 +216,13 @@ mod tests {
         // Test specific format
         let test_json = r#"{"type":"CRC64NVME","value":"dGVzdCBkYXRh"}"#;
         let parsed: Crc64Hash = serde_json::from_str(test_json).unwrap();
-        assert_eq!(BASE64_STANDARD.encode(parsed.digest()), "dGVzdCBkYXRh");
+        assert_eq!(
+            &multibase::encode(multibase::Base::Base64Pad, parsed.digest())[1..],
+            "dGVzdCBkYXRh"
+        );
 
         // Test serialized format
-        let expected_base64 = BASE64_STANDARD.encode(crc64.digest());
+        let expected_base64 = &multibase::encode(multibase::Base::Base64Pad, crc64.digest())[1..];
         assert!(serialized.contains("\"type\":\"CRC64NVME\""));
         assert!(serialized.contains(&format!("\"value\":\"{}\"", expected_base64)));
     }

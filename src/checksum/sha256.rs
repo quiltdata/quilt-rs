@@ -1,5 +1,6 @@
 //! SHA256 checksum implementation
 
+use multibase;
 use multihash::Multihash;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -60,7 +61,11 @@ impl Serialize for Sha256Hash {
         use serde::ser::SerializeMap;
         let mut map = serializer.serialize_map(Some(2))?;
         map.serialize_entry("type", "SHA256")?;
-        map.serialize_entry("value", &hex::encode(self.0.digest()))?;
+        // Use multibase encoding but strip the prefix
+        let base = multibase::Base::Base16Lower;
+        let multibase_encoded = multibase::encode(base, self.0.digest());
+        let hex_value = &multibase_encoded[1..]; // Remove the multibase prefix
+        map.serialize_entry("value", hex_value)?;
         map.end()
     }
 }
@@ -121,7 +126,10 @@ impl<'de> Deserialize<'de> for Sha256Hash {
                 }
                 let value_field = value_field.ok_or_else(|| de::Error::missing_field("value"))?;
 
-                let hash_bytes = hex::decode(&value_field)
+                // Add multibase prefix to plain hex and decode with multibase
+                let prefixed_value =
+                    format!("{}{}", multibase::Base::Base16Lower.code(), value_field);
+                let (_, hash_bytes) = multibase::decode(&prefixed_value)
                     .map_err(|e| de::Error::custom(format!("Invalid hex: {}", e)))?;
                 let multihash = Multihash::wrap(MULTIHASH_SHA256, &hash_bytes)
                     .map_err(|e| de::Error::custom(format!("Invalid multihash: {}", e)))?;
@@ -178,13 +186,16 @@ mod tests {
         let deserialized: Sha256Hash = serde_json::from_str(&serialized).unwrap();
         assert_eq!(sha256, deserialized);
 
-        // Test specific format
+        // Test specific format (plain hex)
         let test_json = r#"{"type":"SHA256","value":"deadbeef"}"#;
         let parsed: Sha256Hash = serde_json::from_str(test_json).unwrap();
-        assert_eq!(hex::encode(parsed.digest()), "deadbeef");
+        let multibase_with_prefix =
+            multibase::encode(multibase::Base::Base16Lower, parsed.digest());
+        assert_eq!(multibase_with_prefix, "fdeadbeef");
 
-        // Test serialized format
-        let expected_hex = hex::encode(sha256.digest());
+        // Test serialized format (should be hex without prefix)
+        let expected_multibase = multibase::encode(multibase::Base::Base16Lower, sha256.digest());
+        let expected_hex = &expected_multibase[1..]; // Remove 'f' prefix
         assert!(serialized.contains("\"type\":\"SHA256\""));
         assert!(serialized.contains(&format!("\"value\":\"{}\"", expected_hex)));
     }

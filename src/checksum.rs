@@ -217,6 +217,8 @@ pub fn get_compliant_chunked_checksum(attrs: &GetObjectAttributesOutput) -> Opti
 mod tests {
     use super::*;
 
+    use crate::Error;
+
     use crate::fixtures;
 
     use aws_sdk_s3::types::Checksum;
@@ -613,14 +615,14 @@ mod tests {
     #[test]
     fn test_object_hash_json_format_translation() -> Res {
         // Test SHA256 JSON format translation
-        let sha256_json = r#"{"type":"SHA256","value":"74657374646174610000000000000000000000000000000000000000000000000000"}"#;
+        let sha256_json = r#"{"type":"SHA256","value":"7465737464617461000000000000000000000000000000000000000000000000"}"#;
         let object_hash: ObjectHash = serde_json::from_str(sha256_json)?;
         match object_hash {
             ObjectHash::Sha256(hash) => {
                 assert_eq!(hash.algorithm(), MULTIHASH_SHA256);
                 assert_eq!(
                     hex::encode(hash.digest()),
-                    "74657374646174610000000000000000000000000000000000000000000000000000"
+                    "7465737464617461000000000000000000000000000000000000000000000000"
                 );
             }
             _ => panic!("Expected ObjectHash::Sha256 variant"),
@@ -657,7 +659,7 @@ mod tests {
 
         // Test that serialization produces the correct format
         let hex_bytes =
-            hex::decode("74657374646174610000000000000000000000000000000000000000000000000000")
+            hex::decode("7465737464617461000000000000000000000000000000000000000000000000")
                 .map_err(|e| Error::InvalidMultihash(e.to_string()))?;
         let sha256_hash =
             Sha256Hash::try_from(multihash::Multihash::wrap(MULTIHASH_SHA256, &hex_bytes)?)?;
@@ -665,7 +667,7 @@ mod tests {
         let serialized = serde_json::to_string(&object_hash)?;
         assert!(serialized.contains("\"type\":\"SHA256\""));
         assert!(serialized.contains(
-            "\"value\":\"74657374646174610000000000000000000000000000000000000000000000000000\""
+            "\"value\":\"7465737464617461000000000000000000000000000000000000000000000000\""
         ));
 
         Ok(())

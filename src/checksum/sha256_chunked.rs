@@ -1,7 +1,5 @@
 //! SHA256 chunked checksum implementation
 
-use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
 use multihash::Multihash;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -58,11 +56,10 @@ impl TryFrom<&str> for Sha256ChunkedHash {
     type Error = Error;
 
     fn try_from(base64_str: &str) -> Result<Self, Self::Error> {
-        let hash_bytes = BASE64_STANDARD
-            .decode(base64_str)
-            .map_err(|err| Error::InvalidMultihash(err.to_string()))?;
-        let multihash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, &hash_bytes)
-            .map_err(|err| Error::InvalidMultihash(err.to_string()))?;
+        // Add multibase prefix to plain base64 and decode with multibase
+        let prefixed_value = format!("{}{}", multibase::Base::Base64Pad.code(), base64_str);
+        let (_, hash_bytes) = multibase::decode(&prefixed_value)?;
+        let multihash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, &hash_bytes)?;
         Ok(Self(multihash))
     }
 }
@@ -75,7 +72,10 @@ impl Serialize for Sha256ChunkedHash {
         use serde::ser::SerializeMap;
         let mut map = serializer.serialize_map(Some(2))?;
         map.serialize_entry("type", "sha2-256-chunked")?;
-        map.serialize_entry("value", &BASE64_STANDARD.encode(self.0.digest()))?;
+        // Use multibase encoding but strip the prefix to maintain backward compatibility
+        let multibase_encoded = multibase::encode(multibase::Base::Base64Pad, self.0.digest());
+        let base64_value = &multibase_encoded[1..]; // Remove the multibase prefix
+        map.serialize_entry("value", base64_value)?;
         map.end()
     }
 }
@@ -136,8 +136,10 @@ impl<'de> Deserialize<'de> for Sha256ChunkedHash {
                 }
                 let value_field = value_field.ok_or_else(|| de::Error::missing_field("value"))?;
 
-                let hash_bytes = BASE64_STANDARD
-                    .decode(&value_field)
+                // Add multibase prefix to plain base64 and decode with multibase
+                let prefixed_value =
+                    format!("{}{}", multibase::Base::Base64Pad.code(), value_field);
+                let (_, hash_bytes) = multibase::decode(&prefixed_value)
                     .map_err(|e| de::Error::custom(format!("Invalid base64: {}", e)))?;
                 let multihash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, &hash_bytes)
                     .map_err(|e| de::Error::custom(format!("Invalid multihash: {}", e)))?;
@@ -153,7 +155,6 @@ impl<'de> Deserialize<'de> for Sha256ChunkedHash {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::Engine;
 
     #[test]
     fn test_sha256_chunked_hash_algorithm() {
@@ -193,7 +194,7 @@ mod tests {
         assert_eq!(hash.algorithm(), MULTIHASH_SHA256_CHUNKED);
 
         // Test that we can convert back to base64
-        let encoded_back = BASE64_STANDARD.encode(hash.digest());
+        let encoded_back = &multibase::encode(multibase::Base::Base64Pad, hash.digest())[1..];
         assert_eq!(encoded_back, base64_str);
 
         // Test invalid base64 string
@@ -218,10 +219,14 @@ mod tests {
         // Test specific format
         let test_json = r#"{"type":"sha2-256-chunked","value":"dGVzdCBkYXRh"}"#;
         let parsed: Sha256ChunkedHash = serde_json::from_str(test_json).unwrap();
-        assert_eq!(BASE64_STANDARD.encode(parsed.digest()), "dGVzdCBkYXRh");
+        assert_eq!(
+            &multibase::encode(multibase::Base::Base64Pad, parsed.digest())[1..],
+            "dGVzdCBkYXRh"
+        );
 
         // Test serialized format
-        let expected_base64 = BASE64_STANDARD.encode(sha256_chunked.digest());
+        let expected_base64 =
+            &multibase::encode(multibase::Base::Base64Pad, sha256_chunked.digest())[1..];
         assert!(serialized.contains("\"type\":\"sha2-256-chunked\""));
         assert!(serialized.contains(&format!("\"value\":\"{}\"", expected_base64)));
     }
