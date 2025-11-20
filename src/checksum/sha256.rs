@@ -1,6 +1,7 @@
 //! SHA256 checksum implementation
 
 use multihash::Multihash;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::Error;
 
@@ -51,6 +52,88 @@ impl TryFrom<Multihash<256>> for Sha256Hash {
     }
 }
 
+impl Serialize for Sha256Hash {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(2))?;
+        map.serialize_entry("type", "SHA256")?;
+        map.serialize_entry("value", &hex::encode(self.0.digest()))?;
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Sha256Hash {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use serde::de::{self, MapAccess, Visitor};
+        use std::fmt;
+
+        struct Sha256HashVisitor;
+
+        impl<'de> Visitor<'de> for Sha256HashVisitor {
+            type Value = Sha256Hash;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a map with type and value fields")
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<Self::Value, V::Error>
+            where
+                V: MapAccess<'de>,
+            {
+                let mut type_field = None;
+                let mut value_field = None;
+
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "type" => {
+                            if type_field.is_some() {
+                                return Err(de::Error::duplicate_field("type"));
+                            }
+                            let type_value: String = map.next_value()?;
+                            if type_value != "SHA256" {
+                                return Err(de::Error::custom(format!(
+                                    "Expected type 'SHA256', got '{}'",
+                                    type_value
+                                )));
+                            }
+                            type_field = Some(type_value);
+                        }
+                        "value" => {
+                            if value_field.is_some() {
+                                return Err(de::Error::duplicate_field("value"));
+                            }
+                            value_field = Some(map.next_value::<String>()?);
+                        }
+                        _ => {
+                            let _: serde::de::IgnoredAny = map.next_value()?;
+                        }
+                    }
+                }
+
+                if type_field.is_none() {
+                    return Err(de::Error::missing_field("type"));
+                }
+                let value_field = value_field.ok_or_else(|| de::Error::missing_field("value"))?;
+
+                let hash_bytes = hex::decode(&value_field)
+                    .map_err(|e| de::Error::custom(format!("Invalid hex: {}", e)))?;
+                let multihash = Multihash::wrap(MULTIHASH_SHA256, &hash_bytes)
+                    .map_err(|e| de::Error::custom(format!("Invalid multihash: {}", e)))?;
+
+                Ok(Sha256Hash(multihash))
+            }
+        }
+
+        deserializer.deserialize_map(Sha256HashVisitor)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,5 +164,50 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("Expected SHA256 hash"));
+    }
+
+    #[test]
+    fn test_sha256_hash_serde() {
+        let original_hash = multihash::Multihash::wrap(MULTIHASH_SHA256, b"test_data").unwrap();
+        let sha256 = Sha256Hash::try_from(original_hash).unwrap();
+
+        // Test serialization
+        let serialized = serde_json::to_string(&sha256).unwrap();
+
+        // Test deserialization
+        let deserialized: Sha256Hash = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(sha256, deserialized);
+
+        // Test specific format
+        let test_json = r#"{"type":"SHA256","value":"deadbeef"}"#;
+        let parsed: Sha256Hash = serde_json::from_str(test_json).unwrap();
+        assert_eq!(hex::encode(parsed.digest()), "deadbeef");
+
+        // Test serialized format
+        let expected_hex = hex::encode(sha256.digest());
+        assert!(serialized.contains("\"type\":\"SHA256\""));
+        assert!(serialized.contains(&format!("\"value\":\"{}\"", expected_hex)));
+    }
+
+    #[test]
+    fn test_sha256_hash_serde_errors() {
+        // Test invalid type
+        let invalid_type = r#"{"type":"INVALID","value":"deadbeef"}"#;
+        let result: Result<Sha256Hash, _> = serde_json::from_str(invalid_type);
+        assert!(result.is_err());
+
+        // Test invalid hex
+        let invalid_hex = r#"{"type":"SHA256","value":"invalid_hex"}"#;
+        let result: Result<Sha256Hash, _> = serde_json::from_str(invalid_hex);
+        assert!(result.is_err());
+
+        // Test missing fields
+        let missing_type = r#"{"value":"deadbeef"}"#;
+        let result: Result<Sha256Hash, _> = serde_json::from_str(missing_type);
+        assert!(result.is_err());
+
+        let missing_value = r#"{"type":"SHA256"}"#;
+        let result: Result<Sha256Hash, _> = serde_json::from_str(missing_value);
+        assert!(result.is_err());
     }
 }

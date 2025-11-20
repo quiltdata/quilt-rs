@@ -247,7 +247,7 @@ impl TryFrom<ManifestRow> for Row {
         Ok(Row {
             name: manifest_row.logical_key,
             place: manifest_row.physical_key,
-            hash: manifest_row.hash.try_into()?,
+            hash: manifest_row.hash.into(),
             size: manifest_row.size,
             meta,
             info,

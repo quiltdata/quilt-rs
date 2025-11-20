@@ -111,10 +111,10 @@ fn serialize_row_entry(row: &Row) -> serde_json::Value {
         meta.insert("user_meta".into(), m.clone());
     }
 
-    let content_hash: checksum::ContentHash = row.hash.try_into().unwrap();
+    let object_hash: checksum::ObjectHash = row.hash.into();
 
     serde_json::json!({
-        "hash": content_hash,
+        "hash": object_hash,
         "logical_key": row.name,
         "meta": meta,
         "size": row.size,

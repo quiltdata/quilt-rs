@@ -3,6 +3,7 @@
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
 use multihash::Multihash;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::Error;
 
@@ -66,6 +67,89 @@ impl TryFrom<&str> for Crc64Hash {
     }
 }
 
+impl Serialize for Crc64Hash {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(2))?;
+        map.serialize_entry("type", "CRC64NVME")?;
+        map.serialize_entry("value", &BASE64_STANDARD.encode(self.0.digest()))?;
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Crc64Hash {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use serde::de::{self, MapAccess, Visitor};
+        use std::fmt;
+
+        struct Crc64HashVisitor;
+
+        impl<'de> Visitor<'de> for Crc64HashVisitor {
+            type Value = Crc64Hash;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a map with type and value fields")
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<Self::Value, V::Error>
+            where
+                V: MapAccess<'de>,
+            {
+                let mut type_field = None;
+                let mut value_field = None;
+
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "type" => {
+                            if type_field.is_some() {
+                                return Err(de::Error::duplicate_field("type"));
+                            }
+                            let type_value: String = map.next_value()?;
+                            if type_value != "CRC64NVME" {
+                                return Err(de::Error::custom(format!(
+                                    "Expected type 'CRC64NVME', got '{}'",
+                                    type_value
+                                )));
+                            }
+                            type_field = Some(type_value);
+                        }
+                        "value" => {
+                            if value_field.is_some() {
+                                return Err(de::Error::duplicate_field("value"));
+                            }
+                            value_field = Some(map.next_value::<String>()?);
+                        }
+                        _ => {
+                            let _: serde::de::IgnoredAny = map.next_value()?;
+                        }
+                    }
+                }
+
+                if type_field.is_none() {
+                    return Err(de::Error::missing_field("type"));
+                }
+                let value_field = value_field.ok_or_else(|| de::Error::missing_field("value"))?;
+
+                let hash_bytes = BASE64_STANDARD
+                    .decode(&value_field)
+                    .map_err(|e| de::Error::custom(format!("Invalid base64: {}", e)))?;
+                let multihash = Multihash::wrap(MULTIHASH_CRC64_NVME, &hash_bytes)
+                    .map_err(|e| de::Error::custom(format!("Invalid multihash: {}", e)))?;
+
+                Ok(Crc64Hash(multihash))
+            }
+        }
+
+        deserializer.deserialize_map(Crc64HashVisitor)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,5 +197,50 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("Expected CRC64-NVMe hash"));
+    }
+
+    #[test]
+    fn test_crc64_hash_serde() {
+        let original_hash = multihash::Multihash::wrap(MULTIHASH_CRC64_NVME, b"test_data").unwrap();
+        let crc64 = Crc64Hash::try_from(original_hash).unwrap();
+
+        // Test serialization
+        let serialized = serde_json::to_string(&crc64).unwrap();
+
+        // Test deserialization
+        let deserialized: Crc64Hash = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(crc64, deserialized);
+
+        // Test specific format
+        let test_json = r#"{"type":"CRC64NVME","value":"dGVzdCBkYXRh"}"#;
+        let parsed: Crc64Hash = serde_json::from_str(test_json).unwrap();
+        assert_eq!(BASE64_STANDARD.encode(parsed.digest()), "dGVzdCBkYXRh");
+
+        // Test serialized format
+        let expected_base64 = BASE64_STANDARD.encode(crc64.digest());
+        assert!(serialized.contains("\"type\":\"CRC64NVME\""));
+        assert!(serialized.contains(&format!("\"value\":\"{}\"", expected_base64)));
+    }
+
+    #[test]
+    fn test_crc64_hash_serde_errors() {
+        // Test invalid type
+        let invalid_type = r#"{"type":"INVALID","value":"dGVzdA=="}"#;
+        let result: Result<Crc64Hash, _> = serde_json::from_str(invalid_type);
+        assert!(result.is_err());
+
+        // Test invalid base64
+        let invalid_base64 = r#"{"type":"CRC64NVME","value":"invalid_base64!"}"#;
+        let result: Result<Crc64Hash, _> = serde_json::from_str(invalid_base64);
+        assert!(result.is_err());
+
+        // Test missing fields
+        let missing_type = r#"{"value":"dGVzdA=="}"#;
+        let result: Result<Crc64Hash, _> = serde_json::from_str(missing_type);
+        assert!(result.is_err());
+
+        let missing_value = r#"{"type":"CRC64NVME"}"#;
+        let result: Result<Crc64Hash, _> = serde_json::from_str(missing_value);
+        assert!(result.is_err());
     }
 }

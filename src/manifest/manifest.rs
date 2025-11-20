@@ -156,7 +156,7 @@ impl TryFrom<Header> for ManifestHeader {
 struct Quilt3ManifestRow {
     pub logical_key: PathBuf,
     pub physical_keys: Vec<String>,
-    pub hash: checksum::ContentHash,
+    pub hash: checksum::ObjectHash,
     // XXX: u64 cannot be safely deserialized by standard JS json parser,
     //      which treats numbers as 64-bit floats.
     //      However, having file size more than ~9PB (max safe/lossless integer - 53 bits)
@@ -188,7 +188,7 @@ pub struct ManifestRow {
     pub logical_key: PathBuf,
     // XXX: use Url to have validated string?
     pub physical_key: String,
-    pub hash: checksum::ContentHash,
+    pub hash: checksum::ObjectHash,
     pub size: u64,
     pub meta: Option<serde_json::Value>,
 }
@@ -337,7 +337,7 @@ impl Manifest {
                 manifest_rows.push(ManifestRow {
                     logical_key: row.name.clone(),
                     physical_key: row.place.clone(),
-                    hash: row.hash.try_into().unwrap(),
+                    hash: row.hash.into(),
                     size: row.size,
                     meta: Some(serde_json::Value::Object(meta)),
                 })
@@ -370,14 +370,32 @@ mod tests {
         let left = ManifestRow {
             logical_key: PathBuf::from("A"),
             physical_key: "B".to_string(),
-            hash: checksum::ContentHash::SHA256("C".to_string()),
+            hash: checksum::ObjectHash::Sha256(
+                checksum::Sha256Hash::try_from(
+                    multihash::Multihash::wrap(
+                        checksum::MULTIHASH_SHA256,
+                        b"C_test_hash_for_equality_check",
+                    )
+                    .unwrap(),
+                )
+                .unwrap(),
+            ),
             size: 1,
             meta: None,
         };
         let right = ManifestRow {
             logical_key: PathBuf::from("A"),
             physical_key: "B".to_string(),
-            hash: checksum::ContentHash::SHA256("C".to_string()),
+            hash: checksum::ObjectHash::Sha256(
+                checksum::Sha256Hash::try_from(
+                    multihash::Multihash::wrap(
+                        checksum::MULTIHASH_SHA256,
+                        b"C_test_hash_for_equality_check",
+                    )
+                    .unwrap(),
+                )
+                .unwrap(),
+            ),
             size: 1,
             meta: None,
         };
@@ -391,14 +409,32 @@ mod tests {
         let left = ManifestRow {
             logical_key: PathBuf::from("A"),
             physical_key: "FOO".to_string(),
-            hash: checksum::ContentHash::SHA256("C".to_string()),
+            hash: checksum::ObjectHash::Sha256(
+                checksum::Sha256Hash::try_from(
+                    multihash::Multihash::wrap(
+                        checksum::MULTIHASH_SHA256,
+                        b"C_test_hash_for_equality_check",
+                    )
+                    .unwrap(),
+                )
+                .unwrap(),
+            ),
             size: 1,
             meta: Some(serde_json::Value::Object(meta)),
         };
         let right = ManifestRow {
             logical_key: PathBuf::from("A"),
             physical_key: "BAR".to_string(),
-            hash: checksum::ContentHash::SHA256("C".to_string()),
+            hash: checksum::ObjectHash::Sha256(
+                checksum::Sha256Hash::try_from(
+                    multihash::Multihash::wrap(
+                        checksum::MULTIHASH_SHA256,
+                        b"C_test_hash_for_equality_check",
+                    )
+                    .unwrap(),
+                )
+                .unwrap(),
+            ),
             size: 1,
             meta: None,
         };
@@ -535,7 +571,11 @@ mod tests {
                         logical_key: PathBuf::from("README.md"),
                         physical_key: "s3://udp-spec/test_run/test_push/README.md?versionId=Rv.GfYdUWkLfeTT73Rodm3aBUrTIcC1X".to_string(),
                         size: 26,
-                        hash: checksum::ContentHash::SHA256("bc2f10e72e751ea6cc1e0b9bdbbb531d437ccbba684b9fef90e1cc228318e112".to_string()),
+                        hash: checksum::ObjectHash::Sha256(
+                            checksum::Sha256Hash::try_from(
+                                multihash::Multihash::wrap(checksum::MULTIHASH_SHA256, &hex::decode("bc2f10e72e751ea6cc1e0b9bdbbb531d437ccbba684b9fef90e1cc228318e112").unwrap()).unwrap()
+                            ).unwrap()
+                        ),
                         meta: Some(serde_json::Value::Object(serde_json::Map::new())),
                     }
                 ],
@@ -574,7 +614,7 @@ mod tests {
                     logical_key: PathBuf::from("test.txt"),
                     physical_key: "s3://test-bucket/test.txt".to_string(),
                     size: 42,
-                    hash: checksum::ContentHash::try_from(hash)?,
+                    hash: checksum::ObjectHash::from(hash),
                     meta: Some(serde_json::Value::Object(serde_json::Map::from_iter(vec![
                         ("user_meta".to_string(), serde_json::json!({"baz": "qux"})),
                         ("foo".to_string(), serde_json::json!("bar")),
