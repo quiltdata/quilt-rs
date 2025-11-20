@@ -10,8 +10,7 @@ use crate::manifest::ManifestRow;
 use crate::manifest::Workflow;
 use crate::Error;
 use crate::Res;
-use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
+use multibase;
 
 const HEADER_ROW: &str = ".";
 
@@ -189,7 +188,8 @@ impl From<&Row> for RowDisplay {
             name: row.name.display().to_string(),
             place: row.place.clone(),
             size: row.size,
-            hash_base64: BASE64_STANDARD.encode(row.hash.digest()),
+            hash_base64: multibase::encode(multibase::Base::Base64Pad, row.hash.digest())[1..]
+                .to_string(),
             hash_hex: hex::encode(row.hash.to_bytes()),
             info: row
                 .display_info()

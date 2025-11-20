@@ -70,6 +70,27 @@ impl TryFrom<Multihash<256>> for Sha256Hash {
     }
 }
 
+impl TryFrom<&str> for Sha256Hash {
+    type Error = Error;
+
+    fn try_from(hex_str: &str) -> Result<Self, Self::Error> {
+        // Add multibase prefix to plain hex and decode with multibase
+        let prefixed_value = format!("{}{}", multibase::Base::Base16Lower.code(), hex_str);
+        let (_, hash_bytes) = multibase::decode(&prefixed_value)?;
+        let multihash = Multihash::wrap(MULTIHASH_SHA256, &hash_bytes)?;
+        Ok(Self(multihash))
+    }
+}
+
+impl std::fmt::Display for Sha256Hash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Use multibase encoding but strip the prefix to get plain hex
+        let multibase_encoded = multibase::encode(multibase::Base::Base16Lower, self.digest());
+        let hex_value = &multibase_encoded[1..]; // Remove the multibase prefix
+        write!(f, "{}", hex_value)
+    }
+}
+
 impl Serialize for Sha256Hash {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -78,10 +99,7 @@ impl Serialize for Sha256Hash {
         use serde::ser::SerializeMap;
         let mut map = serializer.serialize_map(Some(2))?;
         map.serialize_entry("type", "SHA256")?;
-        // Use multibase encoding but strip the prefix
-        let multibase_encoded = multibase::encode(multibase::Base::Base16Lower, self.digest());
-        let hex_value = &multibase_encoded[1..]; // Remove the multibase prefix
-        map.serialize_entry("value", hex_value)?;
+        map.serialize_entry("value", &self.to_string())?;
         map.end()
     }
 }
@@ -142,15 +160,8 @@ impl<'de> Deserialize<'de> for Sha256Hash {
                 }
                 let value_field = value_field.ok_or_else(|| de::Error::missing_field("value"))?;
 
-                // Add multibase prefix to plain hex and decode with multibase
-                let prefixed_value =
-                    format!("{}{}", multibase::Base::Base16Lower.code(), value_field);
-                let (_, hash_bytes) = multibase::decode(&prefixed_value)
-                    .map_err(|e| de::Error::custom(format!("Invalid hex: {}", e)))?;
-                let multihash = Multihash::wrap(MULTIHASH_SHA256, &hash_bytes)
-                    .map_err(|e| de::Error::custom(format!("Invalid multihash: {}", e)))?;
-
-                Ok(Sha256Hash(multihash))
+                Sha256Hash::try_from(value_field.as_str())
+                    .map_err(|e| de::Error::custom(format!("Invalid SHA256 hash: {}", e)))
             }
         }
 
@@ -295,5 +306,44 @@ mod tests {
         assert_eq!(sha256, back_to_sha256);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_sha256_hash_display() {
+        let original_hash = multihash::Multihash::wrap(MULTIHASH_SHA256, b"test_data").unwrap();
+        let sha256 = Sha256Hash::try_from(original_hash).unwrap();
+
+        // Test Display implementation
+        let display_string = format!("{}", sha256);
+
+        // Should be hex without multibase prefix
+        let expected_hex = hex::encode(b"test_data");
+        assert_eq!(display_string, expected_hex);
+
+        // Test that to_string() works (provided by Display)
+        assert_eq!(sha256.to_string(), expected_hex);
+    }
+
+    #[test]
+    fn test_sha256_hash_try_from_str() {
+        // Test valid hex string
+        let hex_str = "deadbeef";
+        let hash = Sha256Hash::try_from(hex_str).unwrap();
+        assert_eq!(hash.algorithm(), MULTIHASH_SHA256);
+
+        // Test that we can convert back to string (round-trip)
+        let back_to_string = hash.to_string();
+        assert_eq!(back_to_string, hex_str);
+
+        // Test invalid hex string (contains non-hex characters)
+        let invalid_hex = "invalid_hex_string!";
+        let result = Sha256Hash::try_from(invalid_hex);
+        assert!(result.is_err());
+
+        // Test odd-length hex string (multibase might handle this differently)
+        let odd_hex = "abc";
+        let _result = Sha256Hash::try_from(odd_hex);
+        // This might succeed or fail depending on multibase implementation
+        // Let's just check that it doesn't panic
     }
 }

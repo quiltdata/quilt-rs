@@ -178,8 +178,6 @@ mod tests {
     use aws_sdk_s3::types::Checksum;
     use aws_sdk_s3::types::GetObjectAttributesParts;
     use aws_sdk_s3::types::ObjectPart;
-    use base64::prelude::BASE64_STANDARD;
-    use base64::Engine;
 
     #[test]
     fn test_get_checksum_chunksize_and_parts() {
@@ -215,7 +213,9 @@ mod tests {
     #[test]
     fn test_get_compliant_chunked_checksum() -> Res {
         fn b64decode(data: &str) -> Result<Vec<u8>, Error> {
-            Ok(BASE64_STANDARD.decode(data.as_bytes())?)
+            let prefixed_value = format!("{}{}", multibase::Base::Base64Pad.code(), data);
+            let (_, decoded) = multibase::decode(&prefixed_value)?;
+            Ok(decoded)
         }
 
         fn sha256(data: Vec<u8>) -> Vec<u8> {
@@ -488,7 +488,7 @@ mod tests {
             ObjectHash::Sha256Chunked(hash) => {
                 assert_eq!(hash.algorithm(), MULTIHASH_SHA256_CHUNKED);
                 assert_eq!(
-                    BASE64_STANDARD.encode(hash.digest()),
+                    &multibase::encode(multibase::Base::Base64Pad, hash.digest())[1..],
                     "dGVzdGRhdGEAAAAAAAAAAAAAAAAAAAAA"
                 );
             }
@@ -502,7 +502,7 @@ mod tests {
             ObjectHash::Crc64(hash) => {
                 assert_eq!(hash.algorithm(), MULTIHASH_CRC64_NVME);
                 assert_eq!(
-                    BASE64_STANDARD.encode(hash.digest()),
+                    &multibase::encode(multibase::Base::Base64Pad, hash.digest())[1..],
                     "dGVzdGRhdGEAAAAAAAAAAAAAAAAAAAAA"
                 );
             }
