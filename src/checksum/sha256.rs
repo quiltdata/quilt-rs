@@ -3,8 +3,10 @@
 use multibase;
 use multihash::Multihash;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use sha2::{Digest, Sha256};
+use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
 
-use crate::Error;
+use crate::{Error, Res};
 
 /// Multihash code for legacy or single-chunked checksums
 pub const MULTIHASH_SHA256: u64 = 0x12;
@@ -27,6 +29,21 @@ impl Sha256Hash {
     /// Get the digest bytes
     pub fn digest(&self) -> &[u8] {
         self.0.digest()
+    }
+
+    /// Calculates legacy or single-chunk checksum from file or from single chunk
+    pub async fn from_file<F: AsyncRead + Unpin>(file: F) -> Res<Self> {
+        let mut sha256 = Sha256::new();
+        let mut reader = BufReader::new(file);
+        let mut buf = [0; 4096];
+        loop {
+            let n = reader.read(&mut buf).await?;
+            if n == 0 {
+                break;
+            }
+            sha256.update(&buf[0..n]);
+        }
+        Sha256Hash::try_from(Multihash::wrap(MULTIHASH_SHA256, &sha256.finalize())?)
     }
 }
 
@@ -62,8 +79,7 @@ impl Serialize for Sha256Hash {
         let mut map = serializer.serialize_map(Some(2))?;
         map.serialize_entry("type", "SHA256")?;
         // Use multibase encoding but strip the prefix
-        let base = multibase::Base::Base16Lower;
-        let multibase_encoded = multibase::encode(base, self.0.digest());
+        let multibase_encoded = multibase::encode(multibase::Base::Base16Lower, self.digest());
         let hex_value = &multibase_encoded[1..]; // Remove the multibase prefix
         map.serialize_entry("value", hex_value)?;
         map.end()
@@ -200,6 +216,25 @@ mod tests {
         assert!(serialized.contains(&format!("\"value\":\"{}\"", expected_hex)));
     }
 
+    #[tokio::test]
+    async fn test_sha256_hash_from_file() {
+        let test_data = b"test file content";
+        let cursor = std::io::Cursor::new(test_data);
+
+        // Test from_file method
+        let hash_from_method = Sha256Hash::from_file(cursor).await.unwrap();
+
+        // Compare with manual creation
+        let expected_digest = Sha256::digest(test_data);
+        let expected_hash =
+            Sha256Hash::try_from(Multihash::wrap(MULTIHASH_SHA256, &expected_digest).unwrap())
+                .unwrap();
+
+        assert_eq!(hash_from_method, expected_hash);
+        assert_eq!(hash_from_method.algorithm(), MULTIHASH_SHA256);
+        assert_eq!(hash_from_method.digest(), expected_digest.as_slice());
+    }
+
     #[test]
     fn test_sha256_hash_serde_errors() {
         // Test invalid type
@@ -220,5 +255,45 @@ mod tests {
         let missing_value = r#"{"type":"SHA256"}"#;
         let result: Result<Sha256Hash, _> = serde_json::from_str(missing_value);
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_calculate_sha256_checksum() -> crate::Res {
+        use sha2::Digest;
+
+        let bytes = crate::fixtures::objects::less_than_8mb();
+        let hash = Sha256Hash::from_file(bytes).await?;
+
+        assert_eq!(hash.multihash().code(), MULTIHASH_SHA256);
+
+        let double_hash = Sha256::digest(hash.digest());
+        assert_eq!(
+            hex::encode(double_hash),
+            crate::fixtures::objects::LESS_THAN_8MB_HASH_HEX
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_sha256_from_bytes() -> crate::Res {
+        let bytes = crate::fixtures::objects::less_than_8mb();
+        let hash = Sha256Hash::from_file(&bytes[..]).await?;
+
+        assert_eq!(hash.algorithm(), MULTIHASH_SHA256);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_sha256_hash_conversions_from_file() -> crate::Res {
+        let bytes = crate::fixtures::objects::less_than_8mb();
+
+        // Test Sha256Hash conversions
+        let sha256 = Sha256Hash::from_file(&bytes[..]).await?;
+        let multihash: Multihash<256> = sha256.clone().into();
+        let back_to_sha256 = Sha256Hash::try_from(multihash)?;
+        assert_eq!(sha256, back_to_sha256);
+
+        Ok(())
     }
 }

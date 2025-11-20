@@ -239,7 +239,7 @@ mod tests {
     use base64::prelude::BASE64_STANDARD;
     use base64::Engine;
 
-    use crate::checksum::sha256_chunked;
+    use crate::checksum::Sha256ChunkedHash;
     use crate::io::storage::mocks::MockStorage;
     use crate::uri::ManifestUri;
 
@@ -381,7 +381,9 @@ mod tests {
                                         1737031820534,
                                     )
                                     .unwrap(),
-                                    hash: sha256_chunked(bytes, bytes.len() as u64).await?.into(),
+                                    hash: Sha256ChunkedHash::from_file(bytes, bytes.len() as u64)
+                                        .await?
+                                        .into(),
                                 },
                             )]),
                         },

@@ -141,7 +141,7 @@ async fn put_object_and_checksum(
         // NOTE: we're calculating checksum of checksums here,
         //       not a checksum of the file
         // NOTE: in the current design, we're not using this checksum
-        checksum::sha256(hash.digest()).await?.into()
+        checksum::Sha256Hash::from_file(hash.digest()).await?.into()
     };
 
     Ok((

@@ -24,9 +24,11 @@ async fn verify_hash(file: File, hash: Multihash<256>) -> Res<Option<(u64, Multi
     let file_metadata = file.metadata().await?;
     let size = file_metadata.len();
     let calculated_hash = if hash.code() == checksum::MULTIHASH_SHA256_CHUNKED {
-        checksum::sha256_chunked(file, size).await?.into()
+        checksum::Sha256ChunkedHash::from_file(file, size)
+            .await?
+            .into()
     } else {
-        checksum::sha256(file).await?.into()
+        checksum::Sha256Hash::from_file(file).await?.into()
     };
 
     if calculated_hash == hash {
@@ -141,7 +143,9 @@ async fn fingerprint_files(files: Vec<(PathBuf, WorkdirFile)>) -> Res<ChangeSet>
             }
             WorkdirFile::New(file) => {
                 let size = file.metadata().await?.len();
-                let hash = checksum::sha256_chunked(file, size).await?.into();
+                let hash = checksum::Sha256ChunkedHash::from_file(file, size)
+                    .await?
+                    .into();
                 let row = Row {
                     name: logical_key.clone(),
                     size,

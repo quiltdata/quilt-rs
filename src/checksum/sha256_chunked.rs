@@ -2,8 +2,11 @@
 
 use multihash::Multihash;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use sha2::{Digest, Sha256};
+use tokio::io::{AsyncRead, AsyncReadExt};
 
-use crate::Error;
+use crate::checksum::{get_checksum_chunksize_and_parts, Sha256Hash};
+use crate::{Error, Res};
 
 /// Multihash code for chunksums
 pub const MULTIHASH_SHA256_CHUNKED: u64 = 0xb510;
@@ -26,6 +29,24 @@ impl Sha256ChunkedHash {
     /// Get the digest bytes
     pub fn digest(&self) -> &[u8] {
         self.0.digest()
+    }
+
+    /// Calculates chunksum from a file
+    pub async fn from_file<F: AsyncRead + Unpin + Send>(file: F, length: u64) -> Res<Self> {
+        let (chunksize, num_parts) = get_checksum_chunksize_and_parts(length);
+
+        let mut sha256_hasher = Sha256::new();
+
+        let mut chunk = file.take(0);
+        for _ in 0..num_parts {
+            chunk.set_limit(chunksize);
+            sha256_hasher.update(Sha256Hash::from_file(&mut chunk).await?.digest());
+        }
+
+        Sha256ChunkedHash::try_from(Multihash::wrap(
+            MULTIHASH_SHA256_CHUNKED,
+            &sha256_hasher.finalize(),
+        )?)
     }
 }
 
@@ -73,7 +94,7 @@ impl Serialize for Sha256ChunkedHash {
         let mut map = serializer.serialize_map(Some(2))?;
         map.serialize_entry("type", "sha2-256-chunked")?;
         // Use multibase encoding but strip the prefix to maintain backward compatibility
-        let multibase_encoded = multibase::encode(multibase::Base::Base64Pad, self.0.digest());
+        let multibase_encoded = multibase::encode(multibase::Base::Base64Pad, self.digest());
         let base64_value = &multibase_encoded[1..]; // Remove the multibase prefix
         map.serialize_entry("value", base64_value)?;
         map.end()
@@ -251,5 +272,86 @@ mod tests {
         let missing_value = r#"{"type":"sha2-256-chunked"}"#;
         let result: Result<Sha256ChunkedHash, _> = serde_json::from_str(missing_value);
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_files_less_8mb() -> crate::Res {
+        use base64::{prelude::BASE64_STANDARD, Engine};
+
+        let bytes = crate::fixtures::objects::less_than_8mb();
+        let hash = Sha256ChunkedHash::from_file(bytes, bytes.len() as u64).await?;
+        assert_eq!(hash.multihash().code(), MULTIHASH_SHA256_CHUNKED);
+        assert_eq!(
+            BASE64_STANDARD.encode(hash.digest()),
+            crate::fixtures::objects::LESS_THAN_8MB_HASH_B64
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_files_equal_to_8mb() -> crate::Res {
+        use base64::{prelude::BASE64_STANDARD, Engine};
+
+        let bytes = crate::fixtures::objects::equal_to_8mb();
+        let hash = Sha256ChunkedHash::from_file(bytes.as_ref(), bytes.len() as u64).await?;
+        assert_eq!(
+            BASE64_STANDARD.encode(hash.digest()),
+            crate::fixtures::objects::EQUAL_TO_8MB_HASH_B64
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_sha256_chunked_empty() -> crate::Res {
+        use base64::{prelude::BASE64_STANDARD, Engine};
+
+        let bytes = crate::fixtures::objects::zero_bytes();
+        let hash = Sha256ChunkedHash::from_file(bytes, bytes.len() as u64).await?;
+        assert_eq!(
+            BASE64_STANDARD.encode(hash.digest()),
+            crate::fixtures::objects::ZERO_HASH_B64
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_files_bigger_than_8mb() -> crate::Res {
+        use base64::{prelude::BASE64_STANDARD, Engine};
+
+        let bytes = crate::fixtures::objects::more_than_8mb();
+        let hash = Sha256ChunkedHash::from_file(bytes.as_ref(), bytes.len() as u64).await?;
+        assert_eq!(
+            BASE64_STANDARD.encode(hash.digest()),
+            crate::fixtures::objects::MORE_THAN_8MB_HASH_B64
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_sha256_chunked_from_bytes() -> crate::Res {
+        use base64::{prelude::BASE64_STANDARD, Engine};
+
+        let bytes = crate::fixtures::objects::less_than_8mb();
+        let hash = Sha256ChunkedHash::from_file(bytes, bytes.len() as u64).await?;
+
+        assert_eq!(hash.algorithm(), MULTIHASH_SHA256_CHUNKED);
+        assert_eq!(
+            BASE64_STANDARD.encode(hash.digest()),
+            crate::fixtures::objects::LESS_THAN_8MB_HASH_B64
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_sha256_chunked_hash_conversions_from_file() -> crate::Res {
+        let bytes = crate::fixtures::objects::less_than_8mb();
+
+        // Test Sha256ChunkedHash conversions
+        let sha256_chunked = Sha256ChunkedHash::from_file(bytes, bytes.len() as u64).await?;
+        let multihash: Multihash<256> = sha256_chunked.clone().into();
+        let back_to_sha256_chunked = Sha256ChunkedHash::try_from(multihash)?;
+        assert_eq!(sha256_chunked, back_to_sha256_chunked);
+
+        Ok(())
     }
 }

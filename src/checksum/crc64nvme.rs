@@ -73,7 +73,7 @@ impl Serialize for Crc64Hash {
         let mut map = serializer.serialize_map(Some(2))?;
         map.serialize_entry("type", "CRC64NVME")?;
         // Use multibase encoding but strip the prefix to maintain backward compatibility
-        let multibase_encoded = multibase::encode(multibase::Base::Base64Pad, self.0.digest());
+        let multibase_encoded = multibase::encode(multibase::Base::Base64Pad, self.digest());
         let base64_value = &multibase_encoded[1..]; // Remove the multibase prefix
         map.serialize_entry("value", base64_value)?;
         map.end()

@@ -10,13 +10,7 @@ use base64::Engine;
 use multihash::Multihash;
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
-use tokio::io::AsyncRead;
-use tokio::io::AsyncReadExt;
-use tokio::io::BufReader;
-
-use crate::Res;
+use sha2::{Digest, Sha256};
 
 // Re-export CRC64-NVMe related items
 pub use crc64nvme::{Crc64Hash, MULTIHASH_CRC64_NVME};
@@ -133,45 +127,6 @@ pub fn get_checksum_chunksize_and_parts(file_size: u64) -> (u64, u64) {
     (chunksize, num_parts)
 }
 
-/// Caclulates legacy or single-chunk checksum from file or from single chunk
-pub async fn sha256<F: AsyncRead + Unpin>(file: F) -> Res<Sha256Hash> {
-    let mut sha256 = Sha256::new();
-    let mut reader = BufReader::new(file);
-    let mut buf = [0; 4096];
-    loop {
-        let n = reader.read(&mut buf).await?;
-        if n == 0 {
-            break;
-        }
-        sha256.update(&buf[0..n]);
-    }
-    Ok(Sha256Hash::try_from(Multihash::wrap(
-        MULTIHASH_SHA256,
-        &sha256.finalize(),
-    )?)?)
-}
-
-/// Calculates chunksum from a file
-pub async fn sha256_chunked<F: AsyncRead + Unpin + Send>(
-    file: F,
-    length: u64,
-) -> Res<Sha256ChunkedHash> {
-    let (chunksize, num_parts) = get_checksum_chunksize_and_parts(length);
-
-    let mut sha256_hasher = Sha256::new();
-
-    let mut chunk = file.take(0);
-    for _ in 0..num_parts {
-        chunk.set_limit(chunksize);
-        sha256_hasher.update(sha256(&mut chunk).await?.digest());
-    }
-
-    Ok(Sha256ChunkedHash::try_from(Multihash::wrap(
-        MULTIHASH_SHA256_CHUNKED,
-        &sha256_hasher.finalize(),
-    )?)?)
-}
-
 /// Takes checksum got from S3 and convert it to Chunksum.
 pub fn get_compliant_chunked_checksum(attrs: &GetObjectAttributesOutput) -> Option<Vec<u8>> {
     let checksum = attrs.checksum.as_ref()?;
@@ -218,75 +173,13 @@ mod tests {
     use super::*;
 
     use crate::Error;
-
-    use crate::fixtures;
+    use crate::Res;
 
     use aws_sdk_s3::types::Checksum;
     use aws_sdk_s3::types::GetObjectAttributesParts;
     use aws_sdk_s3::types::ObjectPart;
     use base64::prelude::BASE64_STANDARD;
     use base64::Engine;
-
-    #[tokio::test]
-    async fn test_calculate_sha256_checksum() -> Res {
-        let bytes = fixtures::objects::less_than_8mb();
-        let hash = sha256(bytes).await?;
-
-        assert_eq!(hash.multihash().code(), MULTIHASH_SHA256);
-
-        let double_hash = Sha256::digest(hash.digest());
-        assert_eq!(
-            hex::encode(double_hash),
-            fixtures::objects::LESS_THAN_8MB_HASH_HEX
-        );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_files_less_8mb() -> Res {
-        let bytes = fixtures::objects::less_than_8mb();
-        let hash = sha256_chunked(bytes, bytes.len() as u64).await?;
-        assert_eq!(hash.multihash().code(), MULTIHASH_SHA256_CHUNKED);
-        assert_eq!(
-            BASE64_STANDARD.encode(hash.digest()),
-            fixtures::objects::LESS_THAN_8MB_HASH_B64
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_files_equal_to_8mb() -> Res {
-        let bytes = fixtures::objects::equal_to_8mb();
-        let hash = sha256_chunked(bytes.as_ref(), bytes.len() as u64).await?;
-        assert_eq!(
-            BASE64_STANDARD.encode(hash.digest()),
-            fixtures::objects::EQUAL_TO_8MB_HASH_B64
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_sha256_chunked_empty() -> Res {
-        let bytes = fixtures::objects::zero_bytes();
-        let hash = sha256_chunked(bytes, bytes.len() as u64).await?;
-        assert_eq!(
-            BASE64_STANDARD.encode(hash.digest()),
-            fixtures::objects::ZERO_HASH_B64
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_files_bigger_than_8mb() -> Res {
-        let bytes = fixtures::objects::more_than_8mb();
-        let hash = sha256_chunked(bytes.as_ref(), bytes.len() as u64).await?;
-        assert_eq!(
-            BASE64_STANDARD.encode(hash.digest()),
-            fixtures::objects::MORE_THAN_8MB_HASH_B64
-        );
-        Ok(())
-    }
 
     #[test]
     fn test_get_checksum_chunksize_and_parts() {
@@ -463,47 +356,6 @@ mod tests {
         for (attrs, expected) in test_data {
             assert_eq!(get_compliant_chunked_checksum(&attrs.build()), expected);
         }
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_sha256_chunked_from_bytes() -> Res {
-        let bytes = fixtures::objects::less_than_8mb();
-        let hash = sha256_chunked(bytes, bytes.len() as u64).await?;
-
-        assert_eq!(hash.algorithm(), MULTIHASH_SHA256_CHUNKED);
-        assert_eq!(
-            BASE64_STANDARD.encode(hash.digest()),
-            fixtures::objects::LESS_THAN_8MB_HASH_B64
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_sha256_from_bytes() -> Res {
-        let bytes = fixtures::objects::less_than_8mb();
-        let hash = sha256(&bytes[..]).await?;
-
-        assert_eq!(hash.algorithm(), MULTIHASH_SHA256);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_conversions() -> Res {
-        let bytes = fixtures::objects::less_than_8mb();
-
-        // Test Sha256ChunkedHash conversions
-        let sha256_chunked = sha256_chunked(bytes, bytes.len() as u64).await?;
-        let multihash: Multihash<256> = sha256_chunked.clone().into();
-        let back_to_sha256_chunked = Sha256ChunkedHash::try_from(multihash)?;
-        assert_eq!(sha256_chunked, back_to_sha256_chunked);
-
-        // Test Sha256Hash conversions
-        let sha256 = sha256(&bytes[..]).await?;
-        let multihash: Multihash<256> = sha256.clone().into();
-        let back_to_sha256 = Sha256Hash::try_from(multihash)?;
-        assert_eq!(sha256, back_to_sha256);
-
         Ok(())
     }
 
