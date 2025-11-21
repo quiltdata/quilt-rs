@@ -32,15 +32,20 @@ pub enum ObjectHash {
     Crc64(Crc64Hash),
 }
 
-impl From<Multihash<256>> for ObjectHash {
-    fn from(multihash: Multihash<256>) -> Self {
+impl TryFrom<Multihash<256>> for ObjectHash {
+    type Error = crate::Error;
+
+    fn try_from(multihash: Multihash<256>) -> Result<Self, Self::Error> {
         match multihash.code() {
-            MULTIHASH_SHA256 => ObjectHash::Sha256(Sha256Hash::try_from(multihash).unwrap()),
-            MULTIHASH_SHA256_CHUNKED => {
-                ObjectHash::Sha256Chunked(Sha256ChunkedHash::try_from(multihash).unwrap())
-            }
-            MULTIHASH_CRC64_NVME => ObjectHash::Crc64(Crc64Hash::try_from(multihash).unwrap()),
-            _ => panic!("Unsupported multihash code: {:#06x}", multihash.code()),
+            MULTIHASH_SHA256 => Ok(ObjectHash::Sha256(Sha256Hash::try_from(multihash)?)),
+            MULTIHASH_SHA256_CHUNKED => Ok(ObjectHash::Sha256Chunked(Sha256ChunkedHash::try_from(
+                multihash,
+            )?)),
+            MULTIHASH_CRC64_NVME => Ok(ObjectHash::Crc64(Crc64Hash::try_from(multihash)?)),
+            _ => Err(crate::Error::InvalidMultihash(format!(
+                "Unsupported multihash code: {:#06x}",
+                multihash.code()
+            ))),
         }
     }
 }
@@ -385,7 +390,7 @@ mod tests {
     fn test_object_hash_conversions() -> Res {
         // Test SHA256 conversion
         let sha256_multihash = multihash::Multihash::wrap(MULTIHASH_SHA256, b"test_data").unwrap();
-        let object_hash = ObjectHash::from(sha256_multihash.clone());
+        let object_hash = ObjectHash::try_from(sha256_multihash.clone())?;
         let back_to_multihash: Multihash<256> = object_hash.clone().into();
         assert_eq!(sha256_multihash, back_to_multihash);
         assert_eq!(object_hash.algorithm(), MULTIHASH_SHA256);
@@ -393,7 +398,7 @@ mod tests {
         // Test SHA256Chunked conversion
         let sha256_chunked_multihash =
             multihash::Multihash::wrap(MULTIHASH_SHA256_CHUNKED, b"test_data").unwrap();
-        let object_hash = ObjectHash::from(sha256_chunked_multihash.clone());
+        let object_hash = ObjectHash::try_from(sha256_chunked_multihash.clone())?;
         let back_to_multihash: Multihash<256> = object_hash.clone().into();
         assert_eq!(sha256_chunked_multihash, back_to_multihash);
         assert_eq!(object_hash.algorithm(), MULTIHASH_SHA256_CHUNKED);
@@ -401,7 +406,7 @@ mod tests {
         // Test CRC64 conversion
         let crc64_multihash =
             multihash::Multihash::wrap(MULTIHASH_CRC64_NVME, b"test_data").unwrap();
-        let object_hash = ObjectHash::from(crc64_multihash.clone());
+        let object_hash = ObjectHash::try_from(crc64_multihash.clone())?;
         let back_to_multihash: Multihash<256> = object_hash.clone().into();
         assert_eq!(crc64_multihash, back_to_multihash);
         assert_eq!(object_hash.algorithm(), MULTIHASH_CRC64_NVME);
@@ -477,7 +482,11 @@ mod tests {
                     "7465737464617461000000000000000000000000000000000000000000000000"
                 );
             }
-            _ => panic!("Expected ObjectHash::Sha256 variant"),
+            _ => {
+                return Err(crate::Error::InvalidMultihash(
+                    "Expected ObjectHash::Sha256 variant".to_string(),
+                ))
+            }
         }
 
         // Test SHA256Chunked JSON format translation
@@ -492,7 +501,11 @@ mod tests {
                     "dGVzdGRhdGEAAAAAAAAAAAAAAAAAAAAA"
                 );
             }
-            _ => panic!("Expected ObjectHash::Sha256Chunked variant"),
+            _ => {
+                return Err(crate::Error::InvalidMultihash(
+                    "Expected ObjectHash::Sha256Chunked variant".to_string(),
+                ))
+            }
         }
 
         // Test CRC64 JSON format translation
@@ -506,7 +519,11 @@ mod tests {
                     "dGVzdGRhdGEAAAAAAAAAAAAAAAAAAAAA"
                 );
             }
-            _ => panic!("Expected ObjectHash::Crc64 variant"),
+            _ => {
+                return Err(crate::Error::InvalidMultihash(
+                    "Expected ObjectHash::Crc64 variant".to_string(),
+                ))
+            }
         }
 
         // Test that serialization produces the correct format

@@ -89,7 +89,7 @@ impl TopHasher {
 
     /// Append `Row` to the hasher
     pub fn append(&mut self, row: &Row) -> Res {
-        let value = serialize_row_entry(row);
+        let value = serialize_row_entry(row)?;
         let value_str = serde_json::to_string(&value)?;
         self.hasher.update(value_str);
         Ok(())
@@ -102,7 +102,7 @@ impl TopHasher {
 }
 
 // TODO: fix return type to Map<String, serde_json::Value>
-fn serialize_row_entry(row: &Row) -> serde_json::Value {
+fn serialize_row_entry(row: &Row) -> Res<serde_json::Value> {
     let mut meta = match row.info.as_object() {
         Some(meta) => meta.clone(),
         None => serde_json::Map::default(),
@@ -111,14 +111,14 @@ fn serialize_row_entry(row: &Row) -> serde_json::Value {
         meta.insert("user_meta".into(), m.clone());
     }
 
-    let object_hash: checksum::ObjectHash = row.hash.into();
+    let object_hash: checksum::ObjectHash = row.hash.try_into()?;
 
-    serde_json::json!({
+    Ok(serde_json::json!({
         "hash": object_hash,
         "logical_key": row.name,
         "meta": meta,
         "size": row.size,
-    })
+    }))
 }
 
 /// Helper for reading Parquet manifest and get `Row`s
@@ -411,7 +411,7 @@ mod tests {
             meta: Some(serde_json::json!({"foo": "bar"})),
         };
 
-        let serialized = serialize_row_entry(&row);
+        let serialized = serialize_row_entry(&row)?;
         assert_eq!(
             serialized,
             serde_json::json!({

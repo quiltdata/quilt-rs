@@ -337,7 +337,7 @@ impl Manifest {
                 manifest_rows.push(ManifestRow {
                     logical_key: row.name.clone(),
                     physical_key: row.place.clone(),
-                    hash: row.hash.into(),
+                    hash: row.hash.try_into()?,
                     size: row.size,
                     meta: Some(serde_json::Value::Object(meta)),
                 })
@@ -614,7 +614,7 @@ mod tests {
                     logical_key: PathBuf::from("test.txt"),
                     physical_key: "s3://test-bucket/test.txt".to_string(),
                     size: 42,
-                    hash: checksum::ObjectHash::from(hash),
+                    hash: checksum::ObjectHash::try_from(hash)?,
                     meta: Some(serde_json::Value::Object(serde_json::Map::from_iter(vec![
                         ("user_meta".to_string(), serde_json::json!({"baz": "qux"})),
                         ("foo".to_string(), serde_json::json!("bar")),

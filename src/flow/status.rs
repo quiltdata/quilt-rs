@@ -379,7 +379,7 @@ mod tests {
             assert_eq!(added_row, &reference_row);
             Ok(())
         } else {
-            panic!()
+            panic!("Expected Change::Added, got {:?}", added_file)
         }
     }
 
