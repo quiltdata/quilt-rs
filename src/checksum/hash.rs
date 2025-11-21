@@ -6,13 +6,7 @@ use tokio::fs::File;
 
 use crate::Res;
 
-/// Common interface for all hash implementations
-///
-/// This trait ensures all hash types provide consistent access to:
-/// - The underlying multihash representation
-/// - Algorithm identification
-/// - Digest bytes
-/// - Async file hashing with unified signatures
+/// This trait ensures all hash types provide consistent access to the underlying multihash
 pub trait Hash {
     /// Get the inner multihash
     fn multihash(&self) -> &Multihash<256>;
