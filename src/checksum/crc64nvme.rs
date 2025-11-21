@@ -280,6 +280,28 @@ mod tests {
         assert_ne!(hash, hash3);
     }
 
+    #[tokio::test]
+    async fn test_crc64_hash_user_settings_fixture() -> crate::Res {
+        // Test with the known fixture file
+        let fixture_path = std::path::Path::new("fixtures/user-settings.mkfg");
+        let file_content = std::fs::read(fixture_path)?;
+        let file_cursor = std::io::Cursor::new(&file_content);
+
+        // Calculate hash from file
+        let hash = Crc64Hash::from_file(file_cursor).await?;
+
+        // Verify the expected base64 hash
+        let expected_base64 = "LZmmpqbBItw=";
+        assert_eq!(hash.to_string(), expected_base64);
+
+        // Also verify using from_data for consistency
+        let hash_from_data = Crc64Hash::from_data(&file_content)?;
+        assert_eq!(hash, hash_from_data);
+        assert_eq!(hash_from_data.to_string(), expected_base64);
+
+        Ok(())
+    }
+
     #[test]
     fn test_crc64_hash_serde_errors() {
         // Test invalid type
