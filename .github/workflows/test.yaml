@@ -17,9 +17,9 @@ jobs:
       - name: Setup Rust
         uses: moonrepo/setup-rust@v1
         with:
-            cache-base: main
-            cache-target: debug
-            inherit-toolchain: true
+          cache-base: main
+          cache-target: debug
+          inherit-toolchain: true
 
       - name: Check formatting
         run: cargo fmt --check
@@ -33,3 +33,5 @@ jobs:
         env:
           RUST_BACKTRACE: 1
           RUST_LOG: debug
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
