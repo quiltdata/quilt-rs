@@ -201,7 +201,7 @@ mod tests {
         let storage = MockStorage::default();
         let test_data = b"test file content";
         let test_path = Path::new("test_file.txt");
-        
+
         // Write test data to mock storage
         storage.write_file(test_path, test_data).await?;
 
@@ -219,7 +219,7 @@ mod tests {
         assert_eq!(hash_from_method, expected_hash);
         assert_eq!(hash_from_method.algorithm(), MULTIHASH_SHA256);
         assert_eq!(hash_from_method.digest(), &expected_digest);
-        
+
         Ok(())
     }
 
@@ -250,10 +250,10 @@ mod tests {
         let storage = MockStorage::default();
         let bytes = crate::fixtures::objects::less_than_8mb();
         let test_path = Path::new("checksum_test.txt");
-        
+
         // Write test data to mock storage
         storage.write_file(test_path, &bytes).await?;
-        
+
         // Test from_file method
         let file = storage.open_file(test_path).await?;
         let hash = Sha256Hash::from_file(file).await?;
@@ -276,10 +276,10 @@ mod tests {
         let storage = MockStorage::default();
         let bytes = crate::fixtures::objects::less_than_8mb();
         let test_path = Path::new("less_than_8mb.txt");
-        
+
         // Write test data to mock storage
         storage.write_file(test_path, &bytes).await?;
-        
+
         // Test from_file method
         let file = storage.open_file(test_path).await?;
         let hash = Sha256Hash::from_file(file).await?;
@@ -293,7 +293,7 @@ mod tests {
         let storage = MockStorage::default();
         let bytes = crate::fixtures::objects::less_than_8mb();
         let test_path = Path::new("conversion_test.txt");
-        
+
         // Write test data to mock storage
         storage.write_file(test_path, &bytes).await?;
 
