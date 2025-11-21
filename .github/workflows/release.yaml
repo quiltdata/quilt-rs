@@ -1,13 +1,6 @@
 name: Release
 
-on:
-  push:
-    branches:
-      - main
-      - dev
-    paths:
-      - "Cargo.toml"
-      - ".github/workflows/release.yaml"
+on: workflow_dispatch
 
 env:
   PACKAGE_VERSION: ""
@@ -25,19 +18,26 @@ jobs:
             registryName: quilt-rs
             path: .
     steps:
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: moonrepo/setup-rust@v1
+        with:
+          cache-base: main
+          cache-target: release
+
       - name: Get Version
         working-directory: ${{ matrix.package.path }}
         run: echo PACKAGE_VERSION=$(sed -nE 's/^\s*version = "(.*?)"/\1/p' Cargo.toml) >> $GITHUB_ENV
+
       - name: Check Published Version
         run: echo PUBLISHED_VERSION=$(cargo search ${{ matrix.package.registryName }} --limit 1 | sed -nE 's/^[^"]*"//; s/".*//1p' -) >> $GITHUB_ENV
+
       - name: Cargo Login
         if: env.PACKAGE_VERSION != env.PUBLISHED_VERSION
         run: cargo login ${{ secrets.CRATES_TOKEN }}
+
       - name: Cargo Package
         if: env.PACKAGE_VERSION != env.PUBLISHED_VERSION
         working-directory: ${{ matrix.package.path }}
@@ -45,6 +45,7 @@ jobs:
           cargo package
           echo "We will publish:" $PACKAGE_VERSION
           echo "This is current latest:" $PUBLISHED_VERSION
+
       - name: Publish ${{ matrix.package.name }}
         if: env.PACKAGE_VERSION != env.PUBLISHED_VERSION
         working-directory: ${{ matrix.package.path }}
