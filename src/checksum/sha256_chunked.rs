@@ -1,8 +1,8 @@
 //! SHA256 chunked checksum implementation
 
+use aws_smithy_checksums::ChecksumAlgorithm;
 use multihash::Multihash;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use sha2::{Digest, Sha256};
 use std::fmt;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
@@ -36,7 +36,7 @@ impl Sha256ChunkedHash {
     pub async fn from_file<F: AsyncRead + Unpin + Send>(file: F, length: u64) -> Res<Self> {
         let (chunksize, num_parts) = get_checksum_chunksize_and_parts(length);
 
-        let mut sha256_hasher = Sha256::new();
+        let mut sha256_hasher = ChecksumAlgorithm::Sha256.into_impl();
 
         let mut chunk = file.take(0);
         for _ in 0..num_parts {

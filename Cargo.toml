@@ -39,7 +39,6 @@ reqwest = { version = "0.12.24", features = ["json"] }
 serde = { version = "1.0.228", features = ["derive", "serde_derive"] }
 serde_json = { version = "1.0.145", features = ["preserve_order", "float_roundtrip"] }
 serde_yaml = "0.9.34"
-sha2 = "0.10.9"
 tabled = "0.20.0"
 tempfile = "3.23.0"
 thiserror = "2.0.17"

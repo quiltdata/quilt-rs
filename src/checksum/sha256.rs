@@ -1,8 +1,8 @@
 //! SHA256 checksum implementation
 
+use aws_smithy_checksums::ChecksumAlgorithm;
 use multihash::Multihash;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use sha2::{Digest, Sha256};
 use std::fmt;
 use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
 
@@ -33,7 +33,7 @@ impl Sha256Hash {
 
     /// Calculates legacy or single-chunk checksum from file or from single chunk
     pub async fn from_file<F: AsyncRead + Unpin>(file: F) -> Res<Self> {
-        let mut hasher = Sha256::new();
+        let mut hasher = ChecksumAlgorithm::Sha256.into_impl();
         let mut reader = BufReader::new(file);
         let mut buf = [0; 4096];
         loop {
@@ -200,14 +200,16 @@ mod tests {
         let hash_from_method = Sha256Hash::from_file(cursor).await.unwrap();
 
         // Compare with manual creation
-        let expected_digest = Sha256::digest(test_data);
+        let mut manual_hasher = ChecksumAlgorithm::Sha256.into_impl();
+        manual_hasher.update(test_data);
+        let expected_digest = manual_hasher.finalize();
         let expected_hash =
             Sha256Hash::try_from(Multihash::wrap(MULTIHASH_SHA256, &expected_digest).unwrap())
                 .unwrap();
 
         assert_eq!(hash_from_method, expected_hash);
         assert_eq!(hash_from_method.algorithm(), MULTIHASH_SHA256);
-        assert_eq!(hash_from_method.digest(), expected_digest.as_slice());
+        assert_eq!(hash_from_method.digest(), &expected_digest);
     }
 
     #[test]
@@ -234,14 +236,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_calculate_sha256_checksum() -> crate::Res {
-        use sha2::Digest;
-
         let bytes = crate::fixtures::objects::less_than_8mb();
         let hash = Sha256Hash::from_file(bytes).await?;
 
         assert_eq!(hash.multihash().code(), MULTIHASH_SHA256);
 
-        let double_hash = Sha256::digest(hash.digest());
+        let mut double_hasher = ChecksumAlgorithm::Sha256.into_impl();
+        double_hasher.update(hash.digest());
+        let double_hash = double_hasher.finalize();
         assert_eq!(
             hex::encode(double_hash),
             crate::fixtures::objects::LESS_THAN_8MB_HASH_HEX

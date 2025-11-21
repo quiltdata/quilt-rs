@@ -16,10 +16,9 @@ use arrow::array::UInt64Array;
 use arrow::datatypes::BinaryType;
 use arrow::datatypes::Utf8Type;
 use arrow::error::ArrowError;
+use aws_smithy_checksums::ChecksumAlgorithm;
 use multihash::Multihash;
 use parquet::arrow::ParquetRecordBatchStreamBuilder;
-use sha2::Digest;
-use sha2::Sha256;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncSeek;
 use tokio_stream::StreamExt;
@@ -61,9 +60,16 @@ fn serialize_table_header(header: &Header) -> Res<serde_json::Map<String, serde_
 }
 
 /// Helper for creating `top_hash`
-#[derive(Debug)]
 pub struct TopHasher {
-    pub hasher: Box<Sha256>,
+    pub hasher: Box<dyn aws_smithy_checksums::Checksum>,
+}
+
+impl fmt::Debug for TopHasher {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TopHasher")
+            .field("hasher", &"<aws_smithy_checksums::Checksum>")
+            .finish()
+    }
 }
 
 impl Default for TopHasher {
@@ -75,7 +81,7 @@ impl Default for TopHasher {
 impl TopHasher {
     pub fn new() -> Self {
         TopHasher {
-            hasher: Box::new(Sha256::new()),
+            hasher: ChecksumAlgorithm::Sha256.into_impl(),
         }
     }
 
@@ -83,7 +89,7 @@ impl TopHasher {
     pub fn append_header(&mut self, header: &Header) -> Res {
         let value = serialize_table_header(header)?;
         let value_str = serde_json::to_string(&value)?;
-        self.hasher.update(value_str);
+        self.hasher.update(value_str.as_bytes());
         Ok(())
     }
 
@@ -91,7 +97,7 @@ impl TopHasher {
     pub fn append(&mut self, row: &Row) -> Res {
         let value = serialize_row_entry(row)?;
         let value_str = serde_json::to_string(&value)?;
-        self.hasher.update(value_str);
+        self.hasher.update(value_str.as_bytes());
         Ok(())
     }
 

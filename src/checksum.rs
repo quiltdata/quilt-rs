@@ -5,12 +5,12 @@ mod sha256;
 mod sha256_chunked;
 
 use aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput;
+use aws_smithy_checksums::ChecksumAlgorithm;
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
 use multihash::Multihash;
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 
 // Re-export CRC64-NVMe related items
 pub use crc64nvme::{Crc64Hash, MULTIHASH_CRC64_NVME};
@@ -152,7 +152,9 @@ pub fn get_compliant_chunked_checksum(attrs: &GetObjectAttributesOutput) -> Opti
             }
         }
         #[allow(deprecated)]
-        return Some(Sha256::digest(checksum_sha256_decoded).as_slice().into());
+        let mut hasher = ChecksumAlgorithm::Sha256.into_impl();
+        hasher.update(&checksum_sha256_decoded);
+        return Some(hasher.finalize().into());
     } else if let Some(object_parts) = &attrs.object_parts {
         let parts = object_parts.parts();
         // Make sure we requested all parts.
@@ -224,7 +226,9 @@ mod tests {
         }
 
         fn sha256(data: Vec<u8>) -> Vec<u8> {
-            Sha256::digest(data).to_vec()
+            let mut hasher = ChecksumAlgorithm::Sha256.into_impl();
+            hasher.update(&data);
+            hasher.finalize().to_vec()
         }
 
         let builder = GetObjectAttributesOutput::builder;
