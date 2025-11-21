@@ -44,9 +44,9 @@ pub async fn verify_hash(file: File, hash: Multihash<256>) -> Res<Option<(u64, M
     let size = file_metadata.len();
 
     let calculated_hash: Res<Multihash<256>> = match hash.code() {
-        MULTIHASH_CRC64_NVME => Ok(<Crc64Hash as Hash>::from_file(file).await?.into()),
-        MULTIHASH_SHA256 => Ok(<Sha256Hash as Hash>::from_file(file).await?.into()),
-        MULTIHASH_SHA256_CHUNKED => Ok(<Sha256ChunkedHash as Hash>::from_file(file).await?.into()),
+        MULTIHASH_CRC64_NVME => Ok(Crc64Hash::from_file(file).await?.into()),
+        MULTIHASH_SHA256 => Ok(Sha256Hash::from_file(file).await?.into()),
+        MULTIHASH_SHA256_CHUNKED => Ok(Sha256ChunkedHash::from_file(file).await?.into()),
         code => Err(Error::InvalidMultihash(format!(
             "Wrong multihash type {}",
             code
