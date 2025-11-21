@@ -107,8 +107,7 @@ impl TopHasher {
     }
 }
 
-// TODO: fix return type to Map<String, serde_json::Value>
-fn serialize_row_entry(row: &Row) -> Res<serde_json::Value> {
+fn serialize_row_entry(row: &Row) -> Res<serde_json::Map<String, serde_json::Value>> {
     let mut meta = match row.info.as_object() {
         Some(meta) => meta.clone(),
         None => serde_json::Map::default(),
@@ -119,12 +118,16 @@ fn serialize_row_entry(row: &Row) -> Res<serde_json::Value> {
 
     let object_hash: checksum::ObjectHash = row.hash.try_into()?;
 
-    Ok(serde_json::json!({
-        "hash": object_hash,
-        "logical_key": row.name,
-        "meta": meta,
-        "size": row.size,
-    }))
+    // Build map more idiomatically using from_iter
+    Ok(serde_json::Map::from_iter([
+        ("hash".to_string(), serde_json::to_value(object_hash)?),
+        ("logical_key".to_string(), serde_json::to_value(&row.name)?),
+        ("meta".to_string(), serde_json::Value::Object(meta)),
+        (
+            "size".to_string(),
+            serde_json::Value::Number(row.size.into()),
+        ),
+    ]))
 }
 
 /// Helper for reading Parquet manifest and get `Row`s
@@ -321,9 +324,6 @@ mod tests {
             .unwrap();
         assert_eq!(table.records_len().await, 2);
 
-        // let header = table.get_header().await?;
-        // assert_eq!(header.size, 0);
-
         let readme = table
             .get_record(&PathBuf::from("READ ME.md"))
             .await?
@@ -332,26 +332,6 @@ mod tests {
 
         Ok(())
     }
-
-    // #[tokio::test]
-    // #[ignore]
-    // async fn read_write_local() {
-    //     let storage = mocks::storage::MockStorage::default();
-    //     let table1 = Table::read_from_path(&storage, &mocks::manifest::parquet())
-    //         .await
-    //         .unwrap();
-    //     assert_eq!(table1.records_len().await, 2);
-
-    //     let temp_dir = temp_testdir::TempDir::default();
-    //     let temp_path = temp_dir.join("test.parquet");
-
-    //     table1.write_to_path(&storage, &temp_path).await.unwrap();
-
-    //     let table2 = Table::read_from_path(&storage, &temp_path).await.unwrap();
-
-    //     assert_eq!(table2.records_len().await, 2);
-    //     assert_eq!(table2.records, table1.records);
-    // }
 
     #[test]
     fn test_formatting_no_records() -> Res {
@@ -418,15 +398,22 @@ mod tests {
         };
 
         let serialized = serialize_row_entry(&row)?;
-        assert_eq!(
-            serialized,
-            serde_json::json!({
-                "hash": {"type": "SHA256", "value": hex::encode(hash.digest())},
-                "logical_key": "test.txt",
-                "meta": {"user_meta": {"foo": "bar"}},
-                "size": 42,
-            })
-        );
+
+        // Create expected map for comparison
+        let expected = serde_json::Map::from_iter([
+            (
+                "hash".to_string(),
+                serde_json::json!({"type": "SHA256", "value": hex::encode(hash.digest())}),
+            ),
+            ("logical_key".to_string(), serde_json::json!("test.txt")),
+            (
+                "meta".to_string(),
+                serde_json::json!({"user_meta": {"foo": "bar"}}),
+            ),
+            ("size".to_string(), serde_json::json!(42)),
+        ]);
+
+        assert_eq!(serialized, expected);
         Ok(())
     }
 
