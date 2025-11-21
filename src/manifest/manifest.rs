@@ -366,79 +366,45 @@ mod tests {
     use crate::manifest::Table;
 
     #[test]
-    fn test_equality_of_strictly_equal() {
+    fn test_equality_of_strictly_equal() -> Res {
         let left = ManifestRow {
             logical_key: PathBuf::from("A"),
             physical_key: "B".to_string(),
-            hash: checksum::ObjectHash::Sha256(
-                checksum::Sha256Hash::try_from(
-                    multihash::Multihash::wrap(
-                        checksum::MULTIHASH_SHA256,
-                        b"C_test_hash_for_equality_check",
-                    )
-                    .unwrap(),
-                )
-                .unwrap(),
-            ),
+            hash: checksum::Sha256Hash::try_from("deadbeef")?.into(),
             size: 1,
             meta: None,
         };
         let right = ManifestRow {
             logical_key: PathBuf::from("A"),
             physical_key: "B".to_string(),
-            hash: checksum::ObjectHash::Sha256(
-                checksum::Sha256Hash::try_from(
-                    multihash::Multihash::wrap(
-                        checksum::MULTIHASH_SHA256,
-                        b"C_test_hash_for_equality_check",
-                    )
-                    .unwrap(),
-                )
-                .unwrap(),
-            ),
+            hash: checksum::Sha256Hash::try_from("deadbeef")?.into(),
             size: 1,
             meta: None,
         };
-        assert!(left == right)
+        assert!(left == right);
+        Ok(())
     }
 
     #[test]
-    fn test_equality_of_partialy_equal() {
+    fn test_equality_of_partialy_equal() -> Res {
         let mut meta = serde_json::Map::new();
         meta.insert("foo".to_string(), serde_json::json!("bar"));
         let left = ManifestRow {
             logical_key: PathBuf::from("A"),
             physical_key: "FOO".to_string(),
-            hash: checksum::ObjectHash::Sha256(
-                checksum::Sha256Hash::try_from(
-                    multihash::Multihash::wrap(
-                        checksum::MULTIHASH_SHA256,
-                        b"C_test_hash_for_equality_check",
-                    )
-                    .unwrap(),
-                )
-                .unwrap(),
-            ),
+            hash: checksum::Sha256Hash::try_from("deadbeef")?.into(),
             size: 1,
             meta: Some(serde_json::Value::Object(meta)),
         };
         let right = ManifestRow {
             logical_key: PathBuf::from("A"),
             physical_key: "BAR".to_string(),
-            hash: checksum::ObjectHash::Sha256(
-                checksum::Sha256Hash::try_from(
-                    multihash::Multihash::wrap(
-                        checksum::MULTIHASH_SHA256,
-                        b"C_test_hash_for_equality_check",
-                    )
-                    .unwrap(),
-                )
-                .unwrap(),
-            ),
+            hash: checksum::Sha256Hash::try_from("deadbeef")?.into(),
             size: 1,
             meta: None,
         };
-        assert!(left == right)
+        assert!(left == right);
+        Ok(())
     }
 
     #[tokio::test]
@@ -571,11 +537,7 @@ mod tests {
                         logical_key: PathBuf::from("README.md"),
                         physical_key: "s3://udp-spec/test_run/test_push/README.md?versionId=Rv.GfYdUWkLfeTT73Rodm3aBUrTIcC1X".to_string(),
                         size: 26,
-                        hash: checksum::ObjectHash::Sha256(
-                            checksum::Sha256Hash::try_from(
-                                multihash::Multihash::wrap(checksum::MULTIHASH_SHA256, &hex::decode("bc2f10e72e751ea6cc1e0b9bdbbb531d437ccbba684b9fef90e1cc228318e112").unwrap()).unwrap()
-                            ).unwrap()
-                        ),
+                        hash: checksum::Sha256Hash::try_from("bc2f10e72e751ea6cc1e0b9bdbbb531d437ccbba684b9fef90e1cc228318e112")?.into(),
                         meta: Some(serde_json::Value::Object(serde_json::Map::new())),
                     }
                 ],
