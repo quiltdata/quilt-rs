@@ -9,7 +9,7 @@ use std::fmt;
 use std::path::Path;
 use std::path::PathBuf;
 
-use crate::checksum;
+use crate::checksum::ObjectHash;
 use crate::io::storage::Storage;
 use arrow::array::GenericByteArray;
 use arrow::array::UInt64Array;
@@ -116,7 +116,7 @@ fn serialize_row_entry(row: &Row) -> Res<serde_json::Map<String, serde_json::Val
         meta.insert("user_meta".into(), m.clone());
     }
 
-    let object_hash: checksum::ObjectHash = row.hash.try_into()?;
+    let object_hash: ObjectHash = row.hash.try_into()?;
 
     Ok(serde_json::Map::from_iter([
         ("hash".to_string(), serde_json::to_value(object_hash)?),
@@ -303,8 +303,10 @@ mod tests {
     use super::*;
 
     use multihash::Multihash;
+    use serde_json::json;
 
     use crate::checksum::Sha256ChunkedHash;
+    use crate::checksum::MULTIHASH_SHA256;
     use crate::fixtures;
     use crate::io::storage::mocks::MockStorage;
     use crate::manifest::Row;
@@ -386,33 +388,30 @@ mod tests {
 
     #[test]
     fn test_serialize_row_entry_with_info() -> Res {
-        let hash = Multihash::<256>::wrap(checksum::MULTIHASH_SHA256, b"test")?;
+        let hash = Multihash::<256>::wrap(MULTIHASH_SHA256, b"test")?;
         let row = Row {
             name: PathBuf::from("test.txt"),
             place: "s3://test-bucket/test.txt".to_string(),
             size: 42,
             hash,
             info: serde_json::Value::Null,
-            meta: Some(serde_json::json!({"foo": "bar"})),
+            meta: Some(json!({"foo": "bar"})),
         };
 
         let serialized = serialize_row_entry(&row)?;
 
-        // Create expected map for comparison
-        let expected = serde_json::Map::from_iter([
-            (
-                "hash".to_string(),
-                serde_json::json!({"type": "SHA256", "value": hex::encode(hash.digest())}),
-            ),
-            ("logical_key".to_string(), serde_json::json!("test.txt")),
-            (
-                "meta".to_string(),
-                serde_json::json!({"user_meta": {"foo": "bar"}}),
-            ),
-            ("size".to_string(), serde_json::json!(42)),
-        ]);
-
-        assert_eq!(serialized, expected);
+        assert_eq!(
+            serialized,
+            serde_json::Map::from_iter([
+                (
+                    "hash".to_string(),
+                    json!({"type": "SHA256", "value": hex::encode(hash.digest())}),
+                ),
+                ("logical_key".to_string(), json!("test.txt")),
+                ("meta".to_string(), json!({"user_meta": {"foo": "bar"}})),
+                ("size".to_string(), json!(42)),
+            ])
+        );
         Ok(())
     }
 
@@ -457,10 +456,10 @@ mod tests {
     async fn test_top_hash() -> Res {
         let manifest = Table::new(
             Header {
-                meta: Some(serde_json::json!({
+                meta: Some(json!({
                        "1234567890": "a",
                 })),
-                info: serde_json::json!({
+                info: json!({
                        "message": "Second revision",
                        "version": "v0",
                 }),
