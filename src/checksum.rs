@@ -17,13 +17,9 @@ mod hash;
 mod sha256;
 mod sha256_chunked;
 
-// Re-export CRC64-NVMe related items
 pub use crc64nvme::{Crc64Hash, MULTIHASH_CRC64_NVME};
-// Re-export common hash trait
 pub use hash::Hash;
-// Re-export SHA256 related items
 pub use sha256::{Sha256Hash, MULTIHASH_SHA256};
-// Re-export SHA256 chunked related items
 pub use sha256_chunked::{Sha256ChunkedHash, MULTIHASH_SHA256_CHUNKED};
 
 /// Type-safe container for object's checksum using struct types
