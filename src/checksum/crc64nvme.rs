@@ -50,15 +50,6 @@ impl Crc64Hash {
             &hasher.finalize(),
         )?))
     }
-
-    /// Calculates CRC64-NVMe checksum from raw data
-    pub fn from_data(data: &[u8]) -> Res<Self> {
-        let mut hasher = ChecksumAlgorithm::Crc64Nvme.into_impl();
-        hasher.update(data);
-        let crc64_bytes = hasher.finalize();
-        let multihash = Multihash::wrap(MULTIHASH_CRC64_NVME, &crc64_bytes)?;
-        Ok(Self(multihash))
-    }
 }
 
 // From/TryFrom conversions for Crc64Hash
@@ -250,34 +241,36 @@ mod tests {
         // Test that digest is 8 bytes (CRC64 size)
         assert_eq!(hash_from_file.digest().len(), 8);
 
-        // Test from_data method for consistency
-        let hash_from_data = Crc64Hash::from_data(test_data)?;
-        assert_eq!(hash_from_file, hash_from_data);
-
         // Test that different data produces different hashes
         let different_data = b"different test data";
-        let different_hash = Crc64Hash::from_data(different_data)?;
+        let different_cursor = std::io::Cursor::new(different_data);
+        let different_hash = Crc64Hash::from_file(different_cursor).await?;
         assert_ne!(hash_from_file, different_hash);
 
         Ok(())
     }
 
-    #[test]
-    fn test_crc64_nvme_algorithm() {
+    #[tokio::test]
+    async fn test_crc64_nvme_algorithm() -> crate::Res {
         // Test with known data to verify CRC64-NVMe implementation
         let test_data = b"hello world";
-        let hash = Crc64Hash::from_data(test_data).unwrap();
+        let cursor1 = std::io::Cursor::new(test_data);
+        let hash = Crc64Hash::from_file(cursor1).await?;
 
         // Verify it's exactly 8 bytes
         assert_eq!(hash.digest().len(), 8);
 
         // Test consistency - same input should give same output
-        let hash2 = Crc64Hash::from_data(test_data).unwrap();
+        let cursor2 = std::io::Cursor::new(test_data);
+        let hash2 = Crc64Hash::from_file(cursor2).await?;
         assert_eq!(hash, hash2);
 
         // Different input should give different output
-        let hash3 = Crc64Hash::from_data(b"hello world!").unwrap();
+        let cursor3 = std::io::Cursor::new(b"hello world!");
+        let hash3 = Crc64Hash::from_file(cursor3).await?;
         assert_ne!(hash, hash3);
+
+        Ok(())
     }
 
     #[tokio::test]
@@ -293,11 +286,6 @@ mod tests {
         // Verify the expected base64 hash
         let expected_base64 = "LZmmpqbBItw=";
         assert_eq!(hash.to_string(), expected_base64);
-
-        // Also verify using from_data for consistency
-        let hash_from_data = Crc64Hash::from_data(&file_content)?;
-        assert_eq!(hash, hash_from_data);
-        assert_eq!(hash_from_data.to_string(), expected_base64);
 
         Ok(())
     }
