@@ -1,4 +1,3 @@
-use multihash::Multihash;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::path::Path;
@@ -19,24 +18,6 @@ use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::Error;
 use crate::Res;
-
-async fn verify_hash(file: File, hash: Multihash<256>) -> Res<Option<(u64, Multihash<256>)>> {
-    let file_metadata = file.metadata().await?;
-    let size = file_metadata.len();
-    let calculated_hash = if hash.code() == checksum::MULTIHASH_SHA256_CHUNKED {
-        checksum::Sha256ChunkedHash::from_file(file, size)
-            .await?
-            .into()
-    } else {
-        checksum::Sha256Hash::from_file(file).await?.into()
-    };
-
-    if calculated_hash == hash {
-        Ok(None)
-    } else {
-        Ok(Some((size, calculated_hash)))
-    }
-}
 
 /// Refreshes the tracked `latest_hash` property in lineage.json
 pub async fn refresh_latest_hash(
@@ -123,7 +104,7 @@ async fn fingerprint_files(files: Vec<(PathBuf, WorkdirFile)>) -> Res<ChangeSet>
     for (logical_key, location) in files {
         match location {
             WorkdirFile::Tracked(file, row) => {
-                if let Some((size, hash)) = verify_hash(file, row.hash).await? {
+                if let Some((size, hash)) = checksum::verify_hash(file, row.hash).await? {
                     let row = Row { hash, size, ..row };
                     changes.insert(logical_key, Change::Modified(row));
                 } else {
@@ -131,7 +112,7 @@ async fn fingerprint_files(files: Vec<(PathBuf, WorkdirFile)>) -> Res<ChangeSet>
                 }
             }
             WorkdirFile::NotTracked(file, row) => {
-                if let Some((size, hash)) = verify_hash(file, row.hash).await? {
+                if let Some((size, hash)) = checksum::verify_hash(file, row.hash).await? {
                     let row = Row { hash, size, ..row };
                     changes.insert(logical_key, Change::Modified(row));
                 } else {

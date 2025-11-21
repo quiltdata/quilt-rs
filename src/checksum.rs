@@ -1,9 +1,5 @@
 //! This module contains helpers and structs for creating and managing checkums.
 
-mod crc64nvme;
-mod sha256;
-mod sha256_chunked;
-
 use aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput;
 use aws_smithy_checksums::ChecksumAlgorithm;
 use base64::prelude::BASE64_STANDARD;
@@ -11,6 +7,13 @@ use base64::Engine;
 use multihash::Multihash;
 use serde::Deserialize;
 use serde::Serialize;
+use tokio::fs::File;
+
+use crate::Res;
+
+mod crc64nvme;
+mod sha256;
+mod sha256_chunked;
 
 // Re-export CRC64-NVMe related items
 pub use crc64nvme::{Crc64Hash, MULTIHASH_CRC64_NVME};
@@ -30,6 +33,19 @@ pub enum ObjectHash {
     Sha256Chunked(Sha256ChunkedHash),
     /// CRC64-NVMe checksum
     Crc64(Crc64Hash),
+}
+
+pub async fn verify_hash(file: File, hash: Multihash<256>) -> Res<Option<(u64, Multihash<256>)>> {
+    let file_metadata = file.metadata().await?;
+    let size = file_metadata.len();
+
+    let calculated_hash: Multihash<256> = match hash.code() {
+        MULTIHASH_SHA256_CHUNKED => Sha256ChunkedHash::from_file(file, size).await?.into(),
+        MULTIHASH_CRC64_NVME => Crc64Hash::from_file(file).await?.into(),
+        _ => Sha256Hash::from_file(file).await?.into(),
+    };
+
+    Ok((hash != calculated_hash).then_some((size, calculated_hash)))
 }
 
 impl TryFrom<Multihash<256>> for ObjectHash {
