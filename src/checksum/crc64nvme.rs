@@ -4,8 +4,10 @@ use aws_smithy_checksums::ChecksumAlgorithm;
 use multihash::Multihash;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
+use tokio::fs::File;
 use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
 
+use crate::checksum::hash::Hash;
 use crate::{Error, Res};
 
 /// Multihash code for CRC64-NVMe
@@ -16,22 +18,7 @@ pub const MULTIHASH_CRC64_NVME: u64 = 0x0165;
 pub struct Crc64Hash(Multihash<256>);
 
 impl Crc64Hash {
-    /// Get the inner multihash
-    pub fn multihash(&self) -> &Multihash<256> {
-        &self.0
-    }
-
-    /// Get the algorithm code
-    pub fn algorithm(&self) -> u64 {
-        self.0.code()
-    }
-
-    /// Get the digest bytes
-    pub fn digest(&self) -> &[u8] {
-        self.0.digest()
-    }
-
-    /// Calculates CRC64-NVMe checksum from a file
+    /// Calculates CRC64-NVMe checksum from any async reader
     pub async fn from_async_read<F: AsyncRead + Unpin>(file: F) -> Res<Self> {
         let mut hasher = ChecksumAlgorithm::Crc64Nvme.into_impl();
         let mut reader = BufReader::new(file);
@@ -49,6 +36,18 @@ impl Crc64Hash {
             MULTIHASH_CRC64_NVME,
             &hasher.finalize(),
         )?))
+    }
+}
+
+impl crate::checksum::Hash for Crc64Hash {
+    /// Get the inner multihash
+    fn multihash(&self) -> &Multihash<256> {
+        &self.0
+    }
+
+    /// Calculates CRC64-NVMe checksum from a file
+    async fn from_file(file: File) -> Res<Self> {
+        Self::from_async_read(file).await
     }
 }
 

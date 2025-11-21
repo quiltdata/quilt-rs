@@ -4,8 +4,10 @@ use aws_smithy_checksums::ChecksumAlgorithm;
 use multihash::Multihash;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
+use tokio::fs::File;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
+use crate::checksum::hash::Hash;
 use crate::checksum::{get_checksum_chunksize_and_parts, Sha256Hash};
 use crate::{Error, Res};
 
@@ -17,22 +19,7 @@ pub const MULTIHASH_SHA256_CHUNKED: u64 = 0xb510;
 pub struct Sha256ChunkedHash(Multihash<256>);
 
 impl Sha256ChunkedHash {
-    /// Get the inner multihash
-    pub fn multihash(&self) -> &Multihash<256> {
-        &self.0
-    }
-
-    /// Get the algorithm code
-    pub fn algorithm(&self) -> u64 {
-        self.0.code()
-    }
-
-    /// Get the digest bytes
-    pub fn digest(&self) -> &[u8] {
-        self.0.digest()
-    }
-
-    /// Calculates chunksum from a file
+    /// Calculates chunksum from any async reader with known length
     pub async fn from_async_read<F: AsyncRead + Unpin + Send>(file: F, length: u64) -> Res<Self> {
         let (chunksize, num_parts) = get_checksum_chunksize_and_parts(length);
 
@@ -48,6 +35,19 @@ impl Sha256ChunkedHash {
             MULTIHASH_SHA256_CHUNKED,
             &sha256_hasher.finalize(),
         )?))
+    }
+}
+
+impl crate::checksum::Hash for Sha256ChunkedHash {
+    /// Get the inner multihash
+    fn multihash(&self) -> &Multihash<256> {
+        &self.0
+    }
+
+    /// Calculates chunksum from a file
+    async fn from_file(file: File) -> Res<Self> {
+        let length = file.metadata().await?.len();
+        Self::from_async_read(file, length).await
     }
 }
 

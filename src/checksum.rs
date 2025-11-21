@@ -13,11 +13,14 @@ use crate::Error;
 use crate::Res;
 
 mod crc64nvme;
+mod hash;
 mod sha256;
 mod sha256_chunked;
 
 // Re-export CRC64-NVMe related items
 pub use crc64nvme::{Crc64Hash, MULTIHASH_CRC64_NVME};
+// Re-export common hash trait
+pub use hash::Hash;
 // Re-export SHA256 related items
 pub use sha256::{Sha256Hash, MULTIHASH_SHA256};
 // Re-export SHA256 chunked related items
@@ -41,11 +44,9 @@ pub async fn verify_hash(file: File, hash: Multihash<256>) -> Res<Option<(u64, M
     let size = file_metadata.len();
 
     let calculated_hash: Res<Multihash<256>> = match hash.code() {
-        MULTIHASH_CRC64_NVME => Ok(Crc64Hash::from_async_read(file).await?.into()),
-        MULTIHASH_SHA256 => Ok(Sha256Hash::from_async_read(file).await?.into()),
-        MULTIHASH_SHA256_CHUNKED => {
-            Ok(Sha256ChunkedHash::from_async_read(file, size).await?.into())
-        }
+        MULTIHASH_CRC64_NVME => Ok(<Crc64Hash as Hash>::from_file(file).await?.into()),
+        MULTIHASH_SHA256 => Ok(<Sha256Hash as Hash>::from_file(file).await?.into()),
+        MULTIHASH_SHA256_CHUNKED => Ok(<Sha256ChunkedHash as Hash>::from_file(file).await?.into()),
         code => Err(Error::InvalidMultihash(format!(
             "Wrong multihash type {}",
             code
@@ -580,5 +581,99 @@ mod tests {
         let mismatched_json = r#"{"type":"SHA256","value":"dGVzdA=="}"#; // base64 in SHA256 field
         let result: Result<ObjectHash, _> = serde_json::from_str(mismatched_json);
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_consistent_from_file_signatures() -> Res {
+        use crate::io::storage::mocks::MockStorage;
+        use crate::io::storage::Storage;
+        use std::path::Path;
+
+        let storage = MockStorage::default();
+        let test_data = b"test data for consistent from_file signatures";
+        let test_path = Path::new("consistent_test.txt");
+
+        // Write test data to mock storage
+        storage.write_file(test_path, test_data).await?;
+
+        // Test that all hash types have consistent from_file signatures
+        let file = storage.open_file(test_path).await?;
+        let sha256_hash = Sha256Hash::from_file(file).await?;
+
+        let file = storage.open_file(test_path).await?;
+        let sha256_chunked_hash = Sha256ChunkedHash::from_file(file).await?;
+
+        let file = storage.open_file(test_path).await?;
+        let crc64_hash = Crc64Hash::from_file(file).await?;
+
+        // Verify they all work and have correct algorithms
+        assert_eq!(sha256_hash.algorithm(), MULTIHASH_SHA256);
+        assert_eq!(sha256_chunked_hash.algorithm(), MULTIHASH_SHA256_CHUNKED);
+        assert_eq!(crc64_hash.algorithm(), MULTIHASH_CRC64_NVME);
+
+        // Test that verify_hash works with all types
+        let file = storage.open_file(test_path).await?;
+        let sha256_multihash: Multihash<256> = sha256_hash.into();
+        let result = verify_hash(file, sha256_multihash).await?;
+        assert!(result.is_none()); // Should match
+
+        let file = storage.open_file(test_path).await?;
+        let sha256_chunked_multihash: Multihash<256> = sha256_chunked_hash.into();
+        let result = verify_hash(file, sha256_chunked_multihash).await?;
+        assert!(result.is_none()); // Should match
+
+        let file = storage.open_file(test_path).await?;
+        let crc64_multihash: Multihash<256> = crc64_hash.into();
+        let result = verify_hash(file, crc64_multihash).await?;
+        assert!(result.is_none()); // Should match
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_hash_trait_functionality() -> Res {
+        use crate::io::storage::mocks::MockStorage;
+        use crate::io::storage::Storage;
+        use std::path::Path;
+
+        let storage = MockStorage::default();
+        let test_data = b"test data for Hash trait functionality";
+        let test_path = Path::new("hash_trait_test.txt");
+
+        // Write test data to mock storage
+        storage.write_file(test_path, test_data).await?;
+
+        // Test that all hash types implement the Hash trait correctly
+        let file = storage.open_file(test_path).await?;
+        let sha256_hash = <Sha256Hash as Hash>::from_file(file).await?;
+
+        let file = storage.open_file(test_path).await?;
+        let sha256_chunked_hash = <Sha256ChunkedHash as Hash>::from_file(file).await?;
+
+        let file = storage.open_file(test_path).await?;
+        let crc64_hash = <Crc64Hash as Hash>::from_file(file).await?;
+
+        // Test Hash trait methods
+        assert_eq!(sha256_hash.algorithm(), MULTIHASH_SHA256);
+        assert_eq!(sha256_chunked_hash.algorithm(), MULTIHASH_SHA256_CHUNKED);
+        assert_eq!(crc64_hash.algorithm(), MULTIHASH_CRC64_NVME);
+
+        assert!(!sha256_hash.digest().is_empty());
+        assert!(!sha256_chunked_hash.digest().is_empty());
+        assert!(!crc64_hash.digest().is_empty());
+
+        // Test that they work as trait objects (polymorphism)
+        fn check_hash_trait<T: Hash>(hash: &T) -> u64 {
+            hash.algorithm()
+        }
+
+        assert_eq!(check_hash_trait(&sha256_hash), MULTIHASH_SHA256);
+        assert_eq!(
+            check_hash_trait(&sha256_chunked_hash),
+            MULTIHASH_SHA256_CHUNKED
+        );
+        assert_eq!(check_hash_trait(&crc64_hash), MULTIHASH_CRC64_NVME);
+
+        Ok(())
     }
 }
