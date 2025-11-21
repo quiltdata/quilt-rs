@@ -1,28 +1,37 @@
+name: Test
+
 on: [push]
 
-name: build
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
     name: Rust project
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - name: Install latest stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Rust
+        uses: moonrepo/setup-rust@v1
         with:
-            toolchain: stable
-            components: rustfmt, clippy
+            cache-base: main
+            cache-target: debug
+            inherit-toolchain: true
+
       - name: Check formatting
         run: cargo fmt --check
+
       - name: Lint
         run: cargo clippy -- --deny warnings
-      - name: Run cargo test
-        uses: actions-rs/cargo@v1
+
+      - name: Test
+        run: |
+          cargo test --all --verbose
         with:
           command: test
         env:
           RUST_BACKTRACE: 1
           RUST_LOG: debug
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
