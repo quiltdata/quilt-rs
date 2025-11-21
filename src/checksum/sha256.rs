@@ -344,4 +344,40 @@ mod tests {
         // This might succeed or fail depending on multibase implementation
         // Let's just check that it doesn't panic
     }
+
+    #[tokio::test]
+    async fn test_sha256_hash_from_empty_slice() -> crate::Res {
+        let storage = MockStorage::default();
+
+        // Test with empty file (0 bytes) - simulates hash.digest() returning empty data
+        let empty_path = Path::new("empty_test.bin");
+        storage.write_file(empty_path, b"").await?;
+
+        let file = storage.open_file(empty_path).await?;
+        let hash = Sha256Hash::from_async_read(file).await?;
+
+        // Verify the hash was created successfully
+        assert_eq!(hash.algorithm(), MULTIHASH_SHA256);
+        assert_eq!(hash.digest().len(), 32); // SHA256 digest is always 32 bytes
+
+        let expected_empty_hash = crate::fixtures::objects::ZERO_HASH_HEX;
+        assert_eq!(hex::encode(hash.digest()), expected_empty_hash);
+
+        // Test with typical hash digest size (32 bytes for SHA256) to ensure no regression
+        let sample_digest = [0u8; 32]; // 32 bytes of zeros
+        let digest_path = Path::new("digest_test.bin");
+        storage.write_file(digest_path, &sample_digest).await?;
+
+        let file2 = storage.open_file(digest_path).await?;
+        let hash2 = Sha256Hash::from_async_read(file2).await?;
+
+        // Should successfully create hash from 32-byte input
+        assert_eq!(hash2.algorithm(), MULTIHASH_SHA256);
+        assert_eq!(hash2.digest().len(), 32);
+
+        // Different input should produce different hash
+        assert_ne!(hash, hash2);
+
+        Ok(())
+    }
 }
