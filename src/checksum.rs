@@ -151,7 +151,6 @@ pub fn get_compliant_chunked_checksum(attrs: &GetObjectAttributesOutput) -> Opti
                 return Some(checksum_sha256_decoded);
             }
         }
-        #[allow(deprecated)]
         let mut hasher = ChecksumAlgorithm::Sha256.into_impl();
         hasher.update(&checksum_sha256_decoded);
         return Some(hasher.finalize().into());
