@@ -155,7 +155,7 @@ impl Remote for MockRemote {
         size: u64,
     ) -> Res<(S3Uri, Multihash<256>)> {
         let file = self.storage.open_file(source_path.as_ref()).await?;
-        let hash = checksum::Sha256ChunkedHash::from_file(file, size)
+        let hash = checksum::Sha256ChunkedHash::from_async_read(file, size)
             .await?
             .into();
         Ok((

@@ -60,7 +60,7 @@ impl Storage for LocalStorage {
     ) -> Res<S3Attributes> {
         let reader = stream.body.into_async_read();
         let size: u64 = object.size.unwrap_or(0).try_into()?;
-        let hash = checksum::Sha256ChunkedHash::from_file(reader, size)
+        let hash = checksum::Sha256ChunkedHash::from_async_read(reader, size)
             .await?
             .into();
         Ok(S3Attributes {

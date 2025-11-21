@@ -124,7 +124,7 @@ async fn fingerprint_files(files: Vec<(PathBuf, WorkdirFile)>) -> Res<ChangeSet>
             }
             WorkdirFile::New(file) => {
                 let size = file.metadata().await?.len();
-                let hash = checksum::Sha256ChunkedHash::from_file(file, size)
+                let hash = checksum::Sha256ChunkedHash::from_async_read(file, size)
                     .await?
                     .into();
                 let row = Row {

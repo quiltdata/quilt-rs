@@ -32,7 +32,7 @@ impl Sha256Hash {
     }
 
     /// Calculates legacy or single-chunk checksum from file or from single chunk
-    pub async fn from_file<F: AsyncRead + Unpin>(file: F) -> Res<Self> {
+    pub async fn from_async_read<F: AsyncRead + Unpin>(file: F) -> Res<Self> {
         let mut hasher = ChecksumAlgorithm::Sha256.into_impl();
         let mut reader = BufReader::new(file);
         let mut buf = [0; 4096];
@@ -207,7 +207,7 @@ mod tests {
 
         // Test from_file method
         let file = storage.open_file(test_path).await?;
-        let hash_from_method = Sha256Hash::from_file(file).await?;
+        let hash_from_method = Sha256Hash::from_async_read(file).await?;
 
         // Compare with manual creation
         let mut manual_hasher = ChecksumAlgorithm::Sha256.into_impl();
@@ -256,7 +256,7 @@ mod tests {
 
         // Test from_file method
         let file = storage.open_file(test_path).await?;
-        let hash = Sha256Hash::from_file(file).await?;
+        let hash = Sha256Hash::from_async_read(file).await?;
 
         assert_eq!(hash.multihash().code(), MULTIHASH_SHA256);
 
@@ -282,7 +282,7 @@ mod tests {
 
         // Test from_file method
         let file = storage.open_file(test_path).await?;
-        let hash = Sha256Hash::from_file(file).await?;
+        let hash = Sha256Hash::from_async_read(file).await?;
 
         assert_eq!(hash.algorithm(), MULTIHASH_SHA256);
         Ok(())
@@ -299,7 +299,7 @@ mod tests {
 
         // Test Sha256Hash conversions
         let file = storage.open_file(test_path).await?;
-        let sha256 = Sha256Hash::from_file(file).await?;
+        let sha256 = Sha256Hash::from_async_read(file).await?;
         let multihash: Multihash<256> = sha256.clone().into();
         let back_to_sha256 = Sha256Hash::try_from(multihash)?;
         assert_eq!(sha256, back_to_sha256);

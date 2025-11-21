@@ -32,7 +32,7 @@ impl Crc64Hash {
     }
 
     /// Calculates CRC64-NVMe checksum from a file
-    pub async fn from_file<F: AsyncRead + Unpin>(file: F) -> Res<Self> {
+    pub async fn from_async_read<F: AsyncRead + Unpin>(file: F) -> Res<Self> {
         let mut hasher = ChecksumAlgorithm::Crc64Nvme.into_impl();
         let mut reader = BufReader::new(file);
         let mut buf = [0; 4096];
@@ -245,7 +245,7 @@ mod tests {
 
         // Test from_file method
         let file = storage.open_file(test_path).await?;
-        let hash_from_file = Crc64Hash::from_file(file).await?;
+        let hash_from_file = Crc64Hash::from_async_read(file).await?;
         assert_eq!(hash_from_file.algorithm(), MULTIHASH_CRC64_NVME);
 
         // Test that digest is 8 bytes (CRC64 size)
@@ -257,7 +257,7 @@ mod tests {
         storage.write_file(different_path, different_data).await?;
 
         let different_file = storage.open_file(different_path).await?;
-        let different_hash = Crc64Hash::from_file(different_file).await?;
+        let different_hash = Crc64Hash::from_async_read(different_file).await?;
         assert_ne!(hash_from_file, different_hash);
 
         Ok(())
@@ -273,14 +273,14 @@ mod tests {
         storage.write_file(test_path, test_data).await?;
 
         let file1 = storage.open_file(test_path).await?;
-        let hash = Crc64Hash::from_file(file1).await?;
+        let hash = Crc64Hash::from_async_read(file1).await?;
 
         // Verify it's exactly 8 bytes
         assert_eq!(hash.digest().len(), 8);
 
         // Test consistency - same input should give same output
         let file2 = storage.open_file(test_path).await?;
-        let hash2 = Crc64Hash::from_file(file2).await?;
+        let hash2 = Crc64Hash::from_async_read(file2).await?;
         assert_eq!(hash, hash2);
 
         // Different input should give different output
@@ -289,7 +289,7 @@ mod tests {
         storage.write_file(different_path, different_data).await?;
 
         let file3 = storage.open_file(different_path).await?;
-        let hash3 = Crc64Hash::from_file(file3).await?;
+        let hash3 = Crc64Hash::from_async_read(file3).await?;
         assert_ne!(hash, hash3);
 
         Ok(())
@@ -309,7 +309,7 @@ mod tests {
 
         // Calculate hash from file
         let file = storage.open_file(test_path).await?;
-        let hash = Crc64Hash::from_file(file).await?;
+        let hash = Crc64Hash::from_async_read(file).await?;
 
         // Verify the expected base64 hash
         let expected_base64 = "LZmmpqbBItw=";

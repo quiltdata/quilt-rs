@@ -33,7 +33,7 @@ impl Sha256ChunkedHash {
     }
 
     /// Calculates chunksum from a file
-    pub async fn from_file<F: AsyncRead + Unpin + Send>(file: F, length: u64) -> Res<Self> {
+    pub async fn from_async_read<F: AsyncRead + Unpin + Send>(file: F, length: u64) -> Res<Self> {
         let (chunksize, num_parts) = get_checksum_chunksize_and_parts(length);
 
         let mut sha256_hasher = ChecksumAlgorithm::Sha256.into_impl();
@@ -41,7 +41,7 @@ impl Sha256ChunkedHash {
         let mut chunk = file.take(0);
         for _ in 0..num_parts {
             chunk.set_limit(chunksize);
-            sha256_hasher.update(Sha256Hash::from_file(&mut chunk).await?.digest());
+            sha256_hasher.update(Sha256Hash::from_async_read(&mut chunk).await?.digest());
         }
 
         Ok(Self(Multihash::wrap(
@@ -260,7 +260,7 @@ mod tests {
         use base64::{prelude::BASE64_STANDARD, Engine};
 
         let bytes = crate::fixtures::objects::less_than_8mb();
-        let hash = Sha256ChunkedHash::from_file(bytes, bytes.len() as u64).await?;
+        let hash = Sha256ChunkedHash::from_async_read(bytes, bytes.len() as u64).await?;
         assert_eq!(hash.multihash().code(), MULTIHASH_SHA256_CHUNKED);
         assert_eq!(
             BASE64_STANDARD.encode(hash.digest()),
@@ -274,7 +274,7 @@ mod tests {
         use base64::{prelude::BASE64_STANDARD, Engine};
 
         let bytes = crate::fixtures::objects::equal_to_8mb();
-        let hash = Sha256ChunkedHash::from_file(bytes.as_ref(), bytes.len() as u64).await?;
+        let hash = Sha256ChunkedHash::from_async_read(bytes.as_ref(), bytes.len() as u64).await?;
         assert_eq!(
             BASE64_STANDARD.encode(hash.digest()),
             crate::fixtures::objects::EQUAL_TO_8MB_HASH_B64
@@ -287,7 +287,7 @@ mod tests {
         use base64::{prelude::BASE64_STANDARD, Engine};
 
         let bytes = crate::fixtures::objects::zero_bytes();
-        let hash = Sha256ChunkedHash::from_file(bytes, bytes.len() as u64).await?;
+        let hash = Sha256ChunkedHash::from_async_read(bytes, bytes.len() as u64).await?;
         assert_eq!(
             BASE64_STANDARD.encode(hash.digest()),
             crate::fixtures::objects::ZERO_HASH_B64
@@ -300,7 +300,7 @@ mod tests {
         use base64::{prelude::BASE64_STANDARD, Engine};
 
         let bytes = crate::fixtures::objects::more_than_8mb();
-        let hash = Sha256ChunkedHash::from_file(bytes.as_ref(), bytes.len() as u64).await?;
+        let hash = Sha256ChunkedHash::from_async_read(bytes.as_ref(), bytes.len() as u64).await?;
         assert_eq!(
             BASE64_STANDARD.encode(hash.digest()),
             crate::fixtures::objects::MORE_THAN_8MB_HASH_B64
@@ -313,7 +313,7 @@ mod tests {
         use base64::{prelude::BASE64_STANDARD, Engine};
 
         let bytes = crate::fixtures::objects::less_than_8mb();
-        let hash = Sha256ChunkedHash::from_file(bytes, bytes.len() as u64).await?;
+        let hash = Sha256ChunkedHash::from_async_read(bytes, bytes.len() as u64).await?;
 
         assert_eq!(hash.algorithm(), MULTIHASH_SHA256_CHUNKED);
         assert_eq!(
@@ -328,7 +328,7 @@ mod tests {
         let bytes = crate::fixtures::objects::less_than_8mb();
 
         // Test Sha256ChunkedHash conversions
-        let sha256_chunked = Sha256ChunkedHash::from_file(bytes, bytes.len() as u64).await?;
+        let sha256_chunked = Sha256ChunkedHash::from_async_read(bytes, bytes.len() as u64).await?;
         let multihash: Multihash<256> = sha256_chunked.clone().into();
         let back_to_sha256_chunked = Sha256ChunkedHash::try_from(multihash)?;
         assert_eq!(sha256_chunked, back_to_sha256_chunked);

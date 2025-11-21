@@ -381,9 +381,12 @@ mod tests {
                                         1737031820534,
                                     )
                                     .unwrap(),
-                                    hash: Sha256ChunkedHash::from_file(bytes, bytes.len() as u64)
-                                        .await?
-                                        .into(),
+                                    hash: Sha256ChunkedHash::from_async_read(
+                                        bytes,
+                                        bytes.len() as u64,
+                                    )
+                                    .await?
+                                    .into(),
                                 },
                             )]),
                         },

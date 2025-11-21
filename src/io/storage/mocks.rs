@@ -164,7 +164,9 @@ impl Storage for MockStorage {
     ) -> Res<S3Attributes> {
         let reader = stream.body.into_async_read();
         let size: u64 = object.size.unwrap_or(0).try_into()?;
-        let hash = Sha256ChunkedHash::from_file(reader, size).await?.into();
+        let hash = Sha256ChunkedHash::from_async_read(reader, size)
+            .await?
+            .into();
         Ok(S3Attributes {
             listing_uri: listing_uri.clone(),
             object_uri: stream.uri,
