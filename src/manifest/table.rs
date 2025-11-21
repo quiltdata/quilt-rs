@@ -118,7 +118,6 @@ fn serialize_row_entry(row: &Row) -> Res<serde_json::Map<String, serde_json::Val
 
     let object_hash: checksum::ObjectHash = row.hash.try_into()?;
 
-    // Build map more idiomatically using from_iter
     Ok(serde_json::Map::from_iter([
         ("hash".to_string(), serde_json::to_value(object_hash)?),
         ("logical_key".to_string(), serde_json::to_value(&row.name)?),
