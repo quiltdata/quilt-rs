@@ -198,12 +198,15 @@ pub fn get_compliant_chunked_checksum(attrs: &GetObjectAttributesOutput) -> Opti
 mod tests {
     use super::*;
 
-    use crate::Error;
-    use crate::Res;
-
     use aws_sdk_s3::types::Checksum;
     use aws_sdk_s3::types::GetObjectAttributesParts;
     use aws_sdk_s3::types::ObjectPart;
+    use std::path::Path;
+
+    use crate::io::storage::mocks::MockStorage;
+    use crate::io::storage::Storage;
+    use crate::Error;
+    use crate::Res;
 
     #[test]
     fn test_get_checksum_chunksize_and_parts() {
@@ -434,6 +437,15 @@ mod tests {
         assert_eq!(crc64_multihash, back_to_multihash);
         assert_eq!(object_hash.algorithm(), MULTIHASH_CRC64_NVME);
 
+        let invalid_multihash = multihash::Multihash::wrap(0x9999, b"invalid_data").unwrap();
+        let result = ObjectHash::try_from(invalid_multihash);
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Unsupported multihash code: 0x9999"));
+
         Ok(())
     }
 
@@ -580,10 +592,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_hash_trait_and_verify_functionality() -> Res {
-        use crate::io::storage::mocks::MockStorage;
-        use crate::io::storage::Storage;
-        use std::path::Path;
-
         let storage = MockStorage::default();
         let test_data = b"test data for Hash trait and verify functionality";
         let test_path = Path::new("hash_trait_test.txt");
@@ -637,6 +645,15 @@ mod tests {
         let crc64_multihash: Multihash<256> = crc64_hash.into();
         let result = verify_hash(file, crc64_multihash).await?;
         assert!(result.is_none()); // Should match
+
+        let file = storage.open_file(test_path).await?;
+        let unknown_hash = multihash::Multihash::wrap(0x9999, b"test_hash_data").unwrap();
+        let result = verify_hash(file, unknown_hash).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Wrong multihash type"));
 
         Ok(())
     }
