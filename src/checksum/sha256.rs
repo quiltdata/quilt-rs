@@ -137,6 +137,11 @@ impl<'de> Deserialize<'de> for Sha256Hash {
 mod tests {
     use super::*;
 
+    use std::path::Path;
+
+    use crate::io::storage::mocks::MockStorage;
+    use crate::io::storage::Storage;
+
     #[test]
     fn test_sha256_hash_algorithm() {
         let sha256_hash = multihash::Multihash::wrap(MULTIHASH_SHA256, b"test").unwrap();
@@ -192,24 +197,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sha256_hash_from_file() {
+    async fn test_sha256_hash_from_file() -> crate::Res {
+        let storage = MockStorage::default();
         let test_data = b"test file content";
-        let cursor = std::io::Cursor::new(test_data);
+        let test_path = Path::new("test_file.txt");
+        
+        // Write test data to mock storage
+        storage.write_file(test_path, test_data).await?;
 
         // Test from_file method
-        let hash_from_method = Sha256Hash::from_file(cursor).await.unwrap();
+        let file = storage.open_file(test_path).await?;
+        let hash_from_method = Sha256Hash::from_file(file).await?;
 
         // Compare with manual creation
         let mut manual_hasher = ChecksumAlgorithm::Sha256.into_impl();
         manual_hasher.update(test_data);
         let expected_digest = manual_hasher.finalize();
         let expected_hash =
-            Sha256Hash::try_from(Multihash::wrap(MULTIHASH_SHA256, &expected_digest).unwrap())
-                .unwrap();
+            Sha256Hash::try_from(Multihash::wrap(MULTIHASH_SHA256, &expected_digest)?)?;
 
         assert_eq!(hash_from_method, expected_hash);
         assert_eq!(hash_from_method.algorithm(), MULTIHASH_SHA256);
         assert_eq!(hash_from_method.digest(), &expected_digest);
+        
+        Ok(())
     }
 
     #[test]
@@ -236,8 +247,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_calculate_sha256_checksum() -> crate::Res {
+        let storage = MockStorage::default();
         let bytes = crate::fixtures::objects::less_than_8mb();
-        let hash = Sha256Hash::from_file(bytes).await?;
+        let test_path = Path::new("checksum_test.txt");
+        
+        // Write test data to mock storage
+        storage.write_file(test_path, &bytes).await?;
+        
+        // Test from_file method
+        let file = storage.open_file(test_path).await?;
+        let hash = Sha256Hash::from_file(file).await?;
 
         assert_eq!(hash.multihash().code(), MULTIHASH_SHA256);
 
@@ -254,8 +273,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_sha256_from_bytes() -> crate::Res {
+        let storage = MockStorage::default();
         let bytes = crate::fixtures::objects::less_than_8mb();
-        let hash = Sha256Hash::from_file(&bytes[..]).await?;
+        let test_path = Path::new("less_than_8mb.txt");
+        
+        // Write test data to mock storage
+        storage.write_file(test_path, &bytes).await?;
+        
+        // Test from_file method
+        let file = storage.open_file(test_path).await?;
+        let hash = Sha256Hash::from_file(file).await?;
 
         assert_eq!(hash.algorithm(), MULTIHASH_SHA256);
         Ok(())
@@ -263,10 +290,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_sha256_hash_conversions_from_file() -> crate::Res {
+        let storage = MockStorage::default();
         let bytes = crate::fixtures::objects::less_than_8mb();
+        let test_path = Path::new("conversion_test.txt");
+        
+        // Write test data to mock storage
+        storage.write_file(test_path, &bytes).await?;
 
         // Test Sha256Hash conversions
-        let sha256 = Sha256Hash::from_file(&bytes[..]).await?;
+        let file = storage.open_file(test_path).await?;
+        let sha256 = Sha256Hash::from_file(file).await?;
         let multihash: Multihash<256> = sha256.clone().into();
         let back_to_sha256 = Sha256Hash::try_from(multihash)?;
         assert_eq!(sha256, back_to_sha256);

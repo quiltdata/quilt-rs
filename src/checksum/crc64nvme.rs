@@ -142,6 +142,11 @@ impl<'de> Deserialize<'de> for Crc64Hash {
 mod tests {
     use super::*;
 
+    use std::path::Path;
+
+    use crate::io::storage::mocks::MockStorage;
+    use crate::io::storage::Storage;
+
     #[test]
     fn test_crc64_hash_algorithm() {
         let crc64_hash = multihash::Multihash::wrap(MULTIHASH_CRC64_NVME, b"test").unwrap();
@@ -231,11 +236,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_crc64_hash_from_file() -> crate::Res {
+        let storage = MockStorage::default();
         let test_data = b"test file content for CRC64";
-        let cursor = std::io::Cursor::new(test_data);
+        let test_path = Path::new("test_file.txt");
+
+        // Write test data to mock storage
+        storage.write_file(test_path, test_data).await?;
 
         // Test from_file method
-        let hash_from_file = Crc64Hash::from_file(cursor).await?;
+        let file = storage.open_file(test_path).await?;
+        let hash_from_file = Crc64Hash::from_file(file).await?;
         assert_eq!(hash_from_file.algorithm(), MULTIHASH_CRC64_NVME);
 
         // Test that digest is 8 bytes (CRC64 size)
@@ -243,8 +253,11 @@ mod tests {
 
         // Test that different data produces different hashes
         let different_data = b"different test data";
-        let different_cursor = std::io::Cursor::new(different_data);
-        let different_hash = Crc64Hash::from_file(different_cursor).await?;
+        let different_path = Path::new("different_file.txt");
+        storage.write_file(different_path, different_data).await?;
+
+        let different_file = storage.open_file(different_path).await?;
+        let different_hash = Crc64Hash::from_file(different_file).await?;
         assert_ne!(hash_from_file, different_hash);
 
         Ok(())
@@ -252,22 +265,31 @@ mod tests {
 
     #[tokio::test]
     async fn test_crc64_nvme_algorithm() -> crate::Res {
+        let storage = MockStorage::default();
+
         // Test with known data to verify CRC64-NVMe implementation
         let test_data = b"hello world";
-        let cursor1 = std::io::Cursor::new(test_data);
-        let hash = Crc64Hash::from_file(cursor1).await?;
+        let test_path = Path::new("hello_world.txt");
+        storage.write_file(test_path, test_data).await?;
+
+        let file1 = storage.open_file(test_path).await?;
+        let hash = Crc64Hash::from_file(file1).await?;
 
         // Verify it's exactly 8 bytes
         assert_eq!(hash.digest().len(), 8);
 
         // Test consistency - same input should give same output
-        let cursor2 = std::io::Cursor::new(test_data);
-        let hash2 = Crc64Hash::from_file(cursor2).await?;
+        let file2 = storage.open_file(test_path).await?;
+        let hash2 = Crc64Hash::from_file(file2).await?;
         assert_eq!(hash, hash2);
 
         // Different input should give different output
-        let cursor3 = std::io::Cursor::new(b"hello world!");
-        let hash3 = Crc64Hash::from_file(cursor3).await?;
+        let different_data = b"hello world!";
+        let different_path = Path::new("hello_world_exclamation.txt");
+        storage.write_file(different_path, different_data).await?;
+
+        let file3 = storage.open_file(different_path).await?;
+        let hash3 = Crc64Hash::from_file(file3).await?;
         assert_ne!(hash, hash3);
 
         Ok(())
@@ -275,13 +297,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_crc64_hash_user_settings_fixture() -> crate::Res {
+        let storage = MockStorage::default();
+
         // Test with the known fixture file
-        let fixture_path = std::path::Path::new("fixtures/user-settings.mkfg");
+        let fixture_path = Path::new("fixtures/user-settings.mkfg");
         let file_content = std::fs::read(fixture_path)?;
-        let file_cursor = std::io::Cursor::new(&file_content);
+
+        // Write fixture content to mock storage
+        let test_path = Path::new("user-settings.mkfg");
+        storage.write_file(test_path, &file_content).await?;
 
         // Calculate hash from file
-        let hash = Crc64Hash::from_file(file_cursor).await?;
+        let file = storage.open_file(test_path).await?;
+        let hash = Crc64Hash::from_file(file).await?;
 
         // Verify the expected base64 hash
         let expected_base64 = "LZmmpqbBItw=";
