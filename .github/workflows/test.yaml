@@ -30,8 +30,6 @@ jobs:
       - name: Test
         run: |
           cargo test --all --verbose
-        with:
-          command: test
         env:
           RUST_BACKTRACE: 1
           RUST_LOG: debug
