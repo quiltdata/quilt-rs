@@ -6,7 +6,8 @@ use tokio::fs::File;
 
 use tracing::{debug, info, warn};
 
-use crate::checksum;
+use crate::checksum::verify_hash;
+use crate::checksum::Sha256ChunkedHash;
 use crate::io::manifest::resolve_latest;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
@@ -104,7 +105,7 @@ async fn fingerprint_files(files: Vec<(PathBuf, WorkdirFile)>) -> Res<ChangeSet>
     for (logical_key, location) in files {
         match location {
             WorkdirFile::Tracked(file, row) => {
-                if let Some((size, hash)) = checksum::verify_hash(file, row.hash).await? {
+                if let Some((size, hash)) = verify_hash(file, row.hash).await? {
                     let row = Row { hash, size, ..row };
                     changes.insert(logical_key, Change::Modified(row));
                 } else {
@@ -112,7 +113,7 @@ async fn fingerprint_files(files: Vec<(PathBuf, WorkdirFile)>) -> Res<ChangeSet>
                 }
             }
             WorkdirFile::NotTracked(file, row) => {
-                if let Some((size, hash)) = checksum::verify_hash(file, row.hash).await? {
+                if let Some((size, hash)) = verify_hash(file, row.hash).await? {
                     let row = Row { hash, size, ..row };
                     changes.insert(logical_key, Change::Modified(row));
                 } else {
@@ -124,9 +125,7 @@ async fn fingerprint_files(files: Vec<(PathBuf, WorkdirFile)>) -> Res<ChangeSet>
             }
             WorkdirFile::New(file) => {
                 let size = file.metadata().await?.len();
-                let hash = checksum::Sha256ChunkedHash::from_async_read(file, size)
-                    .await?
-                    .into();
+                let hash = Sha256ChunkedHash::from_async_read(file, size).await?.into();
                 let row = Row {
                     name: logical_key.clone(),
                     size,
@@ -200,7 +199,6 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::checksum::Sha256ChunkedHash;
     use crate::fixtures;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::CommitState;
