@@ -26,10 +26,10 @@ use tracing::info;
 use tracing::warn;
 
 use crate::auth;
-use crate::checksum::calculate_sha256_checksum;
 use crate::checksum::get_checksum_chunksize_and_parts;
 use crate::checksum::get_compliant_chunked_checksum;
-use crate::checksum::ContentHash;
+use crate::checksum::Sha256ChunkedHash;
+use crate::checksum::Sha256Hash;
 use crate::checksum::MPU_MAX_PARTS;
 use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use crate::error::AuthError;
@@ -135,9 +135,7 @@ async fn put_object_and_checksum(
     let s3_checksum_b64 = response
         .checksum_sha256
         .ok_or(Error::Checksum("missing checksum".to_string()))?;
-    // let s3_checksum = BASE64_STANDARD.decode(s3_checksum_b64)?;
-    let hash: Multihash<256> =
-        ContentHash::SHA256Chunked(s3_checksum_b64.to_string()).try_into()?;
+    let hash: Multihash<256> = Sha256ChunkedHash::try_from(s3_checksum_b64.as_str())?.into();
     let checksum = if size == 0 {
         // Edge case: a 0-byte upload is treated as an empty list of chunks, rather than
         // a list of a 0-byte chunk. Its checksum is sha256(''), NOT sha256(sha256('')).
@@ -146,7 +144,7 @@ async fn put_object_and_checksum(
         // NOTE: we're calculating checksum of checksums here,
         //       not a checksum of the file
         // NOTE: in the current design, we're not using this checksum
-        calculate_sha256_checksum(hash.digest()).await?
+        Sha256Hash::from_async_read(hash.digest()).await?.into()
     };
 
     Ok((
@@ -233,7 +231,7 @@ async fn multipart_upload_and_checksum(
             version: response.version_id,
             ..dest_uri.clone()
         },
-        ContentHash::SHA256Chunked(checksum_b64.to_string()).try_into()?,
+        Sha256ChunkedHash::try_from(checksum_b64)?.into(),
     ))
 }
 
@@ -698,8 +696,7 @@ mod tests {
         );
         assert_eq!(
             result.hash,
-            ContentHash::SHA256Chunked("/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=".to_string())
-                .try_into()?
+            Sha256ChunkedHash::try_from("/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=")?.into()
         );
         assert_eq!(result.size, 29);
         Ok(())

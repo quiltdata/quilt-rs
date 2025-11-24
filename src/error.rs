@@ -125,6 +125,9 @@ pub enum Error {
     #[error("Multihash error: {0}")]
     Multihash(#[from] multihash::Error),
 
+    #[error("Multibase error: {0}")]
+    Multibase(#[from] multibase::Error),
+
     #[error("Invalid namespace: {0}")]
     Namespace(String),
 

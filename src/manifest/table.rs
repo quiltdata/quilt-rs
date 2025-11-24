@@ -9,17 +9,16 @@ use std::fmt;
 use std::path::Path;
 use std::path::PathBuf;
 
-use crate::checksum::ContentHash;
+use crate::checksum::ObjectHash;
 use crate::io::storage::Storage;
 use arrow::array::GenericByteArray;
 use arrow::array::UInt64Array;
 use arrow::datatypes::BinaryType;
 use arrow::datatypes::Utf8Type;
 use arrow::error::ArrowError;
+use aws_smithy_checksums::ChecksumAlgorithm;
 use multihash::Multihash;
 use parquet::arrow::ParquetRecordBatchStreamBuilder;
-use sha2::Digest;
-use sha2::Sha256;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncSeek;
 use tokio_stream::StreamExt;
@@ -61,9 +60,16 @@ fn serialize_table_header(header: &Header) -> Res<serde_json::Map<String, serde_
 }
 
 /// Helper for creating `top_hash`
-#[derive(Debug)]
 pub struct TopHasher {
-    pub hasher: Box<Sha256>,
+    pub hasher: Box<dyn aws_smithy_checksums::Checksum>,
+}
+
+impl fmt::Debug for TopHasher {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TopHasher")
+            .field("hasher", &"<aws_smithy_checksums::Checksum>")
+            .finish()
+    }
 }
 
 impl Default for TopHasher {
@@ -75,7 +81,7 @@ impl Default for TopHasher {
 impl TopHasher {
     pub fn new() -> Self {
         TopHasher {
-            hasher: Box::new(Sha256::new()),
+            hasher: ChecksumAlgorithm::Sha256.into_impl(),
         }
     }
 
@@ -83,15 +89,15 @@ impl TopHasher {
     pub fn append_header(&mut self, header: &Header) -> Res {
         let value = serialize_table_header(header)?;
         let value_str = serde_json::to_string(&value)?;
-        self.hasher.update(value_str);
+        self.hasher.update(value_str.as_bytes());
         Ok(())
     }
 
     /// Append `Row` to the hasher
     pub fn append(&mut self, row: &Row) -> Res {
-        let value = serialize_row_entry(row);
+        let value = serialize_row_entry(row)?;
         let value_str = serde_json::to_string(&value)?;
-        self.hasher.update(value_str);
+        self.hasher.update(value_str.as_bytes());
         Ok(())
     }
 
@@ -101,8 +107,7 @@ impl TopHasher {
     }
 }
 
-// TODO: fix return type to Map<String, serde_json::Value>
-fn serialize_row_entry(row: &Row) -> serde_json::Value {
+fn serialize_row_entry(row: &Row) -> Res<serde_json::Map<String, serde_json::Value>> {
     let mut meta = match row.info.as_object() {
         Some(meta) => meta.clone(),
         None => serde_json::Map::default(),
@@ -111,14 +116,17 @@ fn serialize_row_entry(row: &Row) -> serde_json::Value {
         meta.insert("user_meta".into(), m.clone());
     }
 
-    let content_hash: ContentHash = row.hash.try_into().unwrap();
+    let object_hash: ObjectHash = row.hash.try_into()?;
 
-    serde_json::json!({
-        "hash": content_hash,
-        "logical_key": row.name,
-        "meta": meta,
-        "size": row.size,
-    })
+    Ok(serde_json::Map::from_iter([
+        ("hash".to_string(), serde_json::to_value(object_hash)?),
+        ("logical_key".to_string(), serde_json::to_value(&row.name)?),
+        ("meta".to_string(), serde_json::Value::Object(meta)),
+        (
+            "size".to_string(),
+            serde_json::Value::Number(row.size.into()),
+        ),
+    ]))
 }
 
 /// Helper for reading Parquet manifest and get `Row`s
@@ -295,7 +303,9 @@ mod tests {
     use super::*;
 
     use multihash::Multihash;
+    use serde_json::json;
 
+    use crate::checksum::Sha256ChunkedHash;
     use crate::checksum::MULTIHASH_SHA256;
     use crate::fixtures;
     use crate::io::storage::mocks::MockStorage;
@@ -315,9 +325,6 @@ mod tests {
             .unwrap();
         assert_eq!(table.records_len().await, 2);
 
-        // let header = table.get_header().await?;
-        // assert_eq!(header.size, 0);
-
         let readme = table
             .get_record(&PathBuf::from("READ ME.md"))
             .await?
@@ -326,26 +333,6 @@ mod tests {
 
         Ok(())
     }
-
-    // #[tokio::test]
-    // #[ignore]
-    // async fn read_write_local() {
-    //     let storage = mocks::storage::MockStorage::default();
-    //     let table1 = Table::read_from_path(&storage, &mocks::manifest::parquet())
-    //         .await
-    //         .unwrap();
-    //     assert_eq!(table1.records_len().await, 2);
-
-    //     let temp_dir = temp_testdir::TempDir::default();
-    //     let temp_path = temp_dir.join("test.parquet");
-
-    //     table1.write_to_path(&storage, &temp_path).await.unwrap();
-
-    //     let table2 = Table::read_from_path(&storage, &temp_path).await.unwrap();
-
-    //     assert_eq!(table2.records_len().await, 2);
-    //     assert_eq!(table2.records, table1.records);
-    // }
 
     #[test]
     fn test_formatting_no_records() -> Res {
@@ -408,18 +395,22 @@ mod tests {
             size: 42,
             hash,
             info: serde_json::Value::Null,
-            meta: Some(serde_json::json!({"foo": "bar"})),
+            meta: Some(json!({"foo": "bar"})),
         };
 
-        let serialized = serialize_row_entry(&row);
+        let serialized = serialize_row_entry(&row)?;
+
         assert_eq!(
             serialized,
-            serde_json::json!({
-                "hash": {"type": "SHA256", "value": hex::encode(hash.digest())},
-                "logical_key": "test.txt",
-                "meta": {"user_meta": {"foo": "bar"}},
-                "size": 42,
-            })
+            serde_json::Map::from_iter([
+                (
+                    "hash".to_string(),
+                    json!({"type": "SHA256", "value": hex::encode(hash.digest())}),
+                ),
+                ("logical_key".to_string(), json!("test.txt")),
+                ("meta".to_string(), json!({"user_meta": {"foo": "bar"}})),
+                ("size".to_string(), json!(42)),
+            ])
         );
         Ok(())
     }
@@ -465,10 +456,10 @@ mod tests {
     async fn test_top_hash() -> Res {
         let manifest = Table::new(
             Header {
-                meta: Some(serde_json::json!({
+                meta: Some(json!({
                        "1234567890": "a",
                 })),
-                info: serde_json::json!({
+                info: json!({
                        "message": "Second revision",
                        "version": "v0",
                 }),
@@ -479,10 +470,10 @@ mod tests {
                     name: PathBuf::from("test.md"),
                     place: "doesn't matter".to_string(),
                     size: 3568,
-                    hash: ContentHash::SHA256Chunked(
-                        "MhntcZnyIL1AIPJNNh8LwzB68M5lFBW0pTEMFTeOSJo=".to_string(),
-                    )
-                    .try_into()?,
+                    hash: Sha256ChunkedHash::try_from(
+                        "MhntcZnyIL1AIPJNNh8LwzB68M5lFBW0pTEMFTeOSJo=",
+                    )?
+                    .into(),
                     info: serde_json::Value::Null,
                     meta: None,
                 },

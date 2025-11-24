@@ -1,89 +1,128 @@
 //! This module contains helpers and structs for creating and managing checkums.
 
 use aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput;
+use aws_smithy_checksums::ChecksumAlgorithm;
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
 use multihash::Multihash;
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
-use tokio::io::AsyncRead;
-use tokio::io::AsyncReadExt;
-use tokio::io::BufReader;
+use tokio::fs::File;
 
 use crate::Error;
 use crate::Res;
 
-// TODO: Introduce struct Chunksum {}, that
-//       * wraps `Multihash`
-//       * can be converted `Chunksum::from(GetObjectAttributesOutput)`
+mod crc64nvme;
+mod hash;
+mod sha256;
+mod sha256_chunked;
 
-/// Container for object's checksum
+pub use crc64nvme::{Crc64Hash, MULTIHASH_CRC64_NVME};
+pub use hash::Hash;
+pub use sha256::{Sha256Hash, MULTIHASH_SHA256};
+pub use sha256_chunked::{Sha256ChunkedHash, MULTIHASH_SHA256_CHUNKED};
+
+/// Type-safe container for object's checksum using struct types
 /// You can convert it to or from `Multihash<256>`.
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
-#[serde(tag = "type", content = "value")]
-pub enum ContentHash {
-    /// Legacy checksum
-    SHA256(String),
-    /// Chunked checksum
-    #[serde(rename = "sha2-256-chunked")]
-    SHA256Chunked(String),
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ObjectHash {
+    /// Legacy SHA256 checksum
+    Sha256(Sha256Hash),
+    /// Chunked SHA256 checksum
+    Sha256Chunked(Sha256ChunkedHash),
     /// CRC64-NVMe checksum
-    CRC64NVME(String),
+    Crc64(Crc64Hash),
 }
 
-/// Multihash code for legacy or single-chunked checksums
-pub const MULTIHASH_SHA256: u64 = 0x12;
-/// Multihash code for chunksums
-pub const MULTIHASH_SHA256_CHUNKED: u64 = 0xb510;
-/// Multihash code for CRC64-NVMe
-pub const MULTIHASH_CRC64_NVME: u64 = 0x0165;
+pub async fn verify_hash(file: File, hash: Multihash<256>) -> Res<Option<(u64, Multihash<256>)>> {
+    let file_metadata = file.metadata().await?;
+    let size = file_metadata.len();
 
-impl TryFrom<Multihash<256>> for ContentHash {
-    type Error = Error;
+    let calculated_hash: Multihash<256> = match hash.code() {
+        MULTIHASH_CRC64_NVME => Ok(Crc64Hash::from_file(file).await?.into()),
+        MULTIHASH_SHA256 => Ok(Sha256Hash::from_file(file).await?.into()),
+        MULTIHASH_SHA256_CHUNKED => Ok(Sha256ChunkedHash::from_file(file).await?.into()),
+        code => Err(Error::InvalidMultihash(format!(
+            "Wrong multihash type {}",
+            code
+        ))),
+    }?;
 
-    fn try_from(value: Multihash<256>) -> Result<Self, Self::Error> {
-        match value.code() {
-            MULTIHASH_SHA256 => Ok(ContentHash::SHA256(hex::encode(value.digest()))),
-            MULTIHASH_SHA256_CHUNKED => Ok(ContentHash::SHA256Chunked(
-                BASE64_STANDARD.encode(value.digest()),
-            )),
-            MULTIHASH_CRC64_NVME => Ok(ContentHash::CRC64NVME(
-                BASE64_STANDARD.encode(value.digest()),
-            )),
-            code => Err(Error::InvalidMultihash(format!(
-                "Unexpected code: {code:#06x}"
+    Ok((hash != calculated_hash).then_some((size, calculated_hash)))
+}
+
+impl TryFrom<Multihash<256>> for ObjectHash {
+    type Error = crate::Error;
+
+    fn try_from(multihash: Multihash<256>) -> Result<Self, Self::Error> {
+        match multihash.code() {
+            MULTIHASH_SHA256 => Ok(ObjectHash::Sha256(Sha256Hash::try_from(multihash)?)),
+            MULTIHASH_SHA256_CHUNKED => Ok(ObjectHash::Sha256Chunked(Sha256ChunkedHash::try_from(
+                multihash,
+            )?)),
+            MULTIHASH_CRC64_NVME => Ok(ObjectHash::Crc64(Crc64Hash::try_from(multihash)?)),
+            _ => Err(crate::Error::InvalidMultihash(format!(
+                "Unsupported multihash code: {:#06x}",
+                multihash.code()
             ))),
         }
     }
 }
 
-impl TryFrom<ContentHash> for Multihash<256> {
-    type Error = Error;
+impl From<ObjectHash> for Multihash<256> {
+    fn from(object_hash: ObjectHash) -> Self {
+        match object_hash {
+            ObjectHash::Sha256(hash) => hash.into(),
+            ObjectHash::Sha256Chunked(hash) => hash.into(),
+            ObjectHash::Crc64(hash) => hash.into(),
+        }
+    }
+}
 
-    fn try_from(content_hash: ContentHash) -> Result<Self, Self::Error> {
-        match content_hash {
-            ContentHash::SHA256(hash) => {
-                let hash_bytes =
-                    hex::decode(hash).map_err(|err| Error::InvalidMultihash(err.to_string()))?;
-                Multihash::wrap(MULTIHASH_SHA256, &hash_bytes)
-                    .map_err(|err| Error::InvalidMultihash(err.to_string()))
-            }
-            ContentHash::SHA256Chunked(hash) => {
-                let hash_bytes = BASE64_STANDARD
-                    .decode(hash)
-                    .map_err(|err| Error::InvalidMultihash(err.to_string()))?;
-                Multihash::wrap(MULTIHASH_SHA256_CHUNKED, &hash_bytes)
-                    .map_err(|err| Error::InvalidMultihash(err.to_string()))
-            }
-            ContentHash::CRC64NVME(hash) => {
-                let hash_bytes = BASE64_STANDARD
-                    .decode(hash)
-                    .map_err(|err| Error::InvalidMultihash(err.to_string()))?;
-                Multihash::wrap(MULTIHASH_CRC64_NVME, &hash_bytes)
-                    .map_err(|err| Error::InvalidMultihash(err.to_string()))
-            }
+impl From<Sha256Hash> for ObjectHash {
+    fn from(hash: Sha256Hash) -> Self {
+        ObjectHash::Sha256(hash)
+    }
+}
+
+impl From<Sha256ChunkedHash> for ObjectHash {
+    fn from(hash: Sha256ChunkedHash) -> Self {
+        ObjectHash::Sha256Chunked(hash)
+    }
+}
+
+impl From<Crc64Hash> for ObjectHash {
+    fn from(hash: Crc64Hash) -> Self {
+        ObjectHash::Crc64(hash)
+    }
+}
+
+impl ObjectHash {
+    /// Get the inner multihash
+    pub fn multihash(&self) -> &Multihash<256> {
+        match self {
+            ObjectHash::Sha256(hash) => hash.multihash(),
+            ObjectHash::Sha256Chunked(hash) => hash.multihash(),
+            ObjectHash::Crc64(hash) => hash.multihash(),
+        }
+    }
+
+    /// Get the algorithm code
+    pub fn algorithm(&self) -> u64 {
+        match self {
+            ObjectHash::Sha256(hash) => hash.algorithm(),
+            ObjectHash::Sha256Chunked(hash) => hash.algorithm(),
+            ObjectHash::Crc64(hash) => hash.algorithm(),
+        }
+    }
+
+    /// Get the digest bytes
+    pub fn digest(&self) -> &[u8] {
+        match self {
+            ObjectHash::Sha256(hash) => hash.digest(),
+            ObjectHash::Sha256Chunked(hash) => hash.digest(),
+            ObjectHash::Crc64(hash) => hash.digest(),
         }
     }
 }
@@ -113,43 +152,6 @@ pub fn get_checksum_chunksize_and_parts(file_size: u64) -> (u64, u64) {
     (chunksize, num_parts)
 }
 
-/// Caclulates legacy or single-chunk checksum from file or from single chunk
-pub async fn calculate_sha256_checksum<F: AsyncRead + Unpin>(file: F) -> Res<Multihash<256>> {
-    let mut sha256 = Sha256::new();
-    let mut reader = BufReader::new(file);
-    let mut buf = [0; 4096];
-    loop {
-        let n = reader.read(&mut buf).await?;
-        if n == 0 {
-            break;
-        }
-        sha256.update(&buf[0..n]);
-    }
-    Ok(Multihash::wrap(MULTIHASH_SHA256, &sha256.finalize())?)
-}
-
-/// Calculates chunksum from a file
-pub async fn calculate_sha256_chunked_checksum<F: AsyncRead + Unpin>(
-    file: F,
-    length: u64,
-) -> Res<Multihash<256>> {
-    let (chunksize, num_parts) = get_checksum_chunksize_and_parts(length);
-
-    let mut sha256 = Sha256::new();
-
-    let mut chunk = file.take(0);
-    for _ in 0..num_parts {
-        chunk.set_limit(chunksize);
-        let chunk_hash = calculate_sha256_checksum(&mut chunk).await?;
-        sha256.update(chunk_hash.digest());
-    }
-
-    Ok(Multihash::wrap(
-        MULTIHASH_SHA256_CHUNKED,
-        &sha256.finalize(),
-    )?)
-}
-
 /// Takes checksum got from S3 and convert it to Chunksum.
 pub fn get_compliant_chunked_checksum(attrs: &GetObjectAttributesOutput) -> Option<Vec<u8>> {
     let checksum = attrs.checksum.as_ref()?;
@@ -169,8 +171,9 @@ pub fn get_compliant_chunked_checksum(attrs: &GetObjectAttributesOutput) -> Opti
                 return Some(checksum_sha256_decoded);
             }
         }
-        #[allow(deprecated)]
-        return Some(Sha256::digest(checksum_sha256_decoded).as_slice().into());
+        let mut hasher = ChecksumAlgorithm::Sha256.into_impl();
+        hasher.update(&checksum_sha256_decoded);
+        return Some(hasher.finalize().into());
     } else if let Some(object_parts) = &attrs.object_parts {
         let parts = object_parts.parts();
         // Make sure we requested all parts.
@@ -198,71 +201,12 @@ mod tests {
     use aws_sdk_s3::types::Checksum;
     use aws_sdk_s3::types::GetObjectAttributesParts;
     use aws_sdk_s3::types::ObjectPart;
-    use base64::prelude::BASE64_STANDARD;
-    use base64::Engine;
+    use std::path::Path;
 
-    use crate::fixtures;
-
-    #[tokio::test]
-    async fn test_calculate_sha256_checksum() -> Res {
-        let bytes = fixtures::objects::less_than_8mb();
-        let hash = calculate_sha256_checksum(bytes).await?;
-
-        assert_eq!(hash.code(), MULTIHASH_SHA256);
-
-        let double_hash = Sha256::digest(hash.digest());
-        assert_eq!(
-            hex::encode(double_hash),
-            fixtures::objects::LESS_THAN_8MB_HASH_HEX
-        );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_files_less_8mb() -> Res {
-        let bytes = fixtures::objects::less_than_8mb();
-        let hash = calculate_sha256_chunked_checksum(bytes, bytes.len() as u64).await?;
-        assert_eq!(hash.code(), MULTIHASH_SHA256_CHUNKED);
-        assert_eq!(
-            BASE64_STANDARD.encode(hash.digest()),
-            fixtures::objects::LESS_THAN_8MB_HASH_B64
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_files_equal_to_8mb() -> Res {
-        let bytes = fixtures::objects::equal_to_8mb();
-        let hash = calculate_sha256_chunked_checksum(bytes.as_ref(), bytes.len() as u64).await?;
-        assert_eq!(
-            BASE64_STANDARD.encode(hash.digest()),
-            fixtures::objects::EQUAL_TO_8MB_HASH_B64
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_sha256_chunked_empty() -> Res {
-        let bytes = fixtures::objects::zero_bytes();
-        let hash = calculate_sha256_chunked_checksum(bytes, bytes.len() as u64).await?;
-        assert_eq!(
-            BASE64_STANDARD.encode(hash.digest()),
-            fixtures::objects::ZERO_HASH_B64
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_files_bigger_than_8mb() -> Res {
-        let bytes = fixtures::objects::more_than_8mb();
-        let hash = calculate_sha256_chunked_checksum(bytes.as_ref(), bytes.len() as u64).await?;
-        assert_eq!(
-            BASE64_STANDARD.encode(hash.digest()),
-            fixtures::objects::MORE_THAN_8MB_HASH_B64
-        );
-        Ok(())
-    }
+    use crate::io::storage::mocks::MockStorage;
+    use crate::io::storage::Storage;
+    use crate::Error;
+    use crate::Res;
 
     #[test]
     fn test_get_checksum_chunksize_and_parts() {
@@ -296,78 +240,17 @@ mod tests {
     }
 
     #[test]
-    fn test_content_hash_try_into_hex_decode_error() {
-        let result: Result<Multihash<256>, Error> = ContentHash::SHA256("a".repeat(45)).try_into();
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Invalid multihash: Odd number of digits"
-        );
-    }
-
-    #[test]
-    fn test_content_hash_chunked_try_into_hex_decode_error() {
-        let result: Result<Multihash<256>, Error> =
-            ContentHash::SHA256Chunked("a".repeat(45)).try_into();
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Invalid multihash: Invalid input length: 45"
-        );
-    }
-
-    #[test]
-    fn test_content_hash_try_into_multihash_oversized() {
-        // Create a hash that's too large (>32 bytes)
-        let oversized_hash = "a".repeat(600); // 65 hex chars = 32.5 bytes
-        let content_hash = ContentHash::SHA256(oversized_hash);
-
-        let result: Result<Multihash<256>, Error> = content_hash.try_into();
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Invalid multihash: Invalid multihash size 300."
-        );
-    }
-
-    #[test]
-    fn test_content_hash_chunked_try_into_multihash_oversized() -> Res {
-        let oversized_hash = "a".repeat(600);
-        let content_hash = ContentHash::SHA256Chunked(oversized_hash);
-        let result = Multihash::<256>::try_from(content_hash);
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Invalid multihash: Invalid multihash size 450."
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn test_content_hash_try_from_multihash_invalid_code() -> Res {
-        // Create a multihash with an unsupported code
-        let digest = [0u8; 32];
-        let invalid_code = 0x42; // Some random code that's not SHA256 or SHA256_CHUNKED
-        let multihash = Multihash::wrap(invalid_code, &digest)?;
-
-        let result = ContentHash::try_from(multihash);
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Invalid multihash: Unexpected code: 0x0042"
-        );
-
-        Ok(())
-    }
-
-    #[test]
     fn test_get_compliant_chunked_checksum() -> Res {
         fn b64decode(data: &str) -> Result<Vec<u8>, Error> {
-            Ok(BASE64_STANDARD.decode(data.as_bytes())?)
+            let prefixed_value = format!("{}{}", multibase::Base::Base64Pad.code(), data);
+            let (_, decoded) = multibase::decode(&prefixed_value)?;
+            Ok(decoded)
         }
 
         fn sha256(data: Vec<u8>) -> Vec<u8> {
-            Sha256::digest(data).to_vec()
+            let mut hasher = ChecksumAlgorithm::Sha256.into_impl();
+            hasher.update(&data);
+            hasher.finalize().to_vec()
         }
 
         let builder = GetObjectAttributesOutput::builder;
@@ -504,6 +387,274 @@ mod tests {
         for (attrs, expected) in test_data {
             assert_eq!(get_compliant_chunked_checksum(&attrs.build()), expected);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_conversion_errors() {
+        // Create a SHA256 hash and try to convert it to SHA256Chunked (should fail)
+        let sha256_hash = multihash::Multihash::wrap(MULTIHASH_SHA256, b"test").unwrap();
+        let result = Sha256ChunkedHash::try_from(sha256_hash);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Expected SHA256 chunked hash"));
+
+        // Create a SHA256Chunked hash and try to convert it to SHA256 (should fail)
+        let sha256_chunked_hash =
+            multihash::Multihash::wrap(MULTIHASH_SHA256_CHUNKED, b"test").unwrap();
+        let result = Sha256Hash::try_from(sha256_chunked_hash);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Expected SHA256 hash"));
+    }
+
+    #[test]
+    fn test_object_hash_conversions() -> Res {
+        // Test SHA256 conversion
+        let sha256_multihash = multihash::Multihash::wrap(MULTIHASH_SHA256, b"test_data").unwrap();
+        let object_hash = ObjectHash::try_from(sha256_multihash.clone())?;
+        let back_to_multihash: Multihash<256> = object_hash.clone().into();
+        assert_eq!(sha256_multihash, back_to_multihash);
+        assert_eq!(object_hash.algorithm(), MULTIHASH_SHA256);
+
+        // Test SHA256Chunked conversion
+        let sha256_chunked_multihash =
+            multihash::Multihash::wrap(MULTIHASH_SHA256_CHUNKED, b"test_data").unwrap();
+        let object_hash = ObjectHash::try_from(sha256_chunked_multihash.clone())?;
+        let back_to_multihash: Multihash<256> = object_hash.clone().into();
+        assert_eq!(sha256_chunked_multihash, back_to_multihash);
+        assert_eq!(object_hash.algorithm(), MULTIHASH_SHA256_CHUNKED);
+
+        // Test CRC64 conversion
+        let crc64_multihash =
+            multihash::Multihash::wrap(MULTIHASH_CRC64_NVME, b"test_data").unwrap();
+        let object_hash = ObjectHash::try_from(crc64_multihash.clone())?;
+        let back_to_multihash: Multihash<256> = object_hash.clone().into();
+        assert_eq!(crc64_multihash, back_to_multihash);
+        assert_eq!(object_hash.algorithm(), MULTIHASH_CRC64_NVME);
+
+        let invalid_multihash = multihash::Multihash::wrap(0x9999, b"invalid_data").unwrap();
+        let result = ObjectHash::try_from(invalid_multihash);
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Unsupported multihash code: 0x9999"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_object_hash_from_individual_types() -> Res {
+        // Test from individual hash types
+        let sha256_hash =
+            Sha256Hash::try_from(multihash::Multihash::wrap(MULTIHASH_SHA256, b"test").unwrap())?;
+        let object_hash: ObjectHash = sha256_hash.clone().into();
+        assert_eq!(object_hash.algorithm(), MULTIHASH_SHA256);
+
+        let sha256_chunked_hash = Sha256ChunkedHash::try_from(
+            multihash::Multihash::wrap(MULTIHASH_SHA256_CHUNKED, b"test").unwrap(),
+        )?;
+        let object_hash: ObjectHash = sha256_chunked_hash.clone().into();
+        assert_eq!(object_hash.algorithm(), MULTIHASH_SHA256_CHUNKED);
+
+        let crc64_hash = Crc64Hash::try_from(
+            multihash::Multihash::wrap(MULTIHASH_CRC64_NVME, b"test").unwrap(),
+        )?;
+        let object_hash: ObjectHash = crc64_hash.clone().into();
+        assert_eq!(object_hash.algorithm(), MULTIHASH_CRC64_NVME);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_object_hash_serde() -> Res {
+        // Test SHA256 serde
+        let sha256_hash = Sha256Hash::try_from(
+            multihash::Multihash::wrap(MULTIHASH_SHA256, b"test_data").unwrap(),
+        )?;
+        let object_hash = ObjectHash::Sha256(sha256_hash);
+        let serialized = serde_json::to_string(&object_hash)?;
+        let deserialized: ObjectHash = serde_json::from_str(&serialized)?;
+        assert_eq!(object_hash, deserialized);
+
+        // Test SHA256Chunked serde
+        let sha256_chunked_hash = Sha256ChunkedHash::try_from(
+            multihash::Multihash::wrap(MULTIHASH_SHA256_CHUNKED, b"test_data").unwrap(),
+        )?;
+        let object_hash = ObjectHash::Sha256Chunked(sha256_chunked_hash);
+        let serialized = serde_json::to_string(&object_hash)?;
+        let deserialized: ObjectHash = serde_json::from_str(&serialized)?;
+        assert_eq!(object_hash, deserialized);
+
+        // Test CRC64 serde
+        let crc64_hash = Crc64Hash::try_from(
+            multihash::Multihash::wrap(MULTIHASH_CRC64_NVME, b"test_data").unwrap(),
+        )?;
+        let object_hash = ObjectHash::Crc64(crc64_hash);
+        let serialized = serde_json::to_string(&object_hash)?;
+        let deserialized: ObjectHash = serde_json::from_str(&serialized)?;
+        assert_eq!(object_hash, deserialized);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_object_hash_json_format_translation() -> Res {
+        // Test SHA256 JSON format translation
+        let sha256_json = r#"{"type":"SHA256","value":"7465737464617461000000000000000000000000000000000000000000000000"}"#;
+        let object_hash: ObjectHash = serde_json::from_str(sha256_json)?;
+        match object_hash {
+            ObjectHash::Sha256(hash) => {
+                assert_eq!(hash.algorithm(), MULTIHASH_SHA256);
+                assert_eq!(
+                    hex::encode(hash.digest()),
+                    "7465737464617461000000000000000000000000000000000000000000000000"
+                );
+            }
+            _ => {
+                return Err(crate::Error::InvalidMultihash(
+                    "Expected ObjectHash::Sha256 variant".to_string(),
+                ))
+            }
+        }
+
+        // Test SHA256Chunked JSON format translation
+        let sha256_chunked_json =
+            r#"{"type":"sha2-256-chunked","value":"dGVzdGRhdGEAAAAAAAAAAAAAAAAAAAAA"}"#;
+        let object_hash: ObjectHash = serde_json::from_str(sha256_chunked_json)?;
+        match object_hash {
+            ObjectHash::Sha256Chunked(hash) => {
+                assert_eq!(hash.algorithm(), MULTIHASH_SHA256_CHUNKED);
+                assert_eq!(
+                    &multibase::encode(multibase::Base::Base64Pad, hash.digest())[1..],
+                    "dGVzdGRhdGEAAAAAAAAAAAAAAAAAAAAA"
+                );
+            }
+            _ => {
+                return Err(crate::Error::InvalidMultihash(
+                    "Expected ObjectHash::Sha256Chunked variant".to_string(),
+                ))
+            }
+        }
+
+        // Test CRC64 JSON format translation
+        let crc64_json = r#"{"type":"CRC64NVME","value":"dGVzdGRhdGEAAAAAAAAAAAAAAAAAAAAA"}"#;
+        let object_hash: ObjectHash = serde_json::from_str(crc64_json)?;
+        match object_hash {
+            ObjectHash::Crc64(hash) => {
+                assert_eq!(hash.algorithm(), MULTIHASH_CRC64_NVME);
+                assert_eq!(
+                    &multibase::encode(multibase::Base::Base64Pad, hash.digest())[1..],
+                    "dGVzdGRhdGEAAAAAAAAAAAAAAAAAAAAA"
+                );
+            }
+            _ => {
+                return Err(crate::Error::InvalidMultihash(
+                    "Expected ObjectHash::Crc64 variant".to_string(),
+                ))
+            }
+        }
+
+        // Test that serialization produces the correct format
+        let hex_bytes =
+            hex::decode("7465737464617461000000000000000000000000000000000000000000000000")
+                .map_err(|e| Error::InvalidMultihash(e.to_string()))?;
+        let sha256_hash =
+            Sha256Hash::try_from(multihash::Multihash::wrap(MULTIHASH_SHA256, &hex_bytes)?)?;
+        let object_hash = ObjectHash::Sha256(sha256_hash);
+        let serialized = serde_json::to_string(&object_hash)?;
+        assert!(serialized.contains("\"type\":\"SHA256\""));
+        assert!(serialized.contains(
+            "\"value\":\"7465737464617461000000000000000000000000000000000000000000000000\""
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_object_hash_json_invalid_type() {
+        // Test invalid type field
+        let invalid_json = r#"{"type":"UNKNOWN","value":"deadbeef"}"#;
+        let result: Result<ObjectHash, _> = serde_json::from_str(invalid_json);
+        assert!(result.is_err());
+
+        // Test mismatched type/encoding
+        let mismatched_json = r#"{"type":"SHA256","value":"dGVzdA=="}"#; // base64 in SHA256 field
+        let result: Result<ObjectHash, _> = serde_json::from_str(mismatched_json);
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_hash_trait_and_verify_functionality() -> Res {
+        let storage = MockStorage::default();
+        let test_data = b"test data for Hash trait and verify functionality";
+        let test_path = Path::new("hash_trait_test.txt");
+
+        // Write test data to mock storage
+        storage.write_file(test_path, test_data).await?;
+
+        // Test Hash trait implementation and consistent from_file signatures
+        let file = storage.open_file(test_path).await?;
+        let sha256_hash = <Sha256Hash as Hash>::from_file(file).await?;
+
+        let file = storage.open_file(test_path).await?;
+        let sha256_chunked_hash = <Sha256ChunkedHash as Hash>::from_file(file).await?;
+
+        let file = storage.open_file(test_path).await?;
+        let crc64_hash = <Crc64Hash as Hash>::from_file(file).await?;
+
+        // Test Hash trait methods
+        assert_eq!(sha256_hash.algorithm(), MULTIHASH_SHA256);
+        assert_eq!(sha256_chunked_hash.algorithm(), MULTIHASH_SHA256_CHUNKED);
+        assert_eq!(crc64_hash.algorithm(), MULTIHASH_CRC64_NVME);
+
+        assert!(!sha256_hash.digest().is_empty());
+        assert!(!sha256_chunked_hash.digest().is_empty());
+        assert!(!crc64_hash.digest().is_empty());
+
+        // Test trait object polymorphism
+        fn check_hash_trait<T: Hash>(hash: &T) -> u64 {
+            hash.algorithm()
+        }
+
+        assert_eq!(check_hash_trait(&sha256_hash), MULTIHASH_SHA256);
+        assert_eq!(
+            check_hash_trait(&sha256_chunked_hash),
+            MULTIHASH_SHA256_CHUNKED
+        );
+        assert_eq!(check_hash_trait(&crc64_hash), MULTIHASH_CRC64_NVME);
+
+        // Test that verify_hash works with all hash types
+        let file = storage.open_file(test_path).await?;
+        let sha256_multihash: Multihash<256> = sha256_hash.into();
+        let result = verify_hash(file, sha256_multihash).await?;
+        assert!(result.is_none()); // Should match
+
+        let file = storage.open_file(test_path).await?;
+        let sha256_chunked_multihash: Multihash<256> = sha256_chunked_hash.into();
+        let result = verify_hash(file, sha256_chunked_multihash).await?;
+        assert!(result.is_none()); // Should match
+
+        let file = storage.open_file(test_path).await?;
+        let crc64_multihash: Multihash<256> = crc64_hash.into();
+        let result = verify_hash(file, crc64_multihash).await?;
+        assert!(result.is_none()); // Should match
+
+        let file = storage.open_file(test_path).await?;
+        let unknown_hash = multihash::Multihash::wrap(0x9999, b"test_hash_data").unwrap();
+        let result = verify_hash(file, unknown_hash).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Wrong multihash type"));
+
         Ok(())
     }
 }

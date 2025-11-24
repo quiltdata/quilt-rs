@@ -1,4 +1,3 @@
-use multihash::Multihash;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::path::Path;
@@ -7,9 +6,8 @@ use tokio::fs::File;
 
 use tracing::{debug, info, warn};
 
-use crate::checksum::calculate_sha256_checksum;
-use crate::checksum::calculate_sha256_chunked_checksum;
-use crate::checksum::MULTIHASH_SHA256_CHUNKED;
+use crate::checksum::verify_hash;
+use crate::checksum::Sha256ChunkedHash;
 use crate::io::manifest::resolve_latest;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
@@ -21,22 +19,6 @@ use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::Error;
 use crate::Res;
-
-async fn verify_hash(file: File, hash: Multihash<256>) -> Res<Option<(u64, Multihash<256>)>> {
-    let file_metadata = file.metadata().await?;
-    let size = file_metadata.len();
-    let calculated_hash = if hash.code() == MULTIHASH_SHA256_CHUNKED {
-        calculate_sha256_chunked_checksum(file, size).await?
-    } else {
-        calculate_sha256_checksum(file).await?
-    };
-
-    if calculated_hash == hash {
-        Ok(None)
-    } else {
-        Ok(Some((size, calculated_hash)))
-    }
-}
 
 /// Refreshes the tracked `latest_hash` property in lineage.json
 pub async fn refresh_latest_hash(
@@ -143,7 +125,7 @@ async fn fingerprint_files(files: Vec<(PathBuf, WorkdirFile)>) -> Res<ChangeSet>
             }
             WorkdirFile::New(file) => {
                 let size = file.metadata().await?.len();
-                let hash = calculate_sha256_chunked_checksum(file, size).await?;
+                let hash = Sha256ChunkedHash::from_async_read(file, size).await?.into();
                 let row = Row {
                     name: logical_key.clone(),
                     size,
@@ -217,7 +199,6 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::checksum::ContentHash;
     use crate::fixtures;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::CommitState;
@@ -370,16 +351,14 @@ mod tests {
             let reference_row = Row {
                 name: PathBuf::from("inside/package/file.pq"),
                 size: 5324,
-                hash: ContentHash::SHA256Chunked(
-                    "EfrtXWeClWPJ/IVKjQeAmMKhJV45/GcpjDm1IhvhJAY=".to_string(),
-                )
-                .try_into()?,
+                hash: Sha256ChunkedHash::try_from("EfrtXWeClWPJ/IVKjQeAmMKhJV45/GcpjDm1IhvhJAY=")?
+                    .into(),
                 ..Row::default()
             };
             assert_eq!(added_row, &reference_row);
             Ok(())
         } else {
-            panic!()
+            panic!("Expected Change::Added, got {:?}", added_file)
         }
     }
 
