@@ -19,7 +19,6 @@ use aws_types::region::Region;
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
 use multihash::Multihash;
-use parquet::data_type::AsBytes;
 use tokio::io::AsyncRead;
 use tracing::debug;
 use tracing::info;
@@ -31,7 +30,6 @@ use crate::checksum::get_compliant_chunked_checksum;
 use crate::checksum::Sha256ChunkedHash;
 use crate::checksum::Sha256Hash;
 use crate::checksum::MPU_MAX_PARTS;
-use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use crate::error::AuthError;
 use crate::error::S3Error;
 use crate::io::remote::HttpClient;
@@ -64,11 +62,10 @@ impl TryFrom<GetObjectAttributesOutput> for S3AttributesWrapper {
             return Err(Error::S3Raw("Object is a delete marker".to_string()));
         }
 
-        let checksum = match get_compliant_chunked_checksum(&attrs) {
-            Some(c) => c,
+        let hash = match get_compliant_chunked_checksum(&attrs) {
+            Some(object_hash) => object_hash.multihash().clone(),
             None => return Err(Error::Checksum("missing checksum".to_string())),
         };
-        let hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, checksum.as_bytes())?;
         let size = attrs.object_size.expect("ObjectSize must be requested") as u64;
         Ok(S3AttributesWrapper {
             version: attrs.version_id.expect("VersionId must be requested"),

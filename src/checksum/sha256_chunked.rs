@@ -8,11 +8,37 @@ use tokio::fs::File;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::checksum::hash::Hash;
-use crate::checksum::{get_checksum_chunksize_and_parts, Sha256Hash};
+use crate::checksum::Sha256Hash;
 use crate::{Error, Res};
 
 /// Multihash code for chunksums
 pub const MULTIHASH_SHA256_CHUNKED: u64 = 0xb510;
+
+/// Maximum number of parts for splitting the file to create chunksum
+/// This is a "hard requirement" for chunksums. We don't outstrip that number of chunks.
+pub const MPU_MAX_PARTS: u64 = 10_000;
+/// Size threshold when the next chunk cut.
+/// This is a "soft requirement" for chunksum size. We can increase threshold if we can't fit into
+/// `MPU_MAX_PARTS`.
+/// Since it's a minimum size for chunksumed chunk, file less than this threshold is treated like
+/// single chunk.
+pub const MULTIPART_THRESHOLD: u64 = 8 * 1024 * 1024;
+
+// TODO: rename to something simpler: get_chunksize_and_parts?
+/// Examines if chunksum size is suitable to split file and get less chunks then supported.
+/// If not, we tries to increas chunksum until it find chunk size that can split into reasonable
+/// number of chunks (`MPU_MAX_PARTS`).
+pub fn get_checksum_chunksize_and_parts(file_size: u64) -> (u64, u64) {
+    let mut chunksize = MULTIPART_THRESHOLD;
+    let mut num_parts = file_size.div_ceil(chunksize);
+
+    while num_parts > MPU_MAX_PARTS {
+        chunksize *= 2;
+        num_parts = file_size.div_ceil(chunksize);
+    }
+
+    (chunksize, num_parts)
+}
 
 /// SHA256 chunked checksum wrapper
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -334,5 +360,36 @@ mod tests {
         assert_eq!(sha256_chunked, back_to_sha256_chunked);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_get_checksum_chunksize_and_parts() {
+        // Test file smaller than threshold
+        let (chunksize, parts) = get_checksum_chunksize_and_parts(MULTIPART_THRESHOLD - 1);
+        assert_eq!(chunksize, MULTIPART_THRESHOLD);
+        assert_eq!(parts, 1);
+
+        // Test file equal to threshold
+        let (chunksize, parts) = get_checksum_chunksize_and_parts(MULTIPART_THRESHOLD);
+        assert_eq!(chunksize, MULTIPART_THRESHOLD);
+        assert_eq!(parts, 1);
+
+        // Test file requiring exactly MPU_MAX_PARTS
+        let file_size = MULTIPART_THRESHOLD * MPU_MAX_PARTS;
+        let (chunksize, parts) = get_checksum_chunksize_and_parts(file_size);
+        assert_eq!(chunksize, MULTIPART_THRESHOLD);
+        assert_eq!(parts, MPU_MAX_PARTS);
+
+        // Test file requiring more than MPU_MAX_PARTS at base chunk size
+        let file_size = MULTIPART_THRESHOLD * (MPU_MAX_PARTS + 1);
+        let (chunksize, parts) = get_checksum_chunksize_and_parts(file_size);
+        assert_eq!(chunksize, MULTIPART_THRESHOLD * 2);
+        assert_eq!(parts, (MPU_MAX_PARTS / 2) + 1);
+
+        // Test very large file requiring multiple chunk size doublings
+        let file_size = MULTIPART_THRESHOLD * MPU_MAX_PARTS * 8;
+        let (chunksize, parts) = get_checksum_chunksize_and_parts(file_size);
+        assert_eq!(chunksize, MULTIPART_THRESHOLD * 8);
+        assert_eq!(parts, MPU_MAX_PARTS);
     }
 }
