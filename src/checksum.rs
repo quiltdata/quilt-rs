@@ -16,7 +16,7 @@ mod sha256_chunked;
 
 pub use crc64nvme::{Crc64Hash, MULTIHASH_CRC64_NVME};
 pub use hash::Hash;
-pub use remote::get_compliant_chunked_checksum;
+pub use remote::get_compliant_checksum;
 pub use sha256::{Sha256Hash, MULTIHASH_SHA256};
 pub use sha256_chunked::{
     get_checksum_chunksize_and_parts, Sha256ChunkedHash, MPU_MAX_PARTS, MULTIHASH_SHA256_CHUNKED,

@@ -26,7 +26,7 @@ use tracing::warn;
 
 use crate::auth;
 use crate::checksum::get_checksum_chunksize_and_parts;
-use crate::checksum::get_compliant_chunked_checksum;
+use crate::checksum::get_compliant_checksum;
 use crate::checksum::Sha256ChunkedHash;
 use crate::checksum::Sha256Hash;
 use crate::checksum::MPU_MAX_PARTS;
@@ -62,7 +62,7 @@ impl TryFrom<GetObjectAttributesOutput> for S3AttributesWrapper {
             return Err(Error::S3Raw("Object is a delete marker".to_string()));
         }
 
-        let hash = match get_compliant_chunked_checksum(&attrs) {
+        let hash = match get_compliant_checksum(&attrs) {
             Some(object_hash) => object_hash.multihash().clone(),
             None => return Err(Error::Checksum("missing checksum".to_string())),
         };
