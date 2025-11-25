@@ -3,6 +3,7 @@
 use multihash::Multihash;
 use serde::Deserialize;
 use serde::Serialize;
+use std::fmt;
 use tokio::fs::File;
 
 use crate::Error;
@@ -17,6 +18,7 @@ mod sha256_chunked;
 pub use crc64nvme::{Crc64Hash, MULTIHASH_CRC64_NVME};
 pub use hash::Hash;
 pub use remote::get_compliant_checksum;
+pub use remote::hash_sha256_checksum;
 pub use sha256::{Sha256Hash, MULTIHASH_SHA256};
 pub use sha256_chunked::{
     get_checksum_chunksize_and_parts, Sha256ChunkedHash, MPU_MAX_PARTS, MULTIHASH_SHA256_CHUNKED,
@@ -128,6 +130,16 @@ impl ObjectHash {
     }
 }
 
+impl fmt::Display for ObjectHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ObjectHash::Sha256(hash) => hash.fmt(f),
+            ObjectHash::Sha256Chunked(hash) => hash.fmt(f),
+            ObjectHash::Crc64(hash) => hash.fmt(f),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,6 +171,23 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("Expected SHA256 hash"));
+    }
+
+    #[test]
+    fn test_object_hash_display() -> Res {
+        // Test SHA256 display (hex format)
+        let object_hash = ObjectHash::Sha256(Sha256Hash::try_from("deadbeef")?);
+        assert_eq!(object_hash.to_string(), "deadbeef");
+
+        // Test SHA256Chunked display (base64 format)
+        let object_hash = ObjectHash::Sha256Chunked(Sha256ChunkedHash::try_from("Zm9vYmFy")?);
+        assert_eq!(object_hash.to_string(), "Zm9vYmFy");
+
+        // Test CRC64 display (base64 format)
+        let object_hash = ObjectHash::Crc64(Crc64Hash::try_from("aGVsbG8gd29ybGQ=")?);
+        assert_eq!(object_hash.to_string(), "aGVsbG8gd29ybGQ=");
+
+        Ok(())
     }
 
     #[test]

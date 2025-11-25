@@ -139,8 +139,6 @@ impl LocalStorage {
 mod tests {
     use super::*;
 
-    use base64::prelude::BASE64_STANDARD;
-    use base64::Engine;
     use tempfile::tempdir;
     use tokio::io::AsyncWriteExt;
 
@@ -221,7 +219,7 @@ mod tests {
             .await?;
         assert_eq!(attrs.size, 123);
         assert_eq!(
-            BASE64_STANDARD.encode(attrs.hash.digest()),
+            attrs.hash.to_string(),
             "Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="
         );
 

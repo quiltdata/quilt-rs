@@ -14,7 +14,7 @@ fn sha256_hash_bytes(data: &[u8]) -> Vec<u8> {
 }
 
 /// Hash a base64-encoded checksum with SHA256 and return as Sha256ChunkedHash
-fn hash_sha256_checksum(checksum_b64: &str) -> Option<String> {
+pub fn hash_sha256_checksum(checksum_b64: &str) -> Option<String> {
     let checksum_decoded = base64::decode(checksum_b64).ok()?;
     let hashed_bytes = sha256_hash_bytes(&checksum_decoded);
     Some(base64::encode(&hashed_bytes))

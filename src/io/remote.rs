@@ -11,6 +11,7 @@ use multihash::Multihash;
 use tokio::io::AsyncRead;
 use tokio_stream::Stream;
 
+use crate::checksum::ObjectHash;
 use crate::uri::Host;
 use crate::uri::S3Uri;
 use crate::Res;
@@ -32,7 +33,7 @@ pub mod mocks;
 pub struct S3Attributes {
     pub listing_uri: S3Uri,
     pub object_uri: S3Uri,
-    pub hash: Multihash<256>,
+    pub hash: ObjectHash,
     pub size: u64,
 }
 
