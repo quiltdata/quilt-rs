@@ -9,9 +9,7 @@ use tracing::log;
 
 use crate::checksum;
 use crate::error::S3Error;
-use crate::io::remote::ObjectsStream;
-use crate::io::remote::RemoteObjectStream;
-use crate::io::remote::S3Attributes;
+use crate::io::remote::{HostConfig, ObjectsStream, RemoteObjectStream, S3Attributes};
 use crate::io::storage::mocks::MockStorage;
 use crate::io::storage::Storage;
 use crate::uri::Host;
@@ -165,6 +163,10 @@ impl Remote for MockRemote {
             },
             hash,
         ))
+    }
+
+    async fn host_config(&self, _host: &Option<Host>) -> Res<HostConfig> {
+        Ok(HostConfig::default())
     }
 }
 

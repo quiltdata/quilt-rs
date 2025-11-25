@@ -31,9 +31,8 @@ use crate::checksum::Sha256ChunkedHash;
 use crate::checksum::MPU_MAX_PARTS;
 use crate::error::AuthError;
 use crate::error::S3Error;
-use crate::io::remote::HttpClient;
-use crate::io::remote::ObjectsStream;
-use crate::io::remote::Remote;
+use crate::io::remote::host::fetch_host_config;
+use crate::io::remote::{HostConfig, HttpClient, ObjectsStream, Remote};
 use crate::io::storage::auth::AuthIo;
 use crate::io::storage::LocalStorage;
 use crate::paths::DomainPaths;
@@ -652,6 +651,13 @@ impl Remote for RemoteS3 {
                 S3Error::UploadFile(DisplayErrorContext(err).to_string()),
             )
         })
+    }
+
+    async fn host_config(&self, host: &Option<Host>) -> Res<HostConfig> {
+        match host {
+            Some(host) => fetch_host_config(&self.http, &host.to_string()).await,
+            None => Ok(HostConfig::default()),
+        }
     }
 }
 
