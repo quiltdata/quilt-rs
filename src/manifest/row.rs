@@ -264,7 +264,7 @@ impl From<S3Attributes> for Row {
             place: attrs.object_uri.to_string(),
             // XXX: can we use `as u64` safely here?
             size: attrs.size,
-            hash: attrs.hash,
+            hash: attrs.hash.into(),
             info: serde_json::Value::Null, // XXX: is this right?
             meta: None,                    // XXX: is this right?
         }
@@ -300,6 +300,7 @@ mod tests {
 
     #[test]
     fn test_from_s3_attributes() -> Res {
+        use crate::checksum::Sha256ChunkedHash;
         use crate::uri::S3Uri;
 
         let listing_uri = S3Uri {
@@ -318,7 +319,7 @@ mod tests {
             listing_uri,
             object_uri,
             size: 42,
-            hash: Multihash::wrap(345, b"test hash")?,
+            hash: Sha256ChunkedHash::try_from("Zm9vYmFy")?.into(),
         };
 
         assert_eq!(
@@ -327,7 +328,7 @@ mod tests {
                 name: PathBuf::from("data/file.txt"),
                 place: "s3://test-bucket/prefix/data/file.txt?versionId=v1".to_string(),
                 size: 42,
-                hash: Multihash::wrap(345, b"test hash")?,
+                hash: Sha256ChunkedHash::try_from("Zm9vYmFy")?.into(),
                 info: serde_json::Value::Null,
                 meta: None,
             }

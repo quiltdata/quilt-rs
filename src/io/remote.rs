@@ -11,15 +11,18 @@ use multihash::Multihash;
 use tokio::io::AsyncRead;
 use tokio_stream::Stream;
 
+use crate::checksum::ObjectHash;
 use crate::uri::Host;
 use crate::uri::S3Uri;
 use crate::Res;
 
 pub mod client;
+mod host;
 mod s3;
 mod workflow;
 
 pub use client::HttpClient;
+pub use host::{fetch_host_config, HostChecksums, HostConfig};
 pub use s3::RemoteS3;
 pub use workflow::resolve_workflow;
 
@@ -32,7 +35,7 @@ pub mod mocks;
 pub struct S3Attributes {
     pub listing_uri: S3Uri,
     pub object_uri: S3Uri,
-    pub hash: Multihash<256>,
+    pub hash: ObjectHash,
     pub size: u64,
 }
 
@@ -109,4 +112,7 @@ pub trait Remote {
         dest_uri: &S3Uri,
         size: u64,
     ) -> impl Future<Output = Res<(S3Uri, Multihash<256>)>>;
+
+    /// Fetch host configuration from the given host
+    fn host_config(&self, host: &Option<Host>) -> impl Future<Output = Res<HostConfig>> + Send;
 }

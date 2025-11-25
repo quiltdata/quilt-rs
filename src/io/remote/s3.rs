@@ -16,10 +16,7 @@ use aws_sdk_s3::types::CompletedPart;
 use aws_sdk_s3::types::Object;
 use aws_smithy_types::byte_stream::Length;
 use aws_types::region::Region;
-use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
 use multihash::Multihash;
-use parquet::data_type::AsBytes;
 use tokio::io::AsyncRead;
 use tracing::debug;
 use tracing::info;
@@ -27,16 +24,15 @@ use tracing::warn;
 
 use crate::auth;
 use crate::checksum::get_checksum_chunksize_and_parts;
-use crate::checksum::get_compliant_chunked_checksum;
+use crate::checksum::get_compliant_checksum;
+use crate::checksum::hash_sha256_checksum;
+use crate::checksum::ObjectHash;
 use crate::checksum::Sha256ChunkedHash;
-use crate::checksum::Sha256Hash;
 use crate::checksum::MPU_MAX_PARTS;
-use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use crate::error::AuthError;
 use crate::error::S3Error;
-use crate::io::remote::HttpClient;
-use crate::io::remote::ObjectsStream;
-use crate::io::remote::Remote;
+use crate::io::remote::host::fetch_host_config;
+use crate::io::remote::{HostConfig, HttpClient, ObjectsStream, Remote};
 use crate::io::storage::auth::AuthIo;
 use crate::io::storage::LocalStorage;
 use crate::paths::DomainPaths;
@@ -51,7 +47,7 @@ use crate::io::remote::RemoteObjectStream;
 use crate::io::remote::S3Attributes;
 
 struct S3AttributesWrapper {
-    pub hash: Multihash<256>,
+    pub hash: ObjectHash,
     pub size: u64,
     pub version: String,
 }
@@ -64,11 +60,10 @@ impl TryFrom<GetObjectAttributesOutput> for S3AttributesWrapper {
             return Err(Error::S3Raw("Object is a delete marker".to_string()));
         }
 
-        let checksum = match get_compliant_chunked_checksum(&attrs) {
-            Some(c) => c,
+        let hash = match get_compliant_checksum(&attrs) {
+            Some(object_hash) => object_hash,
             None => return Err(Error::Checksum("missing checksum".to_string())),
         };
-        let hash = Multihash::wrap(MULTIHASH_SHA256_CHUNKED, checksum.as_bytes())?;
         let size = attrs.object_size.expect("ObjectSize must be requested") as u64;
         Ok(S3AttributesWrapper {
             version: attrs.version_id.expect("VersionId must be requested"),
@@ -122,7 +117,7 @@ async fn put_object_and_checksum(
     source_path: impl AsRef<Path>,
     dest_uri: &S3Uri,
     size: u64,
-) -> Res<(S3Uri, Multihash<256>)> {
+) -> Res<(S3Uri, ObjectHash)> {
     let response = client
         .put_object()
         .bucket(&dest_uri.bucket)
@@ -132,28 +127,26 @@ async fn put_object_and_checksum(
         .send()
         .await
         .map_err(|err| Error::S3Raw(DisplayErrorContext(err).to_string()))?;
-    let s3_checksum_b64 = response
+    let s3_checksum_sha256_b64 = response
         .checksum_sha256
         .ok_or(Error::Checksum("missing checksum".to_string()))?;
-    let hash: Multihash<256> = Sha256ChunkedHash::try_from(s3_checksum_b64.as_str())?.into();
-    let checksum = if size == 0 {
+
+    let uri = S3Uri {
+        version: response.version_id,
+        ..dest_uri.clone()
+    };
+
+    let hash = match size {
         // Edge case: a 0-byte upload is treated as an empty list of chunks, rather than
         // a list of a 0-byte chunk. Its checksum is sha256(''), NOT sha256(sha256('')).
-        hash
-    } else {
+        0 => s3_checksum_sha256_b64,
         // NOTE: we're calculating checksum of checksums here,
         //       not a checksum of the file
         // NOTE: in the current design, we're not using this checksum
-        Sha256Hash::from_async_read(hash.digest()).await?.into()
+        _ => hash_sha256_checksum(s3_checksum_sha256_b64.as_str())
+            .ok_or(Error::InvalidMultihash(s3_checksum_sha256_b64))?,
     };
-
-    Ok((
-        S3Uri {
-            version: response.version_id,
-            ..dest_uri.clone()
-        },
-        checksum,
-    ))
+    Ok((uri, Sha256ChunkedHash::try_from(hash.as_str())?.into()))
 }
 
 async fn multipart_upload_and_checksum(
@@ -161,7 +154,7 @@ async fn multipart_upload_and_checksum(
     source_path: impl AsRef<Path>,
     dest_uri: &S3Uri,
     size: u64,
-) -> Res<(S3Uri, Multihash<256>)> {
+) -> Res<(S3Uri, ObjectHash)> {
     let (chunksize, num_chunks) = get_checksum_chunksize_and_parts(size);
     let upload_id = client
         .create_multipart_upload()
@@ -519,6 +512,10 @@ impl Remote for RemoteS3 {
                     hash,
                     version,
                 } = attrs.try_into()?;
+                info!(
+                    "✔️ Retrieved attributes for {}/{} - size: {}, hash: {}",
+                    listing_uri.bucket, key, size, hash
+                );
                 let attributes = S3Attributes {
                     listing_uri: listing_uri.clone(),
                     object_uri: S3Uri {
@@ -529,13 +526,6 @@ impl Remote for RemoteS3 {
                     hash,
                     size,
                 };
-                info!(
-                    "✔️ Retrieved attributes for {}/{} - size: {}, hash: {}",
-                    listing_uri.bucket,
-                    key,
-                    size,
-                    BASE64_STANDARD.encode(hash.digest())
-                );
                 Ok(attributes)
             }
             Err(err) => {
@@ -649,19 +639,25 @@ impl Remote for RemoteS3 {
         size: u64,
     ) -> Res<(S3Uri, Multihash<256>)> {
         let client = self.get_client_for_bucket(host, &dest_uri.bucket).await?;
-        {
-            if size == 0 {
-                put_object_and_checksum(client, source_path, dest_uri, size).await
-            } else {
-                multipart_upload_and_checksum(client, source_path, dest_uri, size).await
-            }
-        }
+        (if size == 0 {
+            put_object_and_checksum(client, source_path, dest_uri, size).await
+        } else {
+            multipart_upload_and_checksum(client, source_path, dest_uri, size).await
+        })
+        .map(|(uri, hash)| (uri, hash.into()))
         .map_err(|err| {
             Error::S3(
                 host.to_owned(),
                 S3Error::UploadFile(DisplayErrorContext(err).to_string()),
             )
         })
+    }
+
+    async fn host_config(&self, host: &Option<Host>) -> Res<HostConfig> {
+        match host {
+            Some(host) => fetch_host_config(&self.http, &host.to_string()).await,
+            None => Ok(HostConfig::default()),
+        }
     }
 }
 

@@ -1,12 +1,9 @@
 //! This module contains helpers and structs for creating and managing checkums.
 
-use aws_sdk_s3::operation::get_object_attributes::GetObjectAttributesOutput;
-use aws_smithy_checksums::ChecksumAlgorithm;
-use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
 use multihash::Multihash;
 use serde::Deserialize;
 use serde::Serialize;
+use std::fmt;
 use tokio::fs::File;
 
 use crate::Error;
@@ -14,13 +11,19 @@ use crate::Res;
 
 mod crc64nvme;
 mod hash;
+mod remote;
 mod sha256;
 mod sha256_chunked;
 
 pub use crc64nvme::{Crc64Hash, MULTIHASH_CRC64_NVME};
 pub use hash::Hash;
+pub use remote::get_compliant_checksum;
+pub use remote::hash_sha256_checksum;
 pub use sha256::{Sha256Hash, MULTIHASH_SHA256};
-pub use sha256_chunked::{Sha256ChunkedHash, MULTIHASH_SHA256_CHUNKED};
+pub use sha256_chunked::{
+    get_checksum_chunksize_and_parts, Sha256ChunkedHash, MPU_MAX_PARTS, MULTIHASH_SHA256_CHUNKED,
+    MULTIPART_THRESHOLD,
+};
 
 /// Type-safe container for object's checksum using struct types
 /// You can convert it to or from `Multihash<256>`.
@@ -127,268 +130,26 @@ impl ObjectHash {
     }
 }
 
-/// Maximum number of parts for splitting the file to create chunksum
-/// This is a "hard requirement" for chunksums. We don't outstrip that number of chunks.
-pub const MPU_MAX_PARTS: u64 = 10_000;
-/// Size threshold when the next chunk cut.
-/// This is a "soft requirement" for chunksum size. We can increase threshold if we can't fit into
-/// `MPU_MAX_PARTS`.
-/// Since it's a minimum size for chunksumed chunk, file less than this threshold is treated like
-/// single chunk.
-pub const MULTIPART_THRESHOLD: u64 = 8 * 1024 * 1024;
-
-/// Examines if chunksum size is suitable to split file and get less chunks then supported.
-/// If not, we tries to increas chunksum until it find chunk size that can split into reasonable
-/// number of chunks (`MPU_MAX_PARTS`).
-pub fn get_checksum_chunksize_and_parts(file_size: u64) -> (u64, u64) {
-    let mut chunksize = MULTIPART_THRESHOLD;
-    let mut num_parts = file_size.div_ceil(chunksize);
-
-    while num_parts > MPU_MAX_PARTS {
-        chunksize *= 2;
-        num_parts = file_size.div_ceil(chunksize);
-    }
-
-    (chunksize, num_parts)
-}
-
-/// Takes checksum got from S3 and convert it to Chunksum.
-pub fn get_compliant_chunked_checksum(attrs: &GetObjectAttributesOutput) -> Option<Vec<u8>> {
-    let checksum = attrs.checksum.as_ref()?;
-    let checksum_sha256 = checksum.checksum_sha256.as_ref()?;
-    // XXX: defer decoding until we know it's compatible?
-    let checksum_sha256_decoded = BASE64_STANDARD
-        .decode(checksum_sha256.as_bytes())
-        .expect("AWS checksum must be valid base64");
-    let object_size = attrs.object_size.expect("ObjectSize must be requested");
-    if (object_size as u64) < MULTIPART_THRESHOLD {
-        if let Some(object_parts) = &attrs.object_parts {
-            if object_parts
-                .total_parts_count
-                .expect("ObjectParts is expected to have TotalParts")
-                == 1
-            {
-                return Some(checksum_sha256_decoded);
-            }
-        }
-        let mut hasher = ChecksumAlgorithm::Sha256.into_impl();
-        hasher.update(&checksum_sha256_decoded);
-        return Some(hasher.finalize().into());
-    } else if let Some(object_parts) = &attrs.object_parts {
-        let parts = object_parts.parts();
-        // Make sure we requested all parts.
-        assert_eq!(
-            parts.len(),
-            object_parts
-                .total_parts_count
-                .expect("ObjectParts is expected to have TotalParts") as usize
-        );
-        let expected_chunk_size = get_checksum_chunksize_and_parts(object_size as u64).0;
-        if parts[..parts.len() - 1]
-            .iter()
-            .all(|p| p.size.expect("Part is expected to have size") as u64 == expected_chunk_size)
-        {
-            return Some(checksum_sha256_decoded);
+impl fmt::Display for ObjectHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ObjectHash::Sha256(hash) => hash.fmt(f),
+            ObjectHash::Sha256Chunked(hash) => hash.fmt(f),
+            ObjectHash::Crc64(hash) => hash.fmt(f),
         }
     }
-    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use aws_sdk_s3::types::Checksum;
-    use aws_sdk_s3::types::GetObjectAttributesParts;
-    use aws_sdk_s3::types::ObjectPart;
     use std::path::Path;
 
     use crate::io::storage::mocks::MockStorage;
     use crate::io::storage::Storage;
     use crate::Error;
     use crate::Res;
-
-    #[test]
-    fn test_get_checksum_chunksize_and_parts() {
-        // Test file smaller than threshold
-        let (chunksize, parts) = get_checksum_chunksize_and_parts(MULTIPART_THRESHOLD - 1);
-        assert_eq!(chunksize, MULTIPART_THRESHOLD);
-        assert_eq!(parts, 1);
-
-        // Test file equal to threshold
-        let (chunksize, parts) = get_checksum_chunksize_and_parts(MULTIPART_THRESHOLD);
-        assert_eq!(chunksize, MULTIPART_THRESHOLD);
-        assert_eq!(parts, 1);
-
-        // Test file requiring exactly MPU_MAX_PARTS
-        let file_size = MULTIPART_THRESHOLD * MPU_MAX_PARTS;
-        let (chunksize, parts) = get_checksum_chunksize_and_parts(file_size);
-        assert_eq!(chunksize, MULTIPART_THRESHOLD);
-        assert_eq!(parts, MPU_MAX_PARTS);
-
-        // Test file requiring more than MPU_MAX_PARTS at base chunk size
-        let file_size = MULTIPART_THRESHOLD * (MPU_MAX_PARTS + 1);
-        let (chunksize, parts) = get_checksum_chunksize_and_parts(file_size);
-        assert_eq!(chunksize, MULTIPART_THRESHOLD * 2);
-        assert_eq!(parts, (MPU_MAX_PARTS / 2) + 1);
-
-        // Test very large file requiring multiple chunk size doublings
-        let file_size = MULTIPART_THRESHOLD * MPU_MAX_PARTS * 8;
-        let (chunksize, parts) = get_checksum_chunksize_and_parts(file_size);
-        assert_eq!(chunksize, MULTIPART_THRESHOLD * 8);
-        assert_eq!(parts, MPU_MAX_PARTS);
-    }
-
-    #[test]
-    fn test_get_compliant_chunked_checksum() -> Res {
-        fn b64decode(data: &str) -> Result<Vec<u8>, Error> {
-            let prefixed_value = format!("{}{}", multibase::Base::Base64Pad.code(), data);
-            let (_, decoded) = multibase::decode(&prefixed_value)?;
-            Ok(decoded)
-        }
-
-        fn sha256(data: Vec<u8>) -> Vec<u8> {
-            let mut hasher = ChecksumAlgorithm::Sha256.into_impl();
-            hasher.update(&data);
-            hasher.finalize().to_vec()
-        }
-
-        let builder = GetObjectAttributesOutput::builder;
-        let test_data = [
-            (builder(), None),
-            (
-                builder().checksum(
-                    Checksum::builder()
-                        .checksum_sha1("X94czmA+ZWbSDagRyci8zLBE1K4=")
-                        .build(),
-                ),
-                None,
-            ),
-            (
-                builder()
-                    .checksum(
-                        Checksum::builder()
-                            .checksum_sha256("MOFJVevxNSJm3C/4Bn5oEEYH51CrudOzZYK4r5Cfy1g=")
-                            .build(),
-                    )
-                    .object_size(1048576), // below the threshold
-                Some(sha256(b64decode(
-                    "MOFJVevxNSJm3C/4Bn5oEEYH51CrudOzZYK4r5Cfy1g=",
-                )?)),
-            ),
-            (
-                builder()
-                    .checksum(
-                        Checksum::builder()
-                            .checksum_sha256("vWr41JZ9PL656FAGy906ysrYj/8ccoMUWHT0xEXRftA=")
-                            .build(),
-                    )
-                    .object_parts(
-                        GetObjectAttributesParts::builder()
-                            .total_parts_count(1)
-                            .parts(
-                                ObjectPart::builder()
-                                    .size(5242880)
-                                    .checksum_sha256("wDbLt1U6kJ+LiHfURhkkMH8n7LZs/5KO7q/VacOIfik=")
-                                    .build(),
-                            )
-                            .build(),
-                    )
-                    .object_size(5242880), // below the threshold
-                Some(b64decode("vWr41JZ9PL656FAGy906ysrYj/8ccoMUWHT0xEXRftA=")?),
-            ),
-            (
-                builder()
-                    .checksum(
-                        Checksum::builder()
-                            .checksum_sha256("La6x82CVtEsxhBCz9Oi12Yncx7sCPRQmxJLasKMFPnQ=")
-                            .build(),
-                    )
-                    .object_size(8388608), // above the threshold
-                None,
-            ),
-            (
-                builder()
-                    .checksum(
-                        Checksum::builder()
-                            .checksum_sha256("MIsGKY+ykqN4CPj3gGGu4Gv03N7OWKWpsZqEf+OrGJs=")
-                            .build(),
-                    )
-                    .object_parts(
-                        GetObjectAttributesParts::builder()
-                            .total_parts_count(1)
-                            .parts(
-                                ObjectPart::builder()
-                                    .size(8388608)
-                                    .checksum_sha256("La6x82CVtEsxhBCz9Oi12Yncx7sCPRQmxJLasKMFPnQ=")
-                                    .build(),
-                            )
-                            .build(),
-                    )
-                    .object_size(8388608), // above the threshold
-                Some(b64decode("MIsGKY+ykqN4CPj3gGGu4Gv03N7OWKWpsZqEf+OrGJs=")?),
-            ),
-            (
-                builder()
-                    .checksum(
-                        Checksum::builder()
-                            .checksum_sha256("nlR6I2vcFqpTXrJSmMglmCYoByajfADbDQ6kESbPIlE=")
-                            .build(),
-                    )
-                    .object_parts(
-                        GetObjectAttributesParts::builder()
-                            .total_parts_count(2)
-                            .parts(
-                                ObjectPart::builder()
-                                    .size(5242880)
-                                    .checksum_sha256("wDbLt1U6kJ+LiHfURhkkMH8n7LZs/5KO7q/VacOIfik=")
-                                    .build(),
-                            )
-                            .parts(
-                                ObjectPart::builder()
-                                    .size(8388608)
-                                    .checksum_sha256("La6x82CVtEsxhBCz9Oi12Yncx7sCPRQmxJLasKMFPnQ=")
-                                    .build(),
-                            )
-                            .build(),
-                    )
-                    .object_size(13631488), // above the threshold
-                None,
-            ),
-            (
-                builder()
-                    .checksum(
-                        Checksum::builder()
-                            .checksum_sha256("bGeobZC1xyakKeDkOLWP9khl+vuOditELvPQhrT/R9M=")
-                            .build(),
-                    )
-                    .object_parts(
-                        GetObjectAttributesParts::builder()
-                            .total_parts_count(2)
-                            .parts(
-                                ObjectPart::builder()
-                                    .size(8388608)
-                                    .checksum_sha256("La6x82CVtEsxhBCz9Oi12Yncx7sCPRQmxJLasKMFPnQ=")
-                                    .build(),
-                            )
-                            .parts(
-                                ObjectPart::builder()
-                                    .size(5242880)
-                                    .checksum_sha256("wDbLt1U6kJ+LiHfURhkkMH8n7LZs/5KO7q/VacOIfik=")
-                                    .build(),
-                            )
-                            .build(),
-                    )
-                    .object_size(13631488), // above the threshold
-                Some(b64decode("bGeobZC1xyakKeDkOLWP9khl+vuOditELvPQhrT/R9M=")?),
-            ),
-        ];
-
-        for (attrs, expected) in test_data {
-            assert_eq!(get_compliant_chunked_checksum(&attrs.build()), expected);
-        }
-        Ok(())
-    }
 
     #[test]
     fn test_conversion_errors() {
@@ -410,6 +171,23 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("Expected SHA256 hash"));
+    }
+
+    #[test]
+    fn test_object_hash_display() -> Res {
+        // Test SHA256 display (hex format)
+        let object_hash = ObjectHash::Sha256(Sha256Hash::try_from("deadbeef")?);
+        assert_eq!(object_hash.to_string(), "deadbeef");
+
+        // Test SHA256Chunked display (base64 format)
+        let object_hash = ObjectHash::Sha256Chunked(Sha256ChunkedHash::try_from("Zm9vYmFy")?);
+        assert_eq!(object_hash.to_string(), "Zm9vYmFy");
+
+        // Test CRC64 display (base64 format)
+        let object_hash = ObjectHash::Crc64(Crc64Hash::try_from("aGVsbG8gd29ybGQ=")?);
+        assert_eq!(object_hash.to_string(), "aGVsbG8gd29ybGQ=");
+
+        Ok(())
     }
 
     #[test]

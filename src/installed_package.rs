@@ -41,7 +41,7 @@ impl std::fmt::Display for InstalledPackage {
     }
 }
 
-impl InstalledPackage {
+impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     pub async fn scaffold_paths(&self) -> Res {
         let home = self.lineage.domain_home(&self.storage).await?;
         self.paths
@@ -74,8 +74,18 @@ impl InstalledPackage {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
         let lineage = flow::refresh_latest_hash(lineage, &self.remote).await?;
         let manifest = self.manifest().await?;
-        let (lineage, status) =
-            flow::status(lineage, &self.storage, &manifest, &package_home).await?;
+
+        // Fetch host configuration
+        let host_config = self.remote.host_config(&lineage.remote.catalog).await?;
+
+        let (lineage, status) = flow::status(
+            lineage,
+            &self.storage,
+            &manifest,
+            &package_home,
+            host_config,
+        )
+        .await?;
         self.lineage.write(&self.storage, lineage).await?;
         Ok(status)
     }
@@ -131,8 +141,17 @@ impl InstalledPackage {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
         let mut manifest = self.manifest().await?;
 
-        let (lineage, status) =
-            flow::status(lineage, &self.storage, &manifest, &package_home).await?;
+        // Fetch host configuration for commit
+        let host_config = self.remote.host_config(&lineage.remote.catalog).await?;
+
+        let (lineage, status) = flow::status(
+            lineage,
+            &self.storage,
+            &manifest,
+            &package_home,
+            host_config,
+        )
+        .await?;
 
         let lineage = flow::commit(
             lineage,
@@ -189,8 +208,18 @@ impl InstalledPackage {
             .await?;
 
         let mut manifest = self.manifest().await?;
-        let (lineage, status) =
-            flow::status(lineage, &self.storage, &manifest, &package_home).await?;
+
+        // Fetch host configuration for pull
+        let host_config = self.remote.host_config(&lineage.remote.catalog).await?;
+
+        let (lineage, status) = flow::status(
+            lineage,
+            &self.storage,
+            &manifest,
+            &package_home,
+            host_config,
+        )
+        .await?;
         let lineage = flow::pull(
             lineage,
             &mut manifest,
@@ -258,6 +287,7 @@ impl InstalledPackage {
 mod tests {
     use super::*;
 
+    use crate::io::remote::mocks::MockRemote;
     use crate::lineage::DomainLineageIo;
     use crate::lineage::Home;
     use crate::lineage::PackageLineageIo;
@@ -269,7 +299,7 @@ mod tests {
         let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
 
         let storage = LocalStorage::new();
-        let remote = RemoteS3::new(paths.clone(), storage.clone());
+        let remote = MockRemote::default();
         let namespace: Namespace = ("test", "history").into();
 
         paths

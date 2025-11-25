@@ -236,7 +236,7 @@ mod tests {
     #[tokio::test]
     async fn test_crc64_hash_from_file() -> crate::Res {
         let storage = MockStorage::default();
-        let test_data = b"test file content for CRC64";
+        let test_data = crate::fixtures::objects::less_than_8mb();
         let test_path = Path::new("test_file.txt");
 
         // Write test data to mock storage
@@ -250,8 +250,12 @@ mod tests {
         // Test that digest is 8 bytes (CRC64 size)
         assert_eq!(hash_from_file.digest().len(), 8);
 
+        // Test with known fixture data - the hash should be consistent
+        let expected_hash = "CRSFynAYcw4="; // CRC64 hash of less_than_8mb fixture
+        assert_eq!(hash_from_file.to_string(), expected_hash);
+
         // Test that different data produces different hashes
-        let different_data = b"different test data";
+        let different_data = crate::fixtures::objects::zero_bytes();
         let different_path = Path::new("different_file.txt");
         storage.write_file(different_path, different_data).await?;
 

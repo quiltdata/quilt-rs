@@ -7,9 +7,10 @@ use tokio::fs::File;
 use tracing::{debug, info, warn};
 
 use crate::checksum::verify_hash;
+use crate::checksum::Crc64Hash;
 use crate::checksum::Sha256ChunkedHash;
 use crate::io::manifest::resolve_latest;
-use crate::io::remote::Remote;
+use crate::io::remote::{HostChecksums, HostConfig, Remote};
 use crate::io::storage::Storage;
 use crate::lineage::Change;
 use crate::lineage::ChangeSet;
@@ -100,7 +101,10 @@ async fn locate_files_in_package_home(
     Ok(files)
 }
 
-async fn fingerprint_files(files: Vec<(PathBuf, WorkdirFile)>) -> Res<ChangeSet> {
+async fn fingerprint_files(
+    files: Vec<(PathBuf, WorkdirFile)>,
+    host_config: HostConfig,
+) -> Res<ChangeSet> {
     let mut changes = ChangeSet::new();
     for (logical_key, location) in files {
         match location {
@@ -125,7 +129,12 @@ async fn fingerprint_files(files: Vec<(PathBuf, WorkdirFile)>) -> Res<ChangeSet>
             }
             WorkdirFile::New(file) => {
                 let size = file.metadata().await?.len();
-                let hash = Sha256ChunkedHash::from_async_read(file, size).await?.into();
+                let hash = match host_config.checksums {
+                    HostChecksums::Crc64 => Crc64Hash::from_async_read(file).await?.into(),
+                    HostChecksums::Sha256Chunked => {
+                        Sha256ChunkedHash::from_async_read(file, size).await?.into()
+                    }
+                };
                 let row = Row {
                     name: logical_key.clone(),
                     size,
@@ -154,6 +163,7 @@ pub async fn create_status(
     storage: &(impl Storage + Sync),
     manifest: &Table,
     package_home: impl AsRef<Path>,
+    host_config: HostConfig,
 ) -> Res<(PackageLineage, InstalledPackageStatus)> {
     info!(
         "⏳ Creating status for working directory: {}",
@@ -184,7 +194,7 @@ pub async fn create_status(
 
     let files = locate_files_in_package_home(storage, manifest, package_home, orig_paths).await?;
     debug!("✔️ Located files in working directory {:?}", files);
-    let changes = fingerprint_files(files).await?;
+    let changes = fingerprint_files(files, host_config).await?;
     debug!("✔️ Computed file fingerprints {:?}", changes);
 
     debug!("⏳ Creating package status");
@@ -213,6 +223,7 @@ mod tests {
             &storage,
             &Table::default(),
             PathBuf::default(),
+            HostConfig::default(),
         )
         .await?;
         assert_eq!(status.upstream_state, UpstreamState::default());
@@ -237,6 +248,7 @@ mod tests {
             &MockStorage::default(),
             &Table::default(),
             PathBuf::default(),
+            HostConfig::default(),
         )
         .await?;
         assert_eq!(status.upstream_state, UpstreamState::Behind);
@@ -260,6 +272,7 @@ mod tests {
             &MockStorage::default(),
             &Table::default(),
             PathBuf::default(),
+            HostConfig::default(),
         )
         .await?;
         assert_eq!(status.upstream_state, UpstreamState::Ahead);
@@ -283,6 +296,7 @@ mod tests {
             &MockStorage::default(),
             &Table::default(),
             PathBuf::default(),
+            HostConfig::default(),
         )
         .await?;
         assert_eq!(status.upstream_state, UpstreamState::Diverged);
@@ -314,13 +328,27 @@ mod tests {
             .await?;
 
         // First, we create a status and see the file is not changed
-        let (_, status) = create_status(lineage.clone(), &storage, &manifest, &working_dir).await?;
+        let (_, status) = create_status(
+            lineage.clone(),
+            &storage,
+            &manifest,
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
         let file_not_removed_yet = status.changes.get(&logical_key);
         assert!(file_not_removed_yet.is_none());
 
         // Then we remove the file and create a status again
         storage.remove_file(working_dir.join(&logical_key)).await?;
-        let (_, status) = create_status(lineage, &storage, &manifest, working_dir).await?;
+        let (_, status) = create_status(
+            lineage,
+            &storage,
+            &manifest,
+            working_dir,
+            HostConfig::default(),
+        )
+        .await?;
         // It's "removed", because it's present in lineage and manifest,
         // but absent from file system
         let removed_file = status.changes.get(&logical_key).unwrap();
@@ -344,7 +372,14 @@ mod tests {
             )
             .await?;
 
-        let (_, status) = create_status(lineage, &storage, &manifest, working_dir).await?;
+        let (_, status) = create_status(
+            lineage,
+            &storage,
+            &manifest,
+            working_dir,
+            HostConfig::default(),
+        )
+        .await?;
 
         let added_file = status.changes.get(&file_path).unwrap();
         if let Change::Added(added_row) = added_file {
@@ -353,6 +388,44 @@ mod tests {
                 size: 5324,
                 hash: Sha256ChunkedHash::try_from("EfrtXWeClWPJ/IVKjQeAmMKhJV45/GcpjDm1IhvhJAY=")?
                     .into(),
+                ..Row::default()
+            };
+            assert_eq!(added_row, &reference_row);
+            Ok(())
+        } else {
+            panic!("Expected Change::Added, got {:?}", added_file)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_added_files_crc64() -> Res {
+        let lineage = PackageLineage::default();
+        let manifest = Table::default();
+
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref();
+        let file_path = PathBuf::from("some.pq");
+        storage
+            .write_file(
+                working_dir.join(&file_path),
+                fixtures::objects::less_than_8mb(),
+            )
+            .await?;
+
+        // Use CRC64 host configuration
+        let host_config = HostConfig {
+            checksums: HostChecksums::Crc64,
+        };
+
+        let (_, status) =
+            create_status(lineage, &storage, &manifest, working_dir, host_config).await?;
+
+        let added_file = status.changes.get(&file_path).unwrap();
+        if let Change::Added(added_row) = added_file {
+            let reference_row = Row {
+                name: PathBuf::from("some.pq"),
+                size: 16,
+                hash: Crc64Hash::try_from("CRSFynAYcw4=")?.into(),
                 ..Row::default()
             };
             assert_eq!(added_row, &reference_row);

@@ -80,6 +80,9 @@ pub enum Error {
     #[error("Invalid host: {0}")]
     Host(String),
 
+    #[error("Failed to fetch host config: {0}")]
+    HostConfig(String),
+
     #[error("Failed to install path: {0}")]
     InstallPath(String),
 
