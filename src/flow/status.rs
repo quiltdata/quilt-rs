@@ -397,5 +397,43 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn test_added_files_crc64() -> Res {
+        let lineage = PackageLineage::default();
+        let manifest = Table::default();
+
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref();
+        let file_path = PathBuf::from("some.pq");
+        storage
+            .write_file(
+                working_dir.join(&file_path),
+                fixtures::objects::less_than_8mb(),
+            )
+            .await?;
+
+        // Use CRC64 host configuration
+        let host_config = HostConfig {
+            checksums: HostChecksums::Crc64,
+        };
+
+        let (_, status) =
+            create_status(lineage, &storage, &manifest, working_dir, host_config).await?;
+
+        let added_file = status.changes.get(&file_path).unwrap();
+        if let Change::Added(added_row) = added_file {
+            let reference_row = Row {
+                name: PathBuf::from("some.pq"),
+                size: 16,
+                hash: Crc64Hash::try_from("CRSFynAYcw4=")?.into(),
+                ..Row::default()
+            };
+            assert_eq!(added_row, &reference_row);
+            Ok(())
+        } else {
+            panic!("Expected Change::Added, got {:?}", added_file)
+        }
+    }
+
     // TODO: add tests for every type of chunksum
 }
