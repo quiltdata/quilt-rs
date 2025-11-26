@@ -11,7 +11,6 @@ use multihash::Multihash;
 use tokio::io::AsyncRead;
 use tokio_stream::Stream;
 
-use crate::checksum::ObjectHash;
 use crate::uri::Host;
 use crate::uri::S3Uri;
 use crate::Res;
@@ -28,16 +27,6 @@ pub use workflow::resolve_workflow;
 
 #[cfg(test)]
 pub mod mocks;
-
-/// We use it for getting hashes in files listings when we create new packages from S3 directory.
-/// Also, we re-use this struct for calculating hashes locally when S3-checksums are disabled.
-#[derive(Debug)]
-pub struct S3Attributes {
-    pub listing_uri: S3Uri,
-    pub object_uri: S3Uri,
-    pub hash: ObjectHash,
-    pub size: u64,
-}
 
 pub struct RemoteObjectStream {
     pub body: ByteStream,
