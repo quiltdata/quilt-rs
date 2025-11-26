@@ -71,7 +71,7 @@ pub trait Remote {
     /// Upload file and request checkum from S3
     fn upload_file(
         &self,
-        host: &Option<Host>,
+        host_config: &HostConfig,
         source_path: impl AsRef<Path>,
         dest_uri: &S3Uri,
         size: u64,

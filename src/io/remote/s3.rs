@@ -485,12 +485,14 @@ impl Remote for RemoteS3 {
 
     async fn upload_file(
         &self,
-        host: &Option<Host>,
+        host_config: &HostConfig,
         source_path: impl AsRef<Path>,
         dest_uri: &S3Uri,
         size: u64,
     ) -> Res<(S3Uri, ObjectHash)> {
-        let client = self.get_client_for_bucket(host, &dest_uri.bucket).await?;
+        let client = self
+            .get_client_for_bucket(&host_config.host, &dest_uri.bucket)
+            .await?;
         (if size == 0 {
             put_object_and_checksum(client, source_path, dest_uri, size).await
         } else {
@@ -499,16 +501,13 @@ impl Remote for RemoteS3 {
         .map(|(uri, hash)| (uri, hash.into()))
         .map_err(|err| {
             Error::S3(
-                host.to_owned(),
+                host_config.host.clone(),
                 S3Error::UploadFile(DisplayErrorContext(err).to_string()),
             )
         })
     }
 
     async fn host_config(&self, host: &Option<Host>) -> Res<HostConfig> {
-        match host {
-            Some(host) => fetch_host_config(&self.http, &host.to_string()).await,
-            None => Ok(HostConfig::default()),
-        }
+        fetch_host_config(&self.http, host).await
     }
 }

@@ -5,6 +5,7 @@
 use serde::Deserialize;
 
 use crate::io::remote::client::HttpClient;
+use crate::uri::Host;
 use crate::Error;
 use crate::Res;
 
@@ -24,12 +25,15 @@ pub enum HostChecksums {
 pub struct HostConfig {
     /// Supported checksum algorithms
     pub checksums: HostChecksums,
+    /// The host this configuration came from
+    pub host: Option<Host>,
 }
 
 impl Default for HostConfig {
     fn default() -> Self {
         Self {
             checksums: HostChecksums::Sha256Chunked,
+            host: None,
         }
     }
 }
@@ -55,21 +59,28 @@ struct ConfigResponse {
 /// * `Err(Error::HostConfig)` - Failed to fetch or parse configuration
 /// * `Err(Error::Reqwest)` - HTTP request failed
 /// * `Err(Error::Json)` - JSON parsing failed
-pub async fn fetch_host_config(client: &impl HttpClient, host: &str) -> Res<HostConfig> {
-    let url = format!("https://{}/config.json", host);
+pub async fn fetch_host_config(client: &impl HttpClient, host: &Option<Host>) -> Res<HostConfig> {
+    match host {
+        Some(host) => {
+            let url = format!("https://{}/config.json", host);
 
-    let response: ConfigResponse = client
-        .get(&url, None)
-        .await
-        .map_err(|e| Error::HostConfig(format!("Failed to fetch config from {}: {}", host, e)))?;
+            let response: ConfigResponse = client.get(&url, None).await.map_err(|e| {
+                Error::HostConfig(format!("Failed to fetch config from {}: {}", host, e))
+            })?;
 
-    // Determine checksum algorithm based on crc64Checksums field
-    let checksums = match response.crc64_checksums {
-        Some(true) => HostChecksums::Crc64,
-        Some(false) | None => HostChecksums::Sha256Chunked, // Default
-    };
+            // Determine checksum algorithm based on crc64Checksums field
+            let checksums = match response.crc64_checksums {
+                Some(true) => HostChecksums::Crc64,
+                Some(false) | None => HostChecksums::Sha256Chunked, // Default
+            };
 
-    Ok(HostConfig { checksums })
+            Ok(HostConfig {
+                checksums,
+                host: Some(host.clone()),
+            })
+        }
+        None => Ok(HostConfig::default()),
+    }
 }
 
 #[cfg(test)]
@@ -130,11 +141,11 @@ mod tests {
     async fn test_fetch_host_config_crc64_enabled() -> Res<()> {
         let mut client = MockHttpClient::new();
         client.add_response(
-            "https://example.com/config.json".to_string(),
+            "https://test.quilt.dev/config.json".to_string(),
             Ok(r#"{"crc64Checksums": true}"#.to_string()),
         );
 
-        let config = fetch_host_config(&client, "example.com").await?;
+        let config = fetch_host_config(&client, &Some(Host::default())).await?;
         assert_eq!(config.checksums, HostChecksums::Crc64);
 
         Ok(())
@@ -144,11 +155,11 @@ mod tests {
     async fn test_fetch_host_config_crc64_disabled() -> Res<()> {
         let mut client = MockHttpClient::new();
         client.add_response(
-            "https://example.com/config.json".to_string(),
+            "https://test.quilt.dev/config.json".to_string(),
             Ok(r#"{"crc64Checksums": false}"#.to_string()),
         );
 
-        let config = fetch_host_config(&client, "example.com").await?;
+        let config = fetch_host_config(&client, &Some(Host::default())).await?;
         assert_eq!(config.checksums, HostChecksums::Sha256Chunked);
 
         Ok(())
@@ -158,11 +169,11 @@ mod tests {
     async fn test_fetch_host_config_crc64_missing() -> Res<()> {
         let mut client = MockHttpClient::new();
         client.add_response(
-            "https://example.com/config.json".to_string(),
+            "https://test.quilt.dev/config.json".to_string(),
             Ok(r#"{}"#.to_string()),
         );
 
-        let config = fetch_host_config(&client, "example.com").await?;
+        let config = fetch_host_config(&client, &Some(Host::default())).await?;
         assert_eq!(config.checksums, HostChecksums::Sha256Chunked);
 
         Ok(())
@@ -172,11 +183,11 @@ mod tests {
     async fn test_fetch_host_config_other_fields_ignored() -> Res<()> {
         let mut client = MockHttpClient::new();
         client.add_response(
-            "https://example.com/config.json".to_string(),
+            "https://test.quilt.dev/config.json".to_string(),
             Ok(r#"{"crc64Checksums": true, "mode": "OPEN", "other": "ignored"}"#.to_string()),
         );
 
-        let config = fetch_host_config(&client, "example.com").await?;
+        let config = fetch_host_config(&client, &Some(Host::default())).await?;
         assert_eq!(config.checksums, HostChecksums::Crc64);
 
         Ok(())
@@ -186,11 +197,11 @@ mod tests {
     async fn test_fetch_host_config_network_error() {
         let mut client = MockHttpClient::new();
         client.add_response(
-            "https://example.com/config.json".to_string(),
+            "https://test.quilt.dev/config.json".to_string(),
             Err("Network error".to_string()),
         );
 
-        let result = fetch_host_config(&client, "example.com").await;
+        let result = fetch_host_config(&client, &Some(Host::default())).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Network error"));
     }
@@ -199,11 +210,11 @@ mod tests {
     async fn test_fetch_host_config_invalid_json() {
         let mut client = MockHttpClient::new();
         client.add_response(
-            "https://example.com/config.json".to_string(),
+            "https://test.quilt.dev/config.json".to_string(),
             Ok(r#"invalid json"#.to_string()),
         );
 
-        let result = fetch_host_config(&client, "example.com").await;
+        let result = fetch_host_config(&client, &Some(Host::default())).await;
         assert!(result.is_err());
 
         // JSON parsing errors get wrapped in HostConfig error by map_err
@@ -217,5 +228,13 @@ mod tests {
                 error
             ),
         }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_host_config_none() -> Res<()> {
+        let client = MockHttpClient::new();
+        let config = fetch_host_config(&client, &None).await?;
+        assert_eq!(config, HostConfig::default());
+        Ok(())
     }
 }

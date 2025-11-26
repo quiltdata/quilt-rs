@@ -11,13 +11,13 @@ use crate::io::manifest::upload_manifest;
 use crate::io::manifest::upload_row;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamItem;
+use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::paths;
-use crate::uri::Host;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::uri::S3PackageHandle;
@@ -26,7 +26,7 @@ use crate::Res;
 
 async fn use_existing_row_or_upload(
     remote: &impl Remote,
-    host: &Option<Host>,
+    host_config: &HostConfig,
     package_handle: &S3PackageHandle,
     remote_manifest: &Table,
     rows: StreamItem,
@@ -44,11 +44,11 @@ async fn use_existing_row_or_upload(
                 }));
             } else {
                 debug!("⏳ Uploading modified row for: {}", row.name.display());
-                output.push(upload_row(remote, host, package_handle.clone(), row).await)
+                output.push(upload_row(remote, host_config, package_handle.clone(), row).await)
             }
         } else {
             debug!("⏳ Uploading new row for: {}", row.name.display());
-            output.push(upload_row(remote, host, package_handle.clone(), row).await)
+            output.push(upload_row(remote, host_config, package_handle.clone(), row).await)
         }
     }
     Ok(output)
@@ -56,14 +56,14 @@ async fn use_existing_row_or_upload(
 
 async fn stream_uploaded_local_rows<'a>(
     remote: &'a impl Remote,
-    host: &'a Option<Host>,
+    host_config: &'a HostConfig,
     local_manifest: &'a Table,
     remote_manifest: &'a Table,
     package_handle: &'a S3PackageHandle,
 ) -> impl RowsStream + 'a {
     let stream = local_manifest.records_stream().await;
     stream.then(move |rows| {
-        use_existing_row_or_upload(remote, host, package_handle, remote_manifest, rows)
+        use_existing_row_or_upload(remote, host_config, package_handle, remote_manifest, rows)
     })
 }
 
@@ -75,6 +75,7 @@ pub async fn push_package(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     namespace: Option<Namespace>,
+    host_config: HostConfig,
 ) -> Res<PackageLineage> {
     let commit = match lineage.commit {
         None => {
@@ -109,7 +110,7 @@ pub async fn push_package(
     let stream = Box::pin(
         stream_uploaded_local_rows(
             remote,
-            &manifest_uri.catalog,
+            &host_config,
             &local_manifest,
             &remote_manifest,
             &package_handle,
@@ -197,6 +198,7 @@ mod tests {
             &storage,
             &remote,
             None,
+            HostConfig::default(),
         )
         .await?;
         assert_eq!(lineage, PackageLineage::default());
@@ -253,6 +255,7 @@ mod tests {
             &storage,
             &remote,
             None,
+            HostConfig::default(),
         )
         .await?;
         let manifest_uri = ManifestUri {
@@ -339,6 +342,7 @@ mod tests {
             &storage,
             &remote,
             None,
+            HostConfig::default(),
         )
         .await?;
         let manifest_uri = ManifestUri {

@@ -97,7 +97,7 @@ impl Remote for MockRemote {
 
     async fn upload_file(
         &self,
-        _host: &Option<Host>,
+        _host_config: &HostConfig,
         source_path: impl AsRef<Path>,
         dest_uri: &S3Uri,
         size: u64,

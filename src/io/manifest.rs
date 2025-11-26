@@ -11,6 +11,7 @@ use tokio_stream::StreamExt;
 use tracing::log;
 use url::Url;
 
+use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::io::ParquetWriter;
@@ -189,7 +190,7 @@ pub async fn resolve_manifest_uri(
 /// Response with the new `Row` with `place` pointing to the place it was uploaded to.
 pub async fn upload_row(
     remote: &impl Remote,
-    host: &Option<Host>,
+    host_config: &HostConfig,
     package_handle: S3PackageHandle,
     row: Row,
 ) -> Res<Row> {
@@ -205,7 +206,7 @@ pub async fn upload_row(
     log::info!("Uploading to S3: {object_uri}");
 
     let (remote_url, hash) = remote
-        .upload_file(host, &file_path, &object_uri.into(), row.size)
+        .upload_file(&host_config, &file_path, &object_uri.into(), row.size)
         .await?;
 
     // Update the manifest with the sha2-256-chunked checksum

@@ -75,7 +75,6 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let lineage = flow::refresh_latest_hash(lineage, &self.remote).await?;
         let manifest = self.manifest().await?;
 
-        // Fetch host configuration
         let host_config = self.remote.host_config(&lineage.remote.catalog).await?;
 
         let (lineage, status) = flow::status(
@@ -141,7 +140,6 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
         let mut manifest = self.manifest().await?;
 
-        // Fetch host configuration for commit
         let host_config = self.remote.host_config(&lineage.remote.catalog).await?;
 
         let (lineage, status) = flow::status(
@@ -186,6 +184,9 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             .await?;
 
         let manifest = self.manifest().await?;
+
+        let host_config = self.remote.host_config(&lineage.remote.catalog).await?;
+
         let lineage = flow::push(
             lineage,
             manifest,
@@ -193,6 +194,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             &self.storage,
             &self.remote,
             Some(self.namespace.clone()),
+            host_config,
         )
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
@@ -209,7 +211,6 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
         let mut manifest = self.manifest().await?;
 
-        // Fetch host configuration for pull
         let host_config = self.remote.host_config(&lineage.remote.catalog).await?;
 
         let (lineage, status) = flow::status(
