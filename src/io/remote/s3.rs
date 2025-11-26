@@ -20,12 +20,13 @@ use tracing::warn;
 use crate::auth;
 use crate::checksum::get_checksum_chunksize_and_parts;
 use crate::checksum::hash_sha256_checksum;
+use crate::checksum::Crc64Hash;
 use crate::checksum::ObjectHash;
 use crate::checksum::Sha256ChunkedHash;
 use crate::error::AuthError;
 use crate::error::S3Error;
 use crate::io::remote::host::fetch_host_config;
-use crate::io::remote::{HostConfig, HttpClient, Remote};
+use crate::io::remote::{HostChecksums, HostConfig, HttpClient, Remote};
 use crate::io::storage::auth::AuthIo;
 use crate::io::storage::LocalStorage;
 use crate::paths::DomainPaths;
@@ -68,7 +69,7 @@ async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<R
     })
 }
 
-async fn put_object_and_checksum(
+async fn put_object_and_sha256_chunksum(
     client: aws_sdk_s3::Client,
     source_path: impl AsRef<Path>,
     dest_uri: &S3Uri,
@@ -105,7 +106,7 @@ async fn put_object_and_checksum(
     Ok((uri, Sha256ChunkedHash::try_from(hash.as_str())?.into()))
 }
 
-async fn multipart_upload_and_checksum(
+async fn multipart_upload_and_sha256_chunksum(
     client: aws_sdk_s3::Client,
     source_path: impl AsRef<Path>,
     dest_uri: &S3Uri,
@@ -181,6 +182,37 @@ async fn multipart_upload_and_checksum(
             ..dest_uri.clone()
         },
         Sha256ChunkedHash::try_from(checksum_b64)?.into(),
+    ))
+}
+
+async fn put_object_and_crc64_checksum(
+    client: aws_sdk_s3::Client,
+    source_path: impl AsRef<Path>,
+    dest_uri: &S3Uri,
+    _size: u64,
+) -> Res<(S3Uri, ObjectHash)> {
+    let response = client
+        .put_object()
+        .bucket(&dest_uri.bucket)
+        .key(&dest_uri.key)
+        .body(ByteStream::from_path(source_path).await?)
+        .checksum_algorithm(ChecksumAlgorithm::Crc64Nvme)
+        .send()
+        .await
+        .map_err(|err| Error::S3Raw(DisplayErrorContext(err).to_string()))?;
+
+    let s3_checksum_crc64_b64 = response
+        .checksum_crc64_nvme
+        .ok_or(Error::Checksum("missing checksum".to_string()))?;
+
+    let uri = S3Uri {
+        version: response.version_id,
+        ..dest_uri.clone()
+    };
+
+    Ok((
+        uri,
+        Crc64Hash::try_from(s3_checksum_crc64_b64.as_str())?.into(),
     ))
 }
 
@@ -493,10 +525,17 @@ impl Remote for RemoteS3 {
         let client = self
             .get_client_for_bucket(&host_config.host, &dest_uri.bucket)
             .await?;
-        (if size == 0 {
-            put_object_and_checksum(client, source_path, dest_uri, size).await
-        } else {
-            multipart_upload_and_checksum(client, source_path, dest_uri, size).await
+        (match host_config.checksums {
+            HostChecksums::Sha256Chunked => {
+                if size == 0 {
+                    put_object_and_sha256_chunksum(client, source_path, dest_uri, size).await
+                } else {
+                    multipart_upload_and_sha256_chunksum(client, source_path, dest_uri, size).await
+                }
+            }
+            HostChecksums::Crc64 => {
+                put_object_and_crc64_checksum(client, source_path, dest_uri, size).await
+            }
         })
         .map(|(uri, hash)| (uri, hash.into()))
         .map_err(|err| {
@@ -509,5 +548,152 @@ impl Remote for RemoteS3 {
 
     async fn host_config(&self, host: &Option<Host>) -> Res<HostConfig> {
         fetch_host_config(&self.http, host).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    use crate::fixtures::objects::{less_than_8mb, zero_bytes};
+    use crate::fixtures::objects::{LESS_THAN_8MB_HASH_B64, ZERO_HASH_B64};
+    use crate::io::storage::LocalStorage;
+    use crate::paths::DomainPaths;
+
+    #[tokio::test]
+    async fn test_multipart_upload() -> Res<()> {
+        // Create a temporary file with the test content
+        let mut temp_file = NamedTempFile::new()?;
+        temp_file.write_all(less_than_8mb())?;
+        let temp_path = temp_file.path();
+
+        // Set up the S3 client
+        let paths = DomainPaths::default();
+        let storage = LocalStorage::new();
+        let remote = RemoteS3::new(paths, storage);
+
+        // Create host config for SHA256 chunked checksums
+        let host_config = HostConfig {
+            checksums: HostChecksums::Sha256Chunked,
+            host: None,
+        };
+
+        // Parse the S3 URI
+        let s3_uri =
+            S3Uri::try_from("s3://data-yaml-spec-tests/test_quilt_rs/multipart-upload.txt")?;
+
+        // Get the file size
+        let size = less_than_8mb().len() as u64;
+
+        // Test the upload
+        let result = remote
+            .upload_file(&host_config, temp_path, &s3_uri, size)
+            .await;
+
+        // Verify the upload succeeded
+        assert!(result.is_ok());
+        let (uploaded_uri, object_hash) = result?;
+
+        // Verify we got a versioned URI back
+        assert!(uploaded_uri.version.is_some());
+
+        // Verify we got a hash back
+        assert_eq!(object_hash.to_string(), LESS_THAN_8MB_HASH_B64);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_zero_bytes_upload() -> Res<()> {
+        // Create a temporary file with zero bytes
+        let mut temp_file = NamedTempFile::new()?;
+        temp_file.write_all(zero_bytes())?;
+        let temp_path = temp_file.path();
+
+        // Set up the S3 client
+        let paths = DomainPaths::default();
+        let storage = LocalStorage::new();
+        let remote = RemoteS3::new(paths, storage);
+
+        // Create host config for SHA256 chunked checksums
+        let host_config = HostConfig {
+            checksums: HostChecksums::Sha256Chunked,
+            host: None,
+        };
+
+        // Parse the S3 URI
+        let s3_uri =
+            S3Uri::try_from("s3://data-yaml-spec-tests/test_quilt_rs/zero-bytes-file.txt")?;
+
+        // Get the file size (should be 0)
+        let size = zero_bytes().len() as u64;
+        assert_eq!(size, 0);
+
+        // Test the upload
+        let result = remote
+            .upload_file(&host_config, temp_path, &s3_uri, size)
+            .await;
+
+        // Verify the upload succeeded
+        assert!(result.is_ok());
+        let (uploaded_uri, object_hash) = result?;
+
+        // Verify we got a versioned URI back
+        assert!(uploaded_uri.version.is_some());
+
+        // Verify we got the correct hash for zero bytes
+        assert_eq!(object_hash.to_string(), ZERO_HASH_B64);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_crc64_upload() -> Res<()> {
+        // Read the fixture file content
+        let fixture_path = std::path::Path::new("fixtures/user-settings.mkfg");
+        let file_content = std::fs::read(fixture_path)?;
+
+        // Create a temporary file with the fixture content
+        let mut temp_file = NamedTempFile::new()?;
+        temp_file.write_all(&file_content)?;
+        let temp_path = temp_file.path();
+
+        // Set up the S3 client
+        let paths = DomainPaths::default();
+        let storage = LocalStorage::new();
+        let remote = RemoteS3::new(paths, storage);
+
+        // Create host config for CRC64 checksums
+        let host_config = HostConfig {
+            checksums: HostChecksums::Crc64,
+            host: None,
+        };
+
+        // Parse the S3 URI
+        let s3_uri =
+            S3Uri::try_from("s3://data-yaml-spec-tests/test_quilt_rs/crc64.txt")?;
+
+        // Get the file size
+        let size = file_content.len() as u64;
+
+        // Test the upload
+        let result = remote
+            .upload_file(&host_config, temp_path, &s3_uri, size)
+            .await;
+
+        // Verify the upload succeeded
+        assert!(result.is_ok());
+        let (uploaded_uri, object_hash) = result?;
+
+        // Verify we got a versioned URI back
+        assert!(uploaded_uri.version.is_some());
+
+        // Verify we got the correct CRC64 hash
+        assert_eq!(object_hash.to_string(), "LZmmpqbBItw=");
+
+        Ok(())
     }
 }
