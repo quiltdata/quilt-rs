@@ -37,7 +37,9 @@ async fn fetch_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Res<Vec<
 
 async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res<Manifest> {
     let s3_uri: S3Uri = ManifestUriLegacy::from(manifest_uri).into();
-    let contents = remote.get_object_stream(&manifest_uri.catalog, &s3_uri).await?;
+    let contents = remote
+        .get_object_stream(&manifest_uri.catalog, &s3_uri)
+        .await?;
     Manifest::from_reader(contents.body.into_async_read()).await
 }
 
