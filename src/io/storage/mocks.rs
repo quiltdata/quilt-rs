@@ -1,17 +1,12 @@
 use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;
-use aws_sdk_s3::types::Object;
 use chrono::DateTime;
 use chrono::Utc;
 use tempfile::TempDir;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
-use crate::checksum::Sha256ChunkedHash;
-use crate::io::remote::RemoteObjectStream;
-use crate::io::remote::S3Attributes;
-use crate::uri::S3Uri;
 use crate::Res;
 
 use super::Storage;
@@ -154,24 +149,5 @@ impl Storage for MockStorage {
         file.flush().await?;
 
         Ok(())
-    }
-
-    async fn get_object_attributes(
-        &self,
-        stream: RemoteObjectStream,
-        listing_uri: &S3Uri,
-        object: &Object,
-    ) -> Res<S3Attributes> {
-        let reader = stream.body.into_async_read();
-        let size: u64 = object.size.unwrap_or(0).try_into()?;
-        let hash = Sha256ChunkedHash::from_async_read(reader, size)
-            .await?
-            .into();
-        Ok(S3Attributes {
-            listing_uri: listing_uri.clone(),
-            object_uri: stream.uri,
-            hash,
-            size,
-        })
     }
 }

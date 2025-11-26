@@ -2,9 +2,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 use multihash::Multihash;
-// use url::Url;
 
-use crate::io::remote::S3Attributes;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
 use crate::manifest::Workflow;
@@ -13,30 +11,6 @@ use crate::Res;
 use multibase;
 
 const HEADER_ROW: &str = ".";
-
-// enum PlaceValue {
-//   S3Uri(S3Uri),
-//   PathBuf(PathBuf),
-// }
-//
-// #[derive(Clone, Debug, PartialEq)]
-// pub struct Place {
-//     value: PlaceValue,
-// }
-//
-// impl Default for Place {
-//     fn default() -> Self {
-//         Place {
-//             url: Url::from_file_path(PathBuf::default()).unwrap(),
-//         }
-//     }
-// }
-//
-// impl From<PathBuf> for Place {
-// }
-//
-// impl Into<PathBuf> for Place {
-// }
 
 /// Represents the header row in Parquet manifest
 #[derive(Clone, Debug, PartialEq)]
@@ -255,21 +229,6 @@ impl TryFrom<ManifestRow> for Row {
     }
 }
 
-impl From<S3Attributes> for Row {
-    fn from(attrs: S3Attributes) -> Row {
-        let prefix_len = attrs.listing_uri.key.len();
-        let name = PathBuf::from(attrs.object_uri.key[prefix_len..].to_string());
-        Row {
-            name,
-            place: attrs.object_uri.to_string(),
-            // XXX: can we use `as u64` safely here?
-            size: attrs.size,
-            hash: attrs.hash.into(),
-            info: serde_json::Value::Null, // XXX: is this right?
-            meta: None,                    // XXX: is this right?
-        }
-    }
-}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,44 +253,6 @@ mod tests {
 +------+-------+------+------------------+------------------------------+-------+---------------+
 | Foo  | Bar   | 123  | aGVsbG8gd29ybGQ= | d9020b68656c6c6f20776f726c64 | false | {"foo":"bar"} |
 +------+-------+------+------------------+------------------------------+-------+---------------+"###
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn test_from_s3_attributes() -> Res {
-        use crate::checksum::Sha256ChunkedHash;
-        use crate::uri::S3Uri;
-
-        let listing_uri = S3Uri {
-            bucket: "test-bucket".to_string(),
-            key: "prefix/".to_string(),
-            version: None,
-        };
-
-        let object_uri = S3Uri {
-            bucket: "test-bucket".to_string(),
-            key: "prefix/data/file.txt".to_string(),
-            version: Some("v1".to_string()),
-        };
-
-        let attrs = S3Attributes {
-            listing_uri,
-            object_uri,
-            size: 42,
-            hash: Sha256ChunkedHash::try_from("Zm9vYmFy")?.into(),
-        };
-
-        assert_eq!(
-            Row::from(attrs),
-            Row {
-                name: PathBuf::from("data/file.txt"),
-                place: "s3://test-bucket/prefix/data/file.txt?versionId=v1".to_string(),
-                size: 42,
-                hash: Sha256ChunkedHash::try_from("Zm9vYmFy")?.into(),
-                info: serde_json::Value::Null,
-                meta: None,
-            }
         );
         Ok(())
     }

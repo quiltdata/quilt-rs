@@ -17,12 +17,10 @@ mod sha256_chunked;
 
 pub use crc64nvme::{Crc64Hash, MULTIHASH_CRC64_NVME};
 pub use hash::Hash;
-pub use remote::get_compliant_checksum;
 pub use remote::hash_sha256_checksum;
 pub use sha256::{Sha256Hash, MULTIHASH_SHA256};
 pub use sha256_chunked::{
-    get_checksum_chunksize_and_parts, Sha256ChunkedHash, MPU_MAX_PARTS, MULTIHASH_SHA256_CHUNKED,
-    MULTIPART_THRESHOLD,
+    get_checksum_chunksize_and_parts, Sha256ChunkedHash, MULTIHASH_SHA256_CHUNKED,
 };
 
 /// Type-safe container for object's checksum using struct types

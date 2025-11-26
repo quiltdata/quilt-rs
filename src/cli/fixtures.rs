@@ -56,7 +56,6 @@ pub mod packages {
 
     pub mod invalid {
         pub const URI: &str = "quilt+s3://some-nonsense";
-        pub const SOURCE_PK: &str = "s3://any/thing";
     }
 }
 

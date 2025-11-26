@@ -16,13 +16,13 @@ pub const MULTIHASH_SHA256_CHUNKED: u64 = 0xb510;
 
 /// Maximum number of parts for splitting the file to create chunksum
 /// This is a "hard requirement" for chunksums. We don't outstrip that number of chunks.
-pub const MPU_MAX_PARTS: u64 = 10_000;
+const MPU_MAX_PARTS: u64 = 10_000;
 /// Size threshold when the next chunk cut.
 /// This is a "soft requirement" for chunksum size. We can increase threshold if we can't fit into
 /// `MPU_MAX_PARTS`.
 /// Since it's a minimum size for chunksumed chunk, file less than this threshold is treated like
 /// single chunk.
-pub const MULTIPART_THRESHOLD: u64 = 8 * 1024 * 1024;
+const MULTIPART_THRESHOLD: u64 = 8 * 1024 * 1024;
 
 // TODO: rename to something simpler: get_chunksize_and_parts?
 /// Examines if chunksum size is suitable to split file and get less chunks then supported.

@@ -1,16 +1,11 @@
 use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;
-use aws_sdk_s3::types::Object;
 use chrono::DateTime;
 use chrono::Utc;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
-use crate::checksum;
-use crate::io::remote::RemoteObjectStream;
-use crate::io::remote::S3Attributes;
-use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
 
@@ -50,25 +45,6 @@ impl Storage for LocalStorage {
 
     async fn exists(&self, path: impl AsRef<Path>) -> bool {
         fs::metadata(path).await.is_ok()
-    }
-
-    async fn get_object_attributes(
-        &self,
-        stream: RemoteObjectStream,
-        listing_uri: &S3Uri,
-        object: &Object,
-    ) -> Res<S3Attributes> {
-        let reader = stream.body.into_async_read();
-        let size: u64 = object.size.unwrap_or(0).try_into()?;
-        let hash = checksum::Sha256ChunkedHash::from_async_read(reader, size)
-            .await?
-            .into();
-        Ok(S3Attributes {
-            listing_uri: listing_uri.clone(),
-            object_uri: stream.uri,
-            hash,
-            size,
-        })
     }
 
     async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Res<DateTime<Utc>> {
@@ -199,29 +175,6 @@ mod tests {
         new_file.write_all(b"Hello").await?;
         let contents = fs::read(dest).await?;
         assert_eq!(contents, b"Hello");
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_getting_object_attributes() -> Res {
-        let bytes = "0123456789abcdef".as_bytes();
-        let storage = LocalStorage::default();
-        let body = ByteStream::from_static(bytes);
-        let stream = RemoteObjectStream {
-            body,
-            uri: S3Uri::try_from("s3://foo/bar/key")?,
-        };
-        let obj = Object::builder().set_size(Some(123)).build();
-
-        let attrs = storage
-            .get_object_attributes(stream, &S3Uri::try_from("s3://foo/bar")?, &obj)
-            .await?;
-        assert_eq!(attrs.size, 123);
-        assert_eq!(
-            attrs.hash.to_string(),
-            "Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="
-        );
 
         Ok(())
     }

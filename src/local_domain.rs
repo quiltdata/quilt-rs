@@ -18,8 +18,6 @@ use crate::manifest::Table;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
-use crate::uri::S3PackageUri;
-use crate::uri::S3Uri;
 use crate::Res;
 
 /// This is the entrypoint for the lib.
@@ -135,26 +133,6 @@ impl LocalDomain {
         } else {
             Ok(None)
         }
-    }
-
-    pub async fn package_s3_prefix(
-        &self,
-        source_uri: &S3Uri,
-        dest_uri: S3PackageUri,
-        message: Option<String>,
-        user_meta: Option<serde_json::Value>,
-    ) -> Res<ManifestUri> {
-        self.scaffold_paths_for_caching(&dest_uri.bucket).await?;
-        flow::package_s3_prefix(
-            &self.paths,
-            &self.storage,
-            &self.remote,
-            source_uri,
-            dest_uri,
-            message,
-            user_meta,
-        )
-        .await
     }
 
     pub async fn build_manifest(

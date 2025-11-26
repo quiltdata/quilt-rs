@@ -6,13 +6,11 @@ use tempfile::TempDir;
 
 use quilt_rs::lineage::Home;
 
-use crate::cli::benchmark;
 use crate::cli::browse;
 use crate::cli::commit;
 use crate::cli::install;
 use crate::cli::list;
 use crate::cli::login;
-use crate::cli::package;
 use crate::cli::pull;
 use crate::cli::push;
 use crate::cli::status;
@@ -51,11 +49,6 @@ pub trait Commands {
         login::model(local_domain, args).await
     }
 
-    async fn package(&self, args: package::Input) -> Result<package::Output, Error> {
-        let local_domain = self.get_local_domain();
-        package::model(local_domain, args).await
-    }
-
     async fn pull(&self, args: pull::Input) -> Result<pull::Output, Error> {
         let local_domain = self.get_local_domain();
         pull::model(local_domain, args).await
@@ -69,11 +62,6 @@ pub trait Commands {
     async fn status(&self, args: status::Input) -> Result<status::Output, Error> {
         let local_domain = self.get_local_domain();
         status::model(local_domain, args).await
-    }
-
-    async fn benchmark(&self, args: benchmark::Input) -> Result<benchmark::Output, Error> {
-        let local_domain = self.get_local_domain();
-        benchmark::model(local_domain, args).await
     }
 
     async fn uninstall(&self, args: uninstall::Input) -> Result<uninstall::Output, Error> {
