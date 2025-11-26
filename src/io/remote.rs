@@ -8,7 +8,6 @@ use std::path::Path;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::Object;
 use multihash::Multihash;
-use tokio::io::AsyncRead;
 use tokio_stream::Stream;
 
 use crate::uri::Host;
@@ -47,28 +46,12 @@ pub trait Remote {
     fn exists(&self, host: &Option<Host>, s3_uri: &S3Uri)
         -> impl Future<Output = Res<bool>> + Send;
 
-    /// Gets the objects contents as a `File`
-    // TODO: use `self.get_object_stream`. Under-the-hood it is a stream already
-    fn get_object(
-        &self,
-        host: &Option<Host>,
-        s3_uri: &S3Uri,
-    ) -> impl Future<Output = Res<impl AsyncRead + Send + Unpin>> + Send;
-
     /// Fetches the objects contents as a `ByteStream`
     fn get_object_stream(
         &self,
         host: &Option<Host>,
         s3_uri: &S3Uri,
     ) -> impl Future<Output = Res<RemoteObjectStream>> + Send;
-
-    /// List objects list under S3 prefix using tokio Stream
-    // TODO: return Item = Res<Row>
-    fn list_objects(
-        &self,
-        host: &Option<Host>,
-        listing_uri: &S3Uri,
-    ) -> impl Future<Output = impl ObjectsStream> + Send;
 
     // Makes a head request and resolves the final versioned URL
     fn resolve_url(

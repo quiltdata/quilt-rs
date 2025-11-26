@@ -1,4 +1,3 @@
-use tokio::io::AsyncReadExt;
 use tokio_stream::StreamExt;
 use tracing::debug;
 use tracing::info;
@@ -32,16 +31,14 @@ async fn is_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Res<bool> {
 
 async fn fetch_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Res<Vec<u8>> {
     let s3_uri = S3Uri::from(manifest);
-    let mut contents = remote.get_object(&manifest.catalog, &s3_uri).await?;
-    let mut output = Vec::new();
-    contents.read_to_end(&mut output).await?;
-    Ok(output)
+    let contents = remote.get_object_stream(&manifest.catalog, &s3_uri).await?;
+    Ok(contents.body.collect().await?.to_vec())
 }
 
 async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res<Manifest> {
     let s3_uri: S3Uri = ManifestUriLegacy::from(manifest_uri).into();
-    let contents = remote.get_object(&manifest_uri.catalog, &s3_uri).await?;
-    Manifest::from_reader(contents).await
+    let contents = remote.get_object_stream(&manifest_uri.catalog, &s3_uri).await?;
+    Manifest::from_reader(contents.body.into_async_read()).await
 }
 
 /// If remote manifest is already cached we return it.

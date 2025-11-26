@@ -2,13 +2,11 @@ use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;
 use multihash::Multihash;
-use tokio::io::AsyncRead;
-use tokio::io::AsyncReadExt;
 use tracing::log;
 
 use crate::checksum;
 use crate::error::S3Error;
-use crate::io::remote::{HostConfig, ObjectsStream, RemoteObjectStream};
+use crate::io::remote::{HostConfig, RemoteObjectStream};
 use crate::io::storage::mocks::MockStorage;
 use crate::io::storage::Storage;
 use crate::uri::Host;
@@ -30,31 +28,6 @@ impl Remote for MockRemote {
         let key = s3_uri.to_string();
         log::debug!("Mocking {key} exists request");
         Ok(self.storage.exists(&key).await)
-    }
-
-    async fn get_object(
-        &self,
-        host: &Option<Host>,
-        s3_uri: &S3Uri,
-    ) -> Res<impl AsyncRead + Send + Unpin> {
-        let key = s3_uri.to_string();
-        log::debug!("Mocking {key} get request");
-
-        self.storage.open_file(&key).await.map_err(|err| match err {
-            Error::Io(inner_err) => {
-                if inner_err.kind() == std::io::ErrorKind::NotFound {
-                    Error::S3(
-                        host.to_owned(),
-                        S3Error::GetObject(
-                            "NoSuchKey: The specified key does not exist".to_string(),
-                        ),
-                    )
-                } else {
-                    Error::Io(inner_err)
-                }
-            }
-            other => other,
-        })
     }
 
     async fn get_object_stream(
@@ -95,10 +68,6 @@ impl Remote for MockRemote {
             body: body?,
             uri: s3_uri.clone(),
         })
-    }
-
-    async fn list_objects(&self, _host: &Option<Host>, _listing_uri: &S3Uri) -> impl ObjectsStream {
-        tokio_stream::iter(Vec::new())
     }
 
     async fn put_object(
@@ -156,7 +125,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_get_object() -> Res {
+    async fn test_get_object_stream() -> Res {
         let remote = MockRemote::default();
         remote
             .put_object(
@@ -166,20 +135,18 @@ mod tests {
             )
             .await?;
         let s3_uri_not_found = S3Uri::try_from("s3://b/n?versionId=v")?;
-        let not_found = remote.get_object(&None, &s3_uri_not_found).await;
+        let not_found = remote.get_object_stream(&None, &s3_uri_not_found).await;
         if let Err(Error::S3(None, err)) = not_found {
             assert_eq!(
                 err,
-                S3Error::GetObject("NoSuchKey: The specified key does not exist".to_string(),)
+                S3Error::GetObjectStream("NoSuchKey: The specified key does not exist".to_string(),)
             );
         } else {
             panic!("shouldn't happen");
         }
         let s3_uri_found = S3Uri::try_from("s3://found/n?versionId=v")?;
-        let mut found = remote.get_object(&None, &s3_uri_found).await?;
-        let mut output = Vec::new();
-        found.read_to_end(&mut output).await?;
-        assert_eq!(output, b"Hello");
+        let found = remote.get_object_stream(&None, &s3_uri_found).await?;
+        assert_eq!(found.body.collect().await?.to_vec(), b"Hello");
         Ok(())
     }
 }

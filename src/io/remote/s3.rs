@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::RwLock;
 
-use async_stream::try_stream;
 use aws_config::BehaviorVersion;
 use aws_credential_types::Credentials;
 use aws_sdk_s3::error::DisplayErrorContext;
@@ -15,7 +14,6 @@ use aws_sdk_s3::types::CompletedPart;
 use aws_smithy_types::byte_stream::Length;
 use aws_types::region::Region;
 use multihash::Multihash;
-use tokio::io::AsyncRead;
 use tracing::debug;
 use tracing::info;
 use tracing::warn;
@@ -28,7 +26,7 @@ use crate::checksum::Sha256ChunkedHash;
 use crate::error::AuthError;
 use crate::error::S3Error;
 use crate::io::remote::host::fetch_host_config;
-use crate::io::remote::{HostConfig, HttpClient, ObjectsStream, Remote};
+use crate::io::remote::{HostConfig, HttpClient, Remote};
 use crate::io::storage::auth::AuthIo;
 use crate::io::storage::LocalStorage;
 use crate::paths::DomainPaths;
@@ -36,8 +34,6 @@ use crate::uri::Host;
 use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
-
-const LIST_OBJECTS_V2_MAX_KEYS: i32 = 1_00;
 
 use crate::io::remote::RemoteObjectStream;
 
@@ -71,13 +67,6 @@ async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<R
         body: result.body,
         uri: uri_versioned,
     })
-}
-
-async fn get_object(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<impl AsyncRead> {
-    Ok(get_object_stream(client, s3_uri)
-        .await?
-        .body
-        .into_async_read())
 }
 
 async fn put_object_and_checksum(
@@ -427,28 +416,6 @@ impl Remote for RemoteS3 {
         }
     }
 
-    async fn get_object(
-        &self,
-        host: &Option<Host>,
-        s3_uri: &S3Uri,
-    ) -> Res<impl AsyncRead + Send + Unpin> {
-        debug!("⏳ Getting object - host: {:?}, uri: {}", host, s3_uri);
-        let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
-        match get_object(&client, s3_uri).await {
-            Ok(reader) => {
-                info!("✔️ Successfully retrieved object from {}", s3_uri);
-                Ok(reader)
-            }
-            Err(e) => {
-                warn!("❌ Failed to get object from {}: {}", s3_uri, e);
-                Err(Error::S3(
-                    host.to_owned(),
-                    S3Error::GetObject(DisplayErrorContext(e).to_string()),
-                ))
-            }
-        }
-    }
-
     async fn get_object_stream(
         &self,
         host: &Option<Host>,
@@ -470,28 +437,6 @@ impl Remote for RemoteS3 {
                     host.to_owned(),
                     S3Error::GetObjectStream(DisplayErrorContext(e).to_string()),
                 ))
-            }
-        }
-    }
-
-    async fn list_objects(&self, host: &Option<Host>, listing_uri: &S3Uri) -> impl ObjectsStream {
-        try_stream! {
-            let client = self.get_client_for_bucket(host, &listing_uri.bucket).await?;
-            let mut paginated_stream = client
-                .list_objects_v2()
-                .bucket(&listing_uri.bucket)
-                .prefix(&listing_uri.key)
-                .into_paginator()
-                .page_size(LIST_OBJECTS_V2_MAX_KEYS) // XXX: this is to limit concurrency
-                .send();
-            while let Some(page) = paginated_stream.next().await {
-                yield page
-                    .map_err(|err| Error::S3(host.to_owned(), S3Error::ListObjects(DisplayErrorContext(err).to_string())))?
-                    .contents
-                    .into_iter()
-                    .flatten()
-                    .map(Ok)
-                    .collect::<Vec<_>>();
             }
         }
     }
