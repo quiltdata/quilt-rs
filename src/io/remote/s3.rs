@@ -73,7 +73,6 @@ async fn put_object_and_sha256_chunksum(
     client: aws_sdk_s3::Client,
     source_path: impl AsRef<Path>,
     dest_uri: &S3Uri,
-    size: u64,
 ) -> Res<(S3Uri, ObjectHash)> {
     let response = client
         .put_object()
@@ -93,17 +92,9 @@ async fn put_object_and_sha256_chunksum(
         ..dest_uri.clone()
     };
 
-    let hash = match size {
-        // Edge case: a 0-byte upload is treated as an empty list of chunks, rather than
-        // a list of a 0-byte chunk. Its checksum is sha256(''), NOT sha256(sha256('')).
-        0 => s3_checksum_sha256_b64,
-        // NOTE: we're calculating checksum of checksums here,
-        //       not a checksum of the file
-        // NOTE: in the current design, we're not using this checksum
-        _ => hash_sha256_checksum(s3_checksum_sha256_b64.as_str())
-            .ok_or(Error::InvalidMultihash(s3_checksum_sha256_b64))?,
-    };
-    Ok((uri, Sha256ChunkedHash::try_from(hash.as_str())?.into()))
+    // For 0-byte uploads, the checksum is sha256(''), NOT sha256(sha256(''))
+    // So we use the S3 checksum directly without hashing it again
+    Ok((uri, Sha256ChunkedHash::try_from(s3_checksum_sha256_b64.as_str())?.into()))
 }
 
 async fn multipart_upload_and_sha256_chunksum(
@@ -528,7 +519,7 @@ impl Remote for RemoteS3 {
         (match host_config.checksums {
             HostChecksums::Sha256Chunked => {
                 if size == 0 {
-                    put_object_and_sha256_chunksum(client, source_path, dest_uri, size).await
+                    put_object_and_sha256_chunksum(client, source_path, dest_uri).await
                 } else {
                     multipart_upload_and_sha256_chunksum(client, source_path, dest_uri, size).await
                 }
