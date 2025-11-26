@@ -2,7 +2,6 @@ use std::fmt;
 use std::path::PathBuf;
 
 use multihash::Multihash;
-// use url::Url;
 
 use crate::io::remote::S3Attributes;
 use crate::manifest::Manifest;
@@ -13,30 +12,6 @@ use crate::Res;
 use multibase;
 
 const HEADER_ROW: &str = ".";
-
-// enum PlaceValue {
-//   S3Uri(S3Uri),
-//   PathBuf(PathBuf),
-// }
-//
-// #[derive(Clone, Debug, PartialEq)]
-// pub struct Place {
-//     value: PlaceValue,
-// }
-//
-// impl Default for Place {
-//     fn default() -> Self {
-//         Place {
-//             url: Url::from_file_path(PathBuf::default()).unwrap(),
-//         }
-//     }
-// }
-//
-// impl From<PathBuf> for Place {
-// }
-//
-// impl Into<PathBuf> for Place {
-// }
 
 /// Represents the header row in Parquet manifest
 #[derive(Clone, Debug, PartialEq)]

@@ -3,7 +3,6 @@ use std::io;
 use tracing::log;
 
 mod cli;
-mod perf;
 
 use cli::print;
 

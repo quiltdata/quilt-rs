@@ -10,7 +10,6 @@ use tracing::log;
 use quilt_rs::uri::Host;
 use quilt_rs::uri::Namespace;
 
-mod benchmark;
 mod browse;
 mod commit;
 mod install;
@@ -18,7 +17,6 @@ mod list;
 mod login;
 mod model;
 mod output;
-mod package;
 mod pull;
 mod push;
 mod status;
@@ -68,16 +66,6 @@ pub struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Test and benchmark creating manifest with large number of rows
-    Benchmark {
-        /// How many rows in manifest?
-        /// Ex. 1000000
-        #[arg(short, long)]
-        number: i32,
-        /// Manifest destination dir
-        #[arg(short, long)]
-        dest: Option<PathBuf>,
-    },
     /// Browse remote manifest
     Browse {
         #[arg(value_name = "PKG_URI")]
@@ -124,22 +112,6 @@ enum Commands {
     },
     /// List installed packages
     List,
-    /// Create and install manifest to S3
-    Package {
-        /// Commit message
-        #[arg(short, long)]
-        message: Option<String>,
-        /// Source URI for the package.
-        /// Ex. s3://bucket/s3/prefix
-        #[arg(value_name = "S3_URI")]
-        uri: String,
-        /// quilt+s3 URI for new package
-        #[arg(short, long, value_name = "PKG_URI")]
-        target: String,
-        /// JSON string for user meta
-        #[arg(short, long)]
-        user_meta: Option<String>,
-    },
     /// Pull
     Pull {
         /// Namespace of the package to pull
@@ -198,16 +170,6 @@ pub async fn init(args: Args) -> Result<Std, Error> {
     }
 
     match args.command {
-        Commands::Benchmark { number, dest } => {
-            let dest_dir = match dest {
-                Some(dir) => dir,
-                None => tempfile::tempdir()?.path().to_path_buf(),
-            };
-            let args = benchmark::Input { number, dest_dir };
-
-            log::info!("Benchmark manifest creation {args:?}",);
-            Ok(benchmark::command(m, args).await)
-        }
         Commands::Browse { uri } => {
             let args = browse::Input { uri };
 
@@ -267,31 +229,6 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         Commands::List => {
             log::info!("Listing installed packages");
             Ok(list::command(m).await)
-        }
-        Commands::Package {
-            message,
-            target,
-            uri,
-            user_meta,
-        } => {
-            let user_meta = match &user_meta {
-                Some(object) => match serde_json::from_str(object)? {
-                    serde_json::Value::Object(object) => Some(serde_json::Value::Object(object)),
-                    _ => {
-                        return Err(Error::CommitMetaInvalid(object.to_string()));
-                    }
-                },
-                None => None,
-            };
-            let args = package::Input {
-                message,
-                target,
-                uri,
-                user_meta,
-            };
-
-            log::info!("Packaging {args:?}");
-            Ok(package::command(m, args).await)
         }
         Commands::Pull { namespace } => {
             let args = pull::Input {

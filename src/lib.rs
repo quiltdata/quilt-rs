@@ -31,7 +31,6 @@ pub mod lineage;
 mod local_domain;
 pub mod manifest;
 pub mod paths;
-mod perf;
 pub mod uri;
 
 #[cfg(test)]

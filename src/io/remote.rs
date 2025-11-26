@@ -66,14 +66,6 @@ pub trait Remote {
         s3_uri: &S3Uri,
     ) -> impl Future<Output = Res<impl AsyncRead + Send + Unpin>> + Send;
 
-    /// Get object attributes: checksums, number of chunks, chunksize, version_id
-    fn get_object_attributes(
-        &self,
-        host: &Option<Host>,
-        listing_uri: &S3Uri,
-        object: &Object,
-    ) -> impl Future<Output = Res<S3Attributes>>;
-
     /// Fetches the objects contents as a `ByteStream`
     fn get_object_stream(
         &self,

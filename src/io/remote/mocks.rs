@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;
-use aws_sdk_s3::types::Object;
 use multihash::Multihash;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
@@ -9,7 +8,7 @@ use tracing::log;
 
 use crate::checksum;
 use crate::error::S3Error;
-use crate::io::remote::{HostConfig, ObjectsStream, RemoteObjectStream, S3Attributes};
+use crate::io::remote::{HostConfig, ObjectsStream, RemoteObjectStream};
 use crate::io::storage::mocks::MockStorage;
 use crate::io::storage::Storage;
 use crate::uri::Host;
@@ -56,24 +55,6 @@ impl Remote for MockRemote {
             }
             other => other,
         })
-    }
-
-    async fn get_object_attributes(
-        &self,
-        host: &Option<Host>,
-        listing_uri: &S3Uri,
-        object: &Object,
-    ) -> Res<S3Attributes> {
-        let key = object.key.clone().ok_or(Error::ObjectKey)?;
-        let uri = S3Uri {
-            bucket: listing_uri.bucket.clone(),
-            key,
-            version: None,
-        };
-        let stream = self.get_object_stream(host, &uri).await?;
-        self.storage
-            .get_object_attributes(stream, listing_uri, object)
-            .await
     }
 
     async fn get_object_stream(
