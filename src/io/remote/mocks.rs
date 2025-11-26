@@ -1,10 +1,10 @@
 use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;
-use multihash::Multihash;
 use tracing::log;
 
-use crate::checksum;
+use crate::checksum::ObjectHash;
+use crate::checksum::Sha256ChunkedHash;
 use crate::error::S3Error;
 use crate::io::remote::{HostConfig, RemoteObjectStream};
 use crate::io::storage::mocks::MockStorage;
@@ -101,17 +101,15 @@ impl Remote for MockRemote {
         source_path: impl AsRef<Path>,
         dest_uri: &S3Uri,
         size: u64,
-    ) -> Res<(S3Uri, Multihash<256>)> {
+    ) -> Res<(S3Uri, ObjectHash)> {
         let file = self.storage.open_file(source_path.as_ref()).await?;
-        let hash = checksum::Sha256ChunkedHash::from_async_read(file, size)
-            .await?
-            .into();
+        let hash = Sha256ChunkedHash::from_async_read(file, size).await?;
         Ok((
             S3Uri {
                 version: Some("version".to_string()),
                 ..dest_uri.clone()
             },
-            hash,
+            hash.into(),
         ))
     }
 

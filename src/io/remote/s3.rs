@@ -13,7 +13,6 @@ use aws_sdk_s3::types::CompletedMultipartUpload;
 use aws_sdk_s3::types::CompletedPart;
 use aws_smithy_types::byte_stream::Length;
 use aws_types::region::Region;
-use multihash::Multihash;
 use tracing::debug;
 use tracing::info;
 use tracing::warn;
@@ -490,7 +489,7 @@ impl Remote for RemoteS3 {
         source_path: impl AsRef<Path>,
         dest_uri: &S3Uri,
         size: u64,
-    ) -> Res<(S3Uri, Multihash<256>)> {
+    ) -> Res<(S3Uri, ObjectHash)> {
         let client = self.get_client_for_bucket(host, &dest_uri.bucket).await?;
         (if size == 0 {
             put_object_and_checksum(client, source_path, dest_uri, size).await

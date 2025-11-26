@@ -211,7 +211,11 @@ pub async fn upload_row(
     // Update the manifest with the sha2-256-chunked checksum
     // "Relax" the manifest by using those new remote keys
     let place = remote_url.to_string();
-    Ok(Row { hash, place, ..row })
+    Ok(Row {
+        hash: hash.into(),
+        place,
+        ..row
+    })
 }
 
 struct WritableManifest {
