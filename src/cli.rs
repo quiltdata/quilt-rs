@@ -196,6 +196,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 namespace: namespace.try_into()?,
                 user_meta,
                 workflow,
+                host_config: None,
             };
 
             log::info!("Committing {args:?}");
@@ -233,6 +234,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         Commands::Pull { namespace } => {
             let args = pull::Input {
                 namespace: namespace.try_into()?,
+                host_config: None,
             };
 
             log::info!("Pull {args:?}");
@@ -250,6 +252,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         Commands::Status { namespace } => {
             let args = status::Input {
                 namespace: namespace.try_into()?,
+                host_config: None,
             };
 
             log::info!("Status {args:?}");

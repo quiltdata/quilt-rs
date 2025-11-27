@@ -154,6 +154,7 @@ mod tests {
             namespace: namespace.clone(),
             user_meta: Some(serde_json::json!({"Naturist": "Conjure"})),
             workflow: None,
+            host_config: None,
         })
         .await?;
 
@@ -181,6 +182,7 @@ mod tests {
             namespace: namespace.clone(),
             user_meta: Some(serde_json::json!({"Antitoxic": "Mankind"})),
             workflow: None,
+            host_config: None,
         })
         .await?;
 
@@ -239,6 +241,7 @@ mod tests {
             namespace: namespace.clone(),
             user_meta: Some(serde_json::json!({"Naturist": "Conjure"})),
             workflow: None,
+            host_config: None,
         })
         .await?;
 
@@ -266,6 +269,7 @@ mod tests {
             namespace: namespace.clone(),
             user_meta: None,
             workflow: None,
+            host_config: None,
         })
         .await?;
 

@@ -1,3 +1,4 @@
+use quilt_rs::io::remote::HostConfig;
 use quilt_rs::lineage::Change;
 use quilt_rs::lineage::InstalledPackageStatus;
 use quilt_rs::lineage::UpstreamState;
@@ -10,6 +11,7 @@ use crate::cli::Error;
 #[derive(Debug)]
 pub struct Input {
     pub namespace: Namespace,
+    pub host_config: Option<HostConfig>,
 }
 
 #[derive(Debug)]
@@ -65,18 +67,22 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 async fn get_status(
     local_domain: &quilt_rs::LocalDomain,
     namespace: Namespace,
+    host_config: Option<HostConfig>,
 ) -> Result<InstalledPackageStatus, Error> {
     match local_domain.get_installed_package(&namespace).await? {
-        Some(installed_package) => Ok(installed_package.status().await?),
+        Some(installed_package) => Ok(installed_package.status(host_config).await?),
         None => Err(Error::NamespaceNotFound(namespace)),
     }
 }
 
 pub async fn model(
     local_domain: &quilt_rs::LocalDomain,
-    Input { namespace }: Input,
+    Input {
+        namespace,
+        host_config,
+    }: Input,
 ) -> Result<Output, Error> {
-    let status = get_status(local_domain, namespace).await?;
+    let status = get_status(local_domain, namespace, host_config).await?;
     Ok(Output { status })
 }
 
@@ -113,6 +119,7 @@ mod tests {
                 local_domain,
                 Input {
                     namespace: pkg::NAMESPACE.into(),
+                    host_config: None,
                 },
             )
             .await?;
@@ -143,6 +150,7 @@ mod tests {
                 local_domain,
                 Input {
                     namespace: pkg::NAMESPACE.into(),
+                    host_config: None,
                 },
             )
             .await?;
@@ -167,6 +175,7 @@ mod tests {
                 local_domain,
                 Input {
                     namespace: pkg::NAMESPACE.into(),
+                    host_config: None,
                 },
             )
             .await?;
@@ -185,6 +194,7 @@ mod tests {
                 local_domain,
                 Input {
                     namespace: ("a", "b").into(),
+                    host_config: None,
                 },
             )
             .await;
@@ -193,7 +203,7 @@ mod tests {
         }
 
         installed_package
-            .commit("Anything".to_string(), None, None)
+            .commit("Anything".to_string(), None, None, None)
             .await?;
         {
             let local_domain = m.get_local_domain();
@@ -201,6 +211,7 @@ mod tests {
                 local_domain,
                 Input {
                     namespace: pkg::NAMESPACE.into(),
+                    host_config: None,
                 },
             )
             .await?;
@@ -227,6 +238,7 @@ mod tests {
                 local_domain,
                 Input {
                     namespace: pkg::NAMESPACE.into(),
+                    host_config: None,
                 },
             )
             .await?;
@@ -238,7 +250,7 @@ mod tests {
         }
 
         installed_package
-            .commit("Anything".to_string(), None, None)
+            .commit("Anything".to_string(), None, None, None)
             .await?;
 
         {
@@ -247,6 +259,7 @@ mod tests {
                 local_domain,
                 Input {
                     namespace: pkg::NAMESPACE.into(),
+                    host_config: None,
                 },
             )
             .await?;

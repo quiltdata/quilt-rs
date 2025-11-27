@@ -71,12 +71,13 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         self.lineage.package_home(&self.storage).await
     }
 
-    pub async fn status(&self) -> Res<InstalledPackageStatus> {
+    pub async fn status(&self, host_config_opt: Option<HostConfig>) -> Res<InstalledPackageStatus> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
         let lineage = flow::refresh_latest_hash(lineage, &self.remote).await?;
         let manifest = self.manifest().await?;
 
-        let host_config = self.remote.host_config(&lineage.remote.catalog).await?;
+        let host_config =
+            host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.catalog).await?);
 
         let (lineage, status) = flow::status(
             lineage,
@@ -135,13 +136,15 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         message: String,
         user_meta: Option<serde_json::Value>,
         workflow: Option<Workflow>,
+        host_config_opt: Option<HostConfig>,
     ) -> Res<CommitState> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
         let mut manifest = self.manifest().await?;
 
-        let host_config = self.remote.host_config(&lineage.remote.catalog).await?;
+        let host_config =
+            host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.catalog).await?);
 
         let (lineage, status) = flow::status(
             lineage,
@@ -203,7 +206,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         Ok(lineage.remote)
     }
 
-    pub async fn pull(&self) -> Res<ManifestUri> {
+    pub async fn pull(&self, host_config_opt: Option<HostConfig>) -> Res<ManifestUri> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
@@ -213,7 +216,8 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
         let mut manifest = self.manifest().await?;
 
-        let host_config = self.remote.host_config(&lineage.remote.catalog).await?;
+        let host_config =
+            host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.catalog).await?);
 
         let (lineage, status) = flow::status(
             lineage,
@@ -353,6 +357,7 @@ mod tests {
                 .commit(
                     format!("Commit new1 {i}"),
                     Some(serde_json::json!({ "count": i })),
+                    None,
                     None,
                 )
                 .await?;

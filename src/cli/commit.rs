@@ -1,3 +1,4 @@
+use quilt_rs::io::remote::HostConfig;
 use quilt_rs::lineage::CommitState;
 use quilt_rs::uri::Namespace;
 
@@ -11,6 +12,7 @@ pub struct Input {
     pub namespace: Namespace,
     pub user_meta: Option<serde_json::Value>,
     pub workflow: Option<String>,
+    pub host_config: Option<HostConfig>,
 }
 
 #[derive(Debug)]
@@ -34,12 +36,13 @@ async fn commit_package(
     message: String,
     user_meta: Option<serde_json::Value>,
     workflow_id: Option<String>,
+    host_config: Option<HostConfig>,
 ) -> Result<CommitState, Error> {
     match local_domain.get_installed_package(&namespace).await? {
         Some(installed_package) => {
             let workflow = installed_package.resolve_workflow(workflow_id).await?;
             Ok(installed_package
-                .commit(message, user_meta, workflow)
+                .commit(message, user_meta, workflow, host_config)
                 .await?)
         }
         None => Err(Error::NamespaceNotFound(namespace)),
@@ -53,9 +56,18 @@ pub async fn model(
         namespace,
         user_meta,
         workflow,
+        host_config,
     }: Input,
 ) -> Result<Output, Error> {
-    let commit = commit_package(local_domain, namespace, message, user_meta, workflow).await?;
+    let commit = commit_package(
+        local_domain,
+        namespace,
+        message,
+        user_meta,
+        workflow,
+        host_config,
+    )
+    .await?;
     Ok(Output { commit })
 }
 
@@ -92,6 +104,7 @@ mod tests {
                     namespace: pkg::NAMESPACE.into(),
                     user_meta: None,
                     workflow: None,
+                    host_config: None,
                 },
             )
             .await?;
@@ -123,6 +136,7 @@ mod tests {
                         "Type": "NGS"
                     })),
                     workflow: Some("my-workflow".to_string()),
+                    host_config: None,
                 },
             )
             .await?;
@@ -153,6 +167,7 @@ mod tests {
                     namespace: pkg::NAMESPACE.into(),
                     user_meta: None,
                     workflow: None,
+                    host_config: None,
                 },
             )
             .await?;
@@ -179,6 +194,7 @@ mod tests {
                     namespace: pkg::NAMESPACE.into(),
                     user_meta: None,
                     workflow: Some("Anything".to_string()),
+                    host_config: None,
                 },
             )
             .await;
@@ -216,6 +232,7 @@ mod tests {
                         "f": null
                     })),
                     workflow: None,
+                    host_config: None,
                 },
             )
             .await?;
@@ -242,6 +259,7 @@ mod tests {
             namespace: ("spec", "quilt-rs").into(),
             user_meta: None,
             workflow: None,
+            host_config: None,
         };
         let hash_for_initial_test_commit =
             "d6e62c3c43ddd30447d99eede1c7280c017b15cc716037b74af7bb5230fbb61a";
@@ -281,6 +299,7 @@ mod tests {
                     namespace: ("spec", "quilt-rs").into(),
                     user_meta: Some(serde_json::json!({"key": "value"})),
                     workflow: None,
+                    host_config: None,
                 },
             )
             .await
@@ -305,6 +324,7 @@ mod tests {
                     namespace: ("a", "b").into(),
                     user_meta: None,
                     workflow: None,
+                    host_config: None,
                 },
             )
             .await;
@@ -327,6 +347,7 @@ mod tests {
                     namespace: ("spec", "quilt-rs").into(),
                     user_meta: None,
                     workflow: None,
+                    host_config: None,
                 },
             )
             .await
