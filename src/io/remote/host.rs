@@ -38,6 +38,24 @@ impl Default for HostConfig {
     }
 }
 
+impl HostConfig {
+    /// Create a HostConfig with CRC64 checksums
+    pub fn default_crc64() -> Self {
+        Self {
+            checksums: HostChecksums::Crc64,
+            host: None,
+        }
+    }
+
+    /// Create a HostConfig with SHA256 chunked checksums
+    pub fn default_sha256_chunked() -> Self {
+        Self {
+            checksums: HostChecksums::Sha256Chunked,
+            host: None,
+        }
+    }
+}
+
 /// JSON response structure from host config endpoint
 #[derive(Deserialize)]
 struct ConfigResponse {

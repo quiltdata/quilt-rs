@@ -241,6 +241,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         Commands::Push { namespace } => {
             let args = push::Input {
                 namespace: namespace.try_into()?,
+                host_config: None,
             };
 
             log::info!("Pushing {args:?}");

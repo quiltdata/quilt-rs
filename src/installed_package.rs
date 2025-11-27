@@ -5,6 +5,7 @@ use tracing::log;
 
 use crate::flow;
 use crate::io::remote::resolve_workflow;
+use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
 use crate::io::remote::RemoteS3;
 use crate::io::storage::LocalStorage;
@@ -171,7 +172,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         }
     }
 
-    pub async fn push(&self) -> Res<ManifestUri> {
+    pub async fn push(&self, host_config_opt: Option<HostConfig>) -> Res<ManifestUri> {
         self.scaffold_paths().await?;
 
         let (_, lineage) = self.lineage.read(&self.storage).await?;
@@ -185,7 +186,8 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
         let manifest = self.manifest().await?;
 
-        let host_config = self.remote.host_config(&lineage.remote.catalog).await?;
+        let host_config =
+            host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.catalog).await?);
 
         let lineage = flow::push(
             lineage,
