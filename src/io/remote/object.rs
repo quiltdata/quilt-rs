@@ -1,0 +1,5 @@
+mod multipart_sha256_chunked;
+mod put_and_request_checksum;
+
+pub use multipart_sha256_chunked::multipart_upload_and_sha256_chunksum;
+pub use put_and_request_checksum::put_and_request_checksum;

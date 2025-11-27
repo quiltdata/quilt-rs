@@ -8,24 +8,18 @@ use aws_credential_types::Credentials;
 use aws_sdk_s3::error::DisplayErrorContext;
 use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::primitives::ByteStream;
-use aws_sdk_s3::types::ChecksumAlgorithm;
-use aws_sdk_s3::types::CompletedMultipartUpload;
-use aws_sdk_s3::types::CompletedPart;
-use aws_smithy_types::byte_stream::Length;
 use aws_types::region::Region;
 use tracing::debug;
 use tracing::info;
 use tracing::warn;
 
 use crate::auth;
-use crate::checksum::get_checksum_chunksize_and_parts;
-use crate::checksum::hash_sha256_checksum;
-use crate::checksum::Crc64Hash;
 use crate::checksum::ObjectHash;
-use crate::checksum::Sha256ChunkedHash;
 use crate::error::AuthError;
 use crate::error::S3Error;
 use crate::io::remote::host::fetch_host_config;
+use crate::io::remote::object::multipart_upload_and_sha256_chunksum;
+use crate::io::remote::object::put_and_request_checksum;
 use crate::io::remote::{HostChecksums, HostConfig, HttpClient, Remote};
 use crate::io::storage::auth::AuthIo;
 use crate::io::storage::LocalStorage;
@@ -67,144 +61,6 @@ async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<R
         body: result.body,
         uri: uri_versioned,
     })
-}
-
-async fn put_object_and_sha256_chunksum(
-    client: aws_sdk_s3::Client,
-    source_path: impl AsRef<Path>,
-    dest_uri: &S3Uri,
-) -> Res<(S3Uri, ObjectHash)> {
-    let response = client
-        .put_object()
-        .bucket(&dest_uri.bucket)
-        .key(&dest_uri.key)
-        .body(ByteStream::from_path(source_path).await?)
-        .checksum_algorithm(ChecksumAlgorithm::Sha256)
-        .send()
-        .await
-        .map_err(|err| Error::S3Raw(DisplayErrorContext(err).to_string()))?;
-    let s3_checksum_sha256_b64 = response
-        .checksum_sha256
-        .ok_or(Error::Checksum("missing checksum".to_string()))?;
-
-    let uri = S3Uri {
-        version: response.version_id,
-        ..dest_uri.clone()
-    };
-
-    // For 0-byte uploads, the checksum is sha256(''), NOT sha256(sha256(''))
-    // So we use the S3 checksum directly without hashing it again
-    Ok((uri, Sha256ChunkedHash::try_from(s3_checksum_sha256_b64.as_str())?.into()))
-}
-
-async fn multipart_upload_and_sha256_chunksum(
-    client: aws_sdk_s3::Client,
-    source_path: impl AsRef<Path>,
-    dest_uri: &S3Uri,
-    size: u64,
-) -> Res<(S3Uri, ObjectHash)> {
-    let (chunksize, num_chunks) = get_checksum_chunksize_and_parts(size);
-    let upload_id = client
-        .create_multipart_upload()
-        .bucket(&dest_uri.bucket)
-        .key(&dest_uri.key)
-        .checksum_algorithm(ChecksumAlgorithm::Sha256)
-        .send()
-        .await
-        .map_err(|err| Error::S3Raw(DisplayErrorContext(err).to_string()))?
-        .upload_id
-        .ok_or(Error::UploadId("failed to get an UploadId".to_string()))?;
-
-    let mut parts: Vec<CompletedPart> = Vec::new();
-    for chunk_idx in 0..num_chunks {
-        let part_number = chunk_idx as i32 + 1;
-        let offset = chunk_idx * chunksize;
-        let length = chunksize.min(size - offset);
-        let chunk_body = ByteStream::read_from()
-            .path(source_path.as_ref())
-            .offset(offset)
-            .length(Length::Exact(length)) // https://github.com/awslabs/aws-sdk-rust/issues/821
-            .build()
-            .await?;
-        let part_response = client
-            .upload_part()
-            .bucket(&dest_uri.bucket)
-            .key(&dest_uri.key)
-            .upload_id(&upload_id)
-            .part_number(part_number)
-            .checksum_algorithm(ChecksumAlgorithm::Sha256)
-            .body(chunk_body)
-            .send()
-            .await
-            .map_err(|err| Error::S3Raw(DisplayErrorContext(err).to_string()))?;
-        parts.push(
-            CompletedPart::builder()
-                .part_number(part_number)
-                .e_tag(part_response.e_tag.unwrap_or_default())
-                .checksum_sha256(part_response.checksum_sha256.unwrap_or_default())
-                .build(),
-        );
-    }
-
-    let response = client
-        .complete_multipart_upload()
-        .bucket(&dest_uri.bucket)
-        .key(&dest_uri.key)
-        .upload_id(&upload_id)
-        .multipart_upload(
-            CompletedMultipartUpload::builder()
-                .set_parts(Some(parts))
-                .build(),
-        )
-        .send()
-        .await
-        .map_err(|err| Error::S3Raw(DisplayErrorContext(err).to_string()))?;
-
-    let s3_checksum = response
-        .checksum_sha256
-        .ok_or(Error::Checksum("missing checksum".to_string()))?;
-    let (checksum_b64, _) = s3_checksum
-        .split_once('-')
-        .ok_or(Error::Checksum("unexpected checksum".to_string()))?;
-
-    Ok((
-        S3Uri {
-            version: response.version_id,
-            ..dest_uri.clone()
-        },
-        Sha256ChunkedHash::try_from(checksum_b64)?.into(),
-    ))
-}
-
-async fn put_object_and_crc64_checksum(
-    client: aws_sdk_s3::Client,
-    source_path: impl AsRef<Path>,
-    dest_uri: &S3Uri,
-    _size: u64,
-) -> Res<(S3Uri, ObjectHash)> {
-    let response = client
-        .put_object()
-        .bucket(&dest_uri.bucket)
-        .key(&dest_uri.key)
-        .body(ByteStream::from_path(source_path).await?)
-        .checksum_algorithm(ChecksumAlgorithm::Crc64Nvme)
-        .send()
-        .await
-        .map_err(|err| Error::S3Raw(DisplayErrorContext(err).to_string()))?;
-
-    let s3_checksum_crc64_b64 = response
-        .checksum_crc64_nvme
-        .ok_or(Error::Checksum("missing checksum".to_string()))?;
-
-    let uri = S3Uri {
-        version: response.version_id,
-        ..dest_uri.clone()
-    };
-
-    Ok((
-        uri,
-        Crc64Hash::try_from(s3_checksum_crc64_b64.as_str())?.into(),
-    ))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -469,8 +325,8 @@ impl Remote for RemoteS3 {
         s3_uri: &S3Uri,
         contents: impl Into<ByteStream>,
     ) -> Res {
-        let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
-        client
+        self.get_client_for_bucket(host, &s3_uri.bucket)
+            .await?
             .put_object()
             .bucket(&s3_uri.bucket)
             .key(&s3_uri.key)
@@ -516,25 +372,12 @@ impl Remote for RemoteS3 {
         let client = self
             .get_client_for_bucket(&host_config.host, &dest_uri.bucket)
             .await?;
-        (match host_config.checksums {
-            HostChecksums::Sha256Chunked => {
-                if size == 0 {
-                    put_object_and_sha256_chunksum(client, source_path, dest_uri).await
-                } else {
-                    multipart_upload_and_sha256_chunksum(client, source_path, dest_uri, size).await
-                }
-            }
-            HostChecksums::Crc64 => {
-                put_object_and_crc64_checksum(client, source_path, dest_uri, size).await
-            }
-        })
-        .map(|(uri, hash)| (uri, hash.into()))
-        .map_err(|err| {
-            Error::S3(
-                host_config.host.clone(),
-                S3Error::UploadFile(DisplayErrorContext(err).to_string()),
-            )
-        })
+
+        if host_config.checksums == HostChecksums::Sha256Chunked && size != 0 {
+            multipart_upload_and_sha256_chunksum(client, source_path, dest_uri, size).await
+        } else {
+            put_and_request_checksum(client, source_path, dest_uri, host_config).await
+        }
     }
 
     async fn host_config(&self, host: &Option<Host>) -> Res<HostConfig> {
@@ -664,8 +507,7 @@ mod tests {
         };
 
         // Parse the S3 URI
-        let s3_uri =
-            S3Uri::try_from("s3://data-yaml-spec-tests/test_quilt_rs/crc64.txt")?;
+        let s3_uri = S3Uri::try_from("s3://data-yaml-spec-tests/test_quilt_rs/crc64.txt")?;
 
         // Get the file size
         let size = file_content.len() as u64;

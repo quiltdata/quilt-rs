@@ -16,6 +16,7 @@ use crate::Res;
 
 pub mod client;
 mod host;
+mod object;
 mod s3;
 mod workflow;
 
