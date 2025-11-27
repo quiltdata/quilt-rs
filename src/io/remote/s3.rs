@@ -362,6 +362,8 @@ impl Remote for RemoteS3 {
         }
     }
 
+    // NOTE: For 0-byte Chunked uploads, the checksum is sha256(''), NOT sha256(sha256(''))
+    //       So we use the S3 checksum directly without hashing it again
     async fn upload_file(
         &self,
         host_config: &HostConfig,

@@ -19,10 +19,10 @@ impl TryFrom<PutObjectOutput> for Sha256ChunkedHash {
     type Error = crate::Error;
 
     fn try_from(output: PutObjectOutput) -> Result<Self, Self::Error> {
-        let s3_checksum_b64 = output
-            .checksum_sha256
-            .ok_or(Error::Checksum("missing checksum".to_string()))?;
-        Ok(Sha256ChunkedHash::try_from(s3_checksum_b64.as_str())?)
+        match output.checksum_sha256 {
+            Some(checksum_in_b64) => checksum_in_b64.as_str().try_into(),
+            None => Err(Error::ChecksumMissing(HostChecksums::Sha256Chunked)),
+        }
     }
 }
 
@@ -30,10 +30,10 @@ impl TryFrom<PutObjectOutput> for Crc64Hash {
     type Error = crate::Error;
 
     fn try_from(output: PutObjectOutput) -> Result<Self, Self::Error> {
-        let s3_checksum_b64 = output
-            .checksum_crc64_nvme
-            .ok_or(Error::Checksum("missing checksum".to_string()))?;
-        Ok(Crc64Hash::try_from(s3_checksum_b64.as_str())?)
+        match output.checksum_crc64_nvme {
+            Some(checksum_in_b64) => checksum_in_b64.as_str().try_into(),
+            None => Err(Error::ChecksumMissing(HostChecksums::Crc64)),
+        }
     }
 }
 
@@ -70,12 +70,9 @@ pub async fn put_and_request_checksum(
         version: response.version_id.clone(),
         ..dest_uri.clone()
     };
-    match host_config.checksums {
-        HostChecksums::Sha256Chunked => {
-            // For 0-byte uploads, the checksum is sha256(''), NOT sha256(sha256(''))
-            // So we use the S3 checksum directly without hashing it again
-            Ok((uri, Sha256ChunkedHash::try_from(response)?.into()))
-        }
-        HostChecksums::Crc64 => Ok((uri, Crc64Hash::try_from(response)?.into())),
-    }
+    let checksum = match host_config.checksums {
+        HostChecksums::Sha256Chunked => Sha256ChunkedHash::try_from(response)?.into(),
+        HostChecksums::Crc64 => Crc64Hash::try_from(response)?.into(),
+    };
+    Ok((uri, checksum))
 }
