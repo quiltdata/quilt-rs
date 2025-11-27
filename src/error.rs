@@ -5,6 +5,7 @@ use reqwest::header::ToStrError;
 use thiserror::Error;
 use url::Url;
 
+use crate::io::remote::HostChecksums;
 use crate::uri;
 use crate::uri::Host;
 
@@ -70,6 +71,9 @@ pub enum Error {
 
     #[error("Checksum error: {0}")]
     Checksum(String),
+
+    #[error("Missing checksum: {0:?}")]
+    ChecksumMissing(HostChecksums),
 
     #[error("Commit error: {0}")]
     Commit(String),

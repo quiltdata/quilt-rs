@@ -7,15 +7,16 @@ use std::path::Path;
 
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::Object;
-use multihash::Multihash;
 use tokio_stream::Stream;
 
+use crate::checksum::ObjectHash;
 use crate::uri::Host;
 use crate::uri::S3Uri;
 use crate::Res;
 
 pub mod client;
 mod host;
+mod object;
 mod s3;
 mod workflow;
 
@@ -71,11 +72,11 @@ pub trait Remote {
     /// Upload file and request checkum from S3
     fn upload_file(
         &self,
-        host: &Option<Host>,
+        host_config: &HostConfig,
         source_path: impl AsRef<Path>,
         dest_uri: &S3Uri,
         size: u64,
-    ) -> impl Future<Output = Res<(S3Uri, Multihash<256>)>>;
+    ) -> impl Future<Output = Res<(S3Uri, ObjectHash)>>;
 
     /// Fetch host configuration from the given host
     fn host_config(&self, host: &Option<Host>) -> impl Future<Output = Res<HostConfig>> + Send;

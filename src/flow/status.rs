@@ -415,6 +415,7 @@ mod tests {
         // Use CRC64 host configuration
         let host_config = HostConfig {
             checksums: HostChecksums::Crc64,
+            host: None,
         };
 
         let (_, status) =
