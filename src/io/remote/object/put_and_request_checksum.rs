@@ -15,25 +15,17 @@ use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
 
-impl TryFrom<PutObjectOutput> for Sha256ChunkedHash {
-    type Error = crate::Error;
-
-    fn try_from(output: PutObjectOutput) -> Result<Self, Self::Error> {
-        match output.checksum_sha256 {
-            Some(checksum_in_b64) => checksum_in_b64.as_str().try_into(),
-            None => Err(Error::ChecksumMissing(HostChecksums::Sha256Chunked)),
-        }
+fn extract_sha256_checksum(output: &PutObjectOutput) -> Res<Option<ObjectHash>> {
+    match &output.checksum_sha256 {
+        Some(checksum_in_b64) => Ok(Some(Sha256ChunkedHash::try_from(checksum_in_b64)?.into())),
+        None => Ok(None),
     }
 }
 
-impl TryFrom<PutObjectOutput> for Crc64Hash {
-    type Error = crate::Error;
-
-    fn try_from(output: PutObjectOutput) -> Result<Self, Self::Error> {
-        match output.checksum_crc64_nvme {
-            Some(checksum_in_b64) => checksum_in_b64.as_str().try_into(),
-            None => Err(Error::ChecksumMissing(HostChecksums::Crc64)),
-        }
+fn extract_crc64_checksum(output: &PutObjectOutput) -> Res<Option<ObjectHash>> {
+    match &output.checksum_crc64_nvme {
+        Some(checksum_in_b64) => Ok(Some(Crc64Hash::try_from(checksum_in_b64)?.into())),
+        None => Ok(None),
     }
 }
 
@@ -66,13 +58,17 @@ pub async fn put_and_request_checksum(
                 S3Error::UploadFile(DisplayErrorContext(err).to_string()),
             )
         })?;
+    let checksum = match host_config.checksums {
+        HostChecksums::Sha256Chunked => extract_sha256_checksum(&response)?,
+        HostChecksums::Crc64 => extract_crc64_checksum(&response)?,
+    };
     let uri = S3Uri {
-        version: response.version_id.clone(),
+        version: response.version_id,
         ..dest_uri.clone()
     };
-    let checksum = match host_config.checksums {
-        HostChecksums::Sha256Chunked => Sha256ChunkedHash::try_from(response)?.into(),
-        HostChecksums::Crc64 => Crc64Hash::try_from(response)?.into(),
-    };
-    Ok((uri, checksum))
+
+    match checksum {
+        Some(hash) => Ok((uri, hash)),
+        None => Err(Error::ChecksumMissing(host_config.checksums.clone())),
+    }
 }

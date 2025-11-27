@@ -81,8 +81,15 @@ impl TryFrom<&str> for Crc64Hash {
         // Add multibase prefix to plain base64 and decode with multibase
         let prefixed_value = format!("{}{}", multibase::Base::Base64Pad.code(), base64_str);
         let (_, hash_bytes) = multibase::decode(&prefixed_value)?;
-        let multihash = Multihash::wrap(MULTIHASH_CRC64_NVME, &hash_bytes)?;
-        Ok(Self(multihash))
+        Multihash::wrap(MULTIHASH_CRC64_NVME, &hash_bytes)?.try_into()
+    }
+}
+
+impl TryFrom<&String> for Crc64Hash {
+    type Error = Error;
+
+    fn try_from(base64_str: &String) -> Result<Self, Self::Error> {
+        base64_str.as_str().try_into()
     }
 }
 
