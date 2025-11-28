@@ -104,10 +104,12 @@ pub async fn fetch_host_config(client: &impl HttpClient, host: &Option<Host>) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use async_trait::async_trait;
     use reqwest::header::HeaderMap;
     use serde::de::DeserializeOwned;
     use std::collections::HashMap;
+    use test_log::test;
 
     // Mock HTTP client for testing
     struct MockHttpClient {
@@ -155,7 +157,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_fetch_host_config_crc64_enabled() -> Res<()> {
         let mut client = MockHttpClient::new();
         client.add_response(
@@ -169,7 +171,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_fetch_host_config_crc64_disabled() -> Res<()> {
         let mut client = MockHttpClient::new();
         client.add_response(
@@ -183,7 +185,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_fetch_host_config_crc64_missing() -> Res<()> {
         let mut client = MockHttpClient::new();
         client.add_response(
@@ -197,7 +199,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_fetch_host_config_other_fields_ignored() -> Res<()> {
         let mut client = MockHttpClient::new();
         client.add_response(
@@ -211,7 +213,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_fetch_host_config_network_error() {
         let mut client = MockHttpClient::new();
         client.add_response(
@@ -224,7 +226,7 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("Network error"));
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_fetch_host_config_invalid_json() {
         let mut client = MockHttpClient::new();
         client.add_response(
@@ -248,7 +250,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_fetch_host_config_none() -> Res<()> {
         let client = MockHttpClient::new();
         let config = fetch_host_config(&client, &None).await?;

@@ -135,6 +135,7 @@ impl<'de> Deserialize<'de> for Sha256Hash {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_log::test;
 
     use std::path::Path;
 
@@ -195,7 +196,7 @@ mod tests {
         assert!(serialized.contains(&format!("\"value\":\"{}\"", expected_hex)));
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_sha256_hash_from_file() -> crate::Res {
         let storage = MockStorage::default();
         let test_data = b"test file content";
@@ -244,7 +245,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_calculate_sha256_checksum() -> crate::Res {
         let storage = MockStorage::default();
         let bytes = crate::fixtures::objects::less_than_8mb();
@@ -270,7 +271,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_sha256_from_bytes() -> crate::Res {
         let storage = MockStorage::default();
         let bytes = crate::fixtures::objects::less_than_8mb();
@@ -287,7 +288,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_sha256_hash_conversions_from_file() -> crate::Res {
         let storage = MockStorage::default();
         let bytes = crate::fixtures::objects::less_than_8mb();
@@ -345,7 +346,7 @@ mod tests {
         // Let's just check that it doesn't panic
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_sha256_hash_from_empty_slice() -> crate::Res {
         let storage = MockStorage::default();
 

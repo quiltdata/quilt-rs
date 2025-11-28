@@ -28,11 +28,12 @@ pub async fn certify_latest(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_log::test;
 
     use crate::io::remote::mocks::MockRemote;
     use crate::uri::S3Uri;
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_certifying_latest() -> Res {
         let remote = MockRemote::default();
         remote

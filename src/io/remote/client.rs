@@ -87,11 +87,12 @@ impl HttpClient for ReqwestClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_log::test;
 
     use serde::Deserialize;
     use serde::Serialize;
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_get_config() -> Res {
         let client = ReqwestClient::new();
 

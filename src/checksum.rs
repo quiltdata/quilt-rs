@@ -142,6 +142,8 @@ impl fmt::Display for ObjectHash {
 mod tests {
     use super::*;
 
+    use test_log::test;
+
     use std::path::Path;
 
     use crate::io::storage::mocks::MockStorage;
@@ -366,7 +368,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_hash_trait_and_verify_functionality() -> Res {
         let storage = MockStorage::default();
         let test_data = b"test data for Hash trait and verify functionality";

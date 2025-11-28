@@ -390,6 +390,7 @@ impl Remote for RemoteS3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_log::test;
 
     use std::io::Write;
     use tempfile::NamedTempFile;
@@ -399,7 +400,7 @@ mod tests {
     use crate::io::storage::LocalStorage;
     use crate::paths::DomainPaths;
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_multipart_upload() -> Res<()> {
         // Create a temporary file with the test content
         let mut temp_file = NamedTempFile::new()?;
@@ -442,7 +443,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_zero_bytes_upload() -> Res<()> {
         // Create a temporary file with zero bytes
         let mut temp_file = NamedTempFile::new()?;
@@ -486,7 +487,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_crc64_upload() -> Res<()> {
         // Read the fixture file content
         let fixture_path = std::path::Path::new("fixtures/user-settings.mkfg");

@@ -115,12 +115,14 @@ impl LocalStorage {
 mod tests {
     use super::*;
 
+    use test_log::test;
+
     use tempfile::tempdir;
     use tokio::io::AsyncWriteExt;
 
     use crate::fixtures;
 
-    #[tokio::test]
+    #[test(tokio::test)]
     #[ignore] // It doesn't work in CI. In CI file has `now` date
     async fn test_getting_file_modified_ts() -> Res {
         let storage = LocalStorage::default();
@@ -134,7 +136,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_copy() -> Res {
         let temp_dir = tempdir()?;
         let dest = temp_dir.path().join("foo");
@@ -148,7 +150,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_dirs() -> Res {
         let temp_dir = tempdir()?;
         let dest = temp_dir.path().join("foo").join("bar");
@@ -164,7 +166,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_files() -> Res {
         let temp_dir = tempdir()?;
         let dest = temp_dir.path().join("foo");
@@ -179,7 +181,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_read_byte_stream() -> Res {
         let storage = LocalStorage::default();
         let stream = storage
@@ -194,7 +196,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_write_no_parent() -> Res {
         let storage = LocalStorage::default();
         let result = storage.write_file("", b"test").await;
@@ -206,7 +208,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     #[cfg(unix)]
     async fn test_write_permission_denied() -> Res {
         use std::os::unix::fs::PermissionsExt;

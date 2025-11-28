@@ -294,13 +294,15 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 mod tests {
     use super::*;
 
+    use test_log::test;
+
     use crate::io::remote::mocks::MockRemote;
     use crate::lineage::DomainLineageIo;
     use crate::lineage::Home;
     use crate::lineage::PackageLineageIo;
     use crate::paths::DomainPaths;
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_spamming_commit_writes() -> Res {
         let (home, _temp_dir1) = Home::from_temp_dir()?;
         let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;

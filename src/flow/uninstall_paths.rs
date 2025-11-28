@@ -51,6 +51,7 @@ pub async fn uninstall_paths(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_log::test;
 
     use std::collections::BTreeMap;
 
@@ -58,7 +59,7 @@ mod tests {
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::PathState;
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn uninstall_not_installed_path() -> Res {
         let storage = MockStorage::default();
         let lineage = PackageLineage::default();
@@ -72,7 +73,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn uninstall_single_path() -> Res {
         let logical_key_zero = PathBuf::from("0mb.bin");
         let logical_key_less_than_8mb = PathBuf::from("less-then-8mb.txt");
@@ -124,7 +125,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn uninstall_multiple_paths() -> Res {
         let logical_key_zero = PathBuf::from("0mb.bin");
         let logical_key_nested = PathBuf::from("one/two two/three three three/READ ME.md");

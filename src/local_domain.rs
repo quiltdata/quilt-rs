@@ -150,8 +150,9 @@ mod tests {
     use super::*;
 
     use tempfile::TempDir;
+    use test_log::test;
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_list_installed_packages() -> Res<()> {
         // Create a temporary directory for testing
         let temp_dir = TempDir::new()?;

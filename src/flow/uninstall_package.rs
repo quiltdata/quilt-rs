@@ -44,6 +44,7 @@ pub async fn uninstall_package(
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use test_log::test;
 
     use super::*;
 
@@ -51,7 +52,7 @@ mod tests {
     use crate::lineage::Home;
     use crate::lineage::PackageLineage;
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_panic_if_no_installed_package() {
         let lineage = DomainLineage::default();
         let storage = MockStorage::default();
@@ -64,7 +65,7 @@ mod tests {
         )
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_uninstall_package() -> Res {
         let (home, _temp_dir) = Home::from_temp_dir()?;
 

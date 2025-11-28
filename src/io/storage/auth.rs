@@ -115,6 +115,7 @@ impl<S: Storage> AuthIo<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_log::test;
 
     use chrono::Utc;
 
@@ -123,7 +124,7 @@ mod tests {
     /// 1. Read tokens when they don't exist yet → None
     /// 2. Write tokens → Ok
     /// 3. Read tokens are the same as written tokens
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_write_read_tokens() -> Res {
         let storage = MockStorage::default();
         let dir = storage.temp_dir.path().to_path_buf();
@@ -151,7 +152,7 @@ mod tests {
     }
 
     /// Tests reading and writing credentials, including expiration behavior
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_credentials() -> Res {
         // Test non-existent credentials
         let storage = MockStorage::default();

@@ -38,7 +38,9 @@ pub async fn model(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use std::str::FromStr;
+    use test_log::test;
 
     #[test]
     fn test_output_display() {

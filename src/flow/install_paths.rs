@@ -190,6 +190,7 @@ pub async fn install_paths(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_log::test;
 
     use std::path::PathBuf;
     use std::str::FromStr;
@@ -204,7 +205,7 @@ mod tests {
     // Verify installing the path that is already fetched to the `.quilt/objects`
     // Practically it is useful when we try to install identical files. Then we can re-use cache (because files are located by hash).
     // In other cases, it tests implementation details.
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_installing_one_cached_path() -> Res {
         let (home, _temp_dir1) = Home::from_temp_dir()?;
         let (domain_paths, _temp_dir2) = &DomainPaths::from_temp_dir()?;
@@ -261,7 +262,7 @@ mod tests {
 
     /// Verify installing a path that is not cached locally in `.quilt/objects`.
     /// The path should be downloaded from the remote storage, cached locally, and then installed into the working directory.
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_installing_one_uncached_path() -> Res {
         let (home, _temp_dir1) = Home::from_temp_dir()?;
         let (domain_paths, _temp_dir2) = &DomainPaths::from_temp_dir()?;
@@ -331,7 +332,7 @@ mod tests {
 
     // Nothing special, just a combination of two previous tests,
     // so we're sure that single file is not a special case.
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_installing_multiple_paths() -> Res {
         let (home, _temp_dir1) = Home::from_temp_dir()?;
         let (domain_paths, _temp_dir2) = &DomainPaths::from_temp_dir()?;
@@ -423,7 +424,7 @@ mod tests {
 
     // Verify that the installation fails when we try to install a path that doesn't exist in the
     // manifest.
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_installing_path_that_doesnt_exists_in_manifest() -> Res {
         let lineage = PackageLineage::default();
         let remote = MockRemote::default();
@@ -456,7 +457,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_installing_more_than_1024_paths() -> Res {
         let (home, _temp_dir1) = Home::from_temp_dir()?;
         let (domain_paths, _temp_dir2) = &DomainPaths::from_temp_dir()?;

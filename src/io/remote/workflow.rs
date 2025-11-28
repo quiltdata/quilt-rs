@@ -143,8 +143,9 @@ pub async fn resolve_workflow<R: Remote>(
 mod tests {
     use super::*;
     use crate::io::remote::mocks::MockRemote;
+    use test_log::test;
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_missing_schemas_section() -> Res<()> {
         let remote = MockRemote::default();
         let host = None;
@@ -171,7 +172,7 @@ workflows:
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_no_config_yaml() -> Res<()> {
         let remote = MockRemote::default();
         let host = None;
@@ -191,7 +192,7 @@ workflows:
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_with_config_yaml() -> Res<()> {
         let remote = MockRemote::default();
         let host = None;
