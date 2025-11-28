@@ -180,6 +180,9 @@ mod tests {
     use super::*;
     use test_log::test;
 
+    use base64::prelude::BASE64_STANDARD;
+    use base64::Engine;
+
     #[test]
     fn test_sha256_chunked_hash_algorithm() {
         let sha256_chunked_hash =
@@ -296,9 +299,6 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_files_less_8mb() -> crate::Res {
-        use base64::prelude::BASE64_STANDARD;
-        use base64::Engine;
-
         let bytes = crate::fixtures::objects::less_than_8mb();
         let hash = Sha256ChunkedHash::from_async_read(bytes, bytes.len() as u64).await?;
         assert_eq!(hash.multihash().code(), MULTIHASH_SHA256_CHUNKED);
@@ -311,9 +311,6 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_files_equal_to_8mb() -> crate::Res {
-        use base64::prelude::BASE64_STANDARD;
-        use base64::Engine;
-
         let bytes = crate::fixtures::objects::equal_to_8mb();
         let hash = Sha256ChunkedHash::from_async_read(bytes.as_ref(), bytes.len() as u64).await?;
         assert_eq!(
@@ -325,9 +322,6 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_sha256_chunked_empty() -> crate::Res {
-        use base64::prelude::BASE64_STANDARD;
-        use base64::Engine;
-
         let bytes = crate::fixtures::objects::zero_bytes();
         let hash = Sha256ChunkedHash::from_async_read(bytes, bytes.len() as u64).await?;
         assert_eq!(
@@ -339,9 +333,6 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_files_bigger_than_8mb() -> crate::Res {
-        use base64::prelude::BASE64_STANDARD;
-        use base64::Engine;
-
         let bytes = crate::fixtures::objects::more_than_8mb();
         let hash = Sha256ChunkedHash::from_async_read(bytes.as_ref(), bytes.len() as u64).await?;
         assert_eq!(
@@ -353,9 +344,6 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_sha256_chunked_from_bytes() -> crate::Res {
-        use base64::prelude::BASE64_STANDARD;
-        use base64::Engine;
-
         let bytes = crate::fixtures::objects::less_than_8mb();
         let hash = Sha256ChunkedHash::from_async_read(bytes, bytes.len() as u64).await?;
 
