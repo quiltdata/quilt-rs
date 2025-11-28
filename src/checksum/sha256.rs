@@ -2,13 +2,19 @@
 
 use aws_smithy_checksums::ChecksumAlgorithm;
 use multihash::Multihash;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::Deserialize;
+use serde::Deserializer;
+use serde::Serialize;
+use serde::Serializer;
 use std::fmt;
 use tokio::fs::File;
-use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
+use tokio::io::AsyncRead;
+use tokio::io::AsyncReadExt;
+use tokio::io::BufReader;
 
 use crate::checksum::hash::Hash;
-use crate::{Error, Res};
+use crate::Error;
+use crate::Res;
 
 /// Multihash code for legacy or single-chunked checksums
 pub const MULTIHASH_SHA256: u64 = 0x12;

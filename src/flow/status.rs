@@ -4,13 +4,17 @@ use std::path::Path;
 use std::path::PathBuf;
 use tokio::fs::File;
 
-use tracing::{debug, info, warn};
+use tracing::debug;
+use tracing::info;
+use tracing::warn;
 
 use crate::checksum::verify_hash;
 use crate::checksum::Crc64Hash;
 use crate::checksum::Sha256ChunkedHash;
 use crate::io::manifest::resolve_latest;
-use crate::io::remote::{HostChecksums, HostConfig, Remote};
+use crate::io::remote::HostChecksums;
+use crate::io::remote::HostConfig;
+use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::Change;
 use crate::lineage::ChangeSet;

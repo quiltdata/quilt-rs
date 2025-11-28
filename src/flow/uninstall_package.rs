@@ -1,4 +1,5 @@
-use tracing::{debug, info};
+use tracing::debug;
+use tracing::info;
 
 use crate::io::storage::Storage;
 use crate::lineage::DomainLineage;

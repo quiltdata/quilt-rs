@@ -20,7 +20,10 @@ use crate::error::S3Error;
 use crate::io::remote::host::fetch_host_config;
 use crate::io::remote::object::multipart_upload_and_sha256_chunksum;
 use crate::io::remote::object::put_and_request_checksum;
-use crate::io::remote::{HostChecksums, HostConfig, HttpClient, Remote};
+use crate::io::remote::HostChecksums;
+use crate::io::remote::HostConfig;
+use crate::io::remote::HttpClient;
+use crate::io::remote::Remote;
 use crate::io::storage::auth::AuthIo;
 use crate::io::storage::LocalStorage;
 use crate::paths::DomainPaths;
@@ -395,8 +398,10 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
 
-    use crate::fixtures::objects::{less_than_8mb, zero_bytes};
-    use crate::fixtures::objects::{LESS_THAN_8MB_HASH_B64, ZERO_HASH_B64};
+    use crate::fixtures::objects::less_than_8mb;
+    use crate::fixtures::objects::zero_bytes;
+    use crate::fixtures::objects::LESS_THAN_8MB_HASH_B64;
+    use crate::fixtures::objects::ZERO_HASH_B64;
     use crate::io::storage::LocalStorage;
     use crate::paths::DomainPaths;
 

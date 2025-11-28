@@ -2,14 +2,19 @@
 
 use aws_smithy_checksums::ChecksumAlgorithm;
 use multihash::Multihash;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::Deserialize;
+use serde::Deserializer;
+use serde::Serialize;
+use serde::Serializer;
 use std::fmt;
 use tokio::fs::File;
-use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::io::AsyncRead;
+use tokio::io::AsyncReadExt;
 
 use crate::checksum::hash::Hash;
 use crate::checksum::Sha256Hash;
-use crate::{Error, Res};
+use crate::Error;
+use crate::Res;
 
 /// Multihash code for chunksums
 pub const MULTIHASH_SHA256_CHUNKED: u64 = 0xb510;
@@ -291,7 +296,8 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_files_less_8mb() -> crate::Res {
-        use base64::{prelude::BASE64_STANDARD, Engine};
+        use base64::prelude::BASE64_STANDARD;
+        use base64::Engine;
 
         let bytes = crate::fixtures::objects::less_than_8mb();
         let hash = Sha256ChunkedHash::from_async_read(bytes, bytes.len() as u64).await?;
@@ -305,7 +311,8 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_files_equal_to_8mb() -> crate::Res {
-        use base64::{prelude::BASE64_STANDARD, Engine};
+        use base64::prelude::BASE64_STANDARD;
+        use base64::Engine;
 
         let bytes = crate::fixtures::objects::equal_to_8mb();
         let hash = Sha256ChunkedHash::from_async_read(bytes.as_ref(), bytes.len() as u64).await?;
@@ -318,7 +325,8 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_sha256_chunked_empty() -> crate::Res {
-        use base64::{prelude::BASE64_STANDARD, Engine};
+        use base64::prelude::BASE64_STANDARD;
+        use base64::Engine;
 
         let bytes = crate::fixtures::objects::zero_bytes();
         let hash = Sha256ChunkedHash::from_async_read(bytes, bytes.len() as u64).await?;
@@ -331,7 +339,8 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_files_bigger_than_8mb() -> crate::Res {
-        use base64::{prelude::BASE64_STANDARD, Engine};
+        use base64::prelude::BASE64_STANDARD;
+        use base64::Engine;
 
         let bytes = crate::fixtures::objects::more_than_8mb();
         let hash = Sha256ChunkedHash::from_async_read(bytes.as_ref(), bytes.len() as u64).await?;
@@ -344,7 +353,8 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_sha256_chunked_from_bytes() -> crate::Res {
-        use base64::{prelude::BASE64_STANDARD, Engine};
+        use base64::prelude::BASE64_STANDARD;
+        use base64::Engine;
 
         let bytes = crate::fixtures::objects::less_than_8mb();
         let hash = Sha256ChunkedHash::from_async_read(bytes, bytes.len() as u64).await?;

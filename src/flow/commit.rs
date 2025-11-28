@@ -6,7 +6,8 @@ use std::path::PathBuf;
 use serde_json::json;
 use tokio_stream::StreamExt;
 use tracing::warn;
-use tracing::{debug, info};
+use tracing::debug;
+use tracing::info;
 use url::Url;
 
 use crate::io::manifest::build_manifest_from_rows_stream;
