@@ -205,8 +205,8 @@ pub async fn create_status(
 
 #[cfg(test)]
 mod tests {
-    use test_log::test;
     use super::*;
+    use test_log::test;
 
     use std::collections::BTreeMap;
 

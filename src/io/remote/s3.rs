@@ -389,8 +389,8 @@ impl Remote for RemoteS3 {
 
 #[cfg(test)]
 mod tests {
-    use test_log::test;
     use super::*;
+    use test_log::test;
 
     use std::io::Write;
     use tempfile::NamedTempFile;

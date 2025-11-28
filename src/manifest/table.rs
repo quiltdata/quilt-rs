@@ -302,9 +302,9 @@ impl Default for Table {
 mod tests {
     use super::*;
 
-    use test_log::test;
     use multihash::Multihash;
     use serde_json::json;
+    use test_log::test;
 
     use crate::checksum::Sha256ChunkedHash;
     use crate::checksum::MULTIHASH_SHA256;

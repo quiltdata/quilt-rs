@@ -105,11 +105,11 @@ pub async fn fetch_host_config(client: &impl HttpClient, host: &Option<Host>) ->
 mod tests {
     use super::*;
 
-    use test_log::test;
     use async_trait::async_trait;
     use reqwest::header::HeaderMap;
     use serde::de::DeserializeOwned;
     use std::collections::HashMap;
+    use test_log::test;
 
     // Mock HTTP client for testing
     struct MockHttpClient {

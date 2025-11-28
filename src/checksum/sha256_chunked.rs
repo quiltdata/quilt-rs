@@ -172,8 +172,8 @@ impl<'de> Deserialize<'de> for Sha256ChunkedHash {
 
 #[cfg(test)]
 mod tests {
-    use test_log::test;
     use super::*;
+    use test_log::test;
 
     #[test]
     fn test_sha256_chunked_hash_algorithm() {

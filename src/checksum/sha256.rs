@@ -134,8 +134,8 @@ impl<'de> Deserialize<'de> for Sha256Hash {
 
 #[cfg(test)]
 mod tests {
-    use test_log::test;
     use super::*;
+    use test_log::test;
 
     use std::path::Path;
 

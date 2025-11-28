@@ -189,8 +189,8 @@ pub async fn install_paths(
 
 #[cfg(test)]
 mod tests {
-    use test_log::test;
     use super::*;
+    use test_log::test;
 
     use std::path::PathBuf;
     use std::str::FromStr;

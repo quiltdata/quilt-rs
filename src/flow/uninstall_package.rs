@@ -43,8 +43,8 @@ pub async fn uninstall_package(
 
 #[cfg(test)]
 mod tests {
-    use test_log::test;
     use std::collections::BTreeMap;
+    use test_log::test;
 
     use super::*;
 

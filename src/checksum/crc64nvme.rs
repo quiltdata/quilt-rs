@@ -146,8 +146,8 @@ impl<'de> Deserialize<'de> for Crc64Hash {
 
 #[cfg(test)]
 mod tests {
-    use test_log::test;
     use super::*;
+    use test_log::test;
 
     use std::path::Path;
 

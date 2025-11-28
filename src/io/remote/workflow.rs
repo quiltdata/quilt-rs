@@ -142,8 +142,8 @@ pub async fn resolve_workflow<R: Remote>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use test_log::test;
     use crate::io::remote::mocks::MockRemote;
+    use test_log::test;
 
     #[test(tokio::test)]
     async fn test_missing_schemas_section() -> Res<()> {

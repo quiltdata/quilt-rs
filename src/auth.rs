@@ -281,9 +281,9 @@ impl<S: Storage + Clone> Auth<S> {
 mod tests {
     use super::*;
 
-    use test_log::test;
     use async_trait::async_trait;
     use reqwest::header::HeaderMap;
+    use test_log::test;
 
     const ACCESS_TOKEN: &str = "test-access-token";
     const REFRESH_TOKEN: &str = "test-refresh-token";
