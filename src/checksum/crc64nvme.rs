@@ -146,6 +146,7 @@ impl<'de> Deserialize<'de> for Crc64Hash {
 
 #[cfg(test)]
 mod tests {
+    use test_log::test;
     use super::*;
 
     use std::path::Path;
@@ -240,7 +241,7 @@ mod tests {
         assert_eq!(crc64.to_string(), expected_base64);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_crc64_hash_from_file() -> crate::Res {
         let storage = MockStorage::default();
         let test_data = crate::fixtures::objects::less_than_8mb();
@@ -273,7 +274,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_crc64_nvme_algorithm() -> crate::Res {
         let storage = MockStorage::default();
 
@@ -305,7 +306,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_crc64_hash_user_settings_fixture() -> crate::Res {
         let storage = MockStorage::default();
 

@@ -292,6 +292,7 @@ pub async fn commit_package(
 
 #[cfg(test)]
 mod tests {
+    use test_log::test;
     use super::*;
 
     use std::collections::BTreeMap;
@@ -302,7 +303,7 @@ mod tests {
 
     // NOTE: Tests use "/" path for working directory, because it then parsed with Url and have to be absolute path
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_commit_empty() -> Res {
         let storage = MockStorage::default();
         let lineage = PackageLineage::default();
@@ -330,7 +331,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_commit_meta() -> Res {
         let storage = MockStorage::default();
 
@@ -366,7 +367,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_removing_and_commit() -> Res {
         let storage = MockStorage::default();
 
@@ -433,7 +434,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_adding_and_commit() -> Res {
         let added_file = Row {
             name: PathBuf::from("foo"),
@@ -503,7 +504,7 @@ mod tests {
     // and I doubt it ever could be reproducible at all
     // TODO: anyway it makes sense to add some sanity checks
     //       even for imposible states
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_adding_manifest_already_has_it() -> Res {
         let added_file = Row {
             name: PathBuf::from("one/two two/three three three/READ ME.md"),
@@ -571,7 +572,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_modifying_and_commit() -> Res {
         let storage = MockStorage::default();
         storage

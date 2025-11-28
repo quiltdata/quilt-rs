@@ -123,6 +123,7 @@ pub async fn pull_package(
 
 #[cfg(test)]
 mod tests {
+    use test_log::test;
     use super::*;
 
     use std::collections::BTreeMap;
@@ -133,7 +134,7 @@ mod tests {
     use crate::lineage::CommitState;
     use crate::manifest::Row;
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_no_pull_if_changes() -> Res {
         let storage = MockStorage::default();
         let lineage = PackageLineage::default();
@@ -162,7 +163,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_no_pull_if_commit() {
         let storage = MockStorage::default();
         let remote = MockRemote::default();
@@ -188,7 +189,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_no_pull_if_diverged() {
         let storage = MockStorage::default();
         let remote = MockRemote::default();
@@ -217,7 +218,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_no_pull_if_up_to_date() {
         let storage = MockStorage::default();
         let remote = MockRemote::default();

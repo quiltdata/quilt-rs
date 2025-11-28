@@ -311,6 +311,7 @@ impl From<quilt_rs::Error> for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_log::test;
 
     use crate::cli::model::create_model_in_temp_dir;
     use crate::cli::model::install_package_into_temp_dir;
@@ -349,7 +350,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_install() -> Result<(), Error> {
         use crate::cli::fixtures::packages::workflow_null as pkg;
 
@@ -385,7 +386,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_commit_valid() -> Result<(), Error> {
         use crate::cli::fixtures::packages::workflow_null as pkg;
 
@@ -415,7 +416,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_commit_invalid() -> Result<(), Error> {
         use crate::cli::fixtures::packages::workflow_null as pkg;
 
@@ -442,7 +443,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_pull_valid() -> Result<(), Error> {
         use crate::cli::fixtures::packages::outdated as pkg;
 
@@ -469,7 +470,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_pull_invalid() -> Result<(), Error> {
         // Create temporary directory for domain
         let (_, temp_dir) = create_model_in_temp_dir().await?;
@@ -492,7 +493,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_uninstall_valid() -> Result<(), Error> {
         use crate::cli::fixtures::packages::default as pkg;
 
@@ -519,7 +520,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_uninstall_invalid() -> Result<(), Error> {
         // Create temporary directory for domain
         let (_, temp_dir) = create_model_in_temp_dir().await?;
@@ -542,7 +543,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_list_invalid() -> Result<(), Error> {
         use std::fs::Permissions;
         use std::os::unix::fs::PermissionsExt;
@@ -568,7 +569,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_list_valid() -> Result<(), Error> {
         // Create temporary directory for domain
         let (_, temp_dir) = create_model_in_temp_dir().await?;
@@ -589,7 +590,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_install_invalid() -> Result<(), Error> {
         use crate::cli::fixtures::packages::invalid as pkg;
 
@@ -624,7 +625,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_browse_valid() -> Result<(), Error> {
         use crate::cli::fixtures::get_browse_output;
         use crate::cli::fixtures::packages::default as pkg;
@@ -649,7 +650,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_browse_invalid() -> Result<(), Error> {
         use crate::cli::fixtures::packages::invalid as pkg;
 

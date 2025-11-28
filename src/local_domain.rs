@@ -149,9 +149,10 @@ impl LocalDomain {
 mod tests {
     use super::*;
 
+    use test_log::test;
     use tempfile::TempDir;
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_list_installed_packages() -> Res<()> {
         // Create a temporary directory for testing
         let temp_dir = TempDir::new()?;

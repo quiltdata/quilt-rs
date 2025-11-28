@@ -183,6 +183,8 @@ async fn scaffold_paths(storage: &impl Storage, paths: Vec<PathBuf>) -> Res {
 mod tests {
     use super::*;
 
+    use test_log::test;
+
     #[test]
     fn test_required_paths() {
         let paths = DomainPaths::new(PathBuf::from("foo/bar"));

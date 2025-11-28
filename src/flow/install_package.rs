@@ -71,6 +71,7 @@ pub async fn install_package(
 
 #[cfg(test)]
 mod tests {
+    use test_log::test;
     use super::*;
 
     use std::collections::BTreeMap;
@@ -86,7 +87,7 @@ mod tests {
 
     /// Verify that attempting to install a package that is already installed results in an error.
     /// A package is considered installed if it is present in the lineage.
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_if_already_installed() -> Res {
         let (home, _temp_dir) = Home::from_temp_dir()?;
         let namespace = ("foo", "bar");
@@ -115,7 +116,7 @@ mod tests {
     /// Verify that a manifest is fetched from the remote storage and installed locally.
     /// This test focuses on the manifest itself, not on the package files.
     /// Package files are installed separately using `install_paths`.
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_installing() -> Res {
         let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
 
@@ -188,7 +189,7 @@ mod tests {
 
     // Verify it throws correct error when no permissions
     // Permissions denied, because we try to create a file in the OS root directory
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_installing_when_no_permissions() -> Res {
         let manifest_uri = ManifestUri {
             bucket: "a".to_string(),

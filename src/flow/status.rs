@@ -205,6 +205,7 @@ pub async fn create_status(
 
 #[cfg(test)]
 mod tests {
+    use test_log::test;
     use super::*;
 
     use std::collections::BTreeMap;
@@ -215,7 +216,7 @@ mod tests {
     use crate::lineage::PathState;
     use crate::lineage::UpstreamState;
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_default_status() -> Res {
         let storage = MockStorage::default();
         let (_lineage, status) = create_status(
@@ -231,7 +232,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_behind() -> Res {
         let lineage = PackageLineage {
             commit: Some(CommitState {
@@ -255,7 +256,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_ahead() -> Res {
         let lineage = PackageLineage {
             commit: Some(CommitState {
@@ -279,7 +280,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_diverged() -> Res {
         let lineage = PackageLineage {
             commit: Some(CommitState {
@@ -303,7 +304,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_removed_files() -> Res {
         let manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
         let logical_key = PathBuf::from("less-then-8mb.txt");
@@ -357,7 +358,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_added_files() -> Res {
         let lineage = PackageLineage::default();
         let manifest = Table::default();
@@ -397,7 +398,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_added_files_crc64() -> Res {
         let lineage = PackageLineage::default();
         let manifest = Table::default();

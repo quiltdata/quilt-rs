@@ -236,6 +236,8 @@ impl PackageLineageIo {
 mod tests {
     use super::*;
 
+    use test_log::test;
+
     use base64::prelude::BASE64_STANDARD;
     use base64::Engine;
 
@@ -324,7 +326,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_domain_lineage_from_file() -> Res {
         let storage = MockStorage::default();
         let file_path = PathBuf::from("foo");
@@ -339,7 +341,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_domain_lineage_from_nothing() -> Res {
         let storage = MockStorage::default();
         let lineage = DomainLineageIo::new(PathBuf::from("does-not-exist"))
@@ -350,7 +352,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_domain_lineage_write() -> Res {
         let storage = MockStorage::default();
         let file_path = PathBuf::from("foo");
@@ -416,7 +418,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_read_package_lineage() -> Res {
         let storage = MockStorage::default();
         let file_path = PathBuf::from("lineage.json");
@@ -467,7 +469,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_write_package_lineage() -> Res {
         let storage = MockStorage::default();
         let file_path = PathBuf::from("lineage.json");
@@ -541,7 +543,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_domain_lineage_create_package_lineage() -> Res {
         let namespace = ("foo", "bar");
         let domain_lineage = DomainLineageIo::default();

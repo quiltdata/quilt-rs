@@ -299,13 +299,15 @@ pub async fn build_manifest_from_rows_stream(
 mod tests {
     use super::*;
 
+    use test_log::test;
+
     use tokio_stream;
 
     use crate::fixtures::manifest_empty;
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_resolve_existing_hash() -> Res {
         let uri = S3PackageUri::try_from("quilt+s3://b#package=foo/bar@hjknlmn")?;
         let remote = MockRemote::default();
@@ -314,7 +316,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_resolve_remote_hash() -> Res {
         let uri = S3PackageUri::try_from("quilt+s3://b#package=foo/bar")?;
         let remote = MockRemote::default();
@@ -330,7 +332,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_empty_manifest_header_empty() -> Res {
         let storage = MockStorage::default();
         let dest_dir = storage.temp_dir.path();
@@ -349,7 +351,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_empty_manifest_header_empty_none() -> Res {
         let storage = MockStorage::default();
         let dest_dir = storage.temp_dir.path();
@@ -368,7 +370,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_empty_manifest_header_empty_null() -> Res {
         let storage = MockStorage::default();
         let dest_dir = storage.temp_dir.path();
@@ -387,7 +389,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_empty_manifest_header_null_empty() -> Res {
         let storage = MockStorage::default();
         let dest_dir = storage.temp_dir.path();
@@ -406,7 +408,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_empty_manifest_header_null_none() -> Res {
         let storage = MockStorage::default();
         let dest_dir = storage.temp_dir.path();
@@ -422,7 +424,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_empty_manifest_header_null_null() -> Res {
         let storage = MockStorage::default();
         let dest_dir = storage.temp_dir.path();

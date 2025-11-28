@@ -176,6 +176,8 @@ pub async fn push_package(
 mod tests {
     use super::*;
 
+    use test_log::test;
+
     use std::path::PathBuf;
 
     use crate::fixtures;
@@ -187,7 +189,7 @@ mod tests {
     use crate::uri::ManifestUri;
     use crate::uri::S3Uri;
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_no_push_if_no_commit() -> Res {
         let storage = MockStorage::default();
         let remote = MockRemote::default();
@@ -205,7 +207,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_no_entries_push() -> Res {
         let manifest_uri = ManifestUri {
             bucket: "b".to_string(),
@@ -276,7 +278,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_single_chunk_push() -> Res {
         let manifest_uri = ManifestUri {
             bucket: "b".to_string(),
@@ -363,7 +365,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     #[ignore]
     async fn test_multichunk_push() -> Res {
         // TODO

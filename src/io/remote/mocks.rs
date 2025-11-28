@@ -120,9 +120,10 @@ impl Remote for MockRemote {
 
 #[cfg(test)]
 mod tests {
+    use test_log::test;
     use super::*;
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_get_object_stream() -> Res {
         let remote = MockRemote::default();
         remote

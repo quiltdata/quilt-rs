@@ -38,6 +38,8 @@ pub async fn model(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use test_log::test;
     use std::str::FromStr;
 
     #[test]

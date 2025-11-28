@@ -302,6 +302,7 @@ impl Default for Table {
 mod tests {
     use super::*;
 
+    use test_log::test;
     use multihash::Multihash;
     use serde_json::json;
 
@@ -311,7 +312,7 @@ mod tests {
     use crate::io::storage::mocks::MockStorage;
     use crate::manifest::Row;
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn read_existing_local() -> Res {
         let storage = MockStorage::default();
         storage
@@ -415,7 +416,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_table_record_operations() -> Res {
         let mut table = Table::default();
         let path = PathBuf::from("foo/bar");
@@ -452,7 +453,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_top_hash() -> Res {
         let manifest = Table::new(
             Header {

@@ -280,6 +280,8 @@ impl<S: Storage + Clone> Auth<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use test_log::test;
     use async_trait::async_trait;
     use reqwest::header::HeaderMap;
 
@@ -350,7 +352,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_get_registry_url() {
         let client = TestHttpClient;
         let result = get_registry_url(&client, &get_host()).await.unwrap();
@@ -360,7 +362,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_get_auth_tokens() {
         let client = TestHttpClient;
         let tokens = get_auth_tokens(&client, &get_host(), REFRESH_TOKEN)
@@ -374,7 +376,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_refresh_credentials() {
         let client = TestHttpClient;
         let credentials = refresh_credentials(&client, &get_host(), ACCESS_TOKEN)
@@ -389,7 +391,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_auth_refresh_credentials() -> Res {
         use crate::io::storage::mocks::MockStorage;
         use crate::paths::DomainPaths;

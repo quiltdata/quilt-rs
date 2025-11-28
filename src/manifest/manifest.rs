@@ -353,6 +353,7 @@ impl Manifest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_log::test;
 
     use multihash::Multihash;
     use std::collections::BTreeMap;
@@ -407,7 +408,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_manifest_from_reader_invalid() -> Res {
         let storage = MockStorage::default();
         let invalid_content = r#"{"invalid": "json"}"#;
@@ -426,7 +427,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_manifest_from_reader_empty() -> Res {
         let storage = MockStorage::default();
         let path = PathBuf::from("empty_manifest.jsonl");
@@ -442,7 +443,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_manifest_from_reader_invalid_utf8() -> Res {
         let storage = MockStorage::default();
         let invalid_content = b"\xFF\xFF\xFF\xFF"; // Invalid UTF-8 bytes
@@ -459,7 +460,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_manifest_from_reader_unsupported_version() -> Res {
         let storage = MockStorage::default();
         let invalid_content = r#"{"version": "v1"}"#;
@@ -478,7 +479,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_manifest_from_reader_invalid_row() -> Res {
         let storage = MockStorage::default();
         let invalid_content = r#"{"version": "v0"}
@@ -498,7 +499,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_manifest_from_reader_empty_physical_keys() -> Res {
         let storage = MockStorage::default();
         let invalid_content = r#"{"version": "v0"}
@@ -518,7 +519,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_manifest_from_reader_valid() -> Res {
         let storage = LocalStorage::default();
         let file = storage.open_file(fixtures::manifest::jsonl()?).await?;
@@ -546,7 +547,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_manifest_from_table_with_metadata() -> Res {
         let hash = Multihash::<256>::wrap(checksum::MULTIHASH_SHA256, b"test")?;
         let mut table = Table::default();

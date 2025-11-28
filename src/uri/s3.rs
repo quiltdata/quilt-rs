@@ -136,6 +136,8 @@ impl std::str::FromStr for S3Uri {
 mod tests {
     use super::*;
 
+    use test_log::test;
+
     use crate::Res;
 
     #[test]

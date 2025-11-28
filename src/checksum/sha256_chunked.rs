@@ -172,6 +172,7 @@ impl<'de> Deserialize<'de> for Sha256ChunkedHash {
 
 #[cfg(test)]
 mod tests {
+    use test_log::test;
     use super::*;
 
     #[test]
@@ -288,7 +289,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_files_less_8mb() -> crate::Res {
         use base64::{prelude::BASE64_STANDARD, Engine};
 
@@ -302,7 +303,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_files_equal_to_8mb() -> crate::Res {
         use base64::{prelude::BASE64_STANDARD, Engine};
 
@@ -315,7 +316,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_sha256_chunked_empty() -> crate::Res {
         use base64::{prelude::BASE64_STANDARD, Engine};
 
@@ -328,7 +329,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_files_bigger_than_8mb() -> crate::Res {
         use base64::{prelude::BASE64_STANDARD, Engine};
 
@@ -341,7 +342,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_sha256_chunked_from_bytes() -> crate::Res {
         use base64::{prelude::BASE64_STANDARD, Engine};
 
@@ -356,7 +357,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_sha256_chunked_hash_conversions_from_file() -> crate::Res {
         let bytes = crate::fixtures::objects::less_than_8mb();
 
