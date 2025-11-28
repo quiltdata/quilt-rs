@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## [0.23.0](https://crates.io/crates/quilt-rs/0.23.0) - 2025-11-28
+
+- Support for creating packages with "CRC64/NVMe" object hash
+- Provide `HostConfig` as parameter to CLI model and improve test coverage
+- Update dependencies including "aws-sdk-rust" monorepo and "arrow/parquet"
+
 ## [0.22.0](https://crates.io/crates/quilt-rs/0.22.0) - 2025-11-13
 
 - Support reading manifests with CRC64/NVMe hash/checksum types
