@@ -63,9 +63,6 @@ pub enum Error {
     #[error("Authentication failed for {0}: {1}")]
     Auth(Host, AuthError),
 
-    #[error("Base64 error: {0}")]
-    Base64(#[from] base64::DecodeError),
-
     #[error("ByteStreamError: {0}")]
     ByteStreamError(#[from] byte_stream::error::Error),
 
