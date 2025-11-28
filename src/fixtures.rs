@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
 use crate::checksum::MULTIHASH_SHA256_CHUNKED;
-use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
+use aws_smithy_types::base64;
 use multihash::Multihash;
 
+use crate::Error;
 use crate::Res;
 
 fn local_uri(key: &str) -> Res<PathBuf> {
@@ -144,7 +144,7 @@ pub mod manifest_empty {
 pub fn create_multihash(b64_str: &str) -> Res<Multihash<256>> {
     Ok(Multihash::wrap(
         MULTIHASH_SHA256_CHUNKED,
-        &BASE64_STANDARD.decode(b64_str)?,
+        &base64::decode(b64_str).map_err(|e| Error::Checksum(e.to_string()))?,
     )?)
 }
 

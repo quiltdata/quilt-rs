@@ -180,8 +180,7 @@ mod tests {
     use super::*;
     use test_log::test;
 
-    use base64::prelude::BASE64_STANDARD;
-    use base64::Engine;
+    use aws_smithy_types::base64;
 
     #[test]
     fn test_sha256_chunked_hash_algorithm() {
@@ -303,7 +302,7 @@ mod tests {
         let hash = Sha256ChunkedHash::from_async_read(bytes, bytes.len() as u64).await?;
         assert_eq!(hash.multihash().code(), MULTIHASH_SHA256_CHUNKED);
         assert_eq!(
-            BASE64_STANDARD.encode(hash.digest()),
+            base64::encode(hash.digest()),
             crate::fixtures::objects::LESS_THAN_8MB_HASH_B64
         );
         Ok(())
@@ -314,7 +313,7 @@ mod tests {
         let bytes = crate::fixtures::objects::equal_to_8mb();
         let hash = Sha256ChunkedHash::from_async_read(bytes.as_ref(), bytes.len() as u64).await?;
         assert_eq!(
-            BASE64_STANDARD.encode(hash.digest()),
+            base64::encode(hash.digest()),
             crate::fixtures::objects::EQUAL_TO_8MB_HASH_B64
         );
         Ok(())
@@ -325,7 +324,7 @@ mod tests {
         let bytes = crate::fixtures::objects::zero_bytes();
         let hash = Sha256ChunkedHash::from_async_read(bytes, bytes.len() as u64).await?;
         assert_eq!(
-            BASE64_STANDARD.encode(hash.digest()),
+            base64::encode(hash.digest()),
             crate::fixtures::objects::ZERO_HASH_B64
         );
         Ok(())
@@ -336,7 +335,7 @@ mod tests {
         let bytes = crate::fixtures::objects::more_than_8mb();
         let hash = Sha256ChunkedHash::from_async_read(bytes.as_ref(), bytes.len() as u64).await?;
         assert_eq!(
-            BASE64_STANDARD.encode(hash.digest()),
+            base64::encode(hash.digest()),
             crate::fixtures::objects::MORE_THAN_8MB_HASH_B64
         );
         Ok(())
@@ -349,7 +348,7 @@ mod tests {
 
         assert_eq!(hash.algorithm(), MULTIHASH_SHA256_CHUNKED);
         assert_eq!(
-            BASE64_STANDARD.encode(hash.digest()),
+            base64::encode(hash.digest()),
             crate::fixtures::objects::LESS_THAN_8MB_HASH_B64
         );
         Ok(())
