@@ -4,7 +4,8 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use tokio_stream::StreamExt;
-use tracing::{debug, info};
+use tracing::debug;
+use tracing::info;
 use url::Url;
 
 use crate::io::manifest::build_manifest_from_rows_stream;

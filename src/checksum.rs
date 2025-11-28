@@ -15,13 +15,15 @@ mod remote;
 mod sha256;
 mod sha256_chunked;
 
-pub use crc64nvme::{Crc64Hash, MULTIHASH_CRC64_NVME};
+pub use crc64nvme::Crc64Hash;
+pub use crc64nvme::MULTIHASH_CRC64_NVME;
 pub use hash::Hash;
 pub use remote::hash_sha256_checksum;
-pub use sha256::{Sha256Hash, MULTIHASH_SHA256};
-pub use sha256_chunked::{
-    get_checksum_chunksize_and_parts, Sha256ChunkedHash, MULTIHASH_SHA256_CHUNKED,
-};
+pub use sha256::Sha256Hash;
+pub use sha256::MULTIHASH_SHA256;
+pub use sha256_chunked::get_checksum_chunksize_and_parts;
+pub use sha256_chunked::Sha256ChunkedHash;
+pub use sha256_chunked::MULTIHASH_SHA256_CHUNKED;
 
 /// Type-safe container for object's checksum using struct types
 /// You can convert it to or from `Multihash<256>`.

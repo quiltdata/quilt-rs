@@ -285,6 +285,9 @@ mod tests {
     use reqwest::header::HeaderMap;
     use test_log::test;
 
+    use crate::io::storage::mocks::MockStorage;
+    use crate::paths::DomainPaths;
+
     const ACCESS_TOKEN: &str = "test-access-token";
     const REFRESH_TOKEN: &str = "test-refresh-token";
     const TIMESTAMP: i64 = 1708444800;
@@ -393,9 +396,6 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_auth_refresh_credentials() -> Res {
-        use crate::io::storage::mocks::MockStorage;
-        use crate::paths::DomainPaths;
-
         let storage = MockStorage::default();
         let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
         let auth = Auth::new(paths.clone(), storage);

@@ -11,7 +11,8 @@ use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::Res;
-use tracing::{debug, info};
+use tracing::debug;
+use tracing::info;
 
 pub async fn reset_to_latest(
     lineage: PackageLineage,

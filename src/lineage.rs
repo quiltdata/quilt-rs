@@ -238,8 +238,7 @@ mod tests {
 
     use test_log::test;
 
-    use base64::prelude::BASE64_STANDARD;
-    use base64::Engine;
+    use aws_smithy_types::base64;
 
     use crate::checksum::Sha256ChunkedHash;
     use crate::io::storage::mocks::MockStorage;
@@ -410,7 +409,7 @@ mod tests {
             .get(&PathBuf::from("foo"))
             .unwrap()
             .hash;
-        let hash_from_lineage = BASE64_STANDARD.encode(multihash_from_lineage.digest());
+        let hash_from_lineage = base64::encode(multihash_from_lineage.digest());
         assert_eq!(
             hash_from_lineage,
             "Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="
