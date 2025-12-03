@@ -1,6 +1,8 @@
+use std::collections::BTreeMap;
 use std::marker::Unpin;
 use std::path::Path;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use crate::flow;
 use crate::installed_package::InstalledPackage;
@@ -13,9 +15,11 @@ use crate::io::storage::Storage;
 use crate::lineage;
 use crate::lineage::DomainLineage;
 use crate::lineage::Home;
+use crate::lineage::PackageLineage;
 use crate::manifest::Header;
 use crate::manifest::Table;
 use crate::paths;
+use crate::uri::Host;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::Res;
@@ -143,6 +147,111 @@ impl LocalDomain {
         let dest_dir = dest_path.parent().unwrap_or(&dest_path).to_path_buf();
         build_manifest_from_rows_stream(&self.storage, dest_dir, Header::default(), stream).await
     }
+
+    /// Create a brand new package from scratch that doesn't exist in S3 yet.
+    ///
+    /// This method:
+    /// 1. Creates the package home directory structure
+    /// 2. Creates an empty manifest with a placeholder hash
+    /// 3. Registers the package in the local lineage
+    /// 4. Returns an InstalledPackage that can be committed and pushed
+    ///
+    /// # Arguments
+    /// * `namespace` - The package namespace (e.g., "owner/package-name")
+    /// * `bucket` - The S3 bucket where this package will be pushed to
+    /// * `catalog` - Optional catalog URL for authentication
+    ///
+    /// # Example
+    /// ```ignore
+    /// let domain = LocalDomain::new("/path/to/quilt");
+    /// domain.set_home("/path/to/working/dir").await?;
+    /// let package = domain.create_new_package(
+    ///     ("myteam", "mypackage").into(),
+    ///     "my-s3-bucket",
+    ///     None
+    /// ).await?;
+    /// // Now you can add files to the package home and commit
+    /// package.commit("Initial commit", None, None, None).await?;
+    /// package.push(None).await?;
+    /// ```
+    pub async fn create_new_package(
+        &self,
+        namespace: Namespace,
+        bucket: impl Into<String>,
+        catalog: Option<String>,
+    ) -> Res<InstalledPackage> {
+        let bucket = bucket.into();
+
+        // Ensure home directory is set
+        let home = self.get_home().await?;
+
+        // Create the necessary directory structure for this package
+        self.scaffold_paths_for_installing(&namespace).await?;
+        self.scaffold_paths_for_caching(&bucket).await?;
+
+        // Build an empty manifest to get a proper hash
+        // The manifest file will be created in the installed manifests directory
+        let manifest_dir = self.paths.installed_manifests(&namespace);
+        let (_manifest_path, initial_hash) = build_manifest_from_rows_stream(
+            &self.storage,
+            manifest_dir,
+            Header::default(),
+            tokio_stream::empty(),
+        )
+        .await?;
+
+        // Convert catalog string to Host if provided
+        let catalog_host: Option<Host> = match catalog {
+            Some(ref s) => Some(Host::from_str(s).map_err(|_| {
+                crate::Error::Host(format!("Invalid catalog host: {}", s))
+            })?),
+            None => None,
+        };
+
+        // Create the package lineage entry
+        let package_lineage = PackageLineage {
+            commit: None,
+            remote: ManifestUri {
+                bucket: bucket.clone(),
+                namespace: namespace.clone(),
+                hash: initial_hash.clone(),
+                catalog: catalog_host,
+            },
+            base_hash: initial_hash.clone(),
+            latest_hash: initial_hash.clone(),
+            paths: BTreeMap::new(),
+        };
+
+        // Read, update, and write the domain lineage
+        let mut domain_lineage = match self.lineage.read(&self.storage).await {
+            Ok(lineage) => lineage,
+            Err(crate::Error::LineageMissing) => DomainLineage::new(home.as_ref() as &PathBuf),
+            Err(e) => return Err(e),
+        };
+
+        domain_lineage
+            .packages
+            .insert(namespace.clone(), package_lineage);
+
+        self.lineage
+            .write(&self.storage, domain_lineage)
+            .await?;
+
+        // Create the package home directory if it doesn't exist
+        let package_home = paths::package_home(&home, &namespace);
+        self.storage.create_dir_all(&package_home).await?;
+
+        self.create_installed_package(namespace)
+    }
+
+    /// Check if a package exists locally (is installed)
+    pub async fn package_exists(&self, namespace: &Namespace) -> Res<bool> {
+        match self.lineage.read(&self.storage).await {
+            Ok(lineage) => Ok(lineage.packages.contains_key(namespace)),
+            Err(crate::Error::LineageMissing) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -205,6 +314,102 @@ mod tests {
         assert_eq!(packages[0].namespace, Namespace::from(("abc", "xyz")));
         assert_eq!(packages[1].namespace, Namespace::from(("foo", "bar")));
         assert_eq!(packages[2].namespace, Namespace::from(("test", "package")));
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_create_new_package() -> Res<()> {
+        // Create a temporary directory for testing
+        let temp_dir = TempDir::new()?;
+        let local_domain = LocalDomain::new(temp_dir.path());
+
+        // Set home directory
+        local_domain.set_home(&temp_dir.path()).await?;
+
+        let namespace = Namespace::from(("myteam", "mypackage"));
+        let bucket = "test-bucket";
+
+        // Initially the package should not exist
+        assert!(!local_domain.package_exists(&namespace).await?);
+
+        // Create the new package
+        let installed_package = local_domain
+            .create_new_package(namespace.clone(), bucket, None)
+            .await?;
+
+        // Verify the package was created
+        assert_eq!(installed_package.namespace, namespace);
+
+        // Verify the package exists now
+        assert!(local_domain.package_exists(&namespace).await?);
+
+        // Verify it appears in the list
+        let packages = local_domain.list_installed_packages().await?;
+        assert_eq!(packages.len(), 1);
+        assert_eq!(packages[0].namespace, namespace);
+
+        // Verify the lineage has correct bucket
+        let lineage = installed_package.lineage().await?;
+        assert_eq!(lineage.remote.bucket, bucket);
+        assert_eq!(lineage.remote.namespace, namespace);
+
+        // Verify the package home directory was created
+        let package_home = paths::package_home(
+            &local_domain.get_home().await?,
+            &namespace,
+        );
+        assert!(package_home.exists());
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_create_new_package_with_catalog() -> Res<()> {
+        let temp_dir = TempDir::new()?;
+        let local_domain = LocalDomain::new(temp_dir.path());
+        local_domain.set_home(&temp_dir.path()).await?;
+
+        let namespace = Namespace::from(("team", "data"));
+        let bucket = "my-bucket";
+        let catalog = Some("catalog.quiltdata.com".to_string());
+
+        let installed_package = local_domain
+            .create_new_package(namespace.clone(), bucket, catalog)
+            .await?;
+
+        let lineage = installed_package.lineage().await?;
+        assert!(lineage.remote.catalog.is_some());
+        assert_eq!(
+            lineage.remote.catalog.unwrap().to_string(),
+            "catalog.quiltdata.com"
+        );
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_package_exists() -> Res<()> {
+        let temp_dir = TempDir::new()?;
+        let local_domain = LocalDomain::new(temp_dir.path());
+        local_domain.set_home(&temp_dir.path()).await?;
+
+        let namespace = Namespace::from(("test", "pkg"));
+
+        // Should not exist initially
+        assert!(!local_domain.package_exists(&namespace).await?);
+
+        // Create the package
+        local_domain
+            .create_new_package(namespace.clone(), "bucket", None)
+            .await?;
+
+        // Should exist now
+        assert!(local_domain.package_exists(&namespace).await?);
+
+        // A different namespace should not exist
+        let other_namespace = Namespace::from(("other", "pkg"));
+        assert!(!local_domain.package_exists(&other_namespace).await?);
 
         Ok(())
     }
