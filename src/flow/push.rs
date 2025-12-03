@@ -23,6 +23,7 @@ use crate::uri::Namespace;
 use crate::uri::S3PackageHandle;
 use crate::Error;
 use crate::Res;
+use crate::error::S3Error;
 
 async fn use_existing_row_or_upload(
     remote: &impl Remote,
@@ -86,8 +87,22 @@ pub async fn push_package(
     };
 
     debug!("⏳ Fetching remote manifest");
-    let remote_manifest = flow::browse(paths, storage, remote, &lineage.remote).await?;
-    debug!("✔️ Remote manifest fetched");
+    // For new packages that don't exist in S3 yet, use an empty manifest
+    let remote_manifest = match flow::browse(paths, storage, remote, &lineage.remote).await {
+        Ok(manifest) => {
+            debug!("✔️ Remote manifest fetched");
+            manifest
+        }
+        Err(Error::S3(_, S3Error::GetObjectStream(msg))) if msg.contains("NoSuchKey") => {
+            debug!("✔️ No remote manifest found (new package), using empty manifest");
+            Table::default()
+        }
+        Err(Error::S3(_, S3Error::GetObject(msg))) if msg.contains("NoSuchKey") => {
+            debug!("✔️ No remote manifest found (new package), using empty manifest");
+            Table::default()
+        }
+        Err(e) => return Err(e),
+    };
 
     // ## copy data
     // Copy each of the _modified_ paths from their local_key to remote_key,
@@ -143,10 +158,22 @@ pub async fn push_package(
     debug!("✔️ Timestamp tag added");
 
     debug!("⏳ Checking remote's latest manifest hash");
-    lineage.latest_hash = resolve_latest(remote, &new_manifest_uri.catalog, &manifest_uri.into())
-        .await?
-        .hash;
-    debug!("✔️ Latest hash is: {}", lineage.latest_hash);
+    // For new packages, there's no "latest" yet, so we use the new hash
+    lineage.latest_hash = match resolve_latest(remote, &new_manifest_uri.catalog, &manifest_uri.into()).await {
+        Ok(uri) => {
+            debug!("✔️ Latest hash is: {}", uri.hash);
+            uri.hash
+        }
+        Err(Error::S3(_, S3Error::GetObjectStream(msg))) if msg.contains("NoSuchKey") => {
+            debug!("✔️ No latest tag found (new package), using new hash");
+            new_manifest_uri.hash.clone()
+        }
+        Err(Error::S3(_, S3Error::GetObject(msg))) if msg.contains("NoSuchKey") => {
+            debug!("✔️ No latest tag found (new package), using new hash");
+            new_manifest_uri.hash.clone()
+        }
+        Err(e) => return Err(e),
+    };
 
     lineage.remote = new_manifest_uri.clone();
     lineage.commit = None;
