@@ -23,7 +23,7 @@ use crate::uri::Namespace;
 use crate::uri::S3PackageHandle;
 use crate::Error;
 use crate::Res;
-use crate::error::S3Error;
+// use crate::error::S3Error;
 
 async fn use_existing_row_or_upload(
     remote: &impl Remote,
@@ -93,11 +93,7 @@ pub async fn push_package(
             debug!("✔️ Remote manifest fetched");
             manifest
         }
-        Err(Error::S3(_, S3Error::GetObjectStream(msg))) if msg.contains("NoSuchKey") => {
-            debug!("✔️ No remote manifest found (new package), using empty manifest");
-            Table::default()
-        }
-        Err(Error::S3(_, S3Error::GetObject(msg))) if msg.contains("NoSuchKey") => {
+        Err(Error::S3(_, s3_err)) if s3_err.to_string().contains("NoSuchKey") => {
             debug!("✔️ No remote manifest found (new package), using empty manifest");
             Table::default()
         }
@@ -159,18 +155,14 @@ pub async fn push_package(
 
     debug!("⏳ Checking remote's latest manifest hash");
     // For new packages, there's no "latest" yet, so we use the new hash
-    lineage.latest_hash = match resolve_latest(remote, &new_manifest_uri.catalog, &manifest_uri.into()).await {
+    lineage.latest_hash = match resolve_latest(remote, &new_manifest_uri.catalog, &manifest_uri.clone().into()).await {
         Ok(uri) => {
             debug!("✔️ Latest hash is: {}", uri.hash);
             uri.hash
         }
-        Err(Error::S3(_, S3Error::GetObjectStream(msg))) if msg.contains("NoSuchKey") => {
-            debug!("✔️ No latest tag found (new package), using new hash");
-            new_manifest_uri.hash.clone()
-        }
-        Err(Error::S3(_, S3Error::GetObject(msg))) if msg.contains("NoSuchKey") => {
-            debug!("✔️ No latest tag found (new package), using new hash");
-            new_manifest_uri.hash.clone()
+        Err(Error::S3(_, s3_err)) if s3_err.to_string().contains("NoSuchKey") => {
+            debug!("✔️ No latest tag found (new package), using base hash");
+            manifest_uri.hash.clone()
         }
         Err(e) => return Err(e),
     };
