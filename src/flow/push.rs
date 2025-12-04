@@ -155,7 +155,13 @@ pub async fn push_package(
 
     debug!("⏳ Checking remote's latest manifest hash");
     // For new packages, there's no "latest" yet, so we use the new hash
-    lineage.latest_hash = match resolve_latest(remote, &new_manifest_uri.catalog, &manifest_uri.clone().into()).await {
+    lineage.latest_hash = match resolve_latest(
+        remote,
+        &new_manifest_uri.catalog,
+        &manifest_uri.clone().into(),
+    )
+    .await
+    {
         Ok(uri) => {
             debug!("✔️ Latest hash is: {}", uri.hash);
             uri.hash

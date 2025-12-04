@@ -202,9 +202,10 @@ impl LocalDomain {
 
         // Convert catalog string to Host if provided
         let catalog_host: Option<Host> = match catalog {
-            Some(ref s) => Some(Host::from_str(s).map_err(|_| {
-                crate::Error::Host(format!("Invalid catalog host: {}", s))
-            })?),
+            Some(ref s) => Some(
+                Host::from_str(s)
+                    .map_err(|_| crate::Error::Host(format!("Invalid catalog host: {}", s)))?,
+            ),
             None => None,
         };
 
@@ -233,9 +234,7 @@ impl LocalDomain {
             .packages
             .insert(namespace.clone(), package_lineage);
 
-        self.lineage
-            .write(&self.storage, domain_lineage)
-            .await?;
+        self.lineage.write(&self.storage, domain_lineage).await?;
 
         // Create the package home directory if it doesn't exist
         let package_home = paths::package_home(&home, &namespace);
@@ -355,10 +354,7 @@ mod tests {
         assert_eq!(lineage.remote.namespace, namespace);
 
         // Verify the package home directory was created
-        let package_home = paths::package_home(
-            &local_domain.get_home().await?,
-            &namespace,
-        );
+        let package_home = paths::package_home(&local_domain.get_home().await?, &namespace);
         assert!(package_home.exists());
 
         Ok(())
