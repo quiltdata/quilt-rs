@@ -87,19 +87,21 @@ cargo clippy -- --deny warnings
 
 For debugging and verification purposes:
 
-### 0Mb Files
+### SHA256-Chunked Verification
+
+#### 0Mb Files
 
 ```bash
 sha256sum ./FILE | xxd -r -p | base64
 ```
 
-### <= 8Mb Files
+#### <= 8Mb Files
 
 ```bash
 sha256sum ./FILE | xxd -r -p | sha256sum | xxd -r -p | base64
 ```
 
-### > 8Mb Files
+#### > 8Mb Files
 
 ```bash
 split -b 8388608 ./FILE --filter='sha256sum' | xxd -r -p | sha256sum | xxd -r -p | base64
@@ -110,3 +112,7 @@ split -b 8388608 ./FILE --filter='sha256sum' | xxd -r -p | sha256sum | xxd -r -p
 ```bash
 split -l 1 ~/MANIFEST.jsonl --filter="jq -cSM 'del(.physical_keys)'" | tr -d '\n' | sha256sum
 ```
+
+### CRC64/NVMe Verification
+
+**TODO**: CRC64/NVMe checksum verification procedures are not yet documented. This is an area for future contribution and documentation improvements.
