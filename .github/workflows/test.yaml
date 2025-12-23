@@ -14,12 +14,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Setup Rust
-        uses: moonrepo/setup-rust@v1
-        with:
-          cache-base: main
-          cache-target: debug
-          inherit-toolchain: true
+      - name: Setup Rust for development
+        uses: ./.github/actions/setup-rust-dev
 
       - name: Check formatting
         run: cargo fmt --check
