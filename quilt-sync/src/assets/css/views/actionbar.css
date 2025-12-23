@@ -1,0 +1,24 @@
+.qui-actionbar {
+  align-items: center;
+  background: var(--q-ui-palette-background-primary);
+  bottom: 0;
+  box-shadow: var(--q-ui-shadows-actionbar);
+  display: flex;
+  justify-content: center;
+  left: 0;
+  opacity: 0.9;
+  padding: var(--q-ui-size-3) 0;
+  position: sticky;
+  right: 0;
+  transition:
+    opacity var(--q-ui-transition-duration-normal)
+      var(--q-ui-transition-type-normal),
+    padding var(--q-ui-transition-duration-normal)
+      var(--q-ui-transition-type-normal);
+  z-index: var(--q-ui-z-index-appbar);
+
+  &:hover {
+    padding: var(--q-ui-size-4) 0;
+    opacity: 1;
+  }
+}

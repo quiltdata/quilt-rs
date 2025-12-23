@@ -1,4 +1,4 @@
-name: Release
+name: Release quilt_rs
 
 on: workflow_dispatch
 
@@ -8,7 +8,7 @@ env:
 
 jobs:
   publish:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -21,10 +21,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Rust
-        uses: moonrepo/setup-rust@v1
+      - name: Setup Rust for release
+        uses: ./.github/actions/setup-rust-minimal
         with:
-          cache-base: main
           cache-target: release
 
       - name: Get Version

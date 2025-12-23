@@ -1,0 +1,92 @@
+[appbar]
+refresh = 'Refresh'
+settings = 'Settings'
+
+[breadcrumbs]
+commit = 'Commit'
+installed_package = '%{s}'
+installed_packages_list = 'Packages'
+merge = 'Merge'
+remote_package = '%{s}'
+settings_user = 'User settings'
+login = 'Log in to %{s}'
+
+[installed_packages_list]
+uri = 'URI: '
+
+[installed_packages_list_empty]
+title = "You don't have any packages"
+description = 'You can navigate to the file in Quilt Catalog and click on GET FILE and then OPEN IN QUILTSYNC buttons to install that package with file'
+
+[installed_package]
+commit = 'Create new revision'
+reveal = 'Open in file manager'
+uninstall = 'Remove'
+
+[installed_package_status]
+push = 'Push to remote'
+pull = 'Pull from remote'
+converge = 'Converge'
+ahead = 'Your commits are ahead of the remote'
+behind = 'Your commits are behind the remote'
+diverged = 'Your commits are detached from the remote'
+
+[commit]
+message = 'Message'
+metadata = 'User metadata'
+submit = 'Commit'
+workflow = 'Workflow ID'
+workflow_null = 'No workflow'
+workflow_source = 'Use the workflow ID from '
+namespace = 'Name'
+
+[login]
+code = 'Code'
+code_instruction = 'Please, visit https://%{s}/code to get your code:'
+open_browser = 'Open browser'
+submit = 'Submit code and Log in'
+
+[merge]
+certify = 'Certify latest'
+reset = 'Reset local'
+certify_description = 'Certify your latest commit as Quilt `latest`. This will update local and remote `latest` with your latest commit.'
+reset_description = 'Erase local commits and make local `latest` the same as remote.'
+
+[remote_package]
+install = 'Install'
+
+[setup]
+browse = 'Browse'
+description = 'Select a directory where QuiltSync will store your packages, ex. ~/QuiltSync'
+directory = 'Set home directory'
+submit = 'Save'
+
+[buttons]
+commit_package = 'Commit'
+open_package_in_file_browser = 'Open'
+open_package_in_catalog = 'Open in Catalog'
+uninstall_package = 'Remove'
+open_entry_in_default_application = 'Open'
+open_entry_in_catalog = 'Open in Catalog'
+reveal_entry_in_file_browser = 'Reveal'
+pull_package = 'Pull'
+push_package = 'Push'
+merge_package = 'Merge'
+install_selected_paths = 'Download selected paths'
+
+[debug_toolbar]
+dot_quilt_button = 'Open .quilt/'
+dot_quilt_title = 'Lineage and  cache files:'
+logs_directory = 'Logs directory:'
+release_notes = 'Release notes'
+reload_page = 'Reload page'
+reset = 'Reset state:'
+reset_auth = 'Re-login'
+show_logs = 'Show logs'
+version = 'Version:'
+
+[error]
+dot_quilt = 'Open .quilt directory'
+home = 'Go home'
+login = 'Login'
+refresh = 'Reload page'

@@ -1,0 +1,11 @@
+name: "Install Ubuntu Dependencies"
+description: "Install system dependencies required for Tauri on Ubuntu"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install dependencies
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev

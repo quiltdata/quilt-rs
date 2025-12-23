@@ -1,6 +1,13 @@
-name: Test
+name: Test quilt_rs
 
-on: [push]
+on:
+  push:
+    paths:
+      - "quilt-rs/**"
+      - "quilt-cli/**"
+      - "Cargo.*"
+      - "rust-toolchain.toml"
+      - ".github/workflows/test-quilt-rs.yaml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -9,23 +16,19 @@ concurrency:
 jobs:
   check:
     name: Rust project
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Setup Rust
-        uses: moonrepo/setup-rust@v1
-        with:
-          cache-base: main
-          cache-target: debug
-          inherit-toolchain: true
+      - name: Setup Rust for development
+        uses: ./.github/actions/setup-rust-dev
 
       - name: Check formatting
-        run: cargo fmt --check
+        run: cargo fmt --check -p quilt-rs -p quilt-cli
 
       - name: Lint
-        run: cargo clippy -- --deny warnings
+        run: cargo clippy -p quilt-rs -p quilt-cli -- --deny warnings
 
       - name: Test library
         run: cargo test -p quilt-rs --verbose

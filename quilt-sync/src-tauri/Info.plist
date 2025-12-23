@@ -1,0 +1,22 @@
+<!-- Add this file next to your tauri.conf.json file -->
+<!-- From https://github.com/FabianLars/tauri-plugin-deep-link/blob/main/example/Info.plist -->
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+    <dict>
+        <key>CFBundleURLTypes</key>
+        <array>
+            <dict>
+                <key>CFBundleURLName</key>
+                <!-- your app's bundle identifier -->
+                <string>com.quiltdata.quilt-sync</string>
+                <key>CFBundleURLSchemes</key>
+                <array>
+                    <!-- register the supported quilt+store:// schemes -->
+                    <string>quilt+s3</string>
+                    <string>quilt+file</string>
+                </array>
+            </dict>
+        </array>
+    </dict>
+</plist>

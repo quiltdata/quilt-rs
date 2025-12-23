@@ -1,0 +1,22 @@
+.qui-layout {
+  -webkit-font-smoothing: antialiased;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow-y: auto;
+
+  &[disabled] {
+    cursor: not-allowed;
+    position: relative;
+  }
+
+  &[disabled]::after {
+    background: rgb(255 255 255 / 30%);
+    inset: 0;
+    content: "";
+    display: block;
+    position: absolute;
+    z-index: var(--q-ui-z-index-overlay);
+    top: var(--q-ui-size-8);
+  }
+}

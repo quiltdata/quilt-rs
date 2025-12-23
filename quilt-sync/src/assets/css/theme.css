@@ -1,0 +1,205 @@
+:root {
+  /* Font */
+  --q-ui-font-family: roboto, helvetica, arial, sans-serif;
+  --q-ui-font-size-small: 0.875rem;
+  --q-ui-font-size-normal: 1rem;
+  --q-ui-font-size-large: 1.2rem;
+
+  /* Palette */
+  --q-ui-palette-primary: #2d306d;
+  --q-ui-palette-action-hover: rgb(0 0 0 / 4%);
+  --q-ui-palette-border: rgb(0 0 0 / 23%);
+  --q-ui-palette-error: rgb(239 83 80);
+  --q-ui-palette-warning: rgb(255 152 0);
+  --q-ui-palette-text-primary: rgb(0 0 0 / 87%);
+  --q-ui-palette-background-primary: #fff;
+  --q-ui-palette-text-secondary: rgb(0 0 0 / 60%);
+  --q-ui-palette-success: #388e3c;
+
+  /* Palette (inverted) */
+  --q-ui-palette-inverted-text-primary: rgb(255 255 255 / 87%);
+  --q-ui-palette-inverted-background-primary: var(--q-ui-palette-primary);
+
+  /* Input (inverted) */
+  --q-ui-palette-inverted-input-background: rgb(255 255 255 / 15%);
+  --q-ui-palette-inverted-input-border: rgb(255 255 255 / 50%);
+  --q-ui-palette-inverted-input-placeholder: rgb(255 255 255 / 70%);
+
+  /* Shadows */
+  --q-ui-shadows-appbar: rgb(0 0 0 / 20%) 0px 2px 4px -1px,
+    rgb(0 0 0 / 14%) 0px 4px 5px 0px, rgb(0 0 0 / 12%) 0px 1px 10px 0px;
+  --q-ui-shadows-button-hover: 0px 2px 4px -1px rgb(0 0 0 / 20%),
+    0px 4px 5px 0px rgb(0 0 0 / 14%), 0px 1px 10px 0px rgb(0 0 0 / 12%);
+  --q-ui-shadows-button: 0px 3px 1px -2px rgb(0 0 0 / 20%),
+    0px 2px 2px 0px rgb(0 0 0 / 14%), 0px 1px 5px 0px rgb(0 0 0 / 12%);
+  --q-ui-shadows-popup: rgb(0 0 0 / 20%) 0px 5px 5px -3px,
+    rgb(0 0 0 / 14%) 0px 8px 10px 1px, rgb(0 0 0 / 12%) 0px 3px 14px 2px;
+  --q-ui-shadows-actionbar: rgb(0 0 0 / 20%) 0px -2px 4px -1px,
+    rgb(0 0 0 / 14%) 0px -4px 5px 0px, rgb(0 0 0 / 12%) 0px -1px 10px 0px;
+
+  /* Z-index */
+  --q-ui-z-index-appbar: 30;
+  --q-ui-z-index-overlay: 40;
+  --q-ui-z-index-progress: 50;
+  --q-ui-z-index-version: 60;
+
+  /* Sizes */
+  --q-ui-container-size: 1280px;
+
+  /* Grid */
+  --q-ui-size-0-5: 4px;
+  --q-ui-size-1: 8px;
+  --q-ui-size-1-5: 12px;
+  --q-ui-size-2: 16px;
+  --q-ui-size-2-5: 20px;
+  --q-ui-size-3: 24px;
+  --q-ui-size-3-5: 28px;
+  --q-ui-size-4: 32px;
+  --q-ui-size-4-5: 36px;
+  --q-ui-size-5: 40px;
+  --q-ui-size-6: 48px;
+  --q-ui-size-7: 56px;
+  --q-ui-size-8: 64px;
+  --q-ui-size-9: 72px;
+  --q-ui-size-10: 80px;
+  --q-ui-size-2-negative: -16px;
+
+  /* Transitions */
+  --q-ui-transition-type-normal: ease;
+  --q-ui-transition-duration-normal: 0.15s;
+
+  /* Misc */
+  --q-ui-border-radius: 4px;
+
+  /* JSON editor */
+  --jse-font-size-main-menu: var(--q-ui-font-size-normal);
+  --jse-font-size-mono: var(--q-ui-font-size-normal);
+  --jse-font-size: var(--q-ui-font-size-large);
+  --jse-menu-color: var(--q-ui-palette-text-secondary);
+  --jse-text-color: var(--q-ui-palette-text-primary);
+  --jse-theme-color-highlight: var(--q-ui-palette-action-hover);
+  --jse-theme-color: var(--q-ui-palette-background-primary);
+  --jse-padding: var(--q-ui-size-2);
+  --jse-modal-editor-theme-color: var(--q-ui-palette-background-primary);
+  --jse-modal-editor-theme-color-highlight: var(--q-ui-palette-action-hover);
+}
+
+.jse-menu {
+  justify-content: flex-end;
+  border: 1px solid var(--q-ui-palette-border);
+  border-radius: var(--q-ui-border-radius) var(--q-ui-border-radius) 0 0;
+  padding: var(--q-ui-size-1);
+}
+
+.jse-menu .jse-space {
+  display: none;
+}
+
+
+.jse-menu .jse-group-button {
+  margin: 2px 0 !important;
+  align-items: center !important;
+  background-color: var(--q-ui-palette-background-primary) !important;
+  border: 1px solid var(--q-ui-palette-border) !important;
+  cursor: pointer !important;
+  display: inline-flex !important;
+  font-family: var(--q-ui-font-family) !important;
+  line-height: 1.75 !important;
+  min-width: 64px !important;
+  padding: 2px 8px !important;
+  text-decoration: none !important;
+  text-transform: uppercase !important;
+  font-size: var(--q-ui-font-size-small) !important;
+  color: var(--q-ui-palette-text-primary) !important;
+  height: auto !important;
+}
+
+.jse-menu .jse-group-button:nth-child(1) {
+  border-radius: 4px 0 0 4px !important;
+}
+
+.jse-menu .jse-group-button:nth-child(3) {
+  border-radius: 0 4px 4px 0 !important;
+}
+
+.jse-menu .jse-group-button.jse-selected {
+  box-shadow:
+    inset 0 3px 1px -2px rgb(0 0 0 / 20%),
+    inset 0 2px 2px 0 rgb(0 0 0 / 14%),
+    inset 0 1px 5px 0 rgb(0 0 0 / 12%) !important;
+  color: var(--q-ui-palette-text-secondary) !important;
+}
+
+.jse-menu .jse-group-button + .jse-separator {
+  width: 0 !important;
+  margin: auto !important;
+}
+
+.jse-welcome .jse-contents {
+  display: grid !important;
+  gap: var(--q-ui-size-1) !important;
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.jse-welcome {
+  border: 1px solid var(--q-ui-palette-border);
+  border-width: 0 1px 1px;
+  border-radius: 0 0 var(--q-ui-border-radius) var(--q-ui-border-radius);
+}
+
+.jse-actions button,
+.jse-welcome button {
+  align-self: center;
+  background-color: var(--q-ui-palette-background-primary) !important;
+  border-radius: 4px !important;
+  border: 1px solid var(--q-ui-palette-border) !important;
+  box-shadow: var(--q-ui-shadows-button);
+  color: var(--q-ui-palette-text-primary) !important;
+  font-family: var(--q-ui-font-family);
+  font-size: var(--q-ui-font-size-small) !important;
+  line-height: 1.75 !important;
+  min-width: 64px !important;
+  padding: 2px 8px !important;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.jse-actions button {
+  font-size: var(--q-ui-font-size-large) !important;
+  min-width: 144px !important;
+  padding: 4px 16px !important;
+}
+
+.jse-actions button:hover .jse-welcome button:hover {
+  background: var(--q-ui-palette-action-hover) !important;
+  box-shadow: var(--q-ui-shadows-button-hover) !important;
+}
+
+.jse-actions .jse-primary {
+  color: #fff !important;
+  background: var(--q-ui-palette-primary) !important;
+}
+
+.jse-actions .jse-primary:hover {
+  color: #fff !important;
+  background: var(--q-ui-palette-primary) !important;
+}
+
+.jse-welcome-title {
+  color: var(--q-ui-palette-text-primary);
+  font-family: var(--q-ui-font-family);
+  font-size: var(--q-ui-font-size-normal);
+  grid-column: 1 / 4;
+}
+
+.jse-welcome-info {
+  color: var(--q-ui-palette-text-secondary);
+  font-family: var(--q-ui-font-family);
+  font-size: var(--q-ui-font-size-normal);
+  grid-column: 1 / 4;
+  margin-bottom: var(--q-ui-size-1);
+}
+
+.jse-welcome-weight {
+  font-weight: 500;
+}

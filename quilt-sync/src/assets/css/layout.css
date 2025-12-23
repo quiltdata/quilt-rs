@@ -1,0 +1,37 @@
+@keyframes appear {
+  from {
+    opacity: 0.3;
+    transform: scale(1.05) translateY(-8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+html {
+  height: 100%;
+}
+
+body {
+  animation: 0.15s ease-in appear;
+  color: var(--q-ui-palette-text-primary);
+  font-family: var(--q-ui-font-family);
+  margin: 0;
+  min-height: 100%;
+  overflow: hidden; /* it's a weird bug */
+  position: relative;
+}
+
+.layout-appbar {
+  position: sticky;
+  top: 0;
+  z-index: var(--q-ui-z-index-appbar);
+}
+
+.layout-toolbar {
+  position: sticky;
+  top: 64px;
+  z-index: var(--q-ui-z-index-appbar);
+}

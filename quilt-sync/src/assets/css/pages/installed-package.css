@@ -1,0 +1,29 @@
+.qui-page-installed-package {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  margin: auto;
+  max-width: var(--q-ui-container-size);
+  width: 100%;
+
+  .form {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+    margin: auto;
+    width: 100%;
+  }
+
+  .list {
+    box-sizing: border-box;
+    flex-grow: 1;
+    padding: var(--q-ui-size-2) 0;
+    width: 100%;
+  }
+
+  .qui-entry.remote,
+  .qui-entry.remote .text-secondary {
+    color: var(--q-ui-palette-text-primary);
+  }
+}

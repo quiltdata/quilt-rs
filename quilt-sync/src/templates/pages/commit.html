@@ -1,0 +1,73 @@
+{% extends "./components/layout.html" %}
+
+{% block children %}
+  <style>
+    @import url("/assets/css/pages/commit.css");
+  </style>
+
+  <div class="qui-page-commit container container-wide">
+    <div class="main">
+      <form id="form" class="form" onsubmit="event.preventDefault();">
+        {{ workflow | safe }}
+
+        <p class="field">
+          <label class="label" for="namespace"
+            >{{ t!("commit.namespace") }}</label
+          >
+          <input
+            class="input"
+            id="namespace"
+            name="namespace"
+            value="{{uri.namespace}}"
+            readonly
+          />
+        </p>
+
+        <p class="field">
+          <label class="label" for="message">{{ t!("commit.message") }}</label>
+          <input
+            class="input"
+            id="message"
+            name="message"
+            placeholder="{{ message.value }}"
+            required
+          />
+          {% if let Some(err) = message.error %}
+            <span class="error">{{ err }}</span>
+          {% endif %}
+        </p>
+
+        <p class="field">
+          <label class="label" for="metadata">{{ t!("commit.metadata") }}</label>
+          <textarea
+            class="textarea"
+            id="metadata"
+            name="metadata"
+            placeholder="{ \"key\": \"value\" }"
+          >{{ user_meta.value }}</textarea>
+          {% if let Some(err) = user_meta.error %}
+            <span class="error">{{ err }}</span>
+          {% endif %}
+        </p>
+        <div class="js-metadata metadata"></div>
+
+      </form>
+    </div>
+
+    <div class="files">
+      <div class="list">
+        <div>
+          {% for entries_list in entries %}
+            {% for entry in entries_list %}
+              {{ entry | safe }}
+            {% endfor %}
+
+            {% if entries.len() > 1 %}
+              <div class="list-separator"></div>
+            {% endif %}
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}

@@ -1,0 +1,45 @@
+.qui-entries-toolbar {
+  background: var(--q-ui-palette-background-primary);
+  border-bottom: 1px solid var(--q-ui-palette-border);
+  padding: var(--q-ui-size-2) var(--q-ui-size-4) var(--q-ui-size-2)
+    var(--q-ui-size-2-5);
+  top: 128px;
+  position: sticky;
+  z-index: 20;
+
+  &.with-status {
+    top: calc(128px + 68px + 32px + 16px);
+  }
+
+  .container {
+    align-items: center;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .select-all {
+    align-items: center;
+    cursor: pointer;
+    display: flex;
+    flex-shrink: 0;
+    justify-content: center;
+    padding: 4px 0 4px 24px;
+    text-transform: uppercase;
+  }
+
+  .select-all input {
+    cursor: pointer;
+    height: 16px;
+    margin: 0 24px 0 0;
+    width: 16px;
+  }
+
+  .select-all input::before {
+    content: "";
+    cursor: pointer;
+    height: 40px;
+    position: absolute;
+    transform: translate(-50%, -50%);
+    width: 40px;
+  }
+}

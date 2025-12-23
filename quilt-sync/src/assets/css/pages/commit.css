@@ -1,0 +1,191 @@
+.qui-page-commit {
+  &.container {
+    box-sizing: border-box;
+    flex-grow: 1;
+    margin: auto;
+    max-width: var(--q-ui-container-size);
+    overflow: hidden;
+    padding: var(--q-ui-size-4);
+    width: 100%;
+  }
+
+  &.container-wide {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: var(--q-ui-size-4);
+    padding: 0 var(--q-ui-size-4);
+  }
+
+  .main {
+    padding: 0;
+    overflow-y: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .form {
+    flex-grow: 1;
+    overflow-y: hidden;
+    display: flex;
+    flex-direction: column;
+    padding: var(--q-ui-size-4) 0 var(--q-ui-size-2);
+    gap: var(--q-ui-size-4);
+  }
+
+  .field {
+    border: 1px solid var(--q-ui-palette-border);
+    border-radius: 4px;
+    margin: 0;
+    position: relative;
+  }
+
+  .label {
+    background: var(--q-ui-palette-background-primary);
+    position: absolute;
+    left: 0;
+    top: -12px;
+    padding: 0 4px;
+    transform: scale(0.75);
+  }
+
+  .textarea,
+  .input {
+    background: transparent;
+    border: 0;
+    box-sizing: border-box;
+    font-size: 1rem;
+    padding: 8px 14px;
+    width: 100%;
+  }
+
+  .textarea {
+    min-height: 160px;
+    resize: vertical;
+  }
+
+  .textarea[readonly],
+  .input[readonly],
+  .textarea[disabled],
+  .input[disabled] {
+    cursor: not-allowed;
+    opacity: 0.3;
+  }
+
+  .metadata {
+    flex-grow: 1;
+    overflow: auto;
+    padding-top: var(--q-ui-size-2);
+    margin-top: var(--q-ui-size-2-negative);
+
+    .jse-menu::before {
+      background: #fff;
+      color: var(--q-ui-palette-text-primary);
+      content: "User metadata";
+      font-size: 13px;
+      left: 12px;
+      padding: 0 4px;
+      position: absolute;
+      top: -12px;
+    }
+  }
+
+  .error {
+    color: var(--q-ui-palette-error);
+    position: absolute;
+    left: 16px;
+    bottom: -8px;
+  }
+
+  .files {
+    display: flex;
+    flex-direction: column;
+    overflow-y: hidden;
+    padding: var(--q-ui-size-4) 0 var(--q-ui-size-2);
+    position: relative;
+  }
+
+  .files::after {
+    content: "";
+    position: absolute;
+    left: 1px;
+    bottom: calc(var(--q-ui-size-2) + 1px);
+    right: 1px;
+    height: var(--q-ui-size-4);
+    background: linear-gradient(
+      to top,
+      rgb(255 255 255 / 100%) 0%,
+      rgb(255 255 255 / 100%) 30%,
+      rgb(255 255 255 / 0%) 100%
+    );
+    border-radius: 0 0 var(--q-ui-border-radius) var(--q-ui-border-radius);
+  }
+
+  .list {
+    border: 1px solid var(--q-ui-palette-border);
+    border-radius: var(--q-ui-border-radius);
+    overflow-y: auto;
+  }
+
+  .list + .list {
+    margin-top: var(--q-ui-size-2);
+  }
+
+  .list > div > div {
+    padding-left: var(--q-ui-size-2);
+    padding-right: var(--q-ui-size-2);
+    position: relative;
+  }
+
+  .list > div > div::after {
+    background: var(--q-ui-palette-border);
+    bottom: 0;
+    content: "";
+    height: 1px;
+    left: 0;
+    position: absolute;
+    right: 0;
+  }
+
+  /* I can't use div + div because <style> elements are there */
+  .list > div > div:last-child::after {
+    content: none;
+  }
+
+  .list-separator {
+    background: var(--q-ui-palette-action-hover);
+    height: var(--q-ui-size-2);
+    border: inset 1px solid var(--q-ui-palette-border);
+  }
+
+  .workflow {
+    align-items: center;
+    display: grid;
+    column-gap: 16px;
+    grid-template-columns: 1fr 120px;
+  }
+
+  .workflow-null {
+    cursor: pointer;
+    text-align: right;
+  }
+
+  .workflow-null-label {
+    cursor: pointer;
+    margin-left: 8px;
+  }
+
+  .field-description {
+    font-size: 0.875rem;
+    margin: var(--q-ui-size-0-5) 0 0;
+  }
+
+  .link {
+    color: var(--q-ui-palette-primary);
+    cursor: pointer;
+    opacity: 0.75;
+  }
+
+  .link:hover {
+    opacity: 1;
+  }
+}

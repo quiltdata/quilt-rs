@@ -1,0 +1,44 @@
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.q-spinner {
+  height: calc(128px + 16px);
+  left: 50%;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: calc(128px + 16px);
+}
+
+.q-spinner div {
+  animation: spin 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+  border: 8px solid var(--q-ui-palette-primary);
+  border-color: var(--q-ui-palette-primary) transparent transparent;
+  border-radius: 50%;
+  box-sizing: border-box;
+  display: block;
+  height: 128px;
+  margin: 8px;
+  position: absolute;
+  width: 128px;
+}
+
+.q-spinner div:nth-child(1) {
+  animation-delay: -0.45s;
+}
+
+.q-spinner div:nth-child(2) {
+  animation-delay: -0.3s;
+}
+
+.q-spinner div:nth-child(3) {
+  animation-delay: -0.15s;
+}
+

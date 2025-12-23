@@ -1,0 +1,13 @@
+<style>
+  @import "/assets/css/views/entries-toolbar.css";
+</style>
+
+<div class="qui-entries-toolbar {%+ if with_status %}with-status{% endif %}">
+  <div class="container">
+    <label class="select-all">
+      <input type="checkbox" class="js-entries-select-all" disabled />
+      Select all
+    </label>
+    {{ button | safe }}
+  </div>
+</div>

@@ -1,0 +1,39 @@
+name: Test QuiltSync Frontend
+
+on:
+  push:
+    paths:
+      - 'quilt-sync/src/**'
+      - 'quilt-sync/*.json'
+      - '.github/workflows/test-quilt-sync-frontend.yaml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend-quality:
+    name: Frontend Quality (Ubuntu)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'quilt-sync/package-lock.json'
+
+      - name: Install frontend dependencies
+        run: npm install
+        working-directory: ./quilt-sync
+
+      - name: Frontend TypeScript check
+        run: npm run frontend:check
+        working-directory: ./quilt-sync
+
+      - name: Frontend linting
+        run: npm run frontend:lint
+        working-directory: ./quilt-sync
