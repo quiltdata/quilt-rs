@@ -1,6 +1,13 @@
 name: Test quilt_rs
 
-on: [push]
+on:
+  push:
+    paths:
+      - "quilt-rs/**"
+      - "quilt-cli/**"
+      - "Cargo.*"
+      - "rust-toolchain.toml"
+      - ".github/workflows/test-quilt-rs.yaml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
