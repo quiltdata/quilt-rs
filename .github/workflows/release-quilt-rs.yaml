@@ -1,4 +1,4 @@
-name: Release
+name: Release quilt_rs
 
 on: workflow_dispatch
 
