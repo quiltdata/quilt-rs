@@ -16,7 +16,7 @@ jobs:
         package:
           - name: quilt-rs
             registryName: quilt-rs
-            path: .
+            path: quilt-rs
     steps:
       - name: Checkout
         uses: actions/checkout@v6
