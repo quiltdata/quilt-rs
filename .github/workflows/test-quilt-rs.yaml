@@ -25,10 +25,10 @@ jobs:
         uses: ./.github/actions/setup-rust-dev
 
       - name: Check formatting
-        run: cargo fmt --check
+        run: cargo fmt --check -p quilt-rs -p quilt-cli
 
       - name: Lint
-        run: cargo clippy -- --deny warnings
+        run: cargo clippy -p quilt-rs -p quilt-cli -- --deny warnings
 
       - name: Test library
         run: cargo test -p quilt-rs --verbose
