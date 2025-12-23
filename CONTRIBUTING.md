@@ -35,7 +35,7 @@ cargo test
 
 ### Creating New Releases
 
-1. **Update the changelog**: Add new section to [CHANGELOG.md](CHANGELOG.md) following
+1. **Update the changelog**: Add new section to [quilt-rs/CHANGELOG.md](quilt-rs/CHANGELOG.md) following
    <https://keepachangelog.com> format with PR links
 2. **Bump version**: Update version in workspace root `Cargo.toml` (shared across all crates)
 3. **Create release**:
