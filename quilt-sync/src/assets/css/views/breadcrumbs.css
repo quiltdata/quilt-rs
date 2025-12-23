@@ -1,0 +1,82 @@
+.qui-breadcrumbs {
+  overflow: hidden;
+  padding-right: 16px;
+
+  .list {
+    align-items: center;
+    display: flex;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .item {
+    align-items: center;
+    display: flex;
+    font-size: var(--q-ui-font-size-normal);
+    white-space: nowrap;
+  }
+
+  .item::before {
+    background: no-repeat 50% 50% / 24px 24px
+      url("/assets/img/icons/chevron_right.svg");
+    content: "";
+    display: inline-block;
+    height: 24px;
+    left: -8px;
+    position: relative;
+    width: 24px;
+  }
+
+  .item:first-child::before {
+    display: none;
+  }
+
+  .item + .item {
+    margin-left: 8px;
+    overflow: hidden;
+    padding-left: 8px;
+    text-overflow: ellipsis;
+  }
+
+  .qui-breadcrumb-link,
+  .qui-breadcrumb-current {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .qui-breadcrumb-link {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .qui-breadcrumb-link:empty {
+    background: no-repeat 50% 50% / 24px 24px url("/assets/img/icons/home.svg");
+    border-radius: 50%;
+    border-width: 0;
+    display: inline-block;
+    height: 40px;
+    width: 40px;
+  }
+
+  .qui-breadcrumb-link:empty:hover,
+  .qui-breadcrumb-link:empty:focus {
+    background-color: var(--q-ui-palette-action-hover);
+  }
+
+  .extra {
+    background: no-repeat 50% 50% / 20px 20px
+      url("/assets/img/icons/open_in_new.svg");
+    border-radius: 50%;
+    border-width: 0;
+    cursor: pointer;
+    height: 40px;
+    margin-left: 4px;
+    width: 40px;
+  }
+
+  .extra:hover,
+  .extra:focus {
+    background-color: var(--q-ui-palette-action-hover);
+  }
+}

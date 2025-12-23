@@ -1,0 +1,31 @@
+.qui-page-installed-packages-list {
+  box-sizing: border-box;
+  flex-grow: 1;
+  margin: auto;
+  max-width: var(--q-ui-container-size);
+  padding: var(--q-ui-size-3) 0;
+  width: 100%;
+
+  .empty {
+    max-width: 880px;
+    margin: auto;
+  }
+
+  .empty-title {
+    font-size: 1.2rem;
+  }
+
+  .empty-img {
+    border-radius: var(--q-ui-border-radius);
+    box-shadow: var(--q-ui-shadows-appbar);
+    box-sizing: border-box;
+    display: block;
+    margin: auto;
+    max-width: 100%;
+  }
+
+  .list {
+    margin: 0;
+    padding: 0;
+  }
+}

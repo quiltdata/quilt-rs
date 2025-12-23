@@ -1,0 +1,73 @@
+.qui-progress {
+  display: none;
+  background: var(--q-ui-palette-background-primary);
+  height: var(--q-ui-size-8);
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: var(--q-ui-size-8);
+  z-index: var(--q-ui-z-index-progress);
+
+  #layout[disabled] & {
+    display: flex;
+  }
+
+  .progress-bar {
+    background-color: var(--q-ui-palette-action-hover);
+    height: var(--q-ui-size-1);
+    margin: var(--q-ui-size-3-5) var(--q-ui-size-4) 0;
+    overflow: hidden;
+    width: 100%;
+    position: relative;
+
+    &::after,
+    &::before {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 160px;
+      content: "";
+      z-index: 1;
+    }
+
+    &::before {
+      left: 0;
+      background: linear-gradient(
+        to right,
+        rgb(255 255 255 / 100%) 0%,
+        rgb(255 255 255 / 0%) 100%
+      );
+    }
+
+    &::after {
+      right: 0;
+      background: linear-gradient(
+        to left,
+        rgb(255 255 255 / 100%) 0%,
+        rgb(255 255 255 / 0%) 100%
+      );
+    }
+  }
+
+  .progress-value {
+    width: 100%;
+    height: 100%;
+    background-color: var(--q-ui-palette-primary);
+    animation: progress-infinite 1s infinite linear;
+    transform-origin: 0% 50%;
+  }
+}
+
+@keyframes progress-infinite {
+  0% {
+    transform: translateX(0) scaleX(0);
+  }
+
+  40% {
+    transform: translateX(0) scaleX(0.4);
+  }
+
+  100% {
+    transform: translateX(100%) scaleX(0.5);
+  }
+}

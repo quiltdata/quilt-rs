@@ -1,0 +1,25 @@
+.container {
+  flex-grow: 1;
+  margin: auto;
+  max-width: 1024px;
+  padding: 24px 16px;
+}
+
+.title {
+  font-size: 1.2rem;
+  margin: 0 0 8px;
+}
+
+.message {
+  font-size: 1rem;
+}
+
+.button-group {
+  display: flex;
+  justify-content: space-between;
+  margin: 16px 0 0;
+}
+
+.button {
+  margin: 0 16px;
+}

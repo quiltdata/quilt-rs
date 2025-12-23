@@ -1,0 +1,44 @@
+<style>
+  @import url("/assets/css/components/button.css");
+</style>
+
+{% if let Some(href) = href %}
+<a href="{{ href }}">
+{% endif %}
+
+<button
+  class="qui-button {{+ get_class_name_modificators() }}"
+  {%+ if let Some(title) = title %} title="{{ title }}"{% endif %}
+
+  {%+ if let Some(data) = data %}
+    {% for (key, value) in data %}
+      data-{{ key }}="{{ value }}"
+    {% endfor %}
+  {% endif %}
+
+  {%+ if disabled %} disabled {% endif +%}
+
+  {%+ match button_type %}
+    {% when ButtonType::Submit %}
+      type="submit"
+    {% when ButtonType::Button %}
+      type="button"
+  {% endmatch %}
+>
+  {% match direction %}
+    {% when Direction::LeftToRight %}
+      {% if let Some(icon) = icon %}
+        {{ icon | safe }}
+      {% endif %}
+      <span>{{ label }}</span>
+    {% when Direction::RightToLeft %}
+      <span>{{ label }}</span>
+      {% if let Some(icon) = icon %}
+        {{ icon | safe }}
+      {% endif %}
+  {% endmatch %}
+</button>
+
+{% if let Some(_) = href %}
+</a>
+{% endif %}

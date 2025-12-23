@@ -1,0 +1,3 @@
+[general]
+dirs = ["../src/templates"]
+whitespace = "suppress"

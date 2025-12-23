@@ -1,0 +1,39 @@
+<style>
+  @import url("/assets/css/views/installed-package-item.css");
+</style>
+
+<li class="qui-installed-package-item">
+  <a class="link" href="{{ Paths::InstalledPackage(namespace.clone()) }}">
+    <span class="item-primary">{{ namespace }}</span>
+    <span class="item-secondary">
+      <strong>{{ t!("installed_packages_list.uri") }}</strong>
+      {{ remote.display() }}
+    </span>
+  </a>
+  <div class="menu">
+    <ul class="menu-list">
+      <li class="menu-item">{{ button_open_local | safe }}</li>
+      <li class="menu-item">{{ button_open_remote | safe }}</li>
+
+      <li class="menu-item menu-divider" />
+
+      <li class="menu-item">{{ button_commit | safe }}</li>
+
+      {% if let Some(button_sync) = button_sync %}
+      <li class="menu-item menu-divider" />
+
+      <li class="menu-item">{{ button_sync | safe }}</li>
+      {% endif %}
+      <!-- -->
+      {% if let Some(button_merge) = button_merge %}
+      <li class="menu-item menu-divider" />
+
+      <li class="menu-item">{{ button_merge | safe }}</li>
+      {% endif %}
+
+      <li class="menu-item menu-divider" />
+
+      <li class="menu-item">{{ button_uninstall | safe }}</li>
+    </ul>
+  </div>
+</li>

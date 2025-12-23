@@ -1,0 +1,339 @@
+use askama::Template;
+use rust_i18n::t;
+
+use crate::app::AppAssets;
+use crate::app::Globals;
+use crate::debug_tools;
+use crate::error::Error;
+use crate::model::QuiltModel;
+use crate::quilt;
+use crate::quilt::lineage::UpstreamState;
+use crate::quilt::uri::Namespace;
+use crate::routes::Paths;
+use crate::telemetry::prelude::*;
+use crate::ui::btn;
+use crate::ui::crumbs;
+use crate::ui::layout::Layout;
+use crate::ui::Icon;
+
+#[derive(Debug)]
+struct InstalledPackage {
+    namespace: Namespace,
+    origin: url::Url,
+    remote: quilt::uri::ManifestUri,
+    status: UpstreamState,
+}
+
+#[derive(Debug)]
+pub struct ViewInstalledPackagesList {
+    installed_packages_list: Vec<InstalledPackage>,
+    globals: Globals,
+}
+
+#[derive(Template)]
+#[template(path = "./components/installed-package-item.html")]
+struct TmplInstalledPackage<'a> {
+    button_commit: btn::TmplButton<'a>,
+    button_merge: Option<btn::TmplButton<'a>>,
+    button_open_local: btn::TmplButton<'a>,
+    button_open_remote: btn::TmplButton<'a>,
+    button_sync: Option<btn::TmplButton<'a>>,
+    button_uninstall: btn::TmplButton<'a>,
+    namespace: quilt::uri::Namespace,
+    remote: quilt::uri::ManifestUri,
+}
+
+impl From<InstalledPackage> for TmplInstalledPackage<'_> {
+    fn from(value: InstalledPackage) -> Self {
+        let InstalledPackage {
+            namespace,
+            origin,
+            remote,
+            status,
+        } = value;
+        TmplInstalledPackage {
+            button_commit: Self::button_commit(&namespace),
+            button_merge: Self::button_merge(&namespace, &status),
+            button_open_local: Self::button_open_local(&namespace),
+            button_open_remote: Self::button_open_remote(&origin),
+            button_sync: Self::button_sync(&namespace, &status),
+            button_uninstall: Self::button_uninstall(&namespace),
+            namespace,
+            remote,
+        }
+    }
+}
+
+impl<'a> TmplInstalledPackage<'a> {
+    fn button_open_local(namespace: &Namespace) -> btn::TmplButton<'a> {
+        btn::TmplButton::builder()
+            .set_data("namespace", namespace.to_string())
+            .set_icon(Icon::FolderOpen)
+            .set_js(btn::JsSelector::OpenInFileBrowser)
+            .set_label(t!("buttons.open_package_in_file_browser"))
+            .set_size(btn::Size::Small)
+    }
+
+    fn button_open_remote(origin: &url::Url) -> btn::TmplButton<'a> {
+        btn::TmplButton::builder()
+            .set_data("url", origin.to_string())
+            .set_icon(Icon::OpenInBrowser)
+            .set_js(btn::JsSelector::OpenInWebBrowser)
+            .set_label(t!("buttons.open_package_in_catalog"))
+            .set_size(btn::Size::Small)
+    }
+
+    fn button_commit(namespace: &Namespace) -> btn::TmplButton<'a> {
+        btn::TmplButton::builder()
+            .set_icon(Icon::Commit)
+            .set_label(t!("buttons.commit_package"))
+            .set_size(btn::Size::Small)
+            .set_href(Paths::Commit(namespace.clone()))
+    }
+
+    fn button_uninstall(namespace: &Namespace) -> btn::TmplButton<'a> {
+        btn::TmplButton::builder()
+            .set_data("namespace", namespace.to_string())
+            .set_icon(Icon::Block)
+            .set_js(btn::JsSelector::PackagesUninstall)
+            .set_label(t!("buttons.uninstall_package"))
+            .set_size(btn::Size::Small)
+    }
+
+    fn button_sync(namespace: &Namespace, status: &UpstreamState) -> Option<btn::TmplButton<'a>> {
+        match status {
+            UpstreamState::Ahead => Some(
+                btn::TmplButton::builder()
+                    .set_data("namespace", namespace.to_string())
+                    .set_icon(Icon::CloudUpload)
+                    .set_js(btn::JsSelector::PackagesPush)
+                    .set_label(t!("buttons.push_package"))
+                    .set_color(btn::Color::Primary)
+                    .set_size(btn::Size::Small),
+            ),
+            UpstreamState::Behind => Some(
+                btn::TmplButton::builder()
+                    .set_data("namespace", namespace.to_string())
+                    .set_icon(Icon::CloudDownload)
+                    .set_js(btn::JsSelector::PackagesPull)
+                    .set_label(t!("buttons.pull_package"))
+                    .set_color(btn::Color::Primary)
+                    .set_size(btn::Size::Small),
+            ),
+            _ => None,
+        }
+    }
+
+    fn button_merge(namespace: &Namespace, status: &UpstreamState) -> Option<btn::TmplButton<'a>> {
+        match status {
+            UpstreamState::Diverged => Some(
+                btn::TmplButton::builder()
+                    .set_data("namespace", namespace.to_string())
+                    .set_icon(Icon::Merge)
+                    .set_label(t!("buttons.merge_package"))
+                    .set_color(btn::Color::Primary)
+                    .set_size(btn::Size::Small)
+                    .set_href(Paths::Merge(namespace.clone())),
+            ),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Template)]
+#[template(path = "./pages/installed-packages-list.html")]
+pub struct TmplPageInstalledPackagesList<'a> {
+    list: Vec<TmplInstalledPackage<'a>>,
+    layout: Layout<'a>,
+}
+impl<'a> TmplPageInstalledPackagesList<'a> {
+    fn breadcrumbs() -> crumbs::TmplBreadcrumbs<'a> {
+        crumbs::TmplBreadcrumbs {
+            list: vec![crumbs::Current::create(t!(
+                "breadcrumbs.installed_packages_list"
+            ))],
+        }
+    }
+}
+
+impl ViewInstalledPackagesList {
+    pub async fn create(
+        model: &impl QuiltModel,
+        app: &impl AppAssets,
+        tracing: &crate::telemetry::Telemetry,
+    ) -> Result<ViewInstalledPackagesList, Error> {
+        let list = model.get_installed_packages_list().await?;
+        let mut installed_packages_list = Vec::new();
+        for installed_package in list {
+            let status = model
+                .get_installed_package_status(&installed_package, None)
+                .await?;
+            let lineage = model
+                .get_installed_package_lineage(&installed_package)
+                .await?;
+            let uri = quilt::uri::S3PackageUri::from(&lineage.remote);
+            let origin_host = debug_tools::try_remote_origin_host(&lineage.remote)?;
+
+            tracing.add_host(&origin_host);
+
+            installed_packages_list.push(InstalledPackage {
+                namespace: installed_package.namespace,
+                origin: uri.display_for_host(&origin_host)?,
+                remote: lineage.remote,
+                status: status.upstream_state,
+            });
+        }
+        debug!("Packages list is {:?}", installed_packages_list);
+        Ok(ViewInstalledPackagesList {
+            installed_packages_list,
+            globals: app.globals(),
+        })
+    }
+
+    pub fn render(self) -> Result<String, Error> {
+        let tmpl = TmplPageInstalledPackagesList::from(self);
+        Ok(tmpl.render()?)
+    }
+}
+
+impl From<ViewInstalledPackagesList> for TmplPageInstalledPackagesList<'_> {
+    fn from(view: ViewInstalledPackagesList) -> Self {
+        let mut list = Vec::new();
+
+        let consumed_list = view.installed_packages_list.into_iter();
+        for item in consumed_list {
+            list.push(TmplInstalledPackage::from(item));
+        }
+
+        TmplPageInstalledPackagesList {
+            layout: Layout::builder(view.globals).set_breadcrumbs(Self::breadcrumbs()),
+            list,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use quilt::uri::ManifestUri;
+    use quilt::uri::S3PackageUri;
+
+    use crate::app::Globals;
+    use crate::Result;
+
+    fn create_test_package(namespace: &str, status: UpstreamState) -> Result<InstalledPackage> {
+        Ok(InstalledPackage {
+            namespace: namespace.try_into().unwrap(),
+            origin: url::Url::parse("https://test.quilt.dev").unwrap(),
+            remote: ManifestUri::try_from(S3PackageUri::try_from(
+                format!("quilt+s3://test#package={namespace}@abcdef").as_str(),
+            )?)?,
+            status,
+        })
+    }
+
+    #[test]
+    fn test_button_rendering_for_different_statuses() -> Result {
+        // Create packages with different statuses
+        let packages = vec![
+            create_test_package("test/ahead", UpstreamState::Ahead)?,
+            create_test_package("test/behind", UpstreamState::Behind)?,
+            create_test_package("test/diverged", UpstreamState::Diverged)?,
+            create_test_package("test/uptodate", UpstreamState::UpToDate)?,
+        ];
+
+        // Create view with test packages
+        let view = ViewInstalledPackagesList {
+            installed_packages_list: packages,
+            globals: Globals::default(),
+        };
+
+        // Render the view
+        let html = view.render()?;
+
+        // Check for push button in the package with Ahead status
+        assert!(html.contains(r#"data-namespace="test/ahead""#));
+        assert!(html.contains(r#"js-packages-push"#));
+        assert!(html.contains(r#"cloud_upload"#));
+
+        // Check for pull button in the package with Behind status
+        assert!(html.contains(r#"data-namespace="test/behind""#));
+        assert!(html.contains(r#"js-packages-pull"#));
+        assert!(html.contains(r#"cloud_download"#));
+
+        // Check for merge button in the package with Diverged status
+        assert!(html.contains(r#"data-namespace="test/diverged""#));
+        assert!(html.contains(r#"merge"#));
+        assert!(html.contains(r#"href="merge.html#namespace=test/diverged""#));
+
+        // Check that all packages have common buttons
+        for namespace in [
+            "test/ahead",
+            "test/behind",
+            "test/diverged",
+            "test/uptodate",
+        ] {
+            // Check for commit button
+            assert!(html.contains(&format!(r#"href="commit.html#namespace={namespace}""#)));
+
+            // Check for open local button
+            assert!(html.contains(&format!(r#"data-namespace="{namespace}""#)));
+            assert!(html.contains(r#"js-open-in-file-browser"#));
+
+            // Check for uninstall button
+            assert!(html.contains(r#"js-packages-uninstall"#));
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_sync_button_rendering() -> Result<()> {
+        // Test that sync buttons are only rendered for appropriate statuses
+        let ahead_package = create_test_package("test/ahead", UpstreamState::Ahead)?;
+        let behind_package = create_test_package("test/behind", UpstreamState::Behind)?;
+        let uptodate_package = create_test_package("test/uptodate", UpstreamState::UpToDate)?;
+
+        // Check that Ahead status has push button
+        let ahead_tmpl = TmplInstalledPackage::from(ahead_package);
+        let ahead_html = ahead_tmpl.to_string();
+        assert!(ahead_html.contains(r#"js-packages-push"#));
+        assert!(!ahead_html.contains(r#"js-packages-pull"#));
+
+        // Check that Behind status has pull button
+        let behind_tmpl = TmplInstalledPackage::from(behind_package);
+        let behind_html = behind_tmpl.to_string();
+        assert!(behind_html.contains(r#"js-packages-pull"#));
+        assert!(!behind_html.contains(r#"js-packages-push"#));
+
+        // Check that UpToDate status has neither push nor pull buttons
+        let uptodate_tmpl = TmplInstalledPackage::from(uptodate_package);
+        let uptodate_html = uptodate_tmpl.to_string();
+        assert!(!uptodate_html.contains(r#"js-packages-pull"#));
+        assert!(!uptodate_html.contains(r#"js-packages-push"#));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_merge_button_rendering() -> Result<()> {
+        // Test that merge button is only rendered for Diverged status
+        let diverged_package = create_test_package("test/diverged", UpstreamState::Diverged)?;
+        let uptodate_package = create_test_package("test/uptodate", UpstreamState::UpToDate)?;
+
+        // Check that Diverged status has merge button
+        let diverged_tmpl = TmplInstalledPackage::from(diverged_package);
+        let diverged_html = diverged_tmpl.to_string();
+        assert!(diverged_html.contains(r#"merge"#));
+        assert!(diverged_html.contains(r#"href="merge.html#namespace=test/diverged""#));
+
+        // Check that UpToDate status doesn't have merge button
+        let uptodate_tmpl = TmplInstalledPackage::from(uptodate_package);
+        let uptodate_html = uptodate_tmpl.to_string();
+        assert!(!uptodate_html.contains(r#"merge"#));
+        assert!(!uptodate_html.contains(r#"href="merge.html"#));
+
+        Ok(())
+    }
+}

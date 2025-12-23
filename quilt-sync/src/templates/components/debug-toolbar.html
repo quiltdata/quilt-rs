@@ -1,0 +1,35 @@
+<style>
+  @import url("/assets/css/components/debug-toolbar.css");
+</style>
+
+<div class="qui-debug-toolbar">
+  {{ button | safe }}
+  <div class="popover-wrapper">
+    <div class="popover">
+      <dl>
+        <dt>{{ t!("debug_toolbar.version") }}</dt>
+        <dd>
+          <span>{{ version }}</span>
+          <span class="divider">,</span>
+          {{ release_notes | safe }}
+        </dd>
+      </dl>
+      <dl>
+        <dt>{{ t!("debug_toolbar.dot_quilt_title") }}</dt>
+        <dd>{{ dot_quilt_button | safe }}</dd>
+      </dl>
+      <dl>
+        <dt>{{ t!("debug_toolbar.logs_directory") }}</dt>
+        <dd>{{ logs_dir_button | safe }}</dd>
+      </dl>
+      <dl>
+        <dt>{{ t!("debug_toolbar.reset") }}</dt>
+        <dd>
+          {{ reload_button | safe }}
+          <span class="divider">,</span>
+          {{ auth_button | safe }}
+        </dd>
+      </dl>
+    </div>
+  </div>
+</div>

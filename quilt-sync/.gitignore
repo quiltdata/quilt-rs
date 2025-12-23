@@ -1,0 +1,18 @@
+# Let's ignore here files produced by the project tools only.
+# You can ignore other files, that are not related to the project in the global gitignore:
+#
+# ```sh
+# git config --global core.excludesFile '~/.gitignore'
+# echo .os-specific-file >> ~/.gitignore
+# ```
+
+dist
+node_modules
+.env
+.parcel-cache
+
+# TODO: move to dist directory
+src/assets/js/main.js
+src/assets/js/main.js.map
+
+tarpaulin-report.html

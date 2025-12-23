@@ -1,0 +1,113 @@
+.qui-entry {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  list-style: none;
+  padding: var(--q-ui-size-1-5) var(--q-ui-size-4) var(--q-ui-size-1-5)
+    var(--q-ui-size-2-5);
+
+  &:hover {
+    background: var(--q-ui-palette-action-hover);
+  }
+
+  .text {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .text-primary {
+    font-size: 1rem;
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .text-secondary {
+    font-size: 0.8rem;
+    margin: 4px 0 0;
+    font-weight: 500;
+    opacity: 0.6;
+  }
+
+  &.added,
+  &.added .text-secondary {
+    color: var(--q-ui-palette-success);
+  }
+
+  &.deleted,
+  &.deleted .text-secondary {
+    color: var(--q-ui-palette-error);
+  }
+
+  &.deleted .text {
+    text-decoration: line-through;
+  }
+
+  &.modified,
+  &.modified .text-secondary {
+    color: var(--q-ui-palette-warning);
+  }
+
+  &.remote,
+  &.remote .text-secondary {
+    color: var(--q-ui-palette-text-secondary);
+  }
+
+  .avatar {
+    align-items: center;
+    display: flex;
+    flex-shrink: 0;
+    height: 40px;
+    justify-content: center;
+    width: 64px;
+  }
+
+  .avatar input {
+    cursor: pointer;
+    height: 16px;
+    position: relative;
+    width: 16px;
+  }
+
+  .avatar input:disabled {
+    cursor: default;
+  }
+
+  .avatar input:not(:disabled)::before {
+    content: "";
+    cursor: pointer;
+    height: 40px;
+    position: absolute;
+    transform: translate(-33%, -33%);
+    width: 40px;
+    z-index: 10;
+  }
+
+  .menu {
+    flex-shrink: 0;
+    opacity: 0.3;
+    transition: opacity 0.15s ease;
+  }
+
+  &:hover .menu {
+    opacity: 1;
+  }
+
+  .menu-list {
+    display: flex;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .menu-item + .menu-item {
+    margin-left: 8px;
+  }
+
+  .qui-button {
+    line-height: 1.5;
+  }
+}

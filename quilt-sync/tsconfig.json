@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "moduleResolution": "node",
+    "noImplicitAny": true,
+    "strict": true,
+    "target": "es2020"
+  },
+  "files": ["./src/assets/js/main.ts"]
+}

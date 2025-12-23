@@ -1,0 +1,26 @@
+.qui-appbar {
+  background: var(--q-ui-palette-inverted-background-primary);
+  color: var(--q-ui-palette-inverted-text-primary);
+  display: flex;
+  flex-shrink: 0;
+  height: var(--q-ui-size-8);
+  position: sticky;
+  top: 0;
+  z-index: var(--q-ui-z-index-appbar);
+
+  .container {
+    align-items: center;
+    box-sizing: border-box;
+    display: flex;
+    flex-grow: 1;
+    justify-content: space-between;
+    margin: auto;
+    max-width: var(--q-ui-container-size);
+    padding: 0 var(--q-ui-size-4);
+  }
+
+  .nav {
+    align-items: center;
+    display: flex;
+  }
+}

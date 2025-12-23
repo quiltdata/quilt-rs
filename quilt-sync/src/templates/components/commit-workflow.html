@@ -1,0 +1,36 @@
+<div class="workflow">
+  <p class="field">
+    <label class="label" for="workflow" >{{ t!("commit.workflow") }}</label>
+
+    <input
+      {%+ if let Some(js) = js %} {{ js | safe }} {% else %} class="input" {% endif +%}
+      {%+ if let Some(value) = value %} value="{{ value }}" {% endif +%}
+      {%+ if disabled +%} disabled {%+ endif +%}
+    />
+
+    {% if let Some(error) = error %}
+      <span class="error">{{ error }}</span>
+    {% endif %}
+  </p>
+
+  <div class="workflow-null">
+    <input id="workflow-null" type="checkbox"
+      {%+ if let Some(null_js) = null_js %}
+        {{ null_js | safe }}
+      {% endif %}
+
+      {%+ if null_checked +%} checked {%+ endif +%}
+      {%+ if null_disabled +%} disabled {%+ endif +%}
+    />
+    <label class="workflow-null-label" for="workflow-null">
+      {{ t!("commit.workflow_null") }}
+    </label>
+  </div>
+
+  {% if let Some(link) = link %}
+    <p class="field-description">
+      {{ link | safe }}
+    </p>
+  {% endif %}
+</div>
+

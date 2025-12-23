@@ -1,0 +1,26 @@
+.qui-page-merge {
+  &.container {
+    flex-grow: 1;
+    margin: auto;
+    max-width: var(--q-ui-container-size);
+    padding: var(--q-ui-size-4);
+    width: 100%;
+  }
+
+  .root {
+    align-items: center;
+    display: flex;
+    flex-direction: column;
+    margin: auto;
+    max-width: 320px;
+  }
+
+  .field {
+    margin: var(--q-ui-size-4) 0 0;
+    text-align: center;
+  }
+
+  .description {
+    margin: var(--q-ui-size-1) 0;
+  }
+}

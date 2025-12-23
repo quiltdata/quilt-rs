@@ -1,0 +1,42 @@
+.qui-uri {
+  align-items: center;
+  display: flex;
+  flex-grow: 1;
+  gap: var(--q-ui-size-0-5);
+  max-width: 560px;
+
+  .input {
+    background: var(--q-ui-palette-inverted-input-background);
+    border: 1px solid var(--q-ui-palette-inverted-input-border);
+    border-radius: var(--q-ui-border-radius);
+    color: var(--q-ui-palette-inverted-text-primary);
+    flex-grow: 1;
+    font-size: var(--q-ui-font-size-small);
+    font-family: var(--q-ui-font-family);
+    opacity: 0.3;
+    outline: none;
+    padding: var(--q-ui-size-1) var(--q-ui-size-2);
+
+    &::placeholder {
+      color: var(--q-ui-palette-inverted-input-placeholder);
+    }
+
+    &[value],
+    &:focus {
+      opacity: 1;
+    }
+  }
+
+  .qui-button {
+    min-width: auto;
+    opacity: 0;
+    transition: opacity var(--q-ui-transition-duration-normal) var(--q-ui-transition-type-normal);
+  }
+
+  .qui-button:active,
+  .qui-button:focus,
+  &:hover .qui-button,
+  & .input:focus ~ .qui-button {
+      opacity: 1;
+  }
+}

@@ -1,5 +1,5 @@
 [workspace]
-members = ["quilt-rs", "quilt-cli"]
+members = ["quilt-rs", "quilt-cli", "quilt-sync/src-tauri"]
 resolver = "2"
 
 [workspace.package]
