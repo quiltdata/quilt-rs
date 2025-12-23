@@ -5,6 +5,12 @@
 -->
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Support for `:tag` syntax in package URI parsing with mutual exclusivity from `@hash` syntax
+
 ## [v0.23.0](https://crates.io/crates/quilt-rs/0.23.0) - 2025-11-28
 
 - Support for creating packages with "CRC64/NVMe" object hash

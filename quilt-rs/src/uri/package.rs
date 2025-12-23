@@ -216,11 +216,32 @@ impl TryFrom<&str> for S3PackageUri {
             .remove("package")
             .ok_or(Error::PackageURI("missing package in fragment".to_string()))?;
 
-        let (namespace, revision) = match pkg_spec.split_once('@') {
-            Some((namespace, top_hash)) => {
-                (namespace.into(), RevisionPointer::Hash(top_hash.into()))
+        let (namespace, revision) = if pkg_spec.contains(':') && pkg_spec.contains('@') {
+            return Err(Error::PackageURI(
+                "package spec may either contain \":\" or \"@\"".to_string(),
+            ));
+        } else if let Some((namespace, tag)) = pkg_spec.split_once(':') {
+            if tag.is_empty() {
+                return Err(Error::PackageURI("tag must not be empty".to_string()));
             }
-            None => (pkg_spec, RevisionPointer::default()),
+            if tag.contains(':') {
+                return Err(Error::PackageURI(
+                    "package spec may contain only one \":\"".to_string(),
+                ));
+            }
+            (namespace.into(), RevisionPointer::Tag(tag.into()))
+        } else if let Some((namespace, top_hash)) = pkg_spec.split_once('@') {
+            if top_hash.is_empty() {
+                return Err(Error::PackageURI("hash must not be empty".to_string()));
+            }
+            if top_hash.contains('@') {
+                return Err(Error::PackageURI(
+                    "package spec may contain only one \"@\"".to_string(),
+                ));
+            }
+            (namespace.into(), RevisionPointer::Hash(top_hash.into()))
+        } else {
+            (pkg_spec, RevisionPointer::default())
         };
 
         let path = params.remove("path").map(PathBuf::from);
@@ -266,7 +287,7 @@ impl S3PackageUri {
                 if h == "latest" {
                     "".to_string()
                 } else {
-                    format!("@{h}")
+                    format!(":{h}")
                 }
             }
             RevisionPointer::Hash(h) => format!("@{}", Self::format_hash(h)),
@@ -319,7 +340,7 @@ impl fmt::Display for S3PackageUri {
                 if h == "latest" {
                     "".to_string()
                 } else {
-                    format!("@{h}")
+                    format!(":{h}")
                 }
             }
             RevisionPointer::Hash(h) => format!("@{h}"),
@@ -559,7 +580,7 @@ mod tests {
             revision: RevisionPointer::Tag("foobar".to_string()),
             path: None,
         };
-        assert_eq!(uri.to_string(), "quilt+s3://bucket#package=foo/bar@foobar");
+        assert_eq!(uri.to_string(), "quilt+s3://bucket#package=foo/bar:foobar");
         Ok(())
     }
 
@@ -674,6 +695,88 @@ mod tests {
         let uri_without_catalog: S3PackageUri =
             "quilt+s3://bucket#package=foo/bar&path=read/me.md".parse()?;
         assert!(uri_without_catalog.display_for_catalog().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn test_tag_parsing() -> Res {
+        let uri: S3PackageUri = "quilt+s3://bucket#package=foo/bar:the-very-latest".parse()?;
+        assert_eq!(
+            uri,
+            S3PackageUri {
+                bucket: "bucket".to_string(),
+                catalog: None,
+                namespace: ("foo", "bar").into(),
+                revision: RevisionPointer::Tag("the-very-latest".to_string()),
+                path: None,
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_tag_with_path() -> Res {
+        let uri: S3PackageUri = "quilt+s3://bucket#package=foo/bar:latest&path=data.csv".parse()?;
+        assert_eq!(
+            uri,
+            S3PackageUri {
+                bucket: "bucket".to_string(),
+                catalog: None,
+                namespace: ("foo", "bar").into(),
+                revision: RevisionPointer::Tag("latest".to_string()),
+                path: Some(PathBuf::from("data.csv")),
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_empty_tag_error() -> Res {
+        let result = S3PackageUri::try_from("quilt+s3://bucket#package=foo/bar:");
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid package URI: tag must not be empty"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_multiple_colons_error() -> Res {
+        let result = S3PackageUri::try_from("quilt+s3://bucket#package=foo/bar:latest:extra");
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid package URI: package spec may contain only one \":\""
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_empty_hash_error() -> Res {
+        let result = S3PackageUri::try_from("quilt+s3://bucket#package=foo/bar@");
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid package URI: hash must not be empty"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_multiple_at_signs_error() -> Res {
+        let result = S3PackageUri::try_from("quilt+s3://bucket#package=foo/bar@abc123@def456");
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid package URI: package spec may contain only one \"@\""
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_both_tag_and_hash_error() -> Res {
+        let result = S3PackageUri::try_from("quilt+s3://bucket#package=foo/bar:latest@abc123");
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid package URI: package spec may either contain \":\" or \"@\""
+        );
         Ok(())
     }
 }
