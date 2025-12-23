@@ -2638,6 +2638,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "quilt-cli"
+version = "0.23.0"
+dependencies = [
+ "clap",
+ "dirs",
+ "quilt-rs",
+ "serde_json",
+ "tabled",
+ "tempfile",
+ "test-log",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "quilt-rs"
 version = "0.23.0"
 dependencies = [
@@ -2653,7 +2671,6 @@ dependencies = [
  "aws-smithy-types",
  "aws-types",
  "chrono",
- "clap",
  "dirs",
  "futures",
  "futures-util",
@@ -2674,7 +2691,6 @@ dependencies = [
  "tokio-stream",
  "tokio-test",
  "tracing",
- "tracing-subscriber",
  "url",
 ]
 
