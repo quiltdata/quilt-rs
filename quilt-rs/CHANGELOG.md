@@ -8,7 +8,6 @@
 ## [v0.23.0](https://crates.io/crates/quilt-rs/0.23.0) - 2025-11-28
 
 - Support for creating packages with "CRC64/NVMe" object hash
-- Provide `HostConfig` as parameter to CLI model and improve test coverage
 - Update dependencies including "aws-sdk-rust" monorepo and "arrow/parquet"
 
 ## [v0.22.0](https://crates.io/crates/quilt-rs/0.22.0) - 2025-11-13
@@ -135,7 +134,6 @@ Bump a version number to highlight the accumulated changes of the 0.8.\* version
 - Add authentication to Quilt Stack preserving backward compatibility with getting credentials from `~/.aws`
 - `domain` path is now required for every command internally, but is optional for users
   If `domain` is not provided, the default user data directory is used
-- New command `login`
 
 ## [v0.8.10]
 
@@ -151,7 +149,6 @@ Bump a version number to highlight the accumulated changes of the 0.8.\* version
 ## [v0.8.8]
 
 - Added "workflow" parameter for commit
-- Implemented tests for CLI, treating them as integration tests. They use real packages from Quilt stack
 - Increased test coverage to 79%
 - Moved HTTPS and AWS S3 clients to the `RemoteS3`, and use `RwLock` there in struct
 - Guard lineage with `Mutex` for `InstalledPackage`
@@ -166,11 +163,10 @@ Bump a version number to highlight the accumulated changes of the 0.8.\* version
 
 - Copy package pushed to the remote to the local storage.
   Locally committed package and remote have different `top_hash`, because local manifest has `file://` physical keys.
-- `package_s3_prefix` (CLI `package` command) accepts `--message` and `--user_meta` arguments similar to `commit` command
 
 ## [v0.8.5]
 
-- `package_s3_prefix` (CLI `package` command) will calculate checksum if missing
+- `package_s3_prefix` will calculate checksum if missing
 
 ## [v0.8.4]
 
@@ -213,7 +209,6 @@ Bump a version number to highlight the accumulated changes of the 0.8.\* version
 
 ## [v0.5.7] - 2024-03-21
 
-- Added command-line interface: `browse`, `install`, `list`, `package` and `uninstall` commands
 
 ## [v0.5.6] - 2024-03-01
 
