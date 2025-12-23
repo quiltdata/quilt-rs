@@ -27,11 +27,22 @@ jobs:
       - name: Lint
         run: cargo clippy -- --deny warnings
 
-      - name: Test
-        run: |
-          cargo test --all --verbose
+      - name: Test library
+        run: cargo test -p quilt-rs --verbose
         env:
           RUST_BACKTRACE: 1
-          RUST_LOG: debug
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Test CLI
+        run: cargo test -p quilt-cli --verbose
+        env:
+          RUST_BACKTRACE: 1
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Build library
+        run: cargo build -p quilt-rs --verbose
+
+      - name: Build CLI
+        run: cargo build -p quilt-cli --verbose
