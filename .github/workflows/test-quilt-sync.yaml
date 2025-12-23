@@ -1,0 +1,69 @@
+name: Test QuiltSync
+
+on:
+  push:
+    paths:
+      - "quilt-sync/src-tauri/**"
+      - "quilt-sync/*.toml"
+      - "quilt-sync/Cargo.*"
+      - ".github/workflows/test-quilt-sync.yaml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Code Quality (Ubuntu)
+    if: github.ref != 'refs/heads/main'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Ubuntu dependencies
+        uses: ./.github/actions/install-ubuntu-deps
+
+      - name: Setup Rust for development
+        uses: ./.github/actions/setup-rust-dev
+
+      - name: Format
+        run: cargo fmt --check
+        working-directory: ./quilt-sync/src-tauri
+
+      - name: Lint
+        run: cargo clippy -- --deny warnings
+        working-directory: ./quilt-sync/src-tauri
+
+      - name: Test
+        run: cargo test --all --verbose
+        working-directory: ./quilt-sync/src-tauri
+        env:
+          RUST_BACKTRACE: 1
+          RUST_LOG: debug
+
+  cross-platform:
+    name: Cross-Platform Tests
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      matrix:
+        platform: [ubuntu-22.04, macos-15, windows-latest]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Ubuntu dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: ./.github/actions/install-ubuntu-deps
+
+      - name: Setup Rust for testing
+        uses: ./.github/actions/setup-rust-minimal
+        with:
+          targets: ${{ matrix.platform == 'macos-15' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Test
+        run: cargo test --all --verbose
+        working-directory: ./quilt-sync/src-tauri
+        env:
+          RUST_BACKTRACE: 1

@@ -1,0 +1,18 @@
+name: "Setup Rust for Development"
+description: "Setup Rust toolchain with clippy and rustfmt for development/testing"
+inputs:
+  targets:
+    description: "Additional targets to install"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Rust
+      uses: moonrepo/setup-rust@v1
+      with:
+        cache-base: main
+        cache-target: debug
+        inherit-toolchain: true
+        targets: ${{ inputs.targets }}
