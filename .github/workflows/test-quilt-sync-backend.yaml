@@ -36,7 +36,7 @@ jobs:
         working-directory: ./quilt-sync/src-tauri
 
       - name: Test
-        run: cargo test --all --verbose
+        run: cargo test --verbose
         working-directory: ./quilt-sync/src-tauri
         env:
           RUST_BACKTRACE: 1
@@ -63,7 +63,7 @@ jobs:
           targets: ${{ matrix.platform == 'macos-15' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Test
-        run: cargo test --all --verbose
+        run: cargo test --verbose
         working-directory: ./quilt-sync/src-tauri
         env:
           RUST_BACKTRACE: 1
