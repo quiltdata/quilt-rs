@@ -2,7 +2,8 @@
 
 This document covers the release process for the quilt_rs Rust library and CLI components.
 
-For testing, development workflows, and other general information, see the main [Contributing Guide](../CONTRIBUTING.md).
+For testing, development workflows, and other general information, see the main
+[Contributing Guide](../CONTRIBUTING.md).
 
 ## Release Process
 
@@ -10,7 +11,8 @@ For testing, development workflows, and other general information, see the main 
 
 1. **Update the changelog**: Add new section to [CHANGELOG.md](CHANGELOG.md) following
    <https://keepachangelog.com> format with PR links
-2. **Bump version**: Update version in workspace root `Cargo.toml` (shared across all crates)
+2. **Bump version**: Update version in workspace root `Cargo.toml` (shared across
+   all crates)
 3. **Create release**:
    a. **Create and push git tag** (optional):
       `git tag v0.x.x && git push origin v0.x.x`

@@ -20,11 +20,13 @@
 ### Added
 
 - **New `login` command** for Quilt Stack authentication
-- Support for authentication to Quilt Stack with backward compatibility for `~/.aws` credentials
+- Support for authentication to Quilt Stack with backward compatibility for
+  `~/.aws` credentials
 
 ### Changed
 
-- `domain` path now optional for users (uses default user data directory if not provided)
+- `domain` path now optional for users (uses default user data directory if not
+  provided)
 - Domain path required internally for every command but seamless for end users
 
 ## [v0.8.8] - 2025-01-XX
@@ -43,7 +45,8 @@
 
 ### Added
 
-- `package` command now accepts `--message` and `--user_meta` arguments (similar to `commit` command)
+- `package` command now accepts `--message` and `--user_meta` arguments
+  (similar to `commit` command)
 
 ## [v0.8.5] - 2024-12-XX
 
@@ -68,6 +71,8 @@
 
 ## Earlier Versions
 
-Prior to v0.5.7, CLI functionality was not yet implemented. The library provided the core functionality but no command-line interface was available.
+Prior to v0.5.7, CLI functionality was not yet implemented. The library
+provided the core functionality but no command-line interface was available.
 
-See [`quilt-rs/CHANGELOG.md`](../quilt-rs/CHANGELOG.md) for complete library changes that power these CLI commands.
+See [`quilt-rs/CHANGELOG.md`](../quilt-rs/CHANGELOG.md) for complete library
+changes that power these CLI commands.

@@ -9,7 +9,8 @@
 
 ### Fixed
 
-- Support for `:tag` syntax in package URI parsing with mutual exclusivity from `@hash` syntax
+- Support for `:tag` syntax in package URI parsing with mutual exclusivity
+  from `@hash` syntax
 
 ## [v0.23.0](https://crates.io/crates/quilt-rs/0.23.0) - 2025-11-28
 
@@ -33,14 +34,15 @@
 
 ### Changed
 
-* Fix the incorrect Multihash code for SHA256
+- Fix the incorrect Multihash code for SHA256
 
 ## [v0.19.0](https://crates.io/crates/quilt-rs/0.19.0) - 2025-04-02
 
 ### Changed
 
-* Group errors for local credentials under `AuthError` and specific S3 errors under `S3Error`
-* Add `Host` or `Option<Host>` for every such error
+- Group errors for local credentials under `AuthError` and specific S3 errors
+  under `S3Error`
+- Add `Host` or `Option<Host>` for every such error
 
 ## [v0.18.0](https://crates.io/crates/quilt-rs/0.18.0) - 2025-04-01
 
@@ -97,18 +99,21 @@
 ### Changed
 
 - Add `"home"` directory in lineage `data.json` and make it required.
-  Home directory is a place where to put mutable files. Previously, they were stored in the root alongside the `.quilt` directory.
+  Home directory is a place where to put mutable files. Previously, they were
+  stored in the root alongside the `.quilt` directory.
 
 ## [v0.9.1](https://crates.io/crates/quilt-rs/0.9.1) - 2025-03-03
 
 ### Fixed
 
 - Fix hashing the `user_meta` when caching the package by sorting the keys.
-  The bug didn't affect the workflow, because the manifests were written to the correct place anyway (by hash derived from the remote location).
+  The bug didn't affect the workflow, because the manifests were written to the
+  correct place anyway (by hash derived from the remote location).
 
 ### Changed
 
-- Refactor directories scaffolding: paths are now scaffolded before every operation, and we imply the file structure is correct during the operation.
+- Refactor directories scaffolding: paths are now scaffolded before every
+  operation, and we imply the file structure is correct during the operation.
 - Refactor mocks and fixtures. They are more organized now.
 
 ## [v0.9.0](https://crates.io/crates/quilt-rs/0.9.0) - 2025-02-27
@@ -137,8 +142,10 @@ Bump a version number to highlight the accumulated changes of the 0.8.\* version
 
 ## [v0.8.11]
 
-- Add authentication to Quilt Stack preserving backward compatibility with getting credentials from `~/.aws`
-- `domain` path is now required for every command internally, but is optional for users
+- Add authentication to Quilt Stack preserving backward compatibility with
+  getting credentials from `~/.aws`
+- `domain` path is now required for every command internally, but is optional
+  for users
   If `domain` is not provided, the default user data directory is used
 
 ## [v0.8.10]
@@ -148,8 +155,11 @@ Bump a version number to highlight the accumulated changes of the 0.8.\* version
 
 ## [v0.8.9]
 
-- Remove unnecessary Mutex wrappers from `LocalDomain` and `InstalledPackage` structs since file I/O operations already provide synchronization through async/await
-- Adds new test `test_spamming_commit_writes` in installed_package.rs to verify sequential commits work correctly without mutex protection
+- Remove unnecessary Mutex wrappers from `LocalDomain` and `InstalledPackage`
+  structs since file I/O operations already provide synchronization through
+  async/await
+- Adds new test `test_spamming_commit_writes` in installed_package.rs to verify
+  sequential commits work correctly without mutex protection
   `file.flush()` is what fixed the issue in the previous commit, not the Mutex.
 
 ## [v0.8.8]
@@ -163,12 +173,14 @@ Bump a version number to highlight the accumulated changes of the 0.8.\* version
 
 - Throw error if locally committed package and remote have different `top_hash`
 - Fix calculating hashes for files <8Mb
-- De-duplicate entries when user add files equal to the file that is not tracked and is already in a remote manifest
+- De-duplicate entries when user add files equal to the file that is not
+  tracked and is already in a remote manifest
 
 ## [v0.8.6]
 
 - Copy package pushed to the remote to the local storage.
-  Locally committed package and remote have different `top_hash`, because local manifest has `file://` physical keys.
+  Locally committed package and remote have different `top_hash`, because local
+  manifest has `file://` physical keys.
 
 ## [v0.8.5]
 
@@ -188,7 +200,8 @@ Bump a version number to highlight the accumulated changes of the 0.8.\* version
 
 ## [v0.8.1]
 
-- Test creating manifest with a billion rows via `quilt_rs benchmark` and improve performance https://github.com/quiltdata/quilt-rs/pull/179
+- Test creating manifest with a billion rows via `quilt_rs benchmark` and
+  improve performance https://github.com/quiltdata/quilt-rs/pull/179
 - Use `Row::default_header()` instead of `Row::default()` https://github.com/quiltdata/quilt-rs/pull/182
 
 ## [v0.8.0]
@@ -198,7 +211,8 @@ Bump a version number to highlight the accumulated changes of the 0.8.\* version
 - Folders reorganization https://github.com/quiltdata/quilt-rs/pull/167
 - Use `PathBuf` for paths where possible https://github.com/quiltdata/quilt-rs/pull/165
 - Use `Namespace` struct instead of `String` https://github.com/quiltdata/quilt-rs/pull/166
-- More tests: `install_paths` and `status`, cover more cases of `Storage`/`Remote` use https://github.com/quiltdata/quilt-rs/pull/164
+- More tests: `install_paths` and `status`, cover more cases of
+  `Storage`/`Remote` use https://github.com/quiltdata/quilt-rs/pull/164
 
 ## [v0.7.0]
 
@@ -206,7 +220,8 @@ Bump a version number to highlight the accumulated changes of the 0.8.\* version
 
 ## [v0.6.0]
 
-- Make `utils` module private as it only contains helper functions for testing. Remove dummy tests.
+- Make `utils` module private as it only contains helper functions for
+  testing. Remove dummy tests.
 - Refactor code to introduce tests
 
 ## [v0.5.8] - 2024-03-25
@@ -214,7 +229,6 @@ Bump a version number to highlight the accumulated changes of the 0.8.\* version
 - Fixed calculating checksums for new files
 
 ## [v0.5.7] - 2024-03-21
-
 
 ## [v0.5.6] - 2024-03-01
 
