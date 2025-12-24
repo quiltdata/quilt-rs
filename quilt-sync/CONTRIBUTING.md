@@ -14,7 +14,7 @@
 #### Whenever you make some changes, verify "Golden path" works
 
 * Go to <https://nightly.quilttest.com/b/quilt-desktop/packages/test/assets>
-* Click "Get package" -> "Open in QUiltSync" -> Open that URI (by copying or clicking)
+* Click "Get package" -> "Open in QuiltSync" -> Open that URI (by copying or clicking)
 * [ ] Ensure app is opened with package contents
 * [ ] Package is installed
 * Go 🏠 and open package again
@@ -22,9 +22,9 @@
 * Back to QuiltSync, go to package, select "Readme.md" and click "Install selected
   paths"
 * [ ] File manager is opened
-* Update Test.md: `date > Readme.md`
+* Update Readme.md: `date > Readme.md`
 * Back to the QuiltSync, click "Refresh"
-* [ ] You see Test.md as "Modified"
+* [ ] You see Readme.md as "Modified"
 * Click "Create new revision"
 * Fill "Message" and "User metadata" with "Test"
 * [ ] You see an error message
@@ -53,7 +53,7 @@
       This is cosmetic and makes it easier to compare releases, but doesn't affect
       the build process.
    b. **Create release via GitHub Actions**:
-      * Go to the Actions tab: <https://github.com/quiltdata/QuiltSync/actions/workflows/release.yaml>
+      * Go to the Actions tab: <https://github.com/quiltdata/quilt-rs/actions/workflows/release-quilt-sync.yaml>
       * Click "Run workflow" button
       * The workflow will build all platforms and create a draft GitHub release
         with built assets

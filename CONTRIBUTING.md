@@ -1,91 +1,60 @@
-# Contributing to quilt-rs
+# Contributing to Quilt Workspace
 
-## Testing
+This repository contains multiple projects in a unified workspace:
 
-### Testing Individual Crates
+- **[quilt-rs](quilt-rs/)** - Rust library for accessing Quilt data packages
+- **[quilt-cli](quilt-cli/)** - Command-line interface for Quilt data packages  
+- **[quilt-sync](quilt-sync/)** - Cross-platform desktop GUI application (QuiltSync)
 
-Since this is a workspace with multiple crates, you can test them independently:
+## Project-Specific Contributing Guides
+
+For detailed contributing information, see the project-specific guides:
+
+- **[quilt-rs Contributing Guide](quilt-rs/CONTRIBUTING.md)** - Rust library and CLI development
+- **[QuiltSync Contributing Guide](quilt-sync/CONTRIBUTING.md)** - Desktop application development
+
+## Development Workflows
+
+All cargo commands work on the entire workspace by default. Use the `-p` flag to target specific packages:
 
 ```bash
-# Test only the library
-cargo test -p quilt-rs
+# Testing
+cargo test                          # All workspace packages
+cargo test -p quilt-rs              # Specific package only
 
-# Test only the CLI
-cargo test -p quilt-cli
-
-# Test all crates
-cargo test --all
+# Building, formatting, linting follow the same pattern
+cargo build [-p package-name]
+cargo fmt [--check] [-p package-name]
+cargo clippy [-- --deny warnings] [-p package-name]
+npx markdownlint-cli --fix *.md
 ```
 
 ### Test Coverage
 
 ```bash
 cargo install cargo-tarpaulin
-cargo tarpaulin --out html
-open tarpaulin-report.html
+cargo tarpaulin --out html [-p package-name]
 ```
 
-### Running Tests
+## Release Process Overview
 
-```bash
-cargo test
-```
+Each project has different release approaches:
 
-## Release Process
-
-### Creating New Releases
-
-1. **Update the changelog**: Add new section to [quilt-rs/CHANGELOG.md](quilt-rs/CHANGELOG.md) following
-   <https://keepachangelog.com> format with PR links
-2. **Bump version**: Update version in workspace root `Cargo.toml` (shared across all crates)
-3. **Create release**:
-   a. **Create and push git tag** (optional):
-      `git tag v0.x.x && git push origin v0.x.x`
-      This is cosmetic and makes it easier to compare releases, but doesn't affect
-      the build process.
-   b. **Create release via GitHub Actions**:
-      * Go to the Actions tab: <https://github.com/quiltdata/quilt-rs/actions/workflows/release.yaml>
-      * Click "Run workflow" button
-      * The workflow will build and publish the library crate to crates.io
-4. **Publish release**: Create a GitHub release with the changelog content
-
-The release workflow publishes only the `quilt-rs` library crate to crates.io.
-The CLI is not published and users compile it from source.
+- **quilt-rs**: Library published to crates.io via GitHub Actions
+- **quilt-cli**: No separate releases - users compile from source
+- **QuiltSync**: Desktop app releases with cross-platform builds via GitHub Actions
 
 ### Version Management
 
 - **Library (`quilt-rs`)**: Versioned and published to crates.io
 - **CLI (`quilt-cli`)**: Not published, inherits version from workspace but not released
+- **QuiltSync (`quilt-sync`)**: Uses workspace version for Tauri app releases
 
-## Development Workflows
-
-### Building
-
-```bash
-# Build entire workspace
-cargo build
-
-# Build individual crates
-cargo build -p quilt-rs
-cargo build -p quilt-cli
-```
-
-### Linting and Formatting
-
-```bash
-# Check formatting
-cargo fmt --check
-
-# Format code
-cargo fmt
-
-# Run clippy lints
-cargo clippy -- --deny warnings
-```
+See project-specific contributing guides for detailed release procedures.
 
 ## File Integrity Verification
 
-For debugging and verification purposes:
+For debugging and verification purposes across all projects:
 
 ### SHA256-Chunked Verification
 
