@@ -1,8 +1,8 @@
 # quilt-rs
 
-## Rust library and CLI for managing Quilt data packages
+## Rust library, CLI, and GUI for managing Quilt data packages
 
-Library and CLI provide a set of commands for managing data packages,
+Library, CLI, and GUI provide tools for managing data packages,
 allowing users to install, commit, push, and pull packages from S3 storage,
 as well as browse and track changes in package contents.
 
@@ -16,6 +16,7 @@ This is a Cargo workspace containing:
 
 - **`quilt-rs/`** - Library crate (published to [crates.io](https://crates.io/crates/quilt-rs))
 - **`quilt-cli/`** - CLI application (compile from source)
+- **`quilt-sync/`** - Cross-platform desktop GUI application (QuiltSync)
 
 ## Usage
 
