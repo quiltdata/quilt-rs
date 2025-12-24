@@ -10,12 +10,15 @@ This repository contains multiple projects in a unified workspace:
 
 For detailed contributing information, see the project-specific guides:
 
-- **[quilt-rs Contributing Guide](quilt-rs/CONTRIBUTING.md)** - Rust library and CLI development
-- **[QuiltSync Contributing Guide](quilt-sync/CONTRIBUTING.md)** - Desktop application development
+- **[quilt-rs Contributing Guide](quilt-rs/CONTRIBUTING.md)** - Rust library and
+  CLI development
+- **[QuiltSync Contributing Guide](quilt-sync/CONTRIBUTING.md)** - Desktop
+  application development
 
 ## Development Workflows
 
-All cargo commands work on the entire workspace by default. Use the `-p` flag to target specific packages:
+All cargo commands work on the entire workspace by default. Use the `-p` flag to
+target specific packages:
 
 ```bash
 # Testing
@@ -26,7 +29,6 @@ cargo test -p quilt-rs              # Specific package only
 cargo build [-p package-name]
 cargo fmt [--check] [-p package-name]
 cargo clippy [-- --deny warnings] [-p package-name]
-npx markdownlint-cli --fix *.md
 ```
 
 ### Test Coverage
@@ -47,7 +49,8 @@ Each project has different release approaches:
 ### Version Management
 
 - **Library (`quilt-rs`)**: Versioned and published to crates.io
-- **CLI (`quilt-cli`)**: Not published, inherits version from workspace but not released
+- **CLI (`quilt-cli`)**: Not published, inherits version from workspace but not
+  released
 - **QuiltSync (`quilt-sync`)**: Uses workspace version for Tauri app releases
 
 See project-specific contributing guides for detailed release procedures.
@@ -73,15 +76,18 @@ sha256sum ./FILE | xxd -r -p | sha256sum | xxd -r -p | base64
 #### > 8Mb Files
 
 ```bash
-split -b 8388608 ./FILE --filter='sha256sum' | xxd -r -p | sha256sum | xxd -r -p | base64
+split -b 8388608 ./FILE --filter='sha256sum' | xxd -r -p | \
+  sha256sum | xxd -r -p | base64
 ```
 
 ### Verify Packages
 
 ```bash
-split -l 1 ~/MANIFEST.jsonl --filter="jq -cSM 'del(.physical_keys)'" | tr -d '\n' | sha256sum
+split -l 1 ~/MANIFEST.jsonl --filter="jq -cSM 'del(.physical_keys)'" | \
+  tr -d '\n' | sha256sum
 ```
 
 ### CRC64/NVMe Verification
 
-**TODO**: CRC64/NVMe checksum verification procedures are not yet documented. This is an area for future contribution and documentation improvements.
+**TODO**: CRC64/NVMe checksum verification procedures are not yet documented.
+This is an area for future contribution and documentation improvements.
