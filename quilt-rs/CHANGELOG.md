@@ -9,8 +9,9 @@
 
 ### Fixed
 
+- Fix manifest hash mismatch for packages containing diacritic characters (<https://github.com/quiltdata/quilt-rs/pull/413>)
 - Support for `:tag` syntax in package URI parsing with mutual exclusivity
-  from `@hash` syntax
+  from `@hash` syntax (<https://github.com/quiltdata/quilt-rs/pull/400>)
 
 ## [v0.23.0](https://crates.io/crates/quilt-rs/0.23.0) - 2025-11-28
 
