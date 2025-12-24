@@ -1,0 +1,27 @@
+name: Lint Markdown
+
+on:
+  push:
+    paths:
+      - '**/*.md'
+      - '.github/workflows/lint-markdown.yaml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-markdown:
+    name: Markdown Linting
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Lint markdown files
+        run: npx markdownlint-cli '**/*.md'
