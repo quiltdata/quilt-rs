@@ -34,6 +34,7 @@ percent-encoding.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde-json-fmt.workspace = true
 serde_yaml.workspace = true
 tabled.workspace = true
 tempfile.workspace = true

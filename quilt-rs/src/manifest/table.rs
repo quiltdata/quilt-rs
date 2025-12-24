@@ -19,6 +19,8 @@ use arrow::error::ArrowError;
 use aws_smithy_checksums::ChecksumAlgorithm;
 use multihash::Multihash;
 use parquet::arrow::ParquetRecordBatchStreamBuilder;
+use serde::Serialize;
+use serde_json_fmt::JsonFormat;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncSeek;
 use tokio_stream::StreamExt;
@@ -30,6 +32,17 @@ use crate::manifest::Row;
 use crate::manifest::RowDisplay;
 use crate::Error;
 use crate::Res;
+
+/// Serialize JSON to match Python's json.JSONEncoder separators=(',', ':') and ensure_ascii=True
+/// TODO: Also implement sort_keys=True to fully match Python's behavior
+fn serialize_like_python<T: Serialize>(value: &T) -> Res<String> {
+    // Use serde-json-fmt to configure JSON formatting to match Python's behavior
+    // JsonFormat::new() defaults to compact format (comma:",", colon":") which matches Python
+    let format = JsonFormat::new().ascii(true); // Match Python's ensure_ascii=True - escape non-ASCII characters
+
+    let json_str = format.format_to_string(value)?;
+    Ok(json_str)
+}
 
 fn serialize_table_header(header: &Header) -> Res<serde_json::Map<String, serde_json::Value>> {
     let mut header_meta = serde_json::Map::new();
@@ -88,7 +101,7 @@ impl TopHasher {
     /// Append `Header` to the hasher
     pub fn append_header(&mut self, header: &Header) -> Res {
         let value = serialize_table_header(header)?;
-        let value_str = serde_json::to_string(&value)?;
+        let value_str = serialize_like_python(&value)?;
         self.hasher.update(value_str.as_bytes());
         Ok(())
     }
@@ -96,7 +109,7 @@ impl TopHasher {
     /// Append `Row` to the hasher
     pub fn append(&mut self, row: &Row) -> Res {
         let value = serialize_row_entry(row)?;
-        let value_str = serde_json::to_string(&value)?;
+        let value_str = serialize_like_python(&value)?;
         self.hasher.update(value_str.as_bytes());
         Ok(())
     }
