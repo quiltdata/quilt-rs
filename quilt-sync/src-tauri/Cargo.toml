@@ -15,7 +15,7 @@ license = "UNLICENSED"
 tauri-build = { version = "2.5.3", features = [] }
 
 [dependencies]
-askama = "0.14.0"
+askama = "0.15.0"
 chrono.workspace = true
 dotenv = "0.15"
 humansize = "2.1.3"
