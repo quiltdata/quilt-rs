@@ -3,7 +3,7 @@
 This repository contains multiple projects in a unified workspace:
 
 - **[quilt-rs](quilt-rs/)** - Rust library for accessing Quilt data packages
-- **[quilt-cli](quilt-cli/)** - Command-line interface for Quilt data packages  
+- **[quilt-cli](quilt-cli/)** - Command-line interface for Quilt data packages
 - **[quilt-sync](quilt-sync/)** - Cross-platform desktop GUI application (QuiltSync)
 
 ## Project-Specific Contributing Guides
