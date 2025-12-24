@@ -14,25 +14,24 @@
 #### Whenever you make some changes, verify "Golden path" works
 
 * Go to <https://nightly.quilttest.com/b/quilt-desktop/packages/test/assets>
-* Click "Code" -> "URI" -> Open that URI (by copying or clicking)
+* Click "Get package" -> "Open in QUiltSync" -> Open that URI (by copying or clicking)
 * [ ] Ensure app is opened with package contents
-* Install package
 * [ ] Package is installed
-* Open package
+* Go 🏠 and open package again
 * [ ] Click on "Open in Catalog" button opens Catalog with the correct URL
-* Back to QuiltSync, go to package, select "Test.md" and click "Install selected
+* Back to QuiltSync, go to package, select "Readme.md" and click "Install selected
   paths"
 * [ ] File manager is opened
-* Update Test.md: `date > Test.md`
+* Update Test.md: `date > Readme.md`
 * Back to the QuiltSync, click "Refresh"
 * [ ] You see Test.md as "Modified"
-* Click "Commit"
+* Click "Create new revision"
 * Fill "Message" and "User metadata" with "Test"
 * [ ] You see an error message
-* Change metadata to the { "datetime": content-of-the-test.md }
-* Click "Submit commit"
+* Change metadata to the { "datetime": content-of-readme.md }
+* Click "Commit"
 * [ ] You see Package page with the "Your commits are ahead of the remote" message
-* Click "Push to remote"
+* Click "Push"
 * [ ] Click on "Open in Catalog" button opens Catalog with the new Package revision
 * Back to QuiltSync, click "Uninstall package"
 * [ ] You see the list of packages without "test/assets" package or empty page
