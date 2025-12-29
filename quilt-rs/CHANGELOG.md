@@ -5,7 +5,7 @@
 -->
 # Changelog
 
-## [Unreleased]
+## [0.24.0-alpha.1] - 2025-12-29
 
 ### Fixed
 

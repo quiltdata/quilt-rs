@@ -6,7 +6,7 @@
 -->
 # Changelog
 
-## [Unreleased]
+## [0.9.8-alpha.1] - 2025-12-29
 
 ### Added
 
@@ -27,7 +27,7 @@
 
 ### quilt-rs
 
-- Updated from v0.21.1 to [Unreleased] (see [../quilt-rs/CHANGELOG.md#unreleased](../quilt-rs/CHANGELOG.md#unreleased))
+- Updated from v0.21.1 to [0.24.0-alpha.1] (see [../quilt-rs/CHANGELOG.md#0.24.0-alpha.1](../quilt-rs/CHANGELOG.md#0.24.0-alpha.1))
   - Fixed `quilt+s3://` URL parsing with `:tag` syntax
   - Fixed hash mismatch for packages with diacritic characters
   - Support for reading manifest with CRC64/NVMe checksums
