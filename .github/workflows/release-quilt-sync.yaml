@@ -23,17 +23,19 @@ jobs:
         include:
           - platform: "macos-15"
             args: "--target aarch64-apple-darwin"
+            skip: false
           - platform: "macos-15"
             args: "--target x86_64-apple-darwin"
+            skip: ${{ inputs.prerelease }}
           - platform: "ubuntu-22.04"
             args: ""
+            skip: false
           - platform: "windows-latest"
             args: ""
-        exclude:
-          - ${{ inputs.prerelease && fromJSON('{"platform": "macos-15", "args": "--target x86_64-apple-darwin"}') || fromJSON('{}') }}
-          - ${{ inputs.prerelease && fromJSON('{"platform": "windows-latest", "args": ""}') || fromJSON('{}') }}
+            skip: ${{ inputs.prerelease }}
     runs-on: ${{ matrix.platform }}
     environment: ${{ inputs.environment }}
+    if: ${{ !matrix.skip }}
 
     steps:
       - name: Checkout repository
