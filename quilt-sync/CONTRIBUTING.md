@@ -19,21 +19,21 @@
 * [ ] Package is installed
 * Go 🏠 and open package again
 * [ ] Click on "Open in Catalog" button opens Catalog with the correct URL
-* Back to QuiltSync, go to package, select "Readme.md" and click "Install selected
+* Back to QuiltSync, go to package, select "README.md" and click "Download selected
   paths"
 * [ ] File manager is opened
-* Update Readme.md: `date > Readme.md`
+* Update README.md: `date > README.md`
 * Back to the QuiltSync, click "Refresh"
-* [ ] You see Readme.md as "Modified"
+* [ ] You see README.md as "Modified"
 * Click "Create new revision"
 * Fill "Message" and "User metadata" with "Test"
 * [ ] You see an error message
-* Change metadata to the { "datetime": content-of-readme.md }
+* Change metadata to the { "datetime": content-of-README.md }
 * Click "Commit"
 * [ ] You see Package page with the "Your commits are ahead of the remote" message
 * Click "Push"
 * [ ] Click on "Open in Catalog" button opens Catalog with the new Package revision
-* Back to QuiltSync, click "Uninstall package"
+* Back to QuiltSync, click "Remove" to uninstall the package
 * [ ] You see the list of packages without "test/assets" package or empty page
 
 #### Troubleshooting
