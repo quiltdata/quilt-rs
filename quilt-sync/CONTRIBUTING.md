@@ -47,16 +47,11 @@
 1. **Update the changelog**: Add new section to [CHANGELOG.md](CHANGELOG.md) following
    <https://keepachangelog.com> format with PR links
 2. **Bump version**: Update version in `src-tauri/Cargo.toml`
-3. **Create release**:
-   a. **Create and push git tag** (optional):
-      `git tag v0.x.x && git push origin v0.x.x`
-      This is cosmetic and makes it easier to compare releases, but doesn't affect
-      the build process.
-   b. **Create release via GitHub Actions**:
-      * Go to the Actions tab: <https://github.com/quiltdata/quilt-rs/actions/workflows/release-quilt-sync.yaml>
-      * Click "Run workflow" button
-      * The workflow will build all platforms and create a draft GitHub release
-        with built assets
+3. **Create release via GitHub Actions**:
+    * Go to the Actions tab: <https://github.com/quiltdata/quilt-rs/actions/workflows/release-quilt-sync.yaml>
+    * Click "Run workflow" button
+    * The workflow will build all platforms and create a draft GitHub release
+      with built assets
 4. **Publish release**: Edit the draft release created by the workflow and publish
    it
 
