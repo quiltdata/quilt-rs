@@ -53,6 +53,10 @@ Each project has different release approaches:
   released
 - **QuiltSync (`quilt-sync`)**: Uses workspace version for Tauri app releases
 
+### Pre-release Versioning
+
+For unreleased changes, use pre-release tags in both `Cargo.toml` and `CHANGELOG.md` (e.g., `0.24.0-alpha.1`).
+
 See project-specific contributing guides for detailed release procedures.
 
 ## File Integrity Verification
