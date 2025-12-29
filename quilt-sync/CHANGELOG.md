@@ -2,18 +2,17 @@
      Follow keepachangelog.com format.
      Use GitHub autolinks for PR references.
      Use nested lists when there are multiple PR links.
+     Put quilt-rs updates under `### quilt-rs` section.
 -->
 # Changelog
 
-## [v0.9.8](https://github.com/quiltdata/QuiltSync/releases/tag/v0.9.8) - 202X-XX-XX
+## [Unreleased]
 
 ### Added
 
 - Mixpanel analytics tracking:
   - <https://github.com/quiltdata/QuiltSync/pull/363>
   - <https://github.com/quiltdata/QuiltSync/pull/366>
-- Support for creating packages with CRC64/NVMe object hashes via
-  quilt-rs@v0.23 (<https://github.com/quiltdata/QuiltSync/pull/381>)
 - More verbose debug logs for failed post-login redirects
   (<https://github.com/quiltdata/QuiltSync/pull/372>)
 
@@ -26,12 +25,18 @@
 - Better detailed error handling for route parsing
   (<https://github.com/quiltdata/QuiltSync/pull/392>)
 
+### quilt-rs
+
+- Updated from v0.21.1 to [Unreleased] (see [../quilt-rs/CHANGELOG.md#unreleased](../quilt-rs/CHANGELOG.md#unreleased))
+  - Fixed `quilt+s3://` URL parsing with `:tag` syntax
+  - Fixed hash mismatch for packages with diacritic characters
+  - Support for reading manifest with CRC64/NVMe checksums
+  - Support for creating packages with CRC64/NVMe object hashes
+
 ### Changed
 
 - Updated macOS build target from macos-13 to macos-15
   (<https://github.com/quiltdata/QuiltSync/pull/393>)
-- Updated quilt-rs with support for reading manifest with CRC64/NVMe
-  checksums (<https://github.com/quiltdata/QuiltSync/pull/381>)
 - Can now pass `HostConfig` argument to commands, requesting specific checksums
   (crc64 or sha256)
 - Updated GitHub Actions workflows (<https://github.com/quiltdata/QuiltSync/pull/370>)
