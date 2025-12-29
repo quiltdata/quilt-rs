@@ -7,76 +7,78 @@ on:
         description: "Environment"
         type: environment
         required: true
-      build_macos_arm:
-        description: "Build macOS ARM64 (M1+)"
+      prerelease:
+        description: "Pre-release build (skips Windows & macOS Intel due to MSI limitations)"
         type: boolean
         default: true
-      build_macos_intel:
-        description: "Build macOS Intel x64"
-        type: boolean
-        default: false
-      build_linux:
-        description: "Build Linux"
-        type: boolean
-        default: true
-      build_windows:
-        description: "Build Windows (not compatible with pre-release versions)"
-        type: boolean
-        default: false
 
 jobs:
-  build-macos-arm:
-    name: Build macOS ARM64
-    if: ${{ inputs.build_macos_arm }}
-    runs-on: macos-15
+  release:
+    name: Build Release
     permissions:
       contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "macos-15"
+            args: "--target aarch64-apple-darwin"
+          - platform: "macos-15"
+            args: "--target x86_64-apple-darwin"
+          - platform: "ubuntu-22.04"
+            args: ""
+          - platform: "windows-latest"
+            args: ""
+        exclude:
+          - ${{ inputs.prerelease && {platform: "macos-15", args: "--target x86_64-apple-darwin"} || {} }}
+          - ${{ inputs.prerelease && {platform: "windows-latest", args: ""} || {} }}
+    runs-on: ${{ matrix.platform }}
     environment: ${{ inputs.environment }}
-    steps:
-      - name: Build QuiltSync
-        uses: ./.github/actions/build-quiltsync
-        with:
-          platform: macos-15
-          args: "--target aarch64-apple-darwin"
 
-  build-macos-intel:
-    name: Build macOS Intel
-    if: ${{ inputs.build_macos_intel }}
-    runs-on: macos-15
-    permissions:
-      contents: write
-    environment: ${{ inputs.environment }}
     steps:
-      - name: Build QuiltSync
-        uses: ./.github/actions/build-quiltsync
-        with:
-          platform: macos-15
-          args: "--target x86_64-apple-darwin"
+      - name: Checkout repository
+        uses: actions/checkout@v6
 
-  build-linux:
-    name: Build Linux
-    if: ${{ inputs.build_linux }}
-    runs-on: ubuntu-22.04
-    permissions:
-      contents: write
-    environment: ${{ inputs.environment }}
-    steps:
-      - name: Build QuiltSync
-        uses: ./.github/actions/build-quiltsync
-        with:
-          platform: ubuntu-22.04
-          args: ""
+      - name: Install Ubuntu dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: ./.github/actions/install-ubuntu-deps
 
-  build-windows:
-    name: Build Windows
-    if: ${{ inputs.build_windows }}
-    runs-on: windows-latest
-    permissions:
-      contents: write
-    environment: ${{ inputs.environment }}
-    steps:
-      - name: Build QuiltSync
-        uses: ./.github/actions/build-quiltsync
+      - name: Setup Rust for release
+        uses: ./.github/actions/setup-rust-minimal
         with:
-          platform: windows-latest
-          args: ""
+          cache-target: release
+          targets: ${{ matrix.platform == 'macos-15' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: 'quilt-sync/package-lock.json'
+
+      - name: Install frontend dependencies
+        run: npm install
+        working-directory: ./quilt-sync
+
+      - name: Build the app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MIXPANEL_API_SECRET: ${{ secrets.MIXPANEL_API_SECRET }}
+          MIXPANEL_PROJECT_TOKEN: ${{ vars.MIXPANEL_PROJECT_TOKEN }}
+          SENTRY_DSN: ${{ vars.SENTRY_DSN }}
+        with:
+          tagName: quilt-sync-v__VERSION__
+          releaseId: quilt-sync-__VERSION__
+          releaseName: QuiltSync v__VERSION__
+          releaseBody: "See the assets to download and install this version."
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+          projectPath: "./quilt-sync"
