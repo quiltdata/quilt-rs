@@ -7,6 +7,22 @@ on:
         description: "Environment"
         type: environment
         required: true
+      build_macos_arm:
+        description: "Build macOS ARM64 (M1+)"
+        type: boolean
+        default: true
+      build_macos_intel:
+        description: "Build macOS Intel x64"
+        type: boolean
+        default: true
+      build_linux:
+        description: "Build Linux"
+        type: boolean
+        default: true
+      build_windows:
+        description: "Build Windows (not compatible with pre-release versions)"
+        type: boolean
+        default: false
 
 jobs:
   release:
@@ -17,16 +33,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: "macos-15" # for Arm based macs (M1 and above).
-            args: "--target aarch64-apple-darwin"
-          - platform: "macos-15" # for Intel based macs.
-            args: "--target x86_64-apple-darwin"
-          - platform: "ubuntu-22.04"
-            args: ""
-          - platform: "windows-latest"
-            args: ""
+          - ${{ inputs.build_macos_arm && fromJSON('{"platform": "macos-15", "args": "--target aarch64-apple-darwin"}') || fromJSON('{"skip": true}') }}
+          - ${{ inputs.build_macos_intel && fromJSON('{"platform": "macos-15", "args": "--target x86_64-apple-darwin"}') || fromJSON('{"skip": true}') }}
+          - ${{ inputs.build_linux && fromJSON('{"platform": "ubuntu-22.04", "args": ""}') || fromJSON('{"skip": true}') }}
+          - ${{ inputs.build_windows && fromJSON('{"platform": "windows-latest", "args": ""}') || fromJSON('{"skip": true}') }}
     runs-on: ${{ matrix.platform }}
     environment: ${{ inputs.environment }}
+    if: ${{ !matrix.skip }}
 
     steps:
       - name: Checkout repository
