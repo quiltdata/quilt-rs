@@ -35,7 +35,7 @@ jobs:
             skip: ${{ inputs.prerelease }}
     runs-on: ${{ matrix.platform }}
     environment: ${{ inputs.environment }}
-    if: ${{ !matrix.skip }}
+    if: ${{ matrix.skip != true }}
 
     steps:
       - name: Checkout repository
