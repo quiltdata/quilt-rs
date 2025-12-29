@@ -30,8 +30,8 @@ jobs:
           - platform: "windows-latest"
             args: ""
         exclude:
-          - ${{ inputs.prerelease && {platform: "macos-15", args: "--target x86_64-apple-darwin"} || {} }}
-          - ${{ inputs.prerelease && {platform: "windows-latest", args: ""} || {} }}
+          - ${{ inputs.prerelease && fromJSON('{"platform": "macos-15", "args": "--target x86_64-apple-darwin"}') || fromJSON('{}') }}
+          - ${{ inputs.prerelease && fromJSON('{"platform": "windows-latest", "args": ""}') || fromJSON('{}') }}
     runs-on: ${{ matrix.platform }}
     environment: ${{ inputs.environment }}
 
