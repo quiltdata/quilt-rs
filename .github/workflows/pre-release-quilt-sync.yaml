@@ -1,0 +1,74 @@
+name: Pre-Release QuiltSync
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment"
+        type: environment
+        required: true
+
+jobs:
+  release:
+    name: Build Release
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "macos-15" # for Arm based macs (M1 and above).
+            args: "--target aarch64-apple-darwin"
+          - platform: "ubuntu-22.04"
+            args: ""
+    runs-on: ${{ matrix.platform }}
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Ubuntu dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: ./.github/actions/install-ubuntu-deps
+
+      - name: Setup Rust for release
+        uses: ./.github/actions/setup-rust-minimal
+        with:
+          cache-target: release
+          targets: ${{ matrix.platform == 'macos-15' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: 'quilt-sync/package-lock.json'
+
+      - name: Install frontend dependencies
+        run: npm install
+        working-directory: ./quilt-sync
+
+      - name: Build the app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MIXPANEL_API_SECRET: ${{ secrets.MIXPANEL_API_SECRET }}
+          MIXPANEL_PROJECT_TOKEN: ${{ vars.MIXPANEL_PROJECT_TOKEN }}
+          SENTRY_DSN: ${{ vars.SENTRY_DSN }}
+        with:
+          # tauri-action replaces \_\_VERSION\_\_ with the app version.
+          tagName: quilt-sync-v__VERSION__
+          releaseId: quilt-sync-__VERSION__
+          releaseName: QuiltSync v__VERSION__
+          releaseBody: "See the assets to download and install this version."
+          releaseDraft: true
+          prerelease: true
+          args: ${{ matrix.args }}
+          projectPath: "./quilt-sync"
