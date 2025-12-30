@@ -27,7 +27,8 @@
 
 ### quilt-rs
 
-- Updated from v0.21.1 to [v0.24.0](https://crates.io/crates/quilt-rs/0.24.0) (see [../quilt-rs/CHANGELOG.md#v0.24.0](../quilt-rs/CHANGELOG.md#v0.24.0))
+- Updated from v0.21.1 to [v0.24.0](https://crates.io/crates/quilt-rs/0.24.0)
+  (see [../quilt-rs/CHANGELOG.md#v0.24.0](../quilt-rs/CHANGELOG.md#v0.24.0))
   - Fixed `quilt+s3://` URL parsing with `:tag` syntax
   - Fixed hash mismatch for packages with diacritic characters
   - Support for reading manifest with CRC64/NVMe checksums
