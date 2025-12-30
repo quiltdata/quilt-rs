@@ -5,7 +5,7 @@
 -->
 # Changelog
 
-## [0.24.0-alpha.1] - 2025-12-29
+## [v0.24.0](https://crates.io/crates/quilt-rs/0.24.0) - 2025-12-30
 
 ### Fixed
 

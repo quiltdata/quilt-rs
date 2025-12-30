@@ -6,7 +6,7 @@
 -->
 # Changelog
 
-## [0.9.8-alpha.1] - 2025-12-29
+## [v0.9.8](https://github.com/quiltdata/QuiltSync/releases/tag/v0.9.8) - 2025-12-30
 
 ### Added
 
@@ -27,7 +27,8 @@
 
 ### quilt-rs
 
-- Updated from v0.21.1 to [0.24.0-alpha.1] (see [../quilt-rs/CHANGELOG.md#0.24.0-alpha.1](../quilt-rs/CHANGELOG.md#0.24.0-alpha.1))
+- Updated from v0.21.1 to [v0.24.0](https://crates.io/crates/quilt-rs/0.24.0)
+  (see [../quilt-rs/CHANGELOG.md#v0.24.0](../quilt-rs/CHANGELOG.md#v0.24.0))
   - Fixed `quilt+s3://` URL parsing with `:tag` syntax
   - Fixed hash mismatch for packages with diacritic characters
   - Support for reading manifest with CRC64/NVMe checksums
