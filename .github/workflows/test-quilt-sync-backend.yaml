@@ -17,7 +17,7 @@ jobs:
   quality:
     name: Code Quality (Ubuntu)
     if: github.ref != 'refs/heads/main'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -48,14 +48,14 @@ jobs:
     if: github.ref == 'refs/heads/main'
     strategy:
       matrix:
-        platform: [ubuntu-22.04, macos-15, windows-latest]
+        platform: [ubuntu-24.04, macos-15, windows-latest]
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
 
       - name: Install Ubuntu dependencies
-        if: matrix.platform == 'ubuntu-22.04'
+        if: matrix.platform == 'ubuntu-24.04'
         uses: ./.github/actions/install-ubuntu-deps
 
       - name: Setup Rust for testing
