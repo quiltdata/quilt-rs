@@ -262,8 +262,8 @@ impl QuiltModel for Model {
 }
 
 impl Model {
-    pub fn create(data_dir: PathBuf) -> Self {
-        debug!("Root directory is {:?}", data_dir);
+    pub fn create(data_dir: impl AsRef<Path>) -> Self {
+        debug!("Root directory is {:?}", data_dir.as_ref());
         let quilt = quilt::LocalDomain::new(data_dir);
         Model {
             quilt: sync::Mutex::new(quilt),
@@ -467,12 +467,15 @@ pub async fn login(
 
 #[cfg(test)]
 pub mod mocks {
-    use super::MockQuiltModel;
+    use super::*;
 
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
+    use tempfile::TempDir;
+
     use crate::quilt;
+    use crate::Result;
 
     pub fn create() -> MockQuiltModel {
         MockQuiltModel::new()
@@ -595,5 +598,110 @@ pub mod mocks {
             .expect_get_installed_packages_list()
             .returning(|| Ok(Vec::new()));
         model
+    }
+
+    #[tokio::test]
+    async fn test_install_package_only_with_latest_tag() -> Result {
+        let mut model = create();
+
+        // Create URI with latest tag (no explicit hash)
+        let uri =
+            quilt::uri::S3PackageUri::try_from("quilt+s3://test-bucket#package=foo/bar@latest")?;
+
+        // Mock resolve_manifest_uri to return resolved manifest with hash
+        let expected_manifest = quilt::uri::ManifestUri {
+            bucket: "test-bucket".to_string(),
+            namespace: ("foo", "bar").into(),
+            hash: "resolved_hash_12345".to_string(),
+            catalog: None,
+        };
+        let expected_manifest_clone = expected_manifest.clone();
+
+        model
+            .expect_resolve_manifest_uri()
+            .times(1)
+            .returning(move |_| Ok(expected_manifest_clone.clone()));
+
+        // Mock is_package_installed to return None (not installed)
+        model
+            .expect_is_package_installed()
+            .times(1)
+            .returning(|_| Ok(None));
+
+        // Mock package_install to return installed package
+        model.expect_package_install().times(1).returning(|_| {
+            Ok(quilt::LocalDomain::new(PathBuf::new())
+                .create_installed_package(("foo", "bar").into())
+                .expect("Failed to create installed package"))
+        });
+
+        // Test the function
+        let result = crate::model::install_package_only(&model, &uri).await;
+        assert!(result.is_ok());
+        let installed_package = result.unwrap();
+        assert_eq!(installed_package.namespace.to_string(), "foo/bar");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_install_package_only_with_hash() -> Result {
+        crate::env::init();
+
+        // Use a real package URI from fixtures - same as used in cli/install.rs
+        const PKG_URI: &str = "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7";
+
+        let temp_dir = TempDir::new()?;
+        let model = super::Model::create(temp_dir.path());
+        model.set_home(temp_dir.path()).await?;
+
+        let uri = quilt::uri::S3PackageUri::try_from(PKG_URI)?;
+
+        let first_install = install_package_only(&model, &uri).await?;
+        assert_eq!(first_install.namespace.to_string(), "reference/quilt-rs");
+
+        let first_hash = model
+            .get_installed_package_lineage(&first_install)
+            .await?
+            .remote
+            .hash;
+
+        // TODO: make sure there was no double installation
+        let second_install = install_package_only(&model, &uri).await?;
+        assert_eq!(second_install.namespace.to_string(), "reference/quilt-rs");
+
+        let second_hash = model
+            .get_installed_package_lineage(&second_install)
+            .await?
+            .remote
+            .hash;
+
+        assert_eq!(first_hash, second_hash);
+        assert_eq!(first_install.package_home().await?, second_install.package_home().await?);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_install_package_only_resolution_failure() -> Result {
+        crate::env::init();
+
+        let temp_dir = TempDir::new()?;
+        let model = super::Model::create(temp_dir.path());
+        // Set up home directory (required for Model to work properly)
+        model.set_home(temp_dir.path()).await?;
+
+        let uri = quilt::uri::S3PackageUri::try_from(
+            "quilt+s3://nonexisting-bucket#package=two/files:latest",
+        )?;
+
+        let result = install_package_only(&model, &uri).await;
+        assert!(result.is_err());
+        // This error description doesnt't make sense, but it is correct so far
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Missing HTTP header: x-amz-bucket-region"));
+
+        Ok(())
     }
 }

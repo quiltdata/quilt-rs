@@ -41,6 +41,7 @@ async fn find_bucket_region(client: &impl HttpClient, bucket: &str) -> Res<Strin
         .get("x-amz-bucket-region")
     {
         Some(location) => Ok(location.to_str()?.into()),
+        // TODO: make a better error for invalid `.head()`
         None => Err(Error::MissingHTTPHeader("x-amz-bucket-region".to_string())),
     }
 }
