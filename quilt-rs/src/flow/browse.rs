@@ -48,7 +48,7 @@ async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res<Ma
 /// If the manifest is in Parquet format we just put it as a file unchanged.
 /// If the manifest is in JSONL format we read it and convert into Parquet, then write.
 /// You must provide `ManifestUri` (package URI with `hash`).
-/// To resolve `latest` you can use `manifest.io.resolve_latest`.
+/// To resolve `latest` you can use `manifest.io.resolve_tag` with `Tag::Latest`.
 pub async fn cache_remote_manifest(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),

@@ -11,7 +11,7 @@ use tracing::warn;
 use crate::checksum::verify_hash;
 use crate::checksum::Crc64Hash;
 use crate::checksum::Sha256ChunkedHash;
-use crate::io::manifest::resolve_latest;
+use crate::io::manifest::resolve_tag;
 use crate::io::remote::HostChecksums;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
@@ -22,6 +22,7 @@ use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageLineage;
 use crate::manifest::Row;
 use crate::manifest::Table;
+use crate::uri::Tag;
 use crate::Error;
 use crate::Res;
 
@@ -30,10 +31,11 @@ pub async fn refresh_latest_hash(
     mut lineage: PackageLineage,
     remote: &impl Remote,
 ) -> Res<PackageLineage> {
-    let latest = resolve_latest(
+    let latest = resolve_tag(
         remote,
         &lineage.remote.catalog,
         &lineage.remote.clone().into(),
+        Tag::Latest,
     )
     .await?;
     if lineage.latest_hash == latest.hash {

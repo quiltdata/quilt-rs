@@ -117,19 +117,15 @@ pub trait QuiltModel {
 
     async fn is_package_installed(
         &self,
-        uri: &quilt::uri::S3PackageUri,
+        manifest_uri: &quilt::uri::ManifestUri,
     ) -> Result<Option<quilt::InstalledPackage>, Error> {
-        match self.get_installed_package(&uri.namespace).await? {
+        match self.get_installed_package(&manifest_uri.namespace).await? {
             Some(installed_package) => {
                 let package_lineage = self
                     .get_installed_package_lineage(&installed_package)
                     .await?;
-                let manifest_uri = package_lineage.remote;
-                let same_hash = match &uri.revision {
-                    quilt::uri::RevisionPointer::Hash(h) => h == &manifest_uri.hash,
-                    _ => false,
-                };
-                if same_hash {
+                let installed_manifest_uri = package_lineage.remote;
+                if manifest_uri.hash == installed_manifest_uri.hash {
                     Ok(Some(installed_package))
                 } else {
                     Ok(None)
@@ -245,6 +241,18 @@ pub trait QuiltModel {
         opener::open(&file_path)?;
         Ok(file_path)
     }
+
+    async fn resolve_manifest_uri(
+        &self,
+        uri: &quilt::uri::S3PackageUri,
+    ) -> Result<quilt::uri::ManifestUri, Error> {
+        Ok(quilt::io::manifest::resolve_manifest_uri(
+            self.get_quilt().lock().await.get_remote(),
+            &uri.catalog,
+            uri,
+        )
+        .await?)
+    }
 }
 
 impl QuiltModel for Model {
@@ -254,8 +262,8 @@ impl QuiltModel for Model {
 }
 
 impl Model {
-    pub fn create(data_dir: PathBuf) -> Self {
-        debug!("Root directory is {:?}", data_dir);
+    pub fn create(data_dir: impl AsRef<Path>) -> Self {
+        debug!("Root directory is {:?}", data_dir.as_ref());
         let quilt = quilt::LocalDomain::new(data_dir);
         Model {
             quilt: sync::Mutex::new(quilt),
@@ -313,97 +321,66 @@ pub async fn package_commit(
     Ok(())
 }
 
-/// Represents the type of installation being performed
-#[derive(Debug)]
-pub enum PathsInstallation {
-    /// A single file from a deep link
-    DeepLink(PathBuf),
-    /// A single file selected by the user
-    SingleFile(PathBuf),
-    /// Multiple files selected by the user
-    Bulk(Vec<PathBuf>),
-}
-
-/// Determines what files to install based on either URI path or explicit paths list
-///
-/// This function handles two mutually exclusive cases:
-/// 1. URI contains a path - use that single path (deep link case)
-/// 2. Explicit paths are provided - use those paths
-///
-/// Returns None if no valid paths are found to install
-fn how_many_files_to_install(
-    uri: &quilt::uri::S3PackageUri,
-    paths: Option<Vec<PathBuf>>,
-) -> Option<PathsInstallation> {
-    if uri.path.is_some() && paths.is_some() {
-        error!("Both URI path and explicit paths provided. Using only URI path.");
-    }
-
-    // Case 1: URI has a path (deep link)
-    if let Some(path) = &uri.path {
-        return Some(PathsInstallation::DeepLink(path.clone()));
-    }
-
-    // Case 2: Explicit paths provided
-    match paths {
-        Some(paths) if paths.is_empty() => None,
-        Some(paths) if paths.len() == 1 => Some(PathsInstallation::SingleFile(paths[0].clone())),
-        Some(paths) => Some(PathsInstallation::Bulk(paths)),
-        None => None,
-    }
-}
-
 pub async fn install_paths(
     model: &impl QuiltModel,
     installed_package: &quilt::InstalledPackage,
-    condition: PathsInstallation,
-) -> Result<(), Error> {
-    let namespace = &installed_package.namespace;
-    match &condition {
-        PathsInstallation::DeepLink(path) => {
-            info!("Install {:?} via deep link", path);
-            model
-                .package_install_paths(installed_package, std::slice::from_ref(path))
-                .await?;
-            model.open_in_default_application(namespace, path).await?;
-        }
-        PathsInstallation::SingleFile(path) => {
-            info!("Installing {:?}", path);
-            model
-                .package_install_paths(installed_package, std::slice::from_ref(path))
-                .await?;
-            model.reveal_in_file_browser(namespace, path).await?;
-        }
-        PathsInstallation::Bulk(paths) => {
-            info!("Installing {} paths", paths.len(),);
-            model
-                .package_install_paths(installed_package, paths)
-                .await?;
-            model.open_in_file_browser(namespace).await?;
-        }
-    };
-    Ok(())
-}
-
-pub async fn package_install(
-    model: &impl QuiltModel,
-    uri: &quilt::uri::S3PackageUri,
-    paths: Option<Vec<PathBuf>>,
-) -> Result<quilt::InstalledPackage, Error> {
-    let installed_package = match model.get_installed_package(&uri.namespace).await? {
-        Some(installed_package) => installed_package,
-        None => {
-            debug!("Installing the package: {:?}", uri);
-            let manifest_uri = quilt::uri::ManifestUri::try_from(uri.clone())?;
-            model.package_install(&manifest_uri).await?
-        }
-    };
-
-    if let Some(paths_condition) = how_many_files_to_install(uri, paths) {
-        install_paths(model, &installed_package, paths_condition).await?;
+    paths: Vec<PathBuf>,
+) -> Result<PathBuf, Error> {
+    if paths.is_empty() {
+        return Err(Error::General(
+            "Cannot install paths: empty paths vector provided".to_string(),
+        ));
     }
 
-    Ok(installed_package)
+    let namespace = &installed_package.namespace;
+
+    model
+        .package_install_paths(installed_package, &paths)
+        .await?;
+
+    // Post-installation actions based on number of paths
+    match paths.len() {
+        1 => {
+            let path = &paths[0];
+            info!("Installed {:?}", path);
+            model.reveal_in_file_browser(namespace, path).await
+        }
+        _ => {
+            info!("Installed {} paths", paths.len());
+            model.open_in_file_browser(namespace).await
+        }
+    }
+}
+
+pub async fn install_package_only(
+    model: &impl QuiltModel,
+    uri: &quilt::uri::S3PackageUri,
+) -> Result<quilt::InstalledPackage, Error> {
+    let manifest_uri = model.resolve_manifest_uri(uri).await?;
+
+    match model.is_package_installed(&manifest_uri).await? {
+        Some(installed_package) => {
+            debug!("Package already installed: {:?}", manifest_uri.namespace);
+            Ok(installed_package)
+        }
+        None => {
+            debug!("Package not installed, installing: {:?}", manifest_uri);
+            Ok(model.package_install(&manifest_uri).await?)
+        }
+    }
+}
+
+pub async fn install_paths_only(
+    model: &impl QuiltModel,
+    namespace: &quilt::uri::Namespace,
+    paths: Vec<PathBuf>,
+) -> Result<PathBuf, Error> {
+    let installed_package = model
+        .get_installed_package(namespace)
+        .await?
+        .ok_or_else(|| Error::General("Package not found for path installation".to_string()))?;
+
+    install_paths(model, &installed_package, paths).await
 }
 
 pub async fn package_uninstall(
@@ -490,12 +467,15 @@ pub async fn login(
 
 #[cfg(test)]
 pub mod mocks {
-    use super::MockQuiltModel;
+    use super::*;
 
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
+    use tempfile::TempDir;
+
     use crate::quilt;
+    use crate::Result;
 
     pub fn create() -> MockQuiltModel {
         MockQuiltModel::new()
@@ -544,22 +524,19 @@ pub mod mocks {
     }
 
     pub fn mock_remote_package(model: &mut MockQuiltModel) -> &MockQuiltModel {
-        let mut a = 0;
-        // let installed_package = quilt::LocalDomain::new(PathBuf::new())
-        //     .create_installed_package(("foo", "bar").into())
-        //     .expect("Failed to create installed package");
+        // Mock resolve_manifest_uri to return the manifest URI directly
+        model
+            .expect_resolve_manifest_uri()
+            .returning(|uri| Ok(quilt::uri::ManifestUri::try_from(uri.clone()).unwrap()));
+        // For the remote package test, the package starts as not installed
         model.expect_is_package_installed().returning(|_| Ok(None));
-        model.expect_get_installed_package().returning(move |_| {
-            if a == 0 {
-                a += 1;
-                Ok(None)
-            } else {
-                Ok(Some(
-                    quilt::LocalDomain::new(PathBuf::new())
-                        .create_installed_package(("foo", "bar").into())
-                        .expect("Failed to create installed package"),
-                ))
-            }
+        // After installation, the package should be available
+        model.expect_get_installed_package().returning(|_| {
+            Ok(Some(
+                quilt::LocalDomain::new(PathBuf::new())
+                    .create_installed_package(("foo", "bar").into())
+                    .expect("Failed to create installed package"),
+            ))
         });
         model.expect_package_install().returning(|_| {
             Ok(quilt::LocalDomain::new(PathBuf::new())
@@ -573,11 +550,15 @@ pub mod mocks {
             }
             Ok(lineage_paths)
         });
+        model.expect_is_path_installed().returning(|_, _| Ok(false));
         model
             .expect_package_home()
             .returning(|_| Ok(PathBuf::default()));
         model
             .expect_open_in_default_application()
+            .returning(|_, _| Ok(PathBuf::default()));
+        model
+            .expect_reveal_in_file_browser()
             .returning(|_, _| Ok(PathBuf::default()));
         model
             .expect_open_in_file_browser()
@@ -617,5 +598,98 @@ pub mod mocks {
             .expect_get_installed_packages_list()
             .returning(|| Ok(Vec::new()));
         model
+    }
+
+    #[tokio::test]
+    async fn test_install_package_only_with_timestamp_tag() -> Result {
+        crate::env::init();
+
+        let temp_dir = TempDir::new()?;
+        let model = super::Model::create(temp_dir.path());
+        model.set_home(temp_dir.path()).await?;
+
+        // Use timestamp tag instead of "latest" for stable testing
+        // Timestamp 1740761585 represents a specific tagged revision
+        let uri = quilt::uri::S3PackageUri::try_from(
+            "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs:1740761585",
+        )?;
+
+        let installed_package = install_package_only(&model, &uri).await?;
+        assert_eq!(
+            installed_package.namespace.to_string(),
+            "reference/quilt-rs"
+        );
+
+        let lineage = model
+            .get_installed_package_lineage(&installed_package)
+            .await?;
+        assert_eq!(
+            lineage.remote.hash,
+            "a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_install_package_only_with_hash() -> Result {
+        crate::env::init();
+
+        let temp_dir = TempDir::new()?;
+        let model = super::Model::create(temp_dir.path());
+        model.set_home(temp_dir.path()).await?;
+
+        let uri = quilt::uri::S3PackageUri::try_from("quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7")?;
+
+        let first_install = install_package_only(&model, &uri).await?;
+        assert_eq!(first_install.namespace.to_string(), "reference/quilt-rs");
+
+        let first_hash = model
+            .get_installed_package_lineage(&first_install)
+            .await?
+            .remote
+            .hash;
+
+        // TODO: make sure there was no double installation
+        let second_install = install_package_only(&model, &uri).await?;
+        assert_eq!(second_install.namespace.to_string(), "reference/quilt-rs");
+
+        let second_hash = model
+            .get_installed_package_lineage(&second_install)
+            .await?
+            .remote
+            .hash;
+
+        assert_eq!(first_hash, second_hash);
+        assert_eq!(
+            first_install.package_home().await?,
+            second_install.package_home().await?
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_install_package_only_resolution_failure() -> Result {
+        crate::env::init();
+
+        let temp_dir = TempDir::new()?;
+        let model = super::Model::create(temp_dir.path());
+        // Set up home directory (required for Model to work properly)
+        model.set_home(temp_dir.path()).await?;
+
+        let uri = quilt::uri::S3PackageUri::try_from(
+            "quilt+s3://nonexisting-bucket#package=two/files:latest",
+        )?;
+
+        let result = install_package_only(&model, &uri).await;
+        assert!(result.is_err());
+        // This error description doesn't make sense, but it is correct so far
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Missing HTTP header: x-amz-bucket-region"));
+
+        Ok(())
     }
 }

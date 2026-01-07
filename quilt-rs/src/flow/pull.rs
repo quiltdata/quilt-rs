@@ -6,7 +6,7 @@ use tracing::info;
 use tracing::warn;
 
 use crate::flow;
-use crate::io::manifest::resolve_latest;
+use crate::io::manifest::resolve_tag;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::InstalledPackageStatus;
@@ -16,6 +16,7 @@ use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
+use crate::uri::Tag;
 use crate::Error;
 use crate::Res;
 
@@ -71,10 +72,11 @@ pub async fn pull_package(
     lineage.base_hash.clone_from(&lineage.latest_hash);
 
     debug!("⏳ Resolving latest manifest");
-    let manifest_uri = resolve_latest(
+    let manifest_uri = resolve_tag(
         remote,
         &lineage.remote.catalog,
         &lineage.remote.clone().into(),
+        Tag::Latest,
     )
     .await?;
     debug!("✔️ Latest manifest resolved: {}", manifest_uri.display());

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::flow;
-use crate::io::manifest::resolve_latest;
+use crate::io::manifest::resolve_tag;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
@@ -10,6 +10,7 @@ use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
+use crate::uri::Tag;
 use crate::Res;
 use tracing::debug;
 use tracing::info;
@@ -29,10 +30,11 @@ pub async fn reset_to_latest(
         "⏳ Resolving latest manifest hash for {}",
         lineage.remote.display()
     );
-    let latest = resolve_latest(
+    let latest = resolve_tag(
         remote,
         &lineage.remote.catalog,
         &lineage.remote.clone().into(),
+        Tag::Latest,
     )
     .await?;
     debug!("✔️ Latest hash resolved: {}", latest.hash);

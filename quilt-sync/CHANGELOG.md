@@ -6,6 +6,19 @@
 -->
 # Changelog
 
+## [Unreleased]
+
+## [v0.9.9](https://github.com/quiltdata/quilt-rs/releases/tag/QuiltSync/v0.9.9) - 2025-01-07
+
+### Fixed
+
+- Handle S3 package URIs with tags that don't have explicit hashes (<https://github.com/quiltdata/quilt-rs/pull/429>)
+
+### quilt-rs
+
+- Support for timestamp tags in package URIs
+- Export `Tag` enum and `LATEST_TAG` constant
+
 ## [v0.9.8](https://github.com/quiltdata/quilt-rs/releases/tag/QuiltSync/v0.9.8) - 2025-12-30
 
 ### Added

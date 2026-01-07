@@ -2,7 +2,7 @@ use tracing::debug;
 use tracing::info;
 
 use crate::flow;
-use crate::io::manifest::resolve_latest;
+use crate::io::manifest::resolve_tag;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::DomainLineage;
@@ -10,6 +10,7 @@ use crate::lineage::PackageLineage;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
+use crate::uri::Tag;
 use crate::Error;
 use crate::Res;
 
@@ -54,7 +55,13 @@ pub async fn install_package(
     );
 
     debug!("⏳ Resolving latest hash for this package handle");
-    let latest = resolve_latest(remote, &manifest_uri.catalog, &manifest_uri.into()).await?;
+    let latest = resolve_tag(
+        remote,
+        &manifest_uri.catalog,
+        &manifest_uri.into(),
+        Tag::Latest,
+    )
+    .await?;
     debug!("✔️ Latest hash is {}", latest.hash);
 
     let mut lineage = lineage;

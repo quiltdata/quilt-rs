@@ -12,9 +12,7 @@ mod setup;
 
 use crate::app::AppAssets;
 use crate::error::Error;
-use crate::model::install_paths;
-use crate::model::package_install;
-use crate::model::PathsInstallation;
+use crate::model::install_package_only;
 use crate::model::QuiltModel;
 use installed_packages_list::ViewInstalledPackagesList;
 
@@ -37,7 +35,7 @@ pub async fn load(
             .await?
             .render(),
         Paths::InstalledPackage(namespace) => {
-            ViewInstalledPackage::create(model, app, tracing, namespace, false)
+            ViewInstalledPackage::create(model, app, tracing, namespace)
                 .await?
                 .render()
         }
@@ -51,27 +49,21 @@ pub async fn load(
             .await?
             .render(),
         Paths::RemotePackage(uri) => {
-            let preflight = model.is_package_installed(uri).await?;
+            let installed_package = install_package_only(model, uri).await?;
 
-            if let Some(ref installed_package) = preflight {
-                if let Some(ref path) = uri.path {
-                    if model.is_path_installed(installed_package, path).await? {
-                        model
-                            .open_in_default_application(&uri.namespace, path)
-                            .await?;
-                    } else {
-                        let deep_link = PathsInstallation::DeepLink(path.clone());
-                        install_paths(model, installed_package, deep_link).await?;
-                    }
+            // If URI has a path, handle it (for both already-installed and newly-installed packages)
+            if let Some(ref path) = uri.path {
+                if !model.is_path_installed(&installed_package, path).await? {
+                    model
+                        .package_install_paths(&installed_package, std::slice::from_ref(path))
+                        .await?;
                 }
+                model
+                    .open_in_default_application(&uri.namespace, path)
+                    .await?;
             }
 
-            let not_installed = preflight.is_none();
-            if not_installed {
-                package_install(model, uri, None).await?;
-            }
-
-            ViewInstalledPackage::create(model, app, tracing, &uri.namespace, not_installed)
+            ViewInstalledPackage::create(model, app, tracing, &uri.namespace)
                 .await?
                 .render()
         }

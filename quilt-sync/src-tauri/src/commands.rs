@@ -615,7 +615,8 @@ async fn package_install_paths_command(
     paths: &[String],
 ) -> Result<(), Error> {
     let uri = quilt::uri::S3PackageUri::try_from(uri)?;
-    model::package_install(m, &uri, Some(paths.iter().map(PathBuf::from).collect())).await?;
+    let paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    model::install_paths_only(m, &uri.namespace, paths).await?;
     Ok(())
 }
 
