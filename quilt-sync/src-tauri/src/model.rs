@@ -684,7 +684,7 @@ pub mod mocks {
 
         let result = install_package_only(&model, &uri).await;
         assert!(result.is_err());
-        // This error description doesnt't make sense, but it is correct so far
+        // This error description doesn't make sense, but it is correct so far
         assert!(result
             .unwrap_err()
             .to_string()
