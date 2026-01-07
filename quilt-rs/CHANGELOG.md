@@ -7,7 +7,7 @@
 
 ## [Unreleased]
 
-## [v0.24.1](https://github.com/quiltdata/quilt-rs/releases/tag/quilt-rs/v0.24.1) - 2025-01-07
+## [v0.25.0](https://github.com/quiltdata/quilt-rs/releases/tag/quilt-rs/v0.25.0) - 2025-01-07
 
 ### Added
 
