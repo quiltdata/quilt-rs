@@ -7,9 +7,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- Support for timestamp tags in package URIs (e.g., `package@1697916638`) (<https://github.com/quiltdata/quilt-rs/pull/429>)
+
 ### Changed
 
-- Export `LATEST_TAG` constant from uri module for external access (<https://github.com/quiltdata/quilt-rs/pull/429>)
+- Export `Tag` enum and `LATEST_TAG` constant from uri module (<https://github.com/quiltdata/quilt-rs/pull/429>)
 
 ## [v0.24.0](https://github.com/quiltdata/quilt-rs/releases/tag/quilt-rs/v0.24.0) - 2025-12-30
 

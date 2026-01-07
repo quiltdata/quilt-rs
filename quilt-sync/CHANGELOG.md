@@ -10,11 +10,12 @@
 
 ### Fixed
 
-- Handle S3 package URIs with tags (like "latest") that don't have explicit hashes (<https://github.com/quiltdata/quilt-rs/pull/429>)
+- Handle S3 package URIs with tags that don't have explicit hashes (<https://github.com/quiltdata/quilt-rs/pull/429>)
 
 ### quilt-rs
 
-- Export `LATEST_TAG` constant for external access
+- Support for timestamp tags in package URIs
+- Export `Tag` enum and `LATEST_TAG` constant
 
 ## [v0.9.8](https://github.com/quiltdata/quilt-rs/releases/tag/QuiltSync/v0.9.8) - 2025-12-30
 
