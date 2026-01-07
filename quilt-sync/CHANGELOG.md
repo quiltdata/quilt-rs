@@ -16,7 +16,7 @@
 
 - Export `LATEST_TAG` constant for external access
 
-## [v0.9.8](https://github.com/quiltdata/QuiltSync/releases/tag/v0.9.8) - 2025-12-30
+## [v0.9.8](https://github.com/quiltdata/quilt-rs/releases/tag/QuiltSync/v0.9.8) - 2025-12-30
 
 ### Added
 
