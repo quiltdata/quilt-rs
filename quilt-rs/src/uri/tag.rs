@@ -1,10 +1,12 @@
 use std::fmt;
+use std::str::FromStr;
 
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::uri::S3PackageHandle;
 use crate::uri::S3Uri;
+use crate::Error;
 
 /// In theory tag can be any string
 /// But in practice we only use timestamps and "latest"
@@ -19,6 +21,20 @@ impl fmt::Display for Tag {
         match self {
             Tag::Timestamp(t) => write!(f, "{t}"),
             Tag::Latest => write!(f, "latest"),
+        }
+    }
+}
+
+impl FromStr for Tag {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "latest" {
+            Ok(Tag::Latest)
+        } else if let Ok(timestamp) = s.parse::<i64>() {
+            Ok(Tag::Timestamp(timestamp))
+        } else {
+            Err(Error::Package(format!("Unsupported tag format: {}", s)))
         }
     }
 }
@@ -68,5 +84,35 @@ impl From<TagUri> for S3Uri {
             key,
             version: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tag_from_str_latest() {
+        let tag: Tag = "latest".parse().unwrap();
+        assert_eq!(tag, Tag::Latest);
+    }
+
+    #[test]
+    fn test_tag_from_str_timestamp() {
+        let tag: Tag = "1697916638".parse().unwrap();
+        assert_eq!(tag, Tag::Timestamp(1697916638));
+    }
+
+    #[test]
+    fn test_tag_from_str_invalid() {
+        let result: Result<Tag, _> = "invalid-tag".parse();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Unsupported tag format"));
+    }
+
+    #[test]
+    fn test_tag_display() {
+        assert_eq!(Tag::Latest.to_string(), "latest");
+        assert_eq!(Tag::Timestamp(1697916638).to_string(), "1697916638");
     }
 }

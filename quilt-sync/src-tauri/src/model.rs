@@ -601,45 +601,33 @@ pub mod mocks {
     }
 
     #[tokio::test]
-    async fn test_install_package_only_with_latest_tag() -> Result {
-        let mut model = create();
+    async fn test_install_package_only_with_timestamp_tag() -> Result {
+        crate::env::init();
 
-        // Create URI with latest tag (no explicit hash)
-        let uri =
-            quilt::uri::S3PackageUri::try_from("quilt+s3://test-bucket#package=foo/bar@latest")?;
+        let temp_dir = TempDir::new()?;
+        let model = super::Model::create(temp_dir.path());
+        model.set_home(temp_dir.path()).await?;
 
-        // Mock resolve_manifest_uri to return resolved manifest with hash
-        let expected_manifest = quilt::uri::ManifestUri {
-            bucket: "test-bucket".to_string(),
-            namespace: ("foo", "bar").into(),
-            hash: "resolved_hash_12345".to_string(),
-            catalog: None,
-        };
-        let expected_manifest_clone = expected_manifest.clone();
+        // Use timestamp tag instead of "latest" for stable testing
+        // Timestamp 1740761585 represents a specific tagged revision
+        let uri = quilt::uri::S3PackageUri::try_from(
+            "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs:1740761585",
+        )?;
 
-        model
-            .expect_resolve_manifest_uri()
-            .times(1)
-            .returning(move |_| Ok(expected_manifest_clone.clone()));
+        let installed_package = install_package_only(&model, &uri).await?;
+        assert_eq!(
+            installed_package.namespace.to_string(),
+            "reference/quilt-rs"
+        );
 
-        // Mock is_package_installed to return None (not installed)
-        model
-            .expect_is_package_installed()
-            .times(1)
-            .returning(|_| Ok(None));
+        let lineage = model
+            .get_installed_package_lineage(&installed_package)
+            .await?;
+        assert_eq!(
+            lineage.remote.hash,
+            "a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7"
+        );
 
-        // Mock package_install to return installed package
-        model.expect_package_install().times(1).returning(|_| {
-            Ok(quilt::LocalDomain::new(PathBuf::new())
-                .create_installed_package(("foo", "bar").into())
-                .expect("Failed to create installed package"))
-        });
-
-        // Test the function
-        let result = crate::model::install_package_only(&model, &uri).await;
-        assert!(result.is_ok());
-        let installed_package = result.unwrap();
-        assert_eq!(installed_package.namespace.to_string(), "foo/bar");
         Ok(())
     }
 
@@ -647,14 +635,11 @@ pub mod mocks {
     async fn test_install_package_only_with_hash() -> Result {
         crate::env::init();
 
-        // Use a real package URI from fixtures - same as used in cli/install.rs
-        const PKG_URI: &str = "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7";
-
         let temp_dir = TempDir::new()?;
         let model = super::Model::create(temp_dir.path());
         model.set_home(temp_dir.path()).await?;
 
-        let uri = quilt::uri::S3PackageUri::try_from(PKG_URI)?;
+        let uri = quilt::uri::S3PackageUri::try_from("quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7")?;
 
         let first_install = install_package_only(&model, &uri).await?;
         assert_eq!(first_install.namespace.to_string(), "reference/quilt-rs");
@@ -676,7 +661,10 @@ pub mod mocks {
             .hash;
 
         assert_eq!(first_hash, second_hash);
-        assert_eq!(first_install.package_home().await?, second_install.package_home().await?);
+        assert_eq!(
+            first_install.package_home().await?,
+            second_install.package_home().await?
+        );
 
         Ok(())
     }

@@ -28,6 +28,7 @@ use crate::uri::RevisionPointer;
 use crate::uri::S3PackageHandle;
 use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
+use crate::uri::Tag;
 use crate::uri::TagUri;
 use crate::Error;
 use crate::Res;
@@ -128,15 +129,16 @@ async fn upload_tag(remote: &impl Remote, manifest_uri: &ManifestUri, tag_uri: T
         .await
 }
 
-/// Downloads the latest tagged package
-/// and returns its content: hash of the latest package revision.
+/// Downloads the tagged package (latest or timestamp)
+/// and returns its content: hash of the tagged package revision.
 /// Then creates `ManifestUri`.
-pub async fn resolve_latest(
+pub async fn resolve_tag(
     remote: &impl Remote,
     host: &Option<Host>,
     uri: &S3PackageHandle,
+    tag: Tag,
 ) -> Res<ManifestUri> {
-    let tag_uri = TagUri::latest(uri.clone());
+    let tag_uri = TagUri::new(uri.bucket.clone(), uri.namespace.clone(), tag);
     let stream = remote.get_object_stream(host, &tag_uri.into()).await?;
     let hash = bytestream_to_string(stream.body).await?;
     let S3PackageHandle { bucket, namespace } = uri.to_owned();
@@ -149,9 +151,22 @@ pub async fn resolve_latest(
     })
 }
 
+/// Downloads the latest tagged package
+/// and returns its content: hash of the latest package revision.
+/// Then creates `ManifestUri`.
+///
+/// This is a backward compatibility wrapper around resolve_tag.
+pub async fn resolve_latest(
+    remote: &impl Remote,
+    host: &Option<Host>,
+    uri: &S3PackageHandle,
+) -> Res<ManifestUri> {
+    resolve_tag(remote, host, uri, Tag::Latest).await
+}
+
 /// `ManifestUri` should always have `hash`.
-/// But `S3PackageUri` can be just tagged as "latest".
-/// So, we need to dowload "latest" tag and find out what the `hash` is
+/// But `S3PackageUri` can be tagged (e.g. "latest" or timestamp).
+/// So, we need to download the tag and find out what the `hash` is
 async fn resolve_top_hash(
     remote: &impl Remote,
     host: &Option<Host>,
@@ -159,14 +174,18 @@ async fn resolve_top_hash(
 ) -> Res<String> {
     match &uri.revision {
         RevisionPointer::Hash(top_hash) => Ok(top_hash.clone()),
-        RevisionPointer::Tag(_) => Ok(resolve_latest(remote, host, &uri.into()).await?.hash),
+        RevisionPointer::Tag(tag_str) => {
+            Ok(resolve_tag(remote, host, &uri.into(), tag_str.parse()?)
+                .await?
+                .hash)
+        }
     }
 }
 
 /// Converts `S3PackageUri` to `ManifestUri`
 /// `ManifestUri` should always have `hash`.
-/// But `S3PackageUri` can be just tagged as "latest".
-/// So, we need to dowload "latest" tag and find out what the `hash` is
+/// But `S3PackageUri` can be tagged (e.g. "latest" or timestamp).
+/// So, we need to download the tag and find out what the `hash` is
 pub async fn resolve_manifest_uri(
     remote: &impl Remote,
     host: &Option<Host>,

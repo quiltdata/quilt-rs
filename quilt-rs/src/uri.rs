@@ -19,4 +19,5 @@ pub use package::S3PackageHandle;
 pub use package::S3PackageUri;
 pub use package::LATEST_TAG;
 pub use s3::S3Uri;
+pub use tag::Tag;
 pub use tag::TagUri;
