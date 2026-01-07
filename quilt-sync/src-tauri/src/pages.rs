@@ -55,7 +55,7 @@ pub async fn load(
             if let Some(ref path) = uri.path {
                 if !model.is_path_installed(&installed_package, path).await? {
                     model
-                        .package_install_paths(&installed_package, &vec![path.clone()])
+                        .package_install_paths(&installed_package, std::slice::from_ref(path))
                         .await?;
                 }
                 model
