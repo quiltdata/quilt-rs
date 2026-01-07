@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [v0.24.1](https://github.com/quiltdata/quilt-rs/releases/tag/quilt-rs/v0.24.1) - 2025-01-07
+
 ### Added
 
 - Support for timestamp tags in package URIs (e.g., `package@1697916638`) (<https://github.com/quiltdata/quilt-rs/pull/429>)
