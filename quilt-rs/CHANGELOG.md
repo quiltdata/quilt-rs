@@ -5,6 +5,12 @@
 -->
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- Export `LATEST_TAG` constant from uri module for external access
+
 ## [v0.24.0](https://crates.io/crates/quilt-rs/0.24.0) - 2025-12-30
 
 ### Fixed

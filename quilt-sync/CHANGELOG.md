@@ -6,6 +6,16 @@
 -->
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Handle S3 package URIs with tags (like "latest") that don't have explicit hashes
+
+### quilt-rs
+
+- Export `LATEST_TAG` constant for external access
+
 ## [v0.9.8](https://github.com/quiltdata/QuiltSync/releases/tag/v0.9.8) - 2025-12-30
 
 ### Added
