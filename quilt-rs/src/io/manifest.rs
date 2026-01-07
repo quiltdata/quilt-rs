@@ -151,19 +151,6 @@ pub async fn resolve_tag(
     })
 }
 
-/// Downloads the latest tagged package
-/// and returns its content: hash of the latest package revision.
-/// Then creates `ManifestUri`.
-///
-/// This is a backward compatibility wrapper around resolve_tag.
-pub async fn resolve_latest(
-    remote: &impl Remote,
-    host: &Option<Host>,
-    uri: &S3PackageHandle,
-) -> Res<ManifestUri> {
-    resolve_tag(remote, host, uri, Tag::Latest).await
-}
-
 /// `ManifestUri` should always have `hash`.
 /// But `S3PackageUri` can be tagged (e.g. "latest" or timestamp).
 /// So, we need to download the tag and find out what the `hash` is

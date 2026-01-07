@@ -5,7 +5,7 @@ use tracing::warn;
 
 use crate::flow;
 use crate::io::manifest::build_manifest_from_rows_stream;
-use crate::io::manifest::resolve_latest;
+use crate::io::manifest::resolve_tag;
 use crate::io::manifest::tag_timestamp;
 use crate::io::manifest::upload_manifest;
 use crate::io::manifest::upload_row;
@@ -21,6 +21,7 @@ use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::uri::S3PackageHandle;
+use crate::uri::Tag;
 use crate::Error;
 use crate::Res;
 
@@ -143,9 +144,14 @@ pub async fn push_package(
     debug!("✔️ Timestamp tag added");
 
     debug!("⏳ Checking remote's latest manifest hash");
-    lineage.latest_hash = resolve_latest(remote, &new_manifest_uri.catalog, &manifest_uri.into())
-        .await?
-        .hash;
+    lineage.latest_hash = resolve_tag(
+        remote,
+        &new_manifest_uri.catalog,
+        &manifest_uri.into(),
+        Tag::Latest,
+    )
+    .await?
+    .hash;
     debug!("✔️ Latest hash is: {}", lineage.latest_hash);
 
     lineage.remote = new_manifest_uri.clone();

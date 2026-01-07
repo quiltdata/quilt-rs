@@ -107,7 +107,10 @@ mod tests {
     fn test_tag_from_str_invalid() {
         let result: Result<Tag, _> = "invalid-tag".parse();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Unsupported tag format"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Unsupported tag format"));
     }
 
     #[test]
