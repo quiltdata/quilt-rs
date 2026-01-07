@@ -10,7 +10,7 @@
 
 ### Fixed
 
-- Handle S3 package URIs with tags (like "latest") that don't have explicit hashes
+- Handle S3 package URIs with tags (like "latest") that don't have explicit hashes (<https://github.com/quiltdata/quilt-rs/pull/429>)
 
 ### quilt-rs
 
