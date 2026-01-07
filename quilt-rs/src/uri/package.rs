@@ -19,7 +19,7 @@ use crate::uri::ManifestUri;
 use crate::Error;
 use crate::Res;
 
-const LATEST_TAG: &str = "latest";
+pub const LATEST_TAG: &str = "latest";
 
 /// This is the revision (or "hash") of the package.
 /// "Package" itself is a handle, but each package has revision.

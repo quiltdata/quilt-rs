@@ -25,7 +25,6 @@ use crate::Result;
 pub struct ViewInstalledPackage {
     entries_list: Vec<entry::ViewEntry>,
     globals: Globals,
-    is_deep_link: bool,
     origin: url::Url,
     status: UpstreamState,
     uri: S3PackageUri,
@@ -88,22 +87,17 @@ struct TmplPageInstalledPackage<'a> {
 }
 
 impl<'a> TmplPageInstalledPackage<'a> {
-    pub fn primary_button(
-        uri: &S3PackageUri,
-        status: &UpstreamState,
-        is_deep_link: bool,
-    ) -> btn::TmplButton<'a> {
-        let is_commit_primary = matches!(status, UpstreamState::UpToDate) && !is_deep_link;
+    pub fn primary_button(uri: &S3PackageUri, status: &UpstreamState) -> btn::TmplButton<'a> {
         let btn = btn::TmplButton::builder()
             .set_icon(Icon::ArrowForward)
             .set_href(Paths::Commit(uri.namespace.clone()))
             .set_label(t!("installed_package.commit"))
             .set_size(btn::Size::Large)
             .set_direction(btn::Direction::RightToLeft);
-        if is_commit_primary {
-            btn.set_color(btn::Color::Primary)
-        } else {
-            btn
+
+        match status {
+            UpstreamState::UpToDate => btn.set_color(btn::Color::Primary),
+            _ => btn,
         }
     }
 
@@ -143,7 +137,6 @@ impl ViewInstalledPackage {
         app: &impl AppAssets,
         tracing: &crate::telemetry::Telemetry,
         namespace: &quilt::uri::Namespace,
-        is_deep_link: bool,
     ) -> Result<ViewInstalledPackage> {
         let installed_package = model
             .get_installed_package(namespace)
@@ -249,7 +242,6 @@ impl ViewInstalledPackage {
         Ok(ViewInstalledPackage {
             entries_list,
             globals: app.globals(),
-            is_deep_link,
             origin: uri.display_for_host(&origin_host)?,
             status: status.upstream_state,
             uri: uri.clone(),
@@ -269,7 +261,6 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
     fn from(view: ViewInstalledPackage) -> Self {
         let ViewInstalledPackage {
             entries_list,
-            is_deep_link,
             origin,
             status,
             uri,
@@ -284,7 +275,7 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
         }
         TmplPageInstalledPackage {
             layout: Layout::builder(view.globals)
-                .set_primary_action(Self::primary_button(&uri, &status, is_deep_link))
+                .set_primary_action(Self::primary_button(&uri, &status))
                 .set_breadcrumbs(Self::breadcrumbs(&uri))
                 .set_actions(Self::actions(&uri, &origin))
                 .set_uri(Some(uri.clone())),
@@ -326,7 +317,6 @@ mod tests {
             origin: url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?,
             status: quilt::lineage::UpstreamState::UpToDate,
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
-            is_deep_link: false,
             globals: Globals::default(),
         })
         .render()?;
@@ -346,7 +336,6 @@ mod tests {
             &app,
             &crate::telemetry::Telemetry::default(),
             &("foo", "bar").into(),
-            false,
         )
         .await?;
         let html = installed_package.render()?;
@@ -389,7 +378,6 @@ mod tests {
             origin: url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?,
             status: quilt::lineage::UpstreamState::UpToDate,
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
-            is_deep_link: false,
             globals: Globals::default(),
         };
 
