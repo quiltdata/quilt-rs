@@ -91,7 +91,6 @@ pub fn setup_deep_link_handler(app_handle: &AppHandle) {
         handle_deep_link_navigation(&handle_for_runtime, urls);
     });
 
-    #[cfg(not(target_os = "macos"))]
     if let Ok(Some(urls)) = deep_link.get_current() {
         debug!("Processing startup deep link: {:?}", urls);
         handle_deep_link_navigation(app_handle, urls);
