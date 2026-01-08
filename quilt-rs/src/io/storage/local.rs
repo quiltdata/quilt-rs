@@ -173,8 +173,12 @@ mod tests {
 
         let storage = LocalStorage::default();
 
-        let mut new_file = storage.create_file(&dest).await?;
-        new_file.write_all(b"Hello").await?;
+        {
+            let mut new_file = storage.create_file(&dest).await?;
+            new_file.write_all(b"Hello").await?;
+            new_file.flush().await?;
+        }
+
         let contents = fs::read(dest).await?;
         assert_eq!(contents, b"Hello");
 
