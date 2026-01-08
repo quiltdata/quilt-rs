@@ -6,7 +6,11 @@
 -->
 # Changelog
 
-## [Unreleased]
+## [v0.9.10-alpha1]
+
+### Fixed
+
+- Fixed handling of macOS deep links on first application start (<https://github.com/quiltdata/quilt-rs/pull/433>)
 
 ## [v0.9.9](https://github.com/quiltdata/quilt-rs/releases/tag/QuiltSync/v0.9.9) - 2025-01-07
 
