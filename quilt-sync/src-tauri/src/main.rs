@@ -74,6 +74,18 @@ fn main() {
 
             uri::setup_deep_link_handler(app.handle());
 
+            // Handle macOS app reopen events (when app is activated from dock or deep link)
+            #[cfg(target_os = "macos")]
+            {
+                let handle = app.handle().clone();
+                app.on_reopen(move |app_handle| {
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
