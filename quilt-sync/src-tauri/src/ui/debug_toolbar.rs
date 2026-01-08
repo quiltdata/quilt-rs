@@ -33,7 +33,7 @@ impl<'a> TmplDebugToolbar<'a> {
 
     fn release_notes_button(globals: &Globals) -> btn::TmplButton<'static> {
         let release_url = format!(
-            "https://github.com/quiltdata/QuiltSync/releases/tag/v{}",
+            "https://github.com/quiltdata/quilt-rs/releases/tag/QuiltSync/v{}",
             globals.version
         );
         btn::TmplButton::builder()
