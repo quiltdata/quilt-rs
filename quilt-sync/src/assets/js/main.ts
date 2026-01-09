@@ -521,18 +521,16 @@ window.addEventListener(EVENT_PAGE_READY, () => {
     installPaths(event as SubmitEvent),
   );
 
-  const selectAllElement = findElement(SELECTOR_ENTRIES_SELECT_ALL);
-  selectAllElement?.addEventListener(
-    "change",
-    (event) => {
-      selectAllPaths(event.currentTarget as HTMLInputElement);
-    },
-  );
-
-  // Auto-select all checkboxes on page load
+  const selectAllElement = findElement(SELECTOR_ENTRIES_SELECT_ALL) as HTMLInputElement;
   if (selectAllElement) {
-    (selectAllElement as HTMLInputElement).checked = true;
-    selectAllPaths(selectAllElement as HTMLInputElement);
+    selectAllElement.addEventListener(
+      "change",
+      (event) => selectAllPaths(event.currentTarget as HTMLInputElement),
+    );
+
+    // Auto-select all checkboxes on page load
+    (selectAllElement).checked = true;
+    selectAllPaths(selectAllElement);
   }
 
   for (const button of findElementsList(SELECTOR_REFRESH)) {
