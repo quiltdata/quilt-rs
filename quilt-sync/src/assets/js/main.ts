@@ -521,12 +521,19 @@ window.addEventListener(EVENT_PAGE_READY, () => {
     installPaths(event as SubmitEvent),
   );
 
-  findElement(SELECTOR_ENTRIES_SELECT_ALL)?.addEventListener(
+  const selectAllElement = findElement(SELECTOR_ENTRIES_SELECT_ALL);
+  selectAllElement?.addEventListener(
     "change",
     (event) => {
       selectAllPaths(event.currentTarget as HTMLInputElement);
     },
   );
+
+  // Auto-select all checkboxes on page load
+  if (selectAllElement) {
+    (selectAllElement as HTMLInputElement).checked = true;
+    selectAllPaths(selectAllElement as HTMLInputElement);
+  }
 
   for (const button of findElementsList(SELECTOR_REFRESH)) {
     button.addEventListener("click", () => {
