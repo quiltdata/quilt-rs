@@ -6,7 +6,14 @@
 -->
 # Changelog
 
-## [v0.9.10-alpha1]
+## [v0.10.0-alpha1]
+
+This version increment consolidates many small changes from previous patch releases.
+
+### Changed
+
+- Auto-select all checkboxes on page load for file installation
+- Add autofocus to commit message input field
 
 ### Fixed
 

@@ -407,7 +407,7 @@ mod tests {
             r#"<input class="input" id="namespace" name="namespace" value="A/B" readonly />"#,
         );
         let has_message_input = html.contains(
-            r#"<input class="input" id="message" name="message" placeholder="" required />"#,
+            r#"<input autofocus class="input" id="message" name="message" placeholder="" required />"#,
         );
         let has_metadata_input = html.contains(r#"<textarea class="textarea" id="metadata" name="metadata" placeholder="{ \"key\": \"value\" }" ></textarea>"#);
         let has_submit_button = html.contains(r##"<button class="qui-button primary js-packages-commit large" data-form="#form" type="button"><span>Commit</span><img class="qui-icon" src="/assets/img/icons/done.svg" /></button>"##);
