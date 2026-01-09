@@ -12,7 +12,8 @@ This version increment consolidates many small changes from previous patch relea
 
 ### Changed
 
-- Add autofocus to commit message input field
+- Auto-select all checkboxes on page load for file installation (<https://github.com/quiltdata/quilt-rs/pull/437>)
+- Add autofocus to commit message input field (<https://github.com/quiltdata/quilt-rs/pull/436>)
 
 ### Fixed
 
