@@ -6,7 +6,7 @@
 -->
 # Changelog
 
-## [v0.10.0-alpha1]
+## [v0.10.0]
 
 This version increment consolidates many small changes from previous patch releases.
 
