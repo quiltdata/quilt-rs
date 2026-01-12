@@ -23,17 +23,17 @@ mockall = "0.14.0"
 multihash.workspace = true
 opener = { version = "0.8.3", features = ["reveal"] }
 quilt-rs = { path = "../../quilt-rs" }
-rfd = { version = "0.17.0", default-features = false, features = ["gtk3"] }
+rfd = { version = "0.17.1", default-features = false, features = ["gtk3"] }
 rust-i18n = "3.1.5"
 semver = "1.0.27"
-sentry = { version = "0.46.0", features = ["tracing"] }
+sentry = { version = "0.46.1", features = ["tracing"] }
 mixpanel-rs = "0.3.1"
 serde.workspace = true
 serde_json.workspace = true
 serde_qs = "0.15.0"
 tauri = { version = "2.9.5", features = ["test", "devtools"] }
-tauri-plugin-deep-link = "2.4.5"
-tauri-plugin-shell = "2.3.3"
+tauri-plugin-deep-link = "2.4.6"
+tauri-plugin-shell = "2.3.4"
 tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
@@ -53,4 +53,4 @@ custom-protocol = ["tauri/custom-protocol"]
 tokio-test.workspace = true
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-tauri-plugin-single-instance = { version = "2.3.6", features = ["deep-link"] }
+tauri-plugin-single-instance = { version = "2.3.7", features = ["deep-link"] }
