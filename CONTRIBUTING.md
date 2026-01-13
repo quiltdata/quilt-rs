@@ -17,6 +17,14 @@ For detailed contributing information, see the project-specific guides:
 
 ## Development Workflows
 
+This project uses `just` as a task runner for common development tasks.
+
+```bash
+cargo install just
+
+just -l
+```
+
 All cargo commands work on the entire workspace by default. Use the `-p` flag to
 target specific packages:
 
@@ -29,13 +37,6 @@ cargo test -p quilt-rs              # Specific package only
 cargo build [-p package-name]
 cargo fmt [--check] [-p package-name]
 cargo clippy [-- --deny warnings] [-p package-name]
-```
-
-### Test Coverage
-
-```bash
-cargo install cargo-tarpaulin
-cargo tarpaulin --out html [-p package-name]
 ```
 
 ## Release Process Overview
