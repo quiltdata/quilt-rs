@@ -4,7 +4,7 @@
 start:
     cd quilt-sync && npm start
 
-# Run test coverage for all packages  
+# Run test coverage for all packages
 coverage:
     cargo tarpaulin --out html
 
