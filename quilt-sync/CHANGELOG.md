@@ -6,6 +6,12 @@
 -->
 # Changelog
 
+## [v0.11.0-alpha1]
+
+### Added
+
+- Added auto-updater functionality for seamless application updates (#447)
+
 ## [v0.10.0]
 
 This version increment consolidates many small changes from previous patch releases.
