@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { check } from "@tauri-apps/plugin-updater";
 import { createJSONEditor } from "vanilla-jsoneditor/standalone.js";
 
 type Namespace = string;
@@ -521,15 +522,16 @@ window.addEventListener(EVENT_PAGE_READY, () => {
     installPaths(event as SubmitEvent),
   );
 
-  const selectAllElement = findElement(SELECTOR_ENTRIES_SELECT_ALL) as HTMLInputElement;
+  const selectAllElement = findElement(
+    SELECTOR_ENTRIES_SELECT_ALL,
+  ) as HTMLInputElement;
   if (selectAllElement) {
-    selectAllElement.addEventListener(
-      "change",
-      (event) => selectAllPaths(event.currentTarget as HTMLInputElement),
+    selectAllElement.addEventListener("change", (event) =>
+      selectAllPaths(event.currentTarget as HTMLInputElement),
     );
 
     // Auto-select all checkboxes on page load
-    (selectAllElement).checked = true;
+    selectAllElement.checked = true;
     selectAllPaths(selectAllElement);
   }
 
@@ -578,4 +580,23 @@ window.addEventListener(EVENT_PAGE_READY, () => {
   }
 });
 
+// Auto updater check
+async function checkForUpdates() {
+  try {
+    const update = await check();
+    if (update?.available) {
+      console.log(`Update available: ${update.version}`);
+      // The updater plugin handles the UI dialog automatically due to "dialog": true in config
+      // No additional frontend code needed for the update flow
+    }
+  } catch (error) {
+    console.warn("Update check failed:", error);
+  }
+}
+
 window.addEventListener("DOMContentLoaded", loadCurrentPage);
+
+// Check for updates on app start (after a short delay)
+window.addEventListener("DOMContentLoaded", () => {
+  setTimeout(checkForUpdates, 5000); // Check after 5 seconds
+});

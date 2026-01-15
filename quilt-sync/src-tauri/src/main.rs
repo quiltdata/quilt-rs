@@ -44,6 +44,7 @@ fn main() {
             }
         }))
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let package_info = app.package_info();
             let enable = match cfg!(debug_assertions) {
