@@ -59,7 +59,8 @@ Learn more at <https://parceljs.org/features/development/#safe-write>.
 
 ## Auto Updater
 
-QuiltSync automatically checks for updates on startup and prompts users when new versions are available.
+QuiltSync automatically checks for updates on startup
+and prompts users when new versions are available.
 
 ## Contributing
 

@@ -62,7 +62,7 @@ using the version from `src-tauri/Cargo.toml`.
 
 The auto updater requires these GitHub repository secrets:
 
-- `TAURI_SIGNING_PRIVATE_KEY`: Private key for signing updates
-- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: Password for the private key (optional)
+* `TAURI_SIGNING_PRIVATE_KEY`: Private key for signing updates
+* `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: Password for the private key (optional)
 
 Updates are cryptographically signed and only work for GitHub releases.
