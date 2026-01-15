@@ -6,6 +6,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
       "icons/32x32.png",
@@ -23,12 +24,37 @@
       "desktop": {
         "schemes": ["quilt+s3"]
       }
+    },
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/quiltdata/quilt-rs/releases/latest/download/latest.json"
+      ],
+      "dialog": true,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFGNTdCMUVDQUJBN0U1MkUKUldRdTVhZXI3TEZYcjdYSzdPM0VidFB1bzErUnVLdmk4amV4NXZhU0lOc290Q3dZTncrZTFFQTYK"
     }
   },
   "app": {
     "withGlobalTauri": true,
+    "security": {
+      "capabilities": [
+        {
+          "identifier": "main-capability",
+          "description": "Capability for the main window",
+          "windows": ["main"],
+          "permissions": [
+            "core:default",
+            "shell:default",
+            "deep-link:default",
+            "updater:default",
+            "updater:allow-check"
+          ]
+        }
+      ]
+    },
     "windows": [
       {
+        "label": "main",
         "fullscreen": false,
         "resizable": true,
         "title": "QuiltSync",
@@ -36,9 +62,6 @@
         "height": 900,
         "useHttpsScheme": true
       }
-    ],
-    "security": {
-      "csp": null
-    }
+    ]
   }
 }

@@ -57,6 +57,11 @@ RUST_BACKTRACE=1 cargo watch -C src-tauri  # -x test
 
 Learn more at <https://parceljs.org/features/development/#safe-write>.
 
+## Auto Updater
+
+QuiltSync automatically checks for updates on startup
+and prompts users when new versions are available.
+
 ## Contributing
 
 For maintainers and contributors, see [CONTRIBUTING.md](CONTRIBUTING.md) for testing

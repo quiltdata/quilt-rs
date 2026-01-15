@@ -1,6 +1,6 @@
 [package]
 name = "quilt-sync"
-version = "0.10.0"
+version = "0.11.0-alpha1"
 authors = ["Quilt Data, Inc."]
 description = "Cross-platform desktop application for editing Quilt data packages"
 documentation = "https://docs.quiltdata.com"
@@ -34,6 +34,7 @@ serde_qs = "0.15.0"
 tauri = { version = "2.9.5", features = ["test", "devtools"] }
 tauri-plugin-deep-link = "2.4.6"
 tauri-plugin-shell = "2.3.4"
+tauri-plugin-updater = "2.9.0"
 tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
