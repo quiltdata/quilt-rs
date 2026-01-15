@@ -594,9 +594,7 @@ async function checkForUpdates() {
   }
 }
 
-window.addEventListener("DOMContentLoaded", loadCurrentPage);
-
-// Check for updates on app start (after a short delay)
 window.addEventListener("DOMContentLoaded", () => {
-  setTimeout(checkForUpdates, 5000); // Check after 5 seconds
+  checkForUpdates();
+  loadCurrentPage();
 });
