@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { check } from "@tauri-apps/plugin-updater";
+import { check, relaunch } from "@tauri-apps/plugin-updater";
 import { createJSONEditor } from "vanilla-jsoneditor/standalone.js";
 
 type Namespace = string;
@@ -586,8 +586,10 @@ async function checkForUpdates() {
     const update = await check();
     if (update?.available) {
       console.log(`Update available: ${update.version}`);
-      // The updater plugin handles the UI dialog automatically due to "dialog": true in config
-      // No additional frontend code needed for the update flow
+      // Download and install the update
+      await update.downloadAndInstall();
+      // Relaunch the application to complete the update
+      await relaunch();
     }
   } catch (error) {
     console.warn("Update check failed:", error);
