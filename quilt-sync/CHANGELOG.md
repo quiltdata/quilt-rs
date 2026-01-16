@@ -6,6 +6,12 @@
 -->
 # Changelog
 
+## [v0.11.0-alpha2]
+
+### Changed
+
+- Incremented release number to verify auto-update functionality works
+
 ## [v0.11.0-alpha1]
 
 ### Added
