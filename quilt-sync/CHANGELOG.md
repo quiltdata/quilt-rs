@@ -6,6 +6,12 @@
 -->
 # Changelog
 
+## [v0.11.0-alpha3]
+
+### Fixed
+
+- Fixed auto-updater to actually download and install updates when available
+
 ## [v0.11.0-alpha2]
 
 ### Changed
