@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { check, relaunch } from "@tauri-apps/plugin-updater";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { createJSONEditor } from "vanilla-jsoneditor/standalone.js";
 
 type Namespace = string;

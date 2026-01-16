@@ -46,6 +46,8 @@
             "core:default",
             "shell:default",
             "deep-link:default",
+            "process:default",
+            "process:allow-restart",
             "updater:default",
             "updater:allow-check"
           ]
