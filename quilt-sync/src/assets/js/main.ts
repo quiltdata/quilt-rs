@@ -584,7 +584,7 @@ window.addEventListener(EVENT_PAGE_READY, () => {
 async function checkForUpdates() {
   try {
     const update = await check();
-    if (update?.available) {
+    if (update) {
       console.log(`Update available: ${update.version}`);
       // Download and install the update
       await update.downloadAndInstall();
