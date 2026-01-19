@@ -6,6 +6,12 @@
 -->
 # Changelog
 
+## [v0.11.2]
+
+### Fixed
+
+- Fixed Windows deep link navigation issue when app is launched via deep link
+
 ## [v0.11.1]
 
 ### Changed
