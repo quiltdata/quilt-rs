@@ -581,23 +581,20 @@ window.addEventListener(EVENT_PAGE_READY, () => {
   }
 });
 
-// Auto updater check
 async function checkForUpdates() {
   try {
     const update = await check();
     if (update) {
-      console.log(`Update available: ${update.version}`);
-      // Download and install the update
+      notify(`<div class="success">Update available: ${update.version}. Downloading...</div>`);
       await update.downloadAndInstall();
-      // Relaunch the application to complete the update
       await relaunch();
     }
   } catch (error) {
-    console.warn("Update check failed:", error);
+    notify(`<div class="error">Update check failed: ${error}</div>`);
   }
 }
 
-window.addEventListener("DOMContentLoaded", () => {
-  checkForUpdates();
-  loadCurrentPage();
+window.addEventListener("DOMContentLoaded", async () => {
+  await loadCurrentPage();
+  await checkForUpdates();
 });
