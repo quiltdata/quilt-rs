@@ -9,7 +9,7 @@ use crate::telemetry::prelude::*;
 use crate::Error;
 use crate::Result;
 
-pub fn get_remote_package_url(current_url: &Url, uri_str: &str) -> Result<Url> {
+fn get_remote_package_url(current_url: &Url, uri_str: &str) -> Result<Url> {
     let uri: quilt::uri::S3PackageUri = uri_str.parse()?;
     Ok(routes::from_url(
         routes::Paths::RemotePackage(uri.clone()),
@@ -17,7 +17,7 @@ pub fn get_remote_package_url(current_url: &Url, uri_str: &str) -> Result<Url> {
     ))
 }
 
-pub fn navigate_to_url<R: tauri::Runtime>(app_handle: &AppHandle<R>, url: Url) -> Result {
+fn navigate_to_url<R: tauri::Runtime>(app_handle: &AppHandle<R>, url: Url) -> Result {
     match app_handle.get_webview_window("main") {
         Some(win) => {
             win.navigate(url)?;
@@ -43,9 +43,14 @@ async fn wait_for_main_window<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> R
 
     while attempts < MAX_ATTEMPTS {
         if let Some(window) = app_handle.get_webview_window("main") {
-            // Additional check: ensure window is visible and ready
+            // Check window is visible and URL is valid
             if let Ok(true) = window.is_visible() {
-                return Ok(());
+                if let Ok(url) = window.url() {
+                    // Only return success if URL has proper HTTP scheme
+                    if url.scheme().starts_with("http") {
+                        return Ok(());
+                    }
+                }
             }
         }
 
