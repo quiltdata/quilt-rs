@@ -590,7 +590,7 @@ async function checkForUpdates() {
       await relaunch();
     }
   } catch (error) {
-    notify(`<div class="error">Update check failed: ${error}</div>`);
+    notify(`<div class="error">Failed to check for QuiltSync updates: ${error}</div>`);
   }
 }
 
