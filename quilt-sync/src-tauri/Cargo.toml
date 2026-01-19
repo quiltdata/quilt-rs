@@ -1,6 +1,6 @@
 [package]
 name = "quilt-sync"
-version = "0.11.0"
+version = "0.11.1"
 authors = ["Quilt Data, Inc."]
 description = "Cross-platform desktop application for editing Quilt data packages"
 documentation = "https://docs.quiltdata.com"
@@ -23,7 +23,7 @@ mockall = "0.14.0"
 multihash.workspace = true
 opener = { version = "0.8.3", features = ["reveal"] }
 quilt-rs = { path = "../../quilt-rs" }
-rfd = { version = "0.17.1", default-features = false, features = ["gtk3"] }
+rfd = { version = "0.17.2", default-features = false, features = ["gtk3"] }
 rust-i18n = "3.1.5"
 semver = "1.0.27"
 sentry = { version = "0.46.1", features = ["tracing"] }

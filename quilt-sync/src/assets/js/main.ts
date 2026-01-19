@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { check } from "@tauri-apps/plugin-updater";
 import { createJSONEditor } from "vanilla-jsoneditor/standalone.js";
 
 type Namespace = string;
@@ -585,17 +585,25 @@ async function checkForUpdates() {
   try {
     const update = await check();
     if (update) {
-      notify(`<div class="success">Update available: ${update.version}. Downloading...</div>`);
+      notify(
+        `<div class="success">Update available: ${update.version}. Downloading...</div>`,
+      );
       try {
         await update.downloadAndInstall();
-        notify(`<div class="success">Update downloaded successfully. Restarting...</div>`);
+        notify(
+          `<div class="success">Update downloaded successfully. Restarting...</div>`,
+        );
         await relaunch();
       } catch (downloadError) {
-        notify(`<div class="error">Failed to download/install update: ${downloadError}</div>`);
+        notify(
+          `<div class="error">Failed to download/install update: ${downloadError}</div>`,
+        );
       }
     }
   } catch (error) {
-    notify(`<div class="error">Failed to check for QuiltSync updates: ${error}</div>`);
+    notify(
+      `<div class="error">Failed to check for QuiltSync updates: ${error}</div>`,
+    );
   }
 }
 
