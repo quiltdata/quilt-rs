@@ -6,6 +6,13 @@
 -->
 # Changelog
 
+## [v0.11.1]
+
+### Changed
+
+- Bumped patch release version to test auto-updater functionality
+- Minor dependency updates
+
 ## [v0.11.0]
 
 ### Added
