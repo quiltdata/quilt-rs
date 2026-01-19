@@ -586,8 +586,13 @@ async function checkForUpdates() {
     const update = await check();
     if (update) {
       notify(`<div class="success">Update available: ${update.version}. Downloading...</div>`);
-      await update.downloadAndInstall();
-      await relaunch();
+      try {
+        await update.downloadAndInstall();
+        notify(`<div class="success">Update downloaded successfully. Restarting...</div>`);
+        await relaunch();
+      } catch (downloadError) {
+        notify(`<div class="error">Failed to download/install update: ${downloadError}</div>`);
+      }
     }
   } catch (error) {
     notify(`<div class="error">Failed to check for QuiltSync updates: ${error}</div>`);
