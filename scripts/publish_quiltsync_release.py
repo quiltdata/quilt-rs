@@ -16,6 +16,7 @@ GITHUB_API_BASE = "https://api.github.com"
 HUBSPOT_FILE_UPLOAD_URL = "https://api.hubapi.com/filemanager/api/v3/files/upload"
 HUBSPOT_HUBDB_ROW_URL = "https://api.hubapi.com/cms/v3/hubdb/tables/{table_id}/rows/{row_id}"
 HUBSPOT_HUBDB_ROWS_URL = "https://api.hubapi.com/cms/v3/hubdb/tables/{table_id}/rows"
+HUBSPOT_HUBDB_TABLES_URL = "https://api.hubapi.com/cms/v3/hubdb/tables"
 
 
 def _log(message):
@@ -213,6 +214,25 @@ def update_hubdb_row(token, table_id, row_id, values, publish):
     return resp.json()
 
 
+def resolve_hubdb_table_id(token, table_name):
+    headers = {"Authorization": f"Bearer {token}"}
+    params = {"name": table_name}
+    resp = requests.get(HUBSPOT_HUBDB_TABLES_URL, headers=headers, params=params, timeout=30)
+    if resp.status_code == 200:
+        data = resp.json()
+        for table in data.get("results", []):
+            if table.get("name") == table_name or table.get("label") == table_name:
+                return table.get("id")
+
+    resp = requests.get(HUBSPOT_HUBDB_TABLES_URL, headers=headers, timeout=30)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Failed to list HubDB tables: {resp.status_code} {resp.text}")
+    for table in resp.json().get("results", []):
+        if table.get("name") == table_name or table.get("label") == table_name:
+            return table.get("id")
+    raise RuntimeError(f"HubDB table not found: {table_name}")
+
+
 def create_hubdb_row(token, table_id, values, publish):
     url = HUBSPOT_HUBDB_ROWS_URL.format(table_id=table_id)
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -329,9 +349,13 @@ def main():
         upload_file_to_hubspot(hubspot_token, updated_latest_path, latest_target_path)
 
         hubdb_table_id = os.environ.get("HUBDB_TABLE_ID")
+        hubdb_table_name = os.environ.get("HUBDB_TABLE_NAME")
         hubdb_row_id = os.environ.get("HUBDB_ROW_ID")
         hubdb_column_map = parse_column_map(os.environ.get("HUBDB_COLUMN_MAP"))
         hubdb_publish = os.environ.get("HUBDB_PUBLISH", "true").lower() == "true"
+
+        if not hubdb_table_id and hubdb_table_name:
+            hubdb_table_id = resolve_hubdb_table_id(hubspot_token, hubdb_table_name)
 
         if hubdb_table_id and hubdb_column_map:
             latest_json_url = args.hubfs_root_url.rstrip("/") + args.latest_json_target_path

@@ -16,6 +16,7 @@ Required environment variables:
 Optional environment variables for HubDB updates:
 
 - `HUBDB_TABLE_ID`: HubDB table id.
+- `HUBDB_TABLE_NAME`: HubDB table name (used if table id is not provided).
 - `HUBDB_ROW_ID`: HubDB row id to update. If omitted, a new row is created.
 - `HUBDB_COLUMN_MAP`: JSON mapping of logical keys to HubDB column names.
   Example:
@@ -30,3 +31,11 @@ Arguments:
   Default `/quiltsync/{version}`.
 - `--hubfs-root-url`: Base hubfs URL. Default `https://www.quilt.bio/hubfs`.
 - `--latest-json-target-path`: Target path for latest.json. Default `/latest.json`.
+
+## Setting up HubDB columns
+
+To create the expected columns in your HubDB table:
+
+```
+HUBSPOT_ACCESS_TOKEN=... python scripts/setup_quiltsync_hubdb.py --table quiltsync_assets
+```
