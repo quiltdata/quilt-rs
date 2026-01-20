@@ -47,20 +47,37 @@ def fetch_release(repo, tag, token):
     return resp.json()
 
 
+def _download_stream(url, dest_path, headers):
+    with requests.get(url, headers=headers, stream=True, timeout=120) as resp:
+        if resp.status_code != 200:
+            return resp
+        with open(dest_path, "wb") as handle:
+            for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    handle.write(chunk)
+    return None
+
+
 def download_asset(asset, dest_dir, token):
     name = asset["name"]
     url = asset["browser_download_url"]
     dest_path = os.path.join(dest_dir, name)
     headers = _github_headers(token)
     _log(f"Downloading {name}")
-    with requests.get(url, headers=headers, stream=True, timeout=120) as resp:
-        if resp.status_code != 200:
-            raise RuntimeError(f"Failed to download {name}: {resp.status_code} {resp.text}")
-        with open(dest_path, "wb") as handle:
-            for chunk in resp.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    handle.write(chunk)
-    return dest_path
+    failed_resp = _download_stream(url, dest_path, headers)
+    if failed_resp is None:
+        return dest_path
+
+    api_url = asset.get("url")
+    if api_url:
+        api_headers = dict(headers)
+        api_headers["Accept"] = "application/octet-stream"
+        _log(f"Retrying download via API for {name}")
+        failed_resp = _download_stream(api_url, dest_path, api_headers)
+        if failed_resp is None:
+            return dest_path
+
+    raise RuntimeError(f"Failed to download {name}: {failed_resp.status_code} {failed_resp.text}")
 
 
 def is_archive(path):
