@@ -16,7 +16,6 @@ GITHUB_API_BASE = "https://api.github.com"
 HUBSPOT_FILE_UPLOAD_URL = "https://api.hubapi.com/filemanager/api/v3/files/upload"
 HUBSPOT_HUBDB_ROW_URL = "https://api.hubapi.com/cms/v3/hubdb/tables/{table_id}/rows/{row_id}"
 HUBSPOT_HUBDB_ROWS_URL = "https://api.hubapi.com/cms/v3/hubdb/tables/{table_id}/rows"
-HUBSPOT_HUBDB_TABLES_URL = "https://api.hubapi.com/cms/v3/hubdb/tables"
 
 
 def _log(message):
@@ -48,37 +47,20 @@ def fetch_release(repo, tag, token):
     return resp.json()
 
 
-def _download_stream(url, dest_path, headers):
-    with requests.get(url, headers=headers, stream=True, timeout=120) as resp:
-        if resp.status_code != 200:
-            return resp
-        with open(dest_path, "wb") as handle:
-            for chunk in resp.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    handle.write(chunk)
-    return None
-
-
 def download_asset(asset, dest_dir, token):
     name = asset["name"]
     url = asset["browser_download_url"]
     dest_path = os.path.join(dest_dir, name)
     headers = _github_headers(token)
     _log(f"Downloading {name}")
-    failed_resp = _download_stream(url, dest_path, headers)
-    if failed_resp is None:
-        return dest_path
-
-    api_url = asset.get("url")
-    if api_url:
-        api_headers = dict(headers)
-        api_headers["Accept"] = "application/octet-stream"
-        _log(f"Retrying download via API for {name}")
-        failed_resp = _download_stream(api_url, dest_path, api_headers)
-        if failed_resp is None:
-            return dest_path
-
-    raise RuntimeError(f"Failed to download {name}: {failed_resp.status_code} {failed_resp.text}")
+    with requests.get(url, headers=headers, stream=True, timeout=120) as resp:
+        if resp.status_code != 200:
+            raise RuntimeError(f"Failed to download {name}: {resp.status_code} {resp.text}")
+        with open(dest_path, "wb") as handle:
+            for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    handle.write(chunk)
+    return dest_path
 
 
 def is_archive(path):
@@ -130,6 +112,8 @@ def build_upload_map(items, base_path, hubfs_root_url):
     mapping = {}
     base_path = "/" + base_path.strip("/")
     hubfs_root_url = hubfs_root_url.rstrip("/")
+    if not hubfs_root_url.startswith("http"):
+        hubfs_root_url = "https://" + hubfs_root_url
     for item in items:
         rel_path = item["rel_path"]
         target_path = f"{base_path}/{rel_path}".replace("//", "/")
@@ -143,16 +127,11 @@ def build_upload_map(items, base_path, hubfs_root_url):
     return mapping
 
 
-def render_base_path(template, version, tag):
-    try:
-        return template.format(version=version, tag=tag)
-    except (KeyError, ValueError):
-        return template
-
-
 def update_latest_json_urls(latest_json, upload_map, hubfs_root_url, base_path):
     base_path = "/" + base_path.strip("/")
     hubfs_root_url = hubfs_root_url.rstrip("/")
+    if not hubfs_root_url.startswith("http"):
+        hubfs_root_url = "https://" + hubfs_root_url
     basename_to_url = {info["basename"]: info["url"] for info in upload_map.values()}
 
     def replace_url(value):
@@ -214,76 +193,31 @@ def update_hubdb_row(token, table_id, row_id, values, publish):
     return resp.json()
 
 
-def resolve_hubdb_table_id(token, table_name):
-    headers = {"Authorization": f"Bearer {token}"}
-    params = {"name": table_name}
-    resp = requests.get(HUBSPOT_HUBDB_TABLES_URL, headers=headers, params=params, timeout=30)
-    if resp.status_code == 200:
-        data = resp.json()
-        for table in data.get("results", []):
-            if table.get("name") == table_name or table.get("label") == table_name:
-                return table.get("id")
-
-    resp = requests.get(HUBSPOT_HUBDB_TABLES_URL, headers=headers, timeout=30)
-    if resp.status_code != 200:
-        raise RuntimeError(f"Failed to list HubDB tables: {resp.status_code} {resp.text}")
-    for table in resp.json().get("results", []):
-        if table.get("name") == table_name or table.get("label") == table_name:
-            return table.get("id")
-    raise RuntimeError(f"HubDB table not found: {table_name}")
-
-
 def create_hubdb_row(token, table_id, values, publish):
     url = HUBSPOT_HUBDB_ROWS_URL.format(table_id=table_id)
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    remaining = dict(values)
-    while True:
-        payload = {"values": remaining, "publish": publish}
-        resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=60)
-        if resp.status_code in (200, 201):
-            return resp.json()
-        if resp.status_code != 400:
-            raise RuntimeError(f"HubDB create failed: {resp.status_code} {resp.text}")
-        data = resp.json()
-        missing = data.get("context", {}).get("columnIdOrName", [])
-        if not missing:
-            raise RuntimeError(f"HubDB create failed: {resp.status_code} {resp.text}")
-        removed = False
-        for column in missing:
-            key_to_remove = None
-            for key, mapped in remaining.items():
-                if key == column:
-                    key_to_remove = key
-                    break
-            for key, mapped in remaining.items():
-                if mapped == column:
-                    key_to_remove = key
-                    break
-            if key_to_remove and key_to_remove in remaining:
-                _log(f"Skipping missing HubDB column: {column}")
-                remaining.pop(key_to_remove, None)
-                removed = True
-        if not removed:
-            raise RuntimeError(f"HubDB create failed: {resp.status_code} {resp.text}")
+    payload = {"values": values, "publish": publish}
+    resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=60)
+    if resp.status_code not in (200, 201):
+        raise RuntimeError(f"HubDB create failed: {resp.status_code} {resp.text}")
+    return resp.json()
 
 
-def build_hubdb_values(latest_json, release_tag, latest_json_url, column_map, asset_urls=None):
+def build_hubdb_values(latest_json, release_tag, latest_json_url, column_map):
     downloads = []
-    if asset_urls:
-        downloads = list(asset_urls)
-    else:
-        def collect_urls(obj):
-            if isinstance(obj, dict):
-                for key, value in obj.items():
-                    if key == "url" and isinstance(value, str):
-                        downloads.append(value)
-                    else:
-                        collect_urls(value)
-            elif isinstance(obj, list):
-                for item in obj:
-                    collect_urls(item)
 
-        collect_urls(latest_json)
+    def collect_urls(obj):
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if key == "url" and isinstance(value, str):
+                    downloads.append(value)
+                else:
+                    collect_urls(value)
+        elif isinstance(obj, list):
+            for item in obj:
+                collect_urls(item)
+
+    collect_urls(latest_json)
     version = find_release_version(latest_json, release_tag)
     resolved = {
         "version": version,
@@ -352,14 +286,12 @@ def main():
             return 1
 
         latest_json = load_latest_json(latest_item["source"])
-        release_version = find_release_version(latest_json, release_tag)
-        resolved_base_path = render_base_path(args.hubfs_base_path, release_version, release_tag)
 
         upload_candidates = [item for item in items if item != latest_item]
-        upload_map = build_upload_map(upload_candidates, resolved_base_path, args.hubfs_root_url)
+        upload_map = build_upload_map(upload_candidates, args.hubfs_base_path, args.hubfs_root_url)
 
         latest_json = update_latest_json_urls(
-            latest_json, upload_map, args.hubfs_root_url, resolved_base_path
+            latest_json, upload_map, args.hubfs_root_url, args.hubfs_base_path
         )
 
         updated_latest_path = os.path.join(temp_dir, "latest.json")
@@ -375,20 +307,13 @@ def main():
         upload_file_to_hubspot(hubspot_token, updated_latest_path, latest_target_path)
 
         hubdb_table_id = os.environ.get("HUBDB_TABLE_ID")
-        hubdb_table_name = os.environ.get("HUBDB_TABLE_NAME")
         hubdb_row_id = os.environ.get("HUBDB_ROW_ID")
         hubdb_column_map = parse_column_map(os.environ.get("HUBDB_COLUMN_MAP"))
         hubdb_publish = os.environ.get("HUBDB_PUBLISH", "true").lower() == "true"
 
-        if not hubdb_table_id and hubdb_table_name:
-            hubdb_table_id = resolve_hubdb_table_id(hubspot_token, hubdb_table_name)
-
         if hubdb_table_id and hubdb_column_map:
             latest_json_url = args.hubfs_root_url.rstrip("/") + args.latest_json_target_path
-            asset_urls = [info["url"] for info in upload_map.values()]
-            values = build_hubdb_values(
-                latest_json, release_tag, latest_json_url, hubdb_column_map, asset_urls
-            )
+            values = build_hubdb_values(latest_json, release_tag, latest_json_url, hubdb_column_map)
             if values:
                 if hubdb_row_id:
                     _log(f"Updating HubDB row {hubdb_row_id}")
