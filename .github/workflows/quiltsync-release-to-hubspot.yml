@@ -41,6 +41,7 @@ jobs:
           HUBFS_BASE_PATH: ${{ vars.HUBFS_BASE_PATH }}
           HUBFS_ROOT_URL: ${{ vars.HUBFS_ROOT_URL }}
           HUBDB_TABLE_ID: ${{ vars.HUBDB_TABLE_ID }}
+          HUBDB_TABLE_NAME: ${{ vars.HUBDB_TABLE_NAME }}
           HUBDB_ROW_ID: ${{ vars.HUBDB_ROW_ID }}
           HUBDB_COLUMN_MAP: ${{ vars.HUBDB_COLUMN_MAP }}
           HUBDB_PUBLISH: ${{ vars.HUBDB_PUBLISH }}
