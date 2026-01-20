@@ -267,21 +267,23 @@ def create_hubdb_row(token, table_id, values, publish):
             raise RuntimeError(f"HubDB create failed: {resp.status_code} {resp.text}")
 
 
-def build_hubdb_values(latest_json, release_tag, latest_json_url, column_map):
+def build_hubdb_values(latest_json, release_tag, latest_json_url, column_map, asset_urls=None):
     downloads = []
+    if asset_urls:
+        downloads = list(asset_urls)
+    else:
+        def collect_urls(obj):
+            if isinstance(obj, dict):
+                for key, value in obj.items():
+                    if key == "url" and isinstance(value, str):
+                        downloads.append(value)
+                    else:
+                        collect_urls(value)
+            elif isinstance(obj, list):
+                for item in obj:
+                    collect_urls(item)
 
-    def collect_urls(obj):
-        if isinstance(obj, dict):
-            for key, value in obj.items():
-                if key == "url" and isinstance(value, str):
-                    downloads.append(value)
-                else:
-                    collect_urls(value)
-        elif isinstance(obj, list):
-            for item in obj:
-                collect_urls(item)
-
-    collect_urls(latest_json)
+        collect_urls(latest_json)
     version = find_release_version(latest_json, release_tag)
     resolved = {
         "version": version,
@@ -383,7 +385,10 @@ def main():
 
         if hubdb_table_id and hubdb_column_map:
             latest_json_url = args.hubfs_root_url.rstrip("/") + args.latest_json_target_path
-            values = build_hubdb_values(latest_json, release_tag, latest_json_url, hubdb_column_map)
+            asset_urls = [info["url"] for info in upload_map.values()]
+            values = build_hubdb_values(
+                latest_json, release_tag, latest_json_url, hubdb_column_map, asset_urls
+            )
             if values:
                 if hubdb_row_id:
                     _log(f"Updating HubDB row {hubdb_row_id}")
