@@ -1,0 +1,47 @@
+name: Publish QuiltSync release to HubSpot
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag (e.g. QuiltSync/v0.11.1). Leave empty for latest."
+        required: false
+      github_repo:
+        description: "GitHub repo with releases (owner/name)."
+        default: "quiltdata/quilt-rs"
+        required: false
+  repository_dispatch:
+    types: [quiltsync_release]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: Publish release assets to HubSpot
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HUBSPOT_ACCESS_TOKEN: ${{ secrets.HUBSPOT_ACCESS_TOKEN }}
+          HUBFS_BASE_PATH: ${{ vars.HUBFS_BASE_PATH }}
+          HUBFS_ROOT_URL: ${{ vars.HUBFS_ROOT_URL }}
+          HUBDB_TABLE_ID: ${{ vars.HUBDB_TABLE_ID }}
+          HUBDB_ROW_ID: ${{ vars.HUBDB_ROW_ID }}
+          HUBDB_COLUMN_MAP: ${{ vars.HUBDB_COLUMN_MAP }}
+          HUBDB_PUBLISH: ${{ vars.HUBDB_PUBLISH }}
+        run: |
+          python scripts/publish_quiltsync_release.py \
+            --github-repo "${{ github.event.inputs.github_repo || github.event.client_payload.github_repo || 'quiltdata/quilt-rs' }}" \
+            --release-tag "${{ github.event.inputs.release_tag || github.event.client_payload.release_tag }}" \
+            --hubfs-base-path "${{ vars.HUBFS_BASE_PATH || '/quiltsync' }}" \
+            --hubfs-root-url "${{ vars.HUBFS_ROOT_URL || 'https://www.quilt.bio/hubfs' }}" \
+            --latest-json-target-path "/latest.json"
