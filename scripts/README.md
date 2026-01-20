@@ -32,10 +32,3 @@ Arguments:
 - `--hubfs-root-url`: Base hubfs URL. Default `https://www.quilt.bio/hubfs`.
 - `--latest-json-target-path`: Target path for latest.json. Default `/latest.json`.
 
-## Setting up HubDB columns
-
-To create the expected columns in your HubDB table:
-
-```
-HUBSPOT_ACCESS_TOKEN=... python scripts/setup_quiltsync_hubdb.py --table quiltsync_assets
-```
