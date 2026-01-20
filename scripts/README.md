@@ -26,6 +26,7 @@ Arguments:
 
 - `--github-repo`: Repo that hosts releases. Default `quiltdata/quilt-rs`.
 - `--release-tag`: Release tag. Omit for latest.
-- `--hubfs-base-path`: Base hubfs path for assets. Default `/quiltsync`.
+- `--hubfs-base-path`: Base hubfs path for assets. Supports `{version}` or `{tag}`.
+  Default `/quiltsync/{version}`.
 - `--hubfs-root-url`: Base hubfs URL. Default `https://www.quilt.bio/hubfs`.
 - `--latest-json-target-path`: Target path for latest.json. Default `/latest.json`.

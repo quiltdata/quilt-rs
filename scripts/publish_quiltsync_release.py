@@ -125,6 +125,13 @@ def build_upload_map(items, base_path, hubfs_root_url):
     return mapping
 
 
+def render_base_path(template, version, tag):
+    try:
+        return template.format(version=version, tag=tag)
+    except (KeyError, ValueError):
+        return template
+
+
 def update_latest_json_urls(latest_json, upload_map, hubfs_root_url, base_path):
     base_path = "/" + base_path.strip("/")
     hubfs_root_url = hubfs_root_url.rstrip("/")
@@ -282,12 +289,14 @@ def main():
             return 1
 
         latest_json = load_latest_json(latest_item["source"])
+        release_version = find_release_version(latest_json, release_tag)
+        resolved_base_path = render_base_path(args.hubfs_base_path, release_version, release_tag)
 
         upload_candidates = [item for item in items if item != latest_item]
-        upload_map = build_upload_map(upload_candidates, args.hubfs_base_path, args.hubfs_root_url)
+        upload_map = build_upload_map(upload_candidates, resolved_base_path, args.hubfs_root_url)
 
         latest_json = update_latest_json_urls(
-            latest_json, upload_map, args.hubfs_root_url, args.hubfs_base_path
+            latest_json, upload_map, args.hubfs_root_url, resolved_base_path
         )
 
         updated_latest_path = os.path.join(temp_dir, "latest.json")

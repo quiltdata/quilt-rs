@@ -42,6 +42,6 @@ jobs:
           python scripts/publish_quiltsync_release.py \
             --github-repo "${{ github.event.inputs.github_repo || github.event.client_payload.github_repo || 'quiltdata/quilt-rs' }}" \
             --release-tag "${{ github.event.inputs.release_tag || github.event.client_payload.release_tag }}" \
-            --hubfs-base-path "${{ vars.HUBFS_BASE_PATH || '/quiltsync' }}" \
+            --hubfs-base-path "${{ vars.HUBFS_BASE_PATH || '/quiltsync/{version}' }}" \
             --hubfs-root-url "${{ vars.HUBFS_ROOT_URL || 'https://www.quilt.bio/hubfs' }}" \
             --latest-json-target-path "/latest.json"
