@@ -10,12 +10,15 @@ on:
         description: "GitHub repo with releases (owner/name)."
         default: "quiltdata/quilt-rs"
         required: false
+  pull_request:
+    types: [opened, synchronize, reopened]
   repository_dispatch:
     types: [quiltsync_release]
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.head_ref == 'quiltsync-hubspot-publish'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,9 +42,13 @@ jobs:
           HUBDB_COLUMN_MAP: ${{ vars.HUBDB_COLUMN_MAP }}
           HUBDB_PUBLISH: ${{ vars.HUBDB_PUBLISH }}
         run: |
+          RELEASE_TAG="${{ github.event.inputs.release_tag || github.event.client_payload.release_tag }}"
+          if [ -z "$RELEASE_TAG" ] && [ "${{ github.event_name }}" = "pull_request" ]; then
+            RELEASE_TAG="QuiltSync/v0.11.1"
+          fi
           python scripts/publish_quiltsync_release.py \
             --github-repo "${{ github.event.inputs.github_repo || github.event.client_payload.github_repo || 'quiltdata/quilt-rs' }}" \
-            --release-tag "${{ github.event.inputs.release_tag || github.event.client_payload.release_tag }}" \
+            --release-tag "$RELEASE_TAG" \
             --hubfs-base-path "${{ vars.HUBFS_BASE_PATH || '/quiltsync/{version}' }}" \
             --hubfs-root-url "${{ vars.HUBFS_ROOT_URL || 'https://www.quilt.bio/hubfs' }}" \
             --latest-json-target-path "/latest.json"
