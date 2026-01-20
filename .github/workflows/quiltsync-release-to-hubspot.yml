@@ -12,6 +12,9 @@ on:
         required: false
   pull_request:
     types: [opened, synchronize, reopened]
+  push:
+    branches:
+      - quiltsync-hubspot-publish
   repository_dispatch:
     types: [quiltsync_release]
 
@@ -44,6 +47,9 @@ jobs:
         run: |
           RELEASE_TAG="${{ github.event.inputs.release_tag || github.event.client_payload.release_tag }}"
           if [ -z "$RELEASE_TAG" ] && [ "${{ github.event_name }}" = "pull_request" ]; then
+            RELEASE_TAG="QuiltSync/v0.11.1"
+          fi
+          if [ -z "$RELEASE_TAG" ] && [ "${{ github.event_name }}" = "push" ]; then
             RELEASE_TAG="QuiltSync/v0.11.1"
           fi
           python scripts/publish_quiltsync_release.py \
