@@ -17,7 +17,6 @@ HUBSPOT_FILE_UPLOAD_URL = "https://api.hubapi.com/filemanager/api/v3/files/uploa
 HUBSPOT_HUBDB_ROW_URL = "https://api.hubapi.com/cms/v3/hubdb/tables/{table_id}/rows/{row_id}"
 HUBSPOT_HUBDB_ROWS_URL = "https://api.hubapi.com/cms/v3/hubdb/tables/{table_id}/rows"
 HUBSPOT_HUBDB_TABLES_URL = "https://api.hubapi.com/cms/v3/hubdb/tables"
-HUBSPOT_HUBDB_COLUMNS_URL = "https://api.hubapi.com/cms/v3/hubdb/tables/{table_id}/columns"
 
 
 def _log(message):
@@ -234,36 +233,38 @@ def resolve_hubdb_table_id(token, table_name):
     raise RuntimeError(f"HubDB table not found: {table_name}")
 
 
-def list_hubdb_columns(token, table_id):
-    headers = {"Authorization": f"Bearer {token}"}
-    url = HUBSPOT_HUBDB_COLUMNS_URL.format(table_id=table_id)
-    resp = requests.get(url, headers=headers, timeout=30)
-    if resp.status_code != 200:
-        raise RuntimeError(f"Failed to list HubDB columns: {resp.status_code} {resp.text}")
-    return {col.get("name") for col in resp.json().get("results", [])}
-
-
-def filter_column_map(column_map, available_columns):
-    filtered = {}
-    missing = []
-    for key, column in column_map.items():
-        if column in available_columns:
-            filtered[key] = column
-        else:
-            missing.append(column)
-    if missing:
-        _log(f"Skipping missing HubDB columns: {', '.join(sorted(missing))}")
-    return filtered
-
-
 def create_hubdb_row(token, table_id, values, publish):
     url = HUBSPOT_HUBDB_ROWS_URL.format(table_id=table_id)
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    payload = {"values": values, "publish": publish}
-    resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=60)
-    if resp.status_code not in (200, 201):
-        raise RuntimeError(f"HubDB create failed: {resp.status_code} {resp.text}")
-    return resp.json()
+    remaining = dict(values)
+    while True:
+        payload = {"values": remaining, "publish": publish}
+        resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=60)
+        if resp.status_code in (200, 201):
+            return resp.json()
+        if resp.status_code != 400:
+            raise RuntimeError(f"HubDB create failed: {resp.status_code} {resp.text}")
+        data = resp.json()
+        missing = data.get("context", {}).get("columnIdOrName", [])
+        if not missing:
+            raise RuntimeError(f"HubDB create failed: {resp.status_code} {resp.text}")
+        removed = False
+        for column in missing:
+            key_to_remove = None
+            for key, mapped in remaining.items():
+                if key == column:
+                    key_to_remove = key
+                    break
+            for key, mapped in remaining.items():
+                if mapped == column:
+                    key_to_remove = key
+                    break
+            if key_to_remove and key_to_remove in remaining:
+                _log(f"Skipping missing HubDB column: {column}")
+                remaining.pop(key_to_remove, None)
+                removed = True
+        if not removed:
+            raise RuntimeError(f"HubDB create failed: {resp.status_code} {resp.text}")
 
 
 def build_hubdb_values(latest_json, release_tag, latest_json_url, column_map):
@@ -381,8 +382,6 @@ def main():
             hubdb_table_id = resolve_hubdb_table_id(hubspot_token, hubdb_table_name)
 
         if hubdb_table_id and hubdb_column_map:
-            available_columns = list_hubdb_columns(hubspot_token, hubdb_table_id)
-            hubdb_column_map = filter_column_map(hubdb_column_map, available_columns)
             latest_json_url = args.hubfs_root_url.rstrip("/") + args.latest_json_target_path
             values = build_hubdb_values(latest_json, release_tag, latest_json_url, hubdb_column_map)
             if values:
