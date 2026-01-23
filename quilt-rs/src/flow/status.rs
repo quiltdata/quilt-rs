@@ -110,20 +110,15 @@ async fn detect_change(
     host_config: &HostConfig,
 ) -> Res<Option<Change>> {
     match location {
-        WorkdirFile::Tracked(path, row) => {
-            verify_hash(storage, &path, logical_key, row, host_config)
-                .await
-                .map(|opt_row| opt_row.map(Change::Modified))
-        }
-        WorkdirFile::NotTracked(path, row) => {
-            verify_hash(storage, &path, logical_key, row, host_config)
-                .await
-                .map(|opt_row| opt_row.map(Change::Modified))
-        }
-        WorkdirFile::New(path) => {
-            let row = calculate_hash(storage, &path, logical_key.clone(), host_config).await?;
-            Ok(Some(Change::Added(row)))
-        }
+        WorkdirFile::Tracked(path, row) => verify_hash(storage, &path, row, host_config)
+            .await
+            .map(|opt_row| opt_row.map(Change::Modified)),
+        WorkdirFile::NotTracked(path, row) => verify_hash(storage, &path, row, host_config)
+            .await
+            .map(|opt_row| opt_row.map(Change::Modified)),
+        WorkdirFile::New(path) => calculate_hash(storage, &path, logical_key, host_config)
+            .await
+            .map(|row| Some(Change::Added(row))),
         WorkdirFile::Removed(row) => Ok(Some(Change::Removed(row))),
         WorkdirFile::UnSupported => {
             // TODO: handle symlinks

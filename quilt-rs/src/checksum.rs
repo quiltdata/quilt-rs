@@ -44,11 +44,7 @@ pub enum ObjectHash {
 
 /// Refresh hash for a file using the same algorithm as the reference row
 /// Returns None if hash hasn't changed, Some(Row) if it has changed
-pub async fn refresh_hash(
-    storage: &impl Storage,
-    path: &PathBuf,
-    row: Row,
-) -> Res<Option<Row>> {
+pub async fn refresh_hash(storage: &impl Storage, path: &PathBuf, row: Row) -> Res<Option<Row>> {
     let file = storage.open_file(path).await?;
     let file_metadata = file.metadata().await?;
     let size = file_metadata.len();
@@ -79,7 +75,7 @@ pub async fn refresh_hash(
 pub async fn calculate_hash(
     storage: &impl Storage,
     path: &PathBuf,
-    logical_key: PathBuf,
+    logical_key: &PathBuf,
     host_config: &HostConfig,
 ) -> Res<Row> {
     let file = storage.open_file(path).await?;
@@ -92,7 +88,7 @@ pub async fn calculate_hash(
     };
 
     Ok(Row {
-        name: logical_key,
+        name: logical_key.clone(),
         size,
         hash,
         ..Row::default()
@@ -104,7 +100,6 @@ pub async fn calculate_hash(
 pub async fn verify_hash(
     storage: &impl Storage,
     path: &PathBuf,
-    logical_key: &PathBuf,
     row: Row,
     host_config: &HostConfig,
 ) -> Res<Option<Row>> {
@@ -116,7 +111,7 @@ pub async fn verify_hash(
         } else {
             // Need to recalculate with host's preferred algorithm
             Ok(Some(
-                calculate_hash(storage, path, logical_key.clone(), host_config).await?,
+                calculate_hash(storage, path, &modified.name, host_config).await?,
             ))
         }
     } else {
@@ -590,7 +585,7 @@ mod tests {
         let result = calculate_hash(
             &storage,
             &test_path.to_path_buf(),
-            logical_key.clone(),
+            &logical_key,
             &crc64_host_config,
         )
         .await?;
@@ -608,7 +603,7 @@ mod tests {
         let result = calculate_hash(
             &storage,
             &test_path.to_path_buf(),
-            logical_key.clone(),
+            &logical_key,
             &sha256_chunked_host_config,
         )
         .await?;
@@ -640,7 +635,7 @@ mod tests {
         let initial_row = calculate_hash(
             &storage,
             &test_path.to_path_buf(),
-            logical_key.clone(),
+            &logical_key,
             &crc64_host_config,
         )
         .await?;
@@ -649,7 +644,6 @@ mod tests {
         let result = verify_hash(
             &storage,
             &test_path.to_path_buf(),
-            &logical_key,
             initial_row.clone(),
             &crc64_host_config,
         )
@@ -667,7 +661,6 @@ mod tests {
         let result = verify_hash(
             &storage,
             &test_path.to_path_buf(),
-            &logical_key,
             initial_row.clone(),
             &sha256_host_config,
         )
@@ -685,7 +678,6 @@ mod tests {
         let result = verify_hash(
             &storage,
             &test_path.to_path_buf(),
-            &logical_key,
             initial_row.clone(),
             &crc64_host_config,
         )
@@ -701,7 +693,7 @@ mod tests {
         let sha256_row = calculate_hash(
             &storage,
             &test_path.to_path_buf(),
-            logical_key.clone(),
+            &logical_key,
             &sha256_host_config,
         )
         .await?;
@@ -714,7 +706,6 @@ mod tests {
         let result = verify_hash(
             &storage,
             &test_path.to_path_buf(),
-            &logical_key,
             sha256_row,
             &crc64_host_config,
         )
