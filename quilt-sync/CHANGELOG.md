@@ -6,6 +6,12 @@
 -->
 # Changelog
 
+## [v0.11.3]
+
+### Fixed
+
+- Fixed redirect after package pull to avoid 'package already installed' error
+
 ## [v0.11.2]
 
 ### Fixed
