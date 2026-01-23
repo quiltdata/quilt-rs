@@ -4,6 +4,8 @@
 
 use serde::Deserialize;
 
+use crate::checksum::MULTIHASH_CRC64_NVME;
+use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use crate::io::remote::client::HttpClient;
 use crate::uri::Host;
 use crate::Error;
@@ -18,6 +20,16 @@ pub enum HostChecksums {
     // Sha256, Legacy, we dont' use it
     /// SHA256 chunked checksums
     Sha256Chunked,
+}
+
+impl HostChecksums {
+    /// Get the multihash algorithm code for this checksum type
+    pub fn algorithm_code(&self) -> u64 {
+        match self {
+            HostChecksums::Crc64 => MULTIHASH_CRC64_NVME,
+            HostChecksums::Sha256Chunked => MULTIHASH_SHA256_CHUNKED,
+        }
+    }
 }
 
 /// Configuration returned by a host

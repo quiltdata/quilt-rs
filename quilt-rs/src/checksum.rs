@@ -4,8 +4,12 @@ use multihash::Multihash;
 use serde::Deserialize;
 use serde::Serialize;
 use std::fmt;
-use tokio::fs::File;
+use std::path::PathBuf;
 
+use crate::io::remote::HostChecksums;
+use crate::io::remote::HostConfig;
+use crate::io::storage::Storage;
+use crate::manifest::Row;
 use crate::Error;
 use crate::Res;
 
@@ -38,9 +42,18 @@ pub enum ObjectHash {
     Crc64(Crc64Hash),
 }
 
-/// Refresh hash for a file using the same algorithm as the reference hash
-async fn refresh_hash(file: File, hash: &Multihash<256>) -> Res<Multihash<256>> {
-    match hash.code() {
+/// Refresh hash for a file using the same algorithm as the reference row
+/// Returns None if hash hasn't changed, Some(Row) if it has changed
+pub async fn refresh_hash(
+    storage: &impl Storage,
+    path: &PathBuf,
+    row: Row,
+) -> Res<Option<Row>> {
+    let file = storage.open_file(path).await?;
+    let file_metadata = file.metadata().await?;
+    let size = file_metadata.len();
+
+    match row.hash.code() {
         MULTIHASH_CRC64_NVME => Ok(Crc64Hash::from_file(file).await?.into()),
         MULTIHASH_SHA256 => Ok(Sha256Hash::from_file(file).await?.into()),
         MULTIHASH_SHA256_CHUNKED => Ok(Sha256ChunkedHash::from_file(file).await?.into()),
@@ -49,15 +62,66 @@ async fn refresh_hash(file: File, hash: &Multihash<256>) -> Res<Multihash<256>> 
             code
         ))),
     }
+    .map(|hash| {
+        if row.hash == hash {
+            None
+        } else {
+            Some(Row {
+                hash,
+                size,
+                ..row.clone()
+            })
+        }
+    })
 }
 
-pub async fn verify_hash(file: File, hash: Multihash<256>) -> Res<Option<(u64, Multihash<256>)>> {
+/// Calculate hash for a file using the algorithm specified by host config
+pub async fn calculate_hash(
+    storage: &impl Storage,
+    path: &PathBuf,
+    logical_key: PathBuf,
+    host_config: &HostConfig,
+) -> Res<Row> {
+    let file = storage.open_file(path).await?;
     let file_metadata = file.metadata().await?;
     let size = file_metadata.len();
 
-    let calculated_hash = refresh_hash(file, &hash).await?;
+    let hash = match host_config.checksums {
+        HostChecksums::Crc64 => Crc64Hash::from_file(file).await?.into(),
+        HostChecksums::Sha256Chunked => Sha256ChunkedHash::from_file(file).await?.into(),
+    };
 
-    Ok((hash != calculated_hash).then_some((size, calculated_hash)))
+    Ok(Row {
+        name: logical_key,
+        size,
+        hash,
+        ..Row::default()
+    })
+}
+
+/// Verify hash for a file and optionally recalculate with host's preferred algorithm
+/// Returns None if hash hasn't changed, Some(Row) if it has changed
+pub async fn verify_hash(
+    storage: &impl Storage,
+    path: &PathBuf,
+    logical_key: &PathBuf,
+    row: Row,
+    host_config: &HostConfig,
+) -> Res<Option<Row>> {
+    if let Some(modified) = refresh_hash(storage, path, row).await? {
+        // File has changed, check if we need to recalculate with host's preferred algorithm
+        if modified.hash.code() == host_config.checksums.algorithm_code() {
+            // Already using the correct algorithm, no need to recalculate
+            Ok(Some(modified))
+        } else {
+            // Need to recalculate with host's preferred algorithm
+            Ok(Some(
+                calculate_hash(storage, path, logical_key.clone(), host_config).await?,
+            ))
+        }
+    } else {
+        Ok(None)
+    }
 }
 
 impl TryFrom<Multihash<256>> for ObjectHash {
@@ -415,30 +479,258 @@ mod tests {
         );
         assert_eq!(check_hash_trait(&crc64_hash), MULTIHASH_CRC64_NVME);
 
-        // Test that verify_hash works with all hash types
-        let file = storage.open_file(test_path).await?;
+        // Test that refresh_hash works with all hash types
         let sha256_multihash: Multihash<256> = sha256_hash.into();
-        let result = verify_hash(file, sha256_multihash).await?;
-        assert!(result.is_none()); // Should match
+        let test_row = Row {
+            name: PathBuf::from("test.txt"),
+            hash: sha256_multihash,
+            size: test_data.len() as u64, // Correct size
+            ..Row::default()
+        };
+        let result = refresh_hash(&storage, &test_path.to_path_buf(), test_row).await?;
+        // Since hash and content match, should return None
+        assert!(result.is_none(), "Unchanged file should return None");
 
-        let file = storage.open_file(test_path).await?;
+        // Test with wrong hash to trigger refresh
+        let wrong_hash = multihash::Multihash::wrap(MULTIHASH_SHA256, b"wrong_hash_data").unwrap();
+        let test_row = Row {
+            name: PathBuf::from("test.txt"),
+            hash: wrong_hash,
+            size: 999, // Wrong size to test that refresh_hash updates it
+            ..Row::default()
+        };
+        let result = refresh_hash(&storage, &test_path.to_path_buf(), test_row).await?;
+        let refreshed_row = result.expect("Changed hash should return Some");
+        assert_eq!(refreshed_row.hash, sha256_multihash); // Should match actual file
+        assert_eq!(refreshed_row.size, test_data.len() as u64); // Should be updated
+
         let sha256_chunked_multihash: Multihash<256> = sha256_chunked_hash.into();
-        let result = verify_hash(file, sha256_chunked_multihash).await?;
-        assert!(result.is_none()); // Should match
+        let test_row = Row {
+            name: PathBuf::from("test.txt"),
+            hash: sha256_chunked_multihash,
+            size: test_data.len() as u64, // Correct size
+            ..Row::default()
+        };
+        let result = refresh_hash(&storage, &test_path.to_path_buf(), test_row).await?;
+        // Since hash and content match, should return None
+        assert!(result.is_none(), "Unchanged file should return None");
 
-        let file = storage.open_file(test_path).await?;
+        // Test with wrong hash to trigger refresh
+        let wrong_chunked_hash =
+            multihash::Multihash::wrap(MULTIHASH_SHA256_CHUNKED, b"wrong_chunked_data").unwrap();
+        let test_row = Row {
+            name: PathBuf::from("test.txt"),
+            hash: wrong_chunked_hash,
+            size: 999, // Wrong size to test that refresh_hash updates it
+            ..Row::default()
+        };
+        let result = refresh_hash(&storage, &test_path.to_path_buf(), test_row).await?;
+        let refreshed_row = result.expect("Changed hash should return Some");
+        assert_eq!(refreshed_row.hash, sha256_chunked_multihash); // Should match actual file
+        assert_eq!(refreshed_row.size, test_data.len() as u64); // Should be updated
+
         let crc64_multihash: Multihash<256> = crc64_hash.into();
-        let result = verify_hash(file, crc64_multihash).await?;
-        assert!(result.is_none()); // Should match
+        let test_row = Row {
+            name: PathBuf::from("test.txt"),
+            hash: crc64_multihash,
+            size: test_data.len() as u64, // Correct size
+            ..Row::default()
+        };
+        let result = refresh_hash(&storage, &test_path.to_path_buf(), test_row).await?;
+        // Since hash and content match, should return None
+        assert!(result.is_none(), "Unchanged file should return None");
 
-        let file = storage.open_file(test_path).await?;
+        // Test with wrong hash to trigger refresh
+        let wrong_crc64_hash =
+            multihash::Multihash::wrap(MULTIHASH_CRC64_NVME, b"wrong_crc64_data").unwrap();
+        let test_row = Row {
+            name: PathBuf::from("test.txt"),
+            hash: wrong_crc64_hash,
+            size: 999, // Wrong size to test that refresh_hash updates it
+            ..Row::default()
+        };
+        let result = refresh_hash(&storage, &test_path.to_path_buf(), test_row).await?;
+        let refreshed_row = result.expect("Changed hash should return Some");
+        assert_eq!(refreshed_row.hash, crc64_multihash); // Should match actual file
+        assert_eq!(refreshed_row.size, test_data.len() as u64); // Should be updated
+
         let unknown_hash = multihash::Multihash::wrap(0x9999, b"test_hash_data").unwrap();
-        let result = verify_hash(file, unknown_hash).await;
+        let test_row = Row {
+            name: PathBuf::from("test.txt"),
+            hash: unknown_hash,
+            size: test_data.len() as u64,
+            ..Row::default()
+        };
+        let result = refresh_hash(&storage, &test_path.to_path_buf(), test_row).await;
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
             .to_string()
             .contains("Wrong multihash type"));
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_calculate_hash() -> Res {
+        let storage = MockStorage::default();
+        let test_data = b"test data for calculate_hash function";
+        let test_path = Path::new("calculate_hash_test.txt");
+
+        // Write test data to mock storage
+        storage.write_file(test_path, test_data).await?;
+
+        // Test with CRC64 host config
+        let crc64_host_config = HostConfig {
+            checksums: HostChecksums::Crc64,
+            host: None,
+        };
+
+        let logical_key = PathBuf::from("test_file.txt");
+        let result = calculate_hash(
+            &storage,
+            &test_path.to_path_buf(),
+            logical_key.clone(),
+            &crc64_host_config,
+        )
+        .await?;
+        assert_eq!(result.hash.code(), MULTIHASH_CRC64_NVME);
+        assert_eq!(result.name, logical_key);
+        assert_eq!(result.size, test_data.len() as u64);
+
+        // Test with SHA256-chunked host config
+        let sha256_chunked_host_config = HostConfig {
+            checksums: HostChecksums::Sha256Chunked,
+            host: None,
+        };
+
+        let logical_key = PathBuf::from("test_file2.txt");
+        let result = calculate_hash(
+            &storage,
+            &test_path.to_path_buf(),
+            logical_key.clone(),
+            &sha256_chunked_host_config,
+        )
+        .await?;
+        assert_eq!(result.hash.code(), MULTIHASH_SHA256_CHUNKED);
+        assert_eq!(result.name, logical_key);
+        assert_eq!(result.size, test_data.len() as u64);
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_verify_hash() -> Res {
+        let storage = MockStorage::default();
+        let test_data = b"test data for verify_hash function";
+        let test_path = Path::new("verify_hash_test.txt");
+
+        // Write test data to mock storage
+        storage.write_file(test_path, test_data).await?;
+
+        // Test with CRC64 host config - file unchanged
+        let crc64_host_config = HostConfig {
+            checksums: HostChecksums::Crc64,
+            host: None,
+        };
+
+        let logical_key = PathBuf::from("test_file.txt");
+
+        // Create initial row with correct CRC64 hash
+        let initial_row = calculate_hash(
+            &storage,
+            &test_path.to_path_buf(),
+            logical_key.clone(),
+            &crc64_host_config,
+        )
+        .await?;
+
+        // Verify unchanged file returns None
+        let result = verify_hash(
+            &storage,
+            &test_path.to_path_buf(),
+            &logical_key,
+            initial_row.clone(),
+            &crc64_host_config,
+        )
+        .await?;
+        assert!(result.is_none(), "Unchanged file should return None");
+
+        // Test with different host config (SHA256-chunked) - won't trigger recalculation
+        // because verify_hash only recalculates if the file has actually changed
+        let sha256_host_config = HostConfig {
+            checksums: HostChecksums::Sha256Chunked,
+            host: None,
+        };
+
+        // Use the CRC64 row but with SHA256-chunked host config - file hasn't changed
+        let result = verify_hash(
+            &storage,
+            &test_path.to_path_buf(),
+            &logical_key,
+            initial_row.clone(),
+            &sha256_host_config,
+        )
+        .await?;
+        // Since the file hasn't changed, verify_hash returns None regardless of algorithm mismatch
+        assert!(
+            result.is_none(),
+            "Unchanged file should return None even with different algorithm"
+        );
+
+        // Test with modified file content - should return CRC64 hash (matching host config)
+        let modified_data = b"modified test data for verify_hash function";
+        storage.write_file(test_path, modified_data).await?;
+
+        let result = verify_hash(
+            &storage,
+            &test_path.to_path_buf(),
+            &logical_key,
+            initial_row.clone(),
+            &crc64_host_config,
+        )
+        .await?;
+        assert!(result.is_some(), "Modified file should return Some");
+
+        let modified_row = result.unwrap();
+        assert_eq!(modified_row.hash.code(), MULTIHASH_CRC64_NVME);
+        assert_eq!(modified_row.size, modified_data.len() as u64);
+
+        // Test algorithm preference optimization: if refreshed hash already matches host preference
+        // Create a row with SHA256-chunked hash, then modify file and verify with CRC64 host config
+        let sha256_row = calculate_hash(
+            &storage,
+            &test_path.to_path_buf(),
+            logical_key.clone(),
+            &sha256_host_config,
+        )
+        .await?;
+
+        // Now write different content
+        let new_data = b"completely different content for algorithm test";
+        storage.write_file(test_path, new_data).await?;
+
+        // Verify with CRC64 host config - should recalculate because algorithms don't match
+        let result = verify_hash(
+            &storage,
+            &test_path.to_path_buf(),
+            &logical_key,
+            sha256_row,
+            &crc64_host_config,
+        )
+        .await?;
+        assert!(
+            result.is_some(),
+            "Modified file with algorithm mismatch should return Some"
+        );
+
+        let final_row = result.unwrap();
+        assert_eq!(
+            final_row.hash.code(),
+            MULTIHASH_CRC64_NVME,
+            "Should use host's preferred algorithm"
+        );
+        assert_eq!(final_row.size, new_data.len() as u64);
 
         Ok(())
     }
