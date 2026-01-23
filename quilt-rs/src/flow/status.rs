@@ -105,7 +105,7 @@ async fn locate_files_in_package_home(
 
 async fn detect_change(
     storage: &(impl Storage + Sync),
-    logical_key: &PathBuf,
+    logical_key: &Path,
     location: WorkdirFile,
     host_config: &HostConfig,
 ) -> Res<Option<Change>> {

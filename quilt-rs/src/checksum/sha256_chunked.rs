@@ -195,7 +195,7 @@ mod tests {
         // Create a SHA256 chunked hash and test conversions
         let original_hash =
             multihash::Multihash::wrap(MULTIHASH_SHA256_CHUNKED, b"test_data").unwrap();
-        let sha256_chunked = Sha256ChunkedHash::try_from(original_hash.clone()).unwrap();
+        let sha256_chunked = Sha256ChunkedHash::try_from(original_hash).unwrap();
         let converted_back: Multihash<256> = sha256_chunked.into();
         assert_eq!(original_hash, converted_back);
     }

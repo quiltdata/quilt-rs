@@ -4,6 +4,7 @@ use multihash::Multihash;
 use serde::Deserialize;
 use serde::Serialize;
 use std::fmt;
+use std::path::Path;
 use std::path::PathBuf;
 
 use crate::io::remote::HostChecksums;
@@ -75,7 +76,7 @@ pub async fn refresh_hash(storage: &impl Storage, path: &PathBuf, row: Row) -> R
 pub async fn calculate_hash(
     storage: &impl Storage,
     path: &PathBuf,
-    logical_key: &PathBuf,
+    logical_key: &Path,
     host_config: &HostConfig,
 ) -> Res<Row> {
     let file = storage.open_file(path).await?;
@@ -88,7 +89,7 @@ pub async fn calculate_hash(
     };
 
     Ok(Row {
-        name: logical_key.clone(),
+        name: logical_key.to_path_buf(),
         size,
         hash,
         ..Row::default()
@@ -260,7 +261,7 @@ mod tests {
     fn test_object_hash_conversions() -> Res {
         // Test SHA256 conversion
         let sha256_multihash = multihash::Multihash::wrap(MULTIHASH_SHA256, b"test_data").unwrap();
-        let object_hash = ObjectHash::try_from(sha256_multihash.clone())?;
+        let object_hash = ObjectHash::try_from(sha256_multihash)?;
         let back_to_multihash: Multihash<256> = object_hash.clone().into();
         assert_eq!(sha256_multihash, back_to_multihash);
         assert_eq!(object_hash.algorithm(), MULTIHASH_SHA256);
@@ -268,7 +269,7 @@ mod tests {
         // Test SHA256Chunked conversion
         let sha256_chunked_multihash =
             multihash::Multihash::wrap(MULTIHASH_SHA256_CHUNKED, b"test_data").unwrap();
-        let object_hash = ObjectHash::try_from(sha256_chunked_multihash.clone())?;
+        let object_hash = ObjectHash::try_from(sha256_chunked_multihash)?;
         let back_to_multihash: Multihash<256> = object_hash.clone().into();
         assert_eq!(sha256_chunked_multihash, back_to_multihash);
         assert_eq!(object_hash.algorithm(), MULTIHASH_SHA256_CHUNKED);
@@ -276,7 +277,7 @@ mod tests {
         // Test CRC64 conversion
         let crc64_multihash =
             multihash::Multihash::wrap(MULTIHASH_CRC64_NVME, b"test_data").unwrap();
-        let object_hash = ObjectHash::try_from(crc64_multihash.clone())?;
+        let object_hash = ObjectHash::try_from(crc64_multihash)?;
         let back_to_multihash: Multihash<256> = object_hash.clone().into();
         assert_eq!(crc64_multihash, back_to_multihash);
         assert_eq!(object_hash.algorithm(), MULTIHASH_CRC64_NVME);
