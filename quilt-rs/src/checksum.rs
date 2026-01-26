@@ -572,23 +572,17 @@ mod tests {
     async fn test_calculate_hash_crc64() -> Res {
         let storage = LocalStorage::default();
 
-        // Use known fixture file directly with known CRC64 hash
-        let fixture_path = Path::new("fixtures/user-settings.mkfg");
+        let file_path = Path::new("fixtures/user-settings.mkfg");
+        let host_config = HostConfig::default_crc64();
+        let logical_key = PathBuf::from("foo");
 
-        // Test with CRC64 host config
-        let crc64_host_config = HostConfig::default_crc64();
+        let row = calculate_hash(&storage, file_path, &logical_key, &host_config).await?;
 
-        let logical_key = PathBuf::from("user-settings.mkfg");
-        let result =
-            calculate_hash(&storage, fixture_path, &logical_key, &crc64_host_config).await?;
-        assert_eq!(result.hash.code(), MULTIHASH_CRC64_NVME);
-        assert_eq!(result.name, logical_key);
-        // Get actual file size for verification
-        let file_content = std::fs::read(fixture_path)?;
-        assert_eq!(result.size, file_content.len() as u64);
-        // Verify the expected CRC64 hash
-        let object_hash = ObjectHash::try_from(result.hash)?;
-        assert_eq!(object_hash.to_string(), "LZmmpqbBItw=");
+        assert_eq!(row.hash.code(), MULTIHASH_CRC64_NVME);
+        assert_eq!(row.name, logical_key);
+
+        assert_eq!(row.size, storage.read_file(file_path).await?.len() as u64);
+        assert_eq!(ObjectHash::try_from(row.hash)?.to_string(), "LZmmpqbBItw=");
 
         Ok(())
     }
@@ -597,22 +591,21 @@ mod tests {
     async fn test_calculate_hash_sha256_chunked() -> Res {
         let storage = MockStorage::default();
 
-        // Test with SHA256-chunked host config using less_than_8mb fixture
         let host_config = HostConfig::default_sha256_chunked();
 
         let file_content = crate::fixtures::objects::less_than_8mb();
-        let test_path = Path::new("less_than_8mb.txt");
-        storage.write_file(test_path, file_content).await?;
+        let file_path = Path::new("foo");
+        storage.write_file(file_path, file_content).await?;
 
-        let logical_key = PathBuf::from("test_file.txt");
-        let result = calculate_hash(&storage, test_path, &logical_key, &host_config).await?;
-        assert_eq!(result.hash.code(), MULTIHASH_SHA256_CHUNKED);
-        assert_eq!(result.name, logical_key);
-        assert_eq!(result.size, file_content.len() as u64);
-        // Verify the expected SHA256-chunked hash
-        let object_hash = ObjectHash::try_from(result.hash)?;
+        let logical_key = PathBuf::from("bar");
+
+        let row = calculate_hash(&storage, file_path, &logical_key, &host_config).await?;
+
+        assert_eq!(row.hash.code(), MULTIHASH_SHA256_CHUNKED);
+        assert_eq!(row.name, logical_key);
+        assert_eq!(row.size, file_content.len() as u64);
         assert_eq!(
-            object_hash.to_string(),
+            ObjectHash::try_from(row.hash)?.to_string(),
             crate::fixtures::objects::LESS_THAN_8MB_HASH_B64
         );
 
@@ -623,30 +616,22 @@ mod tests {
     async fn test_verify_hash_crc64() -> Res {
         let storage = LocalStorage::default();
 
-        // Use known fixture file directly with known CRC64 hash
-        let fixture_path = Path::new("fixtures/user-settings.mkfg");
-
-        // Test with CRC64 host config - file unchanged
+        let file_path = Path::new("fixtures/user-settings.mkfg");
         let crc64_host_config = HostConfig::default_crc64();
-
         let logical_key = PathBuf::from("user-settings.mkfg");
 
-        // Create initial row with correct CRC64 hash
-        let initial_row =
-            calculate_hash(&storage, fixture_path, &logical_key, &crc64_host_config).await?;
+        let row = calculate_hash(&storage, file_path, &logical_key, &crc64_host_config).await?;
 
-        // Verify unchanged file returns None
         let result = verify_hash(
             &storage,
-            &fixture_path.to_path_buf(),
-            initial_row.clone(),
+            &file_path.to_path_buf(),
+            row.clone(),
             &crc64_host_config,
         )
         .await?;
         assert!(result.is_none(), "Unchanged file should return None");
 
-        // Test that initial hash was correct for the fixture
-        let initial_object_hash = ObjectHash::try_from(initial_row.hash)?;
+        let initial_object_hash = ObjectHash::try_from(row.hash)?;
         assert_eq!(initial_object_hash.to_string(), "LZmmpqbBItw=");
 
         Ok(())
@@ -659,7 +644,7 @@ mod tests {
 
         // Use known fixture file with known CRC64 hash
         let fixture_path = Path::new("fixtures/user-settings.mkfg");
-        let file_content = std::fs::read(fixture_path)?;
+        let file_content = local_storage.read_file(fixture_path).await?;
         let test_path = Path::new("user-settings.mkfg");
 
         // Write fixture content to mock storage for modification tests
