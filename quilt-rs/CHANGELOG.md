@@ -5,7 +5,7 @@
 -->
 # Changelog
 
-## [v0.26.0]
+## [v0.26.0](https://github.com/quiltdata/quilt-rs/releases/tag/quilt-rs/v0.26.0) - 2025-01-26
 
 ### Fixed
 
