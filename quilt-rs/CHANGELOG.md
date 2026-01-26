@@ -5,6 +5,12 @@
 -->
 # Changelog
 
+## [v0.26.0]
+
+### Fixed
+
+- Fixed commit logic to respect crc64Checksums configuration from host config
+
 ## [v0.25.0](https://github.com/quiltdata/quilt-rs/releases/tag/quilt-rs/v0.25.0) - 2025-01-07
 
 ### Added

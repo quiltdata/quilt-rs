@@ -49,6 +49,17 @@ impl App {
 }
 
 #[cfg(test)]
+impl Default for Globals {
+    fn default() -> Self {
+        Globals {
+            version: Version::new(0, 0, 0),
+            logs_dir: PathBuf::from("/tmp/quiltsync/logs"),
+            logs_dir_is_temporary: false,
+        }
+    }
+}
+
+#[cfg(test)]
 pub mod mocks {
     use super::*;
 
@@ -60,16 +71,5 @@ pub mod mocks {
             logs_dir_is_temporary: false,
         });
         app
-    }
-}
-
-#[cfg(test)]
-impl Default for Globals {
-    fn default() -> Self {
-        Globals {
-            version: Version::new(0, 0, 0),
-            logs_dir: PathBuf::from("/tmp/quiltsync/logs"),
-            logs_dir_is_temporary: false,
-        }
     }
 }

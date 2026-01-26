@@ -159,7 +159,7 @@ mod tests {
     fn test_sha256_hash_conversions() {
         // Create a SHA256 hash and test conversions
         let original_hash = multihash::Multihash::wrap(MULTIHASH_SHA256, b"test_data").unwrap();
-        let sha256 = Sha256Hash::try_from(original_hash.clone()).unwrap();
+        let sha256 = Sha256Hash::try_from(original_hash).unwrap();
         let converted_back: Multihash<256> = sha256.into();
         assert_eq!(original_hash, converted_back);
     }
@@ -258,7 +258,7 @@ mod tests {
         let test_path = Path::new("checksum_test.txt");
 
         // Write test data to mock storage
-        storage.write_file(test_path, &bytes).await?;
+        storage.write_file(test_path, bytes).await?;
 
         // Test from_file method
         let file = storage.open_file(test_path).await?;
@@ -284,7 +284,7 @@ mod tests {
         let test_path = Path::new("less_than_8mb.txt");
 
         // Write test data to mock storage
-        storage.write_file(test_path, &bytes).await?;
+        storage.write_file(test_path, bytes).await?;
 
         // Test from_file method
         let file = storage.open_file(test_path).await?;
@@ -301,7 +301,7 @@ mod tests {
         let test_path = Path::new("conversion_test.txt");
 
         // Write test data to mock storage
-        storage.write_file(test_path, &bytes).await?;
+        storage.write_file(test_path, bytes).await?;
 
         // Test Sha256Hash conversions
         let file = storage.open_file(test_path).await?;

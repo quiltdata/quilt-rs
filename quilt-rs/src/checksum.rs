@@ -4,8 +4,13 @@ use multihash::Multihash;
 use serde::Deserialize;
 use serde::Serialize;
 use std::fmt;
-use tokio::fs::File;
+use std::path::Path;
+use std::path::PathBuf;
 
+use crate::io::remote::HostChecksums;
+use crate::io::remote::HostConfig;
+use crate::io::storage::Storage;
+use crate::manifest::Row;
 use crate::Error;
 use crate::Res;
 
@@ -38,11 +43,14 @@ pub enum ObjectHash {
     Crc64(Crc64Hash),
 }
 
-pub async fn verify_hash(file: File, hash: Multihash<256>) -> Res<Option<(u64, Multihash<256>)>> {
+/// Refresh hash for a file using the same algorithm as the reference row
+/// Returns None if hash hasn't changed, Some(Row) if it has changed
+pub async fn refresh_hash(storage: &impl Storage, path: &PathBuf, row: Row) -> Res<Option<Row>> {
+    let file = storage.open_file(path).await?;
     let file_metadata = file.metadata().await?;
     let size = file_metadata.len();
 
-    let calculated_hash: Multihash<256> = match hash.code() {
+    match row.hash.code() {
         MULTIHASH_CRC64_NVME => Ok(Crc64Hash::from_file(file).await?.into()),
         MULTIHASH_SHA256 => Ok(Sha256Hash::from_file(file).await?.into()),
         MULTIHASH_SHA256_CHUNKED => Ok(Sha256ChunkedHash::from_file(file).await?.into()),
@@ -50,9 +58,66 @@ pub async fn verify_hash(file: File, hash: Multihash<256>) -> Res<Option<(u64, M
             "Wrong multihash type {}",
             code
         ))),
-    }?;
+    }
+    .map(|hash| {
+        if row.hash == hash {
+            None
+        } else {
+            Some(Row {
+                hash,
+                size,
+                ..row.clone()
+            })
+        }
+    })
+}
 
-    Ok((hash != calculated_hash).then_some((size, calculated_hash)))
+/// Calculate hash for a file using the algorithm specified by host config
+pub async fn calculate_hash(
+    storage: &impl Storage,
+    path: &Path,
+    logical_key: &Path,
+    host_config: &HostConfig,
+) -> Res<Row> {
+    let file = storage.open_file(path).await?;
+    let file_metadata = file.metadata().await?;
+    let size = file_metadata.len();
+
+    let hash = match host_config.checksums {
+        HostChecksums::Crc64 => Crc64Hash::from_file(file).await?.into(),
+        HostChecksums::Sha256Chunked => Sha256ChunkedHash::from_file(file).await?.into(),
+    };
+
+    Ok(Row {
+        name: logical_key.to_path_buf(),
+        size,
+        hash,
+        ..Row::default()
+    })
+}
+
+/// Verify hash for a file and optionally recalculate with host's preferred algorithm
+/// Returns None if hash hasn't changed, Some(Row) if it has changed
+pub async fn verify_hash(
+    storage: &impl Storage,
+    path: &PathBuf,
+    row: Row,
+    host_config: &HostConfig,
+) -> Res<Option<Row>> {
+    if let Some(modified) = refresh_hash(storage, path, row).await? {
+        // File has changed, check if we need to recalculate with host's preferred algorithm
+        if modified.hash.code() == host_config.checksums.algorithm_code() {
+            // Already using the correct algorithm, no need to recalculate
+            Ok(Some(modified))
+        } else {
+            // Need to recalculate with host's preferred algorithm
+            Ok(Some(
+                calculate_hash(storage, path, &modified.name, host_config).await?,
+            ))
+        }
+    } else {
+        Ok(None)
+    }
 }
 
 impl TryFrom<Multihash<256>> for ObjectHash {
@@ -149,6 +214,7 @@ mod tests {
     use std::path::Path;
 
     use crate::io::storage::mocks::MockStorage;
+    use crate::io::storage::LocalStorage;
     use crate::io::storage::Storage;
     use crate::Error;
     use crate::Res;
@@ -196,7 +262,7 @@ mod tests {
     fn test_object_hash_conversions() -> Res {
         // Test SHA256 conversion
         let sha256_multihash = multihash::Multihash::wrap(MULTIHASH_SHA256, b"test_data").unwrap();
-        let object_hash = ObjectHash::try_from(sha256_multihash.clone())?;
+        let object_hash = ObjectHash::try_from(sha256_multihash)?;
         let back_to_multihash: Multihash<256> = object_hash.clone().into();
         assert_eq!(sha256_multihash, back_to_multihash);
         assert_eq!(object_hash.algorithm(), MULTIHASH_SHA256);
@@ -204,7 +270,7 @@ mod tests {
         // Test SHA256Chunked conversion
         let sha256_chunked_multihash =
             multihash::Multihash::wrap(MULTIHASH_SHA256_CHUNKED, b"test_data").unwrap();
-        let object_hash = ObjectHash::try_from(sha256_chunked_multihash.clone())?;
+        let object_hash = ObjectHash::try_from(sha256_chunked_multihash)?;
         let back_to_multihash: Multihash<256> = object_hash.clone().into();
         assert_eq!(sha256_chunked_multihash, back_to_multihash);
         assert_eq!(object_hash.algorithm(), MULTIHASH_SHA256_CHUNKED);
@@ -212,7 +278,7 @@ mod tests {
         // Test CRC64 conversion
         let crc64_multihash =
             multihash::Multihash::wrap(MULTIHASH_CRC64_NVME, b"test_data").unwrap();
-        let object_hash = ObjectHash::try_from(crc64_multihash.clone())?;
+        let object_hash = ObjectHash::try_from(crc64_multihash)?;
         let back_to_multihash: Multihash<256> = object_hash.clone().into();
         assert_eq!(crc64_multihash, back_to_multihash);
         assert_eq!(object_hash.algorithm(), MULTIHASH_CRC64_NVME);
@@ -371,17 +437,15 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_hash_trait_and_verify_functionality() -> Res {
+    async fn test_hash_trait_polymorphism() -> Res {
         let storage = MockStorage::default();
-        let test_data = b"test data for Hash trait and verify functionality";
+        let test_data = b"test data for Hash trait";
         let test_path = Path::new("hash_trait_test.txt");
-
-        // Write test data to mock storage
         storage.write_file(test_path, test_data).await?;
 
         // Test Hash trait implementation and consistent from_file signatures
         let file = storage.open_file(test_path).await?;
-        let sha256_hash = <Sha256Hash as Hash>::from_file(file).await?;
+        let sha256_hash: Sha256Hash = <Sha256Hash as Hash>::from_file(file).await?;
 
         let file = storage.open_file(test_path).await?;
         let sha256_chunked_hash = <Sha256ChunkedHash as Hash>::from_file(file).await?;
@@ -410,30 +474,217 @@ mod tests {
         );
         assert_eq!(check_hash_trait(&crc64_hash), MULTIHASH_CRC64_NVME);
 
-        // Test that verify_hash works with all hash types
-        let file = storage.open_file(test_path).await?;
-        let sha256_multihash: Multihash<256> = sha256_hash.into();
-        let result = verify_hash(file, sha256_multihash).await?;
-        assert!(result.is_none()); // Should match
+        Ok(())
+    }
 
-        let file = storage.open_file(test_path).await?;
-        let sha256_chunked_multihash: Multihash<256> = sha256_chunked_hash.into();
-        let result = verify_hash(file, sha256_chunked_multihash).await?;
-        assert!(result.is_none()); // Should match
+    #[test(tokio::test)]
+    async fn test_refresh_hash_unchanged_file() -> Res {
+        let storage = MockStorage::default();
+        let file_content = b"anything";
+        let file_path = Path::new("foo");
+        storage.write_file(file_path, file_content).await?;
 
-        let file = storage.open_file(test_path).await?;
-        let crc64_multihash: Multihash<256> = crc64_hash.into();
-        let result = verify_hash(file, crc64_multihash).await?;
-        assert!(result.is_none()); // Should match
+        let file = storage.open_file(file_path).await?;
+        let hash = Sha256Hash::from_file(file).await?.into();
 
-        let file = storage.open_file(test_path).await?;
-        let unknown_hash = multihash::Multihash::wrap(0x9999, b"test_hash_data").unwrap();
-        let result = verify_hash(file, unknown_hash).await;
+        let row = Row {
+            name: PathBuf::from("bar"),
+            hash,
+            size: file_content.len() as u64,
+            ..Row::default()
+        };
+        let result = refresh_hash(&storage, &file_path.to_path_buf(), row).await?;
+        assert!(result.is_none(), "Unchanged file should return None");
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_refresh_hash_changed_file() -> Res {
+        let storage = MockStorage::default();
+        let file_content = b"anything";
+        let file_path = Path::new("foo");
+        storage.write_file(file_path, file_content).await?;
+
+        // Calculate the actual hash first
+        let file = storage.open_file(file_path).await?;
+        let hash = Sha256Hash::from_file(file).await?.into();
+
+        // Test with wrong hash - should return updated Row
+        let wrong_hash = Multihash::wrap(MULTIHASH_SHA256, b"wrong_hash_data")?;
+        let test_row = Row {
+            name: PathBuf::from("bar"),
+            hash: wrong_hash,
+            size: 999, // Wrong size to test that refresh_hash updates it
+            ..Row::default()
+        };
+        let result = refresh_hash(&storage, &file_path.to_path_buf(), test_row).await?;
+        let refreshed_row = result.expect("Changed hash should return Some");
+        assert_eq!(refreshed_row.hash, hash);
+        assert_eq!(refreshed_row.size, file_content.len() as u64);
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_refresh_hash_unknown_algorithm() -> Res {
+        let storage = MockStorage::default();
+        let file_content = b"anything";
+        let file_path = Path::new("foo");
+        storage.write_file(file_path, file_content).await?;
+
+        let hash = Multihash::wrap(0x9999, b"anything").unwrap();
+        let row = Row {
+            name: PathBuf::from("bar"),
+            hash,
+            size: file_content.len() as u64,
+            ..Row::default()
+        };
+        let result = refresh_hash(&storage, &file_path.to_path_buf(), row).await;
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
             .to_string()
             .contains("Wrong multihash type"));
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_calculate_hash_crc64() -> Res {
+        let storage = LocalStorage::default();
+
+        let file_path = Path::new("fixtures/user-settings.mkfg");
+        let host_config = HostConfig::default_crc64();
+        let logical_key = PathBuf::from("foo");
+
+        let row = calculate_hash(&storage, file_path, &logical_key, &host_config).await?;
+
+        assert_eq!(row.hash.code(), MULTIHASH_CRC64_NVME);
+        assert_eq!(row.name, logical_key);
+
+        assert_eq!(row.size, storage.read_file(file_path).await?.len() as u64);
+        assert_eq!(ObjectHash::try_from(row.hash)?.to_string(), "LZmmpqbBItw=");
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_calculate_hash_sha256_chunked() -> Res {
+        let storage = MockStorage::default();
+
+        let host_config = HostConfig::default_sha256_chunked();
+
+        let file_content = crate::fixtures::objects::less_than_8mb();
+        let file_path = Path::new("foo");
+        storage.write_file(file_path, file_content).await?;
+
+        let logical_key = PathBuf::from("bar");
+
+        let row = calculate_hash(&storage, file_path, &logical_key, &host_config).await?;
+
+        assert_eq!(row.hash.code(), MULTIHASH_SHA256_CHUNKED);
+        assert_eq!(row.name, logical_key);
+        assert_eq!(row.size, file_content.len() as u64);
+        assert_eq!(
+            ObjectHash::try_from(row.hash)?.to_string(),
+            crate::fixtures::objects::LESS_THAN_8MB_HASH_B64
+        );
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_verify_hash_crc64() -> Res {
+        let storage = MockStorage::default();
+        let local_storage = LocalStorage::default();
+
+        // Create file with initial content
+        let test_path = Path::new("foo");
+        let initial_content = b"lorem ipsum";
+        storage.write_file(test_path, initial_content).await?;
+
+        let sha256_host_config = HostConfig::default_sha256_chunked();
+        let crc64_host_config = HostConfig::default_crc64();
+        let logical_key = PathBuf::from("bar");
+
+        let row = calculate_hash(&storage, test_path, &logical_key, &sha256_host_config).await?;
+
+        assert!(
+            verify_hash(
+                &storage,
+                &test_path.to_path_buf(),
+                row.clone(),
+                &crc64_host_config,
+            )
+            .await?
+            .is_none(),
+            "Unchanged file should return None, even when algorithms don't match"
+        );
+
+        let fixture_path = Path::new("fixtures/user-settings.mkfg");
+        let fixture_content = local_storage.read_file(fixture_path).await?;
+        storage.write_file(test_path, &fixture_content).await?;
+
+        let result =
+            verify_hash(&storage, &test_path.to_path_buf(), row, &crc64_host_config).await?;
+        assert!(result.is_some(), "Modified file should return Some");
+
+        let modified_row = result.unwrap();
+        assert_eq!(modified_row.hash.code(), MULTIHASH_CRC64_NVME);
+        assert_eq!(modified_row.size, fixture_content.len() as u64);
+
+        assert_eq!(
+            ObjectHash::try_from(modified_row.hash)?.to_string(),
+            "LZmmpqbBItw="
+        );
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_verify_hash_sha256_chunked() -> Res {
+        let storage = MockStorage::default();
+
+        // Create file with initial content
+        let test_path = Path::new("foo");
+        let initial_content = b"lorem ipsum";
+        storage.write_file(test_path, initial_content).await?;
+
+        let sha256_host_config = HostConfig::default_sha256_chunked();
+        let crc64_host_config = HostConfig::default_crc64();
+        let logical_key = PathBuf::from("bar");
+
+        let row = calculate_hash(&storage, test_path, &logical_key, &crc64_host_config).await?;
+
+        assert!(
+            verify_hash(
+                &storage,
+                &test_path.to_path_buf(),
+                row.clone(),
+                &sha256_host_config,
+            )
+            .await?
+            .is_none(),
+            "Unchanged file should return None, even when algorithms don't match"
+        );
+
+        // Now rewrite file with less_than_8mb fixture content
+        let fixture_content = crate::fixtures::objects::less_than_8mb();
+        storage.write_file(test_path, fixture_content).await?;
+
+        let result =
+            verify_hash(&storage, &test_path.to_path_buf(), row, &sha256_host_config).await?;
+        assert!(result.is_some(), "Modified file should return Some");
+
+        let modified_row = result.unwrap();
+        assert_eq!(modified_row.hash.code(), MULTIHASH_SHA256_CHUNKED);
+        assert_eq!(modified_row.size, fixture_content.len() as u64);
+
+        assert_eq!(
+            ObjectHash::try_from(modified_row.hash)?.to_string(),
+            crate::fixtures::objects::LESS_THAN_8MB_HASH_B64
+        );
 
         Ok(())
     }

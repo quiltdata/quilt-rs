@@ -188,7 +188,7 @@ mod tests {
     fn test_crc64_hash_conversions() {
         // Create a CRC64-NVMe hash and test conversions
         let original_hash = multihash::Multihash::wrap(MULTIHASH_CRC64_NVME, b"test_data").unwrap();
-        let crc64 = Crc64Hash::try_from(original_hash.clone()).unwrap();
+        let crc64 = Crc64Hash::try_from(original_hash).unwrap();
         let converted_back: Multihash<256> = crc64.into();
         assert_eq!(original_hash, converted_back);
     }

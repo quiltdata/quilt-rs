@@ -241,7 +241,7 @@ mod tests {
             namespace: namespace.clone(),
             user_meta: Some(serde_json::json!({"Naturist": "Conjure"})),
             workflow: None,
-            host_config: None,
+            host_config: host_config.clone(),
         })
         .await?;
 
@@ -269,7 +269,7 @@ mod tests {
             namespace: namespace.clone(),
             user_meta: None,
             workflow: None,
-            host_config: None,
+            host_config: host_config.clone(),
         })
         .await?;
 

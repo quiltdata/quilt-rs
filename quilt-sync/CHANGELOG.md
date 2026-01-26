@@ -6,11 +6,17 @@
 -->
 # Changelog
 
-## [v0.11.3]
+## [v0.12.0]
 
 ### Fixed
 
 - Fixed redirect after package pull to avoid 'package already installed' error
+
+### quilt-rs
+
+- Updated from v0.25.0 to [v0.26.0](https://crates.io/crates/quilt-rs/0.26.0)
+  (see [../quilt-rs/CHANGELOG.md#v0.26.0](../quilt-rs/CHANGELOG.md#v0.26.0))
+  - Fixed commit logic to respect crc64Checksums configuration from host config
 
 ## [v0.11.2]
 

@@ -2,17 +2,14 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::path::Path;
 use std::path::PathBuf;
-use tokio::fs::File;
 
 use tracing::debug;
 use tracing::info;
 use tracing::warn;
 
+use crate::checksum::calculate_hash;
 use crate::checksum::verify_hash;
-use crate::checksum::Crc64Hash;
-use crate::checksum::Sha256ChunkedHash;
 use crate::io::manifest::resolve_tag;
-use crate::io::remote::HostChecksums;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
@@ -47,9 +44,9 @@ pub async fn refresh_latest_hash(
 
 #[derive(Debug)]
 enum WorkdirFile {
-    Tracked(File, Row),
-    NotTracked(File, Row),
-    New(File),
+    Tracked(PathBuf, Row),
+    NotTracked(PathBuf, Row),
+    New(PathBuf),
     Removed(Row),
     UnSupported,
 }
@@ -88,14 +85,13 @@ async fn locate_files_in_package_home(
                 continue;
             }
 
-            let file = storage.open_file(&file_path).await?;
             let logical_key = file_path.strip_prefix(&package_home)?.to_path_buf();
             if let Some(row) = tracked_paths.remove(&logical_key) {
-                files.push((logical_key, WorkdirFile::Tracked(file, row)));
+                files.push((logical_key, WorkdirFile::Tracked(file_path, row)));
             } else if let Some(row) = manifest.get_record(&logical_key).await? {
-                files.push((logical_key, WorkdirFile::NotTracked(file, row)));
+                files.push((logical_key, WorkdirFile::NotTracked(file_path, row)));
             } else {
-                files.push((logical_key, WorkdirFile::New(file)));
+                files.push((logical_key, WorkdirFile::New(file_path)));
             }
         }
     }
@@ -107,56 +103,41 @@ async fn locate_files_in_package_home(
     Ok(files)
 }
 
+async fn detect_change(
+    storage: &(impl Storage + Sync),
+    logical_key: &Path,
+    location: WorkdirFile,
+    host_config: &HostConfig,
+) -> Res<Option<Change>> {
+    match location {
+        WorkdirFile::Tracked(path, row) => verify_hash(storage, &path, row, host_config)
+            .await
+            .map(|opt_row| opt_row.map(Change::Modified)),
+        WorkdirFile::NotTracked(path, row) => verify_hash(storage, &path, row, host_config)
+            .await
+            .map(|opt_row| opt_row.map(Change::Modified)),
+        WorkdirFile::New(path) => calculate_hash(storage, &path, logical_key, host_config)
+            .await
+            .map(|row| Some(Change::Added(row))),
+        WorkdirFile::Removed(row) => Ok(Some(Change::Removed(row))),
+        WorkdirFile::UnSupported => {
+            // TODO: handle symlinks
+            // TODO: changes.insert(path, Change::Broken)
+            warn!("❌ Unexpected file type: {}", logical_key.display());
+            Ok(None)
+        }
+    }
+}
+
 async fn fingerprint_files(
+    storage: &(impl Storage + Sync),
     files: Vec<(PathBuf, WorkdirFile)>,
     host_config: HostConfig,
 ) -> Res<ChangeSet> {
     let mut changes = ChangeSet::new();
     for (logical_key, location) in files {
-        match location {
-            WorkdirFile::Tracked(file, row) => {
-                if let Some((size, hash)) = verify_hash(file, row.hash).await? {
-                    let row = Row { hash, size, ..row };
-                    changes.insert(logical_key, Change::Modified(row));
-                } else {
-                    // the file is tracked (in lineage "paths") and has not been modified
-                }
-            }
-            WorkdirFile::NotTracked(file, row) => {
-                if let Some((size, hash)) = verify_hash(file, row.hash).await? {
-                    let row = Row { hash, size, ..row };
-                    changes.insert(logical_key, Change::Modified(row));
-                } else {
-                    debug!(
-                        "✔️ File {} matches remote manifest but is not tracked locally",
-                        logical_key.display()
-                    );
-                }
-            }
-            WorkdirFile::New(file) => {
-                let size = file.metadata().await?.len();
-                let hash = match host_config.checksums {
-                    HostChecksums::Crc64 => Crc64Hash::from_async_read(file).await?.into(),
-                    HostChecksums::Sha256Chunked => {
-                        Sha256ChunkedHash::from_async_read(file, size).await?.into()
-                    }
-                };
-                let row = Row {
-                    name: logical_key.clone(),
-                    size,
-                    hash,
-                    ..Row::default()
-                };
-                changes.insert(logical_key, Change::Added(row));
-            }
-            WorkdirFile::Removed(row) => {
-                changes.insert(logical_key, Change::Removed(row));
-            }
-            WorkdirFile::UnSupported => {
-                // TODO: handle symlinks
-                // TODO: changes.insert(path, Change::Broken)
-                warn!("❌ Unexpected file type: {}", logical_key.display());
-            }
+        if let Some(change) = detect_change(storage, &logical_key, location, &host_config).await? {
+            changes.insert(logical_key, change);
         }
     }
     Ok(changes)
@@ -200,7 +181,7 @@ pub async fn create_status(
 
     let files = locate_files_in_package_home(storage, manifest, package_home, orig_paths).await?;
     debug!("✔️ Located files in working directory {:?}", files);
-    let changes = fingerprint_files(files, host_config).await?;
+    let changes = fingerprint_files(storage, files, host_config).await?;
     debug!("✔️ Computed file fingerprints {:?}", changes);
 
     debug!("⏳ Creating package status");
@@ -216,7 +197,10 @@ mod tests {
 
     use std::collections::BTreeMap;
 
+    use crate::checksum::Crc64Hash;
+    use crate::checksum::Sha256ChunkedHash;
     use crate::fixtures;
+    use crate::io::remote::HostChecksums;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::CommitState;
     use crate::lineage::PathState;
