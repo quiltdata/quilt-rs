@@ -622,11 +622,11 @@ mod tests {
         let initial_content = b"lorem ipsum";
         storage.write_file(test_path, initial_content).await?;
 
+        let sha256_host_config = HostConfig::default_sha256_chunked();
         let crc64_host_config = HostConfig::default_crc64();
         let logical_key = PathBuf::from("bar");
 
-        // Calculate hash for initial content
-        let row = calculate_hash(&storage, test_path, &logical_key, &crc64_host_config).await?;
+        let row = calculate_hash(&storage, test_path, &logical_key, &sha256_host_config).await?;
 
         assert!(
             verify_hash(
@@ -637,7 +637,7 @@ mod tests {
             )
             .await?
             .is_none(),
-            "Unchanged file should return None"
+            "Unchanged file should return None, even when algorithms don't match"
         );
 
         let fixture_path = Path::new("fixtures/user-settings.mkfg");
@@ -670,10 +670,10 @@ mod tests {
         storage.write_file(test_path, initial_content).await?;
 
         let sha256_host_config = HostConfig::default_sha256_chunked();
+        let crc64_host_config = HostConfig::default_crc64();
         let logical_key = PathBuf::from("bar");
 
-        // Calculate hash for initial content
-        let row = calculate_hash(&storage, test_path, &logical_key, &sha256_host_config).await?;
+        let row = calculate_hash(&storage, test_path, &logical_key, &crc64_host_config).await?;
 
         assert!(
             verify_hash(
@@ -684,7 +684,7 @@ mod tests {
             )
             .await?
             .is_none(),
-            "Unchanged file should return None"
+            "Unchanged file should return None, even when algorithms don't match"
         );
 
         // Now rewrite file with less_than_8mb fixture content
@@ -703,81 +703,6 @@ mod tests {
             ObjectHash::try_from(modified_row.hash)?.to_string(),
             crate::fixtures::objects::LESS_THAN_8MB_HASH_B64
         );
-
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn test_verify_hash_algorithm_preference() -> Res {
-        let local_storage = LocalStorage::default();
-        let mock_storage = MockStorage::default();
-
-        // Use known fixture file with known CRC64 hash
-        let fixture_path = Path::new("fixtures/user-settings.mkfg");
-        let file_content = local_storage.read_file(fixture_path).await?;
-        let test_path = Path::new("user-settings.mkfg");
-
-        // Write fixture content to mock storage for modification tests
-        mock_storage.write_file(test_path, &file_content).await?;
-
-        let crc64_host_config = HostConfig::default_crc64();
-        let sha256_host_config = HostConfig::default_sha256_chunked();
-
-        let logical_key = PathBuf::from("user-settings.mkfg");
-
-        // Create initial row with correct CRC64 hash using local storage and fixture path
-        let initial_row = calculate_hash(
-            &local_storage,
-            fixture_path,
-            &logical_key,
-            &crc64_host_config,
-        )
-        .await?;
-
-        // Test with different host config (SHA256-chunked) using mock storage - won't trigger recalculation
-        // because verify_hash only recalculates if the file has actually changed
-        let result = verify_hash(
-            &mock_storage,
-            &test_path.to_path_buf(),
-            initial_row.clone(),
-            &sha256_host_config,
-        )
-        .await?;
-        // Since the file hasn't changed, verify_hash returns None regardless of algorithm mismatch
-        assert!(
-            result.is_none(),
-            "Unchanged file should return None even with different algorithm"
-        );
-
-        // Test algorithm preference optimization: if refreshed hash already matches host preference
-        // Create a row with SHA256-chunked hash, then modify file and verify with CRC64 host config
-        let sha256_row =
-            calculate_hash(&mock_storage, test_path, &logical_key, &sha256_host_config).await?;
-
-        // Now write different content
-        let new_data = b"completely different content for algorithm test";
-        mock_storage.write_file(test_path, new_data).await?;
-
-        // Verify with CRC64 host config - should recalculate because algorithms don't match
-        let result = verify_hash(
-            &mock_storage,
-            &test_path.to_path_buf(),
-            sha256_row,
-            &crc64_host_config,
-        )
-        .await?;
-        assert!(
-            result.is_some(),
-            "Modified file with algorithm mismatch should return Some"
-        );
-
-        let final_row = result.unwrap();
-        assert_eq!(
-            final_row.hash.code(),
-            MULTIHASH_CRC64_NVME,
-            "Should use host's preferred algorithm"
-        );
-        assert_eq!(final_row.size, new_data.len() as u64);
 
         Ok(())
     }
