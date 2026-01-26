@@ -60,8 +60,8 @@ This version increment consolidates many small changes from previous patch relea
 
 - Updated from [v0.24.0 to v0.25.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.24.0...quilt-rs/v0.25.0)
   (see [../quilt-rs/CHANGELOG.md#v0.25.0](../quilt-rs/CHANGELOG.md#v0.25.0))
-    - Support for timestamp tags in package URIs
-    - Export `Tag` enum and `LATEST_TAG` constant
+  - Support for timestamp tags in package URIs
+  - Export `Tag` enum and `LATEST_TAG` constant
 
 ## [v0.9.8](https://github.com/quiltdata/quilt-rs/releases/tag/QuiltSync/v0.9.8) - 2025-12-30
 
