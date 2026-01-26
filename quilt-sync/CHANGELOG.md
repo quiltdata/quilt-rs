@@ -14,7 +14,7 @@
 
 ### quilt-rs
 
-- Updated from v0.25.0 to [v0.26.0](https://crates.io/crates/quilt-rs/0.26.0)
+- Updated [from v0.25.0 to v0.26.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.25.0...quilt-rs/v0.26.0)
   (see [../quilt-rs/CHANGELOG.md#v0.26.0](../quilt-rs/CHANGELOG.md#v0.26.0))
   - Fixed commit logic to respect crc64Checksums configuration from host config
 
@@ -58,8 +58,10 @@ This version increment consolidates many small changes from previous patch relea
 
 ### quilt-rs
 
-- Support for timestamp tags in package URIs
-- Export `Tag` enum and `LATEST_TAG` constant
+- Updated from [v0.24.0 to v0.25.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.24.0...quilt-rs/v0.25.0)
+  (see [../quilt-rs/CHANGELOG.md#v0.25.0](../quilt-rs/CHANGELOG.md#v0.25.0))
+  - Support for timestamp tags in package URIs
+  - Export `Tag` enum and `LATEST_TAG` constant
 
 ## [v0.9.8](https://github.com/quiltdata/quilt-rs/releases/tag/QuiltSync/v0.9.8) - 2025-12-30
 
@@ -82,7 +84,7 @@ This version increment consolidates many small changes from previous patch relea
 
 ### quilt-rs
 
-- Updated from v0.21.1 to [v0.24.0](https://crates.io/crates/quilt-rs/0.24.0)
+- Updated from v0.21.1 to [v0.24.0](https://github.com/quiltdata/quilt-rs/releases/tag/quilt-rs%2Fv0.24.0)
   (see [../quilt-rs/CHANGELOG.md#v0.24.0](../quilt-rs/CHANGELOG.md#v0.24.0))
   - Fixed `quilt+s3://` URL parsing with `:tag` syntax
   - Fixed hash mismatch for packages with diacritic characters
