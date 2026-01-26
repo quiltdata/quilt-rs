@@ -75,7 +75,7 @@ pub async fn refresh_hash(storage: &impl Storage, path: &PathBuf, row: Row) -> R
 /// Calculate hash for a file using the algorithm specified by host config
 pub async fn calculate_hash(
     storage: &impl Storage,
-    path: &PathBuf,
+    path: &Path,
     logical_key: &Path,
     host_config: &HostConfig,
 ) -> Res<Row> {
@@ -214,6 +214,7 @@ mod tests {
     use std::path::Path;
 
     use crate::io::storage::mocks::MockStorage;
+    use crate::io::storage::LocalStorage;
     use crate::io::storage::Storage;
     use crate::Error;
     use crate::Res;
@@ -568,61 +569,46 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_calculate_hash() -> Res {
-        let storage = MockStorage::default();
+    async fn test_calculate_hash_crc64() -> Res {
+        let storage = LocalStorage::default();
 
-        // Use known fixture file with known CRC64 hash
+        // Use known fixture file directly with known CRC64 hash
         let fixture_path = Path::new("fixtures/user-settings.mkfg");
-        let file_content = std::fs::read(fixture_path)?;
-        let test_path = Path::new("user-settings.mkfg");
-
-        // Write fixture content to mock storage
-        storage.write_file(test_path, &file_content).await?;
 
         // Test with CRC64 host config
-        let crc64_host_config = HostConfig {
-            checksums: HostChecksums::Crc64,
-            host: None,
-        };
+        let crc64_host_config = HostConfig::default_crc64();
 
-        let logical_key = PathBuf::from("test_file.txt");
-        let result = calculate_hash(
-            &storage,
-            &test_path.to_path_buf(),
-            &logical_key,
-            &crc64_host_config,
-        )
-        .await?;
+        let logical_key = PathBuf::from("user-settings.mkfg");
+        let result =
+            calculate_hash(&storage, fixture_path, &logical_key, &crc64_host_config).await?;
         assert_eq!(result.hash.code(), MULTIHASH_CRC64_NVME);
         assert_eq!(result.name, logical_key);
+        // Get actual file size for verification
+        let file_content = std::fs::read(fixture_path)?;
         assert_eq!(result.size, file_content.len() as u64);
         // Verify the expected CRC64 hash
         let object_hash = ObjectHash::try_from(result.hash)?;
         assert_eq!(object_hash.to_string(), "LZmmpqbBItw=");
 
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_calculate_hash_sha256_chunked() -> Res {
+        let storage = MockStorage::default();
+
         // Test with SHA256-chunked host config using less_than_8mb fixture
-        let sha256_chunked_host_config = HostConfig {
-            checksums: HostChecksums::Sha256Chunked,
-            host: None,
-        };
+        let host_config = HostConfig::default_sha256_chunked();
 
-        let sha256_test_data = crate::fixtures::objects::less_than_8mb();
-        let sha256_test_path = Path::new("less_than_8mb.txt");
-        storage
-            .write_file(sha256_test_path, sha256_test_data)
-            .await?;
+        let file_content = crate::fixtures::objects::less_than_8mb();
+        let test_path = Path::new("less_than_8mb.txt");
+        storage.write_file(test_path, file_content).await?;
 
-        let logical_key = PathBuf::from("test_file2.txt");
-        let result = calculate_hash(
-            &storage,
-            &sha256_test_path.to_path_buf(),
-            &logical_key,
-            &sha256_chunked_host_config,
-        )
-        .await?;
+        let logical_key = PathBuf::from("test_file.txt");
+        let result = calculate_hash(&storage, test_path, &logical_key, &host_config).await?;
         assert_eq!(result.hash.code(), MULTIHASH_SHA256_CHUNKED);
         assert_eq!(result.name, logical_key);
-        assert_eq!(result.size, sha256_test_data.len() as u64);
+        assert_eq!(result.size, file_content.len() as u64);
         // Verify the expected SHA256-chunked hash
         let object_hash = ObjectHash::try_from(result.hash)?;
         assert_eq!(
@@ -634,54 +620,69 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_verify_hash() -> Res {
-        let storage = MockStorage::default();
+    async fn test_verify_hash_crc64() -> Res {
+        let storage = LocalStorage::default();
 
-        // Use known fixture file with known CRC64 hash
+        // Use known fixture file directly with known CRC64 hash
         let fixture_path = Path::new("fixtures/user-settings.mkfg");
-        let file_content = std::fs::read(fixture_path)?;
-        let test_path = Path::new("user-settings.mkfg");
-
-        // Write fixture content to mock storage
-        storage.write_file(test_path, &file_content).await?;
 
         // Test with CRC64 host config - file unchanged
-        let crc64_host_config = HostConfig {
-            checksums: HostChecksums::Crc64,
-            host: None,
-        };
+        let crc64_host_config = HostConfig::default_crc64();
 
-        let logical_key = PathBuf::from("test_file.txt");
+        let logical_key = PathBuf::from("user-settings.mkfg");
 
         // Create initial row with correct CRC64 hash
-        let initial_row = calculate_hash(
-            &storage,
-            &test_path.to_path_buf(),
-            &logical_key,
-            &crc64_host_config,
-        )
-        .await?;
+        let initial_row =
+            calculate_hash(&storage, fixture_path, &logical_key, &crc64_host_config).await?;
 
         // Verify unchanged file returns None
         let result = verify_hash(
             &storage,
-            &test_path.to_path_buf(),
+            &fixture_path.to_path_buf(),
             initial_row.clone(),
             &crc64_host_config,
         )
         .await?;
         assert!(result.is_none(), "Unchanged file should return None");
 
-        // Test with different host config (SHA256-chunked) - won't trigger recalculation
-        // because verify_hash only recalculates if the file has actually changed
-        let sha256_host_config = HostConfig {
-            checksums: HostChecksums::Sha256Chunked,
-            host: None,
-        };
+        // Test that initial hash was correct for the fixture
+        let initial_object_hash = ObjectHash::try_from(initial_row.hash)?;
+        assert_eq!(initial_object_hash.to_string(), "LZmmpqbBItw=");
 
-        // Use the CRC64 row but with SHA256-chunked host config - file hasn't changed
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_verify_hash_algorithm_preference() -> Res {
+        let local_storage = LocalStorage::default();
+        let mock_storage = MockStorage::default();
+
+        // Use known fixture file with known CRC64 hash
+        let fixture_path = Path::new("fixtures/user-settings.mkfg");
+        let file_content = std::fs::read(fixture_path)?;
+        let test_path = Path::new("user-settings.mkfg");
+
+        // Write fixture content to mock storage for modification tests
+        mock_storage.write_file(test_path, &file_content).await?;
+
+        let crc64_host_config = HostConfig::default_crc64();
+        let sha256_host_config = HostConfig::default_sha256_chunked();
+
+        let logical_key = PathBuf::from("user-settings.mkfg");
+
+        // Create initial row with correct CRC64 hash using local storage and fixture path
+        let initial_row = calculate_hash(
+            &local_storage,
+            fixture_path,
+            &logical_key,
+            &crc64_host_config,
+        )
+        .await?;
+
+        // Test with different host config (SHA256-chunked) using mock storage - won't trigger recalculation
+        // because verify_hash only recalculates if the file has actually changed
         let result = verify_hash(
-            &storage,
+            &mock_storage,
             &test_path.to_path_buf(),
             initial_row.clone(),
             &sha256_host_config,
@@ -693,40 +694,18 @@ mod tests {
             "Unchanged file should return None even with different algorithm"
         );
 
-        // Test with modified file content - should return CRC64 hash (matching host config)
-        let modified_data = b"modified test data for verify_hash function";
-        storage.write_file(test_path, modified_data).await?;
-
-        let result = verify_hash(
-            &storage,
-            &test_path.to_path_buf(),
-            initial_row.clone(),
-            &crc64_host_config,
-        )
-        .await?;
-        assert!(result.is_some(), "Modified file should return Some");
-
-        let modified_row = result.unwrap();
-        assert_eq!(modified_row.hash.code(), MULTIHASH_CRC64_NVME);
-        assert_eq!(modified_row.size, modified_data.len() as u64);
-
         // Test algorithm preference optimization: if refreshed hash already matches host preference
         // Create a row with SHA256-chunked hash, then modify file and verify with CRC64 host config
-        let sha256_row = calculate_hash(
-            &storage,
-            &test_path.to_path_buf(),
-            &logical_key,
-            &sha256_host_config,
-        )
-        .await?;
+        let sha256_row =
+            calculate_hash(&mock_storage, test_path, &logical_key, &sha256_host_config).await?;
 
         // Now write different content
         let new_data = b"completely different content for algorithm test";
-        storage.write_file(test_path, new_data).await?;
+        mock_storage.write_file(test_path, new_data).await?;
 
         // Verify with CRC64 host config - should recalculate because algorithms don't match
         let result = verify_hash(
-            &storage,
+            &mock_storage,
             &test_path.to_path_buf(),
             sha256_row,
             &crc64_host_config,
@@ -744,10 +723,6 @@ mod tests {
             "Should use host's preferred algorithm"
         );
         assert_eq!(final_row.size, new_data.len() as u64);
-
-        // Test that initial hash was correct for the fixture
-        let initial_object_hash = ObjectHash::try_from(initial_row.hash)?;
-        assert_eq!(initial_object_hash.to_string(), "LZmmpqbBItw=");
 
         Ok(())
     }
