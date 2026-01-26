@@ -614,25 +614,95 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_verify_hash_crc64() -> Res {
-        let storage = LocalStorage::default();
+        let storage = MockStorage::default();
+        let local_storage = LocalStorage::default();
 
-        let file_path = Path::new("fixtures/user-settings.mkfg");
+        // Create file with initial content
+        let test_path = Path::new("foo");
+        let initial_content = b"lorem ipsum";
+        storage.write_file(test_path, initial_content).await?;
+
         let crc64_host_config = HostConfig::default_crc64();
-        let logical_key = PathBuf::from("user-settings.mkfg");
+        let logical_key = PathBuf::from("bar");
 
-        let row = calculate_hash(&storage, file_path, &logical_key, &crc64_host_config).await?;
+        // Calculate hash for initial content
+        let row = calculate_hash(&storage, test_path, &logical_key, &crc64_host_config).await?;
 
-        let result = verify_hash(
-            &storage,
-            &file_path.to_path_buf(),
-            row.clone(),
-            &crc64_host_config,
-        )
-        .await?;
-        assert!(result.is_none(), "Unchanged file should return None");
+        assert!(
+            verify_hash(
+                &storage,
+                &test_path.to_path_buf(),
+                row.clone(),
+                &crc64_host_config,
+            )
+            .await?
+            .is_none(),
+            "Unchanged file should return None"
+        );
 
-        let initial_object_hash = ObjectHash::try_from(row.hash)?;
-        assert_eq!(initial_object_hash.to_string(), "LZmmpqbBItw=");
+        let fixture_path = Path::new("fixtures/user-settings.mkfg");
+        let fixture_content = local_storage.read_file(fixture_path).await?;
+        storage.write_file(test_path, &fixture_content).await?;
+
+        let result =
+            verify_hash(&storage, &test_path.to_path_buf(), row, &crc64_host_config).await?;
+        assert!(result.is_some(), "Modified file should return Some");
+
+        let modified_row = result.unwrap();
+        assert_eq!(modified_row.hash.code(), MULTIHASH_CRC64_NVME);
+        assert_eq!(modified_row.size, fixture_content.len() as u64);
+
+        assert_eq!(
+            ObjectHash::try_from(modified_row.hash)?.to_string(),
+            "LZmmpqbBItw="
+        );
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_verify_hash_sha256_chunked() -> Res {
+        let storage = MockStorage::default();
+
+        // Create file with initial content
+        let test_path = Path::new("foo");
+        let initial_content = b"lorem ipsum";
+        storage.write_file(test_path, initial_content).await?;
+
+        let sha256_host_config = HostConfig::default_sha256_chunked();
+        let logical_key = PathBuf::from("bar");
+
+        // Calculate hash for initial content
+        let row = calculate_hash(&storage, test_path, &logical_key, &sha256_host_config).await?;
+
+        assert!(
+            verify_hash(
+                &storage,
+                &test_path.to_path_buf(),
+                row.clone(),
+                &sha256_host_config,
+            )
+            .await?
+            .is_none(),
+            "Unchanged file should return None"
+        );
+
+        // Now rewrite file with less_than_8mb fixture content
+        let fixture_content = crate::fixtures::objects::less_than_8mb();
+        storage.write_file(test_path, fixture_content).await?;
+
+        let result =
+            verify_hash(&storage, &test_path.to_path_buf(), row, &sha256_host_config).await?;
+        assert!(result.is_some(), "Modified file should return Some");
+
+        let modified_row = result.unwrap();
+        assert_eq!(modified_row.hash.code(), MULTIHASH_SHA256_CHUNKED);
+        assert_eq!(modified_row.size, fixture_content.len() as u64);
+
+        assert_eq!(
+            ObjectHash::try_from(modified_row.hash)?.to_string(),
+            crate::fixtures::objects::LESS_THAN_8MB_HASH_B64
+        );
 
         Ok(())
     }
