@@ -437,17 +437,15 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_hash_trait_and_verify_functionality() -> Res {
+    async fn test_hash_trait_polymorphism() -> Res {
         let storage = MockStorage::default();
-        let test_data = b"test data for Hash trait and verify functionality";
+        let test_data = b"test data for Hash trait";
         let test_path = Path::new("hash_trait_test.txt");
-
-        // Write test data to mock storage
         storage.write_file(test_path, test_data).await?;
 
         // Test Hash trait implementation and consistent from_file signatures
         let file = storage.open_file(test_path).await?;
-        let sha256_hash = <Sha256Hash as Hash>::from_file(file).await?;
+        let sha256_hash: Sha256Hash = <Sha256Hash as Hash>::from_file(file).await?;
 
         let file = storage.open_file(test_path).await?;
         let sha256_chunked_hash = <Sha256ChunkedHash as Hash>::from_file(file).await?;
@@ -476,89 +474,73 @@ mod tests {
         );
         assert_eq!(check_hash_trait(&crc64_hash), MULTIHASH_CRC64_NVME);
 
-        // Test that refresh_hash works with all hash types
-        let sha256_multihash: Multihash<256> = sha256_hash.into();
-        let test_row = Row {
-            name: PathBuf::from("test.txt"),
-            hash: sha256_multihash,
-            size: test_data.len() as u64, // Correct size
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_refresh_hash_unchanged_file() -> Res {
+        let storage = MockStorage::default();
+        let file_content = b"anything";
+        let file_path = Path::new("foo");
+        storage.write_file(file_path, file_content).await?;
+
+        let file = storage.open_file(file_path).await?;
+        let hash = Sha256Hash::from_file(file).await?.into();
+
+        let row = Row {
+            name: PathBuf::from("bar"),
+            hash,
+            size: file_content.len() as u64,
             ..Row::default()
         };
-        let result = refresh_hash(&storage, &test_path.to_path_buf(), test_row).await?;
-        // Since hash and content match, should return None
+        let result = refresh_hash(&storage, &file_path.to_path_buf(), row).await?;
         assert!(result.is_none(), "Unchanged file should return None");
 
-        // Test with wrong hash to trigger refresh
-        let wrong_hash = multihash::Multihash::wrap(MULTIHASH_SHA256, b"wrong_hash_data").unwrap();
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_refresh_hash_changed_file() -> Res {
+        let storage = MockStorage::default();
+        let file_content = b"anything";
+        let file_path = Path::new("foo");
+        storage.write_file(file_path, file_content).await?;
+
+        // Calculate the actual hash first
+        let file = storage.open_file(file_path).await?;
+        let hash = Sha256Hash::from_file(file).await?.into();
+
+        // Test with wrong hash - should return updated Row
+        let wrong_hash = Multihash::wrap(MULTIHASH_SHA256, b"wrong_hash_data")?;
         let test_row = Row {
-            name: PathBuf::from("test.txt"),
+            name: PathBuf::from("bar"),
             hash: wrong_hash,
             size: 999, // Wrong size to test that refresh_hash updates it
             ..Row::default()
         };
-        let result = refresh_hash(&storage, &test_path.to_path_buf(), test_row).await?;
+        let result = refresh_hash(&storage, &file_path.to_path_buf(), test_row).await?;
         let refreshed_row = result.expect("Changed hash should return Some");
-        assert_eq!(refreshed_row.hash, sha256_multihash); // Should match actual file
-        assert_eq!(refreshed_row.size, test_data.len() as u64); // Should be updated
+        assert_eq!(refreshed_row.hash, hash);
+        assert_eq!(refreshed_row.size, file_content.len() as u64);
 
-        let sha256_chunked_multihash: Multihash<256> = sha256_chunked_hash.into();
-        let test_row = Row {
-            name: PathBuf::from("test.txt"),
-            hash: sha256_chunked_multihash,
-            size: test_data.len() as u64, // Correct size
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_refresh_hash_unknown_algorithm() -> Res {
+        let storage = MockStorage::default();
+        let file_content = b"anything";
+        let file_path = Path::new("foo");
+        storage.write_file(file_path, file_content).await?;
+
+        let hash = Multihash::wrap(0x9999, b"anything").unwrap();
+        let row = Row {
+            name: PathBuf::from("bar"),
+            hash,
+            size: file_content.len() as u64,
             ..Row::default()
         };
-        let result = refresh_hash(&storage, &test_path.to_path_buf(), test_row).await?;
-        // Since hash and content match, should return None
-        assert!(result.is_none(), "Unchanged file should return None");
-
-        // Test with wrong hash to trigger refresh
-        let wrong_chunked_hash =
-            multihash::Multihash::wrap(MULTIHASH_SHA256_CHUNKED, b"wrong_chunked_data").unwrap();
-        let test_row = Row {
-            name: PathBuf::from("test.txt"),
-            hash: wrong_chunked_hash,
-            size: 999, // Wrong size to test that refresh_hash updates it
-            ..Row::default()
-        };
-        let result = refresh_hash(&storage, &test_path.to_path_buf(), test_row).await?;
-        let refreshed_row = result.expect("Changed hash should return Some");
-        assert_eq!(refreshed_row.hash, sha256_chunked_multihash); // Should match actual file
-        assert_eq!(refreshed_row.size, test_data.len() as u64); // Should be updated
-
-        let crc64_multihash: Multihash<256> = crc64_hash.into();
-        let test_row = Row {
-            name: PathBuf::from("test.txt"),
-            hash: crc64_multihash,
-            size: test_data.len() as u64, // Correct size
-            ..Row::default()
-        };
-        let result = refresh_hash(&storage, &test_path.to_path_buf(), test_row).await?;
-        // Since hash and content match, should return None
-        assert!(result.is_none(), "Unchanged file should return None");
-
-        // Test with wrong hash to trigger refresh
-        let wrong_crc64_hash =
-            multihash::Multihash::wrap(MULTIHASH_CRC64_NVME, b"wrong_crc64_data").unwrap();
-        let test_row = Row {
-            name: PathBuf::from("test.txt"),
-            hash: wrong_crc64_hash,
-            size: 999, // Wrong size to test that refresh_hash updates it
-            ..Row::default()
-        };
-        let result = refresh_hash(&storage, &test_path.to_path_buf(), test_row).await?;
-        let refreshed_row = result.expect("Changed hash should return Some");
-        assert_eq!(refreshed_row.hash, crc64_multihash); // Should match actual file
-        assert_eq!(refreshed_row.size, test_data.len() as u64); // Should be updated
-
-        let unknown_hash = multihash::Multihash::wrap(0x9999, b"test_hash_data").unwrap();
-        let test_row = Row {
-            name: PathBuf::from("test.txt"),
-            hash: unknown_hash,
-            size: test_data.len() as u64,
-            ..Row::default()
-        };
-        let result = refresh_hash(&storage, &test_path.to_path_buf(), test_row).await;
+        let result = refresh_hash(&storage, &file_path.to_path_buf(), row).await;
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
