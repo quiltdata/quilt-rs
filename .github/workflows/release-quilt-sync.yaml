@@ -90,5 +90,5 @@ jobs:
           path: |
             quilt-sync/src-tauri/target/release/bundle/*/*
             quilt-sync/src-tauri/target/release/quilt-sync*
-          retention-days: 90
+          retention-days: 7
           if-no-files-found: warn
