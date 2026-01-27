@@ -83,12 +83,26 @@ jobs:
           updaterJsonKeepUniversal: true
           updaterJsonPreferNsis: false
 
+      - name: Debug - List created files
+        run: |
+          echo "=== Searching for created files in quilt-sync/src-tauri/target ==="
+          find quilt-sync/src-tauri/target -name "*.deb" -o -name "*.AppImage" -o -name "*.dmg" -o -name "*.exe" -o -name "*.msi" 2>/dev/null || true
+
+          echo "=== Searching for created files in root target ==="
+          find target -name "*.deb" -o -name "*.AppImage" -o -name "*.dmg" -o -name "*.exe" -o -name "*.msi" 2>/dev/null || true
+
+          echo "=== Searching everywhere ==="
+          find . -name "*.deb" -o -name "*.AppImage" -o -name "*.dmg" -o -name "*.exe" -o -name "*.msi" 2>/dev/null || true
+
       - name: Upload artifacts as cache for automation
         uses: actions/upload-artifact@v4
         with:
           name: quilt-sync-${{ matrix.platform }}
           path: |
-            quilt-sync/src-tauri/target/release/bundle/*/*
-            quilt-sync/src-tauri/target/release/quilt-sync*
+            **/*.deb
+            **/*.AppImage
+            **/*.dmg
+            **/*.exe
+            **/*.msi
           retention-days: 7
           if-no-files-found: warn
