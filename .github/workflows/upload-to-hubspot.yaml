@@ -168,16 +168,16 @@ jobs:
   #         fi
   #
   #         echo "🎉 All artifacts uploaded successfully to HubSpot folder: ${{ inputs.hubspot_folder }}"
+  # 
+  # cleanup:
+  #   name: Cleanup Artifacts
+  #   needs: upload-to-hubspot
+  #   runs-on: ubuntu-24.04
+  #   if: always()
 
-  cleanup:
-    name: Cleanup Artifacts
-    needs: upload-to-hubspot
-    runs-on: ubuntu-24.04
-    if: always()
-
-    steps:
-      - name: Delete temporary artifacts
-        uses: geekyeggo/delete-artifact@v5
-        with:
-          name: release-artifacts
-          failOnError: false
+  #   steps:
+  #     - name: Delete temporary artifacts
+  #       uses: geekyeggo/delete-artifact@v5
+  #       with:
+  #         name: release-artifacts
+  #         failOnError: false
