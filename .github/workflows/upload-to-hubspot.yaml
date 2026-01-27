@@ -1,0 +1,183 @@
+name: Upload QuiltSync Artifacts to HubSpot
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "GitHub workflow run ID to download artifacts from (leave empty for latest successful release)"
+        type: string
+        required: false
+      hubspot_folder:
+        description: "HubSpot folder path to upload artifacts to"
+        type: string
+        required: true
+        default: "/releases"
+
+env:
+  HUBSPOT_API_BASE: "https://api.hubapi.com"
+
+jobs:
+  collect-artifacts:
+    name: Download Workflow Artifacts
+    runs-on: ubuntu-24.04
+    outputs:
+      artifacts-path: ${{ steps.artifacts.outputs.path }}
+
+    steps:
+      - name: Create artifacts directory
+        run: mkdir -p ./artifacts
+
+      - name: Find latest release run ID (if not provided)
+        if: inputs.run_id == ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Finding latest successful QuiltSync release run..."
+
+          # Get latest successful workflow run for Release QuiltSync
+          latest_run=$(gh api repos/${{ github.repository }}/actions/workflows/release-quilt-sync.yaml/runs \
+            --jq '.workflow_runs[] | select(.conclusion == "success") | .id' | head -1)
+
+          if [ -z "$latest_run" ]; then
+            echo "❌ No successful release runs found"
+            exit 1
+          fi
+
+          echo "Found latest successful release run ID: $latest_run"
+          echo "DETECTED_RUN_ID=$latest_run" >> $GITHUB_ENV
+
+      - name: Set final run ID
+        run: |
+          if [ -n "${{ inputs.run_id }}" ]; then
+            echo "Using provided run ID: ${{ inputs.run_id }}"
+            echo "FINAL_RUN_ID=${{ inputs.run_id }}" >> $GITHUB_ENV
+          else
+            echo "Using detected run ID: $DETECTED_RUN_ID"
+            echo "FINAL_RUN_ID=$DETECTED_RUN_ID" >> $GITHUB_ENV
+          fi
+
+      - name: Download workflow artifacts for all platforms
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.FINAL_RUN_ID }}
+          path: ./artifacts
+
+      - name: Flatten artifacts directory structure
+        run: |
+          echo "Flattening nested artifact directories..."
+          # Move all files from subdirectories to artifacts root
+          find ./artifacts -type f -mindepth 2 -exec mv {} ./artifacts/ \;
+          # Remove empty directories
+          find ./artifacts -type d -empty -delete
+
+          echo "Artifacts after flattening:"
+          ls -la ./artifacts/
+
+      - name: List collected artifacts
+        id: artifacts
+        run: |
+          echo "Collected artifacts:"
+          ls -la ./artifacts/
+          echo "path=$(pwd)/artifacts" >> $GITHUB_OUTPUT
+
+      - name: Upload artifacts for next job
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: ./artifacts/
+          retention-days: 1
+
+  # upload-to-hubspot:
+  #   name: Upload Artifacts to HubSpot
+  #   needs: collect-artifacts
+  #   runs-on: ubuntu-24.04
+  #
+  #   steps:
+  #     - name: Download artifacts
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: release-artifacts
+  #         path: ./artifacts
+
+  #     - name: List artifacts to upload
+  #       run: |
+  #         echo "Artifacts to upload:"
+  #         ls -la ./artifacts/
+
+  #     - name: Upload artifacts to HubSpot
+  #       env:
+  #         HUBSPOT_TOKEN: ${{ secrets.HUBSPOT_API_TOKEN }}
+  #       run: |
+  #         if [ -z "$HUBSPOT_TOKEN" ]; then
+  #           echo "Error: HUBSPOT_API_TOKEN secret is not set"
+  #           exit 1
+  #         fi
+  #
+  #         # Function to upload a single file
+  #         upload_file() {
+  #           local file_path="$1"
+  #           local file_name=$(basename "$file_path")
+  #
+  #           echo "Uploading: $file_name"
+  #
+  #           response=$(curl -s -w "\n%{http_code}" \
+  #             -X POST \
+  #             -H "Authorization: Bearer $HUBSPOT_TOKEN" \
+  #             -F "file=@$file_path" \
+  #             -F "fileName=$file_name" \
+  #             -F "folderPath=${{ inputs.hubspot_folder }}" \
+  #             -F "options={\"access\":\"PUBLIC_INDEXABLE\",\"ttl\":null,\"overwrite\":false}" \
+  #             "$HUBSPOT_API_BASE/files/v3/files")
+  #
+  #           http_code=$(echo "$response" | tail -n1)
+  #           body=$(echo "$response" | head -n -1)
+  #
+  #           if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
+  #             echo "✅ Successfully uploaded: $file_name"
+  #             echo "$body" | jq -r '.url // "No URL returned"'
+  #           else
+  #             echo "❌ Failed to upload: $file_name (HTTP $http_code)"
+  #             echo "$body"
+  #             return 1
+  #           fi
+  #         }
+  #
+  #         # Upload all files in artifacts directory
+  #         upload_count=0
+  #         failed_count=0
+  #
+  #         for file in ./artifacts/*; do
+  #           if [ -f "$file" ]; then
+  #             if upload_file "$file"; then
+  #               ((upload_count++))
+  #             else
+  #               ((failed_count++))
+  #             fi
+  #           fi
+  #         done
+  #
+  #         echo "📊 Upload Summary:"
+  #         echo "  ✅ Successful uploads: $upload_count"
+  #         echo "  ❌ Failed uploads: $failed_count"
+  #
+  #         if [ $failed_count -gt 0 ]; then
+  #           echo "Some uploads failed. Check the logs above."
+  #           exit 1
+  #         fi
+  #
+  #         echo "🎉 All artifacts uploaded successfully to HubSpot folder: ${{ inputs.hubspot_folder }}"
+
+  cleanup:
+    name: Cleanup Artifacts
+    needs: upload-to-hubspot
+    runs-on: ubuntu-24.04
+    if: always()
+
+    steps:
+      - name: Delete temporary artifacts
+        uses: geekyeggo/delete-artifact@v5
+        with:
+          name: release-artifacts
+          failOnError: false
