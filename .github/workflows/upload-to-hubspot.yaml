@@ -1,24 +1,21 @@
 name: Upload QuiltSync Assets to HubSpot
 
 on:
-  push:
-  # workflow_dispatch:
-  #   inputs:
-  #     release_tag:
-  #       description: "Release tag to download assets from (e.g., quilt-sync-v1.2.3)"
-  #       type: string
-  #       required: true
-  #     hubspot_folder:
-  #       description: "HubSpot folder path to upload artifacts to"
-  #       type: string
-  #       required: true
-  #       default: "/releases"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to download assets from (e.g., QuiltSync/v1.2.3)"
+        type: string
+        required: true
+      hubspot_folder:
+        description: "HubSpot folder path to upload artifacts to"
+        type: string
+        required: true
+        default: "/quiltsync/QuiltSync/v0.12.0"
 
 env:
   HUBSPOT_API_BASE: "https://api.hubapi.com"
   HUBFS_ROOT_URL: "https://www.quilt.bio/hubfs"
-  HUBFS_BASE_PATH: "/quiltsync/QuiltSync/v0.12.0"
-  RELEASE_TAG: "QuiltSync/v0.12.0"
 
 jobs:
   upload-to-hubspot:
@@ -33,9 +30,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Downloading all assets from release: ${RELEASE_TAG}"
+          echo "Downloading all assets from release: ${{ inputs.release_tag }}"
 
-          gh release download "${RELEASE_TAG}" \
+          gh release download "${{ inputs.release_tag }}" \
             --dir ./release-assets \
             --repo ${{ github.repository }}
 
@@ -92,8 +89,8 @@ jobs:
             exit 1
           fi
 
-          # Use hardcoded values from env
-          hubfs_base_path="${HUBFS_BASE_PATH}"
+          # Use input parameter for hubspot folder
+          hubfs_base_path="${{ inputs.hubspot_folder }}"
 
           # Function to upload a single file (matching colleague's script)
           upload_file() {
