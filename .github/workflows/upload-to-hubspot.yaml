@@ -83,69 +83,83 @@ jobs:
             echo "No latest.json found in downloaded assets"
           fi
 
-      # - name: Upload assets to HubSpot
-      #   env:
-      #     HUBSPOT_TOKEN: ${{ secrets.HUBSPOT_ACCESS_TOKEN }}
-      #   run: |
-      #     if [ -z "$HUBSPOT_TOKEN" ]; then
-      #       echo "Error: HUBSPOT_ACCESS_TOKEN secret is not set"
-      #       exit 1
-      #     fi
+      - name: Upload assets to HubSpot
+        env:
+          HUBSPOT_TOKEN: ${{ secrets.HUBSPOT_ACCESS_TOKEN }}
+        run: |
+          if [ -z "$HUBSPOT_TOKEN" ]; then
+            echo "Error: HUBSPOT_ACCESS_TOKEN secret is not set"
+            exit 1
+          fi
 
-      #     # Use hardcoded values from env
-      #     hubfs_base_path="${HUBFS_BASE_PATH}"
+          # Use hardcoded values from env
+          hubfs_base_path="${HUBFS_BASE_PATH}"
 
-      #     # Function to upload a single file (matching colleague's script)
-      #     upload_file() {
-      #       local file_path="$1"
-      #       local file_name=$(basename "$file_path")
-      #       local target_path="${hubfs_base_path}/${file_name}"
-      #       local folder_path=$(dirname "$target_path" | sed 's|\\|/|g')
+          # Function to upload a single file (matching colleague's script)
+          upload_file() {
+            local file_path="$1"
+            local file_name=$(basename "$file_path")
+            local target_path="${hubfs_base_path}/${file_name}"
+            local folder_path=$(dirname "$target_path" | sed 's|\\|/|g')
 
-      #       echo "Uploading: $file_name to $target_path"
+            echo "Would upload: $file_name to $target_path"
+            echo "Folder path: $folder_path"
+            echo ""
+            echo "Would execute curl command:"
+            echo "curl -s -w \"\\n%{http_code}\" \\"
+            echo "  -X POST \\"
+            echo "  -H \"Authorization: Bearer [HUBSPOT_TOKEN]\" \\"
+            echo "  -F \"file=@$file_path\" \\"
+            echo "  -F \"folderPath=$folder_path\" \\"
+            echo "  -F \"options={\\\"access\\\":\\\"PUBLIC_NOT_INDEXABLE\\\"}\" \\"
+            echo "  \"$HUBSPOT_API_BASE/filemanager/api/v3/files/upload?overwrite=true\""
+            echo ""
+            
+            # Simulate successful upload for testing
+            echo "✅ [DRY RUN] Would upload: $file_name"
 
-      #       response=$(curl -s -w "\n%{http_code}" \
-      #         -X POST \
-      #         -H "Authorization: Bearer $HUBSPOT_TOKEN" \
-      #         -F "file=@$file_path" \
-      #         -F "folderPath=$folder_path" \
-      #         -F "options={\"access\":\"PUBLIC_NOT_INDEXABLE\"}" \
-      #         "$HUBSPOT_API_BASE/filemanager/api/v3/files/upload?overwrite=true")
+            # response=$(curl -s -w "\n%{http_code}" \
+            #   -X POST \
+            #   -H "Authorization: Bearer $HUBSPOT_TOKEN" \
+            #   -F "file=@$file_path" \
+            #   -F "folderPath=$folder_path" \
+            #   -F "options={\"access\":\"PUBLIC_NOT_INDEXABLE\"}" \
+            #   "$HUBSPOT_API_BASE/filemanager/api/v3/files/upload?overwrite=true")
 
-      #       http_code=$(echo "$response" | tail -n1)
-      #       body=$(echo "$response" | head -n -1)
+            # http_code=$(echo "$response" | tail -n1)
+            # body=$(echo "$response" | head -n -1)
 
-      #       if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
-      #         echo "✅ Successfully uploaded: $file_name"
-      #         echo "$body" | jq -r '.url // "No URL returned"'
-      #       else
-      #         echo "❌ Failed to upload: $file_name (HTTP $http_code)"
-      #         echo "$body"
-      #         return 1
-      #       fi
-      #     }
+            # if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
+            #   echo "✅ Successfully uploaded: $file_name"
+            #   echo "$body" | jq -r '.url // "No URL returned"'
+            # else
+            #   echo "❌ Failed to upload: $file_name (HTTP $http_code)"
+            #   echo "$body"
+            #   return 1
+            # fi
+          }
 
-      #     # Upload all files in release-assets directory
-      #     upload_count=0
-      #     failed_count=0
+          # Upload all files in release-assets directory
+          upload_count=0
+          failed_count=0
 
-      #     for file in ./release-assets/*; do
-      #       if [ -f "$file" ]; then
-      #         if upload_file "$file"; then
-      #           ((upload_count++))
-      #         else
-      #           ((failed_count++))
-      #         fi
-      #       fi
-      #     done
+          for file in ./release-assets/*; do
+            if [ -f "$file" ]; then
+              if upload_file "$file"; then
+                ((upload_count++))
+              else
+                ((failed_count++))
+              fi
+            fi
+          done
 
-      #     echo "📊 Upload Summary:"
-      #     echo "  ✅ Successful uploads: $upload_count"
-      #     echo "  ❌ Failed uploads: $failed_count"
+          echo "📊 Upload Summary:"
+          echo "  ✅ Successful uploads: $upload_count"
+          echo "  ❌ Failed uploads: $failed_count"
 
-      #     if [ $failed_count -gt 0 ]; then
-      #       echo "Some uploads failed. Check the logs above."
-      #       exit 1
-      #     fi
+          if [ $failed_count -gt 0 ]; then
+            echo "Some uploads failed. Check the logs above."
+            exit 1
+          fi
 
-      #     echo "🎉 All assets uploaded successfully to HubSpot folder: ${{ inputs.hubspot_folder }}"
+          echo "🎉 [DRY RUN] All assets would be uploaded successfully to HubSpot"
