@@ -140,11 +140,11 @@ jobs:
               echo "Processing file: $file"
               if upload_file "$file"; then
                 echo "Upload succeeded for: $(basename "$file")"
-                ((upload_count++))
+                upload_count=$((upload_count + 1))
                 echo "Upload count now: $upload_count"
               else
                 echo "Upload failed for: $(basename "$file")"
-                ((failed_count++))
+                failed_count=$((failed_count + 1))
                 echo "Failed count now: $failed_count"
               fi
             else
