@@ -40,6 +40,38 @@ jobs:
           echo "Downloaded assets:"
           ls -la ./release-assets/
 
+      - name: Modify latest.json URLs
+        run: |
+          release_tag="QuiltSync/v0.12.0"
+          hubspot_folder="/hubfs/quiltsync/QuiltSync/v0.12.0/"
+          
+          if [ -f "./release-assets/latest.json" ]; then
+            echo "Found latest.json, modifying URLs..."
+            
+            # Show original file
+            echo "=== Original latest.json ==="
+            cat ./release-assets/latest.json
+            
+            # Modify URLs using jq - extract filename from existing URL and replace with HubSpot URL
+            jq --arg base_url "https://www.quilt.bio$hubspot_folder" '
+              walk(
+                if type == "object" and has("url") then
+                  .url |= (. as $orig | ($orig | split("/")[-1]) as $filename | $base_url + $filename)
+                else
+                  .
+                end
+              )
+            ' ./release-assets/latest.json > ./release-assets/latest.json.tmp
+            
+            mv ./release-assets/latest.json.tmp ./release-assets/latest.json
+            
+            echo ""
+            echo "=== Modified latest.json ==="
+            cat ./release-assets/latest.json
+          else
+            echo "No latest.json found in downloaded assets"
+          fi
+
       # - name: Upload assets to HubSpot
       #   env:
       #     HUBSPOT_TOKEN: ${{ secrets.HUBSPOT_API_TOKEN }}
