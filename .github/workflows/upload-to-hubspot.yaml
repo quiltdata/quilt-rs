@@ -117,7 +117,18 @@ jobs:
 
             if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
               echo "✅ Successfully uploaded: $file_name"
-              echo "$body" | jq -r '.url // "No URL returned"'
+
+              # Debug: Show the full response to understand structure
+              echo "API Response:"
+              echo "$body" | jq '.' 2>/dev/null || echo "$body"
+
+              # Try different possible URL fields
+              url=$(echo "$body" | jq -r '.url // .publicUrl // .downloadUrl // empty' 2>/dev/null)
+              if [ -n "$url" ] && [ "$url" != "null" ]; then
+                echo "📄 File URL: $url"
+              else
+                echo "📄 No URL found in response, but upload succeeded"
+              fi
             else
               echo "❌ Failed to upload: $file_name (HTTP $http_code)"
               echo "$body"
