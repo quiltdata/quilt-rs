@@ -99,7 +99,14 @@ jobs:
           upload_file() {
             local file_path="$1"
             local file_name=$(basename "$file_path")
-            local target_path="${hubfs_base_path}/${file_name}"
+
+            # Special handling for latest.json - upload to root
+            if [ "$file_name" = "latest.json" ]; then
+              local target_path="/latest.json"
+            else
+              local target_path="${hubfs_base_path}/${file_name}"
+            fi
+
             local folder_path=$(dirname "$target_path" | sed 's|\\|/|g')
 
             echo "Uploading: $file_name to $target_path"
