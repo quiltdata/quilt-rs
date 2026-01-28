@@ -102,41 +102,27 @@ jobs:
             local target_path="${hubfs_base_path}/${file_name}"
             local folder_path=$(dirname "$target_path" | sed 's|\\|/|g')
 
-            echo "Would upload: $file_name to $target_path"
-            echo "Folder path: $folder_path"
-            echo ""
-            echo "Would execute curl command:"
-            echo "curl -s -w \"\\n%{http_code}\" \\"
-            echo "  -X POST \\"
-            echo "  -H \"Authorization: Bearer [HUBSPOT_TOKEN]\" \\"
-            echo "  -F \"file=@$file_path\" \\"
-            echo "  -F \"folderPath=$folder_path\" \\"
-            echo "  -F \"options={\\\"access\\\":\\\"PUBLIC_NOT_INDEXABLE\\\"}\" \\"
-            echo "  \"$HUBSPOT_API_BASE/filemanager/api/v3/files/upload?overwrite=true\""
-            echo ""
-            
-            # Simulate successful upload for testing
-            echo "✅ [DRY RUN] Would upload: $file_name"
+            echo "Uploading: $file_name to $target_path"
 
-            # response=$(curl -s -w "\n%{http_code}" \
-            #   -X POST \
-            #   -H "Authorization: Bearer $HUBSPOT_TOKEN" \
-            #   -F "file=@$file_path" \
-            #   -F "folderPath=$folder_path" \
-            #   -F "options={\"access\":\"PUBLIC_NOT_INDEXABLE\"}" \
-            #   "$HUBSPOT_API_BASE/filemanager/api/v3/files/upload?overwrite=true")
+            response=$(curl -s -w "\n%{http_code}" \
+              -X POST \
+              -H "Authorization: Bearer $HUBSPOT_TOKEN" \
+              -F "file=@$file_path" \
+              -F "folderPath=$folder_path" \
+              -F "options={\"access\":\"PUBLIC_NOT_INDEXABLE\"}" \
+              "$HUBSPOT_API_BASE/filemanager/api/v3/files/upload?overwrite=true")
 
-            # http_code=$(echo "$response" | tail -n1)
-            # body=$(echo "$response" | head -n -1)
+            http_code=$(echo "$response" | tail -n1)
+            body=$(echo "$response" | head -n -1)
 
-            # if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
-            #   echo "✅ Successfully uploaded: $file_name"
-            #   echo "$body" | jq -r '.url // "No URL returned"'
-            # else
-            #   echo "❌ Failed to upload: $file_name (HTTP $http_code)"
-            #   echo "$body"
-            #   return 1
-            # fi
+            if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
+              echo "✅ Successfully uploaded: $file_name"
+              echo "$body" | jq -r '.url // "No URL returned"'
+            else
+              echo "❌ Failed to upload: $file_name (HTTP $http_code)"
+              echo "$body"
+              return 1
+            fi
           }
 
           # Upload all files in release-assets directory
@@ -162,4 +148,4 @@ jobs:
             exit 1
           fi
 
-          echo "🎉 [DRY RUN] All assets would be uploaded successfully to HubSpot"
+          echo "🎉 All assets uploaded successfully to HubSpot"
