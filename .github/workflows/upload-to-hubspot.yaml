@@ -1,12 +1,12 @@
-name: Upload QuiltSync Artifacts to HubSpot
+name: Upload QuiltSync Assets to HubSpot
 
 on:
   workflow_dispatch:
     inputs:
-      run_id:
-        description: "GitHub workflow run ID to download artifacts from (leave empty for latest successful release)"
+      release_tag:
+        description: "Release tag to download assets from (e.g., quilt-sync-v1.2.3)"
         type: string
-        required: false
+        required: true
       hubspot_folder:
         description: "HubSpot folder path to upload artifacts to"
         type: string
@@ -17,96 +17,28 @@ env:
   HUBSPOT_API_BASE: "https://api.hubapi.com"
 
 jobs:
-  collect-artifacts:
-    name: Download Workflow Artifacts
+  upload-to-hubspot:
+    name: Download and Upload to HubSpot
     runs-on: ubuntu-24.04
-    outputs:
-      artifacts-path: ${{ steps.artifacts.outputs.path }}
 
     steps:
-      - name: Create artifacts directory
-        run: mkdir -p ./artifacts
+      - name: Create assets directory
+        run: mkdir -p ./release-assets
 
-      - name: Find latest release run ID (if not provided)
-        if: inputs.run_id == ''
+      - name: Download release assets
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Finding latest successful QuiltSync release run..."
+          echo "Downloading all assets from release: ${{ inputs.release_tag }}"
 
-          # Get latest successful workflow run for Release QuiltSync
-          latest_run=$(gh api repos/${{ github.repository }}/actions/workflows/release-quilt-sync.yaml/runs \
-            --jq '.workflow_runs[] | select(.conclusion == "success") | .id' | head -1)
+          gh release download "${{ inputs.release_tag }}" \
+            --dir ./release-assets \
+            --repo ${{ github.repository }}
 
-          if [ -z "$latest_run" ]; then
-            echo "❌ No successful release runs found"
-            exit 1
-          fi
+          echo "Downloaded assets:"
+          ls -la ./release-assets/
 
-          echo "Found latest successful release run ID: $latest_run"
-          echo "DETECTED_RUN_ID=$latest_run" >> $GITHUB_ENV
-
-      - name: Set final run ID
-        run: |
-          if [ -n "${{ inputs.run_id }}" ]; then
-            echo "Using provided run ID: ${{ inputs.run_id }}"
-            echo "FINAL_RUN_ID=${{ inputs.run_id }}" >> $GITHUB_ENV
-          else
-            echo "Using detected run ID: $DETECTED_RUN_ID"
-            echo "FINAL_RUN_ID=$DETECTED_RUN_ID" >> $GITHUB_ENV
-          fi
-
-      - name: Download workflow artifacts for all platforms
-        uses: actions/download-artifact@v4
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ github.repository }}
-          run-id: ${{ env.FINAL_RUN_ID }}
-          path: ./artifacts
-
-      - name: Flatten artifacts directory structure
-        run: |
-          echo "Flattening nested artifact directories..."
-          # Move all files from subdirectories to artifacts root
-          find ./artifacts -type f -mindepth 2 -exec mv {} ./artifacts/ \;
-          # Remove empty directories
-          find ./artifacts -type d -empty -delete
-
-          echo "Artifacts after flattening:"
-          ls -la ./artifacts/
-
-      - name: List collected artifacts
-        id: artifacts
-        run: |
-          echo "Collected artifacts:"
-          ls -la ./artifacts/
-          echo "path=$(pwd)/artifacts" >> $GITHUB_OUTPUT
-
-      - name: Upload artifacts for next job
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-artifacts
-          path: ./artifacts/
-          retention-days: 1
-
-  upload-to-hubspot:
-    name: Upload Artifacts to HubSpot
-    needs: collect-artifacts
-    runs-on: ubuntu-24.04
-
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: release-artifacts
-          path: ./artifacts
-
-      - name: List artifacts to upload
-        run: |
-          echo "Artifacts to upload:"
-          ls -la ./artifacts/
-
-      # - name: Upload artifacts to HubSpot
+      # - name: Upload assets to HubSpot
       #   env:
       #     HUBSPOT_TOKEN: ${{ secrets.HUBSPOT_API_TOKEN }}
       #   run: |
@@ -144,11 +76,11 @@ jobs:
       #       fi
       #     }
 
-      #     # Upload all files in artifacts directory
+      #     # Upload all files in release-assets directory
       #     upload_count=0
       #     failed_count=0
 
-      #     for file in ./artifacts/*; do
+      #     for file in ./release-assets/*; do
       #       if [ -f "$file" ]; then
       #         if upload_file "$file"; then
       #           ((upload_count++))
@@ -167,4 +99,4 @@ jobs:
       #       exit 1
       #     fi
 
-      #     echo "🎉 All artifacts uploaded successfully to HubSpot folder: ${{ inputs.hubspot_folder }}"
+      #     echo "🎉 All assets uploaded successfully to HubSpot folder: ${{ inputs.hubspot_folder }}"
