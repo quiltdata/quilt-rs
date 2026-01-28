@@ -1,17 +1,18 @@
 name: Upload QuiltSync Assets to HubSpot
 
 on:
-  workflow_dispatch:
-    inputs:
-      release_tag:
-        description: "Release tag to download assets from (e.g., quilt-sync-v1.2.3)"
-        type: string
-        required: true
-      hubspot_folder:
-        description: "HubSpot folder path to upload artifacts to"
-        type: string
-        required: true
-        default: "/releases"
+  push:
+  # workflow_dispatch:
+  #   inputs:
+  #     release_tag:
+  #       description: "Release tag to download assets from (e.g., quilt-sync-v1.2.3)"
+  #       type: string
+  #       required: true
+  #     hubspot_folder:
+  #       description: "HubSpot folder path to upload artifacts to"
+  #       type: string
+  #       required: true
+  #       default: "/releases"
 
 env:
   HUBSPOT_API_BASE: "https://api.hubapi.com"
@@ -29,9 +30,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Downloading all assets from release: ${{ inputs.release_tag }}"
+          release_tag="QuiltSync/v0.12.0"
+          echo "Downloading all assets from release: $release_tag"
 
-          gh release download "${{ inputs.release_tag }}" \
+          gh release download "$release_tag" \
             --dir ./release-assets \
             --repo ${{ github.repository }}
 
