@@ -94,15 +94,3 @@ jobs:
           echo "=== Searching everywhere ==="
           find . -name "*.deb" -o -name "*.AppImage" -o -name "*.dmg" -o -name "*.exe" -o -name "*.msi" 2>/dev/null || true
 
-      - name: Upload artifacts as cache for automation
-        uses: actions/upload-artifact@v4
-        with:
-          name: quilt-sync-${{ matrix.platform }}
-          path: |
-            **/*.deb
-            **/*.AppImage
-            **/*.dmg
-            **/*.exe
-            **/*.msi
-          retention-days: 7
-          if-no-files-found: warn
