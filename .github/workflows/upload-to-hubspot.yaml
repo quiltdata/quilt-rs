@@ -1,0 +1,170 @@
+name: Upload QuiltSync Assets to HubSpot
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to download assets from (e.g., QuiltSync/v1.2.3)"
+        type: string
+        required: true
+      hubspot_folder:
+        description: "HubSpot base folder path (release_tag will be appended)"
+        type: string
+        required: true
+        default: "/quiltsync/"
+
+env:
+  HUBSPOT_API_BASE: "https://api.hubapi.com"
+  HUBFS_ROOT_URL: "https://www.quilt.bio/hubfs"
+
+jobs:
+  upload-to-hubspot:
+    name: Download and Upload to HubSpot
+    runs-on: ubuntu-24.04
+    env:
+      HUBFS_BASE_PATH: "${{ inputs.hubspot_folder }}${{ inputs.release_tag }}"
+
+    steps:
+      - name: Create assets directory
+        run: mkdir -p ./release-assets
+
+      - name: Download release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Downloading all assets from release: ${{ inputs.release_tag }}"
+
+          gh release download "${{ inputs.release_tag }}" \
+            --dir ./release-assets \
+            --repo ${{ github.repository }}
+
+          echo "Downloaded assets:"
+          ls -la ./release-assets/
+
+      - name: Modify latest.json URLs
+        run: |
+          echo "Using HUBFS_ROOT_URL: ${HUBFS_ROOT_URL}"
+          echo "Using HUBFS_BASE_PATH: ${HUBFS_BASE_PATH}"
+
+          if [ -f "./release-assets/latest.json" ]; then
+            echo "Found latest.json, modifying URLs..."
+
+            # Show original file
+            echo "=== Original latest.json ==="
+            cat ./release-assets/latest.json
+
+            # Modify URLs using jq - HUBFS_BASE_PATH includes full path to release folder
+            jq --arg hubfs_root_url "${HUBFS_ROOT_URL}" --arg hubfs_base_path "${HUBFS_BASE_PATH}" '
+              def replace_url(value):
+                if (value | type) == "string" then
+                  (value | split("/")[-1]) as $basename |
+                  "\($hubfs_root_url)\($hubfs_base_path)/\($basename)"
+                else
+                  value
+                end;
+
+              walk(
+                if type == "object" and has("url") then
+                  .url |= replace_url(.)
+                else
+                  .
+                end
+              )
+            ' ./release-assets/latest.json > ./release-assets/latest.json.tmp
+
+            mv ./release-assets/latest.json.tmp ./release-assets/latest.json
+
+            echo ""
+            echo "=== Modified latest.json ==="
+            cat ./release-assets/latest.json
+          else
+            echo "No latest.json found in downloaded assets"
+          fi
+
+      - name: Upload assets to HubSpot
+        env:
+          HUBSPOT_TOKEN: ${{ secrets.HUBSPOT_ACCESS_TOKEN }}
+        run: |
+          if [ -z "$HUBSPOT_TOKEN" ]; then
+            echo "Error: HUBSPOT_ACCESS_TOKEN secret is not set"
+            exit 1
+          fi
+
+
+          # Function to upload a single file (matching colleague's script)
+          upload_file() {
+            local file_path="$1"
+            local file_name=$(basename "$file_path")
+
+            # Special handling for latest.json - upload to root
+            if [ "$file_name" = "latest.json" ]; then
+              local target_path="/latest.json"
+            else
+              local target_path="${HUBFS_BASE_PATH}/${file_name}"
+            fi
+
+            local folder_path=$(dirname "$target_path" | sed 's|\\|/|g')
+
+            echo "Uploading: $file_name to $target_path"
+
+            response=$(curl -s -w "\n%{http_code}" \
+              -X POST \
+              -H "Authorization: Bearer $HUBSPOT_TOKEN" \
+              -F "file=@$file_path" \
+              -F "folderPath=$folder_path" \
+              -F "options={\"access\":\"PUBLIC_NOT_INDEXABLE\"}" \
+              "$HUBSPOT_API_BASE/filemanager/api/v3/files/upload?overwrite=true")
+
+            http_code=$(echo "$response" | tail -n1)
+            body=$(echo "$response" | head -n -1)
+
+            if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
+              echo "✅ Successfully uploaded: $file_name"
+              echo "📄 Expected URL: ${HUBFS_ROOT_URL}${target_path}"
+              return 0
+            else
+              echo "❌ Failed to upload: $file_name (HTTP $http_code)"
+              echo "$body"
+              return 1
+            fi
+          }
+
+          # Upload all files in release-assets directory
+          upload_count=0
+          failed_count=0
+
+          echo "Starting upload loop..."
+          echo "Files in directory:"
+          ls -la ./release-assets/
+
+          for file in ./release-assets/*; do
+            echo "Loop iteration - file: $file"
+            if [ -f "$file" ]; then
+              echo "Processing file: $file"
+              if upload_file "$file"; then
+                echo "Upload succeeded for: $(basename "$file")"
+                upload_count=$((upload_count + 1))
+                echo "Upload count now: $upload_count"
+              else
+                echo "Upload failed for: $(basename "$file")"
+                failed_count=$((failed_count + 1))
+                echo "Failed count now: $failed_count"
+              fi
+            else
+              echo "Skipping non-file: $file"
+            fi
+            echo "End of loop iteration"
+          done
+
+          echo "Loop completed!"
+
+          echo "📊 Upload Summary:"
+          echo "  ✅ Successful uploads: $upload_count"
+          echo "  ❌ Failed uploads: $failed_count"
+
+          if [ $failed_count -gt 0 ]; then
+            echo "Some uploads failed. Check the logs above."
+            exit 1
+          fi
+
+          echo "🎉 All assets uploaded successfully to HubSpot"
