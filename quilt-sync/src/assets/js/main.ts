@@ -460,7 +460,11 @@ window.addEventListener(EVENT_PAGE_READY, () => {
   );
 
   listen(SELECTOR_PACKAGE_PULL, ["namespace"], (data) =>
-    execPageCommand(CMD_PACKAGE_PULL, data, ROUTE_INSTALLED_PACKAGE(data.namespace)),
+    execPageCommand(
+      CMD_PACKAGE_PULL,
+      data,
+      ROUTE_INSTALLED_PACKAGE(data.namespace),
+    ),
   );
 
   listen(SELECTOR_PACKAGE_PUSH, ["namespace"], (data) =>
