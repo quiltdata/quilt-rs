@@ -130,20 +130,30 @@ jobs:
           upload_count=0
           failed_count=0
 
+          echo "Starting upload loop..."
+          echo "Files in directory:"
+          ls -la ./release-assets/
+
           for file in ./release-assets/*; do
+            echo "Loop iteration - file: $file"
             if [ -f "$file" ]; then
               echo "Processing file: $file"
               if upload_file "$file"; then
                 echo "Upload succeeded for: $(basename "$file")"
                 ((upload_count++))
+                echo "Upload count now: $upload_count"
               else
                 echo "Upload failed for: $(basename "$file")"
                 ((failed_count++))
+                echo "Failed count now: $failed_count"
               fi
             else
               echo "Skipping non-file: $file"
             fi
+            echo "End of loop iteration"
           done
+
+          echo "Loop completed!"
 
           echo "📊 Upload Summary:"
           echo "  ✅ Successful uploads: $upload_count"
