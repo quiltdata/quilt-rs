@@ -8,10 +8,10 @@ on:
         type: string
         required: true
       hubspot_folder:
-        description: "HubSpot folder path to upload artifacts to"
+        description: "HubSpot base folder path (release_tag will be appended)"
         type: string
         required: true
-        default: "/quiltsync/QuiltSync/v0.12.0"
+        default: "/quiltsync/"
 
 env:
   HUBSPOT_API_BASE: "https://api.hubapi.com"
@@ -21,6 +21,8 @@ jobs:
   upload-to-hubspot:
     name: Download and Upload to HubSpot
     runs-on: ubuntu-24.04
+    env:
+      HUBFS_BASE_PATH: "${{ inputs.hubspot_folder }}${{ inputs.release_tag }}"
 
     steps:
       - name: Create assets directory
@@ -41,9 +43,8 @@ jobs:
 
       - name: Modify latest.json URLs
         run: |
-          # Use hardcoded values from env for simplicity
           echo "Using HUBFS_ROOT_URL: ${HUBFS_ROOT_URL}"
-          echo "Using hubspot_folder: ${{ inputs.hubspot_folder }}"
+          echo "Using HUBFS_BASE_PATH: ${HUBFS_BASE_PATH}"
 
           if [ -f "./release-assets/latest.json" ]; then
             echo "Found latest.json, modifying URLs..."
@@ -53,7 +54,7 @@ jobs:
             cat ./release-assets/latest.json
 
             # Modify URLs using jq - HUBFS_BASE_PATH includes full path to release folder
-            jq --arg hubfs_root_url "${HUBFS_ROOT_URL}" --arg hubfs_base_path "${{ inputs.hubspot_folder }}" '
+            jq --arg hubfs_root_url "${HUBFS_ROOT_URL}" --arg hubfs_base_path "${HUBFS_BASE_PATH}" '
               def replace_url(value):
                 if (value | type) == "string" then
                   (value | split("/")[-1]) as $basename |
@@ -89,8 +90,6 @@ jobs:
             exit 1
           fi
 
-          # Use input parameter for hubspot folder
-          hubfs_base_path="${{ inputs.hubspot_folder }}"
 
           # Function to upload a single file (matching colleague's script)
           upload_file() {
@@ -101,7 +100,7 @@ jobs:
             if [ "$file_name" = "latest.json" ]; then
               local target_path="/latest.json"
             else
-              local target_path="${hubfs_base_path}/${file_name}"
+              local target_path="${HUBFS_BASE_PATH}/${file_name}"
             fi
 
             local folder_path=$(dirname "$target_path" | sed 's|\\|/|g')
