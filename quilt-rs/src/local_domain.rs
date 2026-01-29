@@ -84,7 +84,10 @@ impl LocalDomain {
         })
     }
 
-    pub async fn install_package(&self, manifest_uri: &ManifestUriParquet) -> Res<InstalledPackage> {
+    pub async fn install_package(
+        &self,
+        manifest_uri: &ManifestUriParquet,
+    ) -> Res<InstalledPackage> {
         self.scaffold_paths_for_caching(&manifest_uri.bucket)
             .await?;
         self.scaffold_paths_for_installing(&manifest_uri.namespace)

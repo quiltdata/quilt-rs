@@ -67,7 +67,10 @@ impl TagUri {
     }
 
     /// Creates TagURI for the revision of the package
-    pub fn timestamp(manifest_uri: ManifestUriParquet, datetime: chrono::DateTime<chrono::Utc>) -> Self {
+    pub fn timestamp(
+        manifest_uri: ManifestUriParquet,
+        datetime: chrono::DateTime<chrono::Utc>,
+    ) -> Self {
         TagUri {
             bucket: manifest_uri.bucket,
             namespace: manifest_uri.namespace,

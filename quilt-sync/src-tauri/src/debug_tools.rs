@@ -1,7 +1,9 @@
 use crate::quilt;
 use crate::Error;
 
-pub fn try_remote_origin_host(uri: &quilt::uri::ManifestUriParquet) -> Result<quilt::uri::Host, Error> {
+pub fn try_remote_origin_host(
+    uri: &quilt::uri::ManifestUriParquet,
+) -> Result<quilt::uri::Host, Error> {
     Ok(uri.catalog.clone().unwrap_or("open.quilt.bio".parse()?))
 }
 
