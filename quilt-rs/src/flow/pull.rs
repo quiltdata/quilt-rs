@@ -14,7 +14,7 @@ use crate::lineage::PackageLineage;
 use crate::manifest::Table;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
-use crate::uri::ManifestUriParquet;
+use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::uri::Tag;
 use crate::Error;
@@ -74,7 +74,7 @@ pub async fn pull_package(
     debug!("⏳ Resolving latest manifest");
     let manifest_uri = resolve_tag(
         remote,
-        &lineage.remote.catalog,
+        &lineage.remote.origin,
         &lineage.remote.clone().into(),
         Tag::Latest,
     )
@@ -88,9 +88,9 @@ pub async fn pull_package(
     copy_cached_to_installed(
         paths,
         storage,
-        &ManifestUriParquet {
+        &ManifestUri {
             namespace: namespace.clone(),
-            ..lineage.remote.clone()
+            ..manifest_uri
         },
     )
     .await?;
@@ -135,6 +135,7 @@ mod tests {
     use crate::lineage::Change;
     use crate::lineage::CommitState;
     use crate::manifest::Row;
+    use crate::uri::ManifestUriParquet;
 
     #[test(tokio::test)]
     async fn test_no_pull_if_changes() -> Res {
@@ -199,7 +200,8 @@ mod tests {
             remote: ManifestUriParquet {
                 hash: "a".to_string(),
                 ..ManifestUriParquet::default()
-            },
+            }
+            .into(),
             base_hash: "b".to_string(),
             ..PackageLineage::default()
         };
@@ -228,7 +230,8 @@ mod tests {
             remote: ManifestUriParquet {
                 hash: "a".to_string(),
                 ..ManifestUriParquet::default()
-            },
+            }
+            .into(),
             base_hash: "a".to_string(),
             latest_hash: "a".to_string(),
             ..PackageLineage::default()

@@ -8,7 +8,7 @@ use crate::lineage::PackageLineage;
 use crate::manifest::Table;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
-use crate::uri::ManifestUriParquet;
+use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::uri::Tag;
 use crate::Res;
@@ -32,7 +32,7 @@ pub async fn reset_to_latest(
     );
     let latest = resolve_tag(
         remote,
-        &lineage.remote.catalog,
+        &lineage.remote.origin,
         &lineage.remote.clone().into(),
         Tag::Latest,
     )
@@ -56,7 +56,7 @@ pub async fn reset_to_latest(
     debug!("✔️ Updated lineage to latest hash: {}", latest.hash);
 
     debug!("⏳ Caching remote manifest");
-    flow::cache_remote_manifest(paths, storage, remote, &latest.clone()).await?;
+    flow::cache_remote_manifest(paths, storage, remote, &latest).await?;
 
     // TODO: merge the following steps with `pull.rs`
 
@@ -64,7 +64,7 @@ pub async fn reset_to_latest(
     copy_cached_to_installed(
         paths,
         storage,
-        &ManifestUriParquet {
+        &ManifestUri {
             namespace: namespace.clone(),
             ..latest.clone()
         },
@@ -109,6 +109,7 @@ mod tests {
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::PackageLineage;
+    use crate::uri::ManifestUriParquet;
     use crate::uri::S3Uri;
 
     use test_log::test;
@@ -122,7 +123,7 @@ mod tests {
             catalog: None,
         };
         let source_lineage = PackageLineage {
-            remote: source_manifest_uri,
+            remote: source_manifest_uri.into(),
             ..PackageLineage::default()
         };
 
@@ -165,7 +166,7 @@ mod tests {
             .await?;
 
         let source_lineage = PackageLineage {
-            remote: manifest_uri,
+            remote: manifest_uri.into(),
             ..PackageLineage::default()
         };
 
@@ -204,8 +205,9 @@ mod tests {
                 latest_hash: hash.to_string(),
                 remote: ManifestUriParquet {
                     hash: hash.to_string(),
-                    ..source_lineage.remote
-                },
+                    ..source_lineage.remote.clone().into()
+                }
+                .into(),
                 ..source_lineage
             }
         );

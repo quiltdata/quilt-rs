@@ -16,7 +16,7 @@ use crate::lineage::Home;
 use crate::manifest::Header;
 use crate::manifest::Table;
 use crate::paths;
-use crate::uri::ManifestUriParquet;
+use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::Res;
 
@@ -68,7 +68,7 @@ impl LocalDomain {
         self.paths.scaffold_for_caching(&self.storage, bucket).await
     }
 
-    pub async fn browse_remote_manifest(&self, uri: &ManifestUriParquet) -> Res<Table> {
+    pub async fn browse_remote_manifest(&self, uri: &ManifestUri) -> Res<Table> {
         self.scaffold_paths_for_caching(&uri.bucket).await?;
         flow::browse(&self.paths, &self.storage, &self.remote, uri).await
     }
@@ -84,10 +84,7 @@ impl LocalDomain {
         })
     }
 
-    pub async fn install_package(
-        &self,
-        manifest_uri: &ManifestUriParquet,
-    ) -> Res<InstalledPackage> {
+    pub async fn install_package(&self, manifest_uri: &ManifestUri) -> Res<InstalledPackage> {
         self.scaffold_paths_for_caching(&manifest_uri.bucket)
             .await?;
         self.scaffold_paths_for_installing(&manifest_uri.namespace)
@@ -187,7 +184,8 @@ mod tests {
                         namespace: namespace.clone(),
                         hash: "abcdef".to_string(),
                         catalog: None,
-                    },
+                    }
+                    .into(),
                     base_hash: "abcdef".to_string(),
                     latest_hash: "abcdef".to_string(),
                     paths: std::collections::BTreeMap::new(),

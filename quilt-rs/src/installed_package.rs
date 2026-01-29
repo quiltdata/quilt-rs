@@ -17,7 +17,7 @@ use crate::lineage::LineagePaths;
 use crate::manifest::Table;
 use crate::manifest::Workflow;
 use crate::paths;
-use crate::uri::ManifestUriParquet;
+use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::uri::S3Uri;
 use crate::Error;
@@ -77,7 +77,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let manifest = self.manifest().await?;
 
         let host_config =
-            host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.catalog).await?);
+            host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.origin).await?);
 
         let (lineage, status) = flow::status(
             lineage,
@@ -144,7 +144,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let mut manifest = self.manifest().await?;
 
         let host_config =
-            host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.catalog).await?);
+            host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.origin).await?);
 
         let (lineage, status) = flow::status(
             lineage,
@@ -175,7 +175,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         }
     }
 
-    pub async fn push(&self, host_config_opt: Option<HostConfig>) -> Res<ManifestUriParquet> {
+    pub async fn push(&self, host_config_opt: Option<HostConfig>) -> Res<ManifestUri> {
         self.scaffold_paths().await?;
 
         let (_, lineage) = self.lineage.read(&self.storage).await?;
@@ -190,7 +190,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let manifest = self.manifest().await?;
 
         let host_config =
-            host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.catalog).await?);
+            host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.origin).await?);
 
         let lineage = flow::push(
             lineage,
@@ -206,7 +206,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         Ok(lineage.remote)
     }
 
-    pub async fn pull(&self, host_config_opt: Option<HostConfig>) -> Res<ManifestUriParquet> {
+    pub async fn pull(&self, host_config_opt: Option<HostConfig>) -> Res<ManifestUri> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
@@ -217,7 +217,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let mut manifest = self.manifest().await?;
 
         let host_config =
-            host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.catalog).await?);
+            host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.origin).await?);
 
         let (lineage, status) = flow::status(
             lineage,
@@ -242,7 +242,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         Ok(lineage.remote)
     }
 
-    pub async fn certify_latest(&self) -> Res<ManifestUriParquet> {
+    pub async fn certify_latest(&self) -> Res<ManifestUri> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
         let latest_manifest_uri = lineage.remote.clone();
         let lineage = flow::certify_latest(lineage, &self.remote, latest_manifest_uri).await?;
@@ -250,7 +250,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         Ok(lineage.remote)
     }
 
-    pub async fn reset_to_latest(&self) -> Res<ManifestUriParquet> {
+    pub async fn reset_to_latest(&self) -> Res<ManifestUri> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
@@ -278,11 +278,11 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let remote_uri = lineage.remote;
         let workflows_config_uri = S3Uri {
             key: ".quilt/workflows/config.yml".to_string(),
-            ..S3Uri::from(&remote_uri)
+            ..S3Uri::from(remote_uri.clone())
         };
         resolve_workflow(
             &self.remote,
-            &remote_uri.catalog,
+            &remote_uri.origin,
             workflow_id,
             &workflows_config_uri,
         )

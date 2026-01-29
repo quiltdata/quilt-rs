@@ -179,7 +179,7 @@ impl ViewInstalledPackagesList {
             installed_packages_list.push(InstalledPackage {
                 namespace: installed_package.namespace,
                 origin: uri.display_for_host(&origin_host)?,
-                remote: lineage.remote,
+                remote: lineage.remote.into(),
                 status: status.upstream_state,
             });
         }

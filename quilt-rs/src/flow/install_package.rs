@@ -9,7 +9,7 @@ use crate::lineage::DomainLineage;
 use crate::lineage::PackageLineage;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
-use crate::uri::ManifestUriParquet;
+use crate::uri::ManifestUri;
 use crate::uri::Tag;
 use crate::Error;
 use crate::Res;
@@ -23,7 +23,7 @@ pub async fn install_package(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    manifest_uri: &ManifestUriParquet,
+    manifest_uri: &ManifestUri,
 ) -> Res<DomainLineage> {
     info!("⏳ Installing package: {}", manifest_uri.display());
 
@@ -43,7 +43,7 @@ pub async fn install_package(
     }
 
     debug!("⏳ Caching remote manifest");
-    flow::cache_remote_manifest(paths, storage, remote, &manifest_uri.clone()).await?;
+    flow::cache_remote_manifest(paths, storage, remote, manifest_uri).await?;
 
     debug!("⏳ Creating installed copy of manifest");
     let installed_manifest_path =
@@ -57,7 +57,7 @@ pub async fn install_package(
     debug!("⏳ Resolving latest hash for this package handle");
     let latest = resolve_tag(
         remote,
-        &manifest_uri.catalog,
+        &manifest_uri.origin,
         &manifest_uri.into(),
         Tag::Latest,
     )
@@ -107,9 +107,9 @@ mod tests {
             &DomainPaths::default(),
             &MockStorage::default(),
             &MockRemote::default(),
-            &ManifestUriParquet {
+            &ManifestUri {
                 namespace: namespace.into(),
-                ..ManifestUriParquet::default()
+                ..ManifestUri::default()
             },
         )
         .await;
@@ -127,11 +127,11 @@ mod tests {
     async fn test_installing() -> Res {
         let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
 
-        let manifest_uri = ManifestUriParquet {
+        let manifest_uri = ManifestUri {
             bucket: "a".to_string(),
             hash: "abcdef1234".to_string(),
             namespace: ("f", "b").into(),
-            catalog: None,
+            origin: None,
         };
 
         // Load the reference manifest from `./fixtures`
@@ -144,7 +144,7 @@ mod tests {
             manifest_uri.bucket, manifest_uri.hash
         ))?;
         remote
-            .put_object(&manifest_uri.catalog, &remote_uri, parquet)
+            .put_object(&manifest_uri.origin, &remote_uri, parquet)
             .await?;
 
         // Simulate the remote storage containing the reference to the latest manifest
@@ -154,7 +154,7 @@ mod tests {
         ))?;
         remote
             .put_object(
-                &manifest_uri.catalog,
+                &manifest_uri.origin,
                 &latest_uri,
                 manifest_uri.hash.as_bytes().to_vec(),
             )
@@ -198,11 +198,11 @@ mod tests {
     // Permissions denied, because we try to create a file in the OS root directory
     #[test(tokio::test)]
     async fn test_installing_when_no_permissions() -> Res {
-        let manifest_uri = ManifestUriParquet {
+        let manifest_uri = ManifestUri {
             bucket: "a".to_string(),
             hash: "h".to_string(),
             namespace: ("f", "b").into(),
-            catalog: None,
+            origin: None,
         };
 
         // Load the reference manifest from `./fixtures`
@@ -215,7 +215,7 @@ mod tests {
             manifest_uri.bucket, manifest_uri.hash
         ))?;
         remote
-            .put_object(&manifest_uri.catalog, &remote_uri, parquet)
+            .put_object(&manifest_uri.origin, &remote_uri, parquet)
             .await?;
 
         let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;

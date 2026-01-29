@@ -18,7 +18,7 @@ use crate::lineage::PackageLineage;
 use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::paths;
-use crate::uri::ManifestUriParquet;
+use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::uri::S3PackageHandle;
 use crate::uri::Tag;
@@ -99,7 +99,7 @@ pub async fn push_package(
     let namespace = namespace.unwrap_or(lineage.remote.namespace.clone());
 
     debug!("⏳ Creating manifest URI");
-    let manifest_uri = ManifestUriParquet {
+    let manifest_uri = ManifestUri {
         namespace,
         ..lineage.remote.clone()
     };
@@ -127,9 +127,9 @@ pub async fn push_package(
         cache_path.display()
     );
 
-    let new_manifest_uri = ManifestUriParquet {
+    let new_manifest_uri = ManifestUri {
         hash: top_hash,
-        ..manifest_uri.clone()
+        ..lineage.remote.clone()
     };
 
     debug!(
@@ -146,7 +146,7 @@ pub async fn push_package(
     debug!("⏳ Checking remote's latest manifest hash");
     lineage.latest_hash = resolve_tag(
         remote,
-        &new_manifest_uri.catalog,
+        &new_manifest_uri.origin,
         &manifest_uri.into(),
         Tag::Latest,
     )
@@ -227,7 +227,7 @@ mod tests {
                 hash: fixtures::manifest_empty::EMPTY_NULL_TOP_HASH.to_string(),
                 prev_hashes: Vec::new(),
             }),
-            remote: manifest_uri,
+            remote: manifest_uri.into(),
             ..PackageLineage::default()
         };
         let jsonl = std::fs::read(fixtures::manifest::parquet_checksummed()?)?;
@@ -275,7 +275,7 @@ mod tests {
         assert_eq!(
             lineage,
             PackageLineage {
-                remote: manifest_uri,
+                remote: manifest_uri.into(),
                 base_hash: "".to_string(), // Huh?
                 latest_hash: "abcdef".to_string(),
                 ..PackageLineage::default()
@@ -298,7 +298,7 @@ mod tests {
                 hash: fixtures::manifest::PARQUEST_CHECKSUMMED_HASH.to_string(),
                 prev_hashes: Vec::new(),
             }),
-            remote: manifest_uri,
+            remote: manifest_uri.into(),
             ..PackageLineage::default()
         };
         let jsonl = std::fs::read(fixtures::manifest::parquet_checksummed()?)?;
@@ -362,7 +362,7 @@ mod tests {
         assert_eq!(
             lineage,
             PackageLineage {
-                remote: manifest_uri,
+                remote: manifest_uri.into(),
                 base_hash: "".to_string(), // Huh?
                 latest_hash: "abcdef".to_string(),
                 ..PackageLineage::default()

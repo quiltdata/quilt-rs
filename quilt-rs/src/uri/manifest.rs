@@ -133,6 +133,12 @@ impl From<&ManifestUri> for ManifestUriParquet {
     }
 }
 
+impl ManifestUri {
+    pub fn display(&self) -> String {
+        S3PackageUri::from(ManifestUriParquet::from(self)).display()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

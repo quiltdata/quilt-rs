@@ -30,7 +30,7 @@ pub async fn refresh_latest_hash(
 ) -> Res<PackageLineage> {
     let latest = resolve_tag(
         remote,
-        &lineage.remote.catalog,
+        &lineage.remote.origin,
         &lineage.remote.clone().into(),
         Tag::Latest,
     )

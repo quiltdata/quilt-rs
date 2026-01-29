@@ -46,16 +46,16 @@ async fn upload_legacy(
     storage: &impl Storage,
     remote: &impl Remote,
     manifest_path: &PathBuf,
-    manifest_uri: &ManifestUriParquet,
+    manifest_uri: &ManifestUri,
 ) -> Res {
-    let s3_uri: S3Uri = ManifestUri::from(manifest_uri).into();
+    let s3_uri: S3Uri = manifest_uri.clone().into();
     let jsonl = Manifest::from_table(&Table::read_from_path(storage, manifest_path).await?)
         .await?
         .to_jsonlines()
         .as_bytes()
         .to_vec();
     remote
-        .put_object(&manifest_uri.catalog, &s3_uri, jsonl)
+        .put_object(&manifest_uri.origin, &s3_uri, jsonl)
         .await
 }
 
@@ -65,13 +65,17 @@ async fn upload_from(
     storage: &impl Storage,
     remote: &impl Remote,
     manifest_path: &PathBuf,
-    manifest_uri: &ManifestUriParquet,
+    manifest_uri: &ManifestUri,
 ) -> Res {
     // TODO: FAIL if the manifest with this hash already exists?
     let body = storage.read_byte_stream(manifest_path).await?;
     log::info!("Writing remote manifest to {manifest_uri:?}");
     remote
-        .put_object(&manifest_uri.catalog, &manifest_uri.into(), body)
+        .put_object(
+            &manifest_uri.origin,
+            &ManifestUriParquet::from(manifest_uri).into(),
+            body,
+        )
         .await
 }
 
@@ -80,7 +84,7 @@ async fn upload_from(
 pub async fn upload_manifest(
     storage: &impl Storage,
     remote: &impl Remote,
-    manifest_uri: &ManifestUriParquet,
+    manifest_uri: &ManifestUri,
     path: &PathBuf,
 ) -> Res {
     // Push the (cached) relaxed manifest to the remote, don't tag it yet
@@ -99,7 +103,7 @@ pub async fn upload_manifest(
 /// "tagged" by timestamp.
 pub async fn tag_timestamp(
     remote: &impl Remote,
-    manifest_uri: &ManifestUriParquet,
+    manifest_uri: &ManifestUri,
     timestamp: chrono::DateTime<chrono::Utc>,
 ) -> Res {
     // Tag the new commit.
@@ -114,19 +118,15 @@ pub async fn tag_timestamp(
 
 /// Upload file containing hash of the manifest
 /// "tagged" as "latest".
-pub async fn tag_latest(remote: &impl Remote, manifest_uri: &ManifestUriParquet) -> Res {
+pub async fn tag_latest(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res {
     let tag_latest = TagUri::latest(manifest_uri.clone().into());
     upload_tag(remote, manifest_uri, tag_latest).await
 }
 
-async fn upload_tag(
-    remote: &impl Remote,
-    manifest_uri: &ManifestUriParquet,
-    tag_uri: TagUri,
-) -> Res {
+async fn upload_tag(remote: &impl Remote, manifest_uri: &ManifestUri, tag_uri: TagUri) -> Res {
     remote
         .put_object(
-            &manifest_uri.catalog,
+            &manifest_uri.origin,
             &tag_uri.into(),
             manifest_uri.hash.as_bytes().to_vec(),
         )
@@ -141,17 +141,17 @@ pub async fn resolve_tag(
     host: &Option<Host>,
     uri: &S3PackageHandle,
     tag: Tag,
-) -> Res<ManifestUriParquet> {
+) -> Res<ManifestUri> {
     let tag_uri = TagUri::new(uri.bucket.clone(), uri.namespace.clone(), tag);
     let stream = remote.get_object_stream(host, &tag_uri.into()).await?;
     let hash = bytestream_to_string(stream.body).await?;
     let S3PackageHandle { bucket, namespace } = uri.to_owned();
-    let catalog = host.to_owned();
-    Ok(ManifestUriParquet {
+    let origin = host.to_owned();
+    Ok(ManifestUri {
         hash,
         bucket,
         namespace,
-        catalog,
+        origin,
     })
 }
 
@@ -181,16 +181,16 @@ pub async fn resolve_manifest_uri(
     remote: &impl Remote,
     host: &Option<Host>,
     uri: &S3PackageUri,
-) -> Res<ManifestUriParquet> {
+) -> Res<ManifestUri> {
     let bucket = uri.bucket.clone();
     let namespace = uri.namespace.clone();
     let hash = resolve_top_hash(remote, host, uri).await?;
-    let catalog = host.to_owned();
-    Ok(ManifestUriParquet {
+    let origin = host.to_owned();
+    Ok(ManifestUri {
         bucket,
         namespace,
         hash,
-        catalog,
+        origin,
     })
 }
 

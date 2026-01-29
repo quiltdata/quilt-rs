@@ -372,7 +372,8 @@ mod tests {
                                 namespace: ("foo", "bar").into(),
                                 hash: "abcdef".to_string(),
                                 catalog: None,
-                            },
+                            }
+                            .into(),
                             base_hash: "abcdef".to_string(),
                             latest_hash: "abcdef".to_string(),
                             paths: BTreeMap::from([(
@@ -429,7 +430,8 @@ mod tests {
                 namespace: namespace.clone(),
                 hash: "abcdef".to_string(),
                 catalog: None,
-            },
+            }
+            .into(),
             base_hash: "abcdef".to_string(),
             latest_hash: "abcdef".to_string(),
             paths: BTreeMap::new(),
@@ -492,7 +494,8 @@ mod tests {
                 namespace: namespace.clone(),
                 hash: "abcdef".to_string(),
                 catalog: None,
-            },
+            }
+            .into(),
             base_hash: "abcdef".to_string(),
             latest_hash: "abcdef".to_string(),
             paths: BTreeMap::new(),

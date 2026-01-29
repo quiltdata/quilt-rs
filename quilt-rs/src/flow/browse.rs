@@ -35,10 +35,10 @@ async fn fetch_parquet(remote: &impl Remote, manifest: &ManifestUriParquet) -> R
     Ok(contents.body.collect().await?.to_vec())
 }
 
-async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUriParquet) -> Res<Manifest> {
-    let s3_uri: S3Uri = ManifestUri::from(manifest_uri).into();
+async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res<Manifest> {
+    let s3_uri: S3Uri = manifest_uri.clone().into();
     let contents = remote
-        .get_object_stream(&manifest_uri.catalog, &s3_uri)
+        .get_object_stream(&manifest_uri.origin, &s3_uri)
         .await?;
     Manifest::from_reader(contents.body.into_async_read()).await
 }
@@ -53,7 +53,7 @@ pub async fn cache_remote_manifest(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    manifest_uri: &ManifestUriParquet,
+    manifest_uri: &ManifestUri,
 ) -> Res<Table> {
     info!("⏳ Caching remote manifest: {}", manifest_uri.display());
 
@@ -70,12 +70,12 @@ pub async fn cache_remote_manifest(
     if !storage.exists(&cache_path).await {
         debug!("🔍 Manifest does not exist in cache, fetching from remote");
         // Does not exist yet
-        if is_parquet(remote, manifest_uri).await? {
+        if is_parquet(remote, &manifest_uri.clone().into()).await? {
             debug!(
                 "⏳ Manifest {} stored remotely in Parquet format. Fetching…",
                 manifest_uri.display()
             );
-            let manifest = fetch_parquet(remote, manifest_uri).await?;
+            let manifest = fetch_parquet(remote, &manifest_uri.clone().into()).await?;
             debug!("✔️ Fetched manifest. Size: {}", manifest.len());
             storage.write_file(&cache_path, &manifest).await?;
             debug!("✔️ Manifest has written to {}", cache_path.display());
@@ -121,7 +121,7 @@ pub async fn browse_remote_manifest(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    manifest_uri: &ManifestUriParquet,
+    manifest_uri: &ManifestUri,
 ) -> Res<Table> {
     cache_remote_manifest(paths, storage, remote, manifest_uri).await
 }
@@ -147,11 +147,11 @@ mod tests {
         let paths = DomainPaths::default();
 
         // Determine the expected cache path for this manifest.
-        let manifest_uri = ManifestUriParquet {
+        let manifest_uri = ManifestUri {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
             hash: "c".to_string(),
-            catalog: None,
+            origin: None,
         };
         let cache_path = paths.manifest_cache(&manifest_uri.bucket, &manifest_uri.hash);
 
@@ -187,11 +187,11 @@ mod tests {
 
         // Simulate a corrupted cached manifest.
         // Write invalid data (an empty vector) to the cache path.
-        let manifest = ManifestUriParquet {
+        let manifest = ManifestUri {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
             hash: "c".to_string(),
-            catalog: None,
+            origin: None,
         };
         let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
         let storage = MockStorage::default();
@@ -216,11 +216,11 @@ mod tests {
     async fn test_caching_parquet() -> Res {
         let paths = DomainPaths::default();
 
-        let manifest = ManifestUriParquet {
+        let manifest = ManifestUri {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
             hash: "c".to_string(),
-            catalog: None,
+            origin: None,
         };
 
         // Simulate the existence of a reference manifest remotely.
@@ -233,7 +233,7 @@ mod tests {
             manifest.bucket, manifest.hash
         ))?;
         remote
-            .put_object(&manifest.catalog, &remote_uri, parquet.clone())
+            .put_object(&manifest.origin, &remote_uri, parquet.clone())
             .await?;
 
         let storage = MockStorage::default();
@@ -263,11 +263,11 @@ mod tests {
         let paths = DomainPaths::default();
 
         // Define the manifest URI to simulate a package lookup.
-        let manifest = ManifestUriParquet {
+        let manifest = ManifestUri {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
             hash: fixtures::manifest::JSONL_HASH.to_string(),
-            catalog: None,
+            origin: None,
         };
 
         // Simulate the remote JSONL manifest.
@@ -279,7 +279,7 @@ mod tests {
             manifest.bucket, manifest.hash
         ))?;
         remote
-            .put_object(&manifest.catalog, &remote_uri, jsonl.clone())
+            .put_object(&manifest.origin, &remote_uri, jsonl.clone())
             .await?;
 
         let storage = MockStorage::default();
