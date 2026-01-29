@@ -75,15 +75,15 @@ impl ManifestUriParquet {
 /// The same as `ManifestUri` but for legacy JSONL format
 /// They have the same struct-ure, but different impl-ementations, especially, for key `property`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct ManifestUriLegacy {
+pub struct ManifestUri {
     pub origin: Option<Host>,
     pub bucket: String,
     pub namespace: Namespace,
     pub hash: String,
 }
 
-impl From<ManifestUriLegacy> for S3Uri {
-    fn from(remote: ManifestUriLegacy) -> S3Uri {
+impl From<ManifestUri> for S3Uri {
+    fn from(remote: ManifestUri) -> S3Uri {
         S3Uri {
             bucket: remote.bucket,
             key: paths::get_manifest_key_legacy(&remote.hash),
@@ -92,9 +92,9 @@ impl From<ManifestUriLegacy> for S3Uri {
     }
 }
 
-impl From<ManifestUriParquet> for ManifestUriLegacy {
+impl From<ManifestUriParquet> for ManifestUri {
     fn from(manifest_uri: ManifestUriParquet) -> Self {
-        ManifestUriLegacy {
+        ManifestUri {
             origin: manifest_uri.catalog,
             bucket: manifest_uri.bucket,
             namespace: manifest_uri.namespace,
@@ -103,7 +103,7 @@ impl From<ManifestUriParquet> for ManifestUriLegacy {
     }
 }
 
-impl From<&ManifestUriParquet> for ManifestUriLegacy {
+impl From<&ManifestUriParquet> for ManifestUri {
     fn from(manifest_uri: &ManifestUriParquet) -> Self {
         manifest_uri.clone().into()
     }
@@ -174,7 +174,7 @@ mod tests {
     #[test]
     fn test_manifest_uri_legacy_to_s3uri() {
         assert_eq!(
-            S3Uri::from(ManifestUriLegacy {
+            S3Uri::from(ManifestUri {
                 origin: None,
                 bucket: "test-bucket".to_string(),
                 namespace: ("ignored", "ignored").into(),

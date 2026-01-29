@@ -21,8 +21,8 @@ use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::manifest::TopHasher;
 use crate::uri::Host;
+use crate::uri::ManifestUri;
 use crate::uri::ManifestUriParquet;
-use crate::uri::ManifestUriLegacy;
 use crate::uri::ObjectUri;
 use crate::uri::RevisionPointer;
 use crate::uri::S3PackageHandle;
@@ -48,7 +48,7 @@ async fn upload_legacy(
     manifest_path: &PathBuf,
     manifest_uri: &ManifestUriParquet,
 ) -> Res {
-    let s3_uri: S3Uri = ManifestUriLegacy::from(manifest_uri).into();
+    let s3_uri: S3Uri = ManifestUri::from(manifest_uri).into();
     let jsonl = Manifest::from_table(&Table::read_from_path(storage, manifest_path).await?)
         .await?
         .to_jsonlines()
@@ -119,7 +119,11 @@ pub async fn tag_latest(remote: &impl Remote, manifest_uri: &ManifestUriParquet)
     upload_tag(remote, manifest_uri, tag_latest).await
 }
 
-async fn upload_tag(remote: &impl Remote, manifest_uri: &ManifestUriParquet, tag_uri: TagUri) -> Res {
+async fn upload_tag(
+    remote: &impl Remote,
+    manifest_uri: &ManifestUriParquet,
+    tag_uri: TagUri,
+) -> Res {
     remote
         .put_object(
             &manifest_uri.catalog,

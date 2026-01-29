@@ -11,7 +11,7 @@ use crate::manifest::Manifest;
 use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::paths::DomainPaths;
-use crate::uri::ManifestUriLegacy;
+use crate::uri::ManifestUri;
 use crate::uri::ManifestUriParquet;
 use crate::uri::S3Uri;
 use crate::Error;
@@ -36,7 +36,7 @@ async fn fetch_parquet(remote: &impl Remote, manifest: &ManifestUriParquet) -> R
 }
 
 async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUriParquet) -> Res<Manifest> {
-    let s3_uri: S3Uri = ManifestUriLegacy::from(manifest_uri).into();
+    let s3_uri: S3Uri = ManifestUri::from(manifest_uri).into();
     let contents = remote
         .get_object_stream(&manifest_uri.catalog, &s3_uri)
         .await?;
