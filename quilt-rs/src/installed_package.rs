@@ -17,7 +17,7 @@ use crate::lineage::LineagePaths;
 use crate::manifest::Table;
 use crate::manifest::Workflow;
 use crate::paths;
-use crate::uri::ManifestUri;
+use crate::uri::ManifestUriParquet;
 use crate::uri::Namespace;
 use crate::uri::S3Uri;
 use crate::Error;
@@ -175,7 +175,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         }
     }
 
-    pub async fn push(&self, host_config_opt: Option<HostConfig>) -> Res<ManifestUri> {
+    pub async fn push(&self, host_config_opt: Option<HostConfig>) -> Res<ManifestUriParquet> {
         self.scaffold_paths().await?;
 
         let (_, lineage) = self.lineage.read(&self.storage).await?;
@@ -206,7 +206,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         Ok(lineage.remote)
     }
 
-    pub async fn pull(&self, host_config_opt: Option<HostConfig>) -> Res<ManifestUri> {
+    pub async fn pull(&self, host_config_opt: Option<HostConfig>) -> Res<ManifestUriParquet> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
@@ -242,7 +242,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         Ok(lineage.remote)
     }
 
-    pub async fn certify_latest(&self) -> Res<ManifestUri> {
+    pub async fn certify_latest(&self) -> Res<ManifestUriParquet> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
         let latest_manifest_uri = lineage.remote.clone();
         let lineage = flow::certify_latest(lineage, &self.remote, latest_manifest_uri).await?;
@@ -250,7 +250,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         Ok(lineage.remote)
     }
 
-    pub async fn reset_to_latest(&self) -> Res<ManifestUri> {
+    pub async fn reset_to_latest(&self) -> Res<ManifestUriParquet> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;

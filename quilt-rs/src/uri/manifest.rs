@@ -17,15 +17,15 @@ use crate::Error;
 ///
 /// This manifest URI is for manifest file in Parquet format.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct ManifestUri {
+pub struct ManifestUriParquet {
     pub catalog: Option<Host>, // TODO: rename to origin
     pub bucket: String,
     pub namespace: Namespace,
     pub hash: String,
 }
 
-impl From<ManifestUri> for S3Uri {
-    fn from(remote: ManifestUri) -> S3Uri {
+impl From<ManifestUriParquet> for S3Uri {
+    fn from(remote: ManifestUriParquet) -> S3Uri {
         S3Uri {
             bucket: remote.bucket,
             key: paths::get_manifest_key(&remote.hash),
@@ -34,16 +34,16 @@ impl From<ManifestUri> for S3Uri {
     }
 }
 
-impl From<&ManifestUri> for S3Uri {
-    fn from(remote: &ManifestUri) -> S3Uri {
+impl From<&ManifestUriParquet> for S3Uri {
+    fn from(remote: &ManifestUriParquet) -> S3Uri {
         remote.clone().into()
     }
 }
 
-impl TryFrom<S3PackageUri> for ManifestUri {
+impl TryFrom<S3PackageUri> for ManifestUriParquet {
     type Error = Error;
     fn try_from(uri: S3PackageUri) -> Result<Self, Self::Error> {
-        Ok(ManifestUri {
+        Ok(ManifestUriParquet {
             bucket: uri.bucket,
             catalog: uri.catalog,
             namespace: uri.namespace,
@@ -59,14 +59,14 @@ impl TryFrom<S3PackageUri> for ManifestUri {
     }
 }
 
-impl fmt::Display for ManifestUri {
+impl fmt::Display for ManifestUriParquet {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let uri = S3PackageUri::from(self);
         write!(f, "{uri}")
     }
 }
 
-impl ManifestUri {
+impl ManifestUriParquet {
     pub fn display(&self) -> String {
         S3PackageUri::from(self).display()
     }
@@ -92,8 +92,8 @@ impl From<ManifestUriLegacy> for S3Uri {
     }
 }
 
-impl From<ManifestUri> for ManifestUriLegacy {
-    fn from(manifest_uri: ManifestUri) -> Self {
+impl From<ManifestUriParquet> for ManifestUriLegacy {
+    fn from(manifest_uri: ManifestUriParquet) -> Self {
         ManifestUriLegacy {
             origin: manifest_uri.catalog,
             bucket: manifest_uri.bucket,
@@ -103,8 +103,8 @@ impl From<ManifestUri> for ManifestUriLegacy {
     }
 }
 
-impl From<&ManifestUri> for ManifestUriLegacy {
-    fn from(manifest_uri: &ManifestUri) -> Self {
+impl From<&ManifestUriParquet> for ManifestUriLegacy {
+    fn from(manifest_uri: &ManifestUriParquet) -> Self {
         manifest_uri.clone().into()
     }
 }
@@ -125,7 +125,7 @@ mod tests {
             catalog: None,
         };
 
-        let result = ManifestUri::try_from(package_uri);
+        let result = ManifestUriParquet::try_from(package_uri);
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),
@@ -137,14 +137,14 @@ mod tests {
     #[test]
     fn test_manifest_uri_try_from_package_uri_with_hash() -> Res {
         assert_eq!(
-            ManifestUri::try_from(S3PackageUri {
+            ManifestUriParquet::try_from(S3PackageUri {
                 bucket: "test-bucket".to_string(),
                 namespace: ("foo", "bar").into(),
                 revision: RevisionPointer::Hash("abc123".to_string()),
                 path: None,
                 catalog: None,
             })?,
-            ManifestUri {
+            ManifestUriParquet {
                 bucket: "test-bucket".to_string(),
                 namespace: ("foo", "bar").into(),
                 hash: "abc123".to_string(),
@@ -157,7 +157,7 @@ mod tests {
     #[test]
     fn test_manifest_uri_to_s3uri() {
         assert_eq!(
-            S3Uri::from(ManifestUri {
+            S3Uri::from(ManifestUriParquet {
                 bucket: "test-bucket".to_string(),
                 namespace: ("ignored", "ignored").into(),
                 hash: "abc123".to_string(),

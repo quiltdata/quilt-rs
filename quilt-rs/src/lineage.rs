@@ -242,7 +242,7 @@ mod tests {
 
     use crate::checksum::Sha256ChunkedHash;
     use crate::io::storage::mocks::MockStorage;
-    use crate::uri::ManifestUri;
+    use crate::uri::ManifestUriParquet;
 
     #[test]
     fn test_syntax_error() {
@@ -367,7 +367,7 @@ mod tests {
                         ("foo", "bar").into(),
                         PackageLineage {
                             commit: None,
-                            remote: ManifestUri {
+                            remote: ManifestUriParquet {
                                 bucket: "bucket".to_string(),
                                 namespace: ("foo", "bar").into(),
                                 hash: "abcdef".to_string(),
@@ -424,7 +424,7 @@ mod tests {
         let namespace = Namespace::from(("foo", "bar"));
         let package_lineage = PackageLineage {
             commit: None,
-            remote: ManifestUri {
+            remote: ManifestUriParquet {
                 bucket: "bucket".to_string(),
                 namespace: namespace.clone(),
                 hash: "abcdef".to_string(),
@@ -487,7 +487,7 @@ mod tests {
         let namespace = Namespace::from(("foo", "bar"));
         let package_lineage = PackageLineage {
             commit: None,
-            remote: ManifestUri {
+            remote: ManifestUriParquet {
                 bucket: "bucket".to_string(),
                 namespace: namespace.clone(),
                 hash: "abcdef".to_string(),

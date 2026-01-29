@@ -1,7 +1,7 @@
 use crate::quilt;
 use crate::Error;
 
-pub fn try_remote_origin_host(uri: &quilt::uri::ManifestUri) -> Result<quilt::uri::Host, Error> {
+pub fn try_remote_origin_host(uri: &quilt::uri::ManifestUriParquet) -> Result<quilt::uri::Host, Error> {
     Ok(uri.catalog.clone().unwrap_or("open.quilt.bio".parse()?))
 }
 
@@ -21,7 +21,7 @@ mod tests {
 
     #[test]
     fn test_stringify_remote_manifest() {
-        let remote_manifest = quilt::uri::ManifestUri {
+        let remote_manifest = quilt::uri::ManifestUriParquet {
             bucket: "bucket".to_string(),
             catalog: None,
             hash: "abcdef".to_string(),
@@ -36,7 +36,7 @@ mod tests {
     #[test]
     fn test_try_remote_origin_host() -> Result<(), Error> {
         // Test with explicit catalog
-        let manifest_with_catalog = quilt::uri::ManifestUri {
+        let manifest_with_catalog = quilt::uri::ManifestUriParquet {
             bucket: "bucket".to_string(),
             catalog: Some("custom.quilt.org".parse()?),
             hash: "abcdef".to_string(),
@@ -48,7 +48,7 @@ mod tests {
         );
 
         // Test with default catalog
-        let manifest_without_catalog = quilt::uri::ManifestUri {
+        let manifest_without_catalog = quilt::uri::ManifestUriParquet {
             bucket: "bucket".to_string(),
             catalog: None,
             hash: "abcdef".to_string(),

@@ -9,7 +9,7 @@ use tempfile::TempDir;
 use crate::io::storage::Storage;
 use crate::lineage::Home;
 use crate::uri::Host;
-use crate::uri::ManifestUri;
+use crate::uri::ManifestUriParquet;
 use crate::uri::Namespace;
 use crate::Res;
 
@@ -160,7 +160,7 @@ impl DomainPaths {
 pub async fn copy_cached_to_installed(
     paths: &DomainPaths,
     storage: &impl Storage,
-    manifest_uri: &ManifestUri,
+    manifest_uri: &ManifestUriParquet,
 ) -> Res {
     storage
         .copy(

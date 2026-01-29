@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::lineage::status::UpstreamState;
-use crate::uri::ManifestUri;
+use crate::uri::ManifestUriParquet;
 
 fn multihash_to_str<S: ser::Serializer>(
     hash: &Multihash<256>,
@@ -65,7 +65,7 @@ pub struct PackageLineage {
     /// Local commits
     pub commit: Option<CommitState>,
     /// Where we installed this package from
-    pub remote: ManifestUri,
+    pub remote: ManifestUriParquet,
     // TODO: I don't understand yet how and why we use it
     pub base_hash: String,
     /// Latest tracked hash. In other words, what was the remote hash when we last checked.
@@ -90,7 +90,7 @@ impl From<PackageLineage> for UpstreamState {
 }
 
 impl PackageLineage {
-    pub fn from_remote(remote: ManifestUri, latest_hash: String) -> Self {
+    pub fn from_remote(remote: ManifestUriParquet, latest_hash: String) -> Self {
         Self {
             base_hash: remote.hash.clone(),
             remote,
@@ -104,15 +104,15 @@ impl PackageLineage {
         self.commit.as_ref().map_or(&self.remote.hash, |c| &c.hash)
     }
 
-    pub fn update_latest(&mut self, manifest_uri: ManifestUri) {
+    pub fn update_latest(&mut self, manifest_uri: ManifestUriParquet) {
         let new_latest_hash = manifest_uri.hash;
         self.latest_hash.clone_from(&new_latest_hash);
         self.base_hash.clone_from(&new_latest_hash);
     }
 }
 
-impl From<ManifestUri> for PackageLineage {
-    fn from(uri: ManifestUri) -> Self {
+impl From<ManifestUriParquet> for PackageLineage {
+    fn from(uri: ManifestUriParquet) -> Self {
         Self {
             base_hash: uri.hash.clone(),
             remote: uri.clone(),

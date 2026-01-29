@@ -1,7 +1,7 @@
 use crate::io::manifest::tag_latest;
 use crate::io::remote::Remote;
 use crate::lineage::PackageLineage;
-use crate::uri::ManifestUri;
+use crate::uri::ManifestUriParquet;
 use crate::Res;
 use tracing::info;
 
@@ -10,7 +10,7 @@ use tracing::info;
 pub async fn certify_latest(
     mut lineage: PackageLineage,
     remote: &impl Remote,
-    manifest_uri: ManifestUri,
+    manifest_uri: ManifestUriParquet,
 ) -> Res<PackageLineage> {
     info!(
         "⏳ Certifying manifest {} as latest",
@@ -44,7 +44,7 @@ mod tests {
             )
             .await?;
 
-        let source_manifest_uri = ManifestUri {
+        let source_manifest_uri = ManifestUriParquet {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
             hash: "LATEST_HASH".to_string(),

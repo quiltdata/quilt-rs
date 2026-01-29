@@ -21,7 +21,7 @@ use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::manifest::TopHasher;
 use crate::uri::Host;
-use crate::uri::ManifestUri;
+use crate::uri::ManifestUriParquet;
 use crate::uri::ManifestUriLegacy;
 use crate::uri::ObjectUri;
 use crate::uri::RevisionPointer;
@@ -46,7 +46,7 @@ async fn upload_legacy(
     storage: &impl Storage,
     remote: &impl Remote,
     manifest_path: &PathBuf,
-    manifest_uri: &ManifestUri,
+    manifest_uri: &ManifestUriParquet,
 ) -> Res {
     let s3_uri: S3Uri = ManifestUriLegacy::from(manifest_uri).into();
     let jsonl = Manifest::from_table(&Table::read_from_path(storage, manifest_path).await?)
@@ -65,7 +65,7 @@ async fn upload_from(
     storage: &impl Storage,
     remote: &impl Remote,
     manifest_path: &PathBuf,
-    manifest_uri: &ManifestUri,
+    manifest_uri: &ManifestUriParquet,
 ) -> Res {
     // TODO: FAIL if the manifest with this hash already exists?
     let body = storage.read_byte_stream(manifest_path).await?;
@@ -80,7 +80,7 @@ async fn upload_from(
 pub async fn upload_manifest(
     storage: &impl Storage,
     remote: &impl Remote,
-    manifest_uri: &ManifestUri,
+    manifest_uri: &ManifestUriParquet,
     path: &PathBuf,
 ) -> Res {
     // Push the (cached) relaxed manifest to the remote, don't tag it yet
@@ -99,7 +99,7 @@ pub async fn upload_manifest(
 /// "tagged" by timestamp.
 pub async fn tag_timestamp(
     remote: &impl Remote,
-    manifest_uri: &ManifestUri,
+    manifest_uri: &ManifestUriParquet,
     timestamp: chrono::DateTime<chrono::Utc>,
 ) -> Res {
     // Tag the new commit.
@@ -114,12 +114,12 @@ pub async fn tag_timestamp(
 
 /// Upload file containing hash of the manifest
 /// "tagged" as "latest".
-pub async fn tag_latest(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res {
+pub async fn tag_latest(remote: &impl Remote, manifest_uri: &ManifestUriParquet) -> Res {
     let tag_latest = TagUri::latest(manifest_uri.clone().into());
     upload_tag(remote, manifest_uri, tag_latest).await
 }
 
-async fn upload_tag(remote: &impl Remote, manifest_uri: &ManifestUri, tag_uri: TagUri) -> Res {
+async fn upload_tag(remote: &impl Remote, manifest_uri: &ManifestUriParquet, tag_uri: TagUri) -> Res {
     remote
         .put_object(
             &manifest_uri.catalog,
@@ -137,13 +137,13 @@ pub async fn resolve_tag(
     host: &Option<Host>,
     uri: &S3PackageHandle,
     tag: Tag,
-) -> Res<ManifestUri> {
+) -> Res<ManifestUriParquet> {
     let tag_uri = TagUri::new(uri.bucket.clone(), uri.namespace.clone(), tag);
     let stream = remote.get_object_stream(host, &tag_uri.into()).await?;
     let hash = bytestream_to_string(stream.body).await?;
     let S3PackageHandle { bucket, namespace } = uri.to_owned();
     let catalog = host.to_owned();
-    Ok(ManifestUri {
+    Ok(ManifestUriParquet {
         hash,
         bucket,
         namespace,
@@ -177,12 +177,12 @@ pub async fn resolve_manifest_uri(
     remote: &impl Remote,
     host: &Option<Host>,
     uri: &S3PackageUri,
-) -> Res<ManifestUri> {
+) -> Res<ManifestUriParquet> {
     let bucket = uri.bucket.clone();
     let namespace = uri.namespace.clone();
     let hash = resolve_top_hash(remote, host, uri).await?;
     let catalog = host.to_owned();
-    Ok(ManifestUri {
+    Ok(ManifestUriParquet {
         bucket,
         namespace,
         hash,

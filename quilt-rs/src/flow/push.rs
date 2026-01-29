@@ -18,7 +18,7 @@ use crate::lineage::PackageLineage;
 use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::paths;
-use crate::uri::ManifestUri;
+use crate::uri::ManifestUriParquet;
 use crate::uri::Namespace;
 use crate::uri::S3PackageHandle;
 use crate::uri::Tag;
@@ -99,7 +99,7 @@ pub async fn push_package(
     let namespace = namespace.unwrap_or(lineage.remote.namespace.clone());
 
     debug!("⏳ Creating manifest URI");
-    let manifest_uri = ManifestUri {
+    let manifest_uri = ManifestUriParquet {
         namespace,
         ..lineage.remote.clone()
     };
@@ -127,7 +127,7 @@ pub async fn push_package(
         cache_path.display()
     );
 
-    let new_manifest_uri = ManifestUri {
+    let new_manifest_uri = ManifestUriParquet {
         hash: top_hash,
         ..manifest_uri.clone()
     };
@@ -192,7 +192,7 @@ mod tests {
     use crate::lineage::CommitState;
     use crate::lineage::PackageLineage;
     use crate::manifest::Row;
-    use crate::uri::ManifestUri;
+    use crate::uri::ManifestUriParquet;
     use crate::uri::S3Uri;
 
     #[test(tokio::test)]
@@ -215,7 +215,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_no_entries_push() -> Res {
-        let manifest_uri = ManifestUri {
+        let manifest_uri = ManifestUriParquet {
             bucket: "b".to_string(),
             namespace: ("a", "c").into(),
             hash: "__FOO__".to_string(),
@@ -266,7 +266,7 @@ mod tests {
             HostConfig::default(),
         )
         .await?;
-        let manifest_uri = ManifestUri {
+        let manifest_uri = ManifestUriParquet {
             bucket: "b".to_string(),
             namespace: ("a", "c").into(),
             hash: fixtures::manifest_empty::EMPTY_NULL_TOP_HASH.to_string(),
@@ -286,7 +286,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_single_chunk_push() -> Res {
-        let manifest_uri = ManifestUri {
+        let manifest_uri = ManifestUriParquet {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
             hash: "__FOO__".to_string(),
@@ -353,7 +353,7 @@ mod tests {
             HostConfig::default(),
         )
         .await?;
-        let manifest_uri = ManifestUri {
+        let manifest_uri = ManifestUriParquet {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
             hash: fixtures::manifest::PARQUEST_CHECKSUMMED_HASH.to_string(),

@@ -14,7 +14,7 @@ use crate::lineage::PackageLineage;
 use crate::manifest::Table;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
-use crate::uri::ManifestUri;
+use crate::uri::ManifestUriParquet;
 use crate::uri::Namespace;
 use crate::uri::Tag;
 use crate::Error;
@@ -88,7 +88,7 @@ pub async fn pull_package(
     copy_cached_to_installed(
         paths,
         storage,
-        &ManifestUri {
+        &ManifestUriParquet {
             namespace: namespace.clone(),
             ..lineage.remote.clone()
         },
@@ -196,9 +196,9 @@ mod tests {
         let storage = MockStorage::default();
         let remote = MockRemote::default();
         let lineage = PackageLineage {
-            remote: ManifestUri {
+            remote: ManifestUriParquet {
                 hash: "a".to_string(),
-                ..ManifestUri::default()
+                ..ManifestUriParquet::default()
             },
             base_hash: "b".to_string(),
             ..PackageLineage::default()
@@ -225,9 +225,9 @@ mod tests {
         let storage = MockStorage::default();
         let remote = MockRemote::default();
         let lineage = PackageLineage {
-            remote: ManifestUri {
+            remote: ManifestUriParquet {
                 hash: "a".to_string(),
-                ..ManifestUri::default()
+                ..ManifestUriParquet::default()
             },
             base_hash: "a".to_string(),
             latest_hash: "a".to_string(),

@@ -11,8 +11,8 @@ use crate::manifest::Manifest;
 use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::paths::DomainPaths;
-use crate::uri::ManifestUri;
 use crate::uri::ManifestUriLegacy;
+use crate::uri::ManifestUriParquet;
 use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
@@ -23,19 +23,19 @@ async fn stream_jsonl_rows(jsonl: Manifest) -> impl RowsStream {
         .map(|rows| Ok(vec![rows]))
 }
 
-async fn is_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Res<bool> {
+async fn is_parquet(remote: &impl Remote, manifest: &ManifestUriParquet) -> Res<bool> {
     remote
         .exists(&manifest.catalog, &S3Uri::from(manifest))
         .await
 }
 
-async fn fetch_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Res<Vec<u8>> {
+async fn fetch_parquet(remote: &impl Remote, manifest: &ManifestUriParquet) -> Res<Vec<u8>> {
     let s3_uri = S3Uri::from(manifest);
     let contents = remote.get_object_stream(&manifest.catalog, &s3_uri).await?;
     Ok(contents.body.collect().await?.to_vec())
 }
 
-async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res<Manifest> {
+async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUriParquet) -> Res<Manifest> {
     let s3_uri: S3Uri = ManifestUriLegacy::from(manifest_uri).into();
     let contents = remote
         .get_object_stream(&manifest_uri.catalog, &s3_uri)
@@ -53,7 +53,7 @@ pub async fn cache_remote_manifest(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    manifest_uri: &ManifestUri,
+    manifest_uri: &ManifestUriParquet,
 ) -> Res<Table> {
     info!("⏳ Caching remote manifest: {}", manifest_uri.display());
 
@@ -121,7 +121,7 @@ pub async fn browse_remote_manifest(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    manifest_uri: &ManifestUri,
+    manifest_uri: &ManifestUriParquet,
 ) -> Res<Table> {
     cache_remote_manifest(paths, storage, remote, manifest_uri).await
 }
@@ -147,7 +147,7 @@ mod tests {
         let paths = DomainPaths::default();
 
         // Determine the expected cache path for this manifest.
-        let manifest_uri = ManifestUri {
+        let manifest_uri = ManifestUriParquet {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
             hash: "c".to_string(),
@@ -187,7 +187,7 @@ mod tests {
 
         // Simulate a corrupted cached manifest.
         // Write invalid data (an empty vector) to the cache path.
-        let manifest = ManifestUri {
+        let manifest = ManifestUriParquet {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
             hash: "c".to_string(),
@@ -216,7 +216,7 @@ mod tests {
     async fn test_caching_parquet() -> Res {
         let paths = DomainPaths::default();
 
-        let manifest = ManifestUri {
+        let manifest = ManifestUriParquet {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
             hash: "c".to_string(),
@@ -263,7 +263,7 @@ mod tests {
         let paths = DomainPaths::default();
 
         // Define the manifest URI to simulate a package lookup.
-        let manifest = ManifestUri {
+        let manifest = ManifestUriParquet {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
             hash: fixtures::manifest::JSONL_HASH.to_string(),

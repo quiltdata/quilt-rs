@@ -24,7 +24,7 @@ pub trait QuiltModel {
 
     async fn browse_remote_manifest(
         &self,
-        remote_manifest: &quilt::uri::ManifestUri,
+        remote_manifest: &quilt::uri::ManifestUriParquet,
     ) -> Result<quilt::manifest::Table, Error> {
         Ok(self
             .get_quilt()
@@ -111,13 +111,13 @@ pub trait QuiltModel {
         &self,
         package: &quilt::InstalledPackage,
         host_config: Option<HostConfig>,
-    ) -> Result<quilt::uri::ManifestUri, Error> {
+    ) -> Result<quilt::uri::ManifestUriParquet, Error> {
         Ok(package.pull(host_config).await?)
     }
 
     async fn is_package_installed(
         &self,
-        manifest_uri: &quilt::uri::ManifestUri,
+        manifest_uri: &quilt::uri::ManifestUriParquet,
     ) -> Result<Option<quilt::InstalledPackage>, Error> {
         match self.get_installed_package(&manifest_uri.namespace).await? {
             Some(installed_package) => {
@@ -148,27 +148,27 @@ pub trait QuiltModel {
         &self,
         package: &quilt::InstalledPackage,
         host_config: Option<HostConfig>,
-    ) -> Result<quilt::uri::ManifestUri, Error> {
+    ) -> Result<quilt::uri::ManifestUriParquet, Error> {
         Ok(package.push(host_config).await?)
     }
 
     async fn package_revision_certify_latest(
         &self,
         package: &quilt::InstalledPackage,
-    ) -> Result<quilt::uri::ManifestUri, Error> {
+    ) -> Result<quilt::uri::ManifestUriParquet, Error> {
         Ok(package.certify_latest().await?)
     }
 
     async fn package_revision_reset_local(
         &self,
         package: &quilt::InstalledPackage,
-    ) -> Result<quilt::uri::ManifestUri, Error> {
+    ) -> Result<quilt::uri::ManifestUriParquet, Error> {
         Ok(package.reset_to_latest().await?)
     }
 
     async fn package_install(
         &self,
-        remote_manifest: &quilt::uri::ManifestUri,
+        remote_manifest: &quilt::uri::ManifestUriParquet,
     ) -> Result<quilt::InstalledPackage, Error> {
         Ok(self
             .get_quilt()
@@ -245,7 +245,7 @@ pub trait QuiltModel {
     async fn resolve_manifest_uri(
         &self,
         uri: &quilt::uri::S3PackageUri,
-    ) -> Result<quilt::uri::ManifestUri, Error> {
+    ) -> Result<quilt::uri::ManifestUriParquet, Error> {
         Ok(quilt::io::manifest::resolve_manifest_uri(
             self.get_quilt().lock().await.get_remote(),
             &uri.catalog,
@@ -486,7 +486,7 @@ pub mod mocks {
     }
 
     pub fn mock_installed_package(model: &mut MockQuiltModel) -> &MockQuiltModel {
-        let remote_manifest = quilt::uri::ManifestUri {
+        let remote_manifest = quilt::uri::ManifestUriParquet {
             bucket: "quilt-example".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "6c3758a4d2bf8fe730be5d12f5e095950dc123c373f55f66ca4b3ced74772b22".to_string(),
@@ -527,7 +527,7 @@ pub mod mocks {
         // Mock resolve_manifest_uri to return the manifest URI directly
         model
             .expect_resolve_manifest_uri()
-            .returning(|uri| Ok(quilt::uri::ManifestUri::try_from(uri.clone()).unwrap()));
+            .returning(|uri| Ok(quilt::uri::ManifestUriParquet::try_from(uri.clone()).unwrap()));
         // For the remote package test, the package starts as not installed
         model.expect_is_package_installed().returning(|_| Ok(None));
         // After installation, the package should be available
@@ -564,7 +564,7 @@ pub mod mocks {
             .expect_open_in_file_browser()
             .returning(|_| Ok(PathBuf::default()));
 
-        let remote_manifest = quilt::uri::ManifestUri {
+        let remote_manifest = quilt::uri::ManifestUriParquet {
             bucket: "quilt-example".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "6c3758a4d2bf8fe730be5d12f5e095950dc123c373f55f66ca4b3ced74772b22".to_string(),

@@ -9,7 +9,7 @@ use crate::lineage::DomainLineage;
 use crate::lineage::PackageLineage;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
-use crate::uri::ManifestUri;
+use crate::uri::ManifestUriParquet;
 use crate::uri::Tag;
 use crate::Error;
 use crate::Res;
@@ -23,7 +23,7 @@ pub async fn install_package(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    manifest_uri: &ManifestUri,
+    manifest_uri: &ManifestUriParquet,
 ) -> Res<DomainLineage> {
     info!("⏳ Installing package: {}", manifest_uri.display());
 
@@ -107,9 +107,9 @@ mod tests {
             &DomainPaths::default(),
             &MockStorage::default(),
             &MockRemote::default(),
-            &ManifestUri {
+            &ManifestUriParquet {
                 namespace: namespace.into(),
-                ..ManifestUri::default()
+                ..ManifestUriParquet::default()
             },
         )
         .await;
@@ -127,7 +127,7 @@ mod tests {
     async fn test_installing() -> Res {
         let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
 
-        let manifest_uri = ManifestUri {
+        let manifest_uri = ManifestUriParquet {
             bucket: "a".to_string(),
             hash: "abcdef1234".to_string(),
             namespace: ("f", "b").into(),
@@ -198,7 +198,7 @@ mod tests {
     // Permissions denied, because we try to create a file in the OS root directory
     #[test(tokio::test)]
     async fn test_installing_when_no_permissions() -> Res {
-        let manifest_uri = ManifestUri {
+        let manifest_uri = ManifestUriParquet {
             bucket: "a".to_string(),
             hash: "h".to_string(),
             namespace: ("f", "b").into(),

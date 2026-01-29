@@ -15,7 +15,7 @@ use url::form_urlencoded;
 use url::Url;
 
 use crate::uri::Host;
-use crate::uri::ManifestUri;
+use crate::uri::ManifestUriParquet;
 use crate::Error;
 use crate::Res;
 
@@ -164,8 +164,8 @@ impl From<&S3PackageUri> for S3PackageHandle {
     }
 }
 
-impl From<ManifestUri> for S3PackageHandle {
-    fn from(uri: ManifestUri) -> S3PackageHandle {
+impl From<ManifestUriParquet> for S3PackageHandle {
+    fn from(uri: ManifestUriParquet) -> S3PackageHandle {
         S3PackageHandle {
             bucket: uri.bucket,
             namespace: uri.namespace,
@@ -173,8 +173,8 @@ impl From<ManifestUri> for S3PackageHandle {
     }
 }
 
-impl From<&ManifestUri> for S3PackageHandle {
-    fn from(uri: &ManifestUri) -> S3PackageHandle {
+impl From<&ManifestUriParquet> for S3PackageHandle {
+    fn from(uri: &ManifestUriParquet) -> S3PackageHandle {
         uri.clone().into()
     }
 }
@@ -369,8 +369,8 @@ impl std::str::FromStr for S3PackageUri {
     }
 }
 
-impl From<ManifestUri> for S3PackageUri {
-    fn from(uri: ManifestUri) -> S3PackageUri {
+impl From<ManifestUriParquet> for S3PackageUri {
+    fn from(uri: ManifestUriParquet) -> S3PackageUri {
         S3PackageUri {
             bucket: uri.bucket,
             catalog: uri.catalog,
@@ -381,8 +381,8 @@ impl From<ManifestUri> for S3PackageUri {
     }
 }
 
-impl From<&ManifestUri> for S3PackageUri {
-    fn from(uri: &ManifestUri) -> S3PackageUri {
+impl From<&ManifestUriParquet> for S3PackageUri {
+    fn from(uri: &ManifestUriParquet) -> S3PackageUri {
         S3PackageUri::from(uri.clone())
     }
 }
@@ -586,7 +586,7 @@ mod tests {
 
     #[test]
     fn test_from_manifest_uri() -> Res {
-        let manifest_uri = ManifestUri {
+        let manifest_uri = ManifestUriParquet {
             bucket: "test-bucket".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "abc123".to_string(),

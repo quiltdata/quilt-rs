@@ -8,7 +8,7 @@ use crate::lineage::PackageLineage;
 use crate::manifest::Table;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
-use crate::uri::ManifestUri;
+use crate::uri::ManifestUriParquet;
 use crate::uri::Namespace;
 use crate::uri::Tag;
 use crate::Res;
@@ -64,7 +64,7 @@ pub async fn reset_to_latest(
     copy_cached_to_installed(
         paths,
         storage,
-        &ManifestUri {
+        &ManifestUriParquet {
             namespace: namespace.clone(),
             ..latest.clone()
         },
@@ -115,7 +115,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_if_already_latest() -> Res {
-        let source_manifest_uri = ManifestUri {
+        let source_manifest_uri = ManifestUriParquet {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
             hash: "foo".to_string(),
@@ -151,7 +151,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_reseting_to_latest() -> Res {
-        let manifest_uri = ManifestUri {
+        let manifest_uri = ManifestUriParquet {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
             hash: "OUTDATED_HASH".to_string(),
@@ -202,7 +202,7 @@ mod tests {
             PackageLineage {
                 base_hash: hash.to_string(),
                 latest_hash: hash.to_string(),
-                remote: ManifestUri {
+                remote: ManifestUriParquet {
                     hash: hash.to_string(),
                     ..source_lineage.remote
                 },
