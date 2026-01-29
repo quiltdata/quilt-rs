@@ -16,6 +16,7 @@ GITHUB_API_BASE = "https://api.github.com"
 HUBSPOT_FILE_UPLOAD_URL = "https://api.hubapi.com/filemanager/api/v3/files/upload"
 HUBSPOT_HUBDB_ROW_URL = "https://api.hubapi.com/cms/v3/hubdb/tables/{table_id}/rows/{row_id}"
 HUBSPOT_HUBDB_ROWS_URL = "https://api.hubapi.com/cms/v3/hubdb/tables/{table_id}/rows"
+DOWNLOAD_EXTENSIONS = (".dmg", ".msi", ".deb")
 
 
 def _log(message):
@@ -112,6 +113,26 @@ def find_release_version(latest_json, fallback_tag):
     return fallback_tag or "unknown"
 
 
+def expand_path_template(value, release_tag, version):
+    if not isinstance(value, str):
+        return value
+    replacements = {
+        "{tag}": release_tag,
+        "{release_tag}": release_tag,
+        "{version}": version,
+        "{v}": version,
+    }
+    rendered = value
+    for placeholder, replacement in replacements.items():
+        if not replacement:
+            continue
+        rendered = rendered.replace(placeholder, replacement)
+        token = placeholder.strip("{}")
+        rendered = rendered.replace(f"%7B{token}%7D", replacement)
+        rendered = rendered.replace(f"%7b{token}%7d", replacement)
+    return rendered
+
+
 def build_upload_map(items, base_path, hubfs_root_url):
     mapping = {}
     base_path = "/" + base_path.strip("/")
@@ -131,7 +152,9 @@ def build_upload_map(items, base_path, hubfs_root_url):
     return mapping
 
 
-def update_latest_json_urls(latest_json, upload_map, hubfs_root_url, base_path):
+def update_latest_json_urls(
+    latest_json, upload_map, hubfs_root_url, base_path, release_tag, version
+):
     base_path = "/" + base_path.strip("/")
     hubfs_root_url = hubfs_root_url.rstrip("/")
     if not hubfs_root_url.startswith("http"):
@@ -141,12 +164,13 @@ def update_latest_json_urls(latest_json, upload_map, hubfs_root_url, base_path):
     def replace_url(value):
         if not isinstance(value, str):
             return value
-        parsed = urlparse(value)
-        basename = os.path.basename(parsed.path) if parsed.path else os.path.basename(value)
+        expanded = expand_path_template(value, release_tag, version)
+        parsed = urlparse(expanded)
+        basename = os.path.basename(parsed.path) if parsed.path else os.path.basename(expanded)
         if basename in basename_to_url:
             return basename_to_url[basename]
         if not parsed.scheme:
-            rel = value.lstrip("/")
+            rel = expanded.lstrip("/")
             # Use simple concatenation, ensuring no double slashes at the join point
             base = f"{hubfs_root_url}{base_path}"
             # Only replace double slashes in the path part, not the protocol
@@ -178,6 +202,24 @@ def update_latest_json_urls(latest_json, upload_map, hubfs_root_url, base_path):
 
     walk(latest_json)
     return latest_json
+
+
+def resolve_base_path(base_path, release_tag, version):
+    resolved = base_path or "/quiltsync"
+    return expand_path_template(resolved, release_tag, version)
+
+
+def is_downloadable_path(path):
+    lower = path.lower()
+    return lower.endswith(DOWNLOAD_EXTENSIONS)
+
+
+def select_upload_url(upload_map, patterns):
+    for info in upload_map.values():
+        basename = info["basename"].lower()
+        if any(pattern in basename for pattern in patterns):
+            return info["url"]
+    return ""
 
 
 def upload_file_to_hubspot(token, file_path, target_path):
@@ -224,13 +266,22 @@ def create_hubdb_row(token, table_id, values, publish):
 
 def build_hubdb_values(latest_json, release_tag, latest_json_url, column_map, upload_map):
     downloads = []
+    version = find_release_version(latest_json, release_tag)
 
     # Collect URLs from latest.json
     def collect_urls(obj):
         if isinstance(obj, dict):
             for key, value in obj.items():
                 if key == "url" and isinstance(value, str):
-                    downloads.append(value)
+                    expanded = expand_path_template(value, release_tag, version)
+                    parsed = urlparse(expanded)
+                    basename = (
+                        os.path.basename(parsed.path)
+                        if parsed.path
+                        else os.path.basename(expanded)
+                    )
+                    if is_downloadable_path(basename):
+                        downloads.append(expanded)
                 else:
                     collect_urls(value)
         elif isinstance(obj, list):
@@ -241,10 +292,27 @@ def build_hubdb_values(latest_json, release_tag, latest_json_url, column_map, up
 
     # Also include all uploaded files in downloads list (deduplicated)
     for info in upload_map.values():
-        if info["url"] not in downloads:
-            downloads.append(info["url"])
+        expanded = expand_path_template(info["url"], release_tag, version)
+        if is_downloadable_path(info["basename"]) and expanded not in downloads:
+            downloads.append(expanded)
 
-    version = find_release_version(latest_json, release_tag)
+    windows_msi_url = expand_path_template(
+        select_upload_url(upload_map, [".msi"]), release_tag, version
+    )
+    macos_arm_url = expand_path_template(
+        select_upload_url(upload_map, ["aarch64.dmg", "arm64.dmg"]),
+        release_tag,
+        version,
+    )
+    macos_intel_url = expand_path_template(
+        select_upload_url(upload_map, ["x64.dmg", "x86_64.dmg", "amd64.dmg"]),
+        release_tag,
+        version,
+    )
+    linux_deb_url = expand_path_template(
+        select_upload_url(upload_map, [".deb"]), release_tag, version
+    )
+
     resolved = {
         "version": version,
         "release_tag": release_tag,
@@ -252,6 +320,12 @@ def build_hubdb_values(latest_json, release_tag, latest_json_url, column_map, up
         "latest_json": json.dumps(latest_json, separators=(",", ":")),
         "downloads_json": json.dumps(downloads, separators=(",", ":")),
         "updated_at": datetime.now(timezone.utc).isoformat(),
+        "windows_msi_url": windows_msi_url,
+        "windows_url": windows_msi_url,
+        "macos_arm_url": macos_arm_url,
+        "macos_intel_url": macos_intel_url,
+        "linux_deb_url": linux_deb_url,
+        "linux_url": linux_deb_url,
     }
     values = {}
     for key, column in column_map.items():
@@ -317,11 +391,24 @@ def main():
 
         latest_json = load_latest_json(latest_item["source"])
 
-        upload_candidates = [item for item in items if item != latest_item]
-        upload_map = build_upload_map(upload_candidates, args.hubfs_base_path, args.hubfs_root_url)
+        version = find_release_version(latest_json, release_tag)
+        resolved_base_path = resolve_base_path(args.hubfs_base_path, release_tag, version)
+        latest_json_target_path = expand_path_template(
+            args.latest_json_target_path, release_tag, version
+        )
+
+        upload_candidates = [
+            item for item in items if item != latest_item and is_downloadable_path(item["rel_path"])
+        ]
+        upload_map = build_upload_map(upload_candidates, resolved_base_path, args.hubfs_root_url)
 
         latest_json = update_latest_json_urls(
-            latest_json, upload_map, args.hubfs_root_url, args.hubfs_base_path
+            latest_json,
+            upload_map,
+            args.hubfs_root_url,
+            resolved_base_path,
+            release_tag,
+            version,
         )
 
         updated_latest_path = os.path.join(temp_dir, "latest.json")
@@ -332,7 +419,7 @@ def main():
             _log(f"Uploading {info['path']}")
             upload_file_to_hubspot(hubspot_token, info["source"], info["path"])
 
-        latest_target_path = args.latest_json_target_path
+        latest_target_path = latest_json_target_path
         _log(f"Uploading {latest_target_path}")
         upload_file_to_hubspot(hubspot_token, updated_latest_path, latest_target_path)
 
@@ -342,7 +429,7 @@ def main():
         hubdb_publish = os.environ.get("HUBDB_PUBLISH", "true").lower() == "true"
 
         if hubdb_table_id and hubdb_column_map:
-            latest_json_url = args.hubfs_root_url.rstrip("/") + args.latest_json_target_path
+            latest_json_url = args.hubfs_root_url.rstrip("/") + latest_json_target_path
             values = build_hubdb_values(latest_json, release_tag, latest_json_url, hubdb_column_map, upload_map)
             if values:
                 if hubdb_row_id:
