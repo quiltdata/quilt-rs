@@ -40,12 +40,12 @@ impl From<&ManifestUriParquet> for S3Uri {
     }
 }
 
-impl TryFrom<S3PackageUri> for ManifestUriParquet {
+impl TryFrom<S3PackageUri> for ManifestUri {
     type Error = Error;
     fn try_from(uri: S3PackageUri) -> Result<Self, Self::Error> {
-        Ok(ManifestUriParquet {
+        Ok(ManifestUri {
             bucket: uri.bucket,
-            catalog: uri.catalog,
+            origin: uri.catalog,
             namespace: uri.namespace,
             hash: match uri.revision {
                 RevisionPointer::Hash(top_hash) => top_hash,
@@ -56,6 +56,13 @@ impl TryFrom<S3PackageUri> for ManifestUriParquet {
                 }
             },
         })
+    }
+}
+
+impl TryFrom<S3PackageUri> for ManifestUriParquet {
+    type Error = Error;
+    fn try_from(uri: S3PackageUri) -> Result<Self, Self::Error> {
+        Ok(ManifestUriParquet::from(ManifestUri::try_from(uri)?))
     }
 }
 
@@ -109,6 +116,23 @@ impl From<&ManifestUriParquet> for ManifestUri {
     }
 }
 
+impl From<ManifestUri> for ManifestUriParquet {
+    fn from(manifest_uri: ManifestUri) -> Self {
+        ManifestUriParquet {
+            catalog: manifest_uri.origin,
+            bucket: manifest_uri.bucket,
+            namespace: manifest_uri.namespace,
+            hash: manifest_uri.hash,
+        }
+    }
+}
+
+impl From<&ManifestUri> for ManifestUriParquet {
+    fn from(manifest_uri: &ManifestUri) -> Self {
+        manifest_uri.clone().into()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,7 +149,7 @@ mod tests {
             catalog: None,
         };
 
-        let result = ManifestUriParquet::try_from(package_uri);
+        let result = ManifestUri::try_from(package_uri);
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),
@@ -137,18 +161,18 @@ mod tests {
     #[test]
     fn test_manifest_uri_try_from_package_uri_with_hash() -> Res {
         assert_eq!(
-            ManifestUriParquet::try_from(S3PackageUri {
+            ManifestUri::try_from(S3PackageUri {
                 bucket: "test-bucket".to_string(),
                 namespace: ("foo", "bar").into(),
                 revision: RevisionPointer::Hash("abc123".to_string()),
                 path: None,
                 catalog: None,
             })?,
-            ManifestUriParquet {
+            ManifestUri {
                 bucket: "test-bucket".to_string(),
                 namespace: ("foo", "bar").into(),
                 hash: "abc123".to_string(),
-                catalog: None,
+                origin: None,
             }
         );
         Ok(())
