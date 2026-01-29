@@ -74,7 +74,7 @@ impl ManifestUriParquet {
 
 /// The same as `ManifestUri` but for legacy JSONL format
 /// They have the same struct-ure, but different impl-ementations, especially, for key `property`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ManifestUriLegacy {
     pub origin: Option<Host>,
     pub bucket: String,
