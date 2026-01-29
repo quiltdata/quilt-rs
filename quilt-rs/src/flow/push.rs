@@ -192,7 +192,6 @@ mod tests {
     use crate::lineage::CommitState;
     use crate::lineage::PackageLineage;
     use crate::manifest::Row;
-    use crate::uri::ManifestUriParquet;
     use crate::uri::S3Uri;
 
     #[test(tokio::test)]
@@ -215,11 +214,11 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_no_entries_push() -> Res {
-        let manifest_uri = ManifestUriParquet {
+        let manifest_uri = ManifestUri {
             bucket: "b".to_string(),
             namespace: ("a", "c").into(),
             hash: "__FOO__".to_string(),
-            catalog: None,
+            origin: None,
         };
         let lineage = PackageLineage {
             commit: Some(CommitState {
@@ -227,7 +226,7 @@ mod tests {
                 hash: fixtures::manifest_empty::EMPTY_NULL_TOP_HASH.to_string(),
                 prev_hashes: Vec::new(),
             }),
-            remote: manifest_uri.into(),
+            remote: manifest_uri,
             ..PackageLineage::default()
         };
         let jsonl = std::fs::read(fixtures::manifest::parquet_checksummed()?)?;
@@ -266,16 +265,16 @@ mod tests {
             HostConfig::default(),
         )
         .await?;
-        let manifest_uri = ManifestUriParquet {
+        let manifest_uri = ManifestUri {
             bucket: "b".to_string(),
             namespace: ("a", "c").into(),
             hash: fixtures::manifest_empty::EMPTY_NULL_TOP_HASH.to_string(),
-            catalog: None,
+            origin: None,
         };
         assert_eq!(
             lineage,
             PackageLineage {
-                remote: manifest_uri.into(),
+                remote: manifest_uri,
                 base_hash: "".to_string(), // Huh?
                 latest_hash: "abcdef".to_string(),
                 ..PackageLineage::default()
@@ -286,11 +285,11 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_single_chunk_push() -> Res {
-        let manifest_uri = ManifestUriParquet {
+        let manifest_uri = ManifestUri {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
             hash: "__FOO__".to_string(),
-            catalog: None,
+            origin: None,
         };
         let lineage = PackageLineage {
             commit: Some(CommitState {
@@ -298,7 +297,7 @@ mod tests {
                 hash: fixtures::manifest::PARQUEST_CHECKSUMMED_HASH.to_string(),
                 prev_hashes: Vec::new(),
             }),
-            remote: manifest_uri.into(),
+            remote: manifest_uri,
             ..PackageLineage::default()
         };
         let jsonl = std::fs::read(fixtures::manifest::parquet_checksummed()?)?;
@@ -353,16 +352,16 @@ mod tests {
             HostConfig::default(),
         )
         .await?;
-        let manifest_uri = ManifestUriParquet {
+        let manifest_uri = ManifestUri {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
             hash: fixtures::manifest::PARQUEST_CHECKSUMMED_HASH.to_string(),
-            catalog: None,
+            origin: None,
         };
         assert_eq!(
             lineage,
             PackageLineage {
-                remote: manifest_uri.into(),
+                remote: manifest_uri,
                 base_hash: "".to_string(), // Huh?
                 latest_hash: "abcdef".to_string(),
                 ..PackageLineage::default()

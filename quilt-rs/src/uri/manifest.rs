@@ -133,6 +133,13 @@ impl From<&ManifestUri> for ManifestUriParquet {
     }
 }
 
+impl fmt::Display for ManifestUri {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let uri = S3PackageUri::from(self);
+        write!(f, "{uri}")
+    }
+}
+
 impl ManifestUri {
     pub fn display(&self) -> String {
         S3PackageUri::from(ManifestUriParquet::from(self)).display()

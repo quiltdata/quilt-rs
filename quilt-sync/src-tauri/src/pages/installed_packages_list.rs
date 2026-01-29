@@ -20,7 +20,7 @@ use crate::ui::Icon;
 struct InstalledPackage {
     namespace: Namespace,
     origin: url::Url,
-    remote: quilt::uri::ManifestUriParquet,
+    remote: quilt::uri::ManifestUri,
     status: UpstreamState,
 }
 
@@ -40,7 +40,7 @@ struct TmplInstalledPackage<'a> {
     button_sync: Option<btn::TmplButton<'a>>,
     button_uninstall: btn::TmplButton<'a>,
     namespace: quilt::uri::Namespace,
-    remote: quilt::uri::ManifestUriParquet,
+    remote: quilt::uri::ManifestUri,
 }
 
 impl From<InstalledPackage> for TmplInstalledPackage<'_> {
@@ -179,7 +179,7 @@ impl ViewInstalledPackagesList {
             installed_packages_list.push(InstalledPackage {
                 namespace: installed_package.namespace,
                 origin: uri.display_for_host(&origin_host)?,
-                remote: lineage.remote.into(),
+                remote: lineage.remote,
                 status: status.upstream_state,
             });
         }
@@ -216,7 +216,7 @@ impl From<ViewInstalledPackagesList> for TmplPageInstalledPackagesList<'_> {
 mod tests {
     use super::*;
 
-    use quilt::uri::ManifestUriParquet;
+    use quilt::uri::ManifestUri;
     use quilt::uri::S3PackageUri;
 
     use crate::app::Globals;
@@ -226,7 +226,7 @@ mod tests {
         Ok(InstalledPackage {
             namespace: namespace.try_into().unwrap(),
             origin: url::Url::parse("https://test.quilt.dev").unwrap(),
-            remote: ManifestUriParquet::try_from(S3PackageUri::try_from(
+            remote: ManifestUri::try_from(S3PackageUri::try_from(
                 format!("quilt+s3://test#package={namespace}@abcdef").as_str(),
             )?)?,
             status,

@@ -242,7 +242,7 @@ mod tests {
 
     use crate::checksum::Sha256ChunkedHash;
     use crate::io::storage::mocks::MockStorage;
-    use crate::uri::ManifestUriParquet;
+    use crate::uri::ManifestUri;
 
     #[test]
     fn test_syntax_error() {
@@ -367,13 +367,12 @@ mod tests {
                         ("foo", "bar").into(),
                         PackageLineage {
                             commit: None,
-                            remote: ManifestUriParquet {
+                            remote: ManifestUri {
                                 bucket: "bucket".to_string(),
                                 namespace: ("foo", "bar").into(),
                                 hash: "abcdef".to_string(),
-                                catalog: None,
-                            }
-                            .into(),
+                                origin: None,
+                            },
                             base_hash: "abcdef".to_string(),
                             latest_hash: "abcdef".to_string(),
                             paths: BTreeMap::from([(
@@ -425,13 +424,12 @@ mod tests {
         let namespace = Namespace::from(("foo", "bar"));
         let package_lineage = PackageLineage {
             commit: None,
-            remote: ManifestUriParquet {
+            remote: ManifestUri {
                 bucket: "bucket".to_string(),
                 namespace: namespace.clone(),
                 hash: "abcdef".to_string(),
-                catalog: None,
-            }
-            .into(),
+                origin: None,
+            },
             base_hash: "abcdef".to_string(),
             latest_hash: "abcdef".to_string(),
             paths: BTreeMap::new(),
@@ -489,13 +487,12 @@ mod tests {
         let namespace = Namespace::from(("foo", "bar"));
         let package_lineage = PackageLineage {
             commit: None,
-            remote: ManifestUriParquet {
+            remote: ManifestUri {
                 bucket: "bucket".to_string(),
                 namespace: namespace.clone(),
                 hash: "abcdef".to_string(),
-                catalog: None,
-            }
-            .into(),
+                origin: None,
+            },
             base_hash: "abcdef".to_string(),
             latest_hash: "abcdef".to_string(),
             paths: BTreeMap::new(),

@@ -109,21 +109,20 @@ mod tests {
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::PackageLineage;
-    use crate::uri::ManifestUriParquet;
     use crate::uri::S3Uri;
 
     use test_log::test;
 
     #[test(tokio::test)]
     async fn test_if_already_latest() -> Res {
-        let source_manifest_uri = ManifestUriParquet {
+        let source_manifest_uri = ManifestUri {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
             hash: "foo".to_string(),
-            catalog: None,
+            origin: None,
         };
         let source_lineage = PackageLineage {
-            remote: source_manifest_uri.into(),
+            remote: source_manifest_uri,
             ..PackageLineage::default()
         };
 
@@ -152,11 +151,11 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_reseting_to_latest() -> Res {
-        let manifest_uri = ManifestUriParquet {
+        let manifest_uri = ManifestUri {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
             hash: "OUTDATED_HASH".to_string(),
-            catalog: None,
+            origin: None,
         };
 
         let paths = DomainPaths::default();
@@ -166,7 +165,7 @@ mod tests {
             .await?;
 
         let source_lineage = PackageLineage {
-            remote: manifest_uri.into(),
+            remote: manifest_uri,
             ..PackageLineage::default()
         };
 
@@ -203,11 +202,10 @@ mod tests {
             PackageLineage {
                 base_hash: hash.to_string(),
                 latest_hash: hash.to_string(),
-                remote: ManifestUriParquet {
+                remote: ManifestUri {
                     hash: hash.to_string(),
-                    ..source_lineage.remote.clone().into()
-                }
-                .into(),
+                    ..source_lineage.remote.clone()
+                },
                 ..source_lineage
             }
         );

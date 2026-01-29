@@ -21,9 +21,9 @@ mod tests {
 
     #[test]
     fn test_stringify_remote_manifest() {
-        let remote_manifest = quilt::uri::ManifestUriParquet {
+        let remote_manifest = quilt::uri::ManifestUri {
             bucket: "bucket".to_string(),
-            catalog: None,
+            origin: None,
             hash: "abcdef".to_string(),
             namespace: ("foo", "bar").into(),
         };

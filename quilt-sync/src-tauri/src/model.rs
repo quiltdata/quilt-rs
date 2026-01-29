@@ -486,11 +486,11 @@ pub mod mocks {
     }
 
     pub fn mock_installed_package(model: &mut MockQuiltModel) -> &MockQuiltModel {
-        let remote_manifest = quilt::uri::ManifestUriParquet {
+        let remote_manifest = quilt::uri::ManifestUri {
             bucket: "quilt-example".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "6c3758a4d2bf8fe730be5d12f5e095950dc123c373f55f66ca4b3ced74772b22".to_string(),
-            catalog: None,
+            origin: None,
         };
         model.expect_get_installed_package().returning(move |_| {
             Ok(Some(
@@ -503,7 +503,7 @@ pub mod mocks {
             .expect_get_installed_package_lineage()
             .returning(move |_| {
                 Ok(quilt::lineage::PackageLineage::from_remote(
-                    remote_manifest.clone().into(),
+                    remote_manifest.clone(),
                     remote_manifest.hash.clone(),
                 ))
             });
@@ -525,11 +525,9 @@ pub mod mocks {
 
     pub fn mock_remote_package(model: &mut MockQuiltModel) -> &MockQuiltModel {
         // Mock resolve_manifest_uri to return the manifest URI directly
-        model.expect_resolve_manifest_uri().returning(|uri| {
-            Ok(quilt::uri::ManifestUriParquet::try_from(uri.clone())
-                .unwrap()
-                .into())
-        });
+        model
+            .expect_resolve_manifest_uri()
+            .returning(|uri| Ok(quilt::uri::ManifestUri::try_from(uri.clone()).unwrap()));
         // For the remote package test, the package starts as not installed
         model.expect_is_package_installed().returning(|_| Ok(None));
         // After installation, the package should be available
@@ -566,18 +564,18 @@ pub mod mocks {
             .expect_open_in_file_browser()
             .returning(|_| Ok(PathBuf::default()));
 
-        let remote_manifest = quilt::uri::ManifestUriParquet {
+        let remote_manifest = quilt::uri::ManifestUri {
             bucket: "quilt-example".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "6c3758a4d2bf8fe730be5d12f5e095950dc123c373f55f66ca4b3ced74772b22".to_string(),
-            catalog: None,
+            origin: None,
         };
 
         model
             .expect_get_installed_package_lineage()
             .returning(move |_| {
                 Ok(quilt::lineage::PackageLineage::from_remote(
-                    remote_manifest.clone().into(),
+                    remote_manifest.clone(),
                     remote_manifest.hash.clone(),
                 ))
             });

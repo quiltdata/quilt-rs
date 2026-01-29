@@ -135,7 +135,6 @@ mod tests {
     use crate::lineage::Change;
     use crate::lineage::CommitState;
     use crate::manifest::Row;
-    use crate::uri::ManifestUriParquet;
 
     #[test(tokio::test)]
     async fn test_no_pull_if_changes() -> Res {
@@ -197,11 +196,10 @@ mod tests {
         let storage = MockStorage::default();
         let remote = MockRemote::default();
         let lineage = PackageLineage {
-            remote: ManifestUriParquet {
+            remote: ManifestUri {
                 hash: "a".to_string(),
-                ..ManifestUriParquet::default()
-            }
-            .into(),
+                ..ManifestUri::default()
+            },
             base_hash: "b".to_string(),
             ..PackageLineage::default()
         };
@@ -227,11 +225,10 @@ mod tests {
         let storage = MockStorage::default();
         let remote = MockRemote::default();
         let lineage = PackageLineage {
-            remote: ManifestUriParquet {
+            remote: ManifestUri {
                 hash: "a".to_string(),
-                ..ManifestUriParquet::default()
-            }
-            .into(),
+                ..ManifestUri::default()
+            },
             base_hash: "a".to_string(),
             latest_hash: "a".to_string(),
             ..PackageLineage::default()

@@ -165,21 +165,6 @@ impl From<&S3PackageUri> for S3PackageHandle {
     }
 }
 
-impl From<ManifestUriParquet> for S3PackageHandle {
-    fn from(uri: ManifestUriParquet) -> S3PackageHandle {
-        S3PackageHandle {
-            bucket: uri.bucket,
-            namespace: uri.namespace,
-        }
-    }
-}
-
-impl From<&ManifestUriParquet> for S3PackageHandle {
-    fn from(uri: &ManifestUriParquet) -> S3PackageHandle {
-        uri.clone().into()
-    }
-}
-
 impl From<ManifestUri> for S3PackageHandle {
     fn from(uri: ManifestUri) -> S3PackageHandle {
         S3PackageHandle {
@@ -387,13 +372,7 @@ impl std::str::FromStr for S3PackageUri {
 
 impl From<ManifestUriParquet> for S3PackageUri {
     fn from(uri: ManifestUriParquet) -> S3PackageUri {
-        S3PackageUri {
-            bucket: uri.bucket,
-            catalog: uri.catalog,
-            namespace: uri.namespace,
-            path: None,
-            revision: RevisionPointer::Hash(uri.hash),
-        }
+        ManifestUri::from(uri).into()
     }
 }
 
