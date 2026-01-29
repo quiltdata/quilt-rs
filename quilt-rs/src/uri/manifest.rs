@@ -76,6 +76,7 @@ impl ManifestUri {
 /// They have the same struct-ure, but different impl-ementations, especially, for key `property`.
 #[derive(Clone, Debug)]
 pub struct ManifestUriLegacy {
+    pub origin: Option<Host>,
     pub bucket: String,
     pub namespace: Namespace,
     pub hash: String,
@@ -94,6 +95,7 @@ impl From<ManifestUriLegacy> for S3Uri {
 impl From<ManifestUri> for ManifestUriLegacy {
     fn from(manifest_uri: ManifestUri) -> Self {
         ManifestUriLegacy {
+            origin: manifest_uri.catalog,
             bucket: manifest_uri.bucket,
             namespace: manifest_uri.namespace,
             hash: manifest_uri.hash,
@@ -173,6 +175,7 @@ mod tests {
     fn test_manifest_uri_legacy_to_s3uri() {
         assert_eq!(
             S3Uri::from(ManifestUriLegacy {
+                origin: None,
                 bucket: "test-bucket".to_string(),
                 namespace: ("ignored", "ignored").into(),
                 hash: "abc123".to_string(),
