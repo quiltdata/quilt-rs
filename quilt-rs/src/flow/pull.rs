@@ -11,7 +11,7 @@ use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageLineage;
-use crate::manifest::{Manifest, Table};
+use crate::manifest::Manifest;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
@@ -107,11 +107,9 @@ pub async fn pull_package(
     }
     info!("⏳ Reinstalling {} paths", paths_to_install.len());
 
-    // Convert Manifest to Table for install_paths function
-    let mut table_manifest = Table::from_manifest(manifest)?;
     let package_lineage = flow::install_paths(
         lineage,
-        &mut table_manifest,
+        manifest,
         paths,
         working_dir,
         namespace,

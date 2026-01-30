@@ -14,8 +14,8 @@ use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
+use crate::manifest::Manifest;
 use crate::manifest::Row;
-use crate::manifest::Table;
 use crate::paths::DomainPaths;
 use crate::uri::Host;
 use crate::uri::Namespace;
@@ -48,7 +48,7 @@ async fn create_mutable_copy(
 }
 
 async fn stream_remote_with_installed_rows(
-    remote_manifest: &Table,
+    remote_manifest: &Manifest,
     local_entries: BTreeMap<PathBuf, Row>,
 ) -> impl RowsStream {
     remote_manifest
@@ -75,7 +75,7 @@ async fn stream_remote_with_installed_rows(
 #[allow(clippy::too_many_arguments)]
 pub async fn install_paths(
     mut lineage: PackageLineage,
-    table: &mut Table,
+    manifest: &mut Manifest,
     paths: &DomainPaths,
     working_dir: PathBuf, // This working dir is working dir of the package
     namespace: Namespace,
@@ -121,9 +121,8 @@ pub async fn install_paths(
 
     for path in entries_paths {
         // TODO: Consider using a hashmap or treemap for manifest.rows
-        let row = table
+        let row = manifest
             .get_record(path)
-            .await?
             .ok_or(Error::Table(format!("path {path:?} not found")))?;
 
         let object_dest = paths.object(row.hash.digest());
@@ -134,7 +133,7 @@ pub async fn install_paths(
                 remote,
                 &lineage.remote.origin,
                 &object_dest,
-                &row.place.parse()?,
+                &row.physical_key.parse()?,
             )
             .await?;
             debug!("✔️ Cached object: {}", object_dest.display());
@@ -152,15 +151,9 @@ pub async fn install_paths(
             object_dest.display(),
             place
         );
-        entries.insert(
-            row.name.clone(),
-            Row {
-                place,
-                ..row.clone()
-            },
-        );
+        entries.insert(row.logical_key.clone(), Row::from(row.clone()));
 
-        let working_dest = working_dir.join(&row.name);
+        let working_dest = working_dir.join(&row.logical_key);
         let last_modified = create_mutable_copy(storage, &object_dest, &working_dest).await?;
         debug!(
             "✔️ Created mutable copy at {} for {}",
@@ -169,18 +162,18 @@ pub async fn install_paths(
         );
 
         lineage.paths.insert(
-            row.name.clone(),
+            row.logical_key.clone(),
             PathState {
                 timestamp: last_modified,
-                hash: row.hash,
+                hash: row.hash.clone().into(),
             },
         );
-        debug!("✔️ Added {}  to lineage paths ", row.name.display());
+        debug!("✔️ Added {}  to lineage paths ", row.logical_key.display());
     }
 
     debug!("⏳ Building manifest with installed rows");
-    let header = table.get_header().await?;
-    let stream = stream_remote_with_installed_rows(table, entries).await;
+    let header = manifest.get_header().await?;
+    let stream = stream_remote_with_installed_rows(manifest, entries).await;
     let dest_dir = paths.installed_manifests(&namespace);
     build_manifest_from_rows_stream(storage, dest_dir, header, stream).await?;
 
@@ -222,13 +215,15 @@ mod tests {
         let lineage = PackageLineage::default();
         let single_object_path = PathBuf::from("less-then-8mb.txt");
         let entries_paths = vec![&single_object_path];
-        let mut manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let table_manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let mut manifest = Manifest::from_table(&table_manifest).await?;
 
-        let hash = manifest
+        let hash: multihash::Multihash<256> = manifest
             .get_record(&single_object_path)
-            .await?
             .unwrap()
-            .hash;
+            .hash
+            .clone()
+            .into();
         // let hash = fixtures::create_multihash(fixtures::objects::LESS_THAN_8MB_HASH_B64)?;
         let object_path = domain_paths.object(hash.digest());
         let absolute_path = home.join(object_path);
@@ -294,7 +289,7 @@ mod tests {
 
         // Create the manifest with a single remote row with a random hash
         let hash: multihash::Multihash<256> = multihash::Multihash::wrap(0x12, b"anything")?;
-        let mut manifest = Table::default();
+        let mut manifest = Manifest::default();
         manifest
             .insert_record(Row {
                 name: single_object_path.clone(),
@@ -367,7 +362,7 @@ mod tests {
             hash: multihash::Multihash::wrap(0x12, b"four")?,
             ..Row::default()
         };
-        let mut manifest = Table::default();
+        let mut manifest = Manifest::default();
         manifest.insert_record(row_1.clone()).await?;
         manifest.insert_record(row_2.clone()).await?;
         manifest.insert_record(row_3.clone()).await?;
@@ -435,7 +430,8 @@ mod tests {
         // We want to install z/z
         let entries_paths = vec![&not_existed];
         // But manifest clearly doens't contain it
-        let mut manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let table_manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let mut manifest = Manifest::from_table(&table_manifest).await?;
 
         // Assert we don't track anything
         assert!(lineage.paths.is_empty());
@@ -470,7 +466,7 @@ mod tests {
         let storage = MockStorage::default();
         let remote = MockRemote::default();
 
-        let mut manifest = Table::default();
+        let mut manifest = Manifest::default();
         let mut entries_paths = Vec::new();
         let mut path_refs = Vec::new();
 

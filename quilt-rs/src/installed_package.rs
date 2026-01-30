@@ -104,11 +104,10 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         self.scaffold_paths_for_caching(&lineage.remote.bucket)
             .await?;
 
-        let manifest = self.manifest().await?;
-        let mut table_manifest = crate::manifest::Table::from_manifest(&manifest)?;
+        let mut manifest = self.manifest().await?;
         let lineage = flow::install_paths(
             lineage,
-            &mut table_manifest,
+            &mut manifest,
             &self.paths,
             package_home,
             self.namespace.clone(),
