@@ -14,7 +14,7 @@ use crate::lineage;
 use crate::lineage::CommitState;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::LineagePaths;
-use crate::manifest::Table;
+use crate::manifest::Manifest;
 use crate::manifest::Workflow;
 use crate::paths;
 use crate::uri::ManifestUri;
@@ -54,12 +54,12 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         self.paths.scaffold_for_caching(&self.storage, bucket).await
     }
 
-    pub async fn manifest(&self) -> Res<Table> {
+    pub async fn manifest(&self) -> Res<Manifest> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
         let pathbuf = self
             .paths
             .installed_manifest(&self.namespace, lineage.current_hash());
-        Table::read_from_path(&self.storage, &pathbuf).await
+        Manifest::from_path(&self.storage, &pathbuf).await
     }
 
     pub async fn lineage(&self) -> Res<lineage::PackageLineage> {
@@ -75,6 +75,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
         let lineage = flow::refresh_latest_hash(lineage, &self.remote).await?;
         let manifest = self.manifest().await?;
+        let table_manifest = crate::manifest::Table::from_manifest(&manifest)?;
 
         let host_config =
             host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.origin).await?);
@@ -82,7 +83,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let (lineage, status) = flow::status(
             lineage,
             &self.storage,
-            &manifest,
+            &table_manifest,
             &package_home,
             host_config,
         )
@@ -103,10 +104,11 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         self.scaffold_paths_for_caching(&lineage.remote.bucket)
             .await?;
 
-        let mut manifest = self.manifest().await?;
+        let manifest = self.manifest().await?;
+        let mut table_manifest = crate::manifest::Table::from_manifest(&manifest)?;
         let lineage = flow::install_paths(
             lineage,
-            &mut manifest,
+            &mut table_manifest,
             &self.paths,
             package_home,
             self.namespace.clone(),
@@ -141,7 +143,8 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
-        let mut manifest = self.manifest().await?;
+        let manifest = self.manifest().await?;
+        let mut table_manifest = crate::manifest::Table::from_manifest(&manifest)?;
 
         let host_config =
             host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.origin).await?);
@@ -149,7 +152,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let (lineage, status) = flow::status(
             lineage,
             &self.storage,
-            &manifest,
+            &table_manifest,
             &package_home,
             host_config,
         )
@@ -157,7 +160,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
         let lineage = flow::commit(
             lineage,
-            &mut manifest,
+            &mut table_manifest,
             &self.paths,
             &self.storage,
             package_home,
@@ -188,13 +191,14 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             .await?;
 
         let manifest = self.manifest().await?;
+        let table_manifest = crate::manifest::Table::from_manifest(&manifest)?;
 
         let host_config =
             host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.origin).await?);
 
         let lineage = flow::push(
             lineage,
-            manifest,
+            table_manifest,
             &self.paths,
             &self.storage,
             &self.remote,
@@ -215,6 +219,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             .await?;
 
         let mut manifest = self.manifest().await?;
+        let table_manifest = crate::manifest::Table::from_manifest(&manifest)?;
 
         let host_config =
             host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.origin).await?);
@@ -222,7 +227,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let (lineage, status) = flow::status(
             lineage,
             &self.storage,
-            &manifest,
+            &table_manifest,
             &package_home,
             host_config,
         )

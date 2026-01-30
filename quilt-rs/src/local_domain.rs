@@ -14,7 +14,7 @@ use crate::lineage;
 use crate::lineage::DomainLineage;
 use crate::lineage::Home;
 use crate::manifest::Header;
-use crate::manifest::Table;
+use crate::manifest::Manifest;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
@@ -68,7 +68,7 @@ impl LocalDomain {
         self.paths.scaffold_for_caching(&self.storage, bucket).await
     }
 
-    pub async fn browse_remote_manifest(&self, uri: &ManifestUri) -> Res<Table> {
+    pub async fn browse_remote_manifest(&self, uri: &ManifestUri) -> Res<Manifest> {
         self.scaffold_paths_for_caching(&uri.bucket).await?;
         flow::browse(&self.paths, &self.storage, &self.remote, uri).await
     }

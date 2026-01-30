@@ -9,7 +9,6 @@ use crate::io::storage::Storage;
 use crate::manifest::Header;
 use crate::manifest::Manifest;
 use crate::manifest::Row;
-use crate::manifest::Table;
 use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::uri::ManifestUriParquet;
@@ -54,7 +53,7 @@ pub async fn cache_remote_manifest(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
-) -> Res<Table> {
+) -> Res<Manifest> {
     info!("⏳ Caching remote manifest: {}", manifest_uri.display());
 
     // check if the manifest is already cached
@@ -108,7 +107,7 @@ pub async fn cache_remote_manifest(
 
     info!("✔️ Manifest {} was written …", manifest_uri.display());
 
-    let manifest = Table::read_from_path(storage, &manifest_path).await?;
+    let manifest = Manifest::from_path(storage, &manifest_path).await?;
 
     info!("✔️ … and, Successfully cached:\n{:?}", manifest.header);
 
@@ -122,7 +121,7 @@ pub async fn browse_remote_manifest(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
-) -> Res<Table> {
+) -> Res<Manifest> {
     cache_remote_manifest(paths, storage, remote, manifest_uri).await
 }
 
@@ -172,7 +171,7 @@ mod tests {
 
         // Verify that the cached manifest matches the reference manifest
         assert_eq!(
-            cached_manifest.header.info.get("message").unwrap(),
+            cached_manifest.header.message.as_ref().unwrap(),
             "test_spec_write 2023-11-29T14:01:39.543975"
         );
 
@@ -241,7 +240,7 @@ mod tests {
         // Fetch the manifest from the remote location.
         let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
         assert_eq!(
-            cached_manifest.header.info.get("message").unwrap(),
+            cached_manifest.header.message.as_ref().unwrap(),
             "test_spec_write 2023-11-29T14:01:39.543975"
         );
 
@@ -301,7 +300,6 @@ mod tests {
         // Verify that the cached manifest contains valid records
         assert!(cached_manifest
             .get_record(&PathBuf::from("README.md"))
-            .await?
             .is_some());
 
         Ok(())

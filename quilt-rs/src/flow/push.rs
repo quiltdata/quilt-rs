@@ -87,7 +87,8 @@ pub async fn push_package(
     };
 
     debug!("⏳ Fetching remote manifest");
-    let remote_manifest = flow::browse(paths, storage, remote, &lineage.remote).await?;
+    let remote_manifest_raw = flow::browse(paths, storage, remote, &lineage.remote).await?;
+    let remote_manifest = Table::from_manifest(&remote_manifest_raw)?;
     debug!("✔️ Remote manifest fetched");
 
     // ## copy data

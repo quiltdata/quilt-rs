@@ -158,6 +158,23 @@ impl Table {
         Table { header, records }
     }
 
+    /// Convert from Manifest to Table format
+    pub fn from_manifest(manifest: &crate::manifest::Manifest) -> Res<Self> {
+        use crate::manifest::Row;
+
+        // Convert header
+        let header = Header::try_from(&manifest.header)?;
+
+        // Convert rows
+        let mut records = BTreeMap::new();
+        for manifest_row in &manifest.rows {
+            let row = Row::try_from(manifest_row.clone())?;
+            records.insert(manifest_row.logical_key.clone(), row);
+        }
+
+        Ok(Table::new(header, records))
+    }
+
     async fn read_rows_impl<T>(reader: T) -> Res<Self>
     where
         T: AsyncSeek + AsyncRead + Unpin + Send + 'static,

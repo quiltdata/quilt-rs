@@ -25,7 +25,7 @@ pub trait QuiltModel {
     async fn browse_remote_manifest(
         &self,
         remote_manifest: &quilt::uri::ManifestUri,
-    ) -> Result<quilt::manifest::Table, Error> {
+    ) -> Result<quilt::manifest::Manifest, Error> {
         Ok(self
             .get_quilt()
             .lock()
@@ -66,7 +66,9 @@ pub trait QuiltModel {
         &self,
         package: &quilt::InstalledPackage,
     ) -> Result<BTreeMap<PathBuf, quilt::manifest::Row>, Error> {
-        let mut stream = package.manifest().await?.records_stream().await;
+        let manifest = package.manifest().await?;
+        let table = quilt::manifest::Table::from_manifest(&manifest)?;
+        let mut stream = table.records_stream().await;
         let mut records = BTreeMap::new();
         while let Some(page) = stream.next().await {
             if let Ok(rows) = page {
@@ -481,8 +483,16 @@ pub mod mocks {
         MockQuiltModel::new()
     }
 
-    pub fn create_remote_manifest() -> quilt::manifest::Table {
-        quilt::manifest::Table::default()
+    pub fn create_remote_manifest() -> quilt::manifest::Manifest {
+        quilt::manifest::Manifest {
+            header: quilt::manifest::ManifestHeader {
+                version: "v0".to_string(),
+                message: None,
+                user_meta: None,
+                workflow: None,
+            },
+            rows: Vec::new(),
+        }
     }
 
     pub fn mock_installed_package(model: &mut MockQuiltModel) -> &MockQuiltModel {

@@ -5,7 +5,7 @@ use crate::io::manifest::resolve_tag;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
-use crate::manifest::Table;
+use crate::manifest::{Manifest, Table};
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
@@ -17,7 +17,7 @@ use tracing::info;
 
 pub async fn reset_to_latest(
     lineage: PackageLineage,
-    manifest: &mut Table,
+    manifest: &mut Manifest,
     paths: &DomainPaths,
     storage: &(impl Storage + std::marker::Sync),
     remote: &impl Remote,
@@ -76,7 +76,7 @@ pub async fn reset_to_latest(
     debug!("⏳ Checking which paths to reinstall");
     let mut paths_to_install = Vec::new();
     for x in &installed_paths {
-        if manifest.contains_record(x).await {
+        if manifest.contains_record(x) {
             debug!("✔️ Will reinstall path: {}", x.display());
             paths_to_install.push(x)
         } else {
@@ -85,9 +85,12 @@ pub async fn reset_to_latest(
     }
 
     info!("⏳ Reinstalling {} paths", paths_to_install.len());
+
+    // Convert Manifest to Table for install_paths function
+    let mut table_manifest = Table::from_manifest(manifest)?;
     let result = flow::install_paths(
         lineage,
-        manifest,
+        &mut table_manifest,
         paths,
         package_home,
         namespace,
@@ -137,7 +140,7 @@ mod tests {
 
         let resolved_lineage = reset_to_latest(
             source_lineage.clone(),
-            &mut Table::default(),
+            &mut Manifest::default(),
             &DomainPaths::default(),
             &MockStorage::default(),
             &remote,
@@ -189,7 +192,7 @@ mod tests {
 
         let resolved_lineage = reset_to_latest(
             source_lineage.clone(),
-            &mut Table::default(),
+            &mut Manifest::default(),
             &paths,
             &storage,
             &remote,

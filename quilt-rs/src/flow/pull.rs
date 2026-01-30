@@ -11,7 +11,7 @@ use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageLineage;
-use crate::manifest::Table;
+use crate::manifest::{Manifest, Table};
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
@@ -26,7 +26,7 @@ use crate::Res;
 #[allow(clippy::too_many_arguments)]
 pub async fn pull_package(
     lineage: PackageLineage,
-    manifest: &mut Table,
+    manifest: &mut Manifest,
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
@@ -98,7 +98,7 @@ pub async fn pull_package(
     debug!("⏳ Checking which paths to reinstall");
     let mut paths_to_install = Vec::new();
     for x in &installed_paths {
-        if manifest.contains_record(x).await {
+        if manifest.contains_record(x) {
             debug!("✔️ Will reinstall path: {}", x.display());
             paths_to_install.push(x)
         } else {
@@ -106,9 +106,12 @@ pub async fn pull_package(
         }
     }
     info!("⏳ Reinstalling {} paths", paths_to_install.len());
+
+    // Convert Manifest to Table for install_paths function
+    let mut table_manifest = Table::from_manifest(manifest)?;
     let package_lineage = flow::install_paths(
         lineage,
-        manifest,
+        &mut table_manifest,
         paths,
         working_dir,
         namespace,
@@ -140,7 +143,7 @@ mod tests {
     async fn test_no_pull_if_changes() -> Res {
         let storage = MockStorage::default();
         let lineage = PackageLineage::default();
-        let mut manifest = Table::default();
+        let mut manifest = Manifest::default();
 
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(PathBuf::from("foo"), Change::Added(Row::default()))]),
@@ -176,7 +179,7 @@ mod tests {
 
         let error = pull_package(
             lineage,
-            &mut Table::default(),
+            &mut Manifest::default(),
             &DomainPaths::default(),
             &storage,
             &remote,
@@ -205,7 +208,7 @@ mod tests {
         };
         let error = pull_package(
             lineage,
-            &mut Table::default(),
+            &mut Manifest::default(),
             &DomainPaths::default(),
             &storage,
             &remote,
@@ -235,7 +238,7 @@ mod tests {
         };
         let error = pull_package(
             lineage,
-            &mut Table::default(),
+            &mut Manifest::default(),
             &DomainPaths::default(),
             &storage,
             &remote,

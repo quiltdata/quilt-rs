@@ -122,7 +122,7 @@ impl Serialize for Workflow {
 }
 
 /// Header (or first row) in JSONL manifest
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Default)]
 pub struct ManifestHeader {
     pub version: String,
     pub message: Option<String>,
@@ -149,6 +149,20 @@ impl TryFrom<Header> for ManifestHeader {
     type Error = Error;
     fn try_from(header: Header) -> Result<Self, Self::Error> {
         ManifestHeader::try_from(&header)
+    }
+}
+
+impl TryFrom<&ManifestHeader> for crate::manifest::Header {
+    type Error = Error;
+
+    fn try_from(manifest_header: &ManifestHeader) -> Result<Self, Self::Error> {
+        use crate::manifest::Header;
+
+        Ok(Header::new(
+            manifest_header.message.clone(),
+            manifest_header.user_meta.clone(),
+            manifest_header.workflow.clone(),
+        ))
     }
 }
 
@@ -219,7 +233,7 @@ impl TryFrom<Quilt3ManifestRow> for ManifestRow {
 }
 
 /// Legacy JSONL in-memory manifest
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Default)]
 pub struct Manifest {
     pub header: ManifestHeader,
     pub rows: Vec<ManifestRow>,
@@ -347,6 +361,25 @@ impl Manifest {
             header: (&table.header).try_into()?,
             rows: manifest_rows,
         })
+    }
+
+    /// Read manifest from a file path, converting from Table format if needed
+    pub async fn from_path(
+        storage: &impl crate::io::storage::Storage,
+        path: &std::path::Path,
+    ) -> Res<Self> {
+        let table = Table::read_from_path(storage, path).await?;
+        Self::from_table(&table).await
+    }
+
+    /// Find a record by path (for compatibility with Table API)
+    pub fn get_record(&self, path: &PathBuf) -> Option<&ManifestRow> {
+        self.rows.iter().find(|row| &row.logical_key == path)
+    }
+
+    /// Check if manifest contains a record for the given path
+    pub fn contains_record(&self, path: &PathBuf) -> bool {
+        self.rows.iter().any(|row| &row.logical_key == path)
     }
 }
 
