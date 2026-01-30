@@ -20,8 +20,8 @@ use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
 use crate::manifest::Header;
+use crate::manifest::Manifest;
 use crate::manifest::Row;
-use crate::manifest::Table;
 use crate::manifest::Workflow;
 use crate::paths::DomainPaths;
 use crate::uri::Namespace;
@@ -29,7 +29,7 @@ use crate::Error;
 use crate::Res;
 
 async fn stream_local_with_changes(
-    local_manifest: &Table,
+    local_manifest: &Manifest,
     removed: HashSet<PathBuf>,
     modified: BTreeMap<PathBuf, Row>,
     new_files: StreamRowsChunk,
@@ -138,7 +138,7 @@ async fn create_immutable_object_copy(
 #[allow(clippy::too_many_arguments)]
 pub async fn commit_package(
     mut lineage: PackageLineage,
-    manifest: &mut Table,
+    manifest: &mut Manifest,
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
     working_dir: PathBuf,
@@ -202,7 +202,7 @@ pub async fn commit_package(
                 removed_keys.insert(row.name);
             }
             Change::Added(current) => {
-                if manifest.contains_record(&current.name).await {
+                if manifest.contains_record(&current.name) {
                     return Err(Error::Commit(format!(
                         "Trying to add a file that is already in the manifest: \"{}\"",
                         current.name.display()
@@ -311,7 +311,7 @@ mod tests {
         assert!(lineage.commit.is_none());
         let lineage = commit_package(
             lineage,
-            &mut Table::default(),
+            &mut Manifest::default(),
             &DomainPaths::default(),
             &storage,
             PathBuf::default(),
@@ -347,7 +347,7 @@ mod tests {
         assert!(lineage.commit.is_none());
         let lineage = commit_package(
             lineage,
-            &mut Table::default(),
+            &mut Manifest::default(),
             &DomainPaths::default(),
             &storage,
             PathBuf::default(),
@@ -390,7 +390,8 @@ mod tests {
             )]),
             ..PackageLineage::default()
         };
-        let mut manifest = crate::fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let table_manifest = crate::fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let mut manifest = Manifest::from_table(&table_manifest).await?;
 
         assert!(
             lineage.commit.is_none(),
@@ -457,7 +458,8 @@ mod tests {
         };
 
         let lineage = PackageLineage::default();
-        let mut manifest = crate::fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let table_manifest = crate::fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let mut manifest = Manifest::from_table(&table_manifest).await?;
 
         assert!(
             lineage.commit.is_none(),
@@ -549,7 +551,8 @@ mod tests {
             )]),
             ..PackageLineage::default()
         };
-        let mut manifest = crate::fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let table_manifest = crate::fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let mut manifest = Manifest::from_table(&table_manifest).await?;
 
         let result = commit_package(
             lineage,
@@ -606,7 +609,8 @@ mod tests {
             )]),
             ..PackageLineage::default()
         };
-        let mut manifest = crate::fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let table_manifest = crate::fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let mut manifest = Manifest::from_table(&table_manifest).await?;
 
         assert!(
             lineage.commit.is_none(),

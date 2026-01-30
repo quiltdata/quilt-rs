@@ -9,8 +9,6 @@ use std::fmt;
 use std::path::Path;
 use std::path::PathBuf;
 
-use crate::checksum::ObjectHash;
-use crate::io::storage::Storage;
 use arrow::array::GenericByteArray;
 use arrow::array::UInt64Array;
 use arrow::datatypes::BinaryType;
@@ -25,9 +23,12 @@ use tokio::io::AsyncRead;
 use tokio::io::AsyncSeek;
 use tokio_stream::StreamExt;
 
+use crate::checksum::ObjectHash;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamRowsChunk;
+use crate::io::storage::Storage;
 use crate::manifest::Header;
+use crate::manifest::Manifest;
 use crate::manifest::Row;
 use crate::manifest::RowDisplay;
 use crate::Error;
@@ -159,18 +160,14 @@ impl Table {
     }
 
     /// Convert from Manifest to Table format
-    pub fn from_manifest(manifest: &crate::manifest::Manifest) -> Res<Self> {
-        use crate::manifest::Row;
-
-        // Convert header
+    pub fn from_manifest(manifest: &Manifest) -> Res<Self> {
         let header = Header::try_from(&manifest.header)?;
 
-        // Convert rows
-        let mut records = BTreeMap::new();
-        for manifest_row in &manifest.rows {
-            let row = Row::try_from(manifest_row.clone())?;
-            records.insert(manifest_row.logical_key.clone(), row);
-        }
+        let records = manifest
+            .rows
+            .iter()
+            .map(|row| (row.logical_key.clone(), Row::from(row.clone())))
+            .collect::<BTreeMap<PathBuf, Row>>();
 
         Ok(Table::new(header, records))
     }

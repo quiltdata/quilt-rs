@@ -10,7 +10,10 @@ use tokio::io::BufReader;
 use tokio_stream::StreamExt;
 
 use crate::checksum;
+use crate::io::manifest::RowsStream;
+use crate::io::manifest::StreamRowsChunk;
 use crate::manifest::Header;
+use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::uri::S3Uri;
 use crate::Error;
@@ -380,6 +383,49 @@ impl Manifest {
     /// Check if manifest contains a record for the given path
     pub fn contains_record(&self, path: &PathBuf) -> bool {
         self.rows.iter().any(|row| &row.logical_key == path)
+    }
+
+    /// Create a stream of rows compatible with Table API
+    /// Returns a stream of Row chunks for compatibility with io::manifest streaming functions
+    /// Sorted by logical_key to match Table's BTreeMap behavior and uses proper TryFrom conversion
+    pub async fn records_stream(&self) -> impl RowsStream {
+        // Sort by logical_key to match Table's BTreeMap ordering
+        let mut sorted_rows = self.rows.clone();
+        sorted_rows.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
+
+        let rows: StreamRowsChunk = sorted_rows.into_iter().map(Row::from).map(Ok).collect();
+        tokio_stream::iter(vec![Ok(rows)])
+    }
+
+    /// Get the number of records in the manifest
+    pub async fn records_len(&self) -> usize {
+        self.rows.len()
+    }
+
+    /// Insert a record into the manifest (for compatibility with Table API)
+    pub async fn insert_record(&mut self, row: Row) -> Res<Option<ManifestRow>> {
+        // Check if row already exists
+        let existing_pos = self.rows.iter().position(|r| r.logical_key == row.name);
+
+        let new_row = ManifestRow {
+            logical_key: row.name,
+            physical_key: row.place,
+            hash: row.hash.try_into()?,
+            size: row.size,
+            meta: row.meta,
+        };
+
+        if let Some(pos) = existing_pos {
+            Ok(Some(std::mem::replace(&mut self.rows[pos], new_row)))
+        } else {
+            self.rows.push(new_row);
+            Ok(None)
+        }
+    }
+
+    /// Get header for compatibility with Table API
+    pub async fn get_header(&self) -> Res<crate::manifest::Header> {
+        (&self.header).try_into()
     }
 }
 

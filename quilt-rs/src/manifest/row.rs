@@ -196,10 +196,8 @@ impl From<&Manifest> for Header {
     }
 }
 
-impl TryFrom<ManifestRow> for Row {
-    type Error = Error;
-
-    fn try_from(manifest_row: ManifestRow) -> Result<Self, Self::Error> {
+impl From<ManifestRow> for Row {
+    fn from(manifest_row: ManifestRow) -> Self {
         // Extract user_meta from manifest_row.meta if it exists
         let (meta, info) = match manifest_row.meta {
             Some(serde_json::Value::Object(mut obj)) => {
@@ -218,14 +216,14 @@ impl TryFrom<ManifestRow> for Row {
             }
         };
 
-        Ok(Row {
+        Row {
             name: manifest_row.logical_key,
             place: manifest_row.physical_key,
             hash: manifest_row.hash.into(),
             size: manifest_row.size,
             meta,
             info,
-        })
+        }
     }
 }
 

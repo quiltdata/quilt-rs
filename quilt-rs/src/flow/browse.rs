@@ -1,4 +1,3 @@
-use tokio_stream::StreamExt;
 use tracing::debug;
 use tracing::info;
 
@@ -8,7 +7,6 @@ use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::manifest::Header;
 use crate::manifest::Manifest;
-use crate::manifest::Row;
 use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::uri::ManifestUriParquet;
@@ -17,9 +15,7 @@ use crate::Error;
 use crate::Res;
 
 async fn stream_jsonl_rows(jsonl: Manifest) -> impl RowsStream {
-    tokio_stream::iter(jsonl.rows)
-        .map(Row::try_from)
-        .map(|rows| Ok(vec![rows]))
+    jsonl.records_stream().await
 }
 
 async fn is_parquet(remote: &impl Remote, manifest: &ManifestUriParquet) -> Res<bool> {

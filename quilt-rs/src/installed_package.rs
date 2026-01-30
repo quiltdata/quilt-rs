@@ -143,8 +143,8 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
-        let manifest = self.manifest().await?;
-        let mut table_manifest = crate::manifest::Table::from_manifest(&manifest)?;
+        let mut manifest = self.manifest().await?;
+        let table_manifest = crate::manifest::Table::from_manifest(&manifest)?;
 
         let host_config =
             host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.origin).await?);
@@ -160,7 +160,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
         let lineage = flow::commit(
             lineage,
-            &mut table_manifest,
+            &mut manifest,
             &self.paths,
             &self.storage,
             package_home,
