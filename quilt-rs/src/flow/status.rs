@@ -17,8 +17,8 @@ use crate::lineage::Change;
 use crate::lineage::ChangeSet;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageLineage;
+use crate::manifest::Manifest;
 use crate::manifest::Row;
-use crate::manifest::Table;
 use crate::uri::Tag;
 use crate::Error;
 use crate::Res;
@@ -53,7 +53,7 @@ enum WorkdirFile {
 
 async fn locate_files_in_package_home(
     storage: &(impl Storage + Sync),
-    manifest: &Table,
+    manifest: &Manifest,
     package_home: impl AsRef<Path>,
     mut tracked_paths: HashMap<PathBuf, Row>,
 ) -> Res<Vec<(PathBuf, WorkdirFile)>> {
@@ -88,7 +88,8 @@ async fn locate_files_in_package_home(
             let logical_key = file_path.strip_prefix(&package_home)?.to_path_buf();
             if let Some(row) = tracked_paths.remove(&logical_key) {
                 files.push((logical_key, WorkdirFile::Tracked(file_path, row)));
-            } else if let Some(row) = manifest.get_record(&logical_key).await? {
+            } else if let Some(manifest_row) = manifest.get_record(&logical_key) {
+                let row = Row::from(manifest_row.clone());
                 files.push((logical_key, WorkdirFile::NotTracked(file_path, row)));
             } else {
                 files.push((logical_key, WorkdirFile::New(file_path)));
@@ -148,7 +149,7 @@ async fn fingerprint_files(
 pub async fn create_status(
     lineage: PackageLineage,
     storage: &(impl Storage + Sync),
-    manifest: &Table,
+    manifest: &Manifest,
     package_home: impl AsRef<Path>,
     host_config: HostConfig,
 ) -> Res<(PackageLineage, InstalledPackageStatus)> {
@@ -168,13 +169,13 @@ pub async fn create_status(
     let mut orig_paths = HashMap::new();
     for path in lineage.paths.keys() {
         debug!("🔍 Checking manifest for path: {}", path.display());
-        let row = manifest
+        let manifest_row = manifest
             .get_record(path)
-            .await?
             .ok_or(Error::ManifestPath(format!(
                 "path {} not found in installed manifest",
                 path.display()
             )))?;
+        let row = Row::from(manifest_row.clone());
         orig_paths.insert(path.clone(), row);
     }
     debug!("✔️ Found {} paths in lineage", orig_paths.len());
@@ -212,7 +213,7 @@ mod tests {
         let (_lineage, status) = create_status(
             PackageLineage::default(),
             &storage,
-            &Table::default(),
+            &Manifest::default(),
             PathBuf::default(),
             HostConfig::default(),
         )
@@ -237,7 +238,7 @@ mod tests {
         let (_lineage, status) = create_status(
             lineage,
             &MockStorage::default(),
-            &Table::default(),
+            &Manifest::default(),
             PathBuf::default(),
             HostConfig::default(),
         )
@@ -261,7 +262,7 @@ mod tests {
         let (_, status) = create_status(
             lineage,
             &MockStorage::default(),
-            &Table::default(),
+            &Manifest::default(),
             PathBuf::default(),
             HostConfig::default(),
         )
@@ -285,7 +286,7 @@ mod tests {
         let (_, status) = create_status(
             lineage,
             &MockStorage::default(),
-            &Table::default(),
+            &Manifest::default(),
             PathBuf::default(),
             HostConfig::default(),
         )
@@ -296,9 +297,11 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_removed_files() -> Res {
-        let manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let table_manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let manifest = Manifest::from_table(&table_manifest).await?;
         let logical_key = PathBuf::from("less-then-8mb.txt");
-        let record = manifest.get_record(&logical_key).await?.unwrap();
+        let manifest_record = manifest.get_record(&logical_key).unwrap();
+        let record = Row::from(manifest_record.clone());
         let storage = MockStorage::default();
         let lineage = PackageLineage {
             paths: BTreeMap::from([(
@@ -351,7 +354,7 @@ mod tests {
     #[test(tokio::test)]
     async fn test_added_files() -> Res {
         let lineage = PackageLineage::default();
-        let manifest = Table::default();
+        let manifest = Manifest::default();
 
         let storage = MockStorage::default();
         let working_dir = storage.temp_dir.as_ref().join(PathBuf::from("foo/bar"));
@@ -391,7 +394,7 @@ mod tests {
     #[test(tokio::test)]
     async fn test_added_files_crc64() -> Res {
         let lineage = PackageLineage::default();
-        let manifest = Table::default();
+        let manifest = Manifest::default();
 
         let storage = MockStorage::default();
         let working_dir = storage.temp_dir.as_ref();

@@ -155,12 +155,10 @@ impl TryFrom<Header> for ManifestHeader {
     }
 }
 
-impl TryFrom<&ManifestHeader> for crate::manifest::Header {
+impl TryFrom<&ManifestHeader> for Header {
     type Error = Error;
 
     fn try_from(manifest_header: &ManifestHeader) -> Result<Self, Self::Error> {
-        use crate::manifest::Header;
-
         Ok(Header::new(
             manifest_header.message.clone(),
             manifest_header.user_meta.clone(),
@@ -424,7 +422,7 @@ impl Manifest {
     }
 
     /// Get header for compatibility with Table API
-    pub async fn get_header(&self) -> Res<crate::manifest::Header> {
+    pub async fn get_header(&self) -> Res<Header> {
         (&self.header).try_into()
     }
 }
@@ -443,7 +441,6 @@ mod tests {
     use crate::io::storage::LocalStorage;
     use crate::io::storage::Storage;
     use crate::manifest::Row;
-    use crate::manifest::Table;
 
     #[test]
     fn test_equality_of_strictly_equal() -> Res {

@@ -67,8 +67,7 @@ pub trait QuiltModel {
         package: &quilt::InstalledPackage,
     ) -> Result<BTreeMap<PathBuf, quilt::manifest::Row>, Error> {
         let manifest = package.manifest().await?;
-        let table = quilt::manifest::Table::from_manifest(&manifest)?;
-        let mut stream = table.records_stream().await;
+        let mut stream = manifest.records_stream().await;
         let mut records = BTreeMap::new();
         while let Some(page) = stream.next().await {
             if let Ok(rows) = page {

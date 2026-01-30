@@ -75,7 +75,6 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
         let lineage = flow::refresh_latest_hash(lineage, &self.remote).await?;
         let manifest = self.manifest().await?;
-        let table_manifest = crate::manifest::Table::from_manifest(&manifest)?;
 
         let host_config =
             host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.origin).await?);
@@ -83,7 +82,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let (lineage, status) = flow::status(
             lineage,
             &self.storage,
-            &table_manifest,
+            &manifest,
             &package_home,
             host_config,
         )
@@ -143,7 +142,6 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
         let mut manifest = self.manifest().await?;
-        let table_manifest = crate::manifest::Table::from_manifest(&manifest)?;
 
         let host_config =
             host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.origin).await?);
@@ -151,7 +149,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let (lineage, status) = flow::status(
             lineage,
             &self.storage,
-            &table_manifest,
+            &manifest,
             &package_home,
             host_config,
         )
@@ -190,14 +188,13 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             .await?;
 
         let manifest = self.manifest().await?;
-        let table_manifest = crate::manifest::Table::from_manifest(&manifest)?;
 
         let host_config =
             host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.origin).await?);
 
         let lineage = flow::push(
             lineage,
-            table_manifest,
+            manifest,
             &self.paths,
             &self.storage,
             &self.remote,
@@ -218,7 +215,6 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             .await?;
 
         let mut manifest = self.manifest().await?;
-        let table_manifest = crate::manifest::Table::from_manifest(&manifest)?;
 
         let host_config =
             host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.origin).await?);
@@ -226,7 +222,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let (lineage, status) = flow::status(
             lineage,
             &self.storage,
-            &table_manifest,
+            &manifest,
             &package_home,
             host_config,
         )
