@@ -17,7 +17,6 @@ use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
-use crate::manifest::Row;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
@@ -54,14 +53,13 @@ async fn use_existing_row_or_upload(
                     row.logical_key.display()
                 );
                 let uploaded_row =
-                    upload_row(remote, host_config, package_handle.clone(), Row::from(row)).await?;
-                output.push(Ok(uploaded_row.try_into()?));
+                    upload_row(remote, host_config, package_handle.clone(), row).await?;
+                output.push(Ok(uploaded_row));
             }
         } else {
             debug!("⏳ Uploading new row for: {}", row.logical_key.display());
-            let uploaded_row =
-                upload_row(remote, host_config, package_handle.clone(), Row::from(row)).await?;
-            output.push(Ok(uploaded_row.try_into()?));
+            let uploaded_row = upload_row(remote, host_config, package_handle.clone(), row).await?;
+            output.push(Ok(uploaded_row));
         }
     }
     Ok(output)
@@ -203,7 +201,6 @@ mod tests {
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::CommitState;
     use crate::lineage::PackageLineage;
-    use crate::manifest::Row;
     use crate::uri::S3Uri;
 
     #[test(tokio::test)]
@@ -350,11 +347,11 @@ mod tests {
         manifest.header.message = Some("".to_string());
         manifest.header.version = "v0".to_string();
         manifest
-            .insert_record(Row {
-                name: PathBuf::from("bar"),
-                place: format!("file://{}", file_path.display()),
-                hash: multihash::Multihash::wrap(0x12, b"test")?,
-                ..Row::default()
+            .insert_record(ManifestRow {
+                logical_key: PathBuf::from("bar"),
+                physical_key: format!("file://{}", file_path.display()),
+                hash: multihash::Multihash::wrap(0x12, b"test")?.try_into()?,
+                ..ManifestRow::default()
             })
             .await?;
 

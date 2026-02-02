@@ -18,6 +18,7 @@ use crate::lineage::ChangeSet;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageLineage;
 use crate::manifest::Manifest;
+use crate::manifest::ManifestRow;
 use crate::manifest::Row;
 use crate::uri::Tag;
 use crate::Error;
@@ -44,10 +45,10 @@ pub async fn refresh_latest_hash(
 
 #[derive(Debug)]
 enum WorkdirFile {
-    Tracked(PathBuf, Row),
-    NotTracked(PathBuf, Row),
+    Tracked(PathBuf, ManifestRow),
+    NotTracked(PathBuf, ManifestRow),
     New(PathBuf),
-    Removed(Row),
+    Removed(ManifestRow),
     UnSupported,
 }
 
@@ -55,7 +56,7 @@ async fn locate_files_in_package_home(
     storage: &(impl Storage + Sync),
     manifest: &Manifest,
     package_home: impl AsRef<Path>,
-    mut tracked_paths: HashMap<PathBuf, Row>,
+    mut tracked_paths: HashMap<PathBuf, ManifestRow>,
 ) -> Res<Vec<(PathBuf, WorkdirFile)>> {
     let mut queue = VecDeque::new();
     queue.push_back(package_home.as_ref().to_path_buf());
@@ -88,9 +89,8 @@ async fn locate_files_in_package_home(
             let logical_key = file_path.strip_prefix(&package_home)?.to_path_buf();
             if let Some(row) = tracked_paths.remove(&logical_key) {
                 files.push((logical_key, WorkdirFile::Tracked(file_path, row)));
-            } else if let Some(manifest_row) = manifest.get_record(&logical_key) {
-                let row = Row::from(manifest_row.clone());
-                files.push((logical_key, WorkdirFile::NotTracked(file_path, row)));
+            } else if let Some(row) = manifest.get_record(&logical_key) {
+                files.push((logical_key, WorkdirFile::NotTracked(file_path, row.clone())));
             } else {
                 files.push((logical_key, WorkdirFile::New(file_path)));
             }
@@ -113,14 +113,14 @@ async fn detect_change(
     match location {
         WorkdirFile::Tracked(path, row) => verify_hash(storage, &path, row, host_config)
             .await
-            .map(|opt_row| opt_row.map(Change::Modified)),
+            .map(|opt_row| opt_row.map(|mr| Change::Modified(Row::from(mr)))),
         WorkdirFile::NotTracked(path, row) => verify_hash(storage, &path, row, host_config)
             .await
-            .map(|opt_row| opt_row.map(Change::Modified)),
+            .map(|opt_row| opt_row.map(|mr| Change::Modified(Row::from(mr)))),
         WorkdirFile::New(path) => calculate_hash(storage, &path, logical_key, host_config)
             .await
-            .map(|row| Some(Change::Added(row))),
-        WorkdirFile::Removed(row) => Ok(Some(Change::Removed(row))),
+            .map(|row| Some(Change::Added(Row::from(row)))),
+        WorkdirFile::Removed(row) => Ok(Some(Change::Removed(Row::from(row)))),
         WorkdirFile::UnSupported => {
             // TODO: handle symlinks
             // TODO: changes.insert(path, Change::Broken)
@@ -169,14 +169,13 @@ pub async fn create_status(
     let mut orig_paths = HashMap::new();
     for path in lineage.paths.keys() {
         debug!("🔍 Checking manifest for path: {}", path.display());
-        let manifest_row = manifest
+        let row = manifest
             .get_record(path)
             .ok_or(Error::ManifestPath(format!(
                 "path {} not found in installed manifest",
                 path.display()
             )))?;
-        let row = Row::from(manifest_row.clone());
-        orig_paths.insert(path.clone(), row);
+        orig_paths.insert(path.clone(), row.clone());
     }
     debug!("✔️ Found {} paths in lineage", orig_paths.len());
 

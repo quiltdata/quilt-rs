@@ -13,7 +13,6 @@ use crate::checksum;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamRowsChunk;
 use crate::manifest::Header;
-use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::uri::S3Uri;
 use crate::Error;
@@ -388,22 +387,17 @@ impl Manifest {
     }
 
     /// Insert a record into the manifest (for compatibility with Table API)
-    pub async fn insert_record(&mut self, row: Row) -> Res<Option<ManifestRow>> {
+    pub async fn insert_record(&mut self, row: ManifestRow) -> Res<Option<ManifestRow>> {
         // Check if row already exists
-        let existing_pos = self.rows.iter().position(|r| r.logical_key == row.name);
-
-        let new_row = ManifestRow {
-            logical_key: row.name,
-            physical_key: row.place,
-            hash: row.hash.try_into()?,
-            size: row.size,
-            meta: row.meta,
-        };
+        let existing_pos = self
+            .rows
+            .iter()
+            .position(|r| r.logical_key == row.logical_key);
 
         if let Some(pos) = existing_pos {
-            Ok(Some(std::mem::replace(&mut self.rows[pos], new_row)))
+            Ok(Some(std::mem::replace(&mut self.rows[pos], row)))
         } else {
-            self.rows.push(new_row);
+            self.rows.push(row);
             Ok(None)
         }
     }

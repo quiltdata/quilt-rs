@@ -195,17 +195,17 @@ pub async fn resolve_manifest_uri(
     })
 }
 
-/// Upload file associated with manifest's `Row`.
+/// Upload file associated with manifest's `ManifestRow`.
 /// After uploading we get new hash,
 /// though it should be the same as already calclulated during commit.
-/// Response with the new `Row` with `place` pointing to the place it was uploaded to.
+/// Response with the new `ManifestRow` with `physical_key` pointing to the place it was uploaded to.
 pub async fn upload_row(
     remote: &impl Remote,
     host_config: &HostConfig,
     package_handle: S3PackageHandle,
-    row: Row,
-) -> Res<Row> {
-    let local_url = Url::parse(&row.place)?;
+    row: ManifestRow,
+) -> Res<ManifestRow> {
+    let local_url = Url::parse(&row.physical_key)?;
     if local_url.scheme() != "file" {
         return Err(Error::FileUri(local_url));
     }
@@ -213,7 +213,7 @@ pub async fn upload_row(
         .to_file_path()
         .map_err(|_| Error::FileUri(local_url))?;
 
-    let object_uri = ObjectUri::new(package_handle, row.name.clone());
+    let object_uri = ObjectUri::new(package_handle, row.logical_key.clone());
     log::info!("Uploading to S3: {object_uri}");
 
     let (remote_url, hash) = remote
@@ -222,10 +222,10 @@ pub async fn upload_row(
 
     // Update the manifest with the sha2-256-chunked checksum
     // "Relax" the manifest by using those new remote keys
-    let place = remote_url.to_string();
-    Ok(Row {
+    let physical_key = remote_url.to_string();
+    Ok(ManifestRow {
         hash: hash.into(),
-        place,
+        physical_key,
         ..row
     })
 }
