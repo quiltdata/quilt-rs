@@ -198,7 +198,7 @@ impl From<ManifestRow> for Quilt3ManifestRow {
 }
 
 /// Represents the row in JSONL manifest
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
 pub struct ManifestRow {
     pub logical_key: PathBuf,
     // XXX: use Url to have validated string?
@@ -340,22 +340,9 @@ impl Manifest {
         let mut manifest_rows = Vec::new();
         let mut stream = table.records_stream().await;
         while let Some(rows) = stream.next().await {
-            for row in rows? {
-                let row = row?;
-                let mut meta = match row.info.as_object() {
-                    Some(meta) => meta.clone(),
-                    None => serde_json::Map::default(),
-                };
-                if let Some(m) = row.meta {
-                    meta.insert("user_meta".into(), m.clone());
-                }
-                manifest_rows.push(ManifestRow {
-                    logical_key: row.name.clone(),
-                    physical_key: row.place.clone(),
-                    hash: row.hash.try_into()?,
-                    size: row.size,
-                    meta: Some(serde_json::Value::Object(meta)),
-                })
+            for manifest_row in rows? {
+                let manifest_row = manifest_row?;
+                manifest_rows.push(manifest_row)
             }
         }
         Ok(Manifest {
@@ -391,7 +378,7 @@ impl Manifest {
         let mut sorted_rows = self.rows.clone();
         sorted_rows.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
 
-        let rows: StreamRowsChunk = sorted_rows.into_iter().map(Row::from).map(Ok).collect();
+        let rows: StreamRowsChunk = sorted_rows.into_iter().map(Ok).collect();
         tokio_stream::iter(vec![Ok(rows)])
     }
 

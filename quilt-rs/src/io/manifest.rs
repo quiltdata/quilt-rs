@@ -17,6 +17,7 @@ use crate::io::storage::Storage;
 use crate::io::ParquetWriter;
 use crate::manifest::Header;
 use crate::manifest::Manifest;
+use crate::manifest::ManifestRow;
 use crate::manifest::Row;
 use crate::manifest::Table;
 use crate::manifest::TopHasher;
@@ -245,7 +246,8 @@ impl TryFrom<File> for WritableManifest {
 
 impl WritableManifest {
     pub async fn insert_header(&mut self, header: Header) -> Res {
-        let header_chunk: StreamRowsChunk = vec![Ok(header.into())];
+        let header_row: Row = header.into();
+        let header_chunk: StreamRowsChunk = vec![Ok(header_row.try_into()?)];
         self.writer.insert(header_chunk).await
     }
 
@@ -259,7 +261,7 @@ impl WritableManifest {
     }
 }
 
-pub type StreamRowsChunk = Vec<Res<Row>>;
+pub type StreamRowsChunk = Vec<Res<ManifestRow>>;
 
 pub type StreamItem = Res<StreamRowsChunk>;
 
@@ -289,7 +291,7 @@ pub async fn build_manifest_from_rows_stream(
     while let Some(Ok(rows)) = stream.next().await {
         for row in &rows {
             match row {
-                Ok(row) => top_hasher.append(row)?,
+                Ok(row) => top_hasher.append(&Row::from(row.clone()))?,
                 Err(err) => return Err(Error::Table(err.to_string())),
             }
         }

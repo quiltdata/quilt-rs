@@ -65,14 +65,14 @@ pub trait QuiltModel {
     async fn get_installed_package_records(
         &self,
         package: &quilt::InstalledPackage,
-    ) -> Result<BTreeMap<PathBuf, quilt::manifest::Row>, Error> {
+    ) -> Result<BTreeMap<PathBuf, quilt::manifest::ManifestRow>, Error> {
         let manifest = package.manifest().await?;
         let mut stream = manifest.records_stream().await;
         let mut records = BTreeMap::new();
         while let Some(page) = stream.next().await {
             if let Ok(rows) = page {
                 for row in rows.into_iter().flatten() {
-                    records.insert(row.name.clone(), row);
+                    records.insert(row.logical_key.clone(), row);
                 }
             }
         }
@@ -523,7 +523,7 @@ pub mod mocks {
         model.expect_get_installed_package_records().returning(|_| {
             Ok(BTreeMap::from([(
                 PathBuf::from("NAME"),
-                quilt::manifest::Row::default(),
+                quilt::manifest::ManifestRow::default(),
             )]))
         });
         model
@@ -595,7 +595,7 @@ pub mod mocks {
         model.expect_get_installed_package_records().returning(|_| {
             Ok(BTreeMap::from([(
                 PathBuf::from("NAME"),
-                quilt::manifest::Row::default(),
+                quilt::manifest::ManifestRow::default(),
             )]))
         });
 

@@ -23,6 +23,12 @@ pub const MULTIHASH_CRC64_NVME: u64 = 0x0165;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Crc64Hash(Multihash<256>);
 
+impl Default for Crc64Hash {
+    fn default() -> Self {
+        Self(Multihash::wrap(MULTIHASH_CRC64_NVME, &[]).unwrap())
+    }
+}
+
 impl Crc64Hash {
     /// Calculates CRC64-NVMe checksum from any async reader
     pub async fn from_async_read<F: AsyncRead + Unpin>(file: F) -> Res<Self> {

@@ -58,8 +58,8 @@ async fn stream_remote_with_installed_rows(
             rows_result.map(|rows| {
                 rows.into_iter()
                     .map(|row_result| {
-                        row_result.map(|row| match local_entries.get(&row.name) {
-                            Some(row) => row.clone(),
+                        row_result.map(|row| match local_entries.get(&row.logical_key) {
+                            Some(local_row) => local_row.clone().try_into().unwrap_or(row),
                             None => row,
                         })
                     })

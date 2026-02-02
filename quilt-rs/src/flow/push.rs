@@ -16,6 +16,7 @@ use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::manifest::Manifest;
+use crate::manifest::ManifestRow;
 use crate::manifest::Row;
 use crate::paths;
 use crate::uri::ManifestUri;
@@ -35,22 +36,32 @@ async fn use_existing_row_or_upload(
     let mut output = Vec::new();
     for row in rows? {
         let row = row?;
-        debug!("⏳ Processing row: {}", row.name.display());
-        if let Some(remote_row) = remote_manifest.get_record(&row.name) {
-            let remote_row_converted = Row::from(remote_row.clone());
-            if remote_row_converted == row {
-                debug!("✔️ Using existing remote row for: {}", row.name.display());
-                output.push(Ok(Row {
-                    place: remote_row_converted.place.to_owned(),
+        debug!("⏳ Processing row: {}", row.logical_key.display());
+        if let Some(remote_row) = remote_manifest.get_record(&row.logical_key) {
+            if remote_row == &row {
+                debug!(
+                    "✔️ Using existing remote row for: {}",
+                    row.logical_key.display()
+                );
+                let updated_manifest_row = ManifestRow {
+                    physical_key: remote_row.physical_key.to_owned(),
                     ..row.clone()
-                }));
+                };
+                output.push(Ok(updated_manifest_row));
             } else {
-                debug!("⏳ Uploading modified row for: {}", row.name.display());
-                output.push(upload_row(remote, host_config, package_handle.clone(), row).await)
+                debug!(
+                    "⏳ Uploading modified row for: {}",
+                    row.logical_key.display()
+                );
+                let uploaded_row =
+                    upload_row(remote, host_config, package_handle.clone(), Row::from(row)).await?;
+                output.push(Ok(uploaded_row.try_into()?));
             }
         } else {
-            debug!("⏳ Uploading new row for: {}", row.name.display());
-            output.push(upload_row(remote, host_config, package_handle.clone(), row).await)
+            debug!("⏳ Uploading new row for: {}", row.logical_key.display());
+            let uploaded_row =
+                upload_row(remote, host_config, package_handle.clone(), Row::from(row)).await?;
+            output.push(Ok(uploaded_row.try_into()?));
         }
     }
     Ok(output)

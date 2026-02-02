@@ -278,7 +278,15 @@ impl Table {
     }
 
     pub async fn records_stream(&self) -> impl RowsStream {
-        let entries: StreamRowsChunk = self.records.values().cloned().map(Ok).collect();
+        let entries: StreamRowsChunk = self
+            .records
+            .values()
+            .cloned()
+            .map(|row| {
+                row.try_into()
+                    .map_err(|e: Error| Error::Table(e.to_string()))
+            })
+            .collect();
         tokio_stream::iter(vec![Ok(entries)])
     }
 

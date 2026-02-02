@@ -21,6 +21,7 @@ use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
 use crate::manifest::Header;
 use crate::manifest::Manifest;
+use crate::manifest::ManifestRow;
 use crate::manifest::Row;
 use crate::manifest::Workflow;
 use crate::paths::DomainPaths;
@@ -35,7 +36,7 @@ async fn stream_local_with_changes(
     new_files: StreamRowsChunk,
 ) -> impl RowsStream {
     // Collect all rows from the local manifest stream
-    let mut all_rows: Vec<Res<Row>> = Vec::new();
+    let mut all_rows: Vec<Res<ManifestRow>> = Vec::new();
 
     // Add new files to the collection
     all_rows.extend(new_files);
@@ -48,15 +49,20 @@ async fn stream_local_with_changes(
                 match row_res {
                     Ok(row) => {
                         // Skip removed rows
-                        if removed.contains(&row.name) {
+                        if removed.contains(&row.logical_key) {
                             continue;
                         }
 
                         // Use modified version if available, otherwise use original
-                        if let Some(modified_row) = modified.get(&row.name) {
-                            all_rows.push(Ok(modified_row.clone()));
+                        if let Some(modified_row) = modified.get(&row.logical_key) {
+                            let manifest_row_result: Result<ManifestRow, Error> =
+                                modified_row.clone().try_into();
+                            match manifest_row_result {
+                                Ok(manifest_row) => all_rows.push(Ok(manifest_row)),
+                                Err(e) => all_rows.push(Err(Error::Table(e.to_string()))),
+                            }
                         } else {
-                            all_rows.push(Ok(row.clone()));
+                            all_rows.push(Ok(row));
                         }
                     }
                     Err(err) => all_rows.push(Err(Error::Table(err.to_string()))),
@@ -67,7 +73,7 @@ async fn stream_local_with_changes(
 
     // Sort all rows by name
     all_rows.sort_by(|a, b| match (a, b) {
-        (Ok(row_a), Ok(row_b)) => row_a.name.cmp(&row_b.name),
+        (Ok(row_a), Ok(row_b)) => row_a.logical_key.cmp(&row_b.logical_key),
         (Ok(_), Err(_)) => std::cmp::Ordering::Less,
         (Err(_), Ok(_)) => std::cmp::Ordering::Greater,
         (Err(_), Err(_)) => std::cmp::Ordering::Equal,
@@ -217,7 +223,11 @@ pub async fn commit_package(
                     current,
                 )
                 .await?;
-                new_files.push(Ok(added))
+                let manifest_row: Result<ManifestRow, Error> = added.try_into();
+                match manifest_row {
+                    Ok(manifest_row) => new_files.push(Ok(manifest_row)),
+                    Err(e) => new_files.push(Err(Error::Table(e.to_string()))),
+                }
             }
             Change::Modified(current) => {
                 let modified = create_immutable_object_copy(

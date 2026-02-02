@@ -43,6 +43,12 @@ pub enum ObjectHash {
     Crc64(Crc64Hash),
 }
 
+impl Default for ObjectHash {
+    fn default() -> Self {
+        ObjectHash::Crc64(Crc64Hash::default())
+    }
+}
+
 /// Refresh hash for a file using the same algorithm as the reference row
 /// Returns None if hash hasn't changed, Some(Row) if it has changed
 pub async fn refresh_hash(storage: &impl Storage, path: &PathBuf, row: Row) -> Res<Option<Row>> {
