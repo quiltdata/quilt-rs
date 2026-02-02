@@ -3,14 +3,14 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
-use crate::manifest::Row;
+use crate::manifest::ManifestRow;
 
 /// Describes modified states of a file
 #[derive(Debug)]
 pub enum Change {
-    Modified(Row), // modified to what
-    Added(Row),    // added what
-    Removed(Row),  // removed what
+    Modified(ManifestRow), // modified to what
+    Added(ManifestRow),    // added what
+    Removed(ManifestRow),  // removed what
 }
 
 /// Map of all changed files

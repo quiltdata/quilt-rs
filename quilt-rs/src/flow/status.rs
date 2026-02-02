@@ -19,7 +19,6 @@ use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageLineage;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
-use crate::manifest::Row;
 use crate::uri::Tag;
 use crate::Error;
 use crate::Res;
@@ -113,14 +112,14 @@ async fn detect_change(
     match location {
         WorkdirFile::Tracked(path, row) => verify_hash(storage, &path, row, host_config)
             .await
-            .map(|opt_row| opt_row.map(|mr| Change::Modified(Row::from(mr)))),
+            .map(|opt_row| opt_row.map(Change::Modified)),
         WorkdirFile::NotTracked(path, row) => verify_hash(storage, &path, row, host_config)
             .await
-            .map(|opt_row| opt_row.map(|mr| Change::Modified(Row::from(mr)))),
+            .map(|opt_row| opt_row.map(Change::Modified)),
         WorkdirFile::New(path) => calculate_hash(storage, &path, logical_key, host_config)
             .await
-            .map(|row| Some(Change::Added(Row::from(row)))),
-        WorkdirFile::Removed(row) => Ok(Some(Change::Removed(Row::from(row)))),
+            .map(|row| Some(Change::Added(row))),
+        WorkdirFile::Removed(row) => Ok(Some(Change::Removed(row))),
         WorkdirFile::UnSupported => {
             // TODO: handle symlinks
             // TODO: changes.insert(path, Change::Broken)
@@ -300,13 +299,12 @@ mod tests {
         let manifest = Manifest::from_table(&table_manifest).await?;
         let logical_key = PathBuf::from("less-then-8mb.txt");
         let manifest_record = manifest.get_record(&logical_key).unwrap();
-        let record = Row::from(manifest_record.clone());
         let storage = MockStorage::default();
         let lineage = PackageLineage {
             paths: BTreeMap::from([(
                 logical_key.clone(),
                 PathState {
-                    hash: record.hash,
+                    hash: manifest_record.hash,
                     ..PathState::default()
                 },
             )]),
@@ -376,12 +374,12 @@ mod tests {
 
         let added_file = status.changes.get(&file_path).unwrap();
         if let Change::Added(added_row) = added_file {
-            let reference_row = Row {
-                name: PathBuf::from("inside/package/file.pq"),
+            let reference_row = ManifestRow {
+                logical_key: PathBuf::from("inside/package/file.pq"),
                 size: 5324,
                 hash: Sha256ChunkedHash::try_from("EfrtXWeClWPJ/IVKjQeAmMKhJV45/GcpjDm1IhvhJAY=")?
                     .into(),
-                ..Row::default()
+                ..ManifestRow::default()
             };
             assert_eq!(added_row, &reference_row);
             Ok(())
@@ -416,11 +414,11 @@ mod tests {
 
         let added_file = status.changes.get(&file_path).unwrap();
         if let Change::Added(added_row) = added_file {
-            let reference_row = Row {
-                name: PathBuf::from("some.pq"),
+            let reference_row = ManifestRow {
+                logical_key: PathBuf::from("some.pq"),
                 size: 16,
                 hash: Crc64Hash::try_from("CRSFynAYcw4=")?.into(),
-                ..Row::default()
+                ..ManifestRow::default()
             };
             assert_eq!(added_row, &reference_row);
             Ok(())

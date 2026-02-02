@@ -22,7 +22,6 @@ use crate::lineage::PathState;
 use crate::manifest::Header;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
-use crate::manifest::Row;
 use crate::manifest::Workflow;
 use crate::paths::DomainPaths;
 use crate::uri::Namespace;
@@ -32,7 +31,7 @@ use crate::Res;
 async fn stream_local_with_changes(
     local_manifest: &Manifest,
     removed: HashSet<PathBuf>,
-    modified: BTreeMap<PathBuf, Row>,
+    modified: BTreeMap<PathBuf, ManifestRow>,
     new_files: StreamRowsChunk,
 ) -> impl RowsStream {
     // Collect all rows from the local manifest stream
@@ -55,12 +54,7 @@ async fn stream_local_with_changes(
 
                         // Use modified version if available, otherwise use original
                         if let Some(modified_row) = modified.get(&row.logical_key) {
-                            let manifest_row_result: Result<ManifestRow, Error> =
-                                modified_row.clone().try_into();
-                            match manifest_row_result {
-                                Ok(manifest_row) => all_rows.push(Ok(manifest_row)),
-                                Err(e) => all_rows.push(Err(Error::Table(e.to_string()))),
-                            }
+                            all_rows.push(Ok(modified_row.clone()));
                         } else {
                             all_rows.push(Ok(row));
                         }
@@ -89,8 +83,8 @@ async fn create_immutable_object_copy(
     working_dir: &Path,
     lineage: &mut PackageLineage,
     logical_key: &PathBuf,
-    current: Row,
-) -> Res<Row> {
+    current: ManifestRow,
+) -> Res<ManifestRow> {
     debug!(
         "⏳ Creating immutable object copy for: {}",
         logical_key.display()
@@ -99,11 +93,12 @@ async fn create_immutable_object_copy(
     let object_dest = objects_dir.join(hex::encode(current.hash.digest()));
     let new_physical_key = Url::from_file_path(&object_dest)
         .map_err(|_| Error::Commit(format!("Failed to create URL from {:?}", &object_dest)))?
-        .into();
+        .to_string();
 
-    let row = Row {
-        name: logical_key.clone(),
-        place: new_physical_key,
+    let current_hash = current.hash.clone();
+    let row = ManifestRow {
+        logical_key: logical_key.clone(),
+        physical_key: new_physical_key,
         ..current
     };
 
@@ -126,7 +121,7 @@ async fn create_immutable_object_copy(
         logical_key.clone(),
         PathState {
             timestamp: storage.modified_timestamp(&work_dest).await?,
-            hash: current.hash,
+            hash: current_hash.into(),
         },
     );
     Ok(row)
@@ -204,14 +199,14 @@ pub async fn commit_package(
         );
         match state {
             Change::Removed(row) => {
-                lineage.paths.remove(&row.name);
-                removed_keys.insert(row.name);
+                lineage.paths.remove(&row.logical_key);
+                removed_keys.insert(row.logical_key);
             }
             Change::Added(current) => {
-                if manifest.contains_record(&current.name) {
+                if manifest.contains_record(&current.logical_key) {
                     return Err(Error::Commit(format!(
                         "Trying to add a file that is already in the manifest: \"{}\"",
-                        current.name.display()
+                        current.logical_key.display()
                     )));
                 }
                 let added = create_immutable_object_copy(
@@ -223,11 +218,7 @@ pub async fn commit_package(
                     current,
                 )
                 .await?;
-                let manifest_row: Result<ManifestRow, Error> = added.try_into();
-                match manifest_row {
-                    Ok(manifest_row) => new_files.push(Ok(manifest_row)),
-                    Err(e) => new_files.push(Err(Error::Table(e.to_string()))),
-                }
+                new_files.push(Ok(added));
             }
             Change::Modified(current) => {
                 let modified = create_immutable_object_copy(
@@ -385,9 +376,9 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("one/two two/three three three/READ ME.md"),
-                Change::Removed(Row {
-                    name: PathBuf::from("one/two two/three three three/READ ME.md"),
-                    ..Row::default()
+                Change::Removed(ManifestRow {
+                    logical_key: PathBuf::from("one/two two/three three three/READ ME.md"),
+                    ..ManifestRow::default()
                 }),
             )]),
             ..InstalledPackageStatus::default()
@@ -448,13 +439,17 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_adding_and_commit() -> Res {
-        let added_file = Row {
-            name: PathBuf::from("foo"),
-            ..fixtures::manifest_with_objects_all_sizes::manifest()
-                .await?
-                .get_record(&PathBuf::from("0mb.bin"))
-                .await?
-                .unwrap()
+        let base_record = fixtures::manifest_with_objects_all_sizes::manifest()
+            .await?
+            .get_record(&PathBuf::from("0mb.bin"))
+            .await?
+            .unwrap();
+        let added_file = ManifestRow {
+            logical_key: PathBuf::from("foo"),
+            hash: base_record.hash.try_into()?,
+            size: base_record.size,
+            physical_key: base_record.place,
+            ..ManifestRow::default()
         };
 
         let storage = MockStorage::default();
@@ -519,15 +514,19 @@ mod tests {
     //       even for imposible states
     #[test(tokio::test)]
     async fn test_adding_manifest_already_has_it() -> Res {
-        let added_file = Row {
-            name: PathBuf::from("one/two two/three three three/READ ME.md"),
-            ..fixtures::manifest_with_objects_all_sizes::manifest()
-                .await?
-                .get_record(&PathBuf::from("one/two two/three three three/READ ME.md"))
-                .await?
-                .unwrap()
+        let base_record = fixtures::manifest_with_objects_all_sizes::manifest()
+            .await?
+            .get_record(&PathBuf::from("one/two two/three three three/READ ME.md"))
+            .await?
+            .unwrap();
+        let added_file = ManifestRow {
+            logical_key: PathBuf::from("one/two two/three three three/READ ME.md"),
+            hash: base_record.hash.try_into()?,
+            size: base_record.size,
+            physical_key: base_record.place,
+            ..ManifestRow::default()
         };
-        let hash = added_file.hash;
+        let hash = added_file.hash.clone();
 
         let storage = MockStorage::default();
         storage
@@ -546,10 +545,7 @@ mod tests {
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
                 PathBuf::from("one/two two/three three three/READ ME.md"),
-                Change::Added(Row {
-                    name: PathBuf::from("one/two two/three three three/READ ME.md"),
-                    ..added_file.clone()
-                }),
+                Change::Added(added_file.clone()),
             )]),
             ..InstalledPackageStatus::default()
         };
@@ -596,13 +592,17 @@ mod tests {
             )
             .await?;
 
-        let modified_file = Row {
-            name: PathBuf::from("one/two two/three three three/READ ME.md"),
-            ..fixtures::manifest_with_objects_all_sizes::manifest()
-                .await?
-                .get_record(&PathBuf::from("less-then-8mb.txt"))
-                .await?
-                .unwrap()
+        let base_record = fixtures::manifest_with_objects_all_sizes::manifest()
+            .await?
+            .get_record(&PathBuf::from("less-then-8mb.txt"))
+            .await?
+            .unwrap();
+        let modified_file = ManifestRow {
+            logical_key: PathBuf::from("one/two two/three three three/READ ME.md"),
+            hash: base_record.hash.try_into()?,
+            size: base_record.size,
+            physical_key: base_record.place,
+            ..ManifestRow::default()
         };
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(

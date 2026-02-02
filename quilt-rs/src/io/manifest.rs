@@ -224,7 +224,7 @@ pub async fn upload_row(
     // "Relax" the manifest by using those new remote keys
     let physical_key = remote_url.to_string();
     Ok(ManifestRow {
-        hash: hash.into(),
+        hash,
         physical_key,
         ..row
     })

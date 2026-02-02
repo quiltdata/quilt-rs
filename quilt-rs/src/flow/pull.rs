@@ -135,7 +135,7 @@ mod tests {
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::Change;
     use crate::lineage::CommitState;
-    use crate::manifest::Row;
+    use crate::manifest::ManifestRow;
 
     #[test(tokio::test)]
     async fn test_no_pull_if_changes() -> Res {
@@ -144,7 +144,10 @@ mod tests {
         let mut manifest = Manifest::default();
 
         let status = InstalledPackageStatus {
-            changes: BTreeMap::from([(PathBuf::from("foo"), Change::Added(Row::default()))]),
+            changes: BTreeMap::from([(
+                PathBuf::from("foo"),
+                Change::Added(ManifestRow::default()),
+            )]),
             ..InstalledPackageStatus::default()
         };
         let remote = MockRemote::default();
