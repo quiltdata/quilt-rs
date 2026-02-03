@@ -21,10 +21,10 @@ The `.quilt` directory serves as the local repository for package management:
 .quilt/
 ├── packages/           # Cached manifests from remote storage
 │   └── <bucket>/
-│       └── <hash>      # Parquet manifest files (downloaded from remote)
+│       └── <hash>      # Manifest files (downloaded from remote)
 ├── installed/          # Local package installations
 │   └── <namespace>/
-│       └── <hash>      # Parquet manifest files (local format)
+│       └── <hash>      # Manifest files (local format)
 ├── objects/            # Local content-addressed object store
 │   └── <sha256>        # Immutable data files
 └── lineage.json        # Package installation and modification tracking
@@ -32,8 +32,8 @@ The `.quilt` directory serves as the local repository for package management:
 
 ### Directory Responsibilities
 
-- **packages/**: Immutable cache of remote manifests in Parquet format, organized by bucket
-- **installed/**: Local copies of package manifests in Parquet format, organized by namespace
+- **packages/**: Immutable cache of remote manifests, organized by bucket
+- **installed/**: Local copies of package manifests, organized by namespace
 - **objects/**: Local object store containing actual file content, deduplicated by hash
 - **lineage.json**: Tracks package installations, modifications, and commit history
 
@@ -69,9 +69,7 @@ A manifest is a collection of ManifestRows that describes a complete package sta
   - `file:///path/to/local/objects/hash` for local storage (before push)
 
 **Format Notes**:
-- **Local manifests**: Stored in Parquet format (both packages/ and installed/)
-- **Remote storage**: Primary format is JSONL, with Parquet duplicates for quilt-rs compatibility
-- **Current state**: quilt-rs downloads and works exclusively with Parquet manifests
+- Manifests are stored in JSONL format
 - All manifests are content-addressed by their top-level hash
 
 ## Complete Workflow
@@ -89,7 +87,7 @@ resolve_tag(remote, "latest") → ManifestUri with specific hash
     ↓
 cache_remote_manifest(manifest_uri)
     ↓
-Download manifest.parquet → .quilt/packages/bucket/hash
+Download manifest → .quilt/packages/bucket/hash
     ↓
 Return: Manifest object for inspection
 ```
@@ -106,7 +104,7 @@ Check: Package not already in lineage
 cache_remote_manifest(manifest_uri) [if not cached]
     ↓
 copy_cached_to_installed() → .quilt/installed/namespace/hash
-  (copies Parquet manifest from packages/ to installed/)
+  (copies manifest from packages/ to installed/)
     ↓
 resolve_tag("latest") → latest_hash
     ↓
@@ -181,7 +179,7 @@ stream_local_with_changes():
   - Sort by logical_key for deterministic ordering
     ↓
 build_manifest_from_rows_stream():
-  - Create new Parquet manifest with updated Header
+  - Create new manifest with updated Header
   - Calculate top-level hash
   - Store → .quilt/installed/namespace/new_hash
     ↓
@@ -211,8 +209,7 @@ stream_uploaded_local_rows():
     ↓
 build_manifest_from_rows_stream() with uploaded rows
     ↓
-upload_manifest() → remote .quilt/packages/bucket/new_hash 
-  (uploads both JSONL primary + Parquet duplicate for compatibility)
+upload_manifest() → remote .quilt/packages/bucket/new_hash
     ↓
 tag_timestamp() → remote .quilt/named_packages/namespace/timestamp
     ↓

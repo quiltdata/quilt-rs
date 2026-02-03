@@ -355,8 +355,8 @@ impl Manifest {
         storage: &impl crate::io::storage::Storage,
         path: &std::path::Path,
     ) -> Res<Self> {
-        let table = Table::read_from_path(storage, path).await?;
-        Self::from_table(&table).await
+        let file = storage.open_file(path).await?;
+        Self::from_reader(file).await
     }
 
     /// Find a record by path (for compatibility with Table API)

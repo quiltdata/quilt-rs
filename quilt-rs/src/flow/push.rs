@@ -238,7 +238,7 @@ mod tests {
             remote: manifest_uri,
             ..PackageLineage::default()
         };
-        let jsonl = std::fs::read(fixtures::manifest::parquet_checksummed()?)?;
+        let jsonl = std::fs::read(fixtures::manifest::jsonl()?)?;
         let manifest_key = format!(
             ".quilt/packages/b/{}",
             fixtures::manifest_empty::EMPTY_NULL_TOP_HASH
@@ -252,8 +252,8 @@ mod tests {
         remote
             .put_object(
                 &None,
-                &S3Uri::try_from("s3://b/.quilt/packages/1220__FOO__.parquet")?,
-                jsonl,
+                &S3Uri::try_from("s3://b/.quilt/packages/__FOO__")?,
+                jsonl.clone(),
             )
             .await?;
         remote
@@ -310,7 +310,7 @@ mod tests {
             remote: manifest_uri,
             ..PackageLineage::default()
         };
-        let jsonl = std::fs::read(fixtures::manifest::parquet_checksummed()?)?;
+        let jsonl = std::fs::read(fixtures::manifest::jsonl()?)?;
         let manifest_key = format!(
             ".quilt/packages/b/{}",
             fixtures::manifest::PARQUEST_CHECKSUMMED_HASH
@@ -323,8 +323,8 @@ mod tests {
         remote
             .put_object(
                 &None,
-                &S3Uri::try_from("s3://b/.quilt/packages/1220__FOO__.parquet")?,
-                jsonl,
+                &S3Uri::try_from("s3://b/.quilt/packages/__FOO__")?,
+                jsonl.clone(),
             )
             .await?;
         remote
@@ -336,7 +336,7 @@ mod tests {
             .await?;
 
         let file_path = PathBuf::from("/b/a/r");
-        let manifest_file = std::fs::read(fixtures::manifest::parquet_checksummed()?)?;
+        let manifest_file = std::fs::read(fixtures::manifest::jsonl()?)?;
         remote
             .storage
             .write_file(&file_path, &manifest_file)

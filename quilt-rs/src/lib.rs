@@ -44,9 +44,9 @@
 //!
 //! ```text
 //! .quilt/
-//! ├── packages/           # Cached manifests from remote (Parquet format)
+//! ├── packages/           # Cached manifests from remote
 //! │   └── <bucket>/<hash>
-//! ├── installed/          # Local package installations (Parquet format)
+//! ├── installed/          # Local package installations
 //! │   └── <namespace>/<hash>
 //! ├── objects/            # Content-addressed object store
 //! │   └── <sha256>        # Immutable data files
@@ -73,9 +73,7 @@
 //!
 //! ### Manifest Formats
 //!
-//! - **Remote storage**: JSONL primary format, Parquet duplicates for compatibility
-//! - **Local storage**: Parquet format exclusively (both cached and installed)
-//! - **Current behavior**: quilt-rs downloads and works with Parquet manifests only
+//! Manifests are stored in JSONL format for both local and remote storage.
 //!
 //! ## Hash Algorithms
 //!

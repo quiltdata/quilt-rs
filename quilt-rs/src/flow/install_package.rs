@@ -129,22 +129,22 @@ mod tests {
 
         let manifest_uri = ManifestUri {
             bucket: "a".to_string(),
-            hash: "abcdef1234".to_string(),
+            hash: fixtures::manifest::JSONL_HASH.to_string(),
             namespace: ("f", "b").into(),
             origin: None,
         };
 
         // Load the reference manifest from `./fixtures`
-        let parquet = std::fs::read(fixtures::manifest::parquet()?)?;
+        let jsonl = std::fs::read(fixtures::manifest::jsonl()?)?;
         let remote = MockRemote::default();
 
-        // Simulate the remote storage containing the Parquet manifest
+        // Simulate the remote storage containing the JSONL manifest
         let remote_uri = S3Uri::from_str(&format!(
-            "s3://{}/.quilt/packages/1220{}.parquet",
+            "s3://{}/.quilt/packages/{}",
             manifest_uri.bucket, manifest_uri.hash
         ))?;
         remote
-            .put_object(&manifest_uri.origin, &remote_uri, parquet)
+            .put_object(&manifest_uri.origin, &remote_uri, jsonl)
             .await?;
 
         // Simulate the remote storage containing the reference to the latest manifest
@@ -173,7 +173,10 @@ mod tests {
         let installed_package = result.packages.get(&("f", "b").into()).unwrap();
         let tracked = installed_package.remote.clone();
 
-        assert_eq!(installed_package.latest_hash, "abcdef1234".to_string());
+        assert_eq!(
+            installed_package.latest_hash,
+            fixtures::manifest::JSONL_HASH.to_string()
+        );
 
         // Verify that the lineage records the installed package
         assert_eq!(tracked, manifest_uri);
@@ -206,16 +209,16 @@ mod tests {
         };
 
         // Load the reference manifest from `./fixtures`
-        let parquet = std::fs::read(fixtures::manifest::parquet()?)?;
+        let jsonl = std::fs::read(fixtures::manifest::jsonl()?)?;
         let remote = MockRemote::default();
 
-        // Simulate the remote storage containing the Parquet manifest
+        // Simulate the remote storage containing the JSONL manifest
         let remote_uri = S3Uri::from_str(&format!(
-            "s3://{}/.quilt/packages/1220{}.parquet",
+            "s3://{}/.quilt/packages/{}",
             manifest_uri.bucket, manifest_uri.hash
         ))?;
         remote
-            .put_object(&manifest_uri.origin, &remote_uri, parquet)
+            .put_object(&manifest_uri.origin, &remote_uri, jsonl)
             .await?;
 
         let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;

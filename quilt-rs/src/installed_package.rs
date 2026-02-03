@@ -296,6 +296,7 @@ mod tests {
 
     use test_log::test;
 
+    use crate::fixtures::manifest;
     use crate::io::remote::mocks::MockRemote;
     use crate::lineage::DomainLineageIo;
     use crate::lineage::Home;
@@ -315,32 +316,34 @@ mod tests {
             .scaffold_for_installing(&storage, &home, &namespace)
             .await?;
         // Initialize domain lineage file
-        storage
-            .write_file(
-                &paths.lineage(),
-                br#"{
-                "packages": {
-                    "test/history": {
+        let lineage_json = format!(
+            r#"{{
+                "packages": {{
+                    "test/history": {{
                         "commit": null,
-                        "remote": {
+                        "remote": {{
                             "bucket": "bucket",
                             "namespace": "test/history",
-                            "hash": "abc123",
+                            "hash": "{}",
                             "catalog": "test.quilt.dev"
-                        },
-                        "base_hash": "abc123",
-                        "latest_hash": "abc123",
-                        "paths": {}
-                    }},
+                        }},
+                        "base_hash": "{}",
+                        "latest_hash": "{}",
+                        "paths": {{}}
+                    }}}},
                 "home": "/tmp/working_dir"
-                }"#,
-            )
+                }}"#,
+            manifest::JSONL_HASH,
+            manifest::JSONL_HASH,
+            manifest::JSONL_HASH
+        );
+        storage
+            .write_file(&paths.lineage(), lineage_json.as_bytes())
             .await?;
 
         // Copy manifest to the expected path
-        let reference_manifest = crate::fixtures::manifest::parquet_checksummed();
-        let test_manifest = paths.installed_manifest(&namespace, "abc123");
-        storage.copy(reference_manifest?, test_manifest).await?;
+        let test_manifest = paths.installed_manifest(&namespace, manifest::JSONL_HASH);
+        storage.copy(manifest::jsonl()?, test_manifest).await?;
 
         let domain_lineage_io = DomainLineageIo::new(paths.lineage());
 
