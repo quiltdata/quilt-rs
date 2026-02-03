@@ -391,8 +391,7 @@ mod tests {
             )]),
             ..PackageLineage::default()
         };
-        let table_manifest = crate::fixtures::manifest_with_objects_all_sizes::manifest().await?;
-        let mut manifest = Manifest::from_table(&table_manifest).await?;
+        let mut manifest = crate::fixtures::manifest_with_objects_all_sizes::manifest().await?;
 
         assert!(
             lineage.commit.is_none(),
@@ -439,16 +438,13 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_adding_and_commit() -> Res {
-        let base_record = fixtures::manifest_with_objects_all_sizes::manifest()
-            .await?
-            .get_record(&PathBuf::from("0mb.bin"))
-            .await?
-            .unwrap();
+        let manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let base_record = manifest.get_record(&PathBuf::from("0mb.bin")).unwrap();
         let added_file = ManifestRow {
             logical_key: PathBuf::from("foo"),
-            hash: base_record.hash.try_into()?,
+            hash: base_record.hash.clone(),
             size: base_record.size,
-            physical_key: base_record.place,
+            physical_key: base_record.physical_key.clone(),
             ..ManifestRow::default()
         };
 
@@ -463,8 +459,7 @@ mod tests {
         };
 
         let lineage = PackageLineage::default();
-        let table_manifest = crate::fixtures::manifest_with_objects_all_sizes::manifest().await?;
-        let mut manifest = Manifest::from_table(&table_manifest).await?;
+        let mut manifest = crate::fixtures::manifest_with_objects_all_sizes::manifest().await?;
 
         assert!(
             lineage.commit.is_none(),
@@ -514,16 +509,15 @@ mod tests {
     //       even for imposible states
     #[test(tokio::test)]
     async fn test_adding_manifest_already_has_it() -> Res {
-        let base_record = fixtures::manifest_with_objects_all_sizes::manifest()
-            .await?
+        let manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let base_record = manifest
             .get_record(&PathBuf::from("one/two two/three three three/READ ME.md"))
-            .await?
             .unwrap();
         let added_file = ManifestRow {
             logical_key: PathBuf::from("one/two two/three three three/READ ME.md"),
-            hash: base_record.hash.try_into()?,
+            hash: base_record.hash.clone(),
             size: base_record.size,
-            physical_key: base_record.place,
+            physical_key: base_record.physical_key.clone(),
             ..ManifestRow::default()
         };
         let hash = added_file.hash.clone();
@@ -557,8 +551,7 @@ mod tests {
             )]),
             ..PackageLineage::default()
         };
-        let table_manifest = crate::fixtures::manifest_with_objects_all_sizes::manifest().await?;
-        let mut manifest = Manifest::from_table(&table_manifest).await?;
+        let mut manifest = crate::fixtures::manifest_with_objects_all_sizes::manifest().await?;
 
         let result = commit_package(
             lineage,
@@ -592,16 +585,15 @@ mod tests {
             )
             .await?;
 
-        let base_record = fixtures::manifest_with_objects_all_sizes::manifest()
-            .await?
+        let manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let base_record = manifest
             .get_record(&PathBuf::from("less-then-8mb.txt"))
-            .await?
             .unwrap();
         let modified_file = ManifestRow {
             logical_key: PathBuf::from("one/two two/three three three/READ ME.md"),
-            hash: base_record.hash.try_into()?,
+            hash: base_record.hash.clone(),
             size: base_record.size,
-            physical_key: base_record.place,
+            physical_key: base_record.physical_key.clone(),
             ..ManifestRow::default()
         };
         let status = InstalledPackageStatus {
@@ -619,8 +611,7 @@ mod tests {
             )]),
             ..PackageLineage::default()
         };
-        let table_manifest = crate::fixtures::manifest_with_objects_all_sizes::manifest().await?;
-        let mut manifest = Manifest::from_table(&table_manifest).await?;
+        let mut manifest = crate::fixtures::manifest_with_objects_all_sizes::manifest().await?;
 
         assert!(
             lineage.commit.is_none(),

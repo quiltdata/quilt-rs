@@ -295,8 +295,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_removed_files() -> Res {
-        let table_manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
-        let manifest = Manifest::from_table(&table_manifest).await?;
+        let manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
         let logical_key = PathBuf::from("less-then-8mb.txt");
         let manifest_record = manifest.get_record(&logical_key).unwrap();
         let storage = MockStorage::default();
@@ -304,7 +303,7 @@ mod tests {
             paths: BTreeMap::from([(
                 logical_key.clone(),
                 PathState {
-                    hash: manifest_record.hash,
+                    hash: manifest_record.hash.clone().into(),
                     ..PathState::default()
                 },
             )]),

@@ -155,8 +155,8 @@ pub mod manifest_with_objects_all_sizes {
     use super::local_uri;
     use super::objects;
 
-    use crate::manifest::Row;
-    use crate::manifest::Table;
+    use crate::manifest::Manifest;
+    use crate::manifest::ManifestRow;
     use crate::Res;
 
     const JSONL: &str = "fixtures/ref-manifest-sizes.jsonl";
@@ -181,46 +181,46 @@ pub mod manifest_with_objects_all_sizes {
         local_uri(PARQUET_REMOTE)
     }
 
-    pub async fn manifest() -> Res<Table> {
-        let mut manifest = Table::default();
+    pub async fn manifest() -> Res<Manifest> {
+        let mut manifest = Manifest::default();
         manifest
-            .insert_record(Row {
-                name: PathBuf::from("0mb.bin"),
+            .insert_record(ManifestRow {
+                logical_key: PathBuf::from("0mb.bin"),
                 size: 0,
-                hash: create_multihash(objects::ZERO_HASH_B64)?,
-                ..Row::default()
+                hash: create_multihash(objects::ZERO_HASH_B64)?.try_into()?,
+                ..ManifestRow::default()
             })
             .await?;
         manifest
-            .insert_record(Row {
-                name: PathBuf::from("bigger-than-8mb.txt"),
+            .insert_record(ManifestRow {
+                logical_key: PathBuf::from("bigger-than-8mb.txt"),
                 size: 18874368,
-                hash: create_multihash(objects::MORE_THAN_8MB_HASH_B64)?,
-                ..Row::default()
+                hash: create_multihash(objects::MORE_THAN_8MB_HASH_B64)?.try_into()?,
+                ..ManifestRow::default()
             })
             .await?;
         manifest
-            .insert_record(Row {
-                name: PathBuf::from("equal-to-8mb.txt"),
+            .insert_record(ManifestRow {
+                logical_key: PathBuf::from("equal-to-8mb.txt"),
                 size: 8388608,
-                hash: create_multihash(objects::EQUAL_TO_8MB_HASH_B64)?,
-                ..Row::default()
+                hash: create_multihash(objects::EQUAL_TO_8MB_HASH_B64)?.try_into()?,
+                ..ManifestRow::default()
             })
             .await?;
         manifest
-            .insert_record(Row {
-                name: PathBuf::from("less-then-8mb.txt"),
+            .insert_record(ManifestRow {
+                logical_key: PathBuf::from("less-then-8mb.txt"),
                 size: 16,
-                hash: create_multihash(objects::LESS_THAN_8MB_HASH_B64)?,
-                ..Row::default()
+                hash: create_multihash(objects::LESS_THAN_8MB_HASH_B64)?.try_into()?,
+                ..ManifestRow::default()
             })
             .await?;
         manifest
-            .insert_record(Row {
-                name: PathBuf::from("one/two two/three three three/READ ME.md"),
+            .insert_record(ManifestRow {
+                logical_key: PathBuf::from("one/two two/three three three/READ ME.md"),
                 size: 20,
-                hash: create_multihash(objects::NESTED_HASH_B64)?,
-                ..Row::default()
+                hash: create_multihash(objects::NESTED_HASH_B64)?.try_into()?,
+                ..ManifestRow::default()
             })
             .await?;
         Ok(manifest)

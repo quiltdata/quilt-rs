@@ -214,8 +214,7 @@ mod tests {
         let lineage = PackageLineage::default();
         let single_object_path = PathBuf::from("less-then-8mb.txt");
         let entries_paths = vec![&single_object_path];
-        let table_manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
-        let mut manifest = Manifest::from_table(&table_manifest).await?;
+        let mut manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
 
         let hash: multihash::Multihash<256> = manifest
             .get_record(&single_object_path)
@@ -434,8 +433,7 @@ mod tests {
         // We want to install z/z
         let entries_paths = vec![&not_existed];
         // But manifest clearly doens't contain it
-        let table_manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
-        let mut manifest = Manifest::from_table(&table_manifest).await?;
+        let mut manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
 
         // Assert we don't track anything
         assert!(lineage.paths.is_empty());

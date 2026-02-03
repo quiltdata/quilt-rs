@@ -345,7 +345,6 @@ mod tests {
     use crate::checksum::MULTIHASH_SHA256;
     use crate::fixtures;
     use crate::io::storage::mocks::MockStorage;
-    use crate::manifest::Row;
 
     #[test(tokio::test)]
     async fn read_existing_local() -> Res {
