@@ -21,10 +21,10 @@ The `.quilt` directory serves as the local repository for package management:
 .quilt/
 ├── packages/           # Cached manifests from remote storage
 │   └── <bucket>/
-│       └── <hash>      # Parquet manifest files (content-addressed)
+│       └── <hash>      # Parquet manifest files (downloaded from remote)
 ├── installed/          # Local package installations
 │   └── <namespace>/
-│       └── <hash>      # Installed manifest copies
+│       └── <hash>      # Parquet manifest files (local format)
 ├── objects/            # Local content-addressed object store
 │   └── <sha256>        # Immutable data files
 └── lineage.json        # Package installation and modification tracking
@@ -32,8 +32,8 @@ The `.quilt` directory serves as the local repository for package management:
 
 ### Directory Responsibilities
 
-- **packages/**: Immutable cache of remote manifests, organized by bucket
-- **installed/**: Local copies of installed package manifests, organized by namespace
+- **packages/**: Immutable cache of remote manifests in Parquet format, organized by bucket
+- **installed/**: Local copies of package manifests in Parquet format, organized by namespace
 - **objects/**: Local object store containing actual file content, deduplicated by hash
 - **lineage.json**: Tracks package installations, modifications, and commit history
 
@@ -62,7 +62,17 @@ pub struct PackageLineage {
 ```
 
 ### Manifest
-A manifest is a collection of ManifestRows that describes a complete package state. Manifests are stored as Parquet files and are content-addressed by their top-level hash.
+A manifest is a collection of ManifestRows that describes a complete package state. Each row represents a file with:
+- **logical_key**: Virtual path inside the package (user-visible file path)
+- **physical_key**: Actual storage location URL
+  - `s3://bucket/path` for remote storage (after push)
+  - `file:///path/to/local/objects/hash` for local storage (before push)
+
+**Format Notes**:
+- **Local manifests**: Stored in Parquet format (both packages/ and installed/)
+- **Remote storage**: Primary format is JSONL, with Parquet duplicates for quilt-rs compatibility
+- **Current state**: quilt-rs downloads and works exclusively with Parquet manifests
+- All manifests are content-addressed by their top-level hash
 
 ## Complete Workflow
 
@@ -96,6 +106,7 @@ Check: Package not already in lineage
 cache_remote_manifest(manifest_uri) [if not cached]
     ↓
 copy_cached_to_installed() → .quilt/installed/namespace/hash
+  (copies Parquet manifest from packages/ to installed/)
     ↓
 resolve_tag("latest") → latest_hash
     ↓
@@ -161,6 +172,7 @@ flow::commit_package(lineage, changes, message, user_meta)
 For each change:
   - Added/Modified: create_immutable_object_copy()
     ↓ Copy working_dir/file → objects/content_hash
+    ↓ Update ManifestRow.physical_key = file:///path/to/objects/content_hash
     ↓ Update lineage.paths[file] = new PathState
   - Removed: remove from lineage.paths
     ↓
@@ -193,12 +205,14 @@ fetch remote_manifest for comparison
     ↓
 stream_uploaded_local_rows():
   For each local row:
-    - If identical to remote: reuse remote physical_key
-    - If different/new: upload_row() → new remote physical_key
+    - If identical to remote: reuse remote s3:// physical_key
+    - If different/new: upload_row() → new s3:// physical_key
+    - Convert file:// physical_keys to s3:// locations
     ↓
 build_manifest_from_rows_stream() with uploaded rows
     ↓
-upload_manifest() → remote .quilt/packages/bucket/new_hash
+upload_manifest() → remote .quilt/packages/bucket/new_hash 
+  (uploads both JSONL primary + Parquet duplicate for compatibility)
     ↓
 tag_timestamp() → remote .quilt/named_packages/namespace/timestamp
     ↓
@@ -265,7 +279,7 @@ enum UpstreamState {
 
 The system uses comprehensive error types covering:
 - I/O operations (`Error::Io`)
-- Remote storage (`Error::Remote`) 
+- Remote storage (`Error::Remote`)
 - Manifest parsing (`Error::Table`)
 - Hash verification (`Error::Checksum`)
 - Package management (`Error::PackageAlreadyInstalled`)
