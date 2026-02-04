@@ -9,7 +9,7 @@
 
 ### Changed
 
-- Migrated manifest format from Parquet to JSONL for improved performance and compatibility
+- Migrated manifest format from Parquet to JSONL
 
 ## [v0.26.0](https://github.com/quiltdata/quilt-rs/releases/tag/quilt-rs/v0.26.0) - 2025-01-26
 
