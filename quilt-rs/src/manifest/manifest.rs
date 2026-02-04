@@ -124,7 +124,7 @@ impl Serialize for Workflow {
 }
 
 /// Header (or first row) in JSONL manifest
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct ManifestHeader {
     pub version: String,
     pub message: Option<String>,
@@ -132,6 +132,17 @@ pub struct ManifestHeader {
     pub user_meta: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workflow: Option<Workflow>,
+}
+
+impl Default for ManifestHeader {
+    fn default() -> Self {
+        ManifestHeader {
+            version: "v0".to_string(),
+            message: Some("".to_string()),
+            user_meta: Some(serde_json::Value::Object(serde_json::Map::new())),
+            workflow: None,
+        }
+    }
 }
 
 impl TryFrom<&Header> for ManifestHeader {

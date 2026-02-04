@@ -116,7 +116,6 @@ pub async fn push_package(
     debug!("✔️ Created manifest URI: {}", manifest_uri.display());
 
     debug!("⏳ Building and uploading manifest");
-    let header = local_manifest.get_header().await?;
     let package_handle = S3PackageHandle::from(&manifest_uri);
     let stream = Box::pin(
         stream_uploaded_local_rows(
@@ -130,7 +129,8 @@ pub async fn push_package(
     );
     let dest_dir = paths.manifest_cache_dir(&manifest_uri.bucket);
     let (cache_path, top_hash) =
-        build_manifest_from_rows_stream(storage, dest_dir, header, stream).await?;
+        build_manifest_from_rows_stream(storage, dest_dir, local_manifest.header.clone(), stream)
+            .await?;
     debug!(
         "✔️ Built manifest with hash {} at {}",
         top_hash,
@@ -263,8 +263,8 @@ mod tests {
                 b"abcdef".to_vec(),
             )
             .await?;
-        let table = fixtures::manifest_empty::empty_null();
-        let manifest = Manifest::from_table(&table).await?;
+        let mut manifest = Manifest::default();
+        manifest.header.user_meta = Some(serde_json::Value::Null);
         let lineage = push_package(
             lineage,
             manifest,
@@ -344,8 +344,6 @@ mod tests {
 
         let mut manifest = Manifest::default();
         manifest.header.user_meta = Some(serde_json::Value::Null);
-        manifest.header.message = Some("".to_string());
-        manifest.header.version = "v0".to_string();
         manifest
             .insert_record(ManifestRow {
                 logical_key: PathBuf::from("bar"),

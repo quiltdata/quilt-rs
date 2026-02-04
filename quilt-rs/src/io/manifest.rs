@@ -13,10 +13,9 @@ use url::Url;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
-use crate::manifest::Header;
 use crate::manifest::Manifest;
+use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
-use crate::manifest::Row;
 use crate::manifest::TopHasher;
 use crate::uri::Host;
 use crate::uri::ManifestUri;
@@ -212,7 +211,7 @@ impl<T: Stream<Item = StreamItem>> RowsStream for T {}
 pub async fn build_manifest_from_rows_stream(
     storage: &impl Storage,
     dest_dir: PathBuf,
-    header: Header,
+    header: ManifestHeader,
     mut stream: impl RowsStream + Unpin,
 ) -> Res<(PathBuf, String)> {
     let temp_dir = tempfile::tempdir()?;
@@ -222,13 +221,14 @@ pub async fn build_manifest_from_rows_stream(
     // Build manifest in memory
     let mut rows = Vec::new();
     let mut top_hasher = TopHasher::new();
+
     top_hasher.append_header(&header)?;
 
     while let Some(Ok(chunk)) = stream.next().await {
         for row_result in &chunk {
             match row_result {
                 Ok(row) => {
-                    top_hasher.append(&Row::from(row.clone()))?;
+                    top_hasher.append(row)?;
                     rows.push(row.clone());
                 }
                 Err(err) => return Err(Error::Table(err.to_string())),
@@ -237,15 +237,7 @@ pub async fn build_manifest_from_rows_stream(
     }
 
     // Create JSONL manifest
-    let manifest = Manifest {
-        header: crate::manifest::ManifestHeader {
-            version: header.get_version().unwrap_or_else(|_| "v0".to_string()),
-            message: header.get_message()?,
-            user_meta: header.meta.clone(),
-            workflow: header.get_workflow()?,
-        },
-        rows,
-    };
+    let manifest = Manifest { header, rows };
 
     let jsonl_content = manifest.to_jsonlines();
     storage
@@ -305,7 +297,7 @@ mod tests {
         let (dest_path, top_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
-            manifest_empty::empty().header,
+            Manifest::default().header,
             tokio_stream::empty(),
         )
         .await?;
@@ -324,7 +316,10 @@ mod tests {
         let (dest_path, top_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
-            manifest_empty::empty_none().header,
+            ManifestHeader {
+                user_meta: None,
+                ..ManifestHeader::default()
+            },
             tokio_stream::empty(),
         )
         .await?;
@@ -343,7 +338,10 @@ mod tests {
         let (dest_path, top_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
-            manifest_empty::empty_null().header,
+            ManifestHeader {
+                user_meta: Some(serde_json::Value::Null),
+                ..ManifestHeader::default()
+            },
             tokio_stream::empty(),
         )
         .await?;
@@ -362,7 +360,10 @@ mod tests {
         let (dest_path, top_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
-            manifest_empty::null_empty().header,
+            ManifestHeader {
+                message: None,
+                ..ManifestHeader::default()
+            },
             tokio_stream::empty(),
         )
         .await?;
@@ -381,7 +382,11 @@ mod tests {
         let (dest_path, top_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
-            manifest_empty::null_none().header,
+            ManifestHeader {
+                message: None,
+                user_meta: None,
+                ..ManifestHeader::default()
+            },
             tokio_stream::empty(),
         )
         .await?;
@@ -397,7 +402,11 @@ mod tests {
         let (dest_path, top_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
-            manifest_empty::null().header,
+            ManifestHeader {
+                message: None,
+                user_meta: Some(serde_json::Value::Null),
+                ..ManifestHeader::default()
+            },
             tokio_stream::empty(),
         )
         .await?;

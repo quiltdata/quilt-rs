@@ -40,7 +40,7 @@ impl Sha256Hash {
     }
 }
 
-impl crate::checksum::Hash for Sha256Hash {
+impl Hash for Sha256Hash {
     /// Get the inner multihash
     fn multihash(&self) -> &Multihash<256> {
         &self.0

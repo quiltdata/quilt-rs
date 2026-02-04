@@ -172,10 +172,9 @@ pub async fn install_paths(
     }
 
     debug!("⏳ Building manifest with installed rows");
-    let header = manifest.get_header().await?;
     let stream = stream_remote_with_installed_rows(manifest, entries).await;
     let dest_dir = paths.installed_manifests(&namespace);
-    build_manifest_from_rows_stream(storage, dest_dir, header, stream).await?;
+    build_manifest_from_rows_stream(storage, dest_dir, manifest.header.clone(), stream).await?;
 
     info!("✔️ Successfully installed {} paths", entries_paths.len());
     Ok(lineage)

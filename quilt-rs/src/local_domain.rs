@@ -13,8 +13,8 @@ use crate::io::storage::Storage;
 use crate::lineage;
 use crate::lineage::DomainLineage;
 use crate::lineage::Home;
-use crate::manifest::Header;
 use crate::manifest::Manifest;
+use crate::manifest::ManifestHeader;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
@@ -141,7 +141,8 @@ impl LocalDomain {
         stream: impl RowsStream + Unpin,
     ) -> Res<(PathBuf, String)> {
         let dest_dir = dest_path.parent().unwrap_or(&dest_path).to_path_buf();
-        build_manifest_from_rows_stream(&self.storage, dest_dir, Header::default(), stream).await
+        build_manifest_from_rows_stream(&self.storage, dest_dir, ManifestHeader::default(), stream)
+            .await
     }
 }
 

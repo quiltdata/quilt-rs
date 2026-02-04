@@ -3,7 +3,6 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
 
-use serde_json::json;
 use tokio_stream::StreamExt;
 use tracing::debug;
 use tracing::info;
@@ -19,8 +18,8 @@ use crate::lineage::CommitState;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
-use crate::manifest::Header;
 use crate::manifest::Manifest;
+use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
 use crate::manifest::Workflow;
 use crate::paths::DomainPaths;
@@ -235,23 +234,19 @@ pub async fn commit_package(
         }
     }
 
-    let header = Header {
-        info: json!({
-            "message": message,
-            "version": "v0",
-            "workflow": workflow,
-        }),
-        meta: if let Some(u) = user_meta {
-            match u {
-                serde_json::Value::Object(mut m) => {
-                    m.sort_keys();
-                    Some(m.into())
-                }
-                _ => u.into(),
-            }
-        } else {
-            None
-        },
+    let processed_user_meta = match user_meta {
+        Some(serde_json::Value::Object(mut m)) => {
+            m.sort_keys();
+            Some(m.into())
+        }
+        other => other,
+    };
+
+    let header = ManifestHeader {
+        message: Some(message.to_string()),
+        workflow,
+        user_meta: processed_user_meta,
+        ..ManifestHeader::default()
     };
 
     debug!(

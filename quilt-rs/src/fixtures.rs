@@ -42,11 +42,8 @@ pub mod manifest {
 pub mod manifest_empty {
     use super::local_uri;
 
-    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
-    use crate::manifest::Header;
-    use crate::manifest::Table;
     use crate::Res;
 
     const EMPTY_EMPTY: &str = "fixtures/header-empty-empty.jsonl";
@@ -91,53 +88,6 @@ pub mod manifest_empty {
 
     pub fn path_null() -> Res<PathBuf> {
         local_uri(NULL_NULL)
-    }
-
-    pub fn empty() -> Table {
-        Table::new(
-            Header::new(
-                Some("".to_string()),
-                Some(serde_json::Value::Object(serde_json::Map::new())),
-                None,
-            ),
-            BTreeMap::new(),
-        )
-    }
-
-    pub fn empty_none() -> Table {
-        Table::new(
-            Header::new(Some("".to_string()), None, None),
-            BTreeMap::new(),
-        )
-    }
-
-    pub fn empty_null() -> Table {
-        Table::new(
-            Header::new(Some("".to_string()), Some(serde_json::Value::Null), None),
-            BTreeMap::new(),
-        )
-    }
-
-    pub fn null_empty() -> Table {
-        Table::new(
-            Header::new(
-                None,
-                Some(serde_json::Value::Object(serde_json::Map::new())),
-                None,
-            ),
-            BTreeMap::new(),
-        )
-    }
-
-    pub fn null_none() -> Table {
-        Table::new(Header::new(None, None, None), BTreeMap::new())
-    }
-
-    pub fn null() -> Table {
-        Table::new(
-            Header::new(None, Some(serde_json::Value::Null), None),
-            BTreeMap::new(),
-        )
     }
 }
 
