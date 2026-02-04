@@ -16,7 +16,8 @@
 
 - Updated [from v0.26.0 to v0.27.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.26.0...quilt-rs/v0.27.0)
   (see [../quilt-rs/CHANGELOG.md#v0.27.0](../quilt-rs/CHANGELOG.md#v0.27.0))
-  - Migrated manifest format from Parquet to JSONL for improved performance and compatibility
+  - Migrated manifest format from Parquet to JSONL for improved performance
+    and compatibility
 
 ## [v0.12.0]
 

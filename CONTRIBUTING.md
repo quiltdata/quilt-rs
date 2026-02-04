@@ -93,10 +93,14 @@ split -l 1 ~/MANIFEST.jsonl --filter="jq -cSM 'del(.physical_keys)'" | \
   tr -d '\n' | sha256sum
 ```
 
-**Note**: If your JSONL manifest contains `"meta": null` entries, you need to convert them to `"meta": {}` first to match the quilt3 implementation's hashing behavior:
+**Note**: If your JSONL manifest contains `"meta": null` entries, you need to
+convert them to `"meta": {}` first to match the quilt3 implementation's hashing
+behavior:
 
 ```bash
-split -l 1 ~/MANIFEST.jsonl --filter="jq -cSM 'if .meta == null then .meta = {} else . end | del(.physical_keys)'" | \
+split -l 1 ~/MANIFEST.jsonl \
+  --filter="jq -cSM 'if .meta == null then .meta = {} else . end | \
+    del(.physical_keys)'" | \
   tr -d '\n' | sha256sum
 ```
 
