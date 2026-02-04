@@ -385,10 +385,13 @@ impl Manifest {
     /// Sorted by logical_key to match Table's BTreeMap behavior and uses proper TryFrom conversion
     pub async fn records_stream(&self) -> impl RowsStream {
         // Sort by logical_key to match Table's BTreeMap ordering
-        let mut sorted_rows = self.rows.clone();
-        sorted_rows.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
+        let mut indices: Vec<usize> = (0..self.rows.len()).collect();
+        indices.sort_by(|&a, &b| self.rows[a].logical_key.cmp(&self.rows[b].logical_key));
 
-        let rows: StreamRowsChunk = sorted_rows.into_iter().map(Ok).collect();
+        let rows: StreamRowsChunk = indices
+            .into_iter()
+            .map(|i| Ok(self.rows[i].clone()))
+            .collect();
         tokio_stream::iter(vec![Ok(rows)])
     }
 
