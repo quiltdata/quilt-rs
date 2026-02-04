@@ -3,10 +3,8 @@
 
 #[allow(clippy::module_inception)]
 mod manifest;
-mod row;
 mod top_hasher;
 
-pub use row::Header;
 pub use top_hasher::TopHasher;
 
 pub use manifest::Manifest;
