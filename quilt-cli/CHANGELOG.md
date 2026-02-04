@@ -5,6 +5,12 @@
 -->
 # Changelog
 
+## [v0.24.0] - 2025-02-04
+
+### Changed
+
+- Updated to use quilt-rs v0.27.0 with JSONL manifest format migration
+
 ## [v0.23.0] - 2025-11-28
 
 ### Added
