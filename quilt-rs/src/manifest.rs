@@ -7,8 +7,6 @@ mod row;
 mod top_hasher;
 
 pub use row::Header;
-pub use row::Row;
-pub use row::RowDisplay;
 pub use top_hasher::TopHasher;
 
 pub use manifest::Manifest;
