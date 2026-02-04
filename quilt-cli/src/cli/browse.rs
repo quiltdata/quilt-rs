@@ -52,7 +52,7 @@ impl std::fmt::Display for Output {
                 Ok(s) => s,
                 Err(e) => {
                     tracing::error!("Failed to stringify user_meta: {}", e);
-                    "⚠".to_string()
+                    format!("⚠ (serialization error: {})", e)
                 }
             },
             None => "∅".to_string(),
@@ -63,7 +63,7 @@ impl std::fmt::Display for Output {
                 Ok(s) => s,
                 Err(e) => {
                     tracing::error!("Failed to stringify workflow: {}", e);
-                    "⚠".to_string()
+                    format!("⚠ (serialization error: {})", e)
                 }
             },
             None => "∅".to_string(),
