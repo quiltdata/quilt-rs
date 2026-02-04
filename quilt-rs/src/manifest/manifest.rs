@@ -11,7 +11,6 @@ use tokio::io::BufReader;
 use crate::checksum;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamRowsChunk;
-use crate::manifest::Header;
 use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
@@ -140,38 +139,6 @@ impl Default for ManifestHeader {
             user_meta: Some(serde_json::Value::Object(serde_json::Map::new())),
             workflow: None,
         }
-    }
-}
-
-impl TryFrom<&Header> for ManifestHeader {
-    type Error = Error;
-
-    fn try_from(header: &Header) -> Result<Self, Self::Error> {
-        Ok(ManifestHeader {
-            version: "v0".into(),
-            message: header.get_message()?,
-            user_meta: header.get_user_meta()?,
-            workflow: header.get_workflow()?,
-        })
-    }
-}
-
-impl TryFrom<Header> for ManifestHeader {
-    type Error = Error;
-    fn try_from(header: Header) -> Result<Self, Self::Error> {
-        ManifestHeader::try_from(&header)
-    }
-}
-
-impl TryFrom<&ManifestHeader> for Header {
-    type Error = Error;
-
-    fn try_from(manifest_header: &ManifestHeader) -> Result<Self, Self::Error> {
-        Ok(Header::new(
-            manifest_header.message.clone(),
-            manifest_header.user_meta.clone(),
-            manifest_header.workflow.clone(),
-        ))
     }
 }
 
@@ -398,11 +365,6 @@ impl Manifest {
             Ok(None)
         }
     }
-
-    /// Get header for compatibility with Table API
-    pub async fn get_header(&self) -> Res<Header> {
-        (&self.header).try_into()
-    }
 }
 
 #[cfg(test)]
@@ -599,35 +561,11 @@ mod tests {
     }
 
     #[test]
-    fn test_manifest_header_from_header() -> Res {
-        let header = Header {
-            info: serde_json::json!({
-                "message": "test message",
-                "version": "v0",
-            }),
-            meta: Some(serde_json::json!({"user": "meta"})),
-        };
-
-        assert_eq!(
-            ManifestHeader::try_from(header)?,
-            ManifestHeader {
-                version: "v0".to_string(),
-                message: Some("test message".to_string()),
-                user_meta: Some(serde_json::Value::Object(serde_json::Map::from_iter(vec![
-                    ("user".to_string(), serde_json::json!("meta")),
-                ]))),
-                workflow: None,
-            }
-        );
-        Ok(())
-    }
-
-    #[test]
     fn test_manifest_header_default() -> Res {
-        let header = ManifestHeader::try_from(Header::default())?;
+        let header = ManifestHeader::default();
         assert_eq!(header.version, "v0");
         assert_eq!(header.message, Some("".to_string()));
-        assert_eq!(header.user_meta, None);
+        assert_eq!(header.user_meta, Some(serde_json::json!({})));
         assert_eq!(header.workflow, None);
         Ok(())
     }
