@@ -11,7 +11,7 @@ mod tag;
 
 pub use host::Host;
 pub use manifest::ManifestUri;
-pub use manifest::ManifestUriLegacy;
+pub use manifest::ManifestUriParquet;
 pub use object::ObjectUri;
 pub use package::Namespace;
 pub use package::RevisionPointer;

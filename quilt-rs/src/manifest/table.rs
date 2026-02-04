@@ -9,8 +9,6 @@ use std::fmt;
 use std::path::Path;
 use std::path::PathBuf;
 
-use crate::checksum::ObjectHash;
-use crate::io::storage::Storage;
 use arrow::array::GenericByteArray;
 use arrow::array::UInt64Array;
 use arrow::datatypes::BinaryType;
@@ -27,7 +25,11 @@ use tokio_stream::StreamExt;
 
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamRowsChunk;
+use crate::io::storage::Storage;
 use crate::manifest::Header;
+use crate::manifest::Manifest;
+use crate::manifest::ManifestHeader;
+use crate::manifest::ManifestRow;
 use crate::manifest::Row;
 use crate::manifest::RowDisplay;
 use crate::Error;
@@ -44,31 +46,41 @@ fn serialize_like_python<T: Serialize>(value: &T) -> Res<String> {
     Ok(json_str)
 }
 
-fn serialize_table_header(header: &Header) -> Res<serde_json::Map<String, serde_json::Value>> {
+fn serialize_manifest_header(
+    manifest_header: &ManifestHeader,
+) -> Res<serde_json::Map<String, serde_json::Value>> {
     let mut header_meta = serde_json::Map::new();
-    if let Some(message) = header.get_message()? {
+
+    // Handle message
+    if let Some(message) = &manifest_header.message {
         header_meta.insert("message".to_string(), serde_json::to_value(message)?);
     } else {
         header_meta.insert("message".to_string(), serde_json::Value::Null);
     }
-    if let Some(user_meta) = header.get_user_meta()? {
+
+    // Handle user_meta - preserve null vs missing distinction for header
+    if let Some(user_meta) = &manifest_header.user_meta {
         let u = match user_meta {
-            serde_json::Value::Object(mut m) => {
+            serde_json::Value::Object(m) => {
+                let mut m = m.clone();
                 m.values_mut().for_each(serde_json::Value::sort_all_objects);
                 m.sort_keys();
                 serde_json::Value::Object(m)
             }
-            _ => user_meta,
+            _ => user_meta.clone(),
         };
         header_meta.insert("user_meta".into(), u);
     }
+
     header_meta.insert(
         "version".to_string(),
-        serde_json::Value::String(header.get_version()?),
+        serde_json::Value::String(manifest_header.version.clone()),
     );
-    if let Some(workflow) = header.get_workflow()? {
-        header_meta.insert("workflow".to_string(), serde_json::to_value(&workflow)?);
+
+    if let Some(workflow) = &manifest_header.workflow {
+        header_meta.insert("workflow".to_string(), serde_json::to_value(workflow)?);
     }
+
     Ok(header_meta)
 }
 
@@ -98,17 +110,17 @@ impl TopHasher {
         }
     }
 
-    /// Append `Header` to the hasher
-    pub fn append_header(&mut self, header: &Header) -> Res {
-        let value = serialize_table_header(header)?;
+    /// Append `ManifestHeader` to the hasher
+    pub fn append_header(&mut self, manifest_header: &ManifestHeader) -> Res {
+        let value = serialize_manifest_header(manifest_header)?;
         let value_str = serialize_like_python(&value)?;
         self.hasher.update(value_str.as_bytes());
         Ok(())
     }
 
-    /// Append `Row` to the hasher
-    pub fn append(&mut self, row: &Row) -> Res {
-        let value = serialize_row_entry(row)?;
+    /// Append `ManifestRow` to the hasher
+    pub fn append(&mut self, manifest_row: &ManifestRow) -> Res {
+        let value = serialize_manifest_row_entry(manifest_row)?;
         let value_str = serialize_like_python(&value)?;
         self.hasher.update(value_str.as_bytes());
         Ok(())
@@ -120,24 +132,34 @@ impl TopHasher {
     }
 }
 
-fn serialize_row_entry(row: &Row) -> Res<serde_json::Map<String, serde_json::Value>> {
-    let mut meta = match row.info.as_object() {
-        Some(meta) => meta.clone(),
-        None => serde_json::Map::default(),
+fn serialize_manifest_row_entry(
+    manifest_row: &ManifestRow,
+) -> Res<serde_json::Map<String, serde_json::Value>> {
+    // Handle meta field - match quilt3 behavior where null becomes {}
+    let meta = match &manifest_row.meta {
+        Some(serde_json::Value::Object(obj)) => obj.clone(),
+        Some(serde_json::Value::Null) | None => serde_json::Map::default(), // quilt3: meta = meta or {}
+        Some(other) => {
+            // If meta is not an object or null, wrap it in an object
+            let mut obj = serde_json::Map::new();
+            obj.insert("user_meta".to_string(), other.clone());
+            obj
+        }
     };
-    if let Some(m) = &row.meta {
-        meta.insert("user_meta".into(), m.clone());
-    }
-
-    let object_hash: ObjectHash = row.hash.try_into()?;
 
     Ok(serde_json::Map::from_iter([
-        ("hash".to_string(), serde_json::to_value(object_hash)?),
-        ("logical_key".to_string(), serde_json::to_value(&row.name)?),
+        (
+            "hash".to_string(),
+            serde_json::to_value(&manifest_row.hash)?,
+        ),
+        (
+            "logical_key".to_string(),
+            serde_json::to_value(&manifest_row.logical_key)?,
+        ),
         ("meta".to_string(), serde_json::Value::Object(meta)),
         (
             "size".to_string(),
-            serde_json::Value::Number(row.size.into()),
+            serde_json::Value::Number(manifest_row.size.into()),
         ),
     ]))
 }
@@ -156,6 +178,19 @@ impl Table {
     // TODO: new creates empty records, from(header, records) creates full Table
     pub fn new(header: Header, records: BTreeMap<PathBuf, Row>) -> Self {
         Table { header, records }
+    }
+
+    /// Convert from Manifest to Table format
+    pub fn from_manifest(manifest: &Manifest) -> Res<Self> {
+        let header = Header::try_from(&manifest.header)?;
+
+        let records = manifest
+            .rows
+            .iter()
+            .map(|row| (row.logical_key.clone(), Row::from(row.clone())))
+            .collect::<BTreeMap<PathBuf, Row>>();
+
+        Ok(Table::new(header, records))
     }
 
     async fn read_rows_impl<T>(reader: T) -> Res<Self>
@@ -264,7 +299,15 @@ impl Table {
     }
 
     pub async fn records_stream(&self) -> impl RowsStream {
-        let entries: StreamRowsChunk = self.records.values().cloned().map(Ok).collect();
+        let entries: StreamRowsChunk = self
+            .records
+            .values()
+            .cloned()
+            .map(|row| {
+                row.try_into()
+                    .map_err(|e: Error| Error::Table(e.to_string()))
+            })
+            .collect();
         tokio_stream::iter(vec![Ok(entries)])
     }
 
@@ -323,7 +366,6 @@ mod tests {
     use crate::checksum::MULTIHASH_SHA256;
     use crate::fixtures;
     use crate::io::storage::mocks::MockStorage;
-    use crate::manifest::Row;
 
     #[test(tokio::test)]
     async fn read_existing_local() -> Res {
@@ -401,18 +443,17 @@ mod tests {
     }
 
     #[test]
-    fn test_serialize_row_entry_with_info() -> Res {
+    fn test_serialize_manifest_row_entry_with_info() -> Res {
         let hash = Multihash::<256>::wrap(MULTIHASH_SHA256, b"test")?;
-        let row = Row {
-            name: PathBuf::from("test.txt"),
-            place: "s3://test-bucket/test.txt".to_string(),
+        let manifest_row = ManifestRow {
+            logical_key: PathBuf::from("test.txt"),
+            physical_key: "s3://test-bucket/test.txt".to_string(),
             size: 42,
-            hash,
-            info: serde_json::Value::Null,
-            meta: Some(json!({"foo": "bar"})),
+            hash: hash.try_into()?,
+            meta: Some(json!({"user_meta": {"foo": "bar"}})),
         };
 
-        let serialized = serialize_row_entry(&row)?;
+        let serialized = serialize_manifest_row_entry(&manifest_row)?;
 
         assert_eq!(
             serialized,
@@ -468,36 +509,27 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_top_hash() -> Res {
-        let manifest = Table::new(
-            Header {
-                meta: Some(json!({
-                       "1234567890": "a",
-                })),
-                info: json!({
-                       "message": "Second revision",
-                       "version": "v0",
-                }),
-            },
-            BTreeMap::from([(
-                PathBuf::from("test.md"),
-                Row {
-                    name: PathBuf::from("test.md"),
-                    place: "doesn't matter".to_string(),
-                    size: 3568,
-                    hash: Sha256ChunkedHash::try_from(
-                        "MhntcZnyIL1AIPJNNh8LwzB68M5lFBW0pTEMFTeOSJo=",
-                    )?
-                    .into(),
-                    info: serde_json::Value::Null,
-                    meta: None,
-                },
-            )]),
-        );
+        // Test with the old Row-based approach for backward compatibility
+
+        let manifest_header = ManifestHeader {
+            version: "v0".to_string(),
+            message: Some("Second revision".to_string()),
+            user_meta: Some(json!({"1234567890": "a"})),
+            workflow: None,
+        };
+
+        let manifest_row = ManifestRow {
+            logical_key: PathBuf::from("test.md"),
+            physical_key: "doesn't matter".to_string(),
+            size: 3568,
+            hash: Sha256ChunkedHash::try_from("MhntcZnyIL1AIPJNNh8LwzB68M5lFBW0pTEMFTeOSJo=")?
+                .into(),
+            meta: None, // This should be treated as {} per quilt3 behavior
+        };
 
         let mut top_hasher = TopHasher::new();
-        top_hasher.append_header(&manifest.header)?;
-        let path = PathBuf::from("test.md");
-        top_hasher.append(&manifest.get_record(&path).await?.unwrap())?;
+        top_hasher.append_header(&manifest_header)?;
+        top_hasher.append(&manifest_row)?;
 
         assert_eq!(
             top_hasher.finalize(),

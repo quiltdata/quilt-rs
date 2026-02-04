@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use multihash::Multihash;
 
+use crate::checksum::ObjectHash;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
 use crate::manifest::Workflow;
@@ -87,7 +88,7 @@ impl From<Header> for Row {
             name: HEADER_ROW.into(),
             place: HEADER_ROW.into(),
             size: 0,
-            hash: Multihash::default(),
+            hash: ObjectHash::default().into(),
             info: header.info,
             meta: header.meta,
         }
@@ -196,10 +197,8 @@ impl From<&Manifest> for Header {
     }
 }
 
-impl TryFrom<ManifestRow> for Row {
-    type Error = Error;
-
-    fn try_from(manifest_row: ManifestRow) -> Result<Self, Self::Error> {
+impl From<ManifestRow> for Row {
+    fn from(manifest_row: ManifestRow) -> Self {
         // Extract user_meta from manifest_row.meta if it exists
         let (meta, info) = match manifest_row.meta {
             Some(serde_json::Value::Object(mut obj)) => {
@@ -218,13 +217,50 @@ impl TryFrom<ManifestRow> for Row {
             }
         };
 
-        Ok(Row {
+        Row {
             name: manifest_row.logical_key,
             place: manifest_row.physical_key,
             hash: manifest_row.hash.into(),
             size: manifest_row.size,
             meta,
             info,
+        }
+    }
+}
+
+impl TryFrom<Row> for ManifestRow {
+    type Error = Error;
+
+    fn try_from(row: Row) -> Result<Self, Self::Error> {
+        // Combine meta and info into a single meta field for ManifestRow
+        let combined_meta = match (row.meta, &row.info) {
+            (Some(user_meta), serde_json::Value::Object(info_obj)) if !info_obj.is_empty() => {
+                let mut combined = info_obj.clone();
+                combined.insert("user_meta".to_string(), user_meta);
+                Some(serde_json::Value::Object(combined))
+            }
+            (Some(user_meta), serde_json::Value::Null) => {
+                let mut combined = serde_json::Map::new();
+                combined.insert("user_meta".to_string(), user_meta);
+                Some(serde_json::Value::Object(combined))
+            }
+            (None, serde_json::Value::Object(info_obj)) if !info_obj.is_empty() => Some(row.info),
+            (None, serde_json::Value::Null) => None,
+            (Some(user_meta), _) => {
+                let mut combined = serde_json::Map::new();
+                combined.insert("user_meta".to_string(), user_meta);
+                combined.insert("info".to_string(), row.info);
+                Some(serde_json::Value::Object(combined))
+            }
+            _ => None, // Handle remaining cases
+        };
+
+        Ok(ManifestRow {
+            logical_key: row.name,
+            physical_key: row.place,
+            hash: row.hash.try_into()?,
+            size: row.size,
+            meta: combined_meta,
         })
     }
 }

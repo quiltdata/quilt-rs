@@ -16,6 +16,7 @@ use url::Url;
 
 use crate::uri::Host;
 use crate::uri::ManifestUri;
+use crate::uri::ManifestUriParquet;
 use crate::Error;
 use crate::Res;
 
@@ -369,11 +370,23 @@ impl std::str::FromStr for S3PackageUri {
     }
 }
 
+impl From<ManifestUriParquet> for S3PackageUri {
+    fn from(uri: ManifestUriParquet) -> S3PackageUri {
+        ManifestUri::from(uri).into()
+    }
+}
+
+impl From<&ManifestUriParquet> for S3PackageUri {
+    fn from(uri: &ManifestUriParquet) -> S3PackageUri {
+        S3PackageUri::from(uri.clone())
+    }
+}
+
 impl From<ManifestUri> for S3PackageUri {
     fn from(uri: ManifestUri) -> S3PackageUri {
         S3PackageUri {
             bucket: uri.bucket,
-            catalog: uri.catalog,
+            catalog: uri.origin,
             namespace: uri.namespace,
             path: None,
             revision: RevisionPointer::Hash(uri.hash),
@@ -586,7 +599,7 @@ mod tests {
 
     #[test]
     fn test_from_manifest_uri() -> Res {
-        let manifest_uri = ManifestUri {
+        let manifest_uri = ManifestUriParquet {
             bucket: "test-bucket".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "abc123".to_string(),

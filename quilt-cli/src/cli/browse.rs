@@ -1,14 +1,11 @@
-use tokio_stream::StreamExt;
-
-use quilt_rs::manifest::Row;
+use quilt_rs::manifest::ManifestRow;
 
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
 use crate::cli::Error;
 
 pub struct Output {
-    manifest: quilt_rs::manifest::Table,
-    rows: Vec<Row>,
+    manifest: quilt_rs::manifest::Manifest,
 }
 
 #[derive(Debug)]
@@ -30,48 +27,46 @@ struct RemoteManifestEntry {
     size: u64,
 }
 
+impl From<&ManifestRow> for RemoteManifestEntry {
+    fn from(row: &ManifestRow) -> Self {
+        Self {
+            name: row.logical_key.display().to_string(),
+            place: row.physical_key.clone(),
+            size: row.size,
+        }
+    }
+}
+
 impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut output: Vec<String> = Vec::new();
         let header = self.manifest.header.clone();
 
-        let message = match header.get_message() {
-            Ok(Some(msg)) => msg,
-            Ok(None) => "∅".to_string(),
-            Err(e) => {
-                tracing::error!("Failed to get message: {}", e);
-                "⚠".to_string()
-            }
+        let message = match &header.message {
+            Some(msg) => msg.clone(),
+            None => "∅".to_string(),
         };
 
-        let user_meta = match header.get_user_meta() {
-            Ok(Some(meta)) => match serde_json::to_string(&meta) {
+        let user_meta = match &header.user_meta {
+            Some(meta) => match serde_json::to_string(&meta) {
                 Ok(s) => s,
                 Err(e) => {
                     tracing::error!("Failed to stringify user_meta: {}", e);
-                    "⚠".to_string()
+                    format!("⚠ (serialization error: {})", e)
                 }
             },
-            Ok(None) => "∅".to_string(),
-            Err(e) => {
-                tracing::error!("Failed to get user_meta: {}", e);
-                "⚠".to_string()
-            }
+            None => "∅".to_string(),
         };
 
-        let workflow = match header.get_workflow() {
-            Ok(Some(w)) => match serde_json::to_string(&w) {
+        let workflow = match &header.workflow {
+            Some(w) => match serde_json::to_string(&w) {
                 Ok(s) => s,
                 Err(e) => {
                     tracing::error!("Failed to stringify workflow: {}", e);
-                    "⚠".to_string()
+                    format!("⚠ (serialization error: {})", e)
                 }
             },
-            Ok(None) => "∅".to_string(),
-            Err(e) => {
-                tracing::error!("Failed to get workflow: {}", e);
-                "⚠".to_string()
-            }
+            None => "∅".to_string(),
         };
         let mut header_table = tabled::Table::new(vec![RemoteManifestHeader {
             message,
@@ -81,12 +76,8 @@ impl std::fmt::Display for Output {
         header_table.with(tabled::settings::Panel::header("Remote manifest header"));
         output.push(header_table.to_string());
 
-        let entries = self.rows.clone().into_iter().map(|e| RemoteManifestEntry {
-            name: e.name.display().to_string(),
-            place: e.place.to_string(),
-            size: e.size,
-        });
-        let mut entries_table = tabled::Table::new(entries);
+        let mut entries_table =
+            tabled::Table::new(self.manifest.rows.iter().map(RemoteManifestEntry::from));
         entries_table.with(tabled::settings::Panel::header("Remote manifest entries"));
         output.push(entries_table.to_string());
         write!(f, "{}", output.join("\n"))
@@ -109,15 +100,7 @@ pub async fn model(
 
     let manifest = local_domain.browse_remote_manifest(&manifest_uri).await?;
 
-    let mut rows = Vec::new();
-    let mut stream = manifest.records_stream().await;
-    while let Some(records) = stream.next().await {
-        for row in records? {
-            rows.push(row?)
-        }
-    }
-
-    Ok(Output { manifest, rows })
+    Ok(Output { manifest })
 }
 
 #[cfg(test)]
@@ -153,25 +136,23 @@ mod tests {
             assert_eq!(output_str, get_browse_output()?);
 
             assert_eq!(
-                output.manifest.header.get_message()?,
-                Some("Test message".to_string()),
+                output.manifest.header.message.as_ref(),
+                Some(&"Test message".to_string()),
             );
             assert_eq!(
                 output
                     .manifest
                     .get_record(&readme_logical_key)
-                    .await?
                     .unwrap()
-                    .place,
+                    .physical_key,
                 readme_uri
             );
             assert_eq!(
                 output
                     .manifest
                     .get_record(&timestamp_logical_key)
-                    .await?
                     .unwrap()
-                    .place,
+                    .physical_key,
                 timestamp_uri
             );
         }

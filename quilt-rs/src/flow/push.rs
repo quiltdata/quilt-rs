@@ -15,8 +15,8 @@ use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
-use crate::manifest::Row;
-use crate::manifest::Table;
+use crate::manifest::Manifest;
+use crate::manifest::ManifestRow;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
@@ -29,27 +29,37 @@ async fn use_existing_row_or_upload(
     remote: &impl Remote,
     host_config: &HostConfig,
     package_handle: &S3PackageHandle,
-    remote_manifest: &Table,
+    remote_manifest: &Manifest,
     rows: StreamItem,
 ) -> StreamItem {
     let mut output = Vec::new();
     for row in rows? {
         let row = row?;
-        debug!("⏳ Processing row: {}", row.name.display());
-        if let Ok(Some(remote_row)) = remote_manifest.get_record(&row.name).await {
-            if remote_row == row {
-                debug!("✔️ Using existing remote row for: {}", row.name.display());
-                output.push(Ok(Row {
-                    place: remote_row.place.to_owned(),
+        debug!("⏳ Processing row: {}", row.logical_key.display());
+        if let Some(remote_row) = remote_manifest.get_record(&row.logical_key) {
+            if remote_row == &row {
+                debug!(
+                    "✔️ Using existing remote row for: {}",
+                    row.logical_key.display()
+                );
+                let updated_manifest_row = ManifestRow {
+                    physical_key: remote_row.physical_key.to_owned(),
                     ..row.clone()
-                }));
+                };
+                output.push(Ok(updated_manifest_row));
             } else {
-                debug!("⏳ Uploading modified row for: {}", row.name.display());
-                output.push(upload_row(remote, host_config, package_handle.clone(), row).await)
+                debug!(
+                    "⏳ Uploading modified row for: {}",
+                    row.logical_key.display()
+                );
+                let uploaded_row =
+                    upload_row(remote, host_config, package_handle.clone(), row).await?;
+                output.push(Ok(uploaded_row));
             }
         } else {
-            debug!("⏳ Uploading new row for: {}", row.name.display());
-            output.push(upload_row(remote, host_config, package_handle.clone(), row).await)
+            debug!("⏳ Uploading new row for: {}", row.logical_key.display());
+            let uploaded_row = upload_row(remote, host_config, package_handle.clone(), row).await?;
+            output.push(Ok(uploaded_row));
         }
     }
     Ok(output)
@@ -58,8 +68,8 @@ async fn use_existing_row_or_upload(
 async fn stream_uploaded_local_rows<'a>(
     remote: &'a impl Remote,
     host_config: &'a HostConfig,
-    local_manifest: &'a Table,
-    remote_manifest: &'a Table,
+    local_manifest: &'a Manifest,
+    remote_manifest: &'a Manifest,
     package_handle: &'a S3PackageHandle,
 ) -> impl RowsStream + 'a {
     let stream = local_manifest.records_stream().await;
@@ -71,7 +81,7 @@ async fn stream_uploaded_local_rows<'a>(
 /// Push the new package revision to the remote and tags it as "latest".
 pub async fn push_package(
     mut lineage: PackageLineage,
-    local_manifest: Table,
+    local_manifest: Manifest,
     paths: &paths::DomainPaths,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
@@ -106,7 +116,6 @@ pub async fn push_package(
     debug!("✔️ Created manifest URI: {}", manifest_uri.display());
 
     debug!("⏳ Building and uploading manifest");
-    let header = local_manifest.get_header().await?;
     let package_handle = S3PackageHandle::from(&manifest_uri);
     let stream = Box::pin(
         stream_uploaded_local_rows(
@@ -120,7 +129,8 @@ pub async fn push_package(
     );
     let dest_dir = paths.manifest_cache_dir(&manifest_uri.bucket);
     let (cache_path, top_hash) =
-        build_manifest_from_rows_stream(storage, dest_dir, header, stream).await?;
+        build_manifest_from_rows_stream(storage, dest_dir, local_manifest.header.clone(), stream)
+            .await?;
     debug!(
         "✔️ Built manifest with hash {} at {}",
         top_hash,
@@ -129,7 +139,7 @@ pub async fn push_package(
 
     let new_manifest_uri = ManifestUri {
         hash: top_hash,
-        ..manifest_uri.clone()
+        ..lineage.remote.clone()
     };
 
     debug!(
@@ -146,7 +156,7 @@ pub async fn push_package(
     debug!("⏳ Checking remote's latest manifest hash");
     lineage.latest_hash = resolve_tag(
         remote,
-        &new_manifest_uri.catalog,
+        &new_manifest_uri.origin,
         &manifest_uri.into(),
         Tag::Latest,
     )
@@ -191,8 +201,6 @@ mod tests {
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::CommitState;
     use crate::lineage::PackageLineage;
-    use crate::manifest::Row;
-    use crate::uri::ManifestUri;
     use crate::uri::S3Uri;
 
     #[test(tokio::test)]
@@ -201,7 +209,7 @@ mod tests {
         let remote = MockRemote::default();
         let lineage = push_package(
             PackageLineage::default(),
-            Table::default(),
+            Manifest::default(),
             &paths::DomainPaths::default(),
             &storage,
             &remote,
@@ -219,7 +227,7 @@ mod tests {
             bucket: "b".to_string(),
             namespace: ("a", "c").into(),
             hash: "__FOO__".to_string(),
-            catalog: None,
+            origin: None,
         };
         let lineage = PackageLineage {
             commit: Some(CommitState {
@@ -230,7 +238,7 @@ mod tests {
             remote: manifest_uri,
             ..PackageLineage::default()
         };
-        let jsonl = std::fs::read(fixtures::manifest::parquet_checksummed()?)?;
+        let jsonl = std::fs::read(fixtures::manifest::jsonl()?)?;
         let manifest_key = format!(
             ".quilt/packages/b/{}",
             fixtures::manifest_empty::EMPTY_NULL_TOP_HASH
@@ -244,8 +252,8 @@ mod tests {
         remote
             .put_object(
                 &None,
-                &S3Uri::try_from("s3://b/.quilt/packages/1220__FOO__.parquet")?,
-                jsonl,
+                &S3Uri::try_from("s3://b/.quilt/packages/__FOO__")?,
+                jsonl.clone(),
             )
             .await?;
         remote
@@ -255,10 +263,11 @@ mod tests {
                 b"abcdef".to_vec(),
             )
             .await?;
-        let table = fixtures::manifest_empty::empty_null();
+        let mut manifest = Manifest::default();
+        manifest.header.user_meta = Some(serde_json::Value::Null);
         let lineage = push_package(
             lineage,
-            table,
+            manifest,
             &paths::DomainPaths::default(),
             &storage,
             &remote,
@@ -270,7 +279,7 @@ mod tests {
             bucket: "b".to_string(),
             namespace: ("a", "c").into(),
             hash: fixtures::manifest_empty::EMPTY_NULL_TOP_HASH.to_string(),
-            catalog: None,
+            origin: None,
         };
         assert_eq!(
             lineage,
@@ -290,7 +299,7 @@ mod tests {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
             hash: "__FOO__".to_string(),
-            catalog: None,
+            origin: None,
         };
         let lineage = PackageLineage {
             commit: Some(CommitState {
@@ -301,7 +310,7 @@ mod tests {
             remote: manifest_uri,
             ..PackageLineage::default()
         };
-        let jsonl = std::fs::read(fixtures::manifest::parquet_checksummed()?)?;
+        let jsonl = std::fs::read(fixtures::manifest::jsonl()?)?;
         let manifest_key = format!(
             ".quilt/packages/b/{}",
             fixtures::manifest::PARQUEST_CHECKSUMMED_HASH
@@ -314,8 +323,8 @@ mod tests {
         remote
             .put_object(
                 &None,
-                &S3Uri::try_from("s3://b/.quilt/packages/1220__FOO__.parquet")?,
-                jsonl,
+                &S3Uri::try_from("s3://b/.quilt/packages/__FOO__")?,
+                jsonl.clone(),
             )
             .await?;
         remote
@@ -327,19 +336,20 @@ mod tests {
             .await?;
 
         let file_path = PathBuf::from("/b/a/r");
-        let manifest_file = std::fs::read(fixtures::manifest::parquet_checksummed()?)?;
+        let manifest_file = std::fs::read(fixtures::manifest::jsonl()?)?;
         remote
             .storage
             .write_file(&file_path, &manifest_file)
             .await?;
 
-        let mut manifest = Table::default();
-        manifest.header.meta = Some(serde_json::Value::Null);
+        let mut manifest = Manifest::default();
+        manifest.header.user_meta = Some(serde_json::Value::Null);
         manifest
-            .insert_record(Row {
-                name: PathBuf::from("bar"),
-                place: format!("file://{}", file_path.display()),
-                ..Row::default()
+            .insert_record(ManifestRow {
+                logical_key: PathBuf::from("bar"),
+                physical_key: format!("file://{}", file_path.display()),
+                hash: multihash::Multihash::wrap(0x12, b"test")?.try_into()?,
+                ..ManifestRow::default()
             })
             .await?;
 
@@ -357,7 +367,7 @@ mod tests {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
             hash: fixtures::manifest::PARQUEST_CHECKSUMMED_HASH.to_string(),
-            catalog: None,
+            origin: None,
         };
         assert_eq!(
             lineage,

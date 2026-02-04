@@ -2,7 +2,7 @@ use crate::quilt;
 use crate::Error;
 
 pub fn try_remote_origin_host(uri: &quilt::uri::ManifestUri) -> Result<quilt::uri::Host, Error> {
-    Ok(uri.catalog.clone().unwrap_or("open.quilt.bio".parse()?))
+    Ok(uri.origin.clone().unwrap_or("open.quilt.bio".parse()?))
 }
 
 #[cfg(test)]
@@ -23,7 +23,7 @@ mod tests {
     fn test_stringify_remote_manifest() {
         let remote_manifest = quilt::uri::ManifestUri {
             bucket: "bucket".to_string(),
-            catalog: None,
+            origin: None,
             hash: "abcdef".to_string(),
             namespace: ("foo", "bar").into(),
         };
@@ -35,27 +35,27 @@ mod tests {
 
     #[test]
     fn test_try_remote_origin_host() -> Result<(), Error> {
-        // Test with explicit catalog
-        let manifest_with_catalog = quilt::uri::ManifestUri {
+        // Test with explicit origin
+        let manifest_with_origin = quilt::uri::ManifestUri {
             bucket: "bucket".to_string(),
-            catalog: Some("custom.quilt.org".parse()?),
+            origin: Some("custom.quilt.org".parse()?),
             hash: "abcdef".to_string(),
             namespace: ("foo", "bar").into(),
         };
         assert_eq!(
-            try_remote_origin_host(&manifest_with_catalog)?.to_string(),
+            try_remote_origin_host(&manifest_with_origin)?.to_string(),
             "custom.quilt.org"
         );
 
-        // Test with default catalog
-        let manifest_without_catalog = quilt::uri::ManifestUri {
+        // Test with default origin
+        let manifest_without_origin = quilt::uri::ManifestUri {
             bucket: "bucket".to_string(),
-            catalog: None,
+            origin: None,
             hash: "abcdef".to_string(),
             namespace: ("foo", "bar").into(),
         };
         assert_eq!(
-            try_remote_origin_host(&manifest_without_catalog)?.to_string(),
+            try_remote_origin_host(&manifest_without_origin)?.to_string(),
             "open.quilt.bio"
         );
 

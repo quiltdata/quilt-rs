@@ -10,6 +10,8 @@ use tokio::io::BufReader;
 use tokio_stream::StreamExt;
 
 use crate::checksum;
+use crate::io::manifest::RowsStream;
+use crate::io::manifest::StreamRowsChunk;
 use crate::manifest::Header;
 use crate::manifest::Table;
 use crate::uri::S3Uri;
@@ -132,6 +134,17 @@ pub struct ManifestHeader {
     pub workflow: Option<Workflow>,
 }
 
+impl Default for ManifestHeader {
+    fn default() -> Self {
+        ManifestHeader {
+            version: "v0".to_string(),
+            message: Some("".to_string()),
+            user_meta: Some(serde_json::Value::Object(serde_json::Map::new())),
+            workflow: None,
+        }
+    }
+}
+
 impl TryFrom<&Header> for ManifestHeader {
     type Error = Error;
 
@@ -149,6 +162,18 @@ impl TryFrom<Header> for ManifestHeader {
     type Error = Error;
     fn try_from(header: Header) -> Result<Self, Self::Error> {
         ManifestHeader::try_from(&header)
+    }
+}
+
+impl TryFrom<&ManifestHeader> for Header {
+    type Error = Error;
+
+    fn try_from(manifest_header: &ManifestHeader) -> Result<Self, Self::Error> {
+        Ok(Header::new(
+            manifest_header.message.clone(),
+            manifest_header.user_meta.clone(),
+            manifest_header.workflow.clone(),
+        ))
     }
 }
 
@@ -183,7 +208,7 @@ impl From<ManifestRow> for Quilt3ManifestRow {
 }
 
 /// Represents the row in JSONL manifest
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
 pub struct ManifestRow {
     pub logical_key: PathBuf,
     // XXX: use Url to have validated string?
@@ -219,7 +244,7 @@ impl TryFrom<Quilt3ManifestRow> for ManifestRow {
 }
 
 /// Legacy JSONL in-memory manifest
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Default)]
 pub struct Manifest {
     pub header: ManifestHeader,
     pub rows: Vec<ManifestRow>,
@@ -325,28 +350,75 @@ impl Manifest {
         let mut manifest_rows = Vec::new();
         let mut stream = table.records_stream().await;
         while let Some(rows) = stream.next().await {
-            for row in rows? {
-                let row = row?;
-                let mut meta = match row.info.as_object() {
-                    Some(meta) => meta.clone(),
-                    None => serde_json::Map::default(),
-                };
-                if let Some(m) = row.meta {
-                    meta.insert("user_meta".into(), m.clone());
-                }
-                manifest_rows.push(ManifestRow {
-                    logical_key: row.name.clone(),
-                    physical_key: row.place.clone(),
-                    hash: row.hash.try_into()?,
-                    size: row.size,
-                    meta: Some(serde_json::Value::Object(meta)),
-                })
+            for manifest_row in rows? {
+                let manifest_row = manifest_row?;
+                manifest_rows.push(manifest_row)
             }
         }
         Ok(Manifest {
             header: (&table.header).try_into()?,
             rows: manifest_rows,
         })
+    }
+
+    /// Read manifest from a file path, converting from Table format if needed
+    pub async fn from_path(
+        storage: &impl crate::io::storage::Storage,
+        path: &std::path::Path,
+    ) -> Res<Self> {
+        let file = storage.open_file(path).await?;
+        Self::from_reader(file).await
+    }
+
+    /// Find a record by path (for compatibility with Table API)
+    pub fn get_record(&self, path: &PathBuf) -> Option<&ManifestRow> {
+        self.rows.iter().find(|row| &row.logical_key == path)
+    }
+
+    /// Check if manifest contains a record for the given path
+    pub fn contains_record(&self, path: &PathBuf) -> bool {
+        self.rows.iter().any(|row| &row.logical_key == path)
+    }
+
+    /// Create a stream of rows compatible with Table API
+    /// Returns a stream of Row chunks for compatibility with io::manifest streaming functions
+    /// Sorted by logical_key to match Table's BTreeMap behavior and uses proper TryFrom conversion
+    pub async fn records_stream(&self) -> impl RowsStream {
+        // Sort by logical_key to match Table's BTreeMap ordering
+        let mut indices: Vec<usize> = (0..self.rows.len()).collect();
+        indices.sort_by(|&a, &b| self.rows[a].logical_key.cmp(&self.rows[b].logical_key));
+
+        let rows: StreamRowsChunk = indices
+            .into_iter()
+            .map(|i| Ok(self.rows[i].clone()))
+            .collect();
+        tokio_stream::iter(vec![Ok(rows)])
+    }
+
+    /// Get the number of records in the manifest
+    pub async fn records_len(&self) -> usize {
+        self.rows.len()
+    }
+
+    /// Insert a record into the manifest (for compatibility with Table API)
+    pub async fn insert_record(&mut self, row: ManifestRow) -> Res<Option<ManifestRow>> {
+        // Check if row already exists
+        let existing_pos = self
+            .rows
+            .iter()
+            .position(|r| r.logical_key == row.logical_key);
+
+        if let Some(pos) = existing_pos {
+            Ok(Some(std::mem::replace(&mut self.rows[pos], row)))
+        } else {
+            self.rows.push(row);
+            Ok(None)
+        }
+    }
+
+    /// Get header for compatibility with Table API
+    pub async fn get_header(&self) -> Res<Header> {
+        (&self.header).try_into()
     }
 }
 
@@ -364,7 +436,6 @@ mod tests {
     use crate::io::storage::LocalStorage;
     use crate::io::storage::Storage;
     use crate::manifest::Row;
-    use crate::manifest::Table;
 
     #[test]
     fn test_equality_of_strictly_equal() -> Res {

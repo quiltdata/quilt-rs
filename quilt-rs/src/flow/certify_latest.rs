@@ -48,7 +48,7 @@ mod tests {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
             hash: "LATEST_HASH".to_string(),
-            catalog: None,
+            origin: None,
         };
         let source_lineage = PackageLineage {
             remote: source_manifest_uri,

@@ -25,7 +25,7 @@ pub trait QuiltModel {
     async fn browse_remote_manifest(
         &self,
         remote_manifest: &quilt::uri::ManifestUri,
-    ) -> Result<quilt::manifest::Table, Error> {
+    ) -> Result<quilt::manifest::Manifest, Error> {
         Ok(self
             .get_quilt()
             .lock()
@@ -65,13 +65,14 @@ pub trait QuiltModel {
     async fn get_installed_package_records(
         &self,
         package: &quilt::InstalledPackage,
-    ) -> Result<BTreeMap<PathBuf, quilt::manifest::Row>, Error> {
-        let mut stream = package.manifest().await?.records_stream().await;
+    ) -> Result<BTreeMap<PathBuf, quilt::manifest::ManifestRow>, Error> {
+        let manifest = package.manifest().await?;
+        let mut stream = manifest.records_stream().await;
         let mut records = BTreeMap::new();
         while let Some(page) = stream.next().await {
             if let Ok(rows) = page {
                 for row in rows.into_iter().flatten() {
-                    records.insert(row.name.clone(), row);
+                    records.insert(row.logical_key.clone(), row);
                 }
             }
         }
@@ -481,8 +482,16 @@ pub mod mocks {
         MockQuiltModel::new()
     }
 
-    pub fn create_remote_manifest() -> quilt::manifest::Table {
-        quilt::manifest::Table::default()
+    pub fn create_remote_manifest() -> quilt::manifest::Manifest {
+        quilt::manifest::Manifest {
+            header: quilt::manifest::ManifestHeader {
+                version: "v0".to_string(),
+                message: None,
+                user_meta: None,
+                workflow: None,
+            },
+            rows: Vec::new(),
+        }
     }
 
     pub fn mock_installed_package(model: &mut MockQuiltModel) -> &MockQuiltModel {
@@ -490,7 +499,7 @@ pub mod mocks {
             bucket: "quilt-example".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "6c3758a4d2bf8fe730be5d12f5e095950dc123c373f55f66ca4b3ced74772b22".to_string(),
-            catalog: None,
+            origin: None,
         };
         model.expect_get_installed_package().returning(move |_| {
             Ok(Some(
@@ -514,7 +523,7 @@ pub mod mocks {
         model.expect_get_installed_package_records().returning(|_| {
             Ok(BTreeMap::from([(
                 PathBuf::from("NAME"),
-                quilt::manifest::Row::default(),
+                quilt::manifest::ManifestRow::default(),
             )]))
         });
         model
@@ -568,7 +577,7 @@ pub mod mocks {
             bucket: "quilt-example".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "6c3758a4d2bf8fe730be5d12f5e095950dc123c373f55f66ca4b3ced74772b22".to_string(),
-            catalog: None,
+            origin: None,
         };
 
         model
@@ -586,7 +595,7 @@ pub mod mocks {
         model.expect_get_installed_package_records().returning(|_| {
             Ok(BTreeMap::from([(
                 PathBuf::from("NAME"),
-                quilt::manifest::Row::default(),
+                quilt::manifest::ManifestRow::default(),
             )]))
         });
 

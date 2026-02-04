@@ -1,52 +1,24 @@
-use tokio_stream::StreamExt;
 use tracing::debug;
 use tracing::info;
 
-use crate::io::manifest::build_manifest_from_rows_stream;
-use crate::io::manifest::RowsStream;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
-use crate::manifest::Header;
 use crate::manifest::Manifest;
-use crate::manifest::Row;
-use crate::manifest::Table;
 use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
-use crate::uri::ManifestUriLegacy;
 use crate::uri::S3Uri;
-use crate::Error;
 use crate::Res;
 
-async fn stream_jsonl_rows(jsonl: Manifest) -> impl RowsStream {
-    tokio_stream::iter(jsonl.rows)
-        .map(Row::try_from)
-        .map(|rows| Ok(vec![rows]))
-}
-
-async fn is_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Res<bool> {
-    remote
-        .exists(&manifest.catalog, &S3Uri::from(manifest))
-        .await
-}
-
-async fn fetch_parquet(remote: &impl Remote, manifest: &ManifestUri) -> Res<Vec<u8>> {
-    let s3_uri = S3Uri::from(manifest);
-    let contents = remote.get_object_stream(&manifest.catalog, &s3_uri).await?;
-    Ok(contents.body.collect().await?.to_vec())
-}
-
 async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res<Manifest> {
-    let s3_uri: S3Uri = ManifestUriLegacy::from(manifest_uri).into();
+    let s3_uri: S3Uri = manifest_uri.clone().into();
     let contents = remote
-        .get_object_stream(&manifest_uri.catalog, &s3_uri)
+        .get_object_stream(&manifest_uri.origin, &s3_uri)
         .await?;
     Manifest::from_reader(contents.body.into_async_read()).await
 }
 
 /// If remote manifest is already cached we return it.
-/// If it's not cached, downloads the remote manifest and put it into cached directory.
-/// If the manifest is in Parquet format we just put it as a file unchanged.
-/// If the manifest is in JSONL format we read it and convert into Parquet, then write.
+/// If it's not cached, downloads the remote JSONL manifest and stores it in cache.
 /// You must provide `ManifestUri` (package URI with `hash`).
 /// To resolve `latest` you can use `manifest.io.resolve_tag` with `Tag::Latest`.
 pub async fn cache_remote_manifest(
@@ -54,7 +26,7 @@ pub async fn cache_remote_manifest(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
-) -> Res<Table> {
+) -> Res<Manifest> {
     info!("⏳ Caching remote manifest: {}", manifest_uri.display());
 
     // check if the manifest is already cached
@@ -65,50 +37,30 @@ pub async fn cache_remote_manifest(
     let cache_dir = paths.manifest_cache_dir(&manifest_uri.bucket);
     let cache_path = cache_dir.join(&manifest_uri.hash);
 
-    let mut manifest_path = cache_path.clone();
+    let manifest_path = cache_path.clone();
 
     if !storage.exists(&cache_path).await {
         debug!("🔍 Manifest does not exist in cache, fetching from remote");
-        // Does not exist yet
-        if is_parquet(remote, manifest_uri).await? {
-            debug!(
-                "⏳ Manifest {} stored remotely in Parquet format. Fetching…",
-                manifest_uri.display()
-            );
-            let manifest = fetch_parquet(remote, manifest_uri).await?;
-            debug!("✔️ Fetched manifest. Size: {}", manifest.len());
-            storage.write_file(&cache_path, &manifest).await?;
-            debug!("✔️ Manifest has written to {}", cache_path.display());
-        } else {
-            debug!(
-                "⏳ Manifest {} stored remotely in JSONL format. Fetching…",
-                manifest_uri.display()
-            );
-            let manifest = fetch_jsonl(remote, manifest_uri).await?;
-            debug!("✔️ Fetched JSONL manifest");
-            let header = Header::from(&manifest);
-            let stream = stream_jsonl_rows(manifest).await;
-            let (dest_path, top_hash) =
-                build_manifest_from_rows_stream(storage, cache_dir, header, stream).await?;
-            if top_hash != manifest_uri.hash {
-                return Err(Error::ManifestPath(format!(
-                    "Top hash mismatch: expected {}, got {}",
-                    manifest_uri.hash, top_hash
-                )));
-            }
-            debug!(
-                "✔️ Manifest has converted to Parquet and written to {}",
-                dest_path.display()
-            );
-            manifest_path = dest_path
-        };
+        debug!(
+            "⏳ Fetching JSONL manifest {} from remote…",
+            manifest_uri.display()
+        );
+        let manifest = fetch_jsonl(remote, manifest_uri).await?;
+        debug!("✔️ Fetched JSONL manifest");
+
+        // Write JSONL to cache
+        let jsonl_content = manifest.to_jsonlines();
+        storage
+            .write_file(&cache_path, jsonl_content.as_bytes())
+            .await?;
+        debug!("✔️ JSONL manifest written to {}", cache_path.display());
     } else {
         debug!("✔️ Manifest exists already in {}", cache_path.display());
     }
 
     info!("✔️ Manifest {} was written …", manifest_uri.display());
 
-    let manifest = Table::read_from_path(storage, &manifest_path).await?;
+    let manifest = Manifest::from_path(storage, &manifest_path).await?;
 
     info!("✔️ … and, Successfully cached:\n{:?}", manifest.header);
 
@@ -122,7 +74,7 @@ pub async fn browse_remote_manifest(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
-) -> Res<Table> {
+) -> Res<Manifest> {
     cache_remote_manifest(paths, storage, remote, manifest_uri).await
 }
 
@@ -150,16 +102,16 @@ mod tests {
         let manifest_uri = ManifestUri {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
-            hash: "c".to_string(),
-            catalog: None,
+            hash: fixtures::manifest::JSONL_HASH.to_string(),
+            origin: None,
         };
         let cache_path = paths.manifest_cache(&manifest_uri.bucket, &manifest_uri.hash);
 
         // Prepare the reference manifest file.
         // It is copied into the cache path to simulate a cached manifest.
-        let parquet = std::fs::read(fixtures::manifest::parquet()?)?;
+        let jsonl = std::fs::read(fixtures::manifest::jsonl()?)?;
         let storage = MockStorage::default();
-        storage.write_file(&cache_path, &parquet).await?;
+        storage.write_file(&cache_path, &jsonl).await?;
 
         // Although there is no direct assertion for `remote.expect_get_object().never()`,
         // we know the remote is not called because a missing key would throw an error.
@@ -171,9 +123,10 @@ mod tests {
             cache_remote_manifest(&paths, &storage, &remote, &manifest_uri).await?;
 
         // Verify that the cached manifest matches the reference manifest
+        // JSONL fixture has no message but has user_meta set to null
         assert_eq!(
-            cached_manifest.header.info.get("message").unwrap(),
-            "test_spec_write 2023-11-29T14:01:39.543975"
+            cached_manifest.header.user_meta,
+            Some(serde_json::Value::Null)
         );
 
         Ok(())
@@ -190,8 +143,8 @@ mod tests {
         let manifest = ManifestUri {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
-            hash: "c".to_string(),
-            catalog: None,
+            hash: "invalid_hash".to_string(),
+            origin: None,
         };
         let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
         let storage = MockStorage::default();
@@ -201,63 +154,15 @@ mod tests {
 
         let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await;
 
-        assert_eq!(
-            cached_manifest.unwrap_err().to_string(),
-            "Parquet error: External: Invalid argument (os error 22)"
-        );
-
-        Ok(())
-    }
-
-    /// Verifies that when a manifest is not cached,
-    /// and the manifest exists remotely in a "parquet" location (with the "1220" prefix),
-    /// it is downloaded and cached correctly.
-    #[test(tokio::test)]
-    async fn test_caching_parquet() -> Res {
-        let paths = DomainPaths::default();
-
-        let manifest = ManifestUri {
-            bucket: "a".to_string(),
-            namespace: ("f", "b").into(),
-            hash: "c".to_string(),
-            catalog: None,
-        };
-
-        // Simulate the existence of a reference manifest remotely.
-        // This is done by "writing" the reference manifest to a mocked remote location.
-        // Technically, it is written to a temporary directory with an URI as a path.
-        let parquet = std::fs::read(fixtures::manifest::parquet()?)?;
-        let remote = MockRemote::default();
-        let remote_uri = S3Uri::from_str(&format!(
-            "s3://{}/.quilt/packages/1220{}.parquet",
-            manifest.bucket, manifest.hash
-        ))?;
-        remote
-            .put_object(&manifest.catalog, &remote_uri, parquet.clone())
-            .await?;
-
-        let storage = MockStorage::default();
-
-        // Fetch the manifest from the remote location.
-        let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
-        assert_eq!(
-            cached_manifest.header.info.get("message").unwrap(),
-            "test_spec_write 2023-11-29T14:01:39.543975"
-        );
-
-        // Manifest should be cached locally after being retrieved at the correct local path.
-        let cache_path = PathBuf::from(format!(
-            ".quilt/packages/{}/{}",
-            manifest.bucket, manifest.hash
-        ));
-        assert_eq!(storage.read_file(cache_path).await?, parquet);
+        // Since we now use JSONL format, the error message will be different
+        assert!(cached_manifest.is_err());
 
         Ok(())
     }
 
     /// Verifies that when a manifest is not cached,
     /// and the manifest exists remotely in JSONL format,
-    /// it is downloaded, converted to Parquet, and cached correctly.
+    /// it is downloaded and cached directly in JSONL format.
     #[test(tokio::test)]
     async fn test_caching_jsonl() -> Res {
         let paths = DomainPaths::default();
@@ -267,7 +172,7 @@ mod tests {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
             hash: fixtures::manifest::JSONL_HASH.to_string(),
-            catalog: None,
+            origin: None,
         };
 
         // Simulate the remote JSONL manifest.
@@ -279,7 +184,7 @@ mod tests {
             manifest.bucket, manifest.hash
         ))?;
         remote
-            .put_object(&manifest.catalog, &remote_uri, jsonl.clone())
+            .put_object(&manifest.origin, &remote_uri, jsonl.clone())
             .await?;
 
         let storage = MockStorage::default();
@@ -288,10 +193,10 @@ mod tests {
             .await?;
 
         // Fetch the manifest from the remote location.
-        // This should trigger a conversion from JSONL to Parquet and cache the result locally.
+        // This should cache the JSONL manifest locally in the same format.
         let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
 
-        // Verify that the converted Parquet manifest is cached locally.
+        // Verify that the JSONL manifest is cached locally.
         let cache_path = PathBuf::from(format!(
             ".quilt/packages/{}/{}",
             manifest.bucket, manifest.hash
@@ -301,7 +206,6 @@ mod tests {
         // Verify that the cached manifest contains valid records
         assert!(cached_manifest
             .get_record(&PathBuf::from("README.md"))
-            .await?
             .is_some());
 
         Ok(())

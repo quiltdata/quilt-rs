@@ -14,7 +14,7 @@ use crate::lineage;
 use crate::lineage::CommitState;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::LineagePaths;
-use crate::manifest::Table;
+use crate::manifest::Manifest;
 use crate::manifest::Workflow;
 use crate::paths;
 use crate::uri::ManifestUri;
@@ -54,12 +54,12 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         self.paths.scaffold_for_caching(&self.storage, bucket).await
     }
 
-    pub async fn manifest(&self) -> Res<Table> {
+    pub async fn manifest(&self) -> Res<Manifest> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
         let pathbuf = self
             .paths
             .installed_manifest(&self.namespace, lineage.current_hash());
-        Table::read_from_path(&self.storage, &pathbuf).await
+        Manifest::from_path(&self.storage, &pathbuf).await
     }
 
     pub async fn lineage(&self) -> Res<lineage::PackageLineage> {
@@ -77,7 +77,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let manifest = self.manifest().await?;
 
         let host_config =
-            host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.catalog).await?);
+            host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.origin).await?);
 
         let (lineage, status) = flow::status(
             lineage,
@@ -144,7 +144,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let mut manifest = self.manifest().await?;
 
         let host_config =
-            host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.catalog).await?);
+            host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.origin).await?);
 
         let (lineage, status) = flow::status(
             lineage,
@@ -190,7 +190,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let manifest = self.manifest().await?;
 
         let host_config =
-            host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.catalog).await?);
+            host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.origin).await?);
 
         let lineage = flow::push(
             lineage,
@@ -217,7 +217,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let mut manifest = self.manifest().await?;
 
         let host_config =
-            host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.catalog).await?);
+            host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.origin).await?);
 
         let (lineage, status) = flow::status(
             lineage,
@@ -278,11 +278,11 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let remote_uri = lineage.remote;
         let workflows_config_uri = S3Uri {
             key: ".quilt/workflows/config.yml".to_string(),
-            ..S3Uri::from(&remote_uri)
+            ..S3Uri::from(remote_uri.clone())
         };
         resolve_workflow(
             &self.remote,
-            &remote_uri.catalog,
+            &remote_uri.origin,
             workflow_id,
             &workflows_config_uri,
         )
@@ -296,6 +296,7 @@ mod tests {
 
     use test_log::test;
 
+    use crate::fixtures::manifest;
     use crate::io::remote::mocks::MockRemote;
     use crate::lineage::DomainLineageIo;
     use crate::lineage::Home;
@@ -315,32 +316,34 @@ mod tests {
             .scaffold_for_installing(&storage, &home, &namespace)
             .await?;
         // Initialize domain lineage file
-        storage
-            .write_file(
-                &paths.lineage(),
-                br#"{
-                "packages": {
-                    "test/history": {
+        let lineage_json = format!(
+            r#"{{
+                "packages": {{
+                    "test/history": {{
                         "commit": null,
-                        "remote": {
+                        "remote": {{
                             "bucket": "bucket",
                             "namespace": "test/history",
-                            "hash": "abc123",
+                            "hash": "{}",
                             "catalog": "test.quilt.dev"
-                        },
-                        "base_hash": "abc123",
-                        "latest_hash": "abc123",
-                        "paths": {}
-                    }},
+                        }},
+                        "base_hash": "{}",
+                        "latest_hash": "{}",
+                        "paths": {{}}
+                    }}}},
                 "home": "/tmp/working_dir"
-                }"#,
-            )
+                }}"#,
+            manifest::JSONL_HASH,
+            manifest::JSONL_HASH,
+            manifest::JSONL_HASH
+        );
+        storage
+            .write_file(&paths.lineage(), lineage_json.as_bytes())
             .await?;
 
         // Copy manifest to the expected path
-        let reference_manifest = crate::fixtures::manifest::parquet_checksummed();
-        let test_manifest = paths.installed_manifest(&namespace, "abc123");
-        storage.copy(reference_manifest?, test_manifest).await?;
+        let test_manifest = paths.installed_manifest(&namespace, manifest::JSONL_HASH);
+        storage.copy(manifest::jsonl()?, test_manifest).await?;
 
         let domain_lineage_io = DomainLineageIo::new(paths.lineage());
 

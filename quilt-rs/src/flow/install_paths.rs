@@ -14,8 +14,8 @@ use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
-use crate::manifest::Row;
-use crate::manifest::Table;
+use crate::manifest::Manifest;
+use crate::manifest::ManifestRow;
 use crate::paths::DomainPaths;
 use crate::uri::Host;
 use crate::uri::Namespace;
@@ -48,8 +48,8 @@ async fn create_mutable_copy(
 }
 
 async fn stream_remote_with_installed_rows(
-    remote_manifest: &Table,
-    local_entries: BTreeMap<PathBuf, Row>,
+    remote_manifest: &Manifest,
+    local_entries: BTreeMap<PathBuf, ManifestRow>,
 ) -> impl RowsStream {
     remote_manifest
         .records_stream()
@@ -58,8 +58,8 @@ async fn stream_remote_with_installed_rows(
             rows_result.map(|rows| {
                 rows.into_iter()
                     .map(|row_result| {
-                        row_result.map(|row| match local_entries.get(&row.name) {
-                            Some(row) => row.clone(),
+                        row_result.map(|row| match local_entries.get(&row.logical_key) {
+                            Some(local_row) => local_row.clone(),
                             None => row,
                         })
                     })
@@ -75,7 +75,7 @@ async fn stream_remote_with_installed_rows(
 #[allow(clippy::too_many_arguments)]
 pub async fn install_paths(
     mut lineage: PackageLineage,
-    table: &mut Table,
+    manifest: &mut Manifest,
     paths: &DomainPaths,
     working_dir: PathBuf, // This working dir is working dir of the package
     namespace: Namespace,
@@ -121,9 +121,8 @@ pub async fn install_paths(
 
     for path in entries_paths {
         // TODO: Consider using a hashmap or treemap for manifest.rows
-        let row = table
+        let row = manifest
             .get_record(path)
-            .await?
             .ok_or(Error::Table(format!("path {path:?} not found")))?;
 
         let object_dest = paths.object(row.hash.digest());
@@ -132,9 +131,9 @@ pub async fn install_paths(
             cache_immutable_object(
                 storage,
                 remote,
-                &lineage.remote.catalog,
+                &lineage.remote.origin,
                 &object_dest,
-                &row.place.parse()?,
+                &row.physical_key.parse()?,
             )
             .await?;
             debug!("✔️ Cached object: {}", object_dest.display());
@@ -152,15 +151,9 @@ pub async fn install_paths(
             object_dest.display(),
             place
         );
-        entries.insert(
-            row.name.clone(),
-            Row {
-                place,
-                ..row.clone()
-            },
-        );
+        entries.insert(row.logical_key.clone(), row.clone());
 
-        let working_dest = working_dir.join(&row.name);
+        let working_dest = working_dir.join(&row.logical_key);
         let last_modified = create_mutable_copy(storage, &object_dest, &working_dest).await?;
         debug!(
             "✔️ Created mutable copy at {} for {}",
@@ -169,20 +162,19 @@ pub async fn install_paths(
         );
 
         lineage.paths.insert(
-            row.name.clone(),
+            row.logical_key.clone(),
             PathState {
                 timestamp: last_modified,
-                hash: row.hash,
+                hash: row.hash.clone().into(),
             },
         );
-        debug!("✔️ Added {}  to lineage paths ", row.name.display());
+        debug!("✔️ Added {}  to lineage paths ", row.logical_key.display());
     }
 
     debug!("⏳ Building manifest with installed rows");
-    let header = table.get_header().await?;
-    let stream = stream_remote_with_installed_rows(table, entries).await;
+    let stream = stream_remote_with_installed_rows(manifest, entries).await;
     let dest_dir = paths.installed_manifests(&namespace);
-    build_manifest_from_rows_stream(storage, dest_dir, header, stream).await?;
+    build_manifest_from_rows_stream(storage, dest_dir, manifest.header.clone(), stream).await?;
 
     info!("✔️ Successfully installed {} paths", entries_paths.len());
     Ok(lineage)
@@ -200,7 +192,6 @@ mod tests {
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::Home;
-    use crate::manifest::Row;
     use crate::paths;
 
     // Verify installing the path that is already fetched to the `.quilt/objects`
@@ -224,11 +215,12 @@ mod tests {
         let entries_paths = vec![&single_object_path];
         let mut manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
 
-        let hash = manifest
+        let hash: multihash::Multihash<256> = manifest
             .get_record(&single_object_path)
-            .await?
             .unwrap()
-            .hash;
+            .hash
+            .clone()
+            .into();
         // let hash = fixtures::create_multihash(fixtures::objects::LESS_THAN_8MB_HASH_B64)?;
         let object_path = domain_paths.object(hash.digest());
         let absolute_path = home.join(object_path);
@@ -289,18 +281,18 @@ mod tests {
         // Simulate the remote object
         let remote_object_uri = S3Uri::from_str(&remote_file_url)?;
         remote
-            .put_object(&lineage.remote.catalog, &remote_object_uri, Vec::new())
+            .put_object(&lineage.remote.origin, &remote_object_uri, Vec::new())
             .await?;
 
         // Create the manifest with a single remote row with a random hash
         let hash: multihash::Multihash<256> = multihash::Multihash::wrap(0x12, b"anything")?;
-        let mut manifest = Table::default();
+        let mut manifest = Manifest::default();
         manifest
-            .insert_record(Row {
-                name: single_object_path.clone(),
-                hash,
-                place: remote_file_url,
-                ..Row::default()
+            .insert_record(ManifestRow {
+                logical_key: single_object_path.clone(),
+                hash: hash.try_into()?,
+                physical_key: remote_file_url,
+                ..ManifestRow::default()
             })
             .await?;
 
@@ -343,31 +335,31 @@ mod tests {
 
         // Simulate the manifest with rows containing objects
         let lineage = PackageLineage::default();
-        let row_1 = Row {
-            name: PathBuf::from("a"),
-            place: "file:///ignored".to_string(),
-            hash: multihash::Multihash::wrap(0x12, b"one")?,
-            ..Row::default()
+        let row_1 = ManifestRow {
+            logical_key: PathBuf::from("a"),
+            physical_key: "file:///ignored".to_string(),
+            hash: multihash::Multihash::wrap(0x12, b"one")?.try_into()?,
+            ..ManifestRow::default()
         };
-        let row_2 = Row {
-            name: PathBuf::from("b/b"),
-            place: "s3://bucket/foo/bar".to_string(),
-            hash: multihash::Multihash::wrap(0x12, b"two")?,
-            ..Row::default()
+        let row_2 = ManifestRow {
+            logical_key: PathBuf::from("b/b"),
+            physical_key: "s3://bucket/foo/bar".to_string(),
+            hash: multihash::Multihash::wrap(0x12, b"two")?.try_into()?,
+            ..ManifestRow::default()
         };
-        let row_3 = Row {
-            name: PathBuf::from("c/c/c"),
-            place: "file:///ignored".to_string(),
-            hash: multihash::Multihash::wrap(0x12, b"three")?,
-            ..Row::default()
+        let row_3 = ManifestRow {
+            logical_key: PathBuf::from("c/c/c"),
+            physical_key: "file:///ignored".to_string(),
+            hash: multihash::Multihash::wrap(0x12, b"three")?.try_into()?,
+            ..ManifestRow::default()
         };
-        let row_4 = Row {
-            name: PathBuf::from("d/d/d/d"),
-            place: "s3://bucket/foo/baz".to_string(),
-            hash: multihash::Multihash::wrap(0x12, b"four")?,
-            ..Row::default()
+        let row_4 = ManifestRow {
+            logical_key: PathBuf::from("d/d/d/d"),
+            physical_key: "s3://bucket/foo/baz".to_string(),
+            hash: multihash::Multihash::wrap(0x12, b"four")?.try_into()?,
+            ..ManifestRow::default()
         };
-        let mut manifest = Table::default();
+        let mut manifest = Manifest::default();
         manifest.insert_record(row_1.clone()).await?;
         manifest.insert_record(row_2.clone()).await?;
         manifest.insert_record(row_3.clone()).await?;
@@ -383,16 +375,21 @@ mod tests {
 
         // Simulate the remote object
         let remote = MockRemote::default();
-        let remote_object_uri_2 = S3Uri::from_str(&row_2.place)?;
+        let remote_object_uri_2 = S3Uri::from_str(&row_2.physical_key)?;
         remote
-            .put_object(&lineage.remote.catalog, &remote_object_uri_2, Vec::new())
+            .put_object(&lineage.remote.origin, &remote_object_uri_2, Vec::new())
             .await?;
-        let remote_object_uri_4 = S3Uri::from_str(&row_4.place)?;
+        let remote_object_uri_4 = S3Uri::from_str(&row_4.physical_key)?;
         remote
-            .put_object(&lineage.remote.catalog, &remote_object_uri_4, Vec::new())
+            .put_object(&lineage.remote.origin, &remote_object_uri_4, Vec::new())
             .await?;
 
-        let entries_paths = vec![&row_1.name, &row_2.name, &row_3.name, &row_4.name];
+        let entries_paths = vec![
+            &row_1.logical_key,
+            &row_2.logical_key,
+            &row_3.logical_key,
+            &row_4.logical_key,
+        ];
 
         // Lineage does not track anything before the installation
         assert!(lineage.paths.is_empty());
@@ -410,15 +407,15 @@ mod tests {
         .await?;
 
         // Now lineage tracks the files in the working directory
-        assert!(lineage.paths.contains_key(&row_1.name));
-        assert!(lineage.paths.contains_key(&row_2.name));
-        assert!(lineage.paths.contains_key(&row_3.name));
-        assert!(lineage.paths.contains_key(&row_4.name));
+        assert!(lineage.paths.contains_key(&row_1.logical_key));
+        assert!(lineage.paths.contains_key(&row_2.logical_key));
+        assert!(lineage.paths.contains_key(&row_3.logical_key));
+        assert!(lineage.paths.contains_key(&row_4.logical_key));
         // And working directory of the package contains the files
-        assert!(storage.exists(&package_home.join(row_1.name)).await);
-        assert!(storage.exists(&package_home.join(row_2.name)).await);
-        assert!(storage.exists(&package_home.join(row_3.name)).await);
-        assert!(storage.exists(&package_home.join(row_4.name)).await);
+        assert!(storage.exists(&package_home.join(&row_1.logical_key)).await);
+        assert!(storage.exists(&package_home.join(&row_2.logical_key)).await);
+        assert!(storage.exists(&package_home.join(&row_3.logical_key)).await);
+        assert!(storage.exists(&package_home.join(&row_4.logical_key)).await);
 
         Ok(())
     }
@@ -470,7 +467,7 @@ mod tests {
         let storage = MockStorage::default();
         let remote = MockRemote::default();
 
-        let mut manifest = Table::default();
+        let mut manifest = Manifest::default();
         let mut entries_paths = Vec::new();
         let mut path_refs = Vec::new();
 
@@ -480,11 +477,11 @@ mod tests {
             let place = format!("s3://bucket/path_{}.txt", i);
             let hash = multihash::Multihash::wrap(0x12, format!("hash_{}", i).as_bytes())?;
 
-            let row = Row {
-                name: path.clone(),
-                place: place.clone(),
-                hash,
-                ..Row::default()
+            let row = ManifestRow {
+                logical_key: path.clone(),
+                physical_key: place.clone(),
+                hash: hash.try_into()?,
+                ..ManifestRow::default()
             };
 
             manifest.insert_record(row).await?;
@@ -493,7 +490,7 @@ mod tests {
             // Simulate remote objects
             let remote_uri = S3Uri::from_str(&place)?;
             remote
-                .put_object(&lineage.remote.catalog, &remote_uri, Vec::new())
+                .put_object(&lineage.remote.origin, &remote_uri, Vec::new())
                 .await?;
         }
 

@@ -4,7 +4,6 @@ use std::marker::Unpin;
 use std::path::PathBuf;
 
 use aws_sdk_s3::primitives::ByteStream;
-use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio_stream::Stream;
 use tokio_stream::StreamExt;
@@ -14,20 +13,16 @@ use url::Url;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
-use crate::io::ParquetWriter;
-use crate::manifest::Header;
 use crate::manifest::Manifest;
-use crate::manifest::Row;
-use crate::manifest::Table;
+use crate::manifest::ManifestHeader;
+use crate::manifest::ManifestRow;
 use crate::manifest::TopHasher;
 use crate::uri::Host;
 use crate::uri::ManifestUri;
-use crate::uri::ManifestUriLegacy;
 use crate::uri::ObjectUri;
 use crate::uri::RevisionPointer;
 use crate::uri::S3PackageHandle;
 use crate::uri::S3PackageUri;
-use crate::uri::S3Uri;
 use crate::uri::Tag;
 use crate::uri::TagUri;
 use crate::Error;
@@ -38,25 +33,6 @@ async fn bytestream_to_string(bytestream: ByteStream) -> Res<String> {
     let mut contents = Vec::new();
     reader.read_to_end(&mut contents).await?;
     String::from_utf8(contents).map_err(|err| Error::Utf8(err.utf8_error()))
-}
-
-/// Read Parquet file and upload manifest converted to JSONL.
-/// We don't care about checksum of the resulted file.
-async fn upload_legacy(
-    storage: &impl Storage,
-    remote: &impl Remote,
-    manifest_path: &PathBuf,
-    manifest_uri: &ManifestUri,
-) -> Res {
-    let s3_uri: S3Uri = ManifestUriLegacy::from(manifest_uri).into();
-    let jsonl = Manifest::from_table(&Table::read_from_path(storage, manifest_path).await?)
-        .await?
-        .to_jsonlines()
-        .as_bytes()
-        .to_vec();
-    remote
-        .put_object(&manifest_uri.catalog, &s3_uri, jsonl)
-        .await
 }
 
 /// Upload manifest from the local path
@@ -71,25 +47,21 @@ async fn upload_from(
     let body = storage.read_byte_stream(manifest_path).await?;
     log::info!("Writing remote manifest to {manifest_uri:?}");
     remote
-        .put_object(&manifest_uri.catalog, &manifest_uri.into(), body)
+        .put_object(&manifest_uri.origin, &manifest_uri.clone().into(), body)
         .await
 }
 
-/// Upload manifest with both formats JSONL and Parquet.
-/// We don't care about checksum of the resulted files.
+/// Upload JSONL manifest to remote.
+/// We don't care about checksum of the resulted file.
 pub async fn upload_manifest(
     storage: &impl Storage,
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
     path: &PathBuf,
 ) -> Res {
-    // Push the (cached) relaxed manifest to the remote, don't tag it yet
+    // Upload the JSONL manifest to the remote, don't tag it yet
     upload_from(storage, remote, path, manifest_uri).await?;
-    log::info!("Parque file uploaded");
-
-    // Upload a quilt3 manifest for backward compatibility.
-    upload_legacy(storage, remote, path, manifest_uri).await?;
-    log::info!("JSONL file uploaded");
+    log::info!("JSONL manifest uploaded");
 
     log::info!("Uploaded remote manifest: {manifest_uri:?}");
     Ok(())
@@ -122,7 +94,7 @@ pub async fn tag_latest(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res
 async fn upload_tag(remote: &impl Remote, manifest_uri: &ManifestUri, tag_uri: TagUri) -> Res {
     remote
         .put_object(
-            &manifest_uri.catalog,
+            &manifest_uri.origin,
             &tag_uri.into(),
             manifest_uri.hash.as_bytes().to_vec(),
         )
@@ -142,12 +114,12 @@ pub async fn resolve_tag(
     let stream = remote.get_object_stream(host, &tag_uri.into()).await?;
     let hash = bytestream_to_string(stream.body).await?;
     let S3PackageHandle { bucket, namespace } = uri.to_owned();
-    let catalog = host.to_owned();
+    let origin = host.to_owned();
     Ok(ManifestUri {
         hash,
         bucket,
         namespace,
-        catalog,
+        origin,
     })
 }
 
@@ -181,26 +153,26 @@ pub async fn resolve_manifest_uri(
     let bucket = uri.bucket.clone();
     let namespace = uri.namespace.clone();
     let hash = resolve_top_hash(remote, host, uri).await?;
-    let catalog = host.to_owned();
+    let origin = host.to_owned();
     Ok(ManifestUri {
         bucket,
         namespace,
         hash,
-        catalog,
+        origin,
     })
 }
 
-/// Upload file associated with manifest's `Row`.
+/// Upload file associated with manifest's `ManifestRow`.
 /// After uploading we get new hash,
 /// though it should be the same as already calclulated during commit.
-/// Response with the new `Row` with `place` pointing to the place it was uploaded to.
+/// Response with the new `ManifestRow` with `physical_key` pointing to the place it was uploaded to.
 pub async fn upload_row(
     remote: &impl Remote,
     host_config: &HostConfig,
     package_handle: S3PackageHandle,
-    row: Row,
-) -> Res<Row> {
-    let local_url = Url::parse(&row.place)?;
+    row: ManifestRow,
+) -> Res<ManifestRow> {
+    let local_url = Url::parse(&row.physical_key)?;
     if local_url.scheme() != "file" {
         return Err(Error::FileUri(local_url));
     }
@@ -208,7 +180,7 @@ pub async fn upload_row(
         .to_file_path()
         .map_err(|_| Error::FileUri(local_url))?;
 
-    let object_uri = ObjectUri::new(package_handle, row.name.clone());
+    let object_uri = ObjectUri::new(package_handle, row.logical_key.clone());
     log::info!("Uploading to S3: {object_uri}");
 
     let (remote_url, hash) = remote
@@ -217,45 +189,15 @@ pub async fn upload_row(
 
     // Update the manifest with the sha2-256-chunked checksum
     // "Relax" the manifest by using those new remote keys
-    let place = remote_url.to_string();
-    Ok(Row {
-        hash: hash.into(),
-        place,
+    let physical_key = remote_url.to_string();
+    Ok(ManifestRow {
+        hash,
+        physical_key,
         ..row
     })
 }
 
-struct WritableManifest {
-    writer: ParquetWriter,
-}
-
-impl TryFrom<File> for WritableManifest {
-    type Error = Error;
-
-    fn try_from(file: File) -> Result<Self, Self::Error> {
-        Ok(WritableManifest {
-            writer: file.try_into()?,
-        })
-    }
-}
-
-impl WritableManifest {
-    pub async fn insert_header(&mut self, header: Header) -> Res {
-        let header_chunk: StreamRowsChunk = vec![Ok(header.into())];
-        self.writer.insert(header_chunk).await
-    }
-
-    pub async fn insert(&mut self, chunk: StreamRowsChunk) -> Res {
-        self.writer.insert(chunk).await
-    }
-
-    /// Close and finalize the writer.
-    pub async fn flush(self) -> Res {
-        self.writer.flush().await
-    }
-}
-
-pub type StreamRowsChunk = Vec<Res<Row>>;
+pub type StreamRowsChunk = Vec<Res<ManifestRow>>;
 
 pub type StreamItem = Res<StreamRowsChunk>;
 
@@ -264,34 +206,43 @@ pub trait RowsStream: Stream<Item = StreamItem> {}
 impl<T: Stream<Item = StreamItem>> RowsStream for T {}
 
 /// Builds the manifest from `Stream<Result<Row>>`
-/// It writes the manifest to temporary file using Parquet.
+/// It writes the manifest to temporary file using JSONL format.
 /// Then it calclutates top_hash and move the temporary file to the destination path.
 pub async fn build_manifest_from_rows_stream(
     storage: &impl Storage,
     dest_dir: PathBuf,
-    header: Header,
+    header: ManifestHeader,
     mut stream: impl RowsStream + Unpin,
 ) -> Res<(PathBuf, String)> {
     let temp_dir = tempfile::tempdir()?;
-    let temp_path = temp_dir.path().join("manifest.pq");
+    let temp_path = temp_dir.path().join("manifest.jsonl");
     log::info!("Temp path for creating manifest {temp_path:?}");
-    let file = storage.create_file(&temp_path).await?;
-    let mut manifest = WritableManifest::try_from(file)?;
 
+    // Build manifest in memory
+    let mut rows = Vec::new();
     let mut top_hasher = TopHasher::new();
-    top_hasher.append_header(&header)?;
-    manifest.insert_header(header).await?;
 
-    while let Some(Ok(rows)) = stream.next().await {
-        for row in &rows {
-            match row {
-                Ok(row) => top_hasher.append(row)?,
+    top_hasher.append_header(&header)?;
+
+    while let Some(Ok(chunk)) = stream.next().await {
+        for row_result in &chunk {
+            match row_result {
+                Ok(row) => {
+                    top_hasher.append(row)?;
+                    rows.push(row.clone());
+                }
                 Err(err) => return Err(Error::Table(err.to_string())),
             }
         }
-        manifest.insert(rows).await?;
     }
-    manifest.flush().await?;
+
+    // Create JSONL manifest
+    let manifest = Manifest { header, rows };
+
+    let jsonl_content = manifest.to_jsonlines();
+    storage
+        .write_file(&temp_path, jsonl_content.as_bytes())
+        .await?;
 
     let top_hash = top_hasher.finalize();
     let dest_path = dest_dir.join(&top_hash);
@@ -312,6 +263,7 @@ mod tests {
     use crate::fixtures::manifest_empty;
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
+    use crate::uri::S3Uri;
 
     #[test(tokio::test)]
     async fn test_resolve_existing_hash() -> Res {
@@ -345,7 +297,7 @@ mod tests {
         let (dest_path, top_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
-            manifest_empty::empty().header,
+            Manifest::default().header,
             tokio_stream::empty(),
         )
         .await?;
@@ -364,7 +316,10 @@ mod tests {
         let (dest_path, top_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
-            manifest_empty::empty_none().header,
+            ManifestHeader {
+                user_meta: None,
+                ..ManifestHeader::default()
+            },
             tokio_stream::empty(),
         )
         .await?;
@@ -383,7 +338,10 @@ mod tests {
         let (dest_path, top_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
-            manifest_empty::empty_null().header,
+            ManifestHeader {
+                user_meta: Some(serde_json::Value::Null),
+                ..ManifestHeader::default()
+            },
             tokio_stream::empty(),
         )
         .await?;
@@ -402,7 +360,10 @@ mod tests {
         let (dest_path, top_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
-            manifest_empty::null_empty().header,
+            ManifestHeader {
+                message: None,
+                ..ManifestHeader::default()
+            },
             tokio_stream::empty(),
         )
         .await?;
@@ -421,7 +382,11 @@ mod tests {
         let (dest_path, top_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
-            manifest_empty::null_none().header,
+            ManifestHeader {
+                message: None,
+                user_meta: None,
+                ..ManifestHeader::default()
+            },
             tokio_stream::empty(),
         )
         .await?;
@@ -437,7 +402,11 @@ mod tests {
         let (dest_path, top_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
-            manifest_empty::null().header,
+            ManifestHeader {
+                message: None,
+                user_meta: Some(serde_json::Value::Null),
+                ..ManifestHeader::default()
+            },
             tokio_stream::empty(),
         )
         .await?;

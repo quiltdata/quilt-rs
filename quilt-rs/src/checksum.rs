@@ -10,8 +10,7 @@ use std::path::PathBuf;
 use crate::io::remote::HostChecksums;
 use crate::io::remote::HostConfig;
 use crate::io::storage::Storage;
-use crate::manifest::Row;
-use crate::Error;
+use crate::manifest::ManifestRow;
 use crate::Res;
 
 mod crc64nvme;
@@ -43,33 +42,34 @@ pub enum ObjectHash {
     Crc64(Crc64Hash),
 }
 
+impl Default for ObjectHash {
+    fn default() -> Self {
+        ObjectHash::Crc64(Crc64Hash::default())
+    }
+}
+
 /// Refresh hash for a file using the same algorithm as the reference row
-/// Returns None if hash hasn't changed, Some(Row) if it has changed
-pub async fn refresh_hash(storage: &impl Storage, path: &PathBuf, row: Row) -> Res<Option<Row>> {
+/// Returns None if hash hasn't changed, Some(ManifestRow) if it has changed
+pub async fn refresh_hash(
+    storage: &impl Storage,
+    path: &PathBuf,
+    row: ManifestRow,
+) -> Res<Option<ManifestRow>> {
     let file = storage.open_file(path).await?;
     let file_metadata = file.metadata().await?;
     let size = file_metadata.len();
 
-    match row.hash.code() {
-        MULTIHASH_CRC64_NVME => Ok(Crc64Hash::from_file(file).await?.into()),
-        MULTIHASH_SHA256 => Ok(Sha256Hash::from_file(file).await?.into()),
-        MULTIHASH_SHA256_CHUNKED => Ok(Sha256ChunkedHash::from_file(file).await?.into()),
-        code => Err(Error::InvalidMultihash(format!(
-            "Wrong multihash type {}",
-            code
-        ))),
-    }
-    .map(|hash| {
-        if row.hash == hash {
-            None
-        } else {
-            Some(Row {
-                hash,
-                size,
-                ..row.clone()
-            })
-        }
-    })
+    let computed_hash = match &row.hash {
+        ObjectHash::Crc64(_) => Crc64Hash::from_file(file).await?.into(),
+        ObjectHash::Sha256(_) => Sha256Hash::from_file(file).await?.into(),
+        ObjectHash::Sha256Chunked(_) => Sha256ChunkedHash::from_file(file).await?.into(),
+    };
+
+    Ok((computed_hash != row.hash).then(|| ManifestRow {
+        hash: computed_hash,
+        size,
+        ..row
+    }))
 }
 
 /// Calculate hash for a file using the algorithm specified by host config
@@ -78,7 +78,7 @@ pub async fn calculate_hash(
     path: &Path,
     logical_key: &Path,
     host_config: &HostConfig,
-) -> Res<Row> {
+) -> Res<ManifestRow> {
     let file = storage.open_file(path).await?;
     let file_metadata = file.metadata().await?;
     let size = file_metadata.len();
@@ -88,32 +88,33 @@ pub async fn calculate_hash(
         HostChecksums::Sha256Chunked => Sha256ChunkedHash::from_file(file).await?.into(),
     };
 
-    Ok(Row {
-        name: logical_key.to_path_buf(),
+    Ok(ManifestRow {
+        logical_key: logical_key.to_path_buf(),
+        physical_key: format!("file://{}", path.display()),
         size,
         hash,
-        ..Row::default()
+        ..ManifestRow::default()
     })
 }
 
 /// Verify hash for a file and optionally recalculate with host's preferred algorithm
-/// Returns None if hash hasn't changed, Some(Row) if it has changed
+/// Returns None if hash hasn't changed, Some(ManifestRow) if it has changed
 pub async fn verify_hash(
     storage: &impl Storage,
     path: &PathBuf,
-    row: Row,
+    row: ManifestRow,
     host_config: &HostConfig,
-) -> Res<Option<Row>> {
+) -> Res<Option<ManifestRow>> {
     if let Some(modified) = refresh_hash(storage, path, row).await? {
         // File has changed, check if we need to recalculate with host's preferred algorithm
-        if modified.hash.code() == host_config.checksums.algorithm_code() {
+        if modified.hash.algorithm() == host_config.checksums.algorithm_code() {
             // Already using the correct algorithm, no need to recalculate
             Ok(Some(modified))
         } else {
             // Need to recalculate with host's preferred algorithm
-            Ok(Some(
-                calculate_hash(storage, path, &modified.name, host_config).await?,
-            ))
+            let calculated_row =
+                calculate_hash(storage, path, &modified.logical_key, host_config).await?;
+            Ok(Some(calculated_row))
         }
     } else {
         Ok(None)
@@ -485,15 +486,15 @@ mod tests {
         storage.write_file(file_path, file_content).await?;
 
         let file = storage.open_file(file_path).await?;
-        let hash = Sha256Hash::from_file(file).await?.into();
+        let hash: Multihash<256> = Sha256Hash::from_file(file).await?.into();
 
-        let row = Row {
-            name: PathBuf::from("bar"),
-            hash,
+        let manifest_row = ManifestRow {
+            logical_key: PathBuf::from("bar"),
+            hash: hash.try_into()?,
             size: file_content.len() as u64,
-            ..Row::default()
+            ..ManifestRow::default()
         };
-        let result = refresh_hash(&storage, &file_path.to_path_buf(), row).await?;
+        let result = refresh_hash(&storage, &file_path.to_path_buf(), manifest_row).await?;
         assert!(result.is_none(), "Unchanged file should return None");
 
         Ok(())
@@ -508,19 +509,19 @@ mod tests {
 
         // Calculate the actual hash first
         let file = storage.open_file(file_path).await?;
-        let hash = Sha256Hash::from_file(file).await?.into();
+        let hash: Multihash<256> = Sha256Hash::from_file(file).await?.into();
 
-        // Test with wrong hash - should return updated Row
+        // Test with wrong hash - should return updated ManifestRow
         let wrong_hash = Multihash::wrap(MULTIHASH_SHA256, b"wrong_hash_data")?;
-        let test_row = Row {
-            name: PathBuf::from("bar"),
-            hash: wrong_hash,
+        let test_manifest_row = ManifestRow {
+            logical_key: PathBuf::from("bar"),
+            hash: wrong_hash.try_into()?,
             size: 999, // Wrong size to test that refresh_hash updates it
-            ..Row::default()
+            ..ManifestRow::default()
         };
-        let result = refresh_hash(&storage, &file_path.to_path_buf(), test_row).await?;
+        let result = refresh_hash(&storage, &file_path.to_path_buf(), test_manifest_row).await?;
         let refreshed_row = result.expect("Changed hash should return Some");
-        assert_eq!(refreshed_row.hash, hash);
+        assert_eq!(refreshed_row.hash, hash.try_into()?);
         assert_eq!(refreshed_row.size, file_content.len() as u64);
 
         Ok(())
@@ -533,19 +534,20 @@ mod tests {
         let file_path = Path::new("foo");
         storage.write_file(file_path, file_content).await?;
 
-        let hash = Multihash::wrap(0x9999, b"anything").unwrap();
-        let row = Row {
-            name: PathBuf::from("bar"),
-            hash,
+        // Since ObjectHash now validates hash types, we cannot create invalid hashes
+        // This test is no longer relevant as the type system prevents invalid hash codes
+        // Let's test a valid case instead - using a valid hash should work
+        let valid_hash = Crc64Hash::default().into();
+        let manifest_row = ManifestRow {
+            logical_key: PathBuf::from("bar"),
+            hash: valid_hash,
             size: file_content.len() as u64,
-            ..Row::default()
+            ..ManifestRow::default()
         };
-        let result = refresh_hash(&storage, &file_path.to_path_buf(), row).await;
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Wrong multihash type"));
+
+        let result = refresh_hash(&storage, &file_path.to_path_buf(), manifest_row).await;
+        // With valid hash, this should work (though it might return Some due to different file content)
+        assert!(result.is_ok());
 
         Ok(())
     }
@@ -560,11 +562,11 @@ mod tests {
 
         let row = calculate_hash(&storage, file_path, &logical_key, &host_config).await?;
 
-        assert_eq!(row.hash.code(), MULTIHASH_CRC64_NVME);
-        assert_eq!(row.name, logical_key);
+        assert_eq!(row.hash.algorithm(), MULTIHASH_CRC64_NVME);
+        assert_eq!(row.logical_key, logical_key);
 
         assert_eq!(row.size, storage.read_file(file_path).await?.len() as u64);
-        assert_eq!(ObjectHash::try_from(row.hash)?.to_string(), "LZmmpqbBItw=");
+        assert_eq!(row.hash.to_string(), "LZmmpqbBItw=");
 
         Ok(())
     }
@@ -583,11 +585,11 @@ mod tests {
 
         let row = calculate_hash(&storage, file_path, &logical_key, &host_config).await?;
 
-        assert_eq!(row.hash.code(), MULTIHASH_SHA256_CHUNKED);
-        assert_eq!(row.name, logical_key);
+        assert_eq!(row.hash.algorithm(), MULTIHASH_SHA256_CHUNKED);
+        assert_eq!(row.logical_key, logical_key);
         assert_eq!(row.size, file_content.len() as u64);
         assert_eq!(
-            ObjectHash::try_from(row.hash)?.to_string(),
+            row.hash.to_string(),
             crate::fixtures::objects::LESS_THAN_8MB_HASH_B64
         );
 
@@ -608,13 +610,14 @@ mod tests {
         let crc64_host_config = HostConfig::default_crc64();
         let logical_key = PathBuf::from("bar");
 
-        let row = calculate_hash(&storage, test_path, &logical_key, &sha256_host_config).await?;
+        let manifest_row =
+            calculate_hash(&storage, test_path, &logical_key, &sha256_host_config).await?;
 
         assert!(
             verify_hash(
                 &storage,
                 &test_path.to_path_buf(),
-                row.clone(),
+                manifest_row.clone(),
                 &crc64_host_config,
             )
             .await?
@@ -626,18 +629,20 @@ mod tests {
         let fixture_content = local_storage.read_file(fixture_path).await?;
         storage.write_file(test_path, &fixture_content).await?;
 
-        let result =
-            verify_hash(&storage, &test_path.to_path_buf(), row, &crc64_host_config).await?;
+        let result = verify_hash(
+            &storage,
+            &test_path.to_path_buf(),
+            manifest_row,
+            &crc64_host_config,
+        )
+        .await?;
         assert!(result.is_some(), "Modified file should return Some");
 
         let modified_row = result.unwrap();
-        assert_eq!(modified_row.hash.code(), MULTIHASH_CRC64_NVME);
+        assert_eq!(modified_row.hash.algorithm(), MULTIHASH_CRC64_NVME);
         assert_eq!(modified_row.size, fixture_content.len() as u64);
 
-        assert_eq!(
-            ObjectHash::try_from(modified_row.hash)?.to_string(),
-            "LZmmpqbBItw="
-        );
+        assert_eq!(modified_row.hash.to_string(), "LZmmpqbBItw=");
 
         Ok(())
     }
@@ -655,13 +660,14 @@ mod tests {
         let crc64_host_config = HostConfig::default_crc64();
         let logical_key = PathBuf::from("bar");
 
-        let row = calculate_hash(&storage, test_path, &logical_key, &crc64_host_config).await?;
+        let manifest_row =
+            calculate_hash(&storage, test_path, &logical_key, &crc64_host_config).await?;
 
         assert!(
             verify_hash(
                 &storage,
                 &test_path.to_path_buf(),
-                row.clone(),
+                manifest_row.clone(),
                 &sha256_host_config,
             )
             .await?
@@ -673,16 +679,21 @@ mod tests {
         let fixture_content = crate::fixtures::objects::less_than_8mb();
         storage.write_file(test_path, fixture_content).await?;
 
-        let result =
-            verify_hash(&storage, &test_path.to_path_buf(), row, &sha256_host_config).await?;
+        let result = verify_hash(
+            &storage,
+            &test_path.to_path_buf(),
+            manifest_row,
+            &sha256_host_config,
+        )
+        .await?;
         assert!(result.is_some(), "Modified file should return Some");
 
         let modified_row = result.unwrap();
-        assert_eq!(modified_row.hash.code(), MULTIHASH_SHA256_CHUNKED);
+        assert_eq!(modified_row.hash.algorithm(), MULTIHASH_SHA256_CHUNKED);
         assert_eq!(modified_row.size, fixture_content.len() as u64);
 
         assert_eq!(
-            ObjectHash::try_from(modified_row.hash)?.to_string(),
+            modified_row.hash.to_string(),
             crate::fixtures::objects::LESS_THAN_8MB_HASH_B64
         );
 

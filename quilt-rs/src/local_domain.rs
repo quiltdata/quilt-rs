@@ -13,8 +13,8 @@ use crate::io::storage::Storage;
 use crate::lineage;
 use crate::lineage::DomainLineage;
 use crate::lineage::Home;
-use crate::manifest::Header;
-use crate::manifest::Table;
+use crate::manifest::Manifest;
+use crate::manifest::ManifestHeader;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
@@ -68,7 +68,7 @@ impl LocalDomain {
         self.paths.scaffold_for_caching(&self.storage, bucket).await
     }
 
-    pub async fn browse_remote_manifest(&self, uri: &ManifestUri) -> Res<Table> {
+    pub async fn browse_remote_manifest(&self, uri: &ManifestUri) -> Res<Manifest> {
         self.scaffold_paths_for_caching(&uri.bucket).await?;
         flow::browse(&self.paths, &self.storage, &self.remote, uri).await
     }
@@ -141,7 +141,8 @@ impl LocalDomain {
         stream: impl RowsStream + Unpin,
     ) -> Res<(PathBuf, String)> {
         let dest_dir = dest_path.parent().unwrap_or(&dest_path).to_path_buf();
-        build_manifest_from_rows_stream(&self.storage, dest_dir, Header::default(), stream).await
+        build_manifest_from_rows_stream(&self.storage, dest_dir, ManifestHeader::default(), stream)
+            .await
     }
 }
 
@@ -179,11 +180,11 @@ mod tests {
                 namespace.clone(),
                 crate::lineage::PackageLineage {
                     commit: None,
-                    remote: crate::uri::ManifestUri {
+                    remote: ManifestUri {
                         bucket: "test-bucket".to_string(),
                         namespace: namespace.clone(),
                         hash: "abcdef".to_string(),
-                        catalog: None,
+                        origin: None,
                     },
                     base_hash: "abcdef".to_string(),
                     latest_hash: "abcdef".to_string(),

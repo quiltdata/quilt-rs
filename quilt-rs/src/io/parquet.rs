@@ -14,6 +14,7 @@ use parquet::file::properties::WriterProperties;
 use tokio::fs::File;
 
 use crate::io::manifest::StreamRowsChunk;
+use crate::manifest::Row;
 use crate::Error;
 use crate::Res;
 
@@ -42,7 +43,8 @@ fn create_columns(chunk: StreamRowsChunk) -> Res<Vec<ArrayRef>> {
     let mut metas = Vec::new();
     let mut infos = Vec::new();
     for row_result in chunk {
-        let row = row_result?;
+        let manifest_row = row_result?;
+        let row = Row::from(manifest_row);
         names.push(row.display_name());
         places.push(row.display_place());
         hashes.push(row.display_hash());

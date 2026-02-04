@@ -141,7 +141,7 @@ impl TmplEntry<'_> {
 mod tests {
     use super::*;
 
-    use crate::quilt::manifest::Row;
+    use crate::quilt::manifest::ManifestRow;
 
     use crate::Result;
 
@@ -158,17 +158,17 @@ mod tests {
 
     #[test]
     fn test_entry_status_from_change() {
-        let added_change = Change::Added(Row {
-            name: PathBuf::from("test.txt"),
-            ..Row::default()
+        let added_change = Change::Added(ManifestRow {
+            logical_key: PathBuf::from("test.txt"),
+            ..ManifestRow::default()
         });
-        let modified_change = Change::Modified(Row {
-            name: PathBuf::from("test.txt"),
-            ..Row::default()
+        let modified_change = Change::Modified(ManifestRow {
+            logical_key: PathBuf::from("test.txt"),
+            ..ManifestRow::default()
         });
-        let removed_change = Change::Removed(Row {
-            name: PathBuf::from("test.txt"),
-            ..Row::default()
+        let removed_change = Change::Removed(ManifestRow {
+            logical_key: PathBuf::from("test.txt"),
+            ..ManifestRow::default()
         });
 
         assert!(matches!(

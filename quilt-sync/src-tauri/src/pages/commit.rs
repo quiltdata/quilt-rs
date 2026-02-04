@@ -98,54 +98,44 @@ struct TmplPageCommit<'a> {
 }
 
 fn parse_commit_workflow(
-    header: &quilt::manifest::Header,
+    header: &quilt::manifest::ManifestHeader,
     host: &quilt::uri::Host,
 ) -> Result<Option<ViewCommitWorkflow>, Error> {
-    match header.get_workflow() {
-        Ok(Some(value)) => Ok(Some(ViewCommitWorkflow {
+    match &header.workflow {
+        Some(value) => Ok(Some(ViewCommitWorkflow {
             error: None,
             url: Some(value.config.display_for_host(host)?),
-            id: value.id.map(|id| id.id),
+            id: value.id.as_ref().map(|id| id.id.clone()),
         })),
-        Ok(None) => Ok(None),
-        Err(err) => Ok(Some(ViewCommitWorkflow {
-            error: Some(err),
-            url: None,
-            id: None,
-        })),
+        None => Ok(None),
     }
 }
 
-fn parse_commit_user_meta(header: &quilt::manifest::Header) -> ViewCommitUserMeta {
-    match header.get_user_meta() {
-        Ok(Some(meta)) => match serde_json::to_string(&meta) {
+fn parse_commit_user_meta(header: &quilt::manifest::ManifestHeader) -> ViewCommitUserMeta {
+    match &header.user_meta {
+        Some(meta) => match serde_json::to_string(&meta) {
             Ok(value) => ViewCommitUserMeta { value, error: None },
             Err(_) => ViewCommitUserMeta {
                 value: "".to_string(),
                 error: Some("Failed to stringify meta".to_string()),
             },
         },
-        Ok(None) => ViewCommitUserMeta {
+        None => ViewCommitUserMeta {
             value: "".to_string(),
             error: None,
-        },
-        Err(err) => ViewCommitUserMeta {
-            value: "".to_string(),
-            error: Some(err.to_string()),
         },
     }
 }
 
-fn parse_commit_message(header: &quilt::manifest::Header) -> ViewCommitMessage {
-    match header.get_message() {
-        Ok(Some(value)) => ViewCommitMessage { value, error: None },
-        Ok(None) => ViewCommitMessage {
-            value: "".to_string(),
+fn parse_commit_message(header: &quilt::manifest::ManifestHeader) -> ViewCommitMessage {
+    match &header.message {
+        Some(value) => ViewCommitMessage {
+            value: value.clone(),
             error: None,
         },
-        Err(error) => ViewCommitMessage {
+        None => ViewCommitMessage {
             value: "".to_string(),
-            error: Some(error),
+            error: None,
         },
     }
 }
