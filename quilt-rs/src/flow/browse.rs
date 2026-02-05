@@ -102,14 +102,14 @@ mod tests {
         let manifest_uri = ManifestUri {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
-            hash: fixtures::manifest::JSONL_HASH.to_string(),
+            hash: "deadbeef".to_string(), // We use it for path location, but it's not used for verification
             origin: None,
         };
         let cache_path = paths.manifest_cache(&manifest_uri.bucket, &manifest_uri.hash);
 
         // Prepare the reference manifest file.
         // It is copied into the cache path to simulate a cached manifest.
-        let jsonl = std::fs::read(fixtures::manifest::jsonl()?)?;
+        let jsonl = std::fs::read(fixtures::manifest::checksummed()?)?;
         let storage = MockStorage::default();
         storage.write_file(&cache_path, &jsonl).await?;
 
@@ -124,10 +124,7 @@ mod tests {
 
         // Verify that the cached manifest matches the reference manifest
         // JSONL fixture has no message but has user_meta set to null
-        assert_eq!(
-            cached_manifest.header.user_meta,
-            Some(serde_json::Value::Null)
-        );
+        assert_eq!(cached_manifest.header.user_meta, None);
 
         Ok(())
     }
@@ -154,7 +151,6 @@ mod tests {
 
         let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await;
 
-        // Since we now use JSONL format, the error message will be different
         assert!(cached_manifest.is_err());
 
         Ok(())
@@ -168,44 +164,45 @@ mod tests {
         let paths = DomainPaths::default();
 
         // Define the manifest URI to simulate a package lookup.
-        let manifest = ManifestUri {
+        let manifest_uri = ManifestUri {
             bucket: "a".to_string(),
             namespace: ("f", "b").into(),
-            hash: fixtures::manifest::JSONL_HASH.to_string(),
+            hash: "deadbeef".to_string(), // we use it for manifest location, we don't verify the hash
             origin: None,
         };
 
         // Simulate the remote JSONL manifest.
         // The JSONL data is loaded from a mocked fixture and placed in the remote location.
-        let jsonl = std::fs::read(fixtures::manifest::jsonl()?)?;
+        let jsonl = std::fs::read(fixtures::manifest::checksummed()?)?;
         let remote = MockRemote::default();
         let remote_uri = S3Uri::from_str(&format!(
             "s3://{}/.quilt/packages/{}",
-            manifest.bucket, manifest.hash
+            manifest_uri.bucket, manifest_uri.hash
         ))?;
         remote
-            .put_object(&manifest.origin, &remote_uri, jsonl.clone())
+            .put_object(&manifest_uri.origin, &remote_uri, jsonl.clone())
             .await?;
 
         let storage = MockStorage::default();
         paths
-            .scaffold_for_caching(&storage, &manifest.bucket)
+            .scaffold_for_caching(&storage, &manifest_uri.bucket)
             .await?;
 
         // Fetch the manifest from the remote location.
         // This should cache the JSONL manifest locally in the same format.
-        let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await?;
+        let cached_manifest =
+            cache_remote_manifest(&paths, &storage, &remote, &manifest_uri).await?;
 
         // Verify that the JSONL manifest is cached locally.
         let cache_path = PathBuf::from(format!(
             ".quilt/packages/{}/{}",
-            manifest.bucket, manifest.hash
+            manifest_uri.bucket, manifest_uri.hash
         ));
         assert!(storage.exists(cache_path).await);
 
         // Verify that the cached manifest contains valid records
         assert!(cached_manifest
-            .get_record(&PathBuf::from("README.md"))
+            .get_record(&PathBuf::from("e0-0.txt"))
             .is_some());
 
         Ok(())

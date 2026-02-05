@@ -19,11 +19,11 @@ pub mod manifest {
     use crate::Res;
 
     const TEST_LOCAL_PARQUET: &str = "fixtures/manifest.parquet";
-    const TEST_LOCAL_PARQUET_CHECKSUMMED: &str = "fixtures/checksummed.parquet";
+    const TEST_LOCAL_CHECKSUMMED: &str = "fixtures/checksummed.jsonl";
     const TEST_LOCAL_JSONL: &str = "fixtures/manifest.jsonl";
 
     pub const JSONL_HASH: &str = "0428ab8c8b0fe83d9e57fb6b26ff190173caad00ed7aeb683ce26cc4b56ea4bb";
-    pub const PARQUEST_CHECKSUMMED_HASH: &str =
+    pub const CHECKSUMMED_HASH: &str =
         "9c4db11437f11c3bbe25b39601069b8ed09b39f5f18ac29a13df4361240859d9";
 
     pub fn parquet() -> Res<PathBuf> {
@@ -34,8 +34,8 @@ pub mod manifest {
         local_uri(TEST_LOCAL_JSONL)
     }
 
-    pub fn parquet_checksummed() -> Res<PathBuf> {
-        local_uri(TEST_LOCAL_PARQUET_CHECKSUMMED)
+    pub fn checksummed() -> Res<PathBuf> {
+        local_uri(TEST_LOCAL_CHECKSUMMED)
     }
 }
 

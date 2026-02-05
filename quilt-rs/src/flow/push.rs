@@ -304,17 +304,14 @@ mod tests {
         let lineage = PackageLineage {
             commit: Some(CommitState {
                 timestamp: chrono::Utc::now(),
-                hash: fixtures::manifest::PARQUEST_CHECKSUMMED_HASH.to_string(),
+                hash: fixtures::manifest::CHECKSUMMED_HASH.to_string(),
                 prev_hashes: Vec::new(),
             }),
             remote: manifest_uri,
             ..PackageLineage::default()
         };
         let jsonl = std::fs::read(fixtures::manifest::jsonl()?)?;
-        let manifest_key = format!(
-            ".quilt/packages/b/{}",
-            fixtures::manifest::PARQUEST_CHECKSUMMED_HASH
-        );
+        let manifest_key = format!(".quilt/packages/b/{}", fixtures::manifest::CHECKSUMMED_HASH);
         let storage = MockStorage::default();
         storage
             .write_file(PathBuf::from(manifest_key), &jsonl)
@@ -366,7 +363,7 @@ mod tests {
         let manifest_uri = ManifestUri {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
-            hash: fixtures::manifest::PARQUEST_CHECKSUMMED_HASH.to_string(),
+            hash: fixtures::manifest::CHECKSUMMED_HASH.to_string(),
             origin: None,
         };
         assert_eq!(
