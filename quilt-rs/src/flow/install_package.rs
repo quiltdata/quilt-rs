@@ -126,10 +126,11 @@ mod tests {
     #[test(tokio::test)]
     async fn test_installing() -> Res {
         let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
+        let test_hash = "deadbeef".to_string();
 
         let manifest_uri = ManifestUri {
             bucket: "a".to_string(),
-            hash: fixtures::manifest::JSONL_HASH.to_string(),
+            hash: test_hash.clone(),
             namespace: ("f", "b").into(),
             origin: None,
         };
@@ -173,10 +174,7 @@ mod tests {
         let installed_package = result.packages.get(&("f", "b").into()).unwrap();
         let tracked = installed_package.remote.clone();
 
-        assert_eq!(
-            installed_package.latest_hash,
-            fixtures::manifest::JSONL_HASH.to_string()
-        );
+        assert_eq!(installed_package.latest_hash, test_hash);
 
         // Verify that the lineage records the installed package
         assert_eq!(tracked, manifest_uri);

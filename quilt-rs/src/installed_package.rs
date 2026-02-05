@@ -311,6 +311,7 @@ mod tests {
         let storage = LocalStorage::new();
         let remote = MockRemote::default();
         let namespace: Namespace = ("test", "history").into();
+        let test_hash = "deadbeef".to_string();
 
         paths
             .scaffold_for_installing(&storage, &home, &namespace)
@@ -333,16 +334,14 @@ mod tests {
                     }}}},
                 "home": "/tmp/working_dir"
                 }}"#,
-            manifest::JSONL_HASH,
-            manifest::JSONL_HASH,
-            manifest::JSONL_HASH
+            test_hash, "foo", "bar"
         );
         storage
             .write_file(&paths.lineage(), lineage_json.as_bytes())
             .await?;
 
         // Copy manifest to the expected path
-        let test_manifest = paths.installed_manifest(&namespace, manifest::JSONL_HASH);
+        let test_manifest = paths.installed_manifest(&namespace, &test_hash);
         storage.copy(manifest::jsonl()?, test_manifest).await?;
 
         let domain_lineage_io = DomainLineageIo::new(paths.lineage());

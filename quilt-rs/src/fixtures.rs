@@ -22,7 +22,6 @@ pub mod manifest {
     const TEST_LOCAL_CHECKSUMMED: &str = "fixtures/checksummed.jsonl";
     const TEST_LOCAL_JSONL: &str = "fixtures/manifest.jsonl";
 
-    pub const JSONL_HASH: &str = "0428ab8c8b0fe83d9e57fb6b26ff190173caad00ed7aeb683ce26cc4b56ea4bb";
     pub const CHECKSUMMED_HASH: &str =
         "9c4db11437f11c3bbe25b39601069b8ed09b39f5f18ac29a13df4361240859d9";
 

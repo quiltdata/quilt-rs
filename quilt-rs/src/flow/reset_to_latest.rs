@@ -172,19 +172,19 @@ mod tests {
         };
 
         let jsonl = std::fs::read(fixtures::manifest::jsonl()?)?;
-        let hash = fixtures::manifest::JSONL_HASH;
+        let test_hash: &str = "deadbeef";
         let remote = MockRemote::default();
         remote
             .put_object(
                 &None,
                 &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
-                hash.as_bytes().to_vec(),
+                test_hash.as_bytes().to_vec(),
             )
             .await?;
         remote
             .put_object(
                 &None,
-                &S3Uri::try_from(format!("s3://b/.quilt/packages/{}", &hash).as_str())?,
+                &S3Uri::try_from(format!("s3://b/.quilt/packages/{}", &test_hash).as_str())?,
                 jsonl,
             )
             .await?;
@@ -202,10 +202,10 @@ mod tests {
         assert_eq!(
             resolved_lineage,
             PackageLineage {
-                base_hash: hash.to_string(),
-                latest_hash: hash.to_string(),
+                base_hash: test_hash.to_string(),
+                latest_hash: test_hash.to_string(),
                 remote: ManifestUri {
-                    hash: hash.to_string(),
+                    hash: test_hash.to_string(),
                     ..source_lineage.remote.clone()
                 },
                 ..source_lineage
