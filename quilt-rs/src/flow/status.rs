@@ -354,31 +354,30 @@ mod tests {
 
         let storage = MockStorage::default();
         let working_dir = storage.temp_dir.as_ref().join(PathBuf::from("foo/bar"));
-        let file_path = PathBuf::from("inside/package/file.pq");
+        let logical_key = PathBuf::from("inside/package/file.pq");
+        let physical_key = working_dir.join(&logical_key);
         storage
-            .write_file(
-                working_dir.join(&file_path),
-                &std::fs::read(fixtures::manifest::parquet()?)?,
-            )
+            .write_file(&physical_key, fixtures::objects::less_than_8mb())
             .await?;
 
         let (_, status) = create_status(
             lineage,
             &storage,
             &manifest,
-            working_dir,
+            working_dir.clone(),
             HostConfig::default(),
         )
         .await?;
 
-        let added_file = status.changes.get(&file_path).unwrap();
+        let added_file = status.changes.get(&logical_key).unwrap();
         if let Change::Added(added_row) = added_file {
             let reference_row = ManifestRow {
-                logical_key: PathBuf::from("inside/package/file.pq"),
-                size: 5324,
-                hash: Sha256ChunkedHash::try_from("EfrtXWeClWPJ/IVKjQeAmMKhJV45/GcpjDm1IhvhJAY=")?
+                logical_key,
+                size: 16,
+                hash: Sha256ChunkedHash::try_from(fixtures::objects::LESS_THAN_8MB_HASH_B64)?
                     .into(),
-                ..ManifestRow::default()
+                meta: None,
+                physical_key: format!("file://{}", physical_key.display()),
             };
             assert_eq!(added_row, &reference_row);
             Ok(())
