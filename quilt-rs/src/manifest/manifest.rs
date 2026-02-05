@@ -535,27 +535,38 @@ mod tests {
     #[test(tokio::test)]
     async fn test_manifest_from_reader_valid() -> Res {
         let storage = LocalStorage::default();
-        let file = storage.open_file(fixtures::manifest::jsonl()?).await?;
+        let file = storage
+            .open_file(fixtures::manifest::checksummed()?)
+            .await?;
+        let checksummed_manifest = Manifest::from_reader(file).await?;
 
         assert_eq!(
-            Manifest::from_reader(file).await?,
-            Manifest {
-                header: ManifestHeader {
-                    version: "v0".to_string(),
-                    message: None,
-                    user_meta: Some(serde_json::Value::Null),
-                    workflow: None,
-                },
-                rows: vec![
-                    ManifestRow {
-                        logical_key: PathBuf::from("README.md"),
-                        physical_key: "s3://udp-spec/test_run/test_push/README.md?versionId=Rv.GfYdUWkLfeTT73Rodm3aBUrTIcC1X".to_string(),
-                        size: 26,
-                        hash: checksum::Sha256Hash::try_from("bc2f10e72e751ea6cc1e0b9bdbbb531d437ccbba684b9fef90e1cc228318e112")?.into(),
-                        meta: Some(serde_json::Value::Object(serde_json::Map::new())),
-                    }
-                ],
+            checksummed_manifest.header,
+            ManifestHeader {
+                message: Some("Initial".to_string()),
+                user_meta: None,
+                ..ManifestHeader::default()
             }
+        );
+        assert_eq!(
+            checksummed_manifest.rows[0],
+                    ManifestRow {
+                        logical_key: PathBuf::from("e0-0.txt".to_string()),
+                        physical_key: "s3://data-yaml-spec-tests/scale/10u/e0-0.txt?versionId=jHb6DGN43Ex7EhbxZc2G9JnAkWSeTfEY".to_string(),
+                        size: 29,
+                        hash: checksum::Sha256ChunkedHash::try_from("/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=")?.into(),
+                        meta: Some(serde_json::Value::Null),
+                    }
+        );
+        assert_eq!(
+            checksummed_manifest.rows[9],
+                    ManifestRow {
+                        logical_key: PathBuf::from("e0-9.txt".to_string()),
+                        physical_key: "s3://data-yaml-spec-tests/scale/10u/e0-9.txt?versionId=T5tkWkC.7PVcpiFYRoCQKhhKC249fdBC".to_string(),
+                        size: 29,
+                        hash: checksum::Sha256ChunkedHash::try_from("/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=")?.into(),
+                        meta: Some(serde_json::Value::Null),
+                    }
         );
         Ok(())
     }

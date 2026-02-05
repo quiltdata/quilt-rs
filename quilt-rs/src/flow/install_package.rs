@@ -85,7 +85,6 @@ mod tests {
     use std::path::PathBuf;
     use std::str::FromStr;
 
-    use crate::fixtures;
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::io::storage::LocalStorage;
@@ -126,16 +125,17 @@ mod tests {
     #[test(tokio::test)]
     async fn test_installing() -> Res {
         let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
+        let test_hash = "deadbeef".to_string();
 
         let manifest_uri = ManifestUri {
             bucket: "a".to_string(),
-            hash: fixtures::manifest::JSONL_HASH.to_string(),
+            hash: test_hash.clone(),
             namespace: ("f", "b").into(),
             origin: None,
         };
 
         // Load the reference manifest from `./fixtures`
-        let jsonl = std::fs::read(fixtures::manifest::jsonl()?)?;
+        let test_manifest = r#"{"version": "v0"}"#;
         let remote = MockRemote::default();
 
         // Simulate the remote storage containing the JSONL manifest
@@ -144,7 +144,11 @@ mod tests {
             manifest_uri.bucket, manifest_uri.hash
         ))?;
         remote
-            .put_object(&manifest_uri.origin, &remote_uri, jsonl)
+            .put_object(
+                &manifest_uri.origin,
+                &remote_uri,
+                test_manifest.as_bytes().to_vec(),
+            )
             .await?;
 
         // Simulate the remote storage containing the reference to the latest manifest
@@ -173,10 +177,7 @@ mod tests {
         let installed_package = result.packages.get(&("f", "b").into()).unwrap();
         let tracked = installed_package.remote.clone();
 
-        assert_eq!(
-            installed_package.latest_hash,
-            fixtures::manifest::JSONL_HASH.to_string()
-        );
+        assert_eq!(installed_package.latest_hash, test_hash);
 
         // Verify that the lineage records the installed package
         assert_eq!(tracked, manifest_uri);
@@ -209,7 +210,7 @@ mod tests {
         };
 
         // Load the reference manifest from `./fixtures`
-        let jsonl = std::fs::read(fixtures::manifest::jsonl()?)?;
+        let test_manifest = r#"{"version": "v0"}"#;
         let remote = MockRemote::default();
 
         // Simulate the remote storage containing the JSONL manifest
@@ -218,7 +219,11 @@ mod tests {
             manifest_uri.bucket, manifest_uri.hash
         ))?;
         remote
-            .put_object(&manifest_uri.origin, &remote_uri, jsonl)
+            .put_object(
+                &manifest_uri.origin,
+                &remote_uri,
+                test_manifest.as_bytes().to_vec(),
+            )
             .await?;
 
         let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
