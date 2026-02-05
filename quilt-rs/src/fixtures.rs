@@ -68,24 +68,10 @@ pub mod manifest_with_objects_all_sizes {
 
     const JSONL: &str = "fixtures/ref-manifest-sizes.jsonl";
 
-    // Some physical keys are 'file://..."
-    const PARQUET_LOCAL: &str = "fixtures/ref-manifest-sizes-local.parquet";
-
-    // All physical keys are 's3://..."
-    const PARQUET_REMOTE: &str = "fixtures/ref-manifest-sizes-remote.parquet";
-
     pub const TOP_HASH: &str = "a8287f20eb1e315a08ce08d9488dc1e8c75ba45d4549bb4351a74c92b217c3c0";
 
     pub fn jsonl_path() -> Res<PathBuf> {
         local_uri(JSONL)
-    }
-
-    pub fn parquet_local_path() -> Res<PathBuf> {
-        local_uri(PARQUET_LOCAL)
-    }
-
-    pub fn parquet_remote_path() -> Res<PathBuf> {
-        local_uri(PARQUET_REMOTE)
     }
 
     pub async fn manifest() -> Res<Manifest> {
