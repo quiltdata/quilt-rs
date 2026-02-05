@@ -20,17 +20,12 @@ pub mod manifest {
 
     const TEST_LOCAL_PARQUET: &str = "fixtures/manifest.parquet";
     const TEST_LOCAL_CHECKSUMMED: &str = "fixtures/checksummed.jsonl";
-    const TEST_LOCAL_JSONL: &str = "fixtures/manifest.jsonl";
 
     pub const CHECKSUMMED_HASH: &str =
         "9c4db11437f11c3bbe25b39601069b8ed09b39f5f18ac29a13df4361240859d9";
 
     pub fn parquet() -> Res<PathBuf> {
         local_uri(TEST_LOCAL_PARQUET)
-    }
-
-    pub fn jsonl() -> Res<PathBuf> {
-        local_uri(TEST_LOCAL_JSONL)
     }
 
     pub fn checksummed() -> Res<PathBuf> {
