@@ -296,7 +296,6 @@ mod tests {
 
     use test_log::test;
 
-    use crate::fixtures::manifest;
     use crate::io::remote::mocks::MockRemote;
     use crate::lineage::DomainLineageIo;
     use crate::lineage::Home;
@@ -341,8 +340,11 @@ mod tests {
             .await?;
 
         // Copy manifest to the expected path
-        let test_manifest = paths.installed_manifest(&namespace, &test_hash);
-        storage.copy(manifest::jsonl()?, test_manifest).await?;
+        let test_manifest_path = paths.installed_manifest(&namespace, &test_hash);
+        let test_manifest = r#"{"version": "v0"}"#;
+        storage
+            .write_file(&test_manifest_path, test_manifest.as_bytes())
+            .await?;
 
         let domain_lineage_io = DomainLineageIo::new(paths.lineage());
 

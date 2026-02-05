@@ -238,22 +238,22 @@ mod tests {
             remote: manifest_uri,
             ..PackageLineage::default()
         };
-        let jsonl = std::fs::read(fixtures::manifest::jsonl()?)?;
         let manifest_key = format!(
             ".quilt/packages/b/{}",
             fixtures::manifest_empty::EMPTY_NULL_TOP_HASH
         );
         let storage = MockStorage::default();
         storage
-            .write_file(PathBuf::from(manifest_key), &jsonl)
+            .write_file(PathBuf::from(manifest_key), b"foo")
             .await?;
 
         let remote = MockRemote::default();
+        let dummy_manifest = r#"{"version": "v0"}"#;
         remote
             .put_object(
                 &None,
                 &S3Uri::try_from("s3://b/.quilt/packages/__FOO__")?,
-                jsonl.clone(),
+                dummy_manifest.as_bytes().to_vec(),
             )
             .await?;
         remote
@@ -310,18 +310,18 @@ mod tests {
             remote: manifest_uri,
             ..PackageLineage::default()
         };
-        let jsonl = std::fs::read(fixtures::manifest::jsonl()?)?;
         let manifest_key = format!(".quilt/packages/b/{}", fixtures::manifest::CHECKSUMMED_HASH);
         let storage = MockStorage::default();
         storage
-            .write_file(PathBuf::from(manifest_key), &jsonl)
+            .write_file(PathBuf::from(manifest_key), b"anything")
             .await?;
         let remote = MockRemote::default();
+        let dummy_manifest = r#"{"version": "v0"}"#;
         remote
             .put_object(
                 &None,
                 &S3Uri::try_from("s3://b/.quilt/packages/__FOO__")?,
-                jsonl.clone(),
+                dummy_manifest.as_bytes().to_vec(),
             )
             .await?;
         remote
@@ -333,11 +333,7 @@ mod tests {
             .await?;
 
         let file_path = PathBuf::from("/b/a/r");
-        let manifest_file = std::fs::read(fixtures::manifest::jsonl()?)?;
-        remote
-            .storage
-            .write_file(&file_path, &manifest_file)
-            .await?;
+        remote.storage.write_file(&file_path, b"any-thing").await?;
 
         let mut manifest = Manifest::default();
         manifest.header.user_meta = Some(serde_json::Value::Null);

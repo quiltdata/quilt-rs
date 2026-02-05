@@ -107,7 +107,6 @@ pub async fn reset_to_latest(
 mod tests {
     use super::*;
 
-    use crate::fixtures;
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::PackageLineage;
@@ -171,8 +170,8 @@ mod tests {
             ..PackageLineage::default()
         };
 
-        let jsonl = std::fs::read(fixtures::manifest::jsonl()?)?;
         let test_hash: &str = "deadbeef";
+        let dummy_manifest = r#"{"version": "v0"}"#;
         let remote = MockRemote::default();
         remote
             .put_object(
@@ -185,7 +184,7 @@ mod tests {
             .put_object(
                 &None,
                 &S3Uri::try_from(format!("s3://b/.quilt/packages/{}", &test_hash).as_str())?,
-                jsonl,
+                dummy_manifest.as_bytes().to_vec(),
             )
             .await?;
 
