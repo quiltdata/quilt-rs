@@ -40,19 +40,6 @@ pub mod manifest {
 }
 
 pub mod manifest_empty {
-    use super::local_uri;
-
-    use std::path::PathBuf;
-
-    use crate::Res;
-
-    const EMPTY_EMPTY: &str = "fixtures/header-empty-empty.jsonl";
-    const EMPTY_NONE: &str = "fixtures/header-empty-none.jsonl";
-    const EMPTY_NULL: &str = "fixtures/header-empty-null.jsonl";
-    const NULL_EMPTY: &str = "fixtures/header-null-empty.jsonl";
-    const NULL_NONE: &str = "fixtures/header-null-none.jsonl";
-    const NULL_NULL: &str = "fixtures/header-null-null.jsonl";
-
     pub const EMPTY_EMPTY_TOP_HASH: &str =
         "0929824c58e90a6d2cc3ad2c7bdc66e34f43e8ed7063a6b48595a3834dd3ec99";
     pub const EMPTY_NONE_TOP_HASH: &str =
@@ -65,30 +52,6 @@ pub mod manifest_empty {
         "2a5a67156ca9238c14d12042db51c5b52260fdd5511b61ea89b58929d6e1769b";
     pub const NULL_NULL_TOP_HASH: &str =
         "fb53faf10edc3c9cc234f362c1a57d702213e869a20b887d9f6ed5439c936513";
-
-    pub fn path_empty() -> Res<PathBuf> {
-        local_uri(EMPTY_EMPTY)
-    }
-
-    pub fn path_empty_none() -> Res<PathBuf> {
-        local_uri(EMPTY_NONE)
-    }
-
-    pub fn path_empty_null() -> Res<PathBuf> {
-        local_uri(EMPTY_NULL)
-    }
-
-    pub fn path_null_empty() -> Res<PathBuf> {
-        local_uri(NULL_EMPTY)
-    }
-
-    pub fn path_null_none() -> Res<PathBuf> {
-        local_uri(NULL_NONE)
-    }
-
-    pub fn path_null() -> Res<PathBuf> {
-        local_uri(NULL_NULL)
-    }
 }
 
 pub fn create_multihash(b64_str: &str) -> Res<Multihash<256>> {
