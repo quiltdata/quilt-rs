@@ -5,6 +5,12 @@
 -->
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- Clean up tests and remove legacy .parquet fixtures following manifest format migration
+
 ## [v0.27.0](https://github.com/quiltdata/quilt-rs/releases/tag/quilt-rs/v0.27.0) - 2025-02-04
 
 ### Changed
