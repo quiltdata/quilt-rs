@@ -14,30 +14,12 @@ use crate::Error;
 /// URI for manifest.
 /// Manifests are stored in immutable files.
 /// They are s3-unversioned but have hash.
-///
-/// This manifest URI is for manifest file in Parquet format.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct ManifestUriParquet {
-    pub catalog: Option<Host>, // TODO: rename to origin
+pub struct ManifestUri {
+    pub origin: Option<Host>,
     pub bucket: String,
     pub namespace: Namespace,
     pub hash: String,
-}
-
-impl From<ManifestUriParquet> for S3Uri {
-    fn from(remote: ManifestUriParquet) -> S3Uri {
-        S3Uri {
-            bucket: remote.bucket,
-            key: paths::get_manifest_key(&remote.hash),
-            version: None,
-        }
-    }
-}
-
-impl From<&ManifestUriParquet> for S3Uri {
-    fn from(remote: &ManifestUriParquet) -> S3Uri {
-        remote.clone().into()
-    }
 }
 
 impl TryFrom<S3PackageUri> for ManifestUri {
@@ -59,36 +41,6 @@ impl TryFrom<S3PackageUri> for ManifestUri {
     }
 }
 
-impl TryFrom<S3PackageUri> for ManifestUriParquet {
-    type Error = Error;
-    fn try_from(uri: S3PackageUri) -> Result<Self, Self::Error> {
-        Ok(ManifestUriParquet::from(ManifestUri::try_from(uri)?))
-    }
-}
-
-impl fmt::Display for ManifestUriParquet {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let uri = S3PackageUri::from(self);
-        write!(f, "{uri}")
-    }
-}
-
-impl ManifestUriParquet {
-    pub fn display(&self) -> String {
-        S3PackageUri::from(self).display()
-    }
-}
-
-/// The same as `ManifestUri` but for legacy JSONL format
-/// They have the same struct-ure, but different impl-ementations, especially, for key `property`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct ManifestUri {
-    pub origin: Option<Host>,
-    pub bucket: String,
-    pub namespace: Namespace,
-    pub hash: String,
-}
-
 impl From<ManifestUri> for S3Uri {
     fn from(remote: ManifestUri) -> S3Uri {
         S3Uri {
@@ -96,40 +48,6 @@ impl From<ManifestUri> for S3Uri {
             key: paths::get_manifest_key_legacy(&remote.hash),
             version: None,
         }
-    }
-}
-
-impl From<ManifestUriParquet> for ManifestUri {
-    fn from(manifest_uri: ManifestUriParquet) -> Self {
-        ManifestUri {
-            origin: manifest_uri.catalog,
-            bucket: manifest_uri.bucket,
-            namespace: manifest_uri.namespace,
-            hash: manifest_uri.hash,
-        }
-    }
-}
-
-impl From<&ManifestUriParquet> for ManifestUri {
-    fn from(manifest_uri: &ManifestUriParquet) -> Self {
-        manifest_uri.clone().into()
-    }
-}
-
-impl From<ManifestUri> for ManifestUriParquet {
-    fn from(manifest_uri: ManifestUri) -> Self {
-        ManifestUriParquet {
-            catalog: manifest_uri.origin,
-            bucket: manifest_uri.bucket,
-            namespace: manifest_uri.namespace,
-            hash: manifest_uri.hash,
-        }
-    }
-}
-
-impl From<&ManifestUri> for ManifestUriParquet {
-    fn from(manifest_uri: &ManifestUri) -> Self {
-        manifest_uri.clone().into()
     }
 }
 
@@ -142,7 +60,7 @@ impl fmt::Display for ManifestUri {
 
 impl ManifestUri {
     pub fn display(&self) -> String {
-        S3PackageUri::from(ManifestUriParquet::from(self)).display()
+        S3PackageUri::from(self).display()
     }
 }
 
@@ -193,23 +111,6 @@ mod tests {
 
     #[test]
     fn test_manifest_uri_to_s3uri() {
-        assert_eq!(
-            S3Uri::from(ManifestUriParquet {
-                bucket: "test-bucket".to_string(),
-                namespace: ("ignored", "ignored").into(),
-                hash: "abc123".to_string(),
-                catalog: None,
-            }),
-            S3Uri {
-                bucket: "test-bucket".to_string(),
-                key: ".quilt/packages/1220abc123.parquet".to_string(),
-                version: None,
-            }
-        );
-    }
-
-    #[test]
-    fn test_manifest_uri_legacy_to_s3uri() {
         assert_eq!(
             S3Uri::from(ManifestUri {
                 origin: None,

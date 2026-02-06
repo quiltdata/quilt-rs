@@ -9,7 +9,6 @@ use serde::Serialize;
 
 use crate::lineage::status::UpstreamState;
 use crate::uri::ManifestUri;
-use crate::uri::ManifestUriParquet;
 
 fn multihash_to_str<S: ser::Serializer>(
     hash: &Multihash<256>,
@@ -121,11 +120,5 @@ impl From<ManifestUri> for PackageLineage {
             commit: None,
             paths: BTreeMap::new(),
         }
-    }
-}
-
-impl From<ManifestUriParquet> for PackageLineage {
-    fn from(uri: ManifestUriParquet) -> Self {
-        ManifestUri::from(uri).into()
     }
 }
