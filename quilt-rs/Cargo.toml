@@ -11,8 +11,6 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-arrow.workspace = true
-arrow-array.workspace = true
 async-stream.workspace = true
 async-trait.workspace = true
 aws-config.workspace = true
@@ -29,7 +27,6 @@ futures-util.workspace = true
 hex.workspace = true
 multibase.workspace = true
 multihash.workspace = true
-parquet.workspace = true
 percent-encoding.workspace = true
 reqwest.workspace = true
 serde.workspace = true

@@ -294,11 +294,11 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_single_chunk_push() -> Res {
+    async fn test_push_virtual_manifest() -> Res {
         let manifest_uri = ManifestUri {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
-            hash: "__FOO__".to_string(),
+            hash: "hash-we-later-rewrite-with-push".to_string(),
             origin: None,
         };
         let lineage = PackageLineage {
@@ -310,17 +310,13 @@ mod tests {
             remote: manifest_uri,
             ..PackageLineage::default()
         };
-        let manifest_key = format!(".quilt/packages/b/{}", fixtures::manifest::CHECKSUMMED_HASH);
         let storage = MockStorage::default();
-        storage
-            .write_file(PathBuf::from(manifest_key), b"anything")
-            .await?;
         let remote = MockRemote::default();
         let dummy_manifest = r#"{"version": "v0"}"#;
         remote
             .put_object(
                 &None,
-                &S3Uri::try_from("s3://b/.quilt/packages/__FOO__")?,
+                &S3Uri::try_from("s3://b/.quilt/packages/hash-we-later-rewrite-with-push")?,
                 dummy_manifest.as_bytes().to_vec(),
             )
             .await?;
@@ -328,23 +324,33 @@ mod tests {
             .put_object(
                 &None,
                 &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
-                b"abcdef".to_vec(),
+                b"latest-hash-abcdef".to_vec(),
             )
             .await?;
 
-        let file_path = PathBuf::from("/b/a/r");
-        remote.storage.write_file(&file_path, b"any-thing").await?;
-
         let mut manifest = Manifest::default();
-        manifest.header.user_meta = Some(serde_json::Value::Null);
-        manifest
-            .insert_record(ManifestRow {
-                logical_key: PathBuf::from("bar"),
-                physical_key: format!("file://{}", file_path.display()),
-                hash: multihash::Multihash::wrap(0x12, b"test")?.try_into()?,
-                ..ManifestRow::default()
-            })
-            .await?;
+        manifest.header.message = Some("Initial".to_string());
+        manifest.header.user_meta = None;
+
+        let file_content = b"Thu Feb 29 19:07:56 PST 2024\n";
+
+        for i in 0..10 {
+            let file_path = PathBuf::from(format!("/b/a/r{}", i));
+            remote.storage.write_file(&file_path, file_content).await?;
+
+            manifest
+                .insert_record(ManifestRow {
+                    logical_key: PathBuf::from(format!("e0-{}.txt", i)),
+                    physical_key: format!("file://{}", file_path.display()),
+                    hash: crate::checksum::Sha256ChunkedHash::try_from(
+                        "/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=",
+                    )?
+                    .into(),
+                    size: file_content.len() as u64,
+                    meta: Some(serde_json::Value::Null),
+                })
+                .await?;
+        }
 
         let lineage = push_package(
             lineage,
@@ -367,17 +373,10 @@ mod tests {
             PackageLineage {
                 remote: manifest_uri,
                 base_hash: "".to_string(), // Huh?
-                latest_hash: "abcdef".to_string(),
+                latest_hash: "latest-hash-abcdef".to_string(),
                 ..PackageLineage::default()
             }
         );
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    #[ignore]
-    async fn test_multichunk_push() -> Res {
-        // TODO
         Ok(())
     }
 }

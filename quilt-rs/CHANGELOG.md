@@ -5,11 +5,15 @@
 -->
 # Changelog
 
-## [Unreleased]
+## [v0.27.1-alpha1] - 2025-02-06
 
 ### Changed
 
 - Clean up tests and remove legacy .parquet fixtures following manifest format migration
+
+### Removed
+
+- Removed parquet dependencies from Cargo.toml and leftovers from source code
 
 ## [v0.27.0](https://github.com/quiltdata/quilt-rs/releases/tag/quilt-rs/v0.27.0) - 2025-02-04
 

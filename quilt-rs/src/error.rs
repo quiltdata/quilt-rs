@@ -57,9 +57,6 @@ pub enum AuthError {
 /// The error type for this library
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("Arrow error: {0}")]
-    Arrow(#[from] arrow::error::ArrowError),
-
     #[error("Authentication failed for {0}: {1}")]
     Auth(Host, AuthError),
 
@@ -152,9 +149,6 @@ pub enum Error {
 
     #[error("Invalid package URI: {0}")]
     PackageURI(String),
-
-    #[error("Parquet error: {0}")]
-    Parquet(#[from] parquet::errors::ParquetError),
 
     #[error("Path prefix not found: {0}")]
     PathPrefixNotFound(#[from] std::path::StripPrefixError),

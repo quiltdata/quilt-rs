@@ -30,15 +30,6 @@ pub fn tag_key(namespace: &Namespace, tag: &str) -> String {
     format!("{TAGS_DIR}/{namespace}/{tag}")
 }
 
-fn parquet_manifest_filename(top_hash: &str) -> String {
-    format!("1220{top_hash}.parquet")
-}
-
-/// What is the path to the PARQUET manifest based on its `hash`
-pub fn get_manifest_key(hash: &str) -> String {
-    format!("{}/{}", MANIFEST_DIR, parquet_manifest_filename(hash))
-}
-
 /// What is the path to the JSONL manifest based on its `hash`
 pub fn get_manifest_key_legacy(hash: &str) -> String {
     format!("{MANIFEST_DIR}/{hash}")
