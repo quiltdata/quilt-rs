@@ -263,6 +263,8 @@ mod tests {
     use crate::fixtures::manifest_empty;
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
+    use crate::io::storage::LocalStorage;
+
     use crate::uri::S3Uri;
 
     #[test(tokio::test)]
@@ -412,6 +414,31 @@ mod tests {
         .await?;
         assert_eq!(dest_path, dest_dir.join(manifest_empty::NULL_NULL_TOP_HASH));
         assert_eq!(top_hash, manifest_empty::NULL_NULL_TOP_HASH);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_checksummed_manifest_build_from_stream() -> Res {
+        use crate::fixtures;
+
+        let storage = LocalStorage::default();
+        let manifest = Manifest::from_path(&storage, &fixtures::manifest::checksummed()?).await?;
+
+        let mock_storage = MockStorage::default();
+        let dest_dir = mock_storage.temp_dir.path();
+
+        let rows_stream = tokio_stream::iter(vec![Ok(manifest.rows.into_iter().map(Ok).collect())]);
+
+        let (_, calculated_hash) = build_manifest_from_rows_stream(
+            &mock_storage,
+            dest_dir.to_path_buf(),
+            manifest.header,
+            rows_stream,
+        )
+        .await?;
+
+        assert_eq!(calculated_hash, fixtures::manifest::CHECKSUMMED_HASH);
+
         Ok(())
     }
 }

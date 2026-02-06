@@ -141,3 +141,44 @@ impl TopHasher {
         hex::encode(self.hasher.finalize())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use test_log::test;
+
+    use crate::fixtures;
+    use crate::Res;
+
+    #[test]
+    fn test_checksummed_manifest_top_hash_direct() -> Res {
+        let header = ManifestHeader {
+            message: Some("Initial".to_string()),
+            user_meta: None,
+            ..ManifestHeader::default()
+        };
+
+        let mut top_hasher = TopHasher::new();
+        top_hasher.append_header(&header)?;
+
+        for i in 0..10 {
+            let manifest_row = ManifestRow {
+                logical_key: PathBuf::from(format!("e0-{}.txt", i)),
+                physical_key: "ignored".to_string(),
+                hash: crate::checksum::Sha256ChunkedHash::try_from(
+                    "/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=",
+                )?
+                .into(),
+                size: 29,
+                meta: Some(serde_json::Value::Null),
+            };
+            top_hasher.append(&manifest_row)?;
+        }
+
+        let calculated_hash = top_hasher.finalize();
+        assert_eq!(calculated_hash, fixtures::manifest::CHECKSUMMED_HASH);
+
+        Ok(())
+    }
+}
