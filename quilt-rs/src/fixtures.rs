@@ -37,15 +37,19 @@ pub mod manifest_empty {
     pub const EMPTY_NONE_TOP_HASH: &str =
         "770459d4230273fd44b272c552d1204458175e7d7cb26fcd601c662cf5f72d05";
 
+    /// Manifest header: {"message":"","user_meta":null,"version":"v0"}
     pub const EMPTY_NULL_TOP_HASH: &str =
         "39ee9fb46019db2d8373c991d7881ba90bbb6a6c65417e108c295363794dec3c";
 
+    /// Manifest header: {"message":null,"user_meta":{},"version":"v0"}
     pub const NULL_EMPTY_TOP_HASH: &str =
         "1a4cae60caad99aaf073c4292adfa510897c31c1d6adb44662925b9b143edbbf";
 
+    /// Manifest header: {"message":null,"version":"v0"}
     pub const NULL_NONE_TOP_HASH: &str =
         "2a5a67156ca9238c14d12042db51c5b52260fdd5511b61ea89b58929d6e1769b";
 
+    /// Manifest header: {"message":null,"user_meta":null,"version":"v0"}
     pub const NULL_NULL_TOP_HASH: &str =
         "fb53faf10edc3c9cc234f362c1a57d702213e869a20b887d9f6ed5439c936513";
 }

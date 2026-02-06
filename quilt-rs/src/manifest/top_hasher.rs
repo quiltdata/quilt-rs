@@ -184,6 +184,76 @@ mod tests {
     }
 
     #[test]
+    fn test_manifest_header_empty_null_no_rows() -> Res {
+        let header = ManifestHeader {
+            user_meta: Some(serde_json::Value::Null),
+            ..ManifestHeader::default()
+        };
+
+        let mut top_hasher = TopHasher::new();
+        top_hasher.append_header(&header)?;
+
+        let calculated_hash = top_hasher.finalize();
+
+        assert_eq!(calculated_hash, manifest_empty::EMPTY_NULL_TOP_HASH);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_manifest_header_null_empty_no_rows() -> Res {
+        let header = ManifestHeader {
+            message: None,
+            ..ManifestHeader::default()
+        };
+
+        let mut top_hasher = TopHasher::new();
+        top_hasher.append_header(&header)?;
+
+        let calculated_hash = top_hasher.finalize();
+
+        assert_eq!(calculated_hash, manifest_empty::NULL_EMPTY_TOP_HASH);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_manifest_header_null_none_no_rows() -> Res {
+        let header = ManifestHeader {
+            message: None,
+            user_meta: None,
+            ..ManifestHeader::default()
+        };
+
+        let mut top_hasher = TopHasher::new();
+        top_hasher.append_header(&header)?;
+
+        let calculated_hash = top_hasher.finalize();
+
+        assert_eq!(calculated_hash, manifest_empty::NULL_NONE_TOP_HASH);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_manifest_header_null_null_no_rows() -> Res {
+        let header = ManifestHeader {
+            message: None,
+            user_meta: Some(serde_json::Value::Null),
+            ..ManifestHeader::default()
+        };
+
+        let mut top_hasher = TopHasher::new();
+        top_hasher.append_header(&header)?;
+
+        let calculated_hash = top_hasher.finalize();
+
+        assert_eq!(calculated_hash, manifest_empty::NULL_NULL_TOP_HASH);
+
+        Ok(())
+    }
+
+    #[test]
     fn test_checksummed_manifest_top_hash_direct() -> Res {
         let header = ManifestHeader {
             message: Some("Initial".to_string()),
