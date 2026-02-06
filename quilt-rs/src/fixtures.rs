@@ -21,7 +21,7 @@ pub mod manifest {
     const TEST_LOCAL_CHECKSUMMED: &str = "fixtures/checksummed.jsonl";
 
     pub const CHECKSUMMED_HASH: &str =
-        "9c4db11437f11c3bbe25b39601069b8ed09b39f5f18ac29a13df4361240859d9";
+        "87c4c6caa2eaeb346ea8c3a5c3650a54b9ae93ed5229db67eac7449fc198f0c5";
 
     pub fn checksummed() -> Res<PathBuf> {
         local_uri(TEST_LOCAL_CHECKSUMMED)
