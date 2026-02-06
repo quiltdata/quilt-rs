@@ -256,6 +256,7 @@ pub async fn build_manifest_from_rows_stream(
 mod tests {
     use super::*;
 
+    use std::io::Cursor;
     use test_log::test;
 
     use tokio_stream;
@@ -308,6 +309,23 @@ mod tests {
             dest_dir.join(manifest_empty::EMPTY_EMPTY_TOP_HASH)
         );
         assert_eq!(top_hash, manifest_empty::EMPTY_EMPTY_TOP_HASH);
+
+        // Create manifest from text content and verify top_hash matches
+        let manifest = Manifest::from_reader(Cursor::new(
+            br#"{"message":"","user_meta":{},"version":"v0"}"#,
+        ))
+        .await?;
+        let (_, calculated_hash) = build_manifest_from_rows_stream(
+            &storage,
+            dest_dir.to_path_buf(),
+            manifest.header.clone(),
+            manifest.records_stream().await,
+        )
+        .await?;
+
+        assert_eq!(calculated_hash, manifest_empty::EMPTY_EMPTY_TOP_HASH);
+        assert_eq!(calculated_hash, top_hash);
+
         Ok(())
     }
 
@@ -330,6 +348,23 @@ mod tests {
             dest_dir.join(manifest_empty::EMPTY_NONE_TOP_HASH)
         );
         assert_eq!(top_hash, manifest_empty::EMPTY_NONE_TOP_HASH);
+
+        // Create manifest from text content and verify top_hash matches
+        let manifest = Manifest::from_reader(Cursor::new(
+            br#"{"message":"","version":"v0"}"#,
+        ))
+        .await?;
+        let (_, calculated_hash) = build_manifest_from_rows_stream(
+            &storage,
+            dest_dir.to_path_buf(),
+            manifest.header.clone(),
+            manifest.records_stream().await,
+        )
+        .await?;
+
+        assert_eq!(calculated_hash, manifest_empty::EMPTY_NONE_TOP_HASH);
+        assert_eq!(calculated_hash, top_hash);
+
         Ok(())
     }
 

@@ -149,7 +149,39 @@ mod tests {
     use test_log::test;
 
     use crate::fixtures;
+    use crate::fixtures::manifest_empty;
     use crate::Res;
+
+    #[test]
+    fn test_manifest_header_default_no_rows() -> Res {
+        let header = ManifestHeader::default();
+
+        let mut top_hasher = TopHasher::new();
+        top_hasher.append_header(&header)?;
+
+        let calculated_hash = top_hasher.finalize();
+
+        assert_eq!(calculated_hash, manifest_empty::EMPTY_EMPTY_TOP_HASH);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_manifest_header_none_no_rows() -> Res {
+        let header = ManifestHeader {
+            user_meta: None,
+            ..ManifestHeader::default()
+        };
+
+        let mut top_hasher = TopHasher::new();
+        top_hasher.append_header(&header)?;
+
+        let calculated_hash = top_hasher.finalize();
+
+        assert_eq!(calculated_hash, manifest_empty::EMPTY_NONE_TOP_HASH);
+
+        Ok(())
+    }
 
     #[test]
     fn test_checksummed_manifest_top_hash_direct() -> Res {
