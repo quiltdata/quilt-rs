@@ -1014,4 +1014,210 @@ mod tests {
 
         Ok(())
     }
+
+    #[test(tokio::test)]
+    async fn test_empty_manifest_header_empty_none_simple_workflow() -> Res {
+        let storage = MockStorage::default();
+        let dest_dir = storage.temp_dir.path();
+        let (dest_path, top_hash) = build_manifest_from_rows_stream(
+            &storage,
+            dest_dir.to_path_buf(),
+            ManifestHeader {
+                message: Some("".to_string()),
+                user_meta: None,
+                workflow: Some(Workflow {
+                    config: "s3://workflow/config".parse()?,
+                    id: None,
+                }),
+                ..ManifestHeader::default()
+            },
+            tokio_stream::empty(),
+        )
+        .await?;
+        assert_eq!(
+            dest_path,
+            dest_dir.join(manifest_empty::EMPTY_NONE_SIMPLE_WORKFLOW_TOP_HASH)
+        );
+        assert_eq!(
+            top_hash,
+            manifest_empty::EMPTY_NONE_SIMPLE_WORKFLOW_TOP_HASH
+        );
+
+        // Create manifest from text content and verify top_hash matches
+        let manifest = Manifest::from_reader(Cursor::new(
+            br#"{"message":"","version":"v0","workflow":{"config":"s3://workflow/config","id":null}}"#,
+        ))
+        .await?;
+        let (_, calculated_hash) = build_manifest_from_rows_stream(
+            &storage,
+            dest_dir.to_path_buf(),
+            manifest.header.clone(),
+            manifest.records_stream().await,
+        )
+        .await?;
+
+        assert_eq!(
+            calculated_hash,
+            manifest_empty::EMPTY_NONE_SIMPLE_WORKFLOW_TOP_HASH
+        );
+        assert_eq!(calculated_hash, top_hash);
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_empty_manifest_header_empty_null_simple_workflow() -> Res {
+        let storage = MockStorage::default();
+        let dest_dir = storage.temp_dir.path();
+        let (dest_path, top_hash) = build_manifest_from_rows_stream(
+            &storage,
+            dest_dir.to_path_buf(),
+            ManifestHeader {
+                message: Some("".to_string()),
+                user_meta: Some(serde_json::Value::Null),
+                workflow: Some(Workflow {
+                    config: "s3://workflow/config".parse()?,
+                    id: None,
+                }),
+                ..ManifestHeader::default()
+            },
+            tokio_stream::empty(),
+        )
+        .await?;
+        assert_eq!(
+            dest_path,
+            dest_dir.join(manifest_empty::EMPTY_NULL_SIMPLE_WORKFLOW_TOP_HASH)
+        );
+        assert_eq!(
+            top_hash,
+            manifest_empty::EMPTY_NULL_SIMPLE_WORKFLOW_TOP_HASH
+        );
+
+        // Create manifest from text content and verify top_hash matches
+        let manifest = Manifest::from_reader(Cursor::new(
+            br#"{"message":"","user_meta":null,"version":"v0","workflow":{"config":"s3://workflow/config","id":null}}"#,
+        ))
+        .await?;
+        let (_, calculated_hash) = build_manifest_from_rows_stream(
+            &storage,
+            dest_dir.to_path_buf(),
+            manifest.header.clone(),
+            manifest.records_stream().await,
+        )
+        .await?;
+
+        assert_eq!(
+            calculated_hash,
+            manifest_empty::EMPTY_NULL_SIMPLE_WORKFLOW_TOP_HASH
+        );
+        assert_eq!(calculated_hash, top_hash);
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_empty_manifest_header_initial_meta_simple_workflow() -> Res {
+        let storage = MockStorage::default();
+        let dest_dir = storage.temp_dir.path();
+        let (dest_path, top_hash) = build_manifest_from_rows_stream(
+            &storage,
+            dest_dir.to_path_buf(),
+            ManifestHeader {
+                message: Some("Initial".to_string()),
+                user_meta: Some(serde_json::json!({"key": "value"})),
+                workflow: Some(Workflow {
+                    config: "s3://workflow/config".parse()?,
+                    id: None,
+                }),
+                ..ManifestHeader::default()
+            },
+            tokio_stream::empty(),
+        )
+        .await?;
+        assert_eq!(
+            dest_path,
+            dest_dir.join(manifest_empty::INITIAL_META_SIMPLE_WORKFLOW_TOP_HASH)
+        );
+        assert_eq!(
+            top_hash,
+            manifest_empty::INITIAL_META_SIMPLE_WORKFLOW_TOP_HASH
+        );
+
+        // Create manifest from text content and verify top_hash matches
+        let manifest = Manifest::from_reader(Cursor::new(
+            br#"{"message":"Initial","user_meta":{"key":"value"},"version":"v0","workflow":{"config":"s3://workflow/config","id":null}}"#,
+        ))
+        .await?;
+        let (_, calculated_hash) = build_manifest_from_rows_stream(
+            &storage,
+            dest_dir.to_path_buf(),
+            manifest.header.clone(),
+            manifest.records_stream().await,
+        )
+        .await?;
+
+        assert_eq!(
+            calculated_hash,
+            manifest_empty::INITIAL_META_SIMPLE_WORKFLOW_TOP_HASH
+        );
+        assert_eq!(calculated_hash, top_hash);
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_empty_manifest_header_initial_none_complex_workflow() -> Res {
+        let storage = MockStorage::default();
+        let dest_dir = storage.temp_dir.path();
+        let (dest_path, top_hash) = build_manifest_from_rows_stream(
+            &storage,
+            dest_dir.to_path_buf(),
+            ManifestHeader {
+                message: Some("Initial".to_string()),
+                user_meta: None,
+                workflow: Some(Workflow {
+                    config: "s3://workflow/config".parse()?,
+                    id: Some(WorkflowId {
+                        id: "test-workflow".to_string(),
+                        metadata: Some(MetadataSchema {
+                            id: "test-schema".to_string(),
+                            url: "s3://bucket/workflows/test.json".parse()?,
+                        }),
+                    }),
+                }),
+                ..ManifestHeader::default()
+            },
+            tokio_stream::empty(),
+        )
+        .await?;
+        assert_eq!(
+            dest_path,
+            dest_dir.join(manifest_empty::INITIAL_NONE_COMPLEX_WORKFLOW_TOP_HASH)
+        );
+        assert_eq!(
+            top_hash,
+            manifest_empty::INITIAL_NONE_COMPLEX_WORKFLOW_TOP_HASH
+        );
+
+        // Create manifest from text content and verify top_hash matches
+        let manifest = Manifest::from_reader(Cursor::new(
+            br#"{"message":"Initial","version":"v0","workflow":{"config":"s3://workflow/config","id":"test-workflow","schemas":{"test-schema":"s3://bucket/workflows/test.json"}}}"#,
+        ))
+        .await?;
+        let (_, calculated_hash) = build_manifest_from_rows_stream(
+            &storage,
+            dest_dir.to_path_buf(),
+            manifest.header.clone(),
+            manifest.records_stream().await,
+        )
+        .await?;
+
+        assert_eq!(
+            calculated_hash,
+            manifest_empty::INITIAL_NONE_COMPLEX_WORKFLOW_TOP_HASH
+        );
+        assert_eq!(calculated_hash, top_hash);
+
+        Ok(())
+    }
 }

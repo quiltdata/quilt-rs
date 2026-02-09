@@ -96,6 +96,20 @@ pub mod manifest_empty {
     /// Manifest header: {"message":"Initial","user_meta":{},"version":"v0","workflow":{"config":"s3://workflow/config","id":"test-workflow","schemas":{"test-schema":"s3://bucket/workflows/test.json"}}}
     pub const INITIAL_EMPTY_COMPLEX_WORKFLOW_TOP_HASH: &str =
         "63d5e6aedc10aeca11a4ad133b21ecfbc299476833465f6a302fd27cc08d8ab2";
+
+    // Additional workflow combinations with different user_meta values
+    /// Manifest header: {"message":"","version":"v0","workflow":{"config":"s3://workflow/config","id":null}}
+    pub const EMPTY_NONE_SIMPLE_WORKFLOW_TOP_HASH: &str =
+        "88df0e39d2ecb9493f44ef30af4e7c6f6e9d5daa0b23e468aa1643a407bbc81c";
+    /// Manifest header: {"message":"","user_meta":null,"version":"v0","workflow":{"config":"s3://workflow/config","id":null}}
+    pub const EMPTY_NULL_SIMPLE_WORKFLOW_TOP_HASH: &str =
+        "129804b4ad21520c21d21c5f2916f549b4e2a7cb106e4efe88c9676270ac00f1";
+    /// Manifest header: {"message":"Initial","user_meta":{"key":"value"},"version":"v0","workflow":{"config":"s3://workflow/config","id":null}}
+    pub const INITIAL_META_SIMPLE_WORKFLOW_TOP_HASH: &str =
+        "7b224912378c80eef0f6255d911b4e7a51c287ea89cc9fee32cee26e56090b0c";
+    /// Manifest header: {"message":"Initial","version":"v0","workflow":{"config":"s3://workflow/config","id":"test-workflow","schemas":{"test-schema":"s3://bucket/workflows/test.json"}}}
+    pub const INITIAL_NONE_COMPLEX_WORKFLOW_TOP_HASH: &str =
+        "f9b5b98503dc3feb22b5fc94bd8ff474efb39adcd9fa2a9f6b3199de536ec5ca";
 }
 
 pub fn create_multihash(b64_str: &str) -> Res<Multihash<256>> {

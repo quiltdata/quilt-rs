@@ -494,6 +494,112 @@ mod tests {
     }
 
     #[test]
+    fn test_manifest_header_empty_none_simple_workflow_no_rows() -> Res {
+        let header = ManifestHeader {
+            message: Some("".to_string()),
+            user_meta: None,
+            workflow: Some(Workflow {
+                config: "s3://workflow/config".parse()?,
+                id: None,
+            }),
+            ..ManifestHeader::default()
+        };
+
+        let mut top_hasher = TopHasher::new();
+        top_hasher.append_header(&header)?;
+
+        let calculated_hash = top_hasher.finalize();
+
+        assert_eq!(
+            calculated_hash,
+            manifest_empty::EMPTY_NONE_SIMPLE_WORKFLOW_TOP_HASH
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_manifest_header_empty_null_simple_workflow_no_rows() -> Res {
+        let header = ManifestHeader {
+            message: Some("".to_string()),
+            user_meta: Some(serde_json::Value::Null),
+            workflow: Some(Workflow {
+                config: "s3://workflow/config".parse()?,
+                id: None,
+            }),
+            ..ManifestHeader::default()
+        };
+
+        let mut top_hasher = TopHasher::new();
+        top_hasher.append_header(&header)?;
+
+        let calculated_hash = top_hasher.finalize();
+
+        assert_eq!(
+            calculated_hash,
+            manifest_empty::EMPTY_NULL_SIMPLE_WORKFLOW_TOP_HASH
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_manifest_header_initial_meta_simple_workflow_no_rows() -> Res {
+        let header = ManifestHeader {
+            message: Some("Initial".to_string()),
+            user_meta: Some(serde_json::json!({"key": "value"})),
+            workflow: Some(Workflow {
+                config: "s3://workflow/config".parse()?,
+                id: None,
+            }),
+            ..ManifestHeader::default()
+        };
+
+        let mut top_hasher = TopHasher::new();
+        top_hasher.append_header(&header)?;
+
+        let calculated_hash = top_hasher.finalize();
+
+        assert_eq!(
+            calculated_hash,
+            manifest_empty::INITIAL_META_SIMPLE_WORKFLOW_TOP_HASH
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_manifest_header_initial_none_complex_workflow_no_rows() -> Res {
+        let header = ManifestHeader {
+            message: Some("Initial".to_string()),
+            user_meta: None,
+            workflow: Some(Workflow {
+                config: "s3://workflow/config".parse()?,
+                id: Some(WorkflowId {
+                    id: "test-workflow".to_string(),
+                    metadata: Some(MetadataSchema {
+                        id: "test-schema".to_string(),
+                        url: "s3://bucket/workflows/test.json".parse()?,
+                    }),
+                }),
+            }),
+            ..ManifestHeader::default()
+        };
+
+        let mut top_hasher = TopHasher::new();
+        top_hasher.append_header(&header)?;
+
+        let calculated_hash = top_hasher.finalize();
+
+        assert_eq!(
+            calculated_hash,
+            manifest_empty::INITIAL_NONE_COMPLEX_WORKFLOW_TOP_HASH
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn test_checksummed_manifest_top_hash_direct() -> Res {
         let header = ManifestHeader {
             message: Some("Initial".to_string()),
