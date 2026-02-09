@@ -73,7 +73,12 @@ pub fn serialize_manifest_row_entry(
 ) -> Res<serde_json::Map<String, serde_json::Value>> {
     // Handle meta field - match quilt3 behavior where null becomes {}
     let meta = match &manifest_row.meta {
-        Some(serde_json::Value::Object(obj)) => obj.clone(),
+        Some(serde_json::Value::Object(obj)) => {
+            let mut m = obj.clone();
+            m.values_mut().for_each(serde_json::Value::sort_all_objects);
+            m.sort_keys();
+            m
+        }
         Some(serde_json::Value::Null) | None => serde_json::Map::default(), // quilt3: meta = meta or {}
         Some(other) => {
             // If meta is not an object or null, wrap it in an object
@@ -156,6 +161,7 @@ mod tests {
 
     use crate::fixtures;
     use crate::fixtures::manifest_empty;
+    use crate::fixtures::objects;
     use crate::Res;
 
     #[test]
@@ -626,6 +632,375 @@ mod tests {
 
         let calculated_hash = top_hasher.finalize();
         assert_eq!(calculated_hash, fixtures::manifest::CHECKSUMMED_HASH);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_single_row() -> Res {
+        // Single row with default header
+        let header = ManifestHeader::default();
+
+        let mut top_hasher = TopHasher::new();
+        top_hasher.append_header(&header)?;
+
+        let manifest_row = ManifestRow {
+            logical_key: PathBuf::from("data.txt"),
+            physical_key: "s3://bucket/data.txt".to_string(),
+            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?
+                .into(),
+            size: 16,
+            meta: Some(serde_json::json!({"type": "text"})),
+        };
+        top_hasher.append(&manifest_row)?;
+
+        let calculated_hash = top_hasher.finalize();
+
+        assert_eq!(calculated_hash, manifest_empty::SINGLE_ROW_TOP_HASH);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_mixed_hash_types() -> Res {
+        // Mixed hash types with default header
+        let header = ManifestHeader::default();
+
+        let mut top_hasher = TopHasher::new();
+        top_hasher.append_header(&header)?;
+
+        // Row 1: SHA256 hash (legacy format)
+        let row1 = ManifestRow {
+            logical_key: PathBuf::from("file1.txt"),
+            physical_key: "s3://bucket/file1.txt".to_string(),
+            hash: crate::checksum::Sha256Hash::try_from(
+                "7465737464617461000000000000000000000000000000000000000000000000",
+            )?
+            .into(),
+            size: 8,
+            meta: None,
+        };
+        top_hasher.append(&row1)?;
+
+        // Row 2: SHA256-chunked hash (current format)
+        let row2 = ManifestRow {
+            logical_key: PathBuf::from("file2.txt"),
+            physical_key: "s3://bucket/file2.txt".to_string(),
+            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?
+                .into(),
+            size: 16,
+            meta: None,
+        };
+        top_hasher.append(&row2)?;
+
+        // Row 3: CRC64-NVMe hash (newest format)
+        let row3 = ManifestRow {
+            logical_key: PathBuf::from("file3.txt"),
+            physical_key: "s3://bucket/file3.txt".to_string(),
+            hash: crate::checksum::Crc64Hash::try_from("dGVzdGRhdGEAAAAAAAAAAAAAAAAAAAAA")?.into(),
+            size: 32,
+            meta: None,
+        };
+        top_hasher.append(&row3)?;
+
+        let calculated_hash = top_hasher.finalize();
+
+        assert_eq!(calculated_hash, manifest_empty::MIXED_HASH_TYPES_TOP_HASH);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_hash_normalization_equivalence() -> Res {
+        // Test that different JSON representations produce the same hash
+        // when they represent equivalent data structures
+
+        // First manifest: meta: {}, logical_key first
+        let header1 = ManifestHeader::default();
+        let mut top_hasher1 = TopHasher::new();
+        top_hasher1.append_header(&header1)?;
+
+        let row1a = ManifestRow {
+            logical_key: PathBuf::from("test1.txt"),
+            physical_key: "s3://bucket/test1.txt".to_string(),
+            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
+            size: 0,
+            meta: Some(serde_json::json!({})), // Empty object
+        };
+
+        let row1b = ManifestRow {
+            logical_key: PathBuf::from("test2.txt"),
+            physical_key: "s3://bucket/test2.txt".to_string(),
+            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?
+                .into(),
+            size: 16,
+            meta: Some(serde_json::json!({"alpha": "first", "beta": "second"})), // Keys in alphabetical order
+        };
+
+        top_hasher1.append(&row1a)?;
+        top_hasher1.append(&row1b)?;
+        let hash1 = top_hasher1.finalize();
+
+        // Second manifest: meta: null (becomes {}), different key order, field order doesn't matter for hashing
+        let header2 = ManifestHeader::default();
+        let mut top_hasher2 = TopHasher::new();
+        top_hasher2.append_header(&header2)?;
+
+        let row2a = ManifestRow {
+            logical_key: PathBuf::from("test1.txt"),
+            physical_key: "s3://bucket/test1.txt".to_string(),
+            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
+            size: 0,
+            meta: Some(serde_json::Value::Null), // Null becomes {}
+        };
+
+        let row2b = ManifestRow {
+            logical_key: PathBuf::from("test2.txt"),
+            physical_key: "s3://bucket/test2.txt".to_string(),
+            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?
+                .into(),
+            size: 16,
+            meta: Some(serde_json::json!({"beta": "second", "alpha": "first"})), // Keys in different order
+        };
+
+        top_hasher2.append(&row2a)?;
+        top_hasher2.append(&row2b)?;
+        let hash2 = top_hasher2.finalize();
+
+        // Third manifest: meta: None (becomes {})
+        let header3 = ManifestHeader::default();
+        let mut top_hasher3 = TopHasher::new();
+        top_hasher3.append_header(&header3)?;
+
+        let row3a = ManifestRow {
+            logical_key: PathBuf::from("test1.txt"),
+            physical_key: "s3://bucket/test1.txt".to_string(),
+            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
+            size: 0,
+            meta: None, // None becomes {}
+        };
+
+        let row3b = ManifestRow {
+            logical_key: PathBuf::from("test2.txt"),
+            physical_key: "s3://bucket/test2.txt".to_string(),
+            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?
+                .into(),
+            size: 16,
+            meta: Some(serde_json::json!({"beta": "second", "alpha": "first"})), // Same as above after normalization
+        };
+
+        top_hasher3.append(&row3a)?;
+        top_hasher3.append(&row3b)?;
+        let hash3 = top_hasher3.finalize();
+
+        // All three should produce the same hash despite different representations
+        assert_eq!(
+            hash1, hash2,
+            "Empty object {{}} and null should normalize to same hash"
+        );
+        assert_eq!(
+            hash1, hash3,
+            "Empty object {{}}, null, and None should normalize to same hash"
+        );
+        assert_eq!(
+            hash2, hash3,
+            "All meta empty representations should normalize to same hash"
+        );
+
+        // Test that the normalized hash matches our expected constant
+        assert_eq!(hash1, manifest_empty::NORMALIZED_EQUIVALENCE_TOP_HASH);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_multiple_rows() -> Res {
+        // Multiple rows with default header
+        let header = ManifestHeader::default();
+
+        let mut top_hasher = TopHasher::new();
+        top_hasher.append_header(&header)?;
+
+        // Row 1: Small file
+        let row1 = ManifestRow {
+            logical_key: PathBuf::from("config.json"),
+            physical_key: "s3://bucket/config.json".to_string(),
+            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
+            size: 0,
+            meta: Some(serde_json::json!({"format": "json"})),
+        };
+        top_hasher.append(&row1)?;
+
+        // Row 2: Medium file
+        let row2 = ManifestRow {
+            logical_key: PathBuf::from("data/file.csv"),
+            physical_key: "s3://bucket/data/file.csv".to_string(),
+            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::EQUAL_TO_8MB_HASH_B64)?
+                .into(),
+            size: 8388608,
+            meta: Some(serde_json::Value::Null),
+        };
+        top_hasher.append(&row2)?;
+
+        // Row 3: Large file
+        let row3 = ManifestRow {
+            logical_key: PathBuf::from("images/photo.jpg"),
+            physical_key: "s3://bucket/images/photo.jpg".to_string(),
+            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::MORE_THAN_8MB_HASH_B64)?
+                .into(),
+            size: 18874368,
+            meta: Some(serde_json::json!({"width": 1920, "height": 1080})),
+        };
+        top_hasher.append(&row3)?;
+
+        let calculated_hash = top_hasher.finalize();
+
+        assert_eq!(calculated_hash, manifest_empty::MULTIPLE_ROWS_TOP_HASH);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_workflow_header_mixed_rows() -> Res {
+        // Case 3: Workflow header + Mixed rows
+        let header = ManifestHeader {
+            message: Some("Production".to_string()),
+            user_meta: None,
+            workflow: Some(Workflow {
+                config: "s3://workflow/prod.json".parse()?,
+                id: None,
+            }),
+            ..ManifestHeader::default()
+        };
+
+        let mut top_hasher = TopHasher::new();
+        top_hasher.append_header(&header)?;
+
+        // Row 1: File with null meta
+        let row1 = ManifestRow {
+            logical_key: PathBuf::from("logs/app.log"),
+            physical_key: "s3://bucket/logs/app.log".to_string(),
+            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::NESTED_HASH_B64)?.into(),
+            size: 20,
+            meta: Some(serde_json::Value::Null),
+        };
+        top_hasher.append(&row1)?;
+
+        // Row 2: File with complex meta
+        let row2 = ManifestRow {
+            logical_key: PathBuf::from("models/trained_model.pkl"),
+            physical_key: "s3://bucket/models/trained_model.pkl".to_string(),
+            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::EQUAL_TO_8MB_HASH_B64)?
+                .into(),
+            size: 8388608,
+            meta: Some(serde_json::json!({
+                "model_type": "random_forest",
+                "accuracy": 0.95,
+                "features": ["age", "income", "location"],
+                "trained_at": "2024-01-01T12:00:00Z"
+            })),
+        };
+        top_hasher.append(&row2)?;
+
+        let calculated_hash = top_hasher.finalize();
+
+        assert_eq!(
+            calculated_hash,
+            manifest_empty::WORKFLOW_HEADER_MIXED_ROWS_TOP_HASH
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_full_featured_header_large_rowset() -> Res {
+        // Case 4: Full-featured header + Large row set
+        let header = ManifestHeader {
+            message: Some("Full Test".to_string()),
+            user_meta: Some(serde_json::json!({
+                "project": "data-science-pipeline",
+                "version": "2.1.0",
+                "tags": ["production", "ml", "analysis"]
+            })),
+            workflow: Some(Workflow {
+                config: "s3://workflow/pipeline.json".parse()?,
+                id: Some(WorkflowId {
+                    id: "ml-pipeline".to_string(),
+                    metadata: Some(MetadataSchema {
+                        id: "pipeline-schema".to_string(),
+                        url: "s3://schemas/pipeline.json".parse()?,
+                    }),
+                }),
+            }),
+            ..ManifestHeader::default()
+        };
+
+        let mut top_hasher = TopHasher::new();
+        top_hasher.append_header(&header)?;
+
+        // Row 1: Raw data
+        let row1 = ManifestRow {
+            logical_key: PathBuf::from("raw/dataset.parquet"),
+            physical_key: "s3://data/raw/dataset.parquet".to_string(),
+            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::MORE_THAN_8MB_HASH_B64)?
+                .into(),
+            size: 18874368,
+            meta: Some(serde_json::json!({"rows": 1000000, "columns": 50})),
+        };
+        top_hasher.append(&row1)?;
+
+        // Row 2: Processed data
+        let row2 = ManifestRow {
+            logical_key: PathBuf::from("processed/clean_data.csv"),
+            physical_key: "s3://data/processed/clean_data.csv".to_string(),
+            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::EQUAL_TO_8MB_HASH_B64)?
+                .into(),
+            size: 8388608,
+            meta: Some(serde_json::json!({"cleaned": true, "missing_values_filled": true})),
+        };
+        top_hasher.append(&row2)?;
+
+        // Row 3: Features
+        let row3 = ManifestRow {
+            logical_key: PathBuf::from("features/feature_matrix.npy"),
+            physical_key: "s3://data/features/feature_matrix.npy".to_string(),
+            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?
+                .into(),
+            size: 16,
+            meta: Some(serde_json::Value::Null),
+        };
+        top_hasher.append(&row3)?;
+
+        // Row 4: Model
+        let row4 = ManifestRow {
+            logical_key: PathBuf::from("models/final_model.joblib"),
+            physical_key: "s3://data/models/final_model.joblib".to_string(),
+            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::NESTED_HASH_B64)?.into(),
+            size: 20,
+            meta: Some(serde_json::json!({
+                "algorithm": "gradient_boosting",
+                "hyperparameters": {"n_estimators": 100, "learning_rate": 0.1},
+                "cross_val_score": 0.92
+            })),
+        };
+        top_hasher.append(&row4)?;
+
+        // Row 5: Results
+        let row5 = ManifestRow {
+            logical_key: PathBuf::from("results/predictions.json"),
+            physical_key: "s3://data/results/predictions.json".to_string(),
+            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
+            size: 0,
+            meta: Some(serde_json::json!({"prediction_count": 10000, "format": "json"})),
+        };
+        top_hasher.append(&row5)?;
+
+        let calculated_hash = top_hasher.finalize();
+
+        assert_eq!(
+            calculated_hash,
+            manifest_empty::FULL_FEATURED_HEADER_LARGE_ROWSET_TOP_HASH
+        );
 
         Ok(())
     }

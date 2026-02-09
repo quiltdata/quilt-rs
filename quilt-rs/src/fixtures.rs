@@ -110,6 +110,53 @@ pub mod manifest_empty {
     /// Manifest header: {"message":"Initial","version":"v0","workflow":{"config":"s3://workflow/config","id":"test-workflow","schemas":{"test-schema":"s3://bucket/workflows/test.json"}}}
     pub const INITIAL_NONE_COMPLEX_WORKFLOW_TOP_HASH: &str =
         "f9b5b98503dc3feb22b5fc94bd8ff474efb39adcd9fa2a9f6b3199de536ec5ca";
+
+    // ROWS series: with header + rows combinations
+
+    /// Single row manifest with default header
+    /// Hash: objects::LESS_THAN_8MB_HASH_B64 (16 bytes)
+    /// JSON:
+    /// {"message":"","user_meta":{},"version":"v0"}
+    /// {"logical_key":"data.txt","physical_keys":["s3://bucket/data.txt"],"hash":{"type":"sha2-256-chunked","value":"Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="},"size":16,"meta":{"type":"text"}}
+    pub const SINGLE_ROW_TOP_HASH: &str =
+        "9adfc26d4d85bc1a31bd9b45af1c78647415d580a4196becd85f9e4e793c5824";
+
+    /// Multiple rows manifest with default header
+    /// Hashes: ZERO_HASH_B64 (0 bytes), EQUAL_TO_8MB_HASH_B64 (8388608 bytes), MORE_THAN_8MB_HASH_B64 (18874368 bytes)
+    /// JSON:
+    /// {"message":"","user_meta":{},"version":"v0"}
+    /// {"logical_key":"config.json","physical_keys":["s3://bucket/config.json"],"hash":{"type":"sha2-256-chunked","value":"47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="},"size":0,"meta":{"format":"json"}}
+    /// {"logical_key":"data/file.csv","physical_keys":["s3://bucket/data/file.csv"],"hash":{"type":"sha2-256-chunked","value":"7V3rZ3Q/AmAYax2wsQBZbc7N1EMIxlxRyMiMthGRdwg="},"size":8388608,"meta":null}
+    /// {"logical_key":"images/photo.jpg","physical_keys":["s3://bucket/images/photo.jpg"],"hash":{"type":"sha2-256-chunked","value":"T+rt/HKRJOiAkEGXKvc+DhCwRcrZiDrFkjKonDT1zgs="},"size":18874368,"meta":{"height":1080,"width":1920}}
+    pub const MULTIPLE_ROWS_TOP_HASH: &str =
+        "b86d9eb02bd108cdd1823d53558c752b9466928c37af7655e4080595633ead7e";
+
+    /// Mixed hash types manifest with default header: SHA256, sha2-256-chunked, CRC64NVME
+    /// Hash values: "7465737464617461000000000000000000000000000000000000000000000000" (8 bytes), LESS_THAN_8MB_HASH_B64 (16 bytes), "dGVzdGRhdGEAAAAAAAAAAAAAAAAAAAAA" (32 bytes)
+    /// JSON:
+    /// {"message":"","user_meta":{},"version":"v0"}
+    /// {"logical_key":"file1.txt","physical_keys":["s3://bucket/file1.txt"],"hash":{"type":"SHA256","value":"7465737464617461000000000000000000000000000000000000000000000000"},"size":8,"meta":{}}
+    /// {"logical_key":"file2.txt","physical_keys":["s3://bucket/file2.txt"],"hash":{"type":"sha2-256-chunked","value":"Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="},"size":16,"meta":{}}
+    /// {"logical_key":"file3.txt","physical_keys":["s3://bucket/file3.txt"],"hash":{"type":"CRC64NVME","value":"dGVzdGRhdGEAAAAAAAAAAAAAAAAAAAAA"},"size":32,"meta":{}}
+    pub const MIXED_HASH_TYPES_TOP_HASH: &str =
+        "45e16dfe0c880236eb9145d20ff246fa190788be2c8b517bf20abd8be6165c10";
+
+    /// Hash normalization equivalence test - tests that different JSON representations produce same hash
+    /// Tests: meta:{} vs meta:null vs meta:None, and key order normalization {"alpha":"first","beta":"second"} vs {"beta":"second","alpha":"first"}
+    /// JSON (normalized form):
+    /// {"message":"","user_meta":{},"version":"v0"}
+    /// {"logical_key":"test1.txt","physical_keys":["s3://bucket/test1.txt"],"hash":{"type":"sha2-256-chunked","value":"47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="},"size":0,"meta":{}}
+    /// {"logical_key":"test2.txt","physical_keys":["s3://bucket/test2.txt"],"hash":{"type":"sha2-256-chunked","value":"Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="},"size":16,"meta":{"alpha":"first","beta":"second"}}
+    pub const NORMALIZED_EQUIVALENCE_TOP_HASH: &str =
+        "10c3b62176b4fbb25b4988181bb65e3861087403f36f13c8adb66bce52d6471b";
+
+    /// Manifest header: {"message":"Production","version":"v0","workflow":{"config":"s3://workflow/prod.json","id":null}} + 2 rows (NESTED, EQUAL_TO_8MB)
+    pub const WORKFLOW_HEADER_MIXED_ROWS_TOP_HASH: &str =
+        "99307ebbd776e6536d26e43cc53c27b82b26cac39d7f749219129d5d66441177";
+
+    /// Manifest header: complex workflow header + user_meta + 5 rows (MORE_THAN_8MB, EQUAL_TO_8MB, LESS_THAN_8MB, NESTED, ZERO)
+    pub const FULL_FEATURED_HEADER_LARGE_ROWSET_TOP_HASH: &str =
+        "022207b5d88f648127bfa25a401c9662e6cf2e85d04069ef8981e5302dd6965c";
 }
 
 pub fn create_multihash(b64_str: &str) -> Res<Multihash<256>> {
