@@ -52,6 +52,50 @@ pub mod manifest_empty {
     /// Manifest header: {"message":null,"user_meta":null,"version":"v0"}
     pub const NULL_NULL_TOP_HASH: &str =
         "fb53faf10edc3c9cc234f362c1a57d702213e869a20b887d9f6ed5439c936513";
+
+    // INITIAL_* series: message="Initial"
+
+    /// Manifest header: {"message":"Initial","user_meta":{},"version":"v0"}
+    pub const INITIAL_EMPTY_TOP_HASH: &str =
+        "7ee06a4f805b84b2f43ddad3f68bcbf7aafad2412da86e2e912cdfe139eea7f0";
+
+    /// Manifest header: {"message":"Initial","version":"v0"}
+    pub const INITIAL_NONE_TOP_HASH: &str =
+        "5c28e0c17258bff26192df9fd307cbcd72ca9c72777e006282b2508827e76874";
+
+    /// Manifest header: {"message":"Initial","user_meta":null,"version":"v0"}
+    pub const INITIAL_NULL_TOP_HASH: &str =
+        "82d4864583067f3dba8909f050fb8dc0b8e00a77e7b5e14a53aacb165740c7a4";
+
+    /// Manifest header: {"message":"Initial","user_meta":{"key":"value"},"version":"v0"}
+    pub const INITIAL_META_TOP_HASH: &str =
+        "0d659c7f1d7a141160a9defc9b1c9ea7bca96d3454af59cbfcf523871e72f47e";
+
+    /// Manifest header: {"message":"Initial","user_meta":{"author":"user","timestamp":"2024-01-01"},"version":"v0"}
+    pub const INITIAL_COMPLEX_META_TOP_HASH: &str =
+        "9bf52db215ab75c1f75fe4b1b4a782cf822eb463f9f8395e95f3b47627a0e825";
+
+    /// Manifest header: {"message":"Initial","user_meta":{large_object},"version":"v0"}
+    pub const INITIAL_LARGE_META_TOP_HASH: &str =
+        "df9d3129d62e60c1ea840d9c147e2ba7c94269bb33382026c5b27a20cd1351aa";
+
+    // WORKFLOW series: with workflow field
+
+    /// Manifest header: {"message":"","user_meta":{},"version":"v0","workflow":{"config":"s3://workflow/config","id":null}}
+    pub const EMPTY_EMPTY_SIMPLE_WORKFLOW_TOP_HASH: &str =
+        "77cb48f84c2109fcf9e10fd230497f2a3803427bb6b48c32f2c026e080ee1553";
+
+    /// Manifest header: {"message":"","user_meta":{},"version":"v0","workflow":{"config":"s3://workflow/config","id":"test-workflow","schemas":{"test-schema":"s3://bucket/workflows/test.json"}}}
+    pub const EMPTY_EMPTY_COMPLEX_WORKFLOW_TOP_HASH: &str =
+        "714b1c209a98a7b9239076b94305a7852dc60946c5ba0afac64246ea9958ba08";
+
+    /// Manifest header: {"message":"Initial","user_meta":{},"version":"v0","workflow":{"config":"s3://workflow/config","id":null}}
+    pub const INITIAL_EMPTY_SIMPLE_WORKFLOW_TOP_HASH: &str =
+        "c716c54535bd3c896d0813dafd672430456f68b2d407a6a65a558ccab53f4990";
+
+    /// Manifest header: {"message":"Initial","user_meta":{},"version":"v0","workflow":{"config":"s3://workflow/config","id":"test-workflow","schemas":{"test-schema":"s3://bucket/workflows/test.json"}}}
+    pub const INITIAL_EMPTY_COMPLEX_WORKFLOW_TOP_HASH: &str =
+        "63d5e6aedc10aeca11a4ad133b21ecfbc299476833465f6a302fd27cc08d8ab2";
 }
 
 pub fn create_multihash(b64_str: &str) -> Res<Multihash<256>> {
