@@ -159,6 +159,9 @@ mod tests {
     use std::path::PathBuf;
     use test_log::test;
 
+    use crate::checksum::Crc64Hash;
+    use crate::checksum::Sha256ChunkedHash;
+    use crate::checksum::Sha256Hash;
     use crate::fixtures;
     use crate::fixtures::manifest_empty;
     use crate::fixtures::objects;
@@ -620,10 +623,8 @@ mod tests {
             let manifest_row = ManifestRow {
                 logical_key: PathBuf::from(format!("e0-{}.txt", i)),
                 physical_key: "ignored".to_string(),
-                hash: crate::checksum::Sha256ChunkedHash::try_from(
-                    "/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=",
-                )?
-                .into(),
+                hash: Sha256ChunkedHash::try_from("/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=")?
+                    .into(),
                 size: 29,
                 meta: Some(serde_json::Value::Null),
             };
@@ -647,8 +648,7 @@ mod tests {
         let manifest_row = ManifestRow {
             logical_key: PathBuf::from("data.txt"),
             physical_key: "s3://bucket/data.txt".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?
-                .into(),
+            hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
             size: 16,
             meta: Some(serde_json::json!({"type": "text"})),
         };
@@ -673,7 +673,7 @@ mod tests {
         let row1 = ManifestRow {
             logical_key: PathBuf::from("file1.txt"),
             physical_key: "s3://bucket/file1.txt".to_string(),
-            hash: crate::checksum::Sha256Hash::try_from(
+            hash: Sha256Hash::try_from(
                 "7465737464617461000000000000000000000000000000000000000000000000",
             )?
             .into(),
@@ -686,8 +686,7 @@ mod tests {
         let row2 = ManifestRow {
             logical_key: PathBuf::from("file2.txt"),
             physical_key: "s3://bucket/file2.txt".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?
-                .into(),
+            hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
             size: 16,
             meta: None,
         };
@@ -697,7 +696,7 @@ mod tests {
         let row3 = ManifestRow {
             logical_key: PathBuf::from("file3.txt"),
             physical_key: "s3://bucket/file3.txt".to_string(),
-            hash: crate::checksum::Crc64Hash::try_from("dGVzdGRhdGEAAAAAAAAAAAAAAAAAAAAA")?.into(),
+            hash: Crc64Hash::try_from("dGVzdGRhdGEAAAAAAAAAAAAAAAAAAAAA")?.into(),
             size: 32,
             meta: None,
         };
@@ -723,7 +722,7 @@ mod tests {
         let row1a = ManifestRow {
             logical_key: PathBuf::from("test1.txt"),
             physical_key: "s3://bucket/test1.txt".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
+            hash: Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
             size: 0,
             meta: Some(serde_json::json!({})), // Empty object
         };
@@ -731,8 +730,7 @@ mod tests {
         let row1b = ManifestRow {
             logical_key: PathBuf::from("test2.txt"),
             physical_key: "s3://bucket/test2.txt".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?
-                .into(),
+            hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
             size: 16,
             meta: Some(serde_json::json!({"alpha": "first", "beta": "second"})), // Keys in alphabetical order
         };
@@ -749,7 +747,7 @@ mod tests {
         let row2a = ManifestRow {
             logical_key: PathBuf::from("test1.txt"),
             physical_key: "s3://bucket/test1.txt".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
+            hash: Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
             size: 0,
             meta: Some(serde_json::Value::Null), // Null becomes {}
         };
@@ -757,8 +755,7 @@ mod tests {
         let row2b = ManifestRow {
             logical_key: PathBuf::from("test2.txt"),
             physical_key: "s3://bucket/test2.txt".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?
-                .into(),
+            hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
             size: 16,
             meta: Some(serde_json::json!({"beta": "second", "alpha": "first"})), // Keys in different order
         };
@@ -775,7 +772,7 @@ mod tests {
         let row3a = ManifestRow {
             logical_key: PathBuf::from("test1.txt"),
             physical_key: "s3://bucket/test1.txt".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
+            hash: Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
             size: 0,
             meta: None, // None becomes {}
         };
@@ -783,8 +780,7 @@ mod tests {
         let row3b = ManifestRow {
             logical_key: PathBuf::from("test2.txt"),
             physical_key: "s3://bucket/test2.txt".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?
-                .into(),
+            hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
             size: 16,
             meta: Some(serde_json::json!({"beta": "second", "alpha": "first"})), // Same as above after normalization
         };
@@ -825,7 +821,7 @@ mod tests {
         let row1 = ManifestRow {
             logical_key: PathBuf::from("config.json"),
             physical_key: "s3://bucket/config.json".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
+            hash: Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
             size: 0,
             meta: Some(serde_json::json!({"format": "json"})),
         };
@@ -835,8 +831,7 @@ mod tests {
         let row2 = ManifestRow {
             logical_key: PathBuf::from("data/file.csv"),
             physical_key: "s3://bucket/data/file.csv".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::EQUAL_TO_8MB_HASH_B64)?
-                .into(),
+            hash: Sha256ChunkedHash::try_from(objects::EQUAL_TO_8MB_HASH_B64)?.into(),
             size: 8388608,
             meta: Some(serde_json::Value::Null),
         };
@@ -846,8 +841,7 @@ mod tests {
         let row3 = ManifestRow {
             logical_key: PathBuf::from("images/photo.jpg"),
             physical_key: "s3://bucket/images/photo.jpg".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::MORE_THAN_8MB_HASH_B64)?
-                .into(),
+            hash: Sha256ChunkedHash::try_from(objects::MORE_THAN_8MB_HASH_B64)?.into(),
             size: 18874368,
             meta: Some(serde_json::json!({"width": 1920, "height": 1080})),
         };
@@ -880,7 +874,7 @@ mod tests {
         let row1 = ManifestRow {
             logical_key: PathBuf::from("logs/app.log"),
             physical_key: "s3://bucket/logs/app.log".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::NESTED_HASH_B64)?.into(),
+            hash: Sha256ChunkedHash::try_from(objects::NESTED_HASH_B64)?.into(),
             size: 20,
             meta: Some(serde_json::Value::Null),
         };
@@ -890,8 +884,7 @@ mod tests {
         let row2 = ManifestRow {
             logical_key: PathBuf::from("models/trained_model.pkl"),
             physical_key: "s3://bucket/models/trained_model.pkl".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::EQUAL_TO_8MB_HASH_B64)?
-                .into(),
+            hash: Sha256ChunkedHash::try_from(objects::EQUAL_TO_8MB_HASH_B64)?.into(),
             size: 8388608,
             meta: Some(serde_json::json!({
                 "model_type": "random_forest",
@@ -942,8 +935,7 @@ mod tests {
         let row1 = ManifestRow {
             logical_key: PathBuf::from("raw/dataset.parquet"),
             physical_key: "s3://data/raw/dataset.parquet".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::MORE_THAN_8MB_HASH_B64)?
-                .into(),
+            hash: Sha256ChunkedHash::try_from(objects::MORE_THAN_8MB_HASH_B64)?.into(),
             size: 18874368,
             meta: Some(serde_json::json!({"rows": 1000000, "columns": 50})),
         };
@@ -953,8 +945,7 @@ mod tests {
         let row2 = ManifestRow {
             logical_key: PathBuf::from("processed/clean_data.csv"),
             physical_key: "s3://data/processed/clean_data.csv".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::EQUAL_TO_8MB_HASH_B64)?
-                .into(),
+            hash: Sha256ChunkedHash::try_from(objects::EQUAL_TO_8MB_HASH_B64)?.into(),
             size: 8388608,
             meta: Some(serde_json::json!({"cleaned": true, "missing_values_filled": true})),
         };
@@ -964,8 +955,7 @@ mod tests {
         let row3 = ManifestRow {
             logical_key: PathBuf::from("features/feature_matrix.npy"),
             physical_key: "s3://data/features/feature_matrix.npy".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?
-                .into(),
+            hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
             size: 16,
             meta: Some(serde_json::Value::Null),
         };
@@ -975,7 +965,7 @@ mod tests {
         let row4 = ManifestRow {
             logical_key: PathBuf::from("models/final_model.joblib"),
             physical_key: "s3://data/models/final_model.joblib".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::NESTED_HASH_B64)?.into(),
+            hash: Sha256ChunkedHash::try_from(objects::NESTED_HASH_B64)?.into(),
             size: 20,
             meta: Some(serde_json::json!({
                 "algorithm": "gradient_boosting",
@@ -989,7 +979,7 @@ mod tests {
         let row5 = ManifestRow {
             logical_key: PathBuf::from("results/predictions.json"),
             physical_key: "s3://data/results/predictions.json".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
+            hash: Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
             size: 0,
             meta: Some(serde_json::json!({"prediction_count": 10000, "format": "json"})),
         };

@@ -267,11 +267,15 @@ mod tests {
 
     use tokio_stream;
 
+    use crate::checksum::Crc64Hash;
+    use crate::checksum::Sha256ChunkedHash;
+    use crate::checksum::Sha256Hash;
+    use crate::fixtures;
     use crate::fixtures::manifest_empty;
+    use crate::fixtures::objects;
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::io::storage::LocalStorage;
-
     use crate::uri::S3Uri;
 
     #[test(tokio::test)]
@@ -992,8 +996,6 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_checksummed_manifest_build_from_stream() -> Res {
-        use crate::fixtures;
-
         let storage = LocalStorage::default();
         let manifest = Manifest::from_path(&storage, &fixtures::manifest::checksummed()?).await?;
 
@@ -1230,10 +1232,7 @@ mod tests {
         let manifest_row = ManifestRow {
             logical_key: PathBuf::from("data.txt"),
             physical_key: "s3://bucket/data.txt".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(
-                crate::fixtures::objects::LESS_THAN_8MB_HASH_B64,
-            )?
-            .into(),
+            hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
             size: 16,
             meta: Some(serde_json::json!({"type": "text"})),
         };
@@ -1252,7 +1251,7 @@ mod tests {
         let json_content = format!(
             r#"{{"message":"","user_meta":{{}},"version":"v0"}}
 {{"logical_key":"data.txt","physical_keys":["s3://bucket/data.txt"],"hash":{{"type":"sha2-256-chunked","value":"{}"}},"size":16,"meta":{{"type":"text"}}}}"#,
-            crate::fixtures::objects::LESS_THAN_8MB_HASH_B64
+            objects::LESS_THAN_8MB_HASH_B64
         );
         let manifest = Manifest::from_reader(Cursor::new(json_content.as_bytes())).await?;
         let (_, calculated_hash) = build_manifest_from_rows_stream(
@@ -1278,7 +1277,7 @@ mod tests {
         let row1 = ManifestRow {
             logical_key: PathBuf::from("file1.txt"),
             physical_key: "s3://bucket/file1.txt".to_string(),
-            hash: crate::checksum::Sha256Hash::try_from(
+            hash: Sha256Hash::try_from(
                 "7465737464617461000000000000000000000000000000000000000000000000",
             )?
             .into(),
@@ -1289,10 +1288,7 @@ mod tests {
         let row2 = ManifestRow {
             logical_key: PathBuf::from("file2.txt"),
             physical_key: "s3://bucket/file2.txt".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(
-                crate::fixtures::objects::LESS_THAN_8MB_HASH_B64,
-            )?
-            .into(),
+            hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
             size: 16,
             meta: None,
         };
@@ -1300,7 +1296,7 @@ mod tests {
         let row3 = ManifestRow {
             logical_key: PathBuf::from("file3.txt"),
             physical_key: "s3://bucket/file3.txt".to_string(),
-            hash: crate::checksum::Crc64Hash::try_from("dGVzdGRhdGEAAAAAAAAAAAAAAAAAAAAA")?.into(),
+            hash: Crc64Hash::try_from("dGVzdGRhdGEAAAAAAAAAAAAAAAAAAAAA")?.into(),
             size: 32,
             meta: None,
         };
@@ -1321,7 +1317,7 @@ mod tests {
 {{"logical_key":"file1.txt","physical_keys":["s3://bucket/file1.txt"],"hash":{{"type":"SHA256","value":"7465737464617461000000000000000000000000000000000000000000000000"}},"size":8,"meta":{{}}}}
 {{"logical_key":"file2.txt","physical_keys":["s3://bucket/file2.txt"],"hash":{{"type":"sha2-256-chunked","value":"{}"}},"size":16,"meta":{{}}}}
 {{"logical_key":"file3.txt","physical_keys":["s3://bucket/file3.txt"],"hash":{{"type":"CRC64NVME","value":"dGVzdGRhdGEAAAAAAAAAAAAAAAAAAAAA"}},"size":32,"meta":{{}}}}"#,
-            crate::fixtures::objects::LESS_THAN_8MB_HASH_B64
+            objects::LESS_THAN_8MB_HASH_B64
         );
         let manifest = Manifest::from_reader(Cursor::new(json_content.as_bytes())).await?;
         let (_, calculated_hash_from_reader) = build_manifest_from_rows_stream(
@@ -1350,10 +1346,7 @@ mod tests {
         let row1 = ManifestRow {
             logical_key: PathBuf::from("config.json"),
             physical_key: "s3://bucket/config.json".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(
-                crate::fixtures::objects::ZERO_HASH_B64,
-            )?
-            .into(),
+            hash: Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
             size: 0,
             meta: Some(serde_json::json!({"format": "json"})),
         };
@@ -1361,10 +1354,7 @@ mod tests {
         let row2 = ManifestRow {
             logical_key: PathBuf::from("data/file.csv"),
             physical_key: "s3://bucket/data/file.csv".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(
-                crate::fixtures::objects::EQUAL_TO_8MB_HASH_B64,
-            )?
-            .into(),
+            hash: Sha256ChunkedHash::try_from(objects::EQUAL_TO_8MB_HASH_B64)?.into(),
             size: 8388608,
             meta: Some(serde_json::Value::Null),
         };
@@ -1372,10 +1362,7 @@ mod tests {
         let row3 = ManifestRow {
             logical_key: PathBuf::from("images/photo.jpg"),
             physical_key: "s3://bucket/images/photo.jpg".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(
-                crate::fixtures::objects::MORE_THAN_8MB_HASH_B64,
-            )?
-            .into(),
+            hash: Sha256ChunkedHash::try_from(objects::MORE_THAN_8MB_HASH_B64)?.into(),
             size: 18874368,
             meta: Some(serde_json::json!({"width": 1920, "height": 1080})),
         };
@@ -1396,9 +1383,9 @@ mod tests {
 {{"logical_key":"config.json","physical_keys":["s3://bucket/config.json"],"hash":{{"type":"sha2-256-chunked","value":"{}"}},"size":0,"meta":{{"format":"json"}}}}
 {{"logical_key":"data/file.csv","physical_keys":["s3://bucket/data/file.csv"],"hash":{{"type":"sha2-256-chunked","value":"{}"}},"size":8388608,"meta":null}}
 {{"logical_key":"images/photo.jpg","physical_keys":["s3://bucket/images/photo.jpg"],"hash":{{"type":"sha2-256-chunked","value":"{}"}},"size":18874368,"meta":{{"width":1920,"height":1080}}}}"#,
-            crate::fixtures::objects::ZERO_HASH_B64,
-            crate::fixtures::objects::EQUAL_TO_8MB_HASH_B64,
-            crate::fixtures::objects::MORE_THAN_8MB_HASH_B64
+            objects::ZERO_HASH_B64,
+            objects::EQUAL_TO_8MB_HASH_B64,
+            objects::MORE_THAN_8MB_HASH_B64
         );
         let manifest = Manifest::from_reader(Cursor::new(json_content.as_bytes())).await?;
         let (_, calculated_hash) = build_manifest_from_rows_stream(
@@ -1432,10 +1419,7 @@ mod tests {
         let row1 = ManifestRow {
             logical_key: PathBuf::from("logs/app.log"),
             physical_key: "s3://bucket/logs/app.log".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(
-                crate::fixtures::objects::NESTED_HASH_B64,
-            )?
-            .into(),
+            hash: Sha256ChunkedHash::try_from(objects::NESTED_HASH_B64)?.into(),
             size: 20,
             meta: Some(serde_json::Value::Null),
         };
@@ -1443,10 +1427,7 @@ mod tests {
         let row2 = ManifestRow {
             logical_key: PathBuf::from("models/trained_model.pkl"),
             physical_key: "s3://bucket/models/trained_model.pkl".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(
-                crate::fixtures::objects::EQUAL_TO_8MB_HASH_B64,
-            )?
-            .into(),
+            hash: Sha256ChunkedHash::try_from(objects::EQUAL_TO_8MB_HASH_B64)?.into(),
             size: 8388608,
             meta: Some(serde_json::json!({
                 "model_type": "random_forest",
@@ -1499,10 +1480,7 @@ mod tests {
         let row1 = ManifestRow {
             logical_key: PathBuf::from("raw/dataset.parquet"),
             physical_key: "s3://data/raw/dataset.parquet".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(
-                crate::fixtures::objects::MORE_THAN_8MB_HASH_B64,
-            )?
-            .into(),
+            hash: Sha256ChunkedHash::try_from(objects::MORE_THAN_8MB_HASH_B64)?.into(),
             size: 18874368,
             meta: Some(serde_json::json!({"rows": 1000000, "columns": 50})),
         };
@@ -1510,10 +1488,7 @@ mod tests {
         let row2 = ManifestRow {
             logical_key: PathBuf::from("processed/clean_data.csv"),
             physical_key: "s3://data/processed/clean_data.csv".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(
-                crate::fixtures::objects::EQUAL_TO_8MB_HASH_B64,
-            )?
-            .into(),
+            hash: Sha256ChunkedHash::try_from(objects::EQUAL_TO_8MB_HASH_B64)?.into(),
             size: 8388608,
             meta: Some(serde_json::json!({"cleaned": true, "missing_values_filled": true})),
         };
@@ -1521,10 +1496,7 @@ mod tests {
         let row3 = ManifestRow {
             logical_key: PathBuf::from("features/feature_matrix.npy"),
             physical_key: "s3://data/features/feature_matrix.npy".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(
-                crate::fixtures::objects::LESS_THAN_8MB_HASH_B64,
-            )?
-            .into(),
+            hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
             size: 16,
             meta: Some(serde_json::Value::Null),
         };
@@ -1532,10 +1504,7 @@ mod tests {
         let row4 = ManifestRow {
             logical_key: PathBuf::from("models/final_model.joblib"),
             physical_key: "s3://data/models/final_model.joblib".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(
-                crate::fixtures::objects::NESTED_HASH_B64,
-            )?
-            .into(),
+            hash: Sha256ChunkedHash::try_from(objects::NESTED_HASH_B64)?.into(),
             size: 20,
             meta: Some(serde_json::json!({
                 "algorithm": "gradient_boosting",
@@ -1547,10 +1516,7 @@ mod tests {
         let row5 = ManifestRow {
             logical_key: PathBuf::from("results/predictions.json"),
             physical_key: "s3://data/results/predictions.json".to_string(),
-            hash: crate::checksum::Sha256ChunkedHash::try_from(
-                crate::fixtures::objects::ZERO_HASH_B64,
-            )?
-            .into(),
+            hash: Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
             size: 0,
             meta: Some(serde_json::json!({"prediction_count": 10000, "format": "json"})),
         };
@@ -1587,8 +1553,8 @@ mod tests {
             r#"{{"message":"","user_meta":{{}},"version":"v0"}}
 {{"logical_key":"test1.txt","physical_keys":["s3://bucket/test1.txt"],"hash":{{"type":"sha2-256-chunked","value":"{}"}},"size":0,"meta":{{}}}}
 {{"logical_key":"test2.txt","physical_keys":["s3://bucket/test2.txt"],"hash":{{"type":"sha2-256-chunked","value":"{}"}},"size":16,"meta":{{"alpha":"first","beta":"second"}}}}"#,
-            crate::fixtures::objects::ZERO_HASH_B64,
-            crate::fixtures::objects::LESS_THAN_8MB_HASH_B64
+            objects::ZERO_HASH_B64,
+            objects::LESS_THAN_8MB_HASH_B64
         );
         let manifest1 = Manifest::from_reader(Cursor::new(json_content1.as_bytes())).await?;
         let (_, calculated_hash1) = build_manifest_from_rows_stream(
@@ -1604,8 +1570,8 @@ mod tests {
             r#"{{"message":"","user_meta":{{}},"version":"v0"}}
 {{"logical_key":"test1.txt","physical_keys":["s3://bucket/test1.txt"],"hash":{{"type":"sha2-256-chunked","value":"{}"}},"size":0,"meta":null}}
 {{"logical_key":"test2.txt","physical_keys":["s3://bucket/test2.txt"],"hash":{{"type":"sha2-256-chunked","value":"{}"}},"size":16,"meta":{{"beta":"second","alpha":"first"}}}}"#,
-            crate::fixtures::objects::ZERO_HASH_B64,
-            crate::fixtures::objects::LESS_THAN_8MB_HASH_B64
+            objects::ZERO_HASH_B64,
+            objects::LESS_THAN_8MB_HASH_B64
         );
         let manifest2 = Manifest::from_reader(Cursor::new(json_content2.as_bytes())).await?;
         let (_, calculated_hash2) = build_manifest_from_rows_stream(
@@ -1621,8 +1587,8 @@ mod tests {
             r#"{{"message":"","user_meta":{{}},"version":"v0"}}
 {{"size":0,"logical_key":"test1.txt","physical_keys":["s3://bucket/test1.txt"],"hash":{{"type":"sha2-256-chunked","value":"{}"}}}}
 {{"size":16,"logical_key":"test2.txt","physical_keys":["s3://bucket/test2.txt"],"hash":{{"type":"sha2-256-chunked","value":"{}"}},"meta":{{"beta":"second","alpha":"first"}}}}"#,
-            crate::fixtures::objects::ZERO_HASH_B64,
-            crate::fixtures::objects::LESS_THAN_8MB_HASH_B64
+            objects::ZERO_HASH_B64,
+            objects::LESS_THAN_8MB_HASH_B64
         );
         let manifest3 = Manifest::from_reader(Cursor::new(json_content3.as_bytes())).await?;
         let (_, calculated_hash3) = build_manifest_from_rows_stream(
