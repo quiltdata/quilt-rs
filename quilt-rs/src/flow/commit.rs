@@ -318,7 +318,7 @@ mod tests {
             None,
         )
         .await?;
-        let hash = fixtures::manifest_empty::EMPTY_NONE_TOP_HASH;
+        let hash = fixtures::top_hash::EMPTY_NONE_TOP_HASH;
         assert!(
             storage
                 .exists(&PathBuf::from(format!(".quilt/installed/foo/bar/{hash}")))

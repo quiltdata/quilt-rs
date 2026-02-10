@@ -1,0 +1,3 @@
+{"message":"","user_meta":{},"version":"v0"}
+{"logical_key":"test1.txt","physical_keys":["s3://bucket/test1.txt"],"hash":{"type":"sha2-256-chunked","value":"47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="},"size":0,"meta":{}}
+{"logical_key":"test2.txt","physical_keys":["s3://bucket/test2.txt"],"hash":{"type":"sha2-256-chunked","value":"Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="},"size":16,"meta":{"alpha":"first","beta":"second"}}

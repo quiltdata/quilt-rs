@@ -271,8 +271,8 @@ mod tests {
     use crate::checksum::Sha256ChunkedHash;
     use crate::checksum::Sha256Hash;
     use crate::fixtures;
-    use crate::fixtures::manifest_empty;
     use crate::fixtures::objects;
+    use crate::fixtures::top_hash;
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::io::storage::LocalStorage;
@@ -314,17 +314,13 @@ mod tests {
             tokio_stream::empty(),
         )
         .await?;
-        assert_eq!(
-            dest_path,
-            dest_dir.join(manifest_empty::EMPTY_EMPTY_TOP_HASH)
-        );
-        assert_eq!(top_hash, manifest_empty::EMPTY_EMPTY_TOP_HASH);
+        assert_eq!(dest_path, dest_dir.join(top_hash::EMPTY_EMPTY_TOP_HASH));
+        assert_eq!(top_hash, top_hash::EMPTY_EMPTY_TOP_HASH);
 
-        // Create manifest from text content and verify top_hash matches
-        let manifest = Manifest::from_reader(Cursor::new(
-            br#"{"message":"","user_meta":{},"version":"v0"}"#,
-        ))
-        .await?;
+        // Create manifest from fixture file and verify top_hash matches
+        let fixture_path = top_hash::load_fixture(top_hash::EMPTY_EMPTY_TOP_HASH)?;
+        let local_storage = LocalStorage::default();
+        let manifest = Manifest::from_path(&local_storage, &fixture_path).await?;
         let (_, calculated_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -333,7 +329,7 @@ mod tests {
         )
         .await?;
 
-        assert_eq!(calculated_hash, manifest_empty::EMPTY_EMPTY_TOP_HASH);
+        assert_eq!(calculated_hash, top_hash::EMPTY_EMPTY_TOP_HASH);
         assert_eq!(calculated_hash, top_hash);
 
         Ok(())
@@ -353,15 +349,13 @@ mod tests {
             tokio_stream::empty(),
         )
         .await?;
-        assert_eq!(
-            dest_path,
-            dest_dir.join(manifest_empty::EMPTY_NONE_TOP_HASH)
-        );
-        assert_eq!(top_hash, manifest_empty::EMPTY_NONE_TOP_HASH);
+        assert_eq!(dest_path, dest_dir.join(top_hash::EMPTY_NONE_TOP_HASH));
+        assert_eq!(top_hash, top_hash::EMPTY_NONE_TOP_HASH);
 
-        // Create manifest from text content and verify top_hash matches
-        let manifest =
-            Manifest::from_reader(Cursor::new(br#"{"message":"","version":"v0"}"#)).await?;
+        // Create manifest from fixture file and verify top_hash matches
+        let fixture_path = top_hash::load_fixture(top_hash::EMPTY_NONE_TOP_HASH)?;
+        let local_storage = LocalStorage::default();
+        let manifest = Manifest::from_path(&local_storage, &fixture_path).await?;
         let (_, calculated_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -370,7 +364,7 @@ mod tests {
         )
         .await?;
 
-        assert_eq!(calculated_hash, manifest_empty::EMPTY_NONE_TOP_HASH);
+        assert_eq!(calculated_hash, top_hash::EMPTY_NONE_TOP_HASH);
         assert_eq!(calculated_hash, top_hash);
 
         Ok(())
@@ -390,17 +384,13 @@ mod tests {
             tokio_stream::empty(),
         )
         .await?;
-        assert_eq!(
-            dest_path,
-            dest_dir.join(manifest_empty::EMPTY_NULL_TOP_HASH)
-        );
-        assert_eq!(top_hash, manifest_empty::EMPTY_NULL_TOP_HASH);
+        assert_eq!(dest_path, dest_dir.join(top_hash::EMPTY_NULL_TOP_HASH));
+        assert_eq!(top_hash, top_hash::EMPTY_NULL_TOP_HASH);
 
-        // Create manifest from text content and verify top_hash matches
-        let manifest = Manifest::from_reader(Cursor::new(
-            br#"{"message":"","user_meta":null,"version":"v0"}"#,
-        ))
-        .await?;
+        // Create manifest from fixture file and verify top_hash matches
+        let fixture_path = top_hash::load_fixture(top_hash::EMPTY_NULL_TOP_HASH)?;
+        let local_storage = LocalStorage::default();
+        let manifest = Manifest::from_path(&local_storage, &fixture_path).await?;
         let (_, calculated_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -409,7 +399,7 @@ mod tests {
         )
         .await?;
 
-        assert_eq!(calculated_hash, manifest_empty::EMPTY_NULL_TOP_HASH);
+        assert_eq!(calculated_hash, top_hash::EMPTY_NULL_TOP_HASH);
         assert_eq!(calculated_hash, top_hash);
 
         Ok(())
@@ -429,17 +419,13 @@ mod tests {
             tokio_stream::empty(),
         )
         .await?;
-        assert_eq!(
-            dest_path,
-            dest_dir.join(manifest_empty::NULL_EMPTY_TOP_HASH)
-        );
-        assert_eq!(top_hash, manifest_empty::NULL_EMPTY_TOP_HASH);
+        assert_eq!(dest_path, dest_dir.join(top_hash::NULL_EMPTY_TOP_HASH));
+        assert_eq!(top_hash, top_hash::NULL_EMPTY_TOP_HASH);
 
-        // Create manifest from text content and verify top_hash matches
-        let manifest = Manifest::from_reader(Cursor::new(
-            br#"{"message":null,"user_meta":{},"version":"v0"}"#,
-        ))
-        .await?;
+        // Create manifest from fixture file and verify top_hash matches
+        let fixture_path = top_hash::load_fixture(top_hash::NULL_EMPTY_TOP_HASH)?;
+        let local_storage = LocalStorage::default();
+        let manifest = Manifest::from_path(&local_storage, &fixture_path).await?;
         let (_, calculated_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -448,7 +434,7 @@ mod tests {
         )
         .await?;
 
-        assert_eq!(calculated_hash, manifest_empty::NULL_EMPTY_TOP_HASH);
+        assert_eq!(calculated_hash, top_hash::NULL_EMPTY_TOP_HASH);
         assert_eq!(calculated_hash, top_hash);
 
         Ok(())
@@ -469,12 +455,13 @@ mod tests {
             tokio_stream::empty(),
         )
         .await?;
-        assert_eq!(dest_path, dest_dir.join(manifest_empty::NULL_NONE_TOP_HASH));
-        assert_eq!(top_hash, manifest_empty::NULL_NONE_TOP_HASH);
+        assert_eq!(dest_path, dest_dir.join(top_hash::NULL_NONE_TOP_HASH));
+        assert_eq!(top_hash, top_hash::NULL_NONE_TOP_HASH);
 
         // Create manifest from text content and verify top_hash matches
-        let manifest =
-            Manifest::from_reader(Cursor::new(br#"{"message":null,"version":"v0"}"#)).await?;
+        let fixture_path = top_hash::load_fixture(top_hash::NULL_NONE_TOP_HASH)?;
+        let local_storage = LocalStorage::default();
+        let manifest = Manifest::from_path(&local_storage, &fixture_path).await?;
         let (_, calculated_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -483,7 +470,7 @@ mod tests {
         )
         .await?;
 
-        assert_eq!(calculated_hash, manifest_empty::NULL_NONE_TOP_HASH);
+        assert_eq!(calculated_hash, top_hash::NULL_NONE_TOP_HASH);
         assert_eq!(calculated_hash, top_hash);
 
         Ok(())
@@ -504,14 +491,13 @@ mod tests {
             tokio_stream::empty(),
         )
         .await?;
-        assert_eq!(dest_path, dest_dir.join(manifest_empty::NULL_NULL_TOP_HASH));
-        assert_eq!(top_hash, manifest_empty::NULL_NULL_TOP_HASH);
+        assert_eq!(dest_path, dest_dir.join(top_hash::NULL_NULL_TOP_HASH));
+        assert_eq!(top_hash, top_hash::NULL_NULL_TOP_HASH);
 
         // Create manifest from text content and verify top_hash matches
-        let manifest = Manifest::from_reader(Cursor::new(
-            br#"{"message":null,"user_meta":null,"version":"v0"}"#,
-        ))
-        .await?;
+        let fixture_path = top_hash::load_fixture(top_hash::NULL_NULL_TOP_HASH)?;
+        let local_storage = LocalStorage::default();
+        let manifest = Manifest::from_path(&local_storage, &fixture_path).await?;
         let (_, calculated_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -520,7 +506,7 @@ mod tests {
         )
         .await?;
 
-        assert_eq!(calculated_hash, manifest_empty::NULL_NULL_TOP_HASH);
+        assert_eq!(calculated_hash, top_hash::NULL_NULL_TOP_HASH);
         assert_eq!(calculated_hash, top_hash);
 
         Ok(())
@@ -541,17 +527,13 @@ mod tests {
             tokio_stream::empty(),
         )
         .await?;
-        assert_eq!(
-            dest_path,
-            dest_dir.join(manifest_empty::INITIAL_EMPTY_TOP_HASH)
-        );
-        assert_eq!(top_hash, manifest_empty::INITIAL_EMPTY_TOP_HASH);
+        assert_eq!(dest_path, dest_dir.join(top_hash::INITIAL_EMPTY_TOP_HASH));
+        assert_eq!(top_hash, top_hash::INITIAL_EMPTY_TOP_HASH);
 
         // Create manifest from text content and verify top_hash matches
-        let manifest = Manifest::from_reader(Cursor::new(
-            br#"{"message":"Initial","user_meta":{},"version":"v0"}"#,
-        ))
-        .await?;
+        let fixture_path = top_hash::load_fixture(top_hash::INITIAL_EMPTY_TOP_HASH)?;
+        let local_storage = LocalStorage::default();
+        let manifest = Manifest::from_path(&local_storage, &fixture_path).await?;
         let (_, calculated_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -560,7 +542,7 @@ mod tests {
         )
         .await?;
 
-        assert_eq!(calculated_hash, manifest_empty::INITIAL_EMPTY_TOP_HASH);
+        assert_eq!(calculated_hash, top_hash::INITIAL_EMPTY_TOP_HASH);
         assert_eq!(calculated_hash, top_hash);
 
         Ok(())
@@ -581,15 +563,13 @@ mod tests {
             tokio_stream::empty(),
         )
         .await?;
-        assert_eq!(
-            dest_path,
-            dest_dir.join(manifest_empty::INITIAL_NONE_TOP_HASH)
-        );
-        assert_eq!(top_hash, manifest_empty::INITIAL_NONE_TOP_HASH);
+        assert_eq!(dest_path, dest_dir.join(top_hash::INITIAL_NONE_TOP_HASH));
+        assert_eq!(top_hash, top_hash::INITIAL_NONE_TOP_HASH);
 
         // Create manifest from text content and verify top_hash matches
-        let manifest =
-            Manifest::from_reader(Cursor::new(br#"{"message":"Initial","version":"v0"}"#)).await?;
+        let fixture_path = top_hash::load_fixture(top_hash::INITIAL_NONE_TOP_HASH)?;
+        let local_storage = LocalStorage::default();
+        let manifest = Manifest::from_path(&local_storage, &fixture_path).await?;
         let (_, calculated_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -598,7 +578,7 @@ mod tests {
         )
         .await?;
 
-        assert_eq!(calculated_hash, manifest_empty::INITIAL_NONE_TOP_HASH);
+        assert_eq!(calculated_hash, top_hash::INITIAL_NONE_TOP_HASH);
         assert_eq!(calculated_hash, top_hash);
 
         Ok(())
@@ -619,17 +599,13 @@ mod tests {
             tokio_stream::empty(),
         )
         .await?;
-        assert_eq!(
-            dest_path,
-            dest_dir.join(manifest_empty::INITIAL_NULL_TOP_HASH)
-        );
-        assert_eq!(top_hash, manifest_empty::INITIAL_NULL_TOP_HASH);
+        assert_eq!(dest_path, dest_dir.join(top_hash::INITIAL_NULL_TOP_HASH));
+        assert_eq!(top_hash, top_hash::INITIAL_NULL_TOP_HASH);
 
         // Create manifest from text content and verify top_hash matches
-        let manifest = Manifest::from_reader(Cursor::new(
-            br#"{"message":"Initial","user_meta":null,"version":"v0"}"#,
-        ))
-        .await?;
+        let fixture_path = top_hash::load_fixture(top_hash::INITIAL_NULL_TOP_HASH)?;
+        let local_storage = LocalStorage::default();
+        let manifest = Manifest::from_path(&local_storage, &fixture_path).await?;
         let (_, calculated_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -638,7 +614,7 @@ mod tests {
         )
         .await?;
 
-        assert_eq!(calculated_hash, manifest_empty::INITIAL_NULL_TOP_HASH);
+        assert_eq!(calculated_hash, top_hash::INITIAL_NULL_TOP_HASH);
         assert_eq!(calculated_hash, top_hash);
 
         Ok(())
@@ -659,17 +635,13 @@ mod tests {
             tokio_stream::empty(),
         )
         .await?;
-        assert_eq!(
-            dest_path,
-            dest_dir.join(manifest_empty::INITIAL_META_TOP_HASH)
-        );
-        assert_eq!(top_hash, manifest_empty::INITIAL_META_TOP_HASH);
+        assert_eq!(dest_path, dest_dir.join(top_hash::INITIAL_META_TOP_HASH));
+        assert_eq!(top_hash, top_hash::INITIAL_META_TOP_HASH);
 
         // Create manifest from text content and verify top_hash matches
-        let manifest = Manifest::from_reader(Cursor::new(
-            br#"{"message":"Initial","user_meta":{"key":"value"},"version":"v0"}"#,
-        ))
-        .await?;
+        let fixture_path = top_hash::load_fixture(top_hash::INITIAL_META_TOP_HASH)?;
+        let local_storage = LocalStorage::default();
+        let manifest = Manifest::from_path(&local_storage, &fixture_path).await?;
         let (_, calculated_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -678,7 +650,7 @@ mod tests {
         )
         .await?;
 
-        assert_eq!(calculated_hash, manifest_empty::INITIAL_META_TOP_HASH);
+        assert_eq!(calculated_hash, top_hash::INITIAL_META_TOP_HASH);
         assert_eq!(calculated_hash, top_hash);
 
         Ok(())
@@ -701,15 +673,14 @@ mod tests {
         .await?;
         assert_eq!(
             dest_path,
-            dest_dir.join(manifest_empty::INITIAL_COMPLEX_META_TOP_HASH)
+            dest_dir.join(top_hash::INITIAL_COMPLEX_META_TOP_HASH)
         );
-        assert_eq!(top_hash, manifest_empty::INITIAL_COMPLEX_META_TOP_HASH);
+        assert_eq!(top_hash, top_hash::INITIAL_COMPLEX_META_TOP_HASH);
 
         // Create manifest from text content and verify top_hash matches
-        let manifest = Manifest::from_reader(Cursor::new(
-            br#"{"message":"Initial","user_meta":{"author":"user","timestamp":"2024-01-01"},"version":"v0"}"#,
-        ))
-        .await?;
+        let fixture_path = top_hash::load_fixture(top_hash::INITIAL_COMPLEX_META_TOP_HASH)?;
+        let local_storage = LocalStorage::default();
+        let manifest = Manifest::from_path(&local_storage, &fixture_path).await?;
         let (_, calculated_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -718,10 +689,7 @@ mod tests {
         )
         .await?;
 
-        assert_eq!(
-            calculated_hash,
-            manifest_empty::INITIAL_COMPLEX_META_TOP_HASH
-        );
+        assert_eq!(calculated_hash, top_hash::INITIAL_COMPLEX_META_TOP_HASH);
         assert_eq!(calculated_hash, top_hash);
 
         Ok(())
@@ -756,18 +724,14 @@ mod tests {
         .await?;
         assert_eq!(
             dest_path,
-            dest_dir.join(manifest_empty::INITIAL_LARGE_META_TOP_HASH)
+            dest_dir.join(top_hash::INITIAL_LARGE_META_TOP_HASH)
         );
-        assert_eq!(top_hash, manifest_empty::INITIAL_LARGE_META_TOP_HASH);
+        assert_eq!(top_hash, top_hash::INITIAL_LARGE_META_TOP_HASH);
 
-        // Create manifest from text content and verify top_hash matches
-        let json_content = serde_json::json!({
-            "message": "Initial",
-            "user_meta": large_meta,
-            "version": "v0"
-        });
-        let json_str = serde_json::to_string(&json_content)?;
-        let manifest = Manifest::from_reader(Cursor::new(json_str.as_bytes())).await?;
+        // Create manifest from fixture file and verify top_hash matches
+        let fixture_path = top_hash::load_fixture(top_hash::INITIAL_LARGE_META_TOP_HASH)?;
+        let local_storage = LocalStorage::default();
+        let manifest = Manifest::from_path(&local_storage, &fixture_path).await?;
         let (_, calculated_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -776,7 +740,7 @@ mod tests {
         )
         .await?;
 
-        assert_eq!(calculated_hash, manifest_empty::INITIAL_LARGE_META_TOP_HASH);
+        assert_eq!(calculated_hash, top_hash::INITIAL_LARGE_META_TOP_HASH);
         assert_eq!(calculated_hash, top_hash);
 
         Ok(())
@@ -803,18 +767,14 @@ mod tests {
         .await?;
         assert_eq!(
             dest_path,
-            dest_dir.join(manifest_empty::EMPTY_EMPTY_SIMPLE_WORKFLOW_TOP_HASH)
+            dest_dir.join(top_hash::EMPTY_EMPTY_SIMPLE_WORKFLOW_TOP_HASH)
         );
-        assert_eq!(
-            top_hash,
-            manifest_empty::EMPTY_EMPTY_SIMPLE_WORKFLOW_TOP_HASH
-        );
+        assert_eq!(top_hash, top_hash::EMPTY_EMPTY_SIMPLE_WORKFLOW_TOP_HASH);
 
-        // Create manifest from text content and verify top_hash matches
-        let manifest = Manifest::from_reader(Cursor::new(
-            br#"{"message":"","user_meta":{},"version":"v0","workflow":{"config":"s3://workflow/config","id":null}}"#,
-        ))
-        .await?;
+        // Create manifest from fixture file and verify top_hash matches
+        let fixture_path = top_hash::load_fixture(top_hash::EMPTY_EMPTY_SIMPLE_WORKFLOW_TOP_HASH)?;
+        let local_storage = LocalStorage::default();
+        let manifest = Manifest::from_path(&local_storage, &fixture_path).await?;
         let (_, calculated_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -825,7 +785,7 @@ mod tests {
 
         assert_eq!(
             calculated_hash,
-            manifest_empty::EMPTY_EMPTY_SIMPLE_WORKFLOW_TOP_HASH
+            top_hash::EMPTY_EMPTY_SIMPLE_WORKFLOW_TOP_HASH
         );
         assert_eq!(calculated_hash, top_hash);
 
@@ -859,18 +819,14 @@ mod tests {
         .await?;
         assert_eq!(
             dest_path,
-            dest_dir.join(manifest_empty::EMPTY_EMPTY_COMPLEX_WORKFLOW_TOP_HASH)
+            dest_dir.join(top_hash::EMPTY_EMPTY_COMPLEX_WORKFLOW_TOP_HASH)
         );
-        assert_eq!(
-            top_hash,
-            manifest_empty::EMPTY_EMPTY_COMPLEX_WORKFLOW_TOP_HASH
-        );
+        assert_eq!(top_hash, top_hash::EMPTY_EMPTY_COMPLEX_WORKFLOW_TOP_HASH);
 
-        // Create manifest from text content and verify top_hash matches
-        let manifest = Manifest::from_reader(Cursor::new(
-            br#"{"message":"","user_meta":{},"version":"v0","workflow":{"config":"s3://workflow/config","id":"test-workflow","schemas":{"test-schema":"s3://bucket/workflows/test.json"}}}"#,
-        ))
-        .await?;
+        // Create manifest from fixture file and verify top_hash matches
+        let fixture_path = top_hash::load_fixture(top_hash::EMPTY_EMPTY_COMPLEX_WORKFLOW_TOP_HASH)?;
+        let local_storage = LocalStorage::default();
+        let manifest = Manifest::from_path(&local_storage, &fixture_path).await?;
         let (_, calculated_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -881,7 +837,7 @@ mod tests {
 
         assert_eq!(
             calculated_hash,
-            manifest_empty::EMPTY_EMPTY_COMPLEX_WORKFLOW_TOP_HASH
+            top_hash::EMPTY_EMPTY_COMPLEX_WORKFLOW_TOP_HASH
         );
         assert_eq!(calculated_hash, top_hash);
 
@@ -909,18 +865,15 @@ mod tests {
         .await?;
         assert_eq!(
             dest_path,
-            dest_dir.join(manifest_empty::INITIAL_EMPTY_SIMPLE_WORKFLOW_TOP_HASH)
+            dest_dir.join(top_hash::INITIAL_EMPTY_SIMPLE_WORKFLOW_TOP_HASH)
         );
-        assert_eq!(
-            top_hash,
-            manifest_empty::INITIAL_EMPTY_SIMPLE_WORKFLOW_TOP_HASH
-        );
+        assert_eq!(top_hash, top_hash::INITIAL_EMPTY_SIMPLE_WORKFLOW_TOP_HASH);
 
-        // Create manifest from text content and verify top_hash matches
-        let manifest = Manifest::from_reader(Cursor::new(
-            br#"{"message":"Initial","user_meta":{},"version":"v0","workflow":{"config":"s3://workflow/config","id":null}}"#,
-        ))
-        .await?;
+        // Create manifest from fixture file and verify top_hash matches
+        let fixture_path =
+            top_hash::load_fixture(top_hash::INITIAL_EMPTY_SIMPLE_WORKFLOW_TOP_HASH)?;
+        let local_storage = LocalStorage::default();
+        let manifest = Manifest::from_path(&local_storage, &fixture_path).await?;
         let (_, calculated_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -931,7 +884,7 @@ mod tests {
 
         assert_eq!(
             calculated_hash,
-            manifest_empty::INITIAL_EMPTY_SIMPLE_WORKFLOW_TOP_HASH
+            top_hash::INITIAL_EMPTY_SIMPLE_WORKFLOW_TOP_HASH
         );
         assert_eq!(calculated_hash, top_hash);
 
@@ -965,18 +918,15 @@ mod tests {
         .await?;
         assert_eq!(
             dest_path,
-            dest_dir.join(manifest_empty::INITIAL_EMPTY_COMPLEX_WORKFLOW_TOP_HASH)
+            dest_dir.join(top_hash::INITIAL_EMPTY_COMPLEX_WORKFLOW_TOP_HASH)
         );
-        assert_eq!(
-            top_hash,
-            manifest_empty::INITIAL_EMPTY_COMPLEX_WORKFLOW_TOP_HASH
-        );
+        assert_eq!(top_hash, top_hash::INITIAL_EMPTY_COMPLEX_WORKFLOW_TOP_HASH);
 
-        // Create manifest from text content and verify top_hash matches
-        let manifest = Manifest::from_reader(Cursor::new(
-            br#"{"message":"Initial","user_meta":{},"version":"v0","workflow":{"config":"s3://workflow/config","id":"test-workflow","schemas":{"test-schema":"s3://bucket/workflows/test.json"}}}"#,
-        ))
-        .await?;
+        // Create manifest from fixture file and verify top_hash matches
+        let fixture_path =
+            top_hash::load_fixture(top_hash::INITIAL_EMPTY_COMPLEX_WORKFLOW_TOP_HASH)?;
+        let local_storage = LocalStorage::default();
+        let manifest = Manifest::from_path(&local_storage, &fixture_path).await?;
         let (_, calculated_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -987,7 +937,7 @@ mod tests {
 
         assert_eq!(
             calculated_hash,
-            manifest_empty::INITIAL_EMPTY_COMPLEX_WORKFLOW_TOP_HASH
+            top_hash::INITIAL_EMPTY_COMPLEX_WORKFLOW_TOP_HASH
         );
         assert_eq!(calculated_hash, top_hash);
 
@@ -1038,18 +988,14 @@ mod tests {
         .await?;
         assert_eq!(
             dest_path,
-            dest_dir.join(manifest_empty::EMPTY_NONE_SIMPLE_WORKFLOW_TOP_HASH)
+            dest_dir.join(top_hash::EMPTY_NONE_SIMPLE_WORKFLOW_TOP_HASH)
         );
-        assert_eq!(
-            top_hash,
-            manifest_empty::EMPTY_NONE_SIMPLE_WORKFLOW_TOP_HASH
-        );
+        assert_eq!(top_hash, top_hash::EMPTY_NONE_SIMPLE_WORKFLOW_TOP_HASH);
 
-        // Create manifest from text content and verify top_hash matches
-        let manifest = Manifest::from_reader(Cursor::new(
-            br#"{"message":"","version":"v0","workflow":{"config":"s3://workflow/config","id":null}}"#,
-        ))
-        .await?;
+        // Create manifest from fixture file and verify top_hash matches
+        let fixture_path = top_hash::load_fixture(top_hash::EMPTY_NONE_SIMPLE_WORKFLOW_TOP_HASH)?;
+        let local_storage = LocalStorage::default();
+        let manifest = Manifest::from_path(&local_storage, &fixture_path).await?;
         let (_, calculated_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -1060,7 +1006,7 @@ mod tests {
 
         assert_eq!(
             calculated_hash,
-            manifest_empty::EMPTY_NONE_SIMPLE_WORKFLOW_TOP_HASH
+            top_hash::EMPTY_NONE_SIMPLE_WORKFLOW_TOP_HASH
         );
         assert_eq!(calculated_hash, top_hash);
 
@@ -1088,18 +1034,14 @@ mod tests {
         .await?;
         assert_eq!(
             dest_path,
-            dest_dir.join(manifest_empty::EMPTY_NULL_SIMPLE_WORKFLOW_TOP_HASH)
+            dest_dir.join(top_hash::EMPTY_NULL_SIMPLE_WORKFLOW_TOP_HASH)
         );
-        assert_eq!(
-            top_hash,
-            manifest_empty::EMPTY_NULL_SIMPLE_WORKFLOW_TOP_HASH
-        );
+        assert_eq!(top_hash, top_hash::EMPTY_NULL_SIMPLE_WORKFLOW_TOP_HASH);
 
-        // Create manifest from text content and verify top_hash matches
-        let manifest = Manifest::from_reader(Cursor::new(
-            br#"{"message":"","user_meta":null,"version":"v0","workflow":{"config":"s3://workflow/config","id":null}}"#,
-        ))
-        .await?;
+        // Create manifest from fixture file and verify top_hash matches
+        let fixture_path = top_hash::load_fixture(top_hash::EMPTY_NULL_SIMPLE_WORKFLOW_TOP_HASH)?;
+        let local_storage = LocalStorage::default();
+        let manifest = Manifest::from_path(&local_storage, &fixture_path).await?;
         let (_, calculated_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -1110,7 +1052,7 @@ mod tests {
 
         assert_eq!(
             calculated_hash,
-            manifest_empty::EMPTY_NULL_SIMPLE_WORKFLOW_TOP_HASH
+            top_hash::EMPTY_NULL_SIMPLE_WORKFLOW_TOP_HASH
         );
         assert_eq!(calculated_hash, top_hash);
 
@@ -1138,18 +1080,14 @@ mod tests {
         .await?;
         assert_eq!(
             dest_path,
-            dest_dir.join(manifest_empty::INITIAL_META_SIMPLE_WORKFLOW_TOP_HASH)
+            dest_dir.join(top_hash::INITIAL_META_SIMPLE_WORKFLOW_TOP_HASH)
         );
-        assert_eq!(
-            top_hash,
-            manifest_empty::INITIAL_META_SIMPLE_WORKFLOW_TOP_HASH
-        );
+        assert_eq!(top_hash, top_hash::INITIAL_META_SIMPLE_WORKFLOW_TOP_HASH);
 
-        // Create manifest from text content and verify top_hash matches
-        let manifest = Manifest::from_reader(Cursor::new(
-            br#"{"message":"Initial","user_meta":{"key":"value"},"version":"v0","workflow":{"config":"s3://workflow/config","id":null}}"#,
-        ))
-        .await?;
+        // Create manifest from fixture file and verify top_hash matches
+        let fixture_path = top_hash::load_fixture(top_hash::INITIAL_META_SIMPLE_WORKFLOW_TOP_HASH)?;
+        let local_storage = LocalStorage::default();
+        let manifest = Manifest::from_path(&local_storage, &fixture_path).await?;
         let (_, calculated_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -1160,7 +1098,7 @@ mod tests {
 
         assert_eq!(
             calculated_hash,
-            manifest_empty::INITIAL_META_SIMPLE_WORKFLOW_TOP_HASH
+            top_hash::INITIAL_META_SIMPLE_WORKFLOW_TOP_HASH
         );
         assert_eq!(calculated_hash, top_hash);
 
@@ -1194,18 +1132,15 @@ mod tests {
         .await?;
         assert_eq!(
             dest_path,
-            dest_dir.join(manifest_empty::INITIAL_NONE_COMPLEX_WORKFLOW_TOP_HASH)
+            dest_dir.join(top_hash::INITIAL_NONE_COMPLEX_WORKFLOW_TOP_HASH)
         );
-        assert_eq!(
-            top_hash,
-            manifest_empty::INITIAL_NONE_COMPLEX_WORKFLOW_TOP_HASH
-        );
+        assert_eq!(top_hash, top_hash::INITIAL_NONE_COMPLEX_WORKFLOW_TOP_HASH);
 
-        // Create manifest from text content and verify top_hash matches
-        let manifest = Manifest::from_reader(Cursor::new(
-            br#"{"message":"Initial","version":"v0","workflow":{"config":"s3://workflow/config","id":"test-workflow","schemas":{"test-schema":"s3://bucket/workflows/test.json"}}}"#,
-        ))
-        .await?;
+        // Create manifest from fixture file and verify top_hash matches
+        let fixture_path =
+            top_hash::load_fixture(top_hash::INITIAL_NONE_COMPLEX_WORKFLOW_TOP_HASH)?;
+        let local_storage = LocalStorage::default();
+        let manifest = Manifest::from_path(&local_storage, &fixture_path).await?;
         let (_, calculated_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -1216,7 +1151,7 @@ mod tests {
 
         assert_eq!(
             calculated_hash,
-            manifest_empty::INITIAL_NONE_COMPLEX_WORKFLOW_TOP_HASH
+            top_hash::INITIAL_NONE_COMPLEX_WORKFLOW_TOP_HASH
         );
         assert_eq!(calculated_hash, top_hash);
 
@@ -1241,19 +1176,13 @@ mod tests {
         let (dest_path, top_hash) =
             build_manifest_from_rows_stream(&storage, dest_dir.to_path_buf(), header, rows_stream)
                 .await?;
-        assert_eq!(
-            dest_path,
-            dest_dir.join(manifest_empty::SINGLE_ROW_TOP_HASH)
-        );
-        assert_eq!(top_hash, manifest_empty::SINGLE_ROW_TOP_HASH);
+        assert_eq!(dest_path, dest_dir.join(top_hash::SINGLE_ROW_TOP_HASH));
+        assert_eq!(top_hash, top_hash::SINGLE_ROW_TOP_HASH);
 
-        // Verify using Manifest::from_reader with the JSON string
-        let json_content = format!(
-            r#"{{"message":"","user_meta":{{}},"version":"v0"}}
-{{"logical_key":"data.txt","physical_keys":["s3://bucket/data.txt"],"hash":{{"type":"sha2-256-chunked","value":"{}"}},"size":16,"meta":{{"type":"text"}}}}"#,
-            objects::LESS_THAN_8MB_HASH_B64
-        );
-        let manifest = Manifest::from_reader(Cursor::new(json_content.as_bytes())).await?;
+        // Verify using Manifest::from_path with the fixture file
+        let fixture_path = top_hash::load_fixture(top_hash::SINGLE_ROW_TOP_HASH)?;
+        let local_storage = LocalStorage::default();
+        let manifest = Manifest::from_path(&local_storage, &fixture_path).await?;
         let (_, calculated_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -1262,7 +1191,7 @@ mod tests {
         )
         .await?;
 
-        assert_eq!(calculated_hash, manifest_empty::SINGLE_ROW_TOP_HASH);
+        assert_eq!(calculated_hash, top_hash::SINGLE_ROW_TOP_HASH);
         assert_eq!(calculated_hash, top_hash);
 
         Ok(())
@@ -1307,19 +1236,14 @@ mod tests {
                 .await?;
         assert_eq!(
             dest_path,
-            dest_dir.join(manifest_empty::MIXED_HASH_TYPES_TOP_HASH)
+            dest_dir.join(top_hash::MIXED_HASH_TYPES_TOP_HASH)
         );
-        assert_eq!(top_hash, manifest_empty::MIXED_HASH_TYPES_TOP_HASH);
+        assert_eq!(top_hash, top_hash::MIXED_HASH_TYPES_TOP_HASH);
 
-        // Verify using Manifest::from_reader with the JSON string
-        let json_content = format!(
-            r#"{{"message":"","user_meta":{{}},"version":"v0"}}
-{{"logical_key":"file1.txt","physical_keys":["s3://bucket/file1.txt"],"hash":{{"type":"SHA256","value":"7465737464617461000000000000000000000000000000000000000000000000"}},"size":8,"meta":{{}}}}
-{{"logical_key":"file2.txt","physical_keys":["s3://bucket/file2.txt"],"hash":{{"type":"sha2-256-chunked","value":"{}"}},"size":16,"meta":{{}}}}
-{{"logical_key":"file3.txt","physical_keys":["s3://bucket/file3.txt"],"hash":{{"type":"CRC64NVME","value":"dGVzdGRhdGEAAAAAAAAAAAAAAAAAAAAA"}},"size":32,"meta":{{}}}}"#,
-            objects::LESS_THAN_8MB_HASH_B64
-        );
-        let manifest = Manifest::from_reader(Cursor::new(json_content.as_bytes())).await?;
+        // Verify using Manifest::from_path with the fixture file
+        let fixture_path = top_hash::load_fixture(top_hash::MIXED_HASH_TYPES_TOP_HASH)?;
+        let local_storage = LocalStorage::default();
+        let manifest = Manifest::from_path(&local_storage, &fixture_path).await?;
         let (_, calculated_hash_from_reader) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -1330,7 +1254,7 @@ mod tests {
 
         assert_eq!(
             calculated_hash_from_reader,
-            manifest_empty::MIXED_HASH_TYPES_TOP_HASH
+            top_hash::MIXED_HASH_TYPES_TOP_HASH
         );
         assert_eq!(calculated_hash_from_reader, top_hash);
 
@@ -1371,23 +1295,13 @@ mod tests {
         let (dest_path, top_hash) =
             build_manifest_from_rows_stream(&storage, dest_dir.to_path_buf(), header, rows_stream)
                 .await?;
-        assert_eq!(
-            dest_path,
-            dest_dir.join(manifest_empty::MULTIPLE_ROWS_TOP_HASH)
-        );
-        assert_eq!(top_hash, manifest_empty::MULTIPLE_ROWS_TOP_HASH);
+        assert_eq!(dest_path, dest_dir.join(top_hash::MULTIPLE_ROWS_TOP_HASH));
+        assert_eq!(top_hash, top_hash::MULTIPLE_ROWS_TOP_HASH);
 
-        // Verify using Manifest::from_reader with the JSON string
-        let json_content = format!(
-            r#"{{"message":"","user_meta":{{}},"version":"v0"}}
-{{"logical_key":"config.json","physical_keys":["s3://bucket/config.json"],"hash":{{"type":"sha2-256-chunked","value":"{}"}},"size":0,"meta":{{"format":"json"}}}}
-{{"logical_key":"data/file.csv","physical_keys":["s3://bucket/data/file.csv"],"hash":{{"type":"sha2-256-chunked","value":"{}"}},"size":8388608,"meta":null}}
-{{"logical_key":"images/photo.jpg","physical_keys":["s3://bucket/images/photo.jpg"],"hash":{{"type":"sha2-256-chunked","value":"{}"}},"size":18874368,"meta":{{"width":1920,"height":1080}}}}"#,
-            objects::ZERO_HASH_B64,
-            objects::EQUAL_TO_8MB_HASH_B64,
-            objects::MORE_THAN_8MB_HASH_B64
-        );
-        let manifest = Manifest::from_reader(Cursor::new(json_content.as_bytes())).await?;
+        // Verify using Manifest::from_path with the fixture file
+        let fixture_path = top_hash::load_fixture(top_hash::MULTIPLE_ROWS_TOP_HASH)?;
+        let local_storage = LocalStorage::default();
+        let manifest = Manifest::from_path(&local_storage, &fixture_path).await?;
         let (_, calculated_hash) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -1396,149 +1310,8 @@ mod tests {
         )
         .await?;
 
-        assert_eq!(calculated_hash, manifest_empty::MULTIPLE_ROWS_TOP_HASH);
+        assert_eq!(calculated_hash, top_hash::MULTIPLE_ROWS_TOP_HASH);
         assert_eq!(calculated_hash, top_hash);
-
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn test_workflow_header_mixed_rows_manifest() -> Res {
-        let storage = MockStorage::default();
-        let dest_dir = storage.temp_dir.path();
-        let header = ManifestHeader {
-            message: Some("Production".to_string()),
-            user_meta: None,
-            workflow: Some(Workflow {
-                config: "s3://workflow/prod.json".parse()?,
-                id: None,
-            }),
-            ..ManifestHeader::default()
-        };
-
-        let row1 = ManifestRow {
-            logical_key: PathBuf::from("logs/app.log"),
-            physical_key: "s3://bucket/logs/app.log".to_string(),
-            hash: Sha256ChunkedHash::try_from(objects::NESTED_HASH_B64)?.into(),
-            size: 20,
-            meta: Some(serde_json::Value::Null),
-        };
-
-        let row2 = ManifestRow {
-            logical_key: PathBuf::from("models/trained_model.pkl"),
-            physical_key: "s3://bucket/models/trained_model.pkl".to_string(),
-            hash: Sha256ChunkedHash::try_from(objects::EQUAL_TO_8MB_HASH_B64)?.into(),
-            size: 8388608,
-            meta: Some(serde_json::json!({
-                "model_type": "random_forest",
-                "accuracy": 0.95,
-                "features": ["age", "income", "location"],
-                "trained_at": "2024-01-01T12:00:00Z"
-            })),
-        };
-
-        let rows_stream = tokio_stream::iter(vec![Ok(vec![Ok(row1), Ok(row2)])]);
-        let (dest_path, top_hash) =
-            build_manifest_from_rows_stream(&storage, dest_dir.to_path_buf(), header, rows_stream)
-                .await?;
-        assert_eq!(
-            dest_path,
-            dest_dir.join(manifest_empty::WORKFLOW_HEADER_MIXED_ROWS_TOP_HASH)
-        );
-        assert_eq!(
-            top_hash,
-            manifest_empty::WORKFLOW_HEADER_MIXED_ROWS_TOP_HASH
-        );
-
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn test_full_featured_header_large_rowset_manifest() -> Res {
-        let storage = MockStorage::default();
-        let dest_dir = storage.temp_dir.path();
-        let header = ManifestHeader {
-            message: Some("Full Test".to_string()),
-            user_meta: Some(serde_json::json!({
-                "project": "data-science-pipeline",
-                "version": "2.1.0",
-                "tags": ["production", "ml", "analysis"]
-            })),
-            workflow: Some(Workflow {
-                config: "s3://workflow/pipeline.json".parse()?,
-                id: Some(WorkflowId {
-                    id: "ml-pipeline".to_string(),
-                    metadata: Some(MetadataSchema {
-                        id: "pipeline-schema".to_string(),
-                        url: "s3://schemas/pipeline.json".parse()?,
-                    }),
-                }),
-            }),
-            ..ManifestHeader::default()
-        };
-
-        let row1 = ManifestRow {
-            logical_key: PathBuf::from("raw/dataset.parquet"),
-            physical_key: "s3://data/raw/dataset.parquet".to_string(),
-            hash: Sha256ChunkedHash::try_from(objects::MORE_THAN_8MB_HASH_B64)?.into(),
-            size: 18874368,
-            meta: Some(serde_json::json!({"rows": 1000000, "columns": 50})),
-        };
-
-        let row2 = ManifestRow {
-            logical_key: PathBuf::from("processed/clean_data.csv"),
-            physical_key: "s3://data/processed/clean_data.csv".to_string(),
-            hash: Sha256ChunkedHash::try_from(objects::EQUAL_TO_8MB_HASH_B64)?.into(),
-            size: 8388608,
-            meta: Some(serde_json::json!({"cleaned": true, "missing_values_filled": true})),
-        };
-
-        let row3 = ManifestRow {
-            logical_key: PathBuf::from("features/feature_matrix.npy"),
-            physical_key: "s3://data/features/feature_matrix.npy".to_string(),
-            hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
-            size: 16,
-            meta: Some(serde_json::Value::Null),
-        };
-
-        let row4 = ManifestRow {
-            logical_key: PathBuf::from("models/final_model.joblib"),
-            physical_key: "s3://data/models/final_model.joblib".to_string(),
-            hash: Sha256ChunkedHash::try_from(objects::NESTED_HASH_B64)?.into(),
-            size: 20,
-            meta: Some(serde_json::json!({
-                "algorithm": "gradient_boosting",
-                "hyperparameters": {"n_estimators": 100, "learning_rate": 0.1},
-                "cross_val_score": 0.92
-            })),
-        };
-
-        let row5 = ManifestRow {
-            logical_key: PathBuf::from("results/predictions.json"),
-            physical_key: "s3://data/results/predictions.json".to_string(),
-            hash: Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
-            size: 0,
-            meta: Some(serde_json::json!({"prediction_count": 10000, "format": "json"})),
-        };
-
-        let rows_stream = tokio_stream::iter(vec![Ok(vec![
-            Ok(row1),
-            Ok(row2),
-            Ok(row3),
-            Ok(row4),
-            Ok(row5),
-        ])]);
-        let (dest_path, top_hash) =
-            build_manifest_from_rows_stream(&storage, dest_dir.to_path_buf(), header, rows_stream)
-                .await?;
-        assert_eq!(
-            dest_path,
-            dest_dir.join(manifest_empty::FULL_FEATURED_HEADER_LARGE_ROWSET_TOP_HASH)
-        );
-        assert_eq!(
-            top_hash,
-            manifest_empty::FULL_FEATURED_HEADER_LARGE_ROWSET_TOP_HASH
-        );
 
         Ok(())
     }
@@ -1614,10 +1387,25 @@ mod tests {
         );
 
         // Test that the normalized hash matches our expected constant
+        assert_eq!(calculated_hash1, top_hash::NORMALIZED_EQUIVALENCE_TOP_HASH);
+
+        // Verify the fixture file also produces the same hash
+        let fixture_path = top_hash::load_fixture(top_hash::NORMALIZED_EQUIVALENCE_TOP_HASH)?;
+        let local_storage = LocalStorage::default();
+        let manifest_from_fixture = Manifest::from_path(&local_storage, &fixture_path).await?;
+        let (_, calculated_hash_from_fixture) = build_manifest_from_rows_stream(
+            &storage,
+            dest_dir.to_path_buf(),
+            manifest_from_fixture.header.clone(),
+            manifest_from_fixture.records_stream().await,
+        )
+        .await?;
+
         assert_eq!(
-            calculated_hash1,
-            manifest_empty::NORMALIZED_EQUIVALENCE_TOP_HASH
+            calculated_hash_from_fixture,
+            top_hash::NORMALIZED_EQUIVALENCE_TOP_HASH
         );
+        assert_eq!(calculated_hash_from_fixture, calculated_hash1);
 
         Ok(())
     }
