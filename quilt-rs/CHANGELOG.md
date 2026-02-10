@@ -9,7 +9,7 @@
 
 ### Added
 
-- Add comprehensive hash reference fixtures for manifest header and row combinations in test suite
+- Add comprehensive hash reference fixtures and tests for manifest combinations
 
 ## [v0.27.1-alpha1] - 2025-02-06
 
