@@ -10,7 +10,15 @@ use std::path::PathBuf;
 
 /// Load manifest fixture by top hash
 pub fn load_fixture(top_hash: &str) -> Res<PathBuf> {
-    local_uri(&format!("fixtures/{}.jsonl", top_hash))
+    local_uri(&format!("fixtures/packages/{}.jsonl", top_hash))
+}
+
+/// Load manifest fixture from equivalent-packages directory with description
+pub fn load_equivalent_fixture(top_hash: &str, description: &str) -> Res<PathBuf> {
+    local_uri(&format!(
+        "fixtures/equivalent-packages/{}-{}.jsonl",
+        top_hash, description
+    ))
 }
 
 // EMPTY_* series: message=""

@@ -262,7 +262,6 @@ pub async fn build_manifest_from_rows_stream(
 mod tests {
     use super::*;
 
-    use std::io::Cursor;
     use test_log::test;
 
     use tokio_stream;
@@ -1320,16 +1319,28 @@ mod tests {
     async fn test_hash_normalization_equivalence_manifest() -> Res {
         let storage = MockStorage::default();
         let dest_dir = storage.temp_dir.path();
+        let local_storage = LocalStorage::default();
 
-        // First variant: meta: {}, keys in alphabetical order
-        let json_content1 = format!(
-            r#"{{"message":"","user_meta":{{}},"version":"v0"}}
-{{"logical_key":"test1.txt","physical_keys":["s3://bucket/test1.txt"],"hash":{{"type":"sha2-256-chunked","value":"{}"}},"size":0,"meta":{{}}}}
-{{"logical_key":"test2.txt","physical_keys":["s3://bucket/test2.txt"],"hash":{{"type":"sha2-256-chunked","value":"{}"}},"size":16,"meta":{{"alpha":"first","beta":"second"}}}}"#,
-            objects::ZERO_HASH_B64,
-            objects::LESS_THAN_8MB_HASH_B64
-        );
-        let manifest1 = Manifest::from_reader(Cursor::new(json_content1.as_bytes())).await?;
+        // Load all three variant fixture files
+        let fixture_path1 = top_hash::load_equivalent_fixture(
+            top_hash::NORMALIZED_EQUIVALENCE_TOP_HASH,
+            "canonical",
+        )?;
+        let fixture_path2 = top_hash::load_equivalent_fixture(
+            top_hash::NORMALIZED_EQUIVALENCE_TOP_HASH,
+            "meta-null-key-order",
+        )?;
+        let fixture_path3 = top_hash::load_equivalent_fixture(
+            top_hash::NORMALIZED_EQUIVALENCE_TOP_HASH,
+            "field-order-missing-meta",
+        )?;
+
+        // Load manifests from fixture files
+        let manifest1 = Manifest::from_path(&local_storage, &fixture_path1).await?;
+        let manifest2 = Manifest::from_path(&local_storage, &fixture_path2).await?;
+        let manifest3 = Manifest::from_path(&local_storage, &fixture_path3).await?;
+
+        // Calculate hashes for all three variants
         let (_, calculated_hash1) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -1338,15 +1349,6 @@ mod tests {
         )
         .await?;
 
-        // Second variant: meta: null (becomes {}), different key order
-        let json_content2 = format!(
-            r#"{{"message":"","user_meta":{{}},"version":"v0"}}
-{{"logical_key":"test1.txt","physical_keys":["s3://bucket/test1.txt"],"hash":{{"type":"sha2-256-chunked","value":"{}"}},"size":0,"meta":null}}
-{{"logical_key":"test2.txt","physical_keys":["s3://bucket/test2.txt"],"hash":{{"type":"sha2-256-chunked","value":"{}"}},"size":16,"meta":{{"beta":"second","alpha":"first"}}}}"#,
-            objects::ZERO_HASH_B64,
-            objects::LESS_THAN_8MB_HASH_B64
-        );
-        let manifest2 = Manifest::from_reader(Cursor::new(json_content2.as_bytes())).await?;
         let (_, calculated_hash2) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -1355,15 +1357,6 @@ mod tests {
         )
         .await?;
 
-        // Third variant: different field order, meta omitted entirely (becomes {})
-        let json_content3 = format!(
-            r#"{{"message":"","user_meta":{{}},"version":"v0"}}
-{{"size":0,"logical_key":"test1.txt","physical_keys":["s3://bucket/test1.txt"],"hash":{{"type":"sha2-256-chunked","value":"{}"}}}}
-{{"size":16,"logical_key":"test2.txt","physical_keys":["s3://bucket/test2.txt"],"hash":{{"type":"sha2-256-chunked","value":"{}"}},"meta":{{"beta":"second","alpha":"first"}}}}"#,
-            objects::ZERO_HASH_B64,
-            objects::LESS_THAN_8MB_HASH_B64
-        );
-        let manifest3 = Manifest::from_reader(Cursor::new(json_content3.as_bytes())).await?;
         let (_, calculated_hash3) = build_manifest_from_rows_stream(
             &storage,
             dest_dir.to_path_buf(),
@@ -1375,11 +1368,11 @@ mod tests {
         // All three variants should produce the same hash despite different representations
         assert_eq!(
             calculated_hash1, calculated_hash2,
-            "Empty object {{}} and null should normalize to same hash"
+            "Canonical and meta-null-key-order variants should normalize to same hash"
         );
         assert_eq!(
             calculated_hash1, calculated_hash3,
-            "Different field orders and missing meta should normalize to same hash"
+            "Canonical and field-order-missing-meta variants should normalize to same hash"
         );
         assert_eq!(
             calculated_hash2, calculated_hash3,
@@ -1388,24 +1381,6 @@ mod tests {
 
         // Test that the normalized hash matches our expected constant
         assert_eq!(calculated_hash1, top_hash::NORMALIZED_EQUIVALENCE_TOP_HASH);
-
-        // Verify the fixture file also produces the same hash
-        let fixture_path = top_hash::load_fixture(top_hash::NORMALIZED_EQUIVALENCE_TOP_HASH)?;
-        let local_storage = LocalStorage::default();
-        let manifest_from_fixture = Manifest::from_path(&local_storage, &fixture_path).await?;
-        let (_, calculated_hash_from_fixture) = build_manifest_from_rows_stream(
-            &storage,
-            dest_dir.to_path_buf(),
-            manifest_from_fixture.header.clone(),
-            manifest_from_fixture.records_stream().await,
-        )
-        .await?;
-
-        assert_eq!(
-            calculated_hash_from_fixture,
-            top_hash::NORMALIZED_EQUIVALENCE_TOP_HASH
-        );
-        assert_eq!(calculated_hash_from_fixture, calculated_hash1);
 
         Ok(())
     }

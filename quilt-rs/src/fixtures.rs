@@ -20,7 +20,7 @@ pub mod manifest {
 
     use crate::Res;
 
-    const TEST_LOCAL_CHECKSUMMED: &str = "fixtures/checksummed.jsonl";
+    const TEST_LOCAL_CHECKSUMMED: &str = "fixtures/packages/checksummed.jsonl";
 
     pub const CHECKSUMMED_HASH: &str =
         "87c4c6caa2eaeb346ea8c3a5c3650a54b9ae93ed5229db67eac7449fc198f0c5";
