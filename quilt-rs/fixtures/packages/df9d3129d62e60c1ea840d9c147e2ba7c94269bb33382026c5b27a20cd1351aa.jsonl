@@ -1,0 +1,1 @@
+{"message":"Initial","user_meta":{"author":"user","timestamp":"2024-01-01T10:30:00Z","description":"This is a comprehensive test with larger metadata","tags":["test","manifest","quilt"],"version":1,"nested":{"key1":"value1","key2":42,"key3":true}},"version":"v0"}

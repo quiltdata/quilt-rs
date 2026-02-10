@@ -1,0 +1,2 @@
+{"message":"","user_meta":{},"version":"v0"}
+{"logical_key":"data.txt","physical_keys":["s3://bucket/data.txt"],"hash":{"type":"sha2-256-chunked","value":"Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="},"size":16,"meta":{"type":"text"}}
