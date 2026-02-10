@@ -1,4 +1,4 @@
 {"message":"","user_meta":{},"version":"v0"}
 {"logical_key":"config.json","physical_keys":["s3://bucket/config.json"],"hash":{"type":"sha2-256-chunked","value":"47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="},"size":0,"meta":{"format":"json"}}
-{"logical_key":"data/file.csv","physical_keys":["s3://bucket/data/file.csv"],"hash":{"type":"sha2-256-chunked","value":"7V3rZ3Q/AmAYax2wsQBZbc7N1EMIxlxRyMiMthGRdwg="},"size":8388608,"meta":null}
-{"logical_key":"images/photo.jpg","physical_keys":["s3://bucket/images/photo.jpg"],"hash":{"type":"sha2-256-chunked","value":"T+rt/HKRJOiAkEGXKvc+DhCwRcrZiDrFkjKonDT1zgs="},"size":18874368,"meta":{"width":1920,"height":1080}}
+{"logical_key":"data/file.csv","physical_keys":["s3://bucket/data/file.csv"],"hash":{"type":"sha2-256-chunked","value":"7V3rZ3Q/AmAYax2wsQBZbc7N1EMIxlxRyMiMthGRdwg="},"size":8388608,"meta":{}}
+{"logical_key":"images/photo.jpg","physical_keys":["s3://bucket/images/photo.jpg"],"hash":{"type":"sha2-256-chunked","value":"T+rt/HKRJOiAkEGXKvc+DhCwRcrZiDrFkjKonDT1zgs="},"size":18874368,"meta":{"height":1080,"width":1920}}
