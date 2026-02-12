@@ -9,7 +9,7 @@
 
 ### Improved
 
-- Add comprehensive structured logging to LocalDomain operations with debug/info messages
+- Add comprehensive logging to LocalDomain operations with debug/info messages
 
 ## [v0.27.1-alpha3] - 2025-02-12
 
