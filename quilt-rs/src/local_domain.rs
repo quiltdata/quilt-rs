@@ -56,8 +56,7 @@ impl LocalDomain {
     }
 
     pub async fn set_home(&self, dir: impl AsRef<Path>) -> Res<Home> {
-        let dir_path = dir.as_ref();
-        info!("Setting home directory to {}", dir_path.display());
+        info!("Setting home directory to {}", dir.as_ref().display());
         Ok(self.lineage.set_home(&self.storage, dir).await?.home)
     }
 
