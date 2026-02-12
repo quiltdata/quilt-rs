@@ -414,6 +414,7 @@ mod tests {
         let storage = LocalStorage::new();
         let remote = MockRemote::default();
         let namespace: Namespace = ("test", "recovery").into();
+        let test_hash = "deadbeef".to_string();
 
         paths
             .scaffold_for_installing(&storage, &home, &namespace)
@@ -421,35 +422,36 @@ mod tests {
         paths.scaffold_for_caching(&storage, "test-bucket").await?;
 
         // Initialize domain lineage file
-        storage
-            .write_file(
-                &paths.lineage(),
-                br#"{
-                "packages": {
-                    "test/recovery": {
+        let lineage_json = format!(
+            r#"{{
+                "packages": {{
+                    "test/recovery": {{
                         "commit": null,
-                        "remote": {
+                        "remote": {{
                             "bucket": "test-bucket",
                             "namespace": "test/recovery",
-                            "hash": "def456",
+                            "hash": "{}",
                             "catalog": null
-                        },
-                        "base_hash": "def456",
-                        "latest_hash": "def456",
-                        "paths": {}
-                    }},
+                        }},
+                        "base_hash": "{}",
+                        "latest_hash": "{}",
+                        "paths": {{}}
+                    }}}},
                 "home": "/tmp/working_dir"
-                }"#,
-            )
+                }}"#,
+            test_hash, "foo", "bar"
+        );
+        storage
+            .write_file(&paths.lineage(), lineage_json.as_bytes())
             .await?;
 
         // Set up a valid cached manifest
         let reference_manifest = crate::fixtures::manifest::checksummed();
-        let cached_manifest = paths.manifest_cache("test-bucket", "def456");
+        let cached_manifest = paths.manifest_cache("test-bucket", &test_hash);
         storage.copy(reference_manifest?, cached_manifest).await?;
 
         // Create a corrupted installed manifest
-        let installed_manifest = paths.installed_manifest(&namespace, "def456");
+        let installed_manifest = paths.installed_manifest(&namespace, &test_hash);
         storage
             .write_file(&installed_manifest, b"corrupted data")
             .await?;
