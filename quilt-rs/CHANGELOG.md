@@ -5,6 +5,12 @@
 -->
 # Changelog
 
+## [v0.27.1-alpha4] - 2025-02-12
+
+### Improved
+
+- Add comprehensive logging to LocalDomain operations with debug/info messages
+
 ## [v0.27.1-alpha3] - 2025-02-12
 
 ### Improved

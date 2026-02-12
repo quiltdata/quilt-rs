@@ -5,7 +5,7 @@ documentation = "https://docs.quiltdata.com"
 homepage = "https://www.quiltdata.com"
 
 # Inherit from workspace
-version = "0.27.1-alpha3"
+version = "0.27.1-alpha4"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
