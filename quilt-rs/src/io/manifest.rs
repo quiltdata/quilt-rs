@@ -946,7 +946,7 @@ mod tests {
     #[test(tokio::test)]
     async fn test_checksummed_manifest_build_from_stream() -> Res {
         let storage = LocalStorage::default();
-        let manifest = Manifest::from_path(&storage, &fixtures::manifest::checksummed()?).await?;
+        let manifest = Manifest::from_path(&storage, &fixtures::manifest::path()?).await?;
 
         let mock_storage = MockStorage::default();
         let dest_dir = mock_storage.temp_dir.path();
@@ -961,7 +961,7 @@ mod tests {
         )
         .await?;
 
-        assert_eq!(calculated_hash, fixtures::manifest::CHECKSUMMED_HASH);
+        assert_eq!(calculated_hash, fixtures::manifest::TOP_HASH);
 
         Ok(())
     }
