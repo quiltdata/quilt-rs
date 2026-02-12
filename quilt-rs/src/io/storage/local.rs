@@ -54,8 +54,9 @@ impl Storage for LocalStorage {
     async fn copy(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Res<u64> {
         let from = from.as_ref();
         let to = to.as_ref();
-        fs::copy(from, to).await.map_err(|e| Error::FileRead {
-            path: from.to_path_buf(),
+        fs::copy(from, to).await.map_err(|e| Error::FileCopy {
+            from: from.to_path_buf(),
+            to: to.to_path_buf(),
             source: e,
         })
     }

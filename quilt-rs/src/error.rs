@@ -105,6 +105,13 @@ pub enum Error {
         source: std::io::Error,
     },
 
+    #[error("Failed to copy file from {from} to {to}: {source}")]
+    FileCopy {
+        from: std::path::PathBuf,
+        to: std::path::PathBuf,
+        source: std::io::Error,
+    },
+
     #[error("Failed to create directory {path}: {source}")]
     DirectoryCreate {
         path: std::path::PathBuf,
