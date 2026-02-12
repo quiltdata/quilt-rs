@@ -93,6 +93,27 @@ pub enum Error {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("Failed to read file {path}: {source}")]
+    FileRead {
+        path: std::path::PathBuf,
+        source: std::io::Error,
+    },
+
+    #[error("Failed to write file {path}: {source}")]
+    FileWrite {
+        path: std::path::PathBuf,
+        source: std::io::Error,
+    },
+
+    #[error("Failed to create directory {path}: {source}")]
+    DirectoryCreate {
+        path: std::path::PathBuf,
+        source: std::io::Error,
+    },
+
+    #[error("File not found: {path}")]
+    FileNotFound { path: std::path::PathBuf },
+
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 

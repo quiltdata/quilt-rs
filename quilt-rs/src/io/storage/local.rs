@@ -12,16 +12,36 @@ use crate::Res;
 use super::Storage;
 
 async fn write(path: impl AsRef<Path> + Send, bytes: &[u8]) -> Res {
-    let Some(parent) = path.as_ref().parent() else {
-        return Err(Error::MissingParentPath(path.as_ref().to_owned()));
+    let path = path.as_ref();
+    let Some(parent) = path.parent() else {
+        return Err(Error::MissingParentPath(path.to_owned()));
     };
-    fs::create_dir_all(&parent).await?;
+
+    fs::create_dir_all(&parent)
+        .await
+        .map_err(|source| Error::DirectoryCreate {
+            path: parent.to_path_buf(),
+            source,
+        })?;
 
     // TODO: Write to a temporary location, then move.
-    let mut file = fs::File::create(&path).await?;
+    let mut file = fs::File::create(&path)
+        .await
+        .map_err(|source| Error::FileWrite {
+            path: path.to_path_buf(),
+            source,
+        })?;
 
-    file.write_all(bytes).await?;
-    file.flush().await?;
+    file.write_all(bytes)
+        .await
+        .map_err(|source| Error::FileWrite {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    file.flush().await.map_err(|source| Error::FileWrite {
+        path: path.to_path_buf(),
+        source,
+    })?;
 
     Ok(())
 }
@@ -32,15 +52,30 @@ pub struct LocalStorage {}
 
 impl Storage for LocalStorage {
     async fn copy(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Res<u64> {
-        Ok(fs::copy(from, to).await?)
+        let from = from.as_ref();
+        let to = to.as_ref();
+        fs::copy(from, to).await.map_err(|e| Error::FileRead {
+            path: from.to_path_buf(),
+            source: e,
+        })
     }
 
     async fn create_dir_all(&self, path: impl AsRef<Path>) -> Res {
-        Ok(fs::create_dir_all(path).await?)
+        let path = path.as_ref();
+        fs::create_dir_all(path)
+            .await
+            .map_err(|e| Error::DirectoryCreate {
+                path: path.to_path_buf(),
+                source: e,
+            })
     }
 
     async fn create_file(&self, path: impl AsRef<Path>) -> Res<fs::File> {
-        Ok(fs::File::create(path.as_ref()).await?)
+        let path = path.as_ref();
+        fs::File::create(path).await.map_err(|e| Error::FileWrite {
+            path: path.to_path_buf(),
+            source: e,
+        })
     }
 
     async fn exists(&self, path: impl AsRef<Path>) -> bool {
@@ -53,19 +88,37 @@ impl Storage for LocalStorage {
     }
 
     async fn open_file(&self, path: impl AsRef<Path>) -> Res<fs::File> {
-        Ok(fs::File::open(path).await?)
+        let path = path.as_ref();
+        fs::File::open(path).await.map_err(|e| Error::FileRead {
+            path: path.to_path_buf(),
+            source: e,
+        })
     }
 
     async fn read_byte_stream(&self, path: impl AsRef<Path> + Send + Sync) -> Res<ByteStream> {
-        Ok(ByteStream::from_path(path).await?)
+        let path = path.as_ref();
+        ByteStream::from_path(path)
+            .await
+            .map_err(|e| Error::FileRead {
+                path: path.to_path_buf(),
+                source: e.into(),
+            })
     }
 
     async fn read_dir(&self, path: impl AsRef<Path>) -> Res<fs::ReadDir> {
-        Ok(fs::read_dir(&path).await?)
+        let path = path.as_ref();
+        fs::read_dir(path).await.map_err(|e| Error::FileRead {
+            path: path.to_path_buf(),
+            source: e,
+        })
     }
 
     async fn read_file(&self, path: impl AsRef<Path>) -> Res<Vec<u8>> {
-        Ok(fs::read(&path).await?)
+        let path = path.as_ref();
+        fs::read(path).await.map_err(|e| Error::FileRead {
+            path: path.to_path_buf(),
+            source: e,
+        })
     }
 
     async fn remove_dir_all(&self, path: impl AsRef<Path>) -> Res {
@@ -231,7 +284,16 @@ mod tests {
         // Should fail with permission denied
         assert!(result.is_err());
         let error = result.unwrap_err();
-        assert!(matches!(error, Error::Io(_)));
+
+        // The error could be DirectoryCreate or FileWrite depending on timing
+        assert!(matches!(
+            error,
+            Error::DirectoryCreate { .. } | Error::FileWrite { .. }
+        ));
+
+        // Verify the error message contains useful context - now we know exactly what failed!
+        let error_msg = error.to_string();
+        assert!(error_msg.contains("test.txt") && error_msg.contains("Permission denied"));
 
         // Restore permissions for cleanup
         let mut perms = fs::metadata(&readonly_dir).await?.permissions();

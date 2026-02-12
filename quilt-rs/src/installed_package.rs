@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use tracing::log;
 
 use crate::flow;
+use crate::flow::cache_remote_manifest;
 use crate::io::remote::resolve_workflow;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
@@ -17,6 +18,7 @@ use crate::lineage::LineagePaths;
 use crate::manifest::Manifest;
 use crate::manifest::Workflow;
 use crate::paths;
+use crate::paths::copy_cached_to_installed;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::uri::S3Uri;
@@ -56,10 +58,29 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
     pub async fn manifest(&self) -> Res<Manifest> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
-        let pathbuf = self
+        let installed_path = self
             .paths
             .installed_manifest(&self.namespace, lineage.current_hash());
-        Manifest::from_path(&self.storage, &pathbuf).await
+        match Manifest::from_path(&self.storage, &installed_path).await {
+            Ok(manifest) => return Ok(manifest),
+
+            Err(e) => {
+                log::warn!(
+                    "Failed to read installed manifest at {}: {}",
+                    installed_path.display(),
+                    e
+                );
+            }
+        }
+
+        // If installed failed, try to recover from cache
+        log::info!("Attempting to recover from cache at {}", &lineage.remote);
+
+        let cached_manifest =
+            cache_remote_manifest(&self.paths, &self.storage, &self.remote, &lineage.remote)
+                .await?;
+        copy_cached_to_installed(&self.paths, &self.storage, &lineage.remote).await?;
+        Ok(cached_manifest)
     }
 
     pub async fn lineage(&self) -> Res<lineage::PackageLineage> {
@@ -380,6 +401,84 @@ mod tests {
         assert_eq!(
             commit_state.prev_hashes,
             expected_hashes.into_iter().rev().collect::<Vec<String>>()
+        );
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_manifest_recovery_from_corruption() -> Res {
+        let (home, _temp_dir1) = Home::from_temp_dir()?;
+        let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+
+        let storage = LocalStorage::new();
+        let remote = MockRemote::default();
+        let namespace: Namespace = ("test", "recovery").into();
+
+        paths
+            .scaffold_for_installing(&storage, &home, &namespace)
+            .await?;
+        paths.scaffold_for_caching(&storage, "test-bucket").await?;
+
+        // Initialize domain lineage file
+        storage
+            .write_file(
+                &paths.lineage(),
+                br#"{
+                "packages": {
+                    "test/recovery": {
+                        "commit": null,
+                        "remote": {
+                            "bucket": "test-bucket",
+                            "namespace": "test/recovery",
+                            "hash": "def456",
+                            "catalog": null
+                        },
+                        "base_hash": "def456",
+                        "latest_hash": "def456",
+                        "paths": {}
+                    }},
+                "home": "/tmp/working_dir"
+                }"#,
+            )
+            .await?;
+
+        // Set up a valid cached manifest
+        let reference_manifest = crate::fixtures::manifest::checksummed();
+        let cached_manifest = paths.manifest_cache("test-bucket", "def456");
+        storage.copy(reference_manifest?, cached_manifest).await?;
+
+        // Create a corrupted installed manifest
+        let installed_manifest = paths.installed_manifest(&namespace, "def456");
+        storage
+            .write_file(&installed_manifest, b"corrupted data")
+            .await?;
+
+        let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+        let package = InstalledPackage {
+            lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+            paths,
+            remote,
+            storage: storage.clone(),
+            namespace,
+        };
+
+        // This should succeed by recovering from cache despite corrupted installed manifest
+        let result = package.manifest().await;
+        assert!(
+            result.is_ok(),
+            "Should recover from cache when installed is corrupted"
+        );
+
+        // Verify the corrupted file was replaced with good data
+        let fixed_manifest_content = storage.read_file(&installed_manifest).await?;
+        assert!(
+            fixed_manifest_content.len() > 10,
+            "Installed manifest should be fixed"
+        );
+        assert!(
+            !fixed_manifest_content.starts_with(b"corrupted"),
+            "Should no longer be corrupted"
         );
 
         Ok(())
