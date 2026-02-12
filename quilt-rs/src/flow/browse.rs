@@ -7,6 +7,7 @@ use crate::manifest::Manifest;
 use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::uri::S3Uri;
+use crate::Error;
 use crate::Res;
 
 async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res<Manifest> {
@@ -60,11 +61,16 @@ pub async fn cache_remote_manifest(
 
     info!("✔️ Manifest {} was written …", manifest_uri.display());
 
-    let manifest = Manifest::from_path(storage, &manifest_path).await?;
-
-    info!("✔️ … and, Successfully cached:\n{:?}", manifest.header);
-
-    Ok(manifest)
+    match Manifest::from_path(storage, &manifest_path).await {
+        Ok(manifest) => {
+            info!("✔️ … and, Successfully cached:\n{:?}", manifest.header);
+            Ok(manifest)
+        }
+        Err(e) => Err(Error::ManifestLoad {
+            path: manifest_path.clone(),
+            source: Box::new(e),
+        }),
+    }
 }
 
 /// Alias for the `cache_remote_manifest`.
@@ -109,7 +115,7 @@ mod tests {
 
         // Prepare the reference manifest file.
         // It is copied into the cache path to simulate a cached manifest.
-        let jsonl = std::fs::read(fixtures::manifest::checksummed()?)?;
+        let jsonl = std::fs::read(fixtures::manifest::path()?)?;
         let storage = MockStorage::default();
         storage.write_file(&cache_path, &jsonl).await?;
 
@@ -173,7 +179,7 @@ mod tests {
 
         // Simulate the remote JSONL manifest.
         // The JSONL data is loaded from a mocked fixture and placed in the remote location.
-        let jsonl = std::fs::read(fixtures::manifest::checksummed()?)?;
+        let jsonl = std::fs::read(fixtures::manifest::path()?)?;
         let remote = MockRemote::default();
         let remote_uri = S3Uri::from_str(&format!(
             "s3://{}/.quilt/packages/{}",

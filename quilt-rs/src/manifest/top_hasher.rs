@@ -629,7 +629,7 @@ mod tests {
         }
 
         let calculated_hash = top_hasher.finalize();
-        assert_eq!(calculated_hash, fixtures::manifest::CHECKSUMMED_HASH);
+        assert_eq!(calculated_hash, fixtures::manifest::TOP_HASH);
 
         Ok(())
     }

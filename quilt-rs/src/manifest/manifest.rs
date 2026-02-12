@@ -535,9 +535,7 @@ mod tests {
     #[test(tokio::test)]
     async fn test_manifest_from_reader_valid() -> Res {
         let storage = LocalStorage::default();
-        let file = storage
-            .open_file(fixtures::manifest::checksummed()?)
-            .await?;
+        let file = storage.open_file(fixtures::manifest::path()?).await?;
         let checksummed_manifest = Manifest::from_reader(file).await?;
 
         assert_eq!(

@@ -304,7 +304,7 @@ mod tests {
         let lineage = PackageLineage {
             commit: Some(CommitState {
                 timestamp: chrono::Utc::now(),
-                hash: fixtures::manifest::CHECKSUMMED_HASH.to_string(),
+                hash: fixtures::manifest::TOP_HASH.to_string(),
                 prev_hashes: Vec::new(),
             }),
             remote: manifest_uri,
@@ -365,7 +365,7 @@ mod tests {
         let manifest_uri = ManifestUri {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
-            hash: fixtures::manifest::CHECKSUMMED_HASH.to_string(),
+            hash: fixtures::manifest::TOP_HASH.to_string(),
             origin: None,
         };
         assert_eq!(
