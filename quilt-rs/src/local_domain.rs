@@ -2,6 +2,8 @@ use std::marker::Unpin;
 use std::path::Path;
 use std::path::PathBuf;
 
+use tracing::{debug, info, warn};
+
 use crate::flow;
 use crate::installed_package::InstalledPackage;
 use crate::io::manifest::build_manifest_from_rows_stream;
@@ -54,10 +56,16 @@ impl LocalDomain {
     }
 
     pub async fn set_home(&self, dir: impl AsRef<Path>) -> Res<Home> {
+        let dir_path = dir.as_ref();
+        info!("Setting home directory to {}", dir_path.display());
         Ok(self.lineage.set_home(&self.storage, dir).await?.home)
     }
 
     pub async fn scaffold_paths_for_installing(&self, namespace: &Namespace) -> Res {
+        debug!(
+            "Scaffolding installation paths for namespace: {}",
+            namespace
+        );
         let home = self.get_home().await?;
         self.paths
             .scaffold_for_installing(&self.storage, &home, namespace)
@@ -65,12 +73,18 @@ impl LocalDomain {
     }
 
     pub async fn scaffold_paths_for_caching(&self, bucket: &str) -> Res {
+        debug!("Scaffolding cache paths for bucket: {}", bucket);
         self.paths.scaffold_for_caching(&self.storage, bucket).await
     }
 
     pub async fn browse_remote_manifest(&self, uri: &ManifestUri) -> Res<Manifest> {
         self.scaffold_paths_for_caching(&uri.bucket).await?;
-        flow::browse(&self.paths, &self.storage, &self.remote, uri).await
+
+        debug!("Initiating browse flow for manifest {}", uri.hash);
+        flow::browse(&self.paths, &self.storage, &self.remote, uri)
+            .await
+            .inspect(|_| debug!("Successfully browsed manifest {}", uri.hash))
+            .inspect_err(|e| warn!("Failed to browse manifest {}: {}", uri.hash, e))
     }
 
     pub fn create_installed_package(&self, namespace: Namespace) -> Res<InstalledPackage> {
@@ -85,11 +99,19 @@ impl LocalDomain {
     }
 
     pub async fn install_package(&self, manifest_uri: &ManifestUri) -> Res<InstalledPackage> {
+        info!("Installing package: {}", manifest_uri.namespace);
+        debug!("Installing from manifest: {}", manifest_uri.display());
+
+        debug!("Preparing paths for installation");
         self.scaffold_paths_for_caching(&manifest_uri.bucket)
             .await?;
         self.scaffold_paths_for_installing(&manifest_uri.namespace)
             .await?;
+
+        debug!("Reading domain lineage");
         let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
+
+        debug!("Executing package installation flow");
         let lineage = flow::install_package(
             lineage,
             &self.paths,
@@ -98,24 +120,40 @@ impl LocalDomain {
             manifest_uri,
         )
         .await?;
+
+        debug!("Updating domain lineage");
         self.lineage.write(&self.storage, lineage).await?;
 
+        info!("Successfully installed package: {}", manifest_uri.namespace);
         self.create_installed_package(manifest_uri.namespace.clone())
     }
 
     pub async fn uninstall_package(&self, namespace: Namespace) -> Res<()> {
+        info!("Uninstalling package: {}", namespace);
+
+        debug!("Preparing paths for uninstallation");
         self.scaffold_paths_for_installing(&namespace).await?;
 
+        debug!("Reading current lineage state");
         let lineage = self.lineage.read(&self.storage).await?;
+
+        debug!("Executing package uninstallation flow");
         let lineage =
-            flow::uninstall_package(lineage, &self.paths, &self.storage, namespace).await?;
+            flow::uninstall_package(lineage, &self.paths, &self.storage, namespace.clone()).await?;
+
+        debug!("Updating domain lineage after uninstallation");
         self.lineage.write(&self.storage, lineage).await?;
+
+        info!("Successfully uninstalled package: {}", namespace);
         Ok(())
     }
 
     pub async fn list_installed_packages(&self) -> Res<Vec<InstalledPackage>> {
+        debug!("Listing installed packages");
         let lineage = self.lineage.read(&self.storage).await?;
         let namespaces = lineage.namespaces();
+
+        debug!("Found {} installed packages", namespaces.len());
         let mut packages = Vec::with_capacity(namespaces.len());
         for namespace in namespaces {
             packages.push(self.create_installed_package(namespace)?);
@@ -127,10 +165,13 @@ impl LocalDomain {
         &self,
         namespace: &Namespace,
     ) -> Res<Option<InstalledPackage>> {
+        debug!("Looking up installed package: {}", namespace);
         let lineage = self.lineage.read(&self.storage).await?;
         if lineage.packages.contains_key(namespace) {
+            debug!("Found installed package: {}", namespace);
             Ok(Some(self.create_installed_package(namespace.to_owned())?))
         } else {
+            debug!("Package not found: {}", namespace);
             Ok(None)
         }
     }
@@ -140,6 +181,7 @@ impl LocalDomain {
         dest_path: PathBuf,
         stream: impl RowsStream + Unpin,
     ) -> Res<(PathBuf, String)> {
+        info!("Building manifest at: {}", dest_path.display());
         let dest_dir = dest_path.parent().unwrap_or(&dest_path).to_path_buf();
         build_manifest_from_rows_stream(&self.storage, dest_dir, ManifestHeader::default(), stream)
             .await
