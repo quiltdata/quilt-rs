@@ -7,6 +7,7 @@ use crate::manifest::Manifest;
 use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::uri::S3Uri;
+use crate::Error;
 use crate::Res;
 
 async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res<Manifest> {
@@ -60,11 +61,16 @@ pub async fn cache_remote_manifest(
 
     info!("✔️ Manifest {} was written …", manifest_uri.display());
 
-    let manifest = Manifest::from_path(storage, &manifest_path).await?;
-
-    info!("✔️ … and, Successfully cached:\n{:?}", manifest.header);
-
-    Ok(manifest)
+    match Manifest::from_path(storage, &manifest_path).await {
+        Ok(manifest) => {
+            info!("✔️ … and, Successfully cached:\n{:?}", manifest.header);
+            Ok(manifest)
+        }
+        Err(e) => Err(Error::ManifestLoad {
+            path: manifest_path.clone(),
+            source: Box::new(e),
+        }),
+    }
 }
 
 /// Alias for the `cache_remote_manifest`.

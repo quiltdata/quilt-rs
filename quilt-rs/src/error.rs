@@ -142,6 +142,12 @@ pub enum Error {
     #[error("Manifest header: {0}")]
     ManifestHeader(String),
 
+    #[error("Failed to load manifest from {path}: {source}")]
+    ManifestLoad {
+        path: std::path::PathBuf,
+        source: Box<Error>,
+    },
+
     #[error("Manifest path error: {0}")]
     ManifestPath(String),
 
