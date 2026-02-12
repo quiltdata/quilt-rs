@@ -5,6 +5,12 @@
 -->
 # Changelog
 
+## [v0.27.1-alpha3] - 2025-02-12
+
+### Improved
+
+- Add contextual error handling with file paths for better debugging of IO operations
+
 ## [v0.27.1-alpha2] - 2025-02-09
 
 ### Added
