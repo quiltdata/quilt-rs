@@ -3,6 +3,10 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::RwLock;
 
+use std::time::Duration;
+
+use aws_config::retry::RetryConfig;
+use aws_config::timeout::TimeoutConfig;
 use aws_config::BehaviorVersion;
 use aws_credential_types::Credentials;
 use aws_sdk_s3::error::DisplayErrorContext;
@@ -196,12 +200,25 @@ impl RemoteS3 {
         }
 
         info!("⏳ Creating new S3 client for region {:?}", region);
+
+        // Configure timeouts and retries for robustness
+        let timeout_config = TimeoutConfig::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .read_timeout(Duration::from_secs(30))
+            .operation_timeout(Duration::from_secs(60))
+            .operation_attempt_timeout(Duration::from_secs(30))
+            .build();
+
+        let retry_config = RetryConfig::standard().with_max_attempts(3);
+
         // Create new client
         let config = match host {
             None => {
                 info!("⏳ No `&catalog=`, so we use credentials in ~/.aws");
                 let config = aws_config::defaults(BehaviorVersion::latest())
                     .region(region.clone())
+                    .timeout_config(timeout_config)
+                    .retry_config(retry_config)
                     .load()
                     .await;
 
@@ -219,6 +236,8 @@ impl RemoteS3 {
                 debug!("✔️ Got credentials for host {:?}", host);
                 aws_config::defaults(BehaviorVersion::latest())
                     .region(region.clone())
+                    .timeout_config(timeout_config)
+                    .retry_config(retry_config)
                     .credentials_provider(Credentials::new(
                         creds.access_key,
                         &creds.secret_key,

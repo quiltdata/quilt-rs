@@ -282,6 +282,14 @@ impl Table {
         Table::read_rows_impl(file).await
     }
 
+    /// Read Parquet from any async reader (used for reading downloaded Parquet bytes)
+    pub async fn from_async_reader<R>(reader: R) -> Res<Self>
+    where
+        R: AsyncSeek + AsyncRead + Unpin + Send + 'static,
+    {
+        Table::read_rows_impl(reader).await
+    }
+
     pub async fn get_header(&self) -> Res<Header> {
         Ok(self.header.clone())
     }

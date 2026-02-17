@@ -38,16 +38,25 @@ pub fn navigate_to_uri<R: tauri::Runtime>(app_handle: &AppHandle<R>, uri_str: &s
 
 async fn wait_for_main_window<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> Result<()> {
     let mut attempts = 0;
-    const MAX_ATTEMPTS: u32 = 10;
+    // On cold start, the window may take several seconds to initialize:
+    // Tauri runtime init → WebView creation → HTML load → JS execution
+    // Use a generous timeout to avoid losing deep links.
+    const MAX_ATTEMPTS: u32 = 75;
     const RETRY_DELAY_MS: u64 = 200;
 
     while attempts < MAX_ATTEMPTS {
         if let Some(window) = app_handle.get_webview_window("main") {
-            // Check window is visible and URL is valid
             if let Ok(true) = window.is_visible() {
                 if let Ok(url) = window.url() {
-                    // Only return success if URL has proper HTTP scheme
-                    if url.scheme().starts_with("http") {
+                    let scheme = url.scheme();
+                    // Accept http://, https://, or tauri:// as valid loaded schemes
+                    if scheme.starts_with("http") || scheme == "tauri" {
+                        info!(
+                            "Main window ready after {} attempts ({}ms), url scheme: {}",
+                            attempts,
+                            attempts as u64 * RETRY_DELAY_MS,
+                            scheme
+                        );
                         return Ok(());
                     }
                 }
