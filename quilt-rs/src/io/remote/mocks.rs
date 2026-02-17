@@ -44,20 +44,15 @@ impl Remote for MockRemote {
             .read_byte_stream(&key)
             .await
             .map_err(|err| match err {
-                // TODO: made a similar finer error for the ByteStreamError
                 Error::ByteStreamError(_) => Error::S3(
                     host.to_owned(),
-                    S3Error::GetObjectStream(
-                        "NoSuchKey: The specified key does not exist".to_string(),
-                    ),
+                    S3Error::NotFound("The specified key does not exist".to_string()),
                 ),
                 Error::Io(inner_err) => {
                     if inner_err.kind() == std::io::ErrorKind::NotFound {
                         Error::S3(
                             host.to_owned(),
-                            S3Error::GetObjectStream(
-                                "NoSuchKey: The specified key does not exist".to_string(),
-                            ),
+                            S3Error::NotFound("The specified key does not exist".to_string()),
                         )
                     } else {
                         Error::Io(inner_err)
@@ -139,7 +134,7 @@ mod tests {
         if let Err(Error::S3(None, err)) = not_found {
             assert_eq!(
                 err,
-                S3Error::GetObjectStream("NoSuchKey: The specified key does not exist".to_string(),)
+                S3Error::NotFound("The specified key does not exist".to_string())
             );
         } else {
             panic!("shouldn't happen");

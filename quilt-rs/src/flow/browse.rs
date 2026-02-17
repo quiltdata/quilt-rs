@@ -6,8 +6,8 @@ use tracing::warn;
 use crate::error::S3Error;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
-use crate::manifest::Table;
 use crate::manifest::Manifest;
+use crate::manifest::Table;
 use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::uri::ManifestUriParquet;
@@ -15,13 +15,11 @@ use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
 
-/// Check if an error indicates a "NoSuchKey" S3 error (object not found)
+/// Check if an error indicates a "NoSuchKey" S3 error (object not found).
+/// Matches on the typed `S3Error::NotFound` variant produced by the S3 client
+/// when the AWS SDK returns a `NoSuchKey` service error.
 fn is_no_such_key_error(err: &Error) -> bool {
-    match err {
-        Error::S3(_, S3Error::GetObjectStream(msg)) => msg.contains("NoSuchKey"),
-        Error::S3Raw(msg) => msg.contains("NoSuchKey"),
-        _ => false,
-    }
+    matches!(err, Error::S3(_, S3Error::NotFound(_)))
 }
 
 async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res<Manifest> {
@@ -57,6 +55,10 @@ async fn fetch_parquet(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res<
 
     let file = tokio::fs::File::open(&temp_path).await?;
     let table = Table::from_async_reader(file).await?;
+    // Explicitly drop temp_dir after reading is complete to ensure the
+    // temporary file is not deleted prematurely (important on Windows where
+    // open files cannot be deleted).
+    drop(temp_dir);
     debug!("✔️ Fetched Parquet manifest, converting to Manifest");
     Manifest::from_table(&table).await
 }

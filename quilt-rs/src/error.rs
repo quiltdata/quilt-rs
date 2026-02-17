@@ -23,6 +23,9 @@ pub enum S3Error {
     #[error("Failed to get object stream: {0}")]
     GetObjectStream(String),
 
+    #[error("Object not found: {0}")]
+    NotFound(String),
+
     #[error("Failed to initialize S3 client: {0}")]
     Client(String),
 

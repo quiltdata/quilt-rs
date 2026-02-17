@@ -53,8 +53,8 @@ async fn wait_for_main_window<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> R
                     if scheme.starts_with("http") || scheme == "tauri" {
                         info!(
                             "Main window ready after {} attempts ({}ms), url scheme: {}",
-                            attempts,
-                            attempts as u64 * RETRY_DELAY_MS,
+                            attempts + 1,
+                            (attempts + 1) as u64 * RETRY_DELAY_MS,
                             scheme
                         );
                         return Ok(());

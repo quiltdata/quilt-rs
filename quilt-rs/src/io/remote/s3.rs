@@ -50,23 +50,26 @@ async fn find_bucket_region(client: &impl HttpClient, bucket: &str) -> Res<Strin
     }
 }
 
-async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<RemoteObjectStream> {
+async fn get_object_stream(
+    client: &aws_sdk_s3::Client,
+    s3_uri: &S3Uri,
+) -> std::result::Result<
+    RemoteObjectStream,
+    SdkError<aws_sdk_s3::operation::get_object::GetObjectError>,
+> {
     let result = client.get_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
     let result = match &s3_uri.version {
         Some(version) => result.version_id(version),
         None => result,
     };
 
-    let result = result
-        .send()
-        .await
-        .map_err(|err| Error::S3Raw(DisplayErrorContext(err).to_string()))?;
+    let output = result.send().await?;
     let uri_versioned = S3Uri {
-        version: result.version_id,
+        version: output.version_id,
         ..s3_uri.clone()
     };
     Ok(RemoteObjectStream {
-        body: result.body,
+        body: output.body,
         uri: uri_versioned,
     })
 }
@@ -332,12 +335,18 @@ impl Remote for RemoteS3 {
                 info!("✔️ Created stream for object {}", s3_uri);
                 Ok(stream)
             }
-            Err(e) => {
-                warn!("❌ Failed to create stream for {}: {}", s3_uri, e);
-                Err(Error::S3(
-                    host.to_owned(),
-                    S3Error::GetObjectStream(DisplayErrorContext(e).to_string()),
-                ))
+            Err(err) => {
+                let is_not_found = err
+                    .as_service_error()
+                    .map(|e| e.is_no_such_key())
+                    .unwrap_or(false);
+                let msg = DisplayErrorContext(&err).to_string();
+                warn!("❌ Failed to create stream for {}: {}", s3_uri, msg);
+                if is_not_found {
+                    Err(Error::S3(host.to_owned(), S3Error::NotFound(msg)))
+                } else {
+                    Err(Error::S3(host.to_owned(), S3Error::GetObjectStream(msg)))
+                }
             }
         }
     }
