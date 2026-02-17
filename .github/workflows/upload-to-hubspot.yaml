@@ -1,3 +1,33 @@
+# Upload QuiltSync release assets to HubSpot HubFS and update HubDB table
+#
+# This workflow downloads release assets from GitHub, processes latest.json to update URLs
+# to point to HubFS locations, uploads all assets to HubSpot file system, and creates
+# a new HubDB row with release metadata for the download page.
+#
+# Required repository variables:
+#   - HUBDB_TABLE_ID: HubDB table ID for storing release metadata
+#   - HUBDB_COLUMN_MAP: JSON mapping of data fields to HubDB column names
+#     Maps logical field names to your HubDB table's actual column names
+#     Available fields: version, release_tag, latest_json_url, latest_json,
+#     downloads_json, updated_at, windows_msi_url, windows_url, macos_arm_url,
+#     macos_intel_url, linux_deb_url, linux_url
+#     Example: {"version": "release_version", "windows_msi_url": "win_download"}
+#
+# Optional repository variables (used if available):
+#   - HUBDB_TABLE_NAME: HubDB table name (not used if HUBDB_TABLE_ID is set)
+#   - HUBFS_BASE_PATH: Custom HubFS base path (defaults to input parameter)
+#
+# Required secrets:
+#   - HUBSPOT_ACCESS_TOKEN: HubSpot private app token with Files + HubDB write scopes
+#   - GITHUB_TOKEN: Automatically provided by GitHub Actions (for downloading releases)
+#
+# Process:
+#   1. Downloads all assets from specified GitHub release
+#   2. Modifies latest.json URLs to point to HubFS locations
+#   3. Uploads all assets (including modified latest.json) to HubFS
+#   4. Extracts version and platform-specific URLs from processed latest.json
+#   5. Creates new HubDB row with release metadata and download URLs
+#
 name: Upload QuiltSync Assets to HubSpot
 
 on:
@@ -168,3 +198,114 @@ jobs:
           fi
 
           echo "🎉 All assets uploaded successfully to HubSpot"
+
+      - name: Update HubDB table
+        run: |
+          if [ -z "${{ vars.HUBDB_TABLE_ID }}" ] || [ -z "${{ vars.HUBDB_COLUMN_MAP }}" ]; then
+            echo "Skipping HubDB update (HUBDB_TABLE_ID and HUBDB_COLUMN_MAP required)"
+            exit 0
+          fi
+
+          echo "Updating HubDB table: ${{ vars.HUBDB_TABLE_ID }}"
+
+          # Extract version from latest.json - fail if not available
+          if [ ! -f "./release-assets/latest.json" ]; then
+            echo "❌ latest.json not found in release assets - cannot determine version"
+            exit 1
+          fi
+
+          VERSION=$(jq -r '.version // empty' ./release-assets/latest.json 2>/dev/null || echo "")
+          if [ -z "$VERSION" ]; then
+            echo "❌ No version field found in latest.json"
+            exit 1
+          fi
+
+          echo "Using version: $VERSION"
+
+          # Extract platform-specific URLs from processed latest.json
+          WINDOWS_MSI_URL=$(jq -r '[.. | .url? | select(. != null and test(".*\\.msi$"; "i"))] | .[0] // ""' ./release-assets/latest.json)
+          MACOS_ARM_URL=$(jq -r '[.. | .url? | select(. != null and test(".*aarch64.*\\.dmg$"; "i"))] | .[0] // ""' ./release-assets/latest.json)
+          MACOS_INTEL_URL=$(jq -r '[.. | .url? | select(. != null and test(".*(x64|x86_64|amd64).*\\.dmg$"; "i"))] | .[0] // ""' ./release-assets/latest.json)
+          LINUX_DEB_URL=$(jq -r '[.. | .url? | select(. != null and test(".*\\.deb$"; "i"))] | .[0] // ""' ./release-assets/latest.json)
+
+          # Collect all download URLs from latest.json
+          DOWNLOADS_JSON=$(jq -c '[.. | .url? | select(. != null and (test("\\.dmg$|\\.msi$|\\.deb$"; "i")))]' ./release-assets/latest.json 2>/dev/null)
+          if [ $? -ne 0 ] || [ -z "$DOWNLOADS_JSON" ]; then
+            echo "❌ Failed to extract download URLs from latest.json"
+            exit 1
+          fi
+
+          # Build the values object based on column mapping
+          CURRENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S.%fZ")
+          LATEST_JSON_URL="${HUBFS_ROOT_URL}/latest.json"
+          LATEST_JSON_CONTENT=$(jq -c . ./release-assets/latest.json)
+          if [ $? -ne 0 ] || [ -z "$LATEST_JSON_CONTENT" ]; then
+            echo "❌ Failed to read latest.json content"
+            exit 1
+          fi
+
+          # Create values JSON using column mapping
+          VALUES_JSON=$(echo '${{ vars.HUBDB_COLUMN_MAP }}' | jq --arg version "$VERSION" \
+            --arg release_tag "${{ inputs.release_tag }}" \
+            --arg latest_json_url "$LATEST_JSON_URL" \
+            --arg latest_json "$LATEST_JSON_CONTENT" \
+            --arg downloads_json "$DOWNLOADS_JSON" \
+            --arg updated_at "$CURRENT_TIME" \
+            --arg windows_msi_url "$WINDOWS_MSI_URL" \
+            --arg windows_url "$WINDOWS_MSI_URL" \
+            --arg macos_arm_url "$MACOS_ARM_URL" \
+            --arg macos_intel_url "$MACOS_INTEL_URL" \
+            --arg linux_deb_url "$LINUX_DEB_URL" \
+            --arg linux_url "$LINUX_DEB_URL" \
+            'to_entries | map({
+              key: .value,
+              value: (
+                if .key == "version" then $version
+                elif .key == "release_tag" then $release_tag
+                elif .key == "latest_json_url" then $latest_json_url
+                elif .key == "latest_json" then $latest_json
+                elif .key == "downloads_json" then $downloads_json
+                elif .key == "updated_at" then $updated_at
+                elif .key == "windows_msi_url" then $windows_msi_url
+                elif .key == "windows_url" then $windows_url
+                elif .key == "macos_arm_url" then $macos_arm_url
+                elif .key == "macos_intel_url" then $macos_intel_url
+                elif .key == "linux_deb_url" then $linux_deb_url
+                elif .key == "linux_url" then $linux_url
+                else empty
+                end
+              )
+            }) | from_entries')
+
+          echo "Values to update: $VALUES_JSON"
+
+          # Create request payload (always publish)
+          PAYLOAD=$(jq -n --argjson values "$VALUES_JSON" \
+            '{values: $values, publish: true}')
+
+          echo "Request payload: $PAYLOAD"
+
+          # Create new HubDB row
+          echo "Creating new HubDB row"
+
+          response=$(curl -s -w "\n%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer ${{ secrets.HUBSPOT_ACCESS_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "$HUBSPOT_API_BASE/cms/v3/hubdb/tables/${{ vars.HUBDB_TABLE_ID }}/rows")
+
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | head -n -1)
+
+          if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
+            NEW_ROW_ID=$(echo "$body" | jq -r '.id // empty')
+            echo "✅ Successfully created HubDB row: $NEW_ROW_ID"
+            echo "Response: $body"
+          else
+            echo "❌ Failed to create HubDB row (HTTP $http_code)"
+            echo "Response: $body"
+            exit 1
+          fi
+
+          echo "🎉 HubDB table updated successfully"
