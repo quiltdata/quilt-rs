@@ -13,10 +13,6 @@
 #     macos_intel_url, linux_deb_url, linux_url
 #     Example: {"version": "release_version", "windows_msi_url": "win_download"}
 #
-# Optional repository variables (used if available):
-#   - HUBDB_TABLE_NAME: HubDB table name (not used if HUBDB_TABLE_ID is set)
-#   - HUBFS_BASE_PATH: Custom HubFS base path (defaults to input parameter)
-#
 # Required secrets:
 #   - HUBSPOT_ACCESS_TOKEN: HubSpot private app token with Files + HubDB write scopes
 #   - GITHUB_TOKEN: Automatically provided by GitHub Actions (for downloading releases)
@@ -46,13 +42,12 @@ on:
 env:
   HUBSPOT_API_BASE: "https://api.hubapi.com"
   HUBFS_ROOT_URL: "https://www.quilt.bio/hubfs"
+  HUBFS_BASE_PATH: "${{ inputs.hubspot_folder }}${{ inputs.release_tag }}"
 
 jobs:
   upload-to-hubspot:
     name: Download and Upload to HubSpot
     runs-on: ubuntu-24.04
-    env:
-      HUBFS_BASE_PATH: "${{ inputs.hubspot_folder }}${{ inputs.release_tag }}"
 
     steps:
       - name: Create assets directory
