@@ -194,7 +194,14 @@ jobs:
           echo "🎉 All assets uploaded successfully to HubSpot"
 
       - name: Update HubDB table
+        env:
+          HUBSPOT_TOKEN: ${{ secrets.HUBSPOT_ACCESS_TOKEN }}
         run: |
+          if [ -z "$HUBSPOT_TOKEN" ]; then
+            echo "Error: HUBSPOT_ACCESS_TOKEN secret is not set"
+            exit 1
+          fi
+
           if [ -z "${{ vars.HUBDB_TABLE_ID }}" ] || [ -z "${{ vars.HUBDB_COLUMN_MAP }}" ]; then
             echo "Skipping HubDB update (HUBDB_TABLE_ID and HUBDB_COLUMN_MAP required)"
             exit 0
@@ -284,7 +291,7 @@ jobs:
 
           response=$(curl -s -w "\n%{http_code}" \
             -X POST \
-            -H "Authorization: Bearer ${{ secrets.HUBSPOT_ACCESS_TOKEN }}" \
+            -H "Authorization: Bearer $HUBSPOT_TOKEN" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD" \
             "$HUBSPOT_API_BASE/cms/v3/hubdb/tables/${{ vars.HUBDB_TABLE_ID }}/rows")
