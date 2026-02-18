@@ -236,7 +236,7 @@ jobs:
           fi
 
           # Build the values object based on column mapping
-          CURRENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S.%fZ")
+          CURRENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
           LATEST_JSON_URL="${HUBFS_ROOT_URL}/latest.json"
           if ! LATEST_JSON_CONTENT=$(jq -c . ./release-assets/latest.json) || [ -z "$LATEST_JSON_CONTENT" ]; then
             echo "❌ Failed to read latest.json content"
