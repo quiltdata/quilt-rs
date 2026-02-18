@@ -10,7 +10,8 @@
 
 ### Fixed
 
-- Fixed deep link handler failing on macOS/Linux due to `tauri://` scheme not matching `http` check
+- Fixed deep link handler failing on macOS/Linux
+  due to `tauri://` scheme not matching `http` check
 
 ## [v0.13.0]
 
