@@ -8,7 +8,6 @@ use crate::manifest::Manifest;
 use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::uri::S3Uri;
-use crate::Error;
 use crate::Res;
 
 async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res<Manifest> {
@@ -24,7 +23,7 @@ async fn fetch_and_cache(
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
     cache_path: &std::path::Path,
-) -> Res {
+) -> Res<Manifest> {
     debug!(
         "⏳ Fetching JSONL manifest {} from remote…",
         manifest_uri.display()
@@ -37,7 +36,7 @@ async fn fetch_and_cache(
         .write_file(cache_path, jsonl_content.as_bytes())
         .await?;
     debug!("✔️ JSONL manifest written to {}", cache_path.display());
-    Ok(())
+    Ok(manifest)
 }
 
 /// If remote manifest is already cached we return it.
@@ -63,10 +62,12 @@ pub async fn cache_remote_manifest(
     let manifest_path = cache_path.clone();
 
     if !storage.exists(&cache_path).await {
-        fetch_and_cache(storage, remote, manifest_uri, &cache_path).await?;
-    } else {
-        debug!("✔️ Manifest exists already in {}", cache_path.display());
+        let manifest = fetch_and_cache(storage, remote, manifest_uri, &cache_path).await?;
+        info!("✔️ Successfully cached:\n{:?}", manifest.header);
+        return Ok(manifest);
     }
+
+    debug!("✔️ Manifest exists already in {}", cache_path.display());
 
     match Manifest::from_path(storage, &manifest_path).await {
         Ok(manifest) => {
@@ -81,13 +82,7 @@ pub async fn cache_remote_manifest(
                 e
             );
             storage.remove_file(&manifest_path).await?;
-            fetch_and_cache(storage, remote, manifest_uri, &cache_path).await?;
-            Manifest::from_path(storage, &manifest_path)
-                .await
-                .map_err(|e| Error::ManifestLoad {
-                    path: manifest_path.clone(),
-                    source: Box::new(e),
-                })
+            fetch_and_cache(storage, remote, manifest_uri, &cache_path).await
         }
     }
 }
