@@ -1,5 +1,6 @@
 use tracing::debug;
 use tracing::info;
+use tracing::warn;
 
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
@@ -16,6 +17,27 @@ async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res<Ma
         .get_object_stream(&manifest_uri.origin, &s3_uri)
         .await?;
     Manifest::from_reader(contents.body.into_async_read()).await
+}
+
+async fn fetch_and_cache(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    manifest_uri: &ManifestUri,
+    cache_path: &std::path::Path,
+) -> Res {
+    debug!(
+        "⏳ Fetching JSONL manifest {} from remote…",
+        manifest_uri.display()
+    );
+    let manifest = fetch_jsonl(remote, manifest_uri).await?;
+    debug!("✔️ Fetched JSONL manifest");
+
+    let jsonl_content = manifest.to_jsonlines();
+    storage
+        .write_file(cache_path, jsonl_content.as_bytes())
+        .await?;
+    debug!("✔️ JSONL manifest written to {}", cache_path.display());
+    Ok(())
 }
 
 /// If remote manifest is already cached we return it.
@@ -41,35 +63,32 @@ pub async fn cache_remote_manifest(
     let manifest_path = cache_path.clone();
 
     if !storage.exists(&cache_path).await {
-        debug!("🔍 Manifest does not exist in cache, fetching from remote");
-        debug!(
-            "⏳ Fetching JSONL manifest {} from remote…",
-            manifest_uri.display()
-        );
-        let manifest = fetch_jsonl(remote, manifest_uri).await?;
-        debug!("✔️ Fetched JSONL manifest");
-
-        // Write JSONL to cache
-        let jsonl_content = manifest.to_jsonlines();
-        storage
-            .write_file(&cache_path, jsonl_content.as_bytes())
-            .await?;
-        debug!("✔️ JSONL manifest written to {}", cache_path.display());
+        fetch_and_cache(storage, remote, manifest_uri, &cache_path).await?;
     } else {
         debug!("✔️ Manifest exists already in {}", cache_path.display());
     }
 
-    info!("✔️ Manifest {} was written …", manifest_uri.display());
-
     match Manifest::from_path(storage, &manifest_path).await {
         Ok(manifest) => {
-            info!("✔️ … and, Successfully cached:\n{:?}", manifest.header);
+            info!("✔️ Successfully cached:\n{:?}", manifest.header);
             Ok(manifest)
         }
-        Err(e) => Err(Error::ManifestLoad {
-            path: manifest_path.clone(),
-            source: Box::new(e),
-        }),
+        Err(e) => {
+            // Cached file is unreadable (e.g. legacy Parquet format), re-fetch
+            warn!(
+                "Cached manifest at {} is invalid, re-fetching: {}",
+                manifest_path.display(),
+                e
+            );
+            storage.remove_file(&manifest_path).await?;
+            fetch_and_cache(storage, remote, manifest_uri, &cache_path).await?;
+            Manifest::from_path(storage, &manifest_path).await.map_err(|e| {
+                Error::ManifestLoad {
+                    path: manifest_path.clone(),
+                    source: Box::new(e),
+                }
+            })
+        }
     }
 }
 
