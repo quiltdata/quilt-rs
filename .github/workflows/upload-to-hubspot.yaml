@@ -274,8 +274,6 @@ jobs:
           PAYLOAD=$(jq -n --argjson values "$VALUES_JSON" \
             '{values: $values, publish: true}')
 
-          echo "Request payload: $PAYLOAD"
-
           # Create new HubDB row
           echo "Creating new HubDB row"
 
