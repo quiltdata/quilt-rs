@@ -82,12 +82,12 @@ pub async fn cache_remote_manifest(
             );
             storage.remove_file(&manifest_path).await?;
             fetch_and_cache(storage, remote, manifest_uri, &cache_path).await?;
-            Manifest::from_path(storage, &manifest_path).await.map_err(|e| {
-                Error::ManifestLoad {
+            Manifest::from_path(storage, &manifest_path)
+                .await
+                .map_err(|e| Error::ManifestLoad {
                     path: manifest_path.clone(),
                     source: Box::new(e),
-                }
-            })
+                })
         }
     }
 }
@@ -216,8 +216,7 @@ mod tests {
             .await?;
 
         // Should recover: delete stale cache, re-fetch, succeed
-        let manifest =
-            cache_remote_manifest(&paths, &storage, &remote, &manifest_uri).await?;
+        let manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest_uri).await?;
 
         assert_eq!(manifest.header.message, Some("Initial".to_string()));
         assert_eq!(manifest.rows.len(), 10);
