@@ -182,18 +182,20 @@ jobs:
       - name: Update HubDB table
         env:
           HUBSPOT_TOKEN: ${{ secrets.HUBSPOT_ACCESS_TOKEN }}
+          HUBDB_TABLE_ID: ${{ vars.HUBDB_TABLE_ID }}
+          HUBDB_COLUMN_MAP: ${{ vars.HUBDB_COLUMN_MAP }}
         run: |
           if [ -z "$HUBSPOT_TOKEN" ]; then
             echo "Error: HUBSPOT_ACCESS_TOKEN secret is not set"
             exit 1
           fi
 
-          if [ -z "${{ vars.HUBDB_TABLE_ID }}" ] || [ -z "${{ vars.HUBDB_COLUMN_MAP }}" ]; then
+          if [ -z "$HUBDB_TABLE_ID" ] || [ -z "$HUBDB_COLUMN_MAP" ]; then
             echo "Skipping HubDB update (HUBDB_TABLE_ID and HUBDB_COLUMN_MAP required)"
             exit 0
           fi
 
-          echo "Updating HubDB table: ${{ vars.HUBDB_TABLE_ID }}"
+          echo "Updating HubDB table: $HUBDB_TABLE_ID"
 
           # Extract version from latest.json - fail if not available
           if [ ! -f "./release-assets/latest.json" ]; then
@@ -234,7 +236,7 @@ jobs:
           fi
 
           # Create values JSON using column mapping
-          VALUES_JSON=$(echo '${{ vars.HUBDB_COLUMN_MAP }}' | jq --arg version "$VERSION" \
+          VALUES_JSON=$(echo "$HUBDB_COLUMN_MAP" | jq --arg version "$VERSION" \
             --arg release_tag "${{ inputs.release_tag }}" \
             --arg latest_json_url "$LATEST_JSON_URL" \
             --arg latest_json "$LATEST_JSON_CONTENT" \
@@ -282,7 +284,7 @@ jobs:
             -H "Authorization: Bearer $HUBSPOT_TOKEN" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD" \
-            "$HUBSPOT_API_BASE/cms/v3/hubdb/tables/${{ vars.HUBDB_TABLE_ID }}/rows")
+            "$HUBSPOT_API_BASE/cms/v3/hubdb/tables/$HUBDB_TABLE_ID/rows")
 
           http_code=$(echo "$response" | tail -n1)
           body=$(echo "$response" | head -n -1)
