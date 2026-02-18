@@ -230,8 +230,7 @@ jobs:
           LINUX_DEB_URL=$(jq -r '[.. | .url? | select(. != null and test(".*\\.deb$"; "i"))] | .[0] // ""' ./release-assets/latest.json)
 
           # Collect all download URLs from latest.json
-          DOWNLOADS_JSON=$(jq -c '[.. | .url? | select(. != null and (test("\\.dmg$|\\.msi$|\\.deb$"; "i")))]' ./release-assets/latest.json 2>/dev/null)
-          if [ $? -ne 0 ] || [ -z "$DOWNLOADS_JSON" ]; then
+          if ! DOWNLOADS_JSON=$(jq -c '[.. | .url? | select(. != null and (test("\\.dmg$|\\.msi$|\\.deb$"; "i")))]' ./release-assets/latest.json 2>/dev/null) || [ -z "$DOWNLOADS_JSON" ]; then
             echo "❌ Failed to extract download URLs from latest.json"
             exit 1
           fi
@@ -239,8 +238,7 @@ jobs:
           # Build the values object based on column mapping
           CURRENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S.%fZ")
           LATEST_JSON_URL="${HUBFS_ROOT_URL}/latest.json"
-          LATEST_JSON_CONTENT=$(jq -c . ./release-assets/latest.json)
-          if [ $? -ne 0 ] || [ -z "$LATEST_JSON_CONTENT" ]; then
+          if ! LATEST_JSON_CONTENT=$(jq -c . ./release-assets/latest.json) || [ -z "$LATEST_JSON_CONTENT" ]; then
             echo "❌ Failed to read latest.json content"
             exit 1
           fi
