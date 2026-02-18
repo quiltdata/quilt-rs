@@ -271,9 +271,9 @@ jobs:
 
           echo "Values to update: $VALUES_JSON"
 
-          # Create request payload (always publish)
+          # Create request payload
           PAYLOAD=$(jq -n --argjson values "$VALUES_JSON" \
-            '{values: $values, publish: true}')
+            '{values: $values}')
 
           # Create new HubDB row
           echo "Creating new HubDB row"
@@ -295,6 +295,21 @@ jobs:
           else
             echo "❌ Failed to create HubDB row (HTTP $http_code)"
             echo "Response: $body"
+            exit 1
+          fi
+
+          # Publish the table draft to make the new row visible
+          publish_response=$(curl -s -w "\n%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer $HUBSPOT_TOKEN" \
+            "$HUBSPOT_API_BASE/cms/v3/hubdb/tables/$HUBDB_TABLE_ID/draft/publish")
+
+          publish_code=$(echo "$publish_response" | tail -n1)
+          if [[ "$publish_code" -ge 200 && "$publish_code" -lt 300 ]]; then
+            echo "✅ Table published successfully"
+          else
+            echo "❌ Failed to publish table (HTTP $publish_code)"
+            echo "$(echo "$publish_response" | head -n -1)"
             exit 1
           fi
 
