@@ -317,12 +317,12 @@ impl Manifest {
         path: &std::path::Path,
     ) -> Res<Self> {
         let file = storage.open_file(path).await?;
-        Self::from_reader(file).await.map_err(|e| {
-            crate::Error::ManifestLoad {
+        Self::from_reader(file)
+            .await
+            .map_err(|e| crate::Error::ManifestLoad {
                 path: path.to_path_buf(),
                 source: Box::new(e),
-            }
-        })
+            })
     }
 
     /// Find a record by path (for compatibility with Table API)
