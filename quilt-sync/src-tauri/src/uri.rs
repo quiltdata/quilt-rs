@@ -46,8 +46,8 @@ async fn wait_for_main_window<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> R
             // Check window is visible and URL is valid
             if let Ok(true) = window.is_visible() {
                 if let Ok(url) = window.url() {
-                    // Only return success if URL has proper HTTP scheme
-                    if url.scheme().starts_with("http") {
+                    // Ensure the app has loaded (not about:blank)
+                    if url.host().is_some() {
                         return Ok(());
                     }
                 }
