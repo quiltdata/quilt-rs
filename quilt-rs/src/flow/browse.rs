@@ -115,6 +115,7 @@ mod tests {
     use crate::fixtures;
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
+    use crate::io::storage::LocalStorage;
 
     /// Verifies that when a manifest is already cached,
     /// the `browse_remote_manifest` function retrieves it from the cache
@@ -177,6 +178,64 @@ mod tests {
         let cached_manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest).await;
 
         assert!(cached_manifest.is_err());
+
+        Ok(())
+    }
+
+    /// Verifies that when a cached manifest is invalid but the remote
+    /// has a valid JSONL manifest, the stale cache is replaced and
+    /// the manifest is returned successfully.
+    #[test(tokio::test)]
+    async fn test_if_cached_invalid_recovers_from_remote() -> Res {
+        let (paths, _temp_dir) = DomainPaths::from_temp_dir()?;
+        let storage = LocalStorage::new();
+
+        let manifest_uri = ManifestUri {
+            bucket: "a".to_string(),
+            namespace: ("f", "b").into(),
+            hash: "stale_hash".to_string(),
+            origin: None,
+        };
+
+        // Write invalid data to simulate a stale Parquet cache
+        let cache_path = paths.manifest_cache(&manifest_uri.bucket, &manifest_uri.hash);
+        paths
+            .scaffold_for_caching(&storage, &manifest_uri.bucket)
+            .await?;
+        storage.write_file(&cache_path, b"PAR1_invalid").await?;
+
+        // Set up valid JSONL on the remote
+        let jsonl = storage.read_file(fixtures::manifest::path()?).await?;
+        let remote = MockRemote::default();
+        let remote_uri = S3Uri::from_str(&format!(
+            "s3://{}/.quilt/packages/{}",
+            manifest_uri.bucket, manifest_uri.hash
+        ))?;
+        remote
+            .put_object(&manifest_uri.origin, &remote_uri, jsonl)
+            .await?;
+
+        // Should recover: delete stale cache, re-fetch, succeed
+        let manifest =
+            cache_remote_manifest(&paths, &storage, &remote, &manifest_uri).await?;
+
+        assert_eq!(manifest.header.message, Some("Initial".to_string()));
+        assert_eq!(manifest.rows.len(), 10);
+        assert!(manifest.get_record(&PathBuf::from("e0-0.txt")).is_some());
+
+        // Verify the cache file was replaced with valid JSONL
+        let cached_bytes = storage.read_file(&cache_path).await?;
+        let first_line = std::str::from_utf8(&cached_bytes)
+            .expect("cached file should be valid UTF-8")
+            .lines()
+            .next()
+            .expect("cached file should not be empty");
+        serde_json::from_str::<serde_json::Value>(first_line)
+            .expect("cached file should contain valid JSON");
+
+        // Verify the cached file can be loaded as a manifest
+        let reloaded = Manifest::from_path(&storage, &cache_path).await?;
+        assert_eq!(reloaded.rows.len(), 10);
 
         Ok(())
     }
