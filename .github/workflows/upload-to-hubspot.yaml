@@ -46,6 +46,7 @@ jobs:
     env:
       HUBSPOT_API_BASE: "https://api.hubapi.com"
       HUBFS_ROOT_URL: "https://www.quilt.bio/hubfs"
+      RELEASE_TAG: ${{ inputs.release_tag }}
       HUBFS_BASE_PATH: "${{ inputs.hubspot_folder }}${{ inputs.release_tag }}"
 
     steps:
@@ -56,9 +57,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Downloading all assets from release: ${{ inputs.release_tag }}"
+          echo "Downloading all assets from release: $RELEASE_TAG"
 
-          gh release download "${{ inputs.release_tag }}" \
+          gh release download "$RELEASE_TAG" \
             --dir ./release-assets \
             --repo ${{ github.repository }}
 
@@ -237,7 +238,7 @@ jobs:
 
           # Create values JSON using column mapping
           VALUES_JSON=$(echo "$HUBDB_COLUMN_MAP" | jq --arg version "$VERSION" \
-            --arg release_tag "${{ inputs.release_tag }}" \
+            --arg release_tag "$RELEASE_TAG" \
             --arg latest_json_url "$LATEST_JSON_URL" \
             --arg latest_json "$LATEST_JSON_CONTENT" \
             --arg downloads_json "$DOWNLOADS_JSON" \
