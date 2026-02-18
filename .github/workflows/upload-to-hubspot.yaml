@@ -223,6 +223,10 @@ jobs:
 
           # Build the values object based on column mapping
           CURRENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
+          # latest.json must stay at a stable location (quilt.bio/hubfs/latest.json)
+          # because QuiltSync checks it for new releases regardless of its own version.
+          # Release assets are folder-prefixed (quilt.bio/hubfs/QuiltSync/vX.X.X/...)
+          # to avoid conflicts between versions. See upload_file() above.
           LATEST_JSON_URL="${HUBFS_ROOT_URL}/latest.json"
           if ! LATEST_JSON_CONTENT=$(jq -c . ./release-assets/latest.json) || [ -z "$LATEST_JSON_CONTENT" ]; then
             echo "❌ Failed to read latest.json content"
