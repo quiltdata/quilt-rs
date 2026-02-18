@@ -116,8 +116,6 @@ jobs:
             exit 1
           fi
 
-
-          # Function to upload a single file (matching colleague's script)
           upload_file() {
             local file_path="$1"
             local file_name=$(basename "$file_path")
