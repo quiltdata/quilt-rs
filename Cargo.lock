@@ -4800,7 +4800,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-rs"
-version = "0.27.1-alpha5"
+version = "0.27.1"
 dependencies = [
  "async-stream",
  "async-trait",

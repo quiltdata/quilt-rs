@@ -5,32 +5,7 @@
 -->
 # Changelog
 
-## [v0.27.1-alpha5] - 2026-02-18
-
-### Fixed
-
-- Re-fetch manifest from remote when cached file is
-  unreadable (e.g. legacy Parquet format)
-
-## [v0.27.1-alpha4] - 2025-02-12
-
-### Improved
-
-- Add comprehensive logging to LocalDomain operations with debug/info messages
-
-## [v0.27.1-alpha3] - 2025-02-12
-
-### Improved
-
-- Add contextual error handling with file paths for better debugging of IO operations
-
-## [v0.27.1-alpha2] - 2025-02-09
-
-### Added
-
-- Add comprehensive hash reference fixtures and tests for manifest combinations
-
-## [v0.27.1-alpha1] - 2025-02-06
+## [v0.27.1] - 2026-02-18
 
 ### Changed
 
@@ -39,6 +14,20 @@
 ### Removed
 
 - Removed parquet dependencies from Cargo.toml and leftovers from source code
+
+### Added
+
+- Add comprehensive hash reference fixtures and tests for manifest combinations
+
+### Improved
+
+- Add contextual error handling with file paths for better debugging of IO operations
+- Add comprehensive logging to LocalDomain operations with debug/info messages
+
+### Fixed
+
+- Re-fetch manifest from remote when cached file is
+  unreadable (e.g. legacy Parquet format)
 
 ## [v0.27.0](https://github.com/quiltdata/quilt-rs/releases/tag/quilt-rs/v0.27.0) - 2025-02-04
 
