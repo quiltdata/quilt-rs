@@ -5,6 +5,13 @@
 -->
 # Changelog
 
+## [v0.27.1-alpha5] - 2026-02-18
+
+### Fixed
+
+- Re-fetch manifest from remote when cached file is
+  unreadable (e.g. legacy Parquet format)
+
 ## [v0.27.1-alpha4] - 2025-02-12
 
 ### Improved
