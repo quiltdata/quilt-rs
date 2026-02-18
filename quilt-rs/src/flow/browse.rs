@@ -8,6 +8,7 @@ use crate::manifest::Manifest;
 use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::uri::S3Uri;
+use crate::Error;
 use crate::Res;
 
 async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res<Manifest> {
@@ -74,16 +75,17 @@ pub async fn cache_remote_manifest(
             info!("✔️ Successfully cached:\n{:?}", manifest.header);
             Ok(manifest)
         }
-        Err(e) => {
+        Err(Error::ManifestLoad { source, .. }) => {
             // Cached file is unreadable (e.g. legacy Parquet format), re-fetch
             warn!(
                 "Cached manifest at {} is invalid, re-fetching: {}",
                 manifest_path.display(),
-                e
+                source
             );
             storage.remove_file(&manifest_path).await?;
             fetch_and_cache(storage, remote, manifest_uri, &cache_path).await
         }
+        Err(e) => Err(e),
     }
 }
 
