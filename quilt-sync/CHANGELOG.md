@@ -22,7 +22,7 @@
 ### quilt-rs
 
 - Updated [from v0.26.0 to v0.27.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.26.0...quilt-rs/v0.27.0)
-  (see [../quilt-rs/CHANGELOG.md#v0.27.0](../quilt-rs/CHANGELOG.md#v0.27.0))
+  (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
   - Migrated manifest format from Parquet to JSONL for improved performance
     and compatibility
 
@@ -35,7 +35,7 @@
 ### quilt-rs
 
 - Updated [from v0.25.0 to v0.26.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.25.0...quilt-rs/v0.26.0)
-  (see [../quilt-rs/CHANGELOG.md#v0.26.0](../quilt-rs/CHANGELOG.md#v0.26.0))
+  (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
   - Fixed commit logic to respect crc64Checksums configuration from host config
 
 ## [v0.11.2]
@@ -79,7 +79,7 @@ This version increment consolidates many small changes from previous patch relea
 ### quilt-rs
 
 - Updated from [v0.24.0 to v0.25.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.24.0...quilt-rs/v0.25.0)
-  (see [../quilt-rs/CHANGELOG.md#v0.25.0](../quilt-rs/CHANGELOG.md#v0.25.0))
+  (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
   - Support for timestamp tags in package URIs
   - Export `Tag` enum and `LATEST_TAG` constant
 
@@ -105,7 +105,7 @@ This version increment consolidates many small changes from previous patch relea
 ### quilt-rs
 
 - Updated from v0.21.1 to [v0.24.0](https://github.com/quiltdata/quilt-rs/releases/tag/quilt-rs%2Fv0.24.0)
-  (see [../quilt-rs/CHANGELOG.md#v0.24.0](../quilt-rs/CHANGELOG.md#v0.24.0))
+  (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
   - Fixed `quilt+s3://` URL parsing with `:tag` syntax
   - Fixed hash mismatch for packages with diacritic characters
   - Support for reading manifest with CRC64/NVMe checksums

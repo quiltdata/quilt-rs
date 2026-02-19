@@ -19,9 +19,9 @@ For testing, development workflows, and other general information, see the main
       This is cosmetic and makes it easier to compare releases, but doesn't affect
       the build process.
    b. **Create release via GitHub Actions**:
-      * Go to the Actions tab: <https://github.com/quiltdata/quilt-rs/actions/workflows/release-quilt-rs.yaml>
-      * Click "Run workflow" button
-      * The workflow will build and publish the library crate to crates.io
+   * Go to the Actions tab: <https://github.com/quiltdata/quilt-rs/actions/workflows/release-quilt-rs.yaml>
+   * Click "Run workflow" button
+   * The workflow will build and publish the library crate to crates.io
 4. **Publish release**: Create a GitHub release with the changelog content
 
 The release workflow publishes only the `quilt-rs` library crate to crates.io.

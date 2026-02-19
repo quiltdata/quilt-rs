@@ -4,7 +4,9 @@ on:
   push:
     paths:
       - "quilt-rs/**"
+      - "!quilt-rs/**/*.md"
       - "quilt-cli/**"
+      - "!quilt-cli/**/*.md"
       - "Cargo.*"
       - "rust-toolchain.toml"
       - ".github/workflows/test-quilt-rs.yaml"
