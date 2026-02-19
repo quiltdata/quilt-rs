@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - "quilt-sync/src-tauri/**"
+      - "!quilt-sync/src-tauri/**/*.md"
       - "quilt-sync/*.toml"
       - "quilt-sync/Cargo.*"
       - "rust-toolchain.toml"
