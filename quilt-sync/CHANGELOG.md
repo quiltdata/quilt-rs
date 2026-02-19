@@ -6,12 +6,18 @@
 -->
 # Changelog
 
-## [v0.13.1-alpha1] - 2026-02-18
+## [v0.13.1] - 2026-02-19
 
 ### Fixed
 
 - Fixed deep link handler failing on macOS/Linux
   due to `tauri://` scheme not matching `http` check
+
+### quilt-rs
+
+- Updated [from v0.27.0 to v0.27.1](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.27.0...quilt-rs/v0.27.1)
+  (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+  - Fixed stale Parquet manifest cache preventing app startup
 
 ## [v0.13.0]
 
