@@ -26,6 +26,9 @@ jobs:
       - name: Setup Rust for development
         uses: ./.github/actions/setup-rust-dev
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Check formatting
         run: cargo fmt --check -p quilt-rs -p quilt-cli
 
@@ -33,21 +36,28 @@ jobs:
         run: cargo clippy -p quilt-rs -p quilt-cli -- --deny warnings
 
       - name: Test library
-        run: cargo test -p quilt-rs --verbose
+        run: cargo nextest run -p quilt-rs
+        env:
+          RUST_BACKTRACE: 1
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Test library doctests
+        run: cargo test --doc -p quilt-rs
         env:
           RUST_BACKTRACE: 1
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
       - name: Test CLI
-        run: cargo test -p quilt-cli --verbose
+        run: cargo nextest run -p quilt-cli
         env:
           RUST_BACKTRACE: 1
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
       - name: Build library
-        run: cargo build -p quilt-rs --verbose
+        run: cargo build -p quilt-rs
 
       - name: Build CLI
-        run: cargo build -p quilt-cli --verbose
+        run: cargo build -p quilt-cli
