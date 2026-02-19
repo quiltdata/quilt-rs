@@ -29,6 +29,9 @@ jobs:
       - name: Setup Rust for development
         uses: ./.github/actions/setup-rust-dev
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Format
         run: cargo fmt --check
         working-directory: ./quilt-sync/src-tauri
@@ -38,7 +41,7 @@ jobs:
         working-directory: ./quilt-sync/src-tauri
 
       - name: Test
-        run: cargo test --verbose
+        run: cargo nextest run
         working-directory: ./quilt-sync/src-tauri
         env:
           RUST_BACKTRACE: 1
@@ -66,8 +69,11 @@ jobs:
         with:
           targets: ${{ matrix.platform == 'macos-15' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Test
-        run: cargo test --verbose
+        run: cargo nextest run
         working-directory: ./quilt-sync/src-tauri
         env:
           RUST_BACKTRACE: 1
