@@ -7,22 +7,19 @@
 
 ## [v0.27.1] - 2026-02-18
 
-### Changed
-
-- Clean up tests and remove legacy .parquet fixtures following manifest format migration
-
-### Removed
-
-- Removed parquet dependencies from Cargo.toml and leftovers from source code
-
 ### Added
 
 - Add comprehensive hash reference fixtures and tests for manifest combinations
 
-### Improved
+### Changed
 
+- Clean up tests and remove legacy .parquet fixtures following manifest format migration
 - Add contextual error handling with file paths for better debugging of IO operations
 - Add comprehensive logging to LocalDomain operations with debug/info messages
+
+### Removed
+
+- Removed parquet dependencies from Cargo.toml and leftovers from source code
 
 ### Fixed
 
