@@ -475,17 +475,16 @@ mod tests {
         Ok(())
     }
 
-    fn make_changes(
-        added: &[&str],
-        modified: &[&str],
-        removed: &[&str],
-    ) -> ChangeSet {
+    fn make_changes(added: &[&str], modified: &[&str], removed: &[&str]) -> ChangeSet {
         let mut changes = BTreeMap::new();
         for name in added {
             changes.insert(PathBuf::from(name), Change::Added(ManifestRow::default()));
         }
         for name in modified {
-            changes.insert(PathBuf::from(name), Change::Modified(ManifestRow::default()));
+            changes.insert(
+                PathBuf::from(name),
+                Change::Modified(ManifestRow::default()),
+            );
         }
         for name in removed {
             changes.insert(PathBuf::from(name), Change::Removed(ManifestRow::default()));
