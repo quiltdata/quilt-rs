@@ -1,0 +1,352 @@
+# Upload QuiltSync release assets to HubSpot HubFS and update HubDB table
+#
+# This workflow downloads release assets from GitHub, processes latest.json to update URLs
+# to point to HubFS locations, uploads all assets to HubSpot file system, and creates
+# a new HubDB row with release metadata for the download page.
+#
+# Required repository variables:
+#   - HUBDB_TABLE_ID: HubDB table ID for storing release metadata
+#   - HUBDB_COLUMN_MAP: JSON mapping of data fields to HubDB column names
+#     Maps logical field names to your HubDB table's actual column names
+#     Available fields: version, release_tag, latest_json_url, latest_json,
+#     downloads_json, updated_at, windows_msi_url, windows_exe_url,
+#     windows_url, macos_arm_url, macos_intel_url, linux_deb_url,
+#     linux_rpm_url, linux_url
+#     Example: {"version": "release_version", "windows_msi_url": "win_download"}
+#
+# Required secrets:
+#   - HUBSPOT_ACCESS_TOKEN: HubSpot private app token with Files + HubDB write scopes
+#   - GITHUB_TOKEN: Automatically provided by GitHub Actions (for downloading releases)
+#
+# Process:
+#   1. Downloads all assets from specified GitHub release
+#   2. Modifies latest.json URLs to point to HubFS locations
+#   3. Uploads all assets (including modified latest.json) to HubFS
+#   4. Extracts version and platform-specific URLs from processed latest.json
+#   5. Creates new HubDB row with release metadata and download URLs
+#
+name: Upload QuiltSync Assets to HubSpot
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to download assets from (e.g., QuiltSync/v1.2.3)"
+        type: string
+        required: true
+      hubspot_folder:
+        description: "HubSpot base folder path (release_tag will be appended)"
+        type: string
+        required: true
+        default: "/quiltsync/"
+
+jobs:
+  upload-to-hubspot:
+    name: Download and Upload to HubSpot
+    runs-on: ubuntu-24.04
+    env:
+      HUBSPOT_API_BASE: "https://api.hubapi.com"
+      HUBFS_ROOT_URL: "https://www.quilt.bio/hubfs"
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      HUBFS_BASE_PATH: "${{ inputs.hubspot_folder }}${{ inputs.release_tag }}"
+
+    steps:
+      - name: Create assets directory
+        run: mkdir -p ./release-assets
+
+      - name: Download release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Downloading all assets from release: $RELEASE_TAG"
+
+          gh release download "$RELEASE_TAG" \
+            --dir ./release-assets \
+            --repo ${{ github.repository }}
+
+          echo "Downloaded assets:"
+          ls -la ./release-assets/
+
+      - name: Modify latest.json URLs
+        run: |
+          echo "Using HUBFS_ROOT_URL: ${HUBFS_ROOT_URL}"
+          echo "Using HUBFS_BASE_PATH: ${HUBFS_BASE_PATH}"
+
+          if [ ! -f "./release-assets/latest.json" ]; then
+            echo "❌ latest.json not found in release assets"
+            exit 1
+          fi
+
+          echo "Found latest.json, modifying URLs..."
+
+          # Show original file
+          echo "=== Original latest.json ==="
+          cat ./release-assets/latest.json
+
+          # Modify URLs using jq - HUBFS_BASE_PATH includes full path to release folder
+          jq --arg hubfs_root_url "${HUBFS_ROOT_URL}" --arg hubfs_base_path "${HUBFS_BASE_PATH}" '
+            def replace_url(value):
+              if (value | type) == "string" then
+                (value | split("/")[-1]) as $basename |
+                "\($hubfs_root_url)\($hubfs_base_path)/\($basename)"
+              else
+                value
+              end;
+
+            walk(
+              if type == "object" and has("url") then
+                .url |= replace_url(.)
+              else
+                .
+              end
+            )
+          ' ./release-assets/latest.json > ./release-assets/latest.json.tmp
+
+          mv ./release-assets/latest.json.tmp ./release-assets/latest.json
+
+          echo ""
+          echo "=== Modified latest.json ==="
+          cat ./release-assets/latest.json
+
+      - name: Upload assets to HubSpot
+        env:
+          HUBSPOT_TOKEN: ${{ secrets.HUBSPOT_ACCESS_TOKEN }}
+        run: |
+          if [ -z "$HUBSPOT_TOKEN" ]; then
+            echo "Error: HUBSPOT_ACCESS_TOKEN secret is not set"
+            exit 1
+          fi
+
+          upload_file() {
+            local file_path="$1"
+            local file_name=$(basename "$file_path")
+
+            # Special handling for latest.json - upload to root
+            if [ "$file_name" = "latest.json" ]; then
+              local target_path="/latest.json"
+            else
+              local target_path="${HUBFS_BASE_PATH}/${file_name}"
+            fi
+
+            local folder_path=$(dirname "$target_path" | sed 's|\\|/|g')
+
+            echo "Uploading: $file_name to $target_path"
+
+            response=$(curl -s -w "\n%{http_code}" \
+              -X POST \
+              -H "Authorization: Bearer $HUBSPOT_TOKEN" \
+              -F "file=@$file_path" \
+              -F "folderPath=$folder_path" \
+              -F "options={\"access\":\"PUBLIC_NOT_INDEXABLE\"}" \
+              "$HUBSPOT_API_BASE/filemanager/api/v3/files/upload?overwrite=true")
+
+            http_code=$(echo "$response" | tail -n1)
+            body=$(echo "$response" | head -n -1)
+
+            if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
+              echo "✅ Successfully uploaded: $file_name"
+              echo "📄 Expected URL: ${HUBFS_ROOT_URL}${target_path}"
+              return 0
+            else
+              echo "❌ Failed to upload: $file_name (HTTP $http_code)"
+              echo "$body"
+              return 1
+            fi
+          }
+
+          # Upload all files in release-assets directory
+          upload_count=0
+          failed_count=0
+
+          for file in ./release-assets/*; do
+            if [ -f "$file" ]; then
+              if upload_file "$file"; then
+                upload_count=$((upload_count + 1))
+              else
+                failed_count=$((failed_count + 1))
+              fi
+            fi
+          done
+
+          echo "📊 Upload Summary:"
+          echo "  ✅ Successful uploads: $upload_count"
+          echo "  ❌ Failed uploads: $failed_count"
+
+          if [ $failed_count -gt 0 ]; then
+            echo "Some uploads failed. Check the logs above."
+            exit 1
+          fi
+
+          echo "🎉 All assets uploaded successfully to HubSpot"
+
+      - name: Update HubDB table
+        env:
+          HUBSPOT_TOKEN: ${{ secrets.HUBSPOT_ACCESS_TOKEN }}
+          HUBDB_TABLE_ID: ${{ vars.HUBDB_TABLE_ID }}
+          HUBDB_COLUMN_MAP: ${{ vars.HUBDB_COLUMN_MAP }}
+        run: |
+          if [ -z "$HUBSPOT_TOKEN" ]; then
+            echo "Error: HUBSPOT_ACCESS_TOKEN secret is not set"
+            exit 1
+          fi
+
+          if [ -z "$HUBDB_TABLE_ID" ] || [ -z "$HUBDB_COLUMN_MAP" ]; then
+            echo "Skipping HubDB update (HUBDB_TABLE_ID and HUBDB_COLUMN_MAP required)"
+            exit 0
+          fi
+
+          echo "Updating HubDB table: $HUBDB_TABLE_ID"
+
+          # Extract version from latest.json - fail if not available
+          if [ ! -f "./release-assets/latest.json" ]; then
+            echo "❌ latest.json not found in release assets - cannot determine version"
+            exit 1
+          fi
+
+          VERSION=$(jq -r '.version // empty' ./release-assets/latest.json 2>/dev/null || echo "")
+          if [ -z "$VERSION" ]; then
+            echo "❌ No version field found in latest.json"
+            exit 1
+          fi
+
+          echo "Using version: $VERSION"
+
+          # Build platform-specific URLs from actual uploaded files.
+          # latest.json is a Tauri updater manifest and does NOT contain .dmg
+          # entries, so we derive installer URLs from the release-assets directory.
+          hubfs_url() { echo "${HUBFS_ROOT_URL}${HUBFS_BASE_PATH}/$1"; }
+
+          WINDOWS_MSI_URL=""
+          WINDOWS_EXE_URL=""
+          MACOS_ARM_URL=""
+          MACOS_INTEL_URL=""
+          LINUX_DEB_URL=""
+          LINUX_RPM_URL=""
+
+          for f in ./release-assets/*; do
+            name=$(basename "$f")
+            case "$name" in
+              *.msi)       WINDOWS_MSI_URL=$(hubfs_url "$name") ;;
+              *-setup.exe) WINDOWS_EXE_URL=$(hubfs_url "$name") ;;
+              *aarch64*.dmg) MACOS_ARM_URL=$(hubfs_url "$name") ;;
+              *x64*.dmg|*amd64*.dmg|*x86_64*.dmg) MACOS_INTEL_URL=$(hubfs_url "$name") ;;
+              *.deb)       LINUX_DEB_URL=$(hubfs_url "$name") ;;
+              *.rpm)       LINUX_RPM_URL=$(hubfs_url "$name") ;;
+            esac
+          done
+
+          # Collect all user-facing installer URLs (deduplicated)
+          DOWNLOADS_JSON=$(printf '%s\n' \
+            "$WINDOWS_EXE_URL" "$WINDOWS_MSI_URL" \
+            "$MACOS_ARM_URL" "$MACOS_INTEL_URL" \
+            "$LINUX_DEB_URL" "$LINUX_RPM_URL" \
+            | grep -v '^$' | sort -u | jq -Rsc 'split("\n") | map(select(length > 0))')
+
+          if [ "$DOWNLOADS_JSON" = "[]" ] || [ -z "$DOWNLOADS_JSON" ]; then
+            echo "❌ No installer URLs found in release assets"
+            exit 1
+          fi
+
+          echo "Platform URLs:"
+          echo "  Windows MSI:   $WINDOWS_MSI_URL"
+          echo "  Windows EXE:   $WINDOWS_EXE_URL"
+          echo "  macOS ARM:     $MACOS_ARM_URL"
+          echo "  macOS Intel:   $MACOS_INTEL_URL"
+          echo "  Linux DEB:     $LINUX_DEB_URL"
+          echo "  Linux RPM:     $LINUX_RPM_URL"
+          echo "  downloads_json: $DOWNLOADS_JSON"
+
+          # Build the values object based on column mapping
+          CURRENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
+          # latest.json must stay at a stable location (quilt.bio/hubfs/latest.json)
+          # because QuiltSync checks it for new releases regardless of its own version.
+          # Release assets are folder-prefixed (quilt.bio/hubfs/QuiltSync/vX.X.X/...)
+          # to avoid conflicts between versions. See upload_file() above.
+          LATEST_JSON_URL="${HUBFS_ROOT_URL}/latest.json"
+          if ! LATEST_JSON_CONTENT=$(jq -c . ./release-assets/latest.json) || [ -z "$LATEST_JSON_CONTENT" ]; then
+            echo "❌ Failed to read latest.json content"
+            exit 1
+          fi
+
+          # Create values JSON using column mapping
+          VALUES_JSON=$(echo "$HUBDB_COLUMN_MAP" | jq --arg version "$VERSION" \
+            --arg release_tag "$RELEASE_TAG" \
+            --arg latest_json_url "$LATEST_JSON_URL" \
+            --arg latest_json "$LATEST_JSON_CONTENT" \
+            --arg downloads_json "$DOWNLOADS_JSON" \
+            --arg updated_at "$CURRENT_TIME" \
+            --arg windows_msi_url "$WINDOWS_MSI_URL" \
+            --arg windows_exe_url "$WINDOWS_EXE_URL" \
+            --arg windows_url "$WINDOWS_EXE_URL" \
+            --arg macos_arm_url "$MACOS_ARM_URL" \
+            --arg macos_intel_url "$MACOS_INTEL_URL" \
+            --arg linux_deb_url "$LINUX_DEB_URL" \
+            --arg linux_rpm_url "$LINUX_RPM_URL" \
+            --arg linux_url "$LINUX_DEB_URL" \
+            'to_entries | map({
+              key: .value,
+              value: (
+                if .key == "version" then $version
+                elif .key == "release_tag" then $release_tag
+                elif .key == "latest_json_url" then $latest_json_url
+                elif .key == "latest_json" then $latest_json
+                elif .key == "downloads_json" then $downloads_json
+                elif .key == "updated_at" then $updated_at
+                elif .key == "windows_msi_url" then $windows_msi_url
+                elif .key == "windows_exe_url" then $windows_exe_url
+                elif .key == "windows_url" then $windows_url
+                elif .key == "macos_arm_url" then $macos_arm_url
+                elif .key == "macos_intel_url" then $macos_intel_url
+                elif .key == "linux_deb_url" then $linux_deb_url
+                elif .key == "linux_rpm_url" then $linux_rpm_url
+                elif .key == "linux_url" then $linux_url
+                else empty
+                end
+              )
+            }) | from_entries')
+
+          echo "Values to update: $VALUES_JSON"
+
+          # Create request payload
+          PAYLOAD=$(jq -n --argjson values "$VALUES_JSON" \
+            '{values: $values}')
+
+          # Create new HubDB row
+          echo "Creating new HubDB row"
+
+          response=$(curl -s -w "\n%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer $HUBSPOT_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "$HUBSPOT_API_BASE/cms/v3/hubdb/tables/$HUBDB_TABLE_ID/rows")
+
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | head -n -1)
+
+          if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
+            NEW_ROW_ID=$(echo "$body" | jq -r '.id // empty')
+            echo "✅ Successfully created HubDB row: $NEW_ROW_ID"
+            echo "Response: $body"
+          else
+            echo "❌ Failed to create HubDB row (HTTP $http_code)"
+            echo "Response: $body"
+            exit 1
+          fi
+
+          # Publish the table draft to make the new row visible
+          publish_response=$(curl -s -w "\n%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer $HUBSPOT_TOKEN" \
+            "$HUBSPOT_API_BASE/cms/v3/hubdb/tables/$HUBDB_TABLE_ID/draft/publish")
+
+          publish_code=$(echo "$publish_response" | tail -n1)
+          if [[ "$publish_code" -ge 200 && "$publish_code" -lt 300 ]]; then
+            echo "✅ Table published successfully"
+          else
+            echo "❌ Failed to publish table (HTTP $publish_code)"
+            echo "$(echo "$publish_response" | head -n -1)"
+            exit 1
+          fi
+
+          echo "🎉 HubDB table updated successfully"
