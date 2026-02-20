@@ -243,6 +243,11 @@ jobs:
           echo "LINUX_DEB_URL=$LINUX_DEB_URL"
           echo "DOWNLOADS_JSON=$DOWNLOADS_JSON"
 
+          if [ "$DOWNLOADS_JSON" = "[]" ]; then
+            echo "❌ No installer URLs (.dmg, .msi, .deb) found in release assets"
+            exit 1
+          fi
+
           # Build the values object based on column mapping
           CURRENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
           # latest.json must stay at a stable location (quilt.bio/hubfs/latest.json)
