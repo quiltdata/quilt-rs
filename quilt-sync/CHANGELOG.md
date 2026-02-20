@@ -6,6 +6,14 @@
 -->
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Commit page now pre-fills the message field with an auto-generated summary
+  of changed files (e.g. "Add results.csv" or "Update 5 files, Remove 1 file"),
+  so users can commit immediately or edit as needed
+
 ## [v0.13.1] - 2026-02-19
 
 ### Fixed
