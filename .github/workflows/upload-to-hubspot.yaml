@@ -210,17 +210,38 @@ jobs:
 
           echo "Using version: $VERSION"
 
-          # Extract platform-specific URLs from processed latest.json
-          WINDOWS_MSI_URL=$(jq -r '[.. | .url? | select(. != null and test(".*\\.msi$"; "i"))] | .[0] // ""' ./release-assets/latest.json)
-          MACOS_ARM_URL=$(jq -r '[.. | .url? | select(. != null and test(".*aarch64.*\\.dmg$"; "i"))] | .[0] // ""' ./release-assets/latest.json)
-          MACOS_INTEL_URL=$(jq -r '[.. | .url? | select(. != null and test(".*(x64|x86_64|amd64).*\\.dmg$"; "i"))] | .[0] // ""' ./release-assets/latest.json)
-          LINUX_DEB_URL=$(jq -r '[.. | .url? | select(. != null and test(".*\\.deb$"; "i"))] | .[0] // ""' ./release-assets/latest.json)
+          # Build platform-specific URLs from uploaded release asset filenames.
+          # We scan the release-assets directory instead of latest.json because
+          # latest.json is Tauri's auto-updater manifest — it contains .app.tar.gz
+          # for macOS (used by the updater), not .dmg (used for manual downloads).
+          HUBFS_URL_PREFIX="${HUBFS_ROOT_URL}${HUBFS_BASE_PATH}"
 
-          # Collect all download URLs from latest.json
-          if ! DOWNLOADS_JSON=$(jq -c '[.. | .url? | select(. != null and (test("\\.dmg$|\\.msi$|\\.deb$"; "i")))]' ./release-assets/latest.json 2>/dev/null) || [ -z "$DOWNLOADS_JSON" ]; then
-            echo "❌ Failed to extract download URLs from latest.json"
-            exit 1
-          fi
+          WINDOWS_MSI_URL=""
+          MACOS_ARM_URL=""
+          MACOS_INTEL_URL=""
+          LINUX_DEB_URL=""
+          DOWNLOADS_JSON="[]"
+
+          for file in ./release-assets/*; do
+            name=$(basename "$file")
+            url="${HUBFS_URL_PREFIX}/${name}"
+            case "$name" in
+              *.msi)           WINDOWS_MSI_URL="$url" ;;
+              *aarch64*.dmg)   MACOS_ARM_URL="$url" ;;
+              *x64*.dmg|*x86_64*.dmg|*amd64*.dmg) MACOS_INTEL_URL="$url" ;;
+              *.deb)           LINUX_DEB_URL="$url" ;;
+            esac
+            # Collect installer URLs for the download page
+            case "$name" in
+              *.dmg|*.msi|*.deb) DOWNLOADS_JSON=$(echo "$DOWNLOADS_JSON" | jq --arg u "$url" '. + [$u]') ;;
+            esac
+          done
+
+          echo "WINDOWS_MSI_URL=$WINDOWS_MSI_URL"
+          echo "MACOS_ARM_URL=$MACOS_ARM_URL"
+          echo "MACOS_INTEL_URL=$MACOS_INTEL_URL"
+          echo "LINUX_DEB_URL=$LINUX_DEB_URL"
+          echo "DOWNLOADS_JSON=$DOWNLOADS_JSON"
 
           # Build the values object based on column mapping
           CURRENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
