@@ -21,7 +21,7 @@
 #   1. Downloads all assets from specified GitHub release
 #   2. Modifies latest.json URLs to point to HubFS locations
 #   3. Uploads all assets (including modified latest.json) to HubFS
-#   4. Extracts version and platform-specific URLs from processed latest.json
+#   4. Extracts version from latest.json and platform-specific URLs from release asset filenames
 #   5. Creates new HubDB row with release metadata and download URLs
 #
 name: Upload QuiltSync Assets to HubSpot
