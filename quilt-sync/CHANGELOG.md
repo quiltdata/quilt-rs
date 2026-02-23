@@ -12,7 +12,8 @@
 
 ### Added
 
-- Commit page now pre-fills the message field with an auto-generated summary of changed files
+- Commit page now pre-fills the message field with an
+  auto-generated summary of changed files
 
 ## [v0.13.1] - 2026-02-19
 
