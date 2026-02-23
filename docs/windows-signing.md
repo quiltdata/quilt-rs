@@ -54,7 +54,7 @@ Notes:
 - Confirm GitHub Actions:
   - Builds Windows installers
   - Signs all `.exe` and `.msi` files
-  - Verifies signatures successfully
+- Verify signatures manually (see step 6)
 
 ## 6. One-Time Manual Verification
 
