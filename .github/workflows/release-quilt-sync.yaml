@@ -88,6 +88,10 @@ jobs:
             -Password (ConvertTo-SecureString -String $env:WINDOWS_PFX_PASSWORD -Force -AsPlainText)
           Remove-Item $pfxPath -Force
 
+          if (-not $cert) {
+            throw "Failed to import PFX certificate"
+          }
+
           $thumbprint = $cert.Thumbprint
           Write-Host "Imported certificate with thumbprint: $thumbprint"
 
