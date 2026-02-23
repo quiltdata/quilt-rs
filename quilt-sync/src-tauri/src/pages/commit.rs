@@ -152,7 +152,7 @@ fn change_count(n: usize, verb: &str) -> String {
 ///
 /// For three or fewer total changes, individual file names are listed.
 /// For larger changesets, counts are used instead.
-fn generate_commit_message(changes: &ChangeSet) -> String {
+fn generate_commit_message(changes: &ChangeSet) -> ViewCommitMessage {
     let added: Vec<_> = changes
         .iter()
         .filter(|(_, c)| matches!(c, Change::Added(_)))
@@ -171,7 +171,7 @@ fn generate_commit_message(changes: &ChangeSet) -> String {
 
     let total = changes.len();
     if total == 0 {
-        return String::new();
+        return ViewCommitMessage::default();
     }
 
     let mut parts = Vec::new();
@@ -196,7 +196,10 @@ fn generate_commit_message(changes: &ChangeSet) -> String {
             parts.push(change_count(removed.len(), "Remove"));
         }
     }
-    parts.join(", ")
+    ViewCommitMessage {
+        value: parts.join(", "),
+        error: None,
+    }
 }
 
 impl ViewCommit {
@@ -277,10 +280,7 @@ impl ViewCommit {
             globals: app.globals(),
             entries_modified,
             entries_rest,
-            message: ViewCommitMessage {
-                value: generate_commit_message(&status.changes),
-                error: None,
-            },
+            message: generate_commit_message(&status.changes),
             user_meta: parse_commit_user_meta(&remote_manifest.header),
             uri: uri.clone(),
             origin: uri.display_for_host(&origin_host)?,
@@ -494,32 +494,32 @@ mod tests {
 
     #[test]
     fn test_generate_commit_message_empty() {
-        assert_eq!(generate_commit_message(&BTreeMap::new()), "");
+        assert_eq!(generate_commit_message(&BTreeMap::new()).value, "");
     }
 
     #[test]
     fn test_generate_commit_message_single_add() {
         let changes = make_changes(&["results.csv"], &[], &[]);
-        assert_eq!(generate_commit_message(&changes), "Add results.csv");
+        assert_eq!(generate_commit_message(&changes).value, "Add results.csv");
     }
 
     #[test]
     fn test_generate_commit_message_single_modify() {
         let changes = make_changes(&[], &["data.parquet"], &[]);
-        assert_eq!(generate_commit_message(&changes), "Update data.parquet");
+        assert_eq!(generate_commit_message(&changes).value, "Update data.parquet");
     }
 
     #[test]
     fn test_generate_commit_message_single_remove() {
         let changes = make_changes(&[], &[], &["old.csv"]);
-        assert_eq!(generate_commit_message(&changes), "Remove old.csv");
+        assert_eq!(generate_commit_message(&changes).value, "Remove old.csv");
     }
 
     #[test]
     fn test_generate_commit_message_mixed_few() {
         let changes = make_changes(&["results.csv"], &[], &["old.csv"]);
         assert_eq!(
-            generate_commit_message(&changes),
+            generate_commit_message(&changes).value,
             "Add results.csv, Remove old.csv"
         );
     }
@@ -528,7 +528,7 @@ mod tests {
     fn test_generate_commit_message_three_files() {
         let changes = make_changes(&["a.csv", "b.csv"], &["c.csv"], &[]);
         assert_eq!(
-            generate_commit_message(&changes),
+            generate_commit_message(&changes).value,
             "Add a.csv, b.csv, Update c.csv"
         );
     }
@@ -538,7 +538,7 @@ mod tests {
         let names: Vec<String> = (1..=5).map(|i| format!("file{i}.csv")).collect();
         let name_refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
         let changes = make_changes(&name_refs, &[], &[]);
-        assert_eq!(generate_commit_message(&changes), "Add 5 files");
+        assert_eq!(generate_commit_message(&changes).value, "Add 5 files");
     }
 
     #[test]
@@ -552,7 +552,7 @@ mod tests {
             &removed.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
         );
         assert_eq!(
-            generate_commit_message(&changes),
+            generate_commit_message(&changes).value,
             "Add 3 files, Update 2 files, Remove 1 file"
         );
     }
@@ -560,7 +560,7 @@ mod tests {
     #[test]
     fn test_generate_commit_message_uses_filename_not_full_path() {
         let changes = make_changes(&["subdir/data/results.csv"], &[], &[]);
-        assert_eq!(generate_commit_message(&changes), "Add results.csv");
+        assert_eq!(generate_commit_message(&changes).value, "Add results.csv");
     }
 
     #[test]
