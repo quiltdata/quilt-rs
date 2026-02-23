@@ -59,7 +59,7 @@ jobs:
       # Windows Authenticode code signing via Tauri's built-in support.
       # Tauri signs installers during the build when bundle.windows.certificateThumbprint
       # is set in the config. We import the PFX into the Windows certificate store,
-      # extract the thumbprint, and pass the signing config to tauri-action via --config.
+      # extract the thumbprint, and write a signing config file passed to tauri via --config.
       # If WINDOWS_PFX_BASE64 is not configured, signing is skipped gracefully.
       # See docs/windows-signing.md for certificate setup instructions.
       - name: Import Windows code signing certificate
@@ -90,7 +90,7 @@ jobs:
           $thumbprint = $cert.Thumbprint
           Write-Host "Imported certificate with thumbprint: $thumbprint"
 
-          $signingConfig = @{
+          @{
             bundle = @{
               windows = @{
                 certificateThumbprint = $thumbprint
@@ -99,9 +99,9 @@ jobs:
                 tsp = $true
               }
             }
-          } | ConvertTo-Json -Depth 4 -Compress
+          } | ConvertTo-Json -Depth 4 | Set-Content -Path "quilt-sync\\src-tauri\\signing-config.json"
 
-          "signing-config=$signingConfig" >> $env:GITHUB_OUTPUT
+          "enabled=true" >> $env:GITHUB_OUTPUT
 
       - name: Build the app
         uses: tauri-apps/tauri-action@v0
@@ -127,7 +127,7 @@ jobs:
           releaseBody: "See the assets to download and install this version."
           releaseDraft: true
           prerelease: false
-          args: ${{ matrix.args }} ${{ steps.windows-codesign.outputs.signing-config && format('--config ''{0}''', steps.windows-codesign.outputs.signing-config) || '' }}
+          args: ${{ matrix.args }} ${{ steps.windows-codesign.outputs.enabled == 'true' && '--config src-tauri/signing-config.json' || '' }}
           projectPath: "./quilt-sync"
           # Auto updater configuration - generates latest.json for update checks
           updaterJsonKeepUniversal: true
