@@ -10,8 +10,7 @@
 #     Maps logical field names to your HubDB table's actual column names
 #     Available fields: version, release_tag, latest_json_url, latest_json,
 #     downloads_json, updated_at, windows_msi_url, windows_exe_url,
-#     windows_url, macos_arm_url, macos_intel_url, linux_deb_url,
-#     linux_rpm_url, linux_url
+#     windows_url, macos_arm_url, macos_intel_url, linux_deb_url, linux_url
 #     Example: {"version": "release_version", "windows_msi_url": "win_download"}
 #
 # Required secrets:
@@ -222,7 +221,6 @@ jobs:
           MACOS_ARM_URL=""
           MACOS_INTEL_URL=""
           LINUX_DEB_URL=""
-          LINUX_RPM_URL=""
 
           for file in ./release-assets/*; do
             name=$(basename "$file")
@@ -233,7 +231,6 @@ jobs:
               *aarch64*.dmg) MACOS_ARM_URL="$url" ;;
               *x64*.dmg|*amd64*.dmg|*x86_64*.dmg) MACOS_INTEL_URL="$url" ;;
               *.deb)       LINUX_DEB_URL="$url" ;;
-              *.rpm)       LINUX_RPM_URL="$url" ;;
             esac
           done
 
@@ -241,7 +238,7 @@ jobs:
           DOWNLOADS_JSON=$(printf '%s\n' \
             "$WINDOWS_EXE_URL" "$WINDOWS_MSI_URL" \
             "$MACOS_ARM_URL" "$MACOS_INTEL_URL" \
-            "$LINUX_DEB_URL" "$LINUX_RPM_URL" \
+            "$LINUX_DEB_URL" \
             | grep -v '^$' | sort -u | jq -Rsc 'split("\n") | map(select(length > 0))')
 
           echo "Platform URLs:"
@@ -250,7 +247,6 @@ jobs:
           echo "  macOS ARM:     $MACOS_ARM_URL"
           echo "  macOS Intel:   $MACOS_INTEL_URL"
           echo "  Linux DEB:     $LINUX_DEB_URL"
-          echo "  Linux RPM:     $LINUX_RPM_URL"
           echo "  downloads_json: $DOWNLOADS_JSON"
 
           if [ "$DOWNLOADS_JSON" = "[]" ] || [ -z "$DOWNLOADS_JSON" ]; then
@@ -283,7 +279,6 @@ jobs:
             --arg macos_arm_url "$MACOS_ARM_URL" \
             --arg macos_intel_url "$MACOS_INTEL_URL" \
             --arg linux_deb_url "$LINUX_DEB_URL" \
-            --arg linux_rpm_url "$LINUX_RPM_URL" \
             --arg linux_url "$LINUX_DEB_URL" \
             'to_entries | map({
               key: .value,
@@ -300,7 +295,6 @@ jobs:
                 elif .key == "macos_arm_url" then $macos_arm_url
                 elif .key == "macos_intel_url" then $macos_intel_url
                 elif .key == "linux_deb_url" then $linux_deb_url
-                elif .key == "linux_rpm_url" then $linux_rpm_url
                 elif .key == "linux_url" then $linux_url
                 else empty
                 end
