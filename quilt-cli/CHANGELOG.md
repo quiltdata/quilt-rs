@@ -2,6 +2,8 @@
      Follow keepachangelog.com format.
      Use GitHub autolinks for PR references.
      Use nested lists when there are multiple PR links.
+     Use alpha pre-release versions (e.g. v0.24.1-alpha1) instead of [Unreleased]
+     to keep changelog in sync with Cargo.toml version.
 -->
 # Changelog
 
