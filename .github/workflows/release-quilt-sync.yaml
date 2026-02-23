@@ -86,6 +86,7 @@ jobs:
             -FilePath $pfxPath `
             -CertStoreLocation Cert:\\CurrentUser\\My `
             -Password (ConvertTo-SecureString -String $env:WINDOWS_PFX_PASSWORD -Force -AsPlainText)
+          Remove-Item $pfxPath -Force
 
           $thumbprint = $cert.Thumbprint
           Write-Host "Imported certificate with thumbprint: $thumbprint"
