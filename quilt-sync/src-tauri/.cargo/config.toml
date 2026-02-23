@@ -1,4 +1,0 @@
-# Use mold linker on Linux to avoid OOM crashes on memory-constrained CI runners.
-# Tauri produces large binaries that can exhaust RAM during linking with the default linker.
-[target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=-fuse-ld=mold"]
