@@ -99,6 +99,7 @@ jobs:
           [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\\codesign.pfx", $pfxBytes)
 
       - name: Sign Windows installers (EXE/MSI)
+        id: sign-windows
         if: matrix.platform == 'windows-latest'
         shell: powershell
         env:
@@ -108,17 +109,28 @@ jobs:
             throw "Missing secret WINDOWS_PFX_PASSWORD"
           }
 
-          $signtool = "${env:ProgramFiles(x86)}\\Windows Kits\\10\\bin\\x64\\signtool.exe"
+          # Discover signtool.exe from installed Windows SDK
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\\Windows Kits" `
+            -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match 'x64' } |
+            Select-Object -First 1 -ExpandProperty FullName
 
           # Install Windows SDK if signtool is not present on the runner image
-          if (-not (Test-Path $signtool)) {
+          if (-not $signtool) {
             Write-Host "signtool not found; installing Windows SDK via Chocolatey..."
             choco install windows-sdk-10-version-2004-all -y
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\\Windows Kits" `
+              -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -match 'x64' } |
+              Select-Object -First 1 -ExpandProperty FullName
           }
 
-          if (-not (Test-Path $signtool)) {
-            throw "signtool still not found after SDK install: $signtool"
+          if (-not $signtool) {
+            throw "signtool.exe not found after SDK install"
           }
+
+          Write-Host "Using signtool: $signtool"
+          "signtool-path=$signtool" >> $env:GITHUB_OUTPUT
 
           $bundleRoot = "quilt-sync\\src-tauri\\target\\release\\bundle"
           if (-not (Test-Path $bundleRoot)) {
@@ -146,7 +158,7 @@ jobs:
         if: matrix.platform == 'windows-latest'
         shell: powershell
         run: |
-          $signtool = "${env:ProgramFiles(x86)}\\Windows Kits\\10\\bin\\x64\\signtool.exe"
+          $signtool = "${{ steps.sign-windows.outputs.signtool-path }}"
           $bundleRoot = "quilt-sync\\src-tauri\\target\\release\\bundle"
 
           $files = Get-ChildItem $bundleRoot -Recurse -Include *.exe,*.msi
