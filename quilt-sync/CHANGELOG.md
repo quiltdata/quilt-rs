@@ -3,6 +3,8 @@
      Use GitHub autolinks for PR references.
      Use nested lists when there are multiple PR links.
      Put quilt-rs updates under `### quilt-rs` section.
+     Use alpha pre-release versions (e.g. v0.13.2-alpha1) instead of [Unreleased]
+     to keep changelog in sync with Cargo.toml version.
 -->
 # Changelog
 

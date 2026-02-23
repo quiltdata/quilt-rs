@@ -4837,7 +4837,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-sync"
-version = "0.13.1"
+version = "0.13.2-alpha1"
 dependencies = [
  "askama",
  "chrono",
