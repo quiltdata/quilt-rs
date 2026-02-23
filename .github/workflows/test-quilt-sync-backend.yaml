@@ -19,6 +19,9 @@ jobs:
     name: Code Quality (Ubuntu)
     if: github.ref != 'refs/heads/main'
     runs-on: ubuntu-24.04
+    env:
+      # Use mold linker on Linux to avoid OOM crashes on memory-constrained CI runners
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -52,6 +55,9 @@ jobs:
   cross-platform:
     name: Cross-Platform Tests
     if: github.ref == 'refs/heads/main'
+    env:
+      # Use mold linker on Linux to avoid OOM crashes on memory-constrained CI runners
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
     strategy:
       matrix:
         platform: [ubuntu-24.04, macos-15, windows-latest]
