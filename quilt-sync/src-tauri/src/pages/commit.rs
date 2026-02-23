@@ -506,7 +506,10 @@ mod tests {
     #[test]
     fn test_generate_commit_message_single_modify() {
         let changes = make_changes(&[], &["data.parquet"], &[]);
-        assert_eq!(generate_commit_message(&changes).value, "Update data.parquet");
+        assert_eq!(
+            generate_commit_message(&changes).value,
+            "Update data.parquet"
+        );
     }
 
     #[test]
