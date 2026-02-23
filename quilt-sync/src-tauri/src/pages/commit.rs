@@ -152,7 +152,7 @@ fn change_count(n: usize, verb: &str) -> String {
 ///
 /// For three or fewer total changes, individual file names are listed.
 /// For larger changesets, counts are used instead.
-pub fn generate_commit_message(changes: &ChangeSet) -> String {
+fn generate_commit_message(changes: &ChangeSet) -> String {
     let added: Vec<_> = changes
         .iter()
         .filter(|(_, c)| matches!(c, Change::Added(_)))
