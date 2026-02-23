@@ -548,7 +548,7 @@ mod tests {
     fn test_generate_commit_message_many_mixed() {
         let added: Vec<String> = (1..=3).map(|i| format!("add{i}.csv")).collect();
         let modified: Vec<String> = (1..=2).map(|i| format!("mod{i}.csv")).collect();
-        let removed = vec!["old.csv".to_string()];
+        let removed = ["old.csv".to_string()];
         let changes = make_changes(
             &added.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
             &modified.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
