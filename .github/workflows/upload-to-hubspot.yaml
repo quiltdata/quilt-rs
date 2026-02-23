@@ -9,8 +9,8 @@
 #   - HUBDB_COLUMN_MAP: JSON mapping of data fields to HubDB column names
 #     Maps logical field names to your HubDB table's actual column names
 #     Available fields: version, release_tag, latest_json_url, latest_json,
-#     downloads_json, updated_at, windows_msi_url, windows_exe_url,
-#     windows_url, macos_arm_url, macos_intel_url, linux_deb_url, linux_url
+#     downloads_json, updated_at, windows_url, macos_arm_url,
+#     macos_intel_url, linux_url
 #     Example: {"version": "release_version", "windows_msi_url": "win_download"}
 #
 # Required secrets:
@@ -217,7 +217,6 @@ jobs:
           HUBFS_URL_PREFIX="${HUBFS_ROOT_URL}${HUBFS_BASE_PATH}"
 
           WINDOWS_MSI_URL=""
-          WINDOWS_EXE_URL=""
           MACOS_ARM_URL=""
           MACOS_INTEL_URL=""
           LINUX_DEB_URL=""
@@ -227,7 +226,6 @@ jobs:
             url="${HUBFS_URL_PREFIX}/${name}"
             case "$name" in
               *.msi)       WINDOWS_MSI_URL="$url" ;;
-              *-setup.exe) WINDOWS_EXE_URL="$url" ;;
               *aarch64*.dmg) MACOS_ARM_URL="$url" ;;
               *x64*.dmg|*amd64*.dmg|*x86_64*.dmg) MACOS_INTEL_URL="$url" ;;
               *.deb)       LINUX_DEB_URL="$url" ;;
@@ -236,14 +234,13 @@ jobs:
 
           # Collect all user-facing installer URLs (deduplicated)
           DOWNLOADS_JSON=$(printf '%s\n' \
-            "$WINDOWS_EXE_URL" "$WINDOWS_MSI_URL" \
+            "$WINDOWS_MSI_URL" \
             "$MACOS_ARM_URL" "$MACOS_INTEL_URL" \
             "$LINUX_DEB_URL" \
             | grep -v '^$' | sort -u | jq -Rsc 'split("\n") | map(select(length > 0))')
 
           echo "Platform URLs:"
           echo "  Windows MSI:   $WINDOWS_MSI_URL"
-          echo "  Windows EXE:   $WINDOWS_EXE_URL"
           echo "  macOS ARM:     $MACOS_ARM_URL"
           echo "  macOS Intel:   $MACOS_INTEL_URL"
           echo "  Linux DEB:     $LINUX_DEB_URL"
@@ -274,8 +271,7 @@ jobs:
             --arg downloads_json "$DOWNLOADS_JSON" \
             --arg updated_at "$CURRENT_TIME" \
             --arg windows_msi_url "$WINDOWS_MSI_URL" \
-            --arg windows_exe_url "$WINDOWS_EXE_URL" \
-            --arg windows_url "$WINDOWS_EXE_URL" \
+            --arg windows_url "$WINDOWS_MSI_URL" \
             --arg macos_arm_url "$MACOS_ARM_URL" \
             --arg macos_intel_url "$MACOS_INTEL_URL" \
             --arg linux_deb_url "$LINUX_DEB_URL" \
@@ -290,7 +286,6 @@ jobs:
                 elif .key == "downloads_json" then $downloads_json
                 elif .key == "updated_at" then $updated_at
                 elif .key == "windows_msi_url" then $windows_msi_url
-                elif .key == "windows_exe_url" then $windows_exe_url
                 elif .key == "windows_url" then $windows_url
                 elif .key == "macos_arm_url" then $macos_arm_url
                 elif .key == "macos_intel_url" then $macos_intel_url
