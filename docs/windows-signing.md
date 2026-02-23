@@ -1,4 +1,3 @@
-
 # Windows Code Signing — Manual Checklist
 
 This document lists the **remaining manual steps** required to enable
