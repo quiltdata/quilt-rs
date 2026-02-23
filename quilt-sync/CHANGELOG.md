@@ -13,26 +13,27 @@
 ### Added
 
 - Commit page now pre-fills the message field with an
-  auto-generated summary of changed files
+  auto-generated summary of changed files (<https://github.com/quiltdata/quilt-rs/pull/504>)
 
 ## [v0.13.1] - 2026-02-19
 
 ### Fixed
 
 - Fixed deep link handler failing on macOS/Linux
-  due to `tauri://` scheme not matching `http` check
+  due to `tauri://` scheme not matching `http` check (<https://github.com/quiltdata/quilt-rs/pull/491>)
 
 ### quilt-rs
 
 - Updated [from v0.27.0 to v0.27.1](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.27.0...quilt-rs/v0.27.1)
   (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
-  - Fixed stale Parquet manifest cache preventing app startup
+  - Fixed stale Parquet manifest cache preventing app startup (<https://github.com/quiltdata/quilt-rs/pull/492>)
 
 ## [v0.13.0]
 
 ### Changed
 
-- Updated to use quilt-rs v0.27.0 with JSONL manifest format migration
+- Updated to use quilt-rs v0.27.0 with JSONL manifest format
+  migration (<https://github.com/quiltdata/quilt-rs/pull/476>)
 
 ### quilt-rs
 
@@ -45,7 +46,8 @@
 
 ### Fixed
 
-- Fixed redirect after package pull to avoid 'package already installed' error
+- Fixed redirect after package pull to avoid
+  'package already installed' error (<https://github.com/quiltdata/quilt-rs/pull/459>)
 
 ### quilt-rs
 
@@ -57,20 +59,22 @@
 
 ### Fixed
 
-- Fixed Windows deep link navigation issue when app is launched via deep link
+- Fixed Windows deep link navigation issue when app is launched
+  via deep link (<https://github.com/quiltdata/quilt-rs/pull/455>)
 
 ## [v0.11.1]
 
 ### Changed
 
-- Bumped patch release version to test auto-updater functionality
+- Bumped patch release version to test auto-updater
+  functionality (<https://github.com/quiltdata/quilt-rs/pull/454>)
 - Minor dependency updates
 
 ## [v0.11.0]
 
 ### Added
 
-- Added auto-updater functionality for seamless application updates (#447)
+- Added auto-updater functionality for seamless application updates (<https://github.com/quiltdata/quilt-rs/pull/447>)
 
 ## [v0.10.0]
 

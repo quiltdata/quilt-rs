@@ -11,34 +11,40 @@
 
 ### Added
 
-- Add comprehensive hash reference fixtures and tests for manifest combinations
+- Add comprehensive hash reference fixtures and tests for
+  manifest combinations (<https://github.com/quiltdata/quilt-rs/pull/482>)
 
 ### Changed
 
-- Clean up tests and remove legacy .parquet fixtures following manifest format migration
-- Add contextual error handling with file paths for better debugging of IO operations
-- Add comprehensive logging to LocalDomain operations with debug/info messages
+- Clean up tests and remove legacy .parquet fixtures following
+  manifest format migration (<https://github.com/quiltdata/quilt-rs/pull/477>)
+- Add contextual error handling with file paths for better
+  debugging of IO operations (<https://github.com/quiltdata/quilt-rs/pull/485>)
+- Add comprehensive logging to LocalDomain operations with
+  debug/info messages (<https://github.com/quiltdata/quilt-rs/pull/486>)
 
 ### Removed
 
-- Removed parquet dependencies from Cargo.toml and leftovers from source code
+- Removed parquet dependencies from Cargo.toml and leftovers
+  from source code (<https://github.com/quiltdata/quilt-rs/pull/480>)
 
 ### Fixed
 
 - Re-fetch manifest from remote when cached file is
-  unreadable (e.g. legacy Parquet format)
+  unreadable (e.g. legacy Parquet format) (<https://github.com/quiltdata/quilt-rs/pull/492>)
 
 ## [v0.27.0](https://github.com/quiltdata/quilt-rs/releases/tag/quilt-rs/v0.27.0) - 2025-02-04
 
 ### Changed
 
-- Migrated manifest format from Parquet to JSONL
+- Migrated manifest format from Parquet to JSONL (<https://github.com/quiltdata/quilt-rs/pull/476>)
 
 ## [v0.26.0](https://github.com/quiltdata/quilt-rs/releases/tag/quilt-rs/v0.26.0) - 2025-01-26
 
 ### Fixed
 
-- Fixed commit logic to respect crc64Checksums configuration from host config
+- Fixed commit logic to respect crc64Checksums configuration
+  from host config (<https://github.com/quiltdata/quilt-rs/pull/461>)
 
 ## [v0.25.0](https://github.com/quiltdata/quilt-rs/releases/tag/quilt-rs/v0.25.0) - 2025-01-07
 
