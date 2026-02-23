@@ -232,7 +232,7 @@ mod tests {
         let lineage = PackageLineage {
             commit: Some(CommitState {
                 timestamp: chrono::Utc::now(),
-                hash: fixtures::manifest_empty::EMPTY_NULL_TOP_HASH.to_string(),
+                hash: fixtures::top_hash::EMPTY_NULL_TOP_HASH.to_string(),
                 prev_hashes: Vec::new(),
             }),
             remote: manifest_uri,
@@ -240,7 +240,7 @@ mod tests {
         };
         let manifest_key = format!(
             ".quilt/packages/b/{}",
-            fixtures::manifest_empty::EMPTY_NULL_TOP_HASH
+            fixtures::top_hash::EMPTY_NULL_TOP_HASH
         );
         let storage = MockStorage::default();
         storage
@@ -278,7 +278,7 @@ mod tests {
         let manifest_uri = ManifestUri {
             bucket: "b".to_string(),
             namespace: ("a", "c").into(),
-            hash: fixtures::manifest_empty::EMPTY_NULL_TOP_HASH.to_string(),
+            hash: fixtures::top_hash::EMPTY_NULL_TOP_HASH.to_string(),
             origin: None,
         };
         assert_eq!(
@@ -304,7 +304,7 @@ mod tests {
         let lineage = PackageLineage {
             commit: Some(CommitState {
                 timestamp: chrono::Utc::now(),
-                hash: fixtures::manifest::CHECKSUMMED_HASH.to_string(),
+                hash: fixtures::manifest::TOP_HASH.to_string(),
                 prev_hashes: Vec::new(),
             }),
             remote: manifest_uri,
@@ -365,7 +365,7 @@ mod tests {
         let manifest_uri = ManifestUri {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
-            hash: fixtures::manifest::CHECKSUMMED_HASH.to_string(),
+            hash: fixtures::manifest::TOP_HASH.to_string(),
             origin: None,
         };
         assert_eq!(

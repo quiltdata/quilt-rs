@@ -2,6 +2,8 @@
      Follow keepachangelog.com format.
      Use GitHub autolinks for PR references.
      Use nested lists when there are multiple PR links.
+     Use alpha pre-release versions (e.g. v0.24.1-alpha1) instead of [Unreleased]
+     to keep changelog in sync with Cargo.toml version.
 -->
 # Changelog
 
@@ -9,17 +11,20 @@
 
 ### Changed
 
-- Updated to use quilt-rs v0.27.0 with JSONL manifest format migration
+- Updated to use quilt-rs v0.27.0 with JSONL manifest format
+  migration (<https://github.com/quiltdata/quilt-rs/pull/476>)
 
 ## [v0.23.0] - 2025-11-28
 
 ### Added
 
-- Improved test coverage for CLI model with `HostConfig` parameter
+- Improved test coverage for CLI model with `HostConfig`
+  parameter (<https://github.com/quiltdata/quilt-rs/pull/393>)
 
 ### Changed
 
-- Updated to use quilt-rs v0.23.0 with CRC64/NVMe object hash support
+- Updated to use quilt-rs v0.23.0 with CRC64/NVMe object hash
+  support (<https://github.com/quiltdata/quilt-rs/pull/393>)
 
 ## [v0.8.11] - 2025-02-XX
 

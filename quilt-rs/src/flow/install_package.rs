@@ -239,10 +239,10 @@ mod tests {
         .await;
 
         let err = result.unwrap_err();
-        if let Error::Io(orig_err) = err {
-            assert_eq!(orig_err.kind(), std::io::ErrorKind::PermissionDenied);
+        if let Error::DirectoryCreate { source, .. } = err {
+            assert_eq!(source.kind(), std::io::ErrorKind::PermissionDenied);
         } else {
-            panic!("Expected IO error, got: {err:?}");
+            panic!("Expected DirectoryCreate error, got: {err:?}");
         }
 
         Ok(())

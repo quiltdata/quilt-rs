@@ -27,6 +27,9 @@ jobs:
             args: ""
     runs-on: ${{ matrix.platform }}
     environment: ${{ inputs.environment }}
+    env:
+      # Use mold linker on Linux to avoid OOM crashes on memory-constrained CI runners
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
 
     steps:
       - name: Checkout repository

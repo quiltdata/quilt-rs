@@ -1,0 +1,4 @@
+{"message":"","user_meta":{},"version":"v0"}
+{"logical_key":"file1.txt","physical_keys":["s3://bucket/file1.txt"],"hash":{"type":"SHA256","value":"7465737464617461000000000000000000000000000000000000000000000000"},"size":8,"meta":{}}
+{"logical_key":"file2.txt","physical_keys":["s3://bucket/file2.txt"],"hash":{"type":"sha2-256-chunked","value":"Xb1PbjJeWof4zD7zuHc9PI7sLiz/Ykj4gphlaZEt3xA="},"size":16,"meta":{}}
+{"logical_key":"file3.txt","physical_keys":["s3://bucket/file3.txt"],"hash":{"type":"CRC64NVME","value":"dGVzdGRhdGEAAAAAAAAAAAAAAAAAAAAA"},"size":32,"meta":{}}

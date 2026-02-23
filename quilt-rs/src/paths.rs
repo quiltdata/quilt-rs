@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 #[cfg(test)]
 use tempfile::TempDir;
+use tracing::error;
 
 use crate::io::storage::Storage;
 use crate::lineage::Home;
@@ -153,13 +154,22 @@ pub async fn copy_cached_to_installed(
     storage: &impl Storage,
     manifest_uri: &ManifestUri,
 ) -> Res {
-    storage
+    match storage
         .copy(
             paths.manifest_cache(&manifest_uri.bucket, &manifest_uri.hash),
             paths.installed_manifest(&manifest_uri.namespace, &manifest_uri.hash),
         )
-        .await?;
-    Ok(())
+        .await
+    {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            error!(
+                "Failed to copy cached manifest to installed location for manifest_uri {}: {}",
+                manifest_uri, e
+            );
+            Err(e)
+        }
+    }
 }
 
 /// Takes list of the required paths and create directories

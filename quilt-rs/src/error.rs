@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::str::Utf8Error;
 
 use aws_smithy_types::byte_stream;
@@ -93,6 +94,34 @@ pub enum Error {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("Failed to read file {path}: {source}")]
+    FileRead {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    #[error("Failed to write file {path}: {source}")]
+    FileWrite {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    #[error("Failed to copy file from {from} to {to}: {source}")]
+    FileCopy {
+        from: PathBuf,
+        to: PathBuf,
+        source: std::io::Error,
+    },
+
+    #[error("Failed to create directory {path}: {source}")]
+    DirectoryCreate {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    #[error("File not found: {path}")]
+    FileNotFound { path: PathBuf },
+
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
@@ -114,6 +143,9 @@ pub enum Error {
     #[error("Manifest header: {0}")]
     ManifestHeader(String),
 
+    #[error("Failed to load manifest from {path}: {source}")]
+    ManifestLoad { path: PathBuf, source: Box<Error> },
+
     #[error("Manifest path error: {0}")]
     ManifestPath(String),
 
@@ -121,7 +153,7 @@ pub enum Error {
     MissingHTTPHeader(String),
 
     #[error("Missing parent path error: {0}")]
-    MissingParentPath(std::path::PathBuf),
+    MissingParentPath(PathBuf),
 
     #[error("Multihash error: {0}")]
     Multihash(#[from] multihash::Error),
