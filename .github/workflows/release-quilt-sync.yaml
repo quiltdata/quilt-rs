@@ -13,6 +13,7 @@ jobs:
     name: Build Release
     permissions:
       contents: write
+      id-token: write  # required for Azure OIDC token request
     strategy:
       fail-fast: false
       matrix:
@@ -56,54 +57,17 @@ jobs:
         run: npm install
         working-directory: ./quilt-sync
 
-      # Windows Authenticode code signing via Tauri's built-in support.
-      # Tauri signs installers during the build when bundle.windows.certificateThumbprint
-      # is set in the config. We import the PFX into the Windows certificate store,
-      # extract the thumbprint, and write a signing config file passed to tauri via --config.
-      # If WINDOWS_PFX_BASE64 is not configured, signing is skipped gracefully.
-      # See docs/windows-signing.md for certificate setup instructions.
-      - name: Import Windows code signing certificate
-        id: windows-codesign
+      # Windows Authenticode code signing via Azure Trusted Signing.
+      # We authenticate to Azure using GitHub's OIDC token (no stored secrets),
+      # then sign the built installers post-build using the managed signing service.
+      # See docs/windows-signing.md for setup instructions.
+      - name: Azure login (OIDC)
         if: matrix.platform == 'windows-latest'
-        shell: powershell
-        env:
-          WINDOWS_PFX_BASE64: ${{ secrets.WINDOWS_PFX_BASE64 }}
-          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
-        run: |
-          if (-not $env:WINDOWS_PFX_BASE64) {
-            Write-Host "::warning::WINDOWS_PFX_BASE64 secret not configured — skipping code signing"
-            return
-          }
-          if (-not $env:WINDOWS_PFX_PASSWORD) {
-            throw "WINDOWS_PFX_BASE64 is set but WINDOWS_PFX_PASSWORD is missing"
-          }
-
-          $pfxPath = "$env:RUNNER_TEMP\\codesign.pfx"
-          $pfxBytes = [Convert]::FromBase64String($env:WINDOWS_PFX_BASE64)
-          [IO.File]::WriteAllBytes($pfxPath, $pfxBytes)
-
-          $cert = Import-PfxCertificate `
-            -FilePath $pfxPath `
-            -CertStoreLocation Cert:\\CurrentUser\\My `
-            -Password (ConvertTo-SecureString -String $env:WINDOWS_PFX_PASSWORD -Force -AsPlainText) `
-            -ErrorAction Stop
-          Remove-Item $pfxPath -Force
-
-          $thumbprint = $cert.Thumbprint
-          Write-Host "Imported certificate with thumbprint: $thumbprint"
-
-          @{
-            bundle = @{
-              windows = @{
-                certificateThumbprint = $thumbprint
-                digestAlgorithm = "sha256"
-                timestampUrl = "http://timestamp.digicert.com"
-                tsp = $true
-              }
-            }
-          } | ConvertTo-Json -Depth 4 | Set-Content -Path "quilt-sync\\src-tauri\\signing-config.json"
-
-          "enabled=true" >> $env:GITHUB_OUTPUT
+        uses: azure/login@v2
+        with:
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Build the app
         uses: tauri-apps/tauri-action@v0
@@ -129,8 +93,25 @@ jobs:
           releaseBody: "See the assets to download and install this version."
           releaseDraft: true
           prerelease: false
-          args: ${{ matrix.args }} ${{ steps.windows-codesign.outputs.enabled == 'true' && '--config src-tauri/signing-config.json' || '' }}
+          args: ${{ matrix.args }}
           projectPath: "./quilt-sync"
           # Auto updater configuration - generates latest.json for update checks
           updaterJsonKeepUniversal: true
           updaterJsonPreferNsis: false
+
+      - name: Sign Windows artifacts with Azure Trusted Signing
+        if: matrix.platform == 'windows-latest'
+        uses: azure/trusted-signing-action@v0
+        with:
+          azure-tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          azure-client-id: ${{ vars.AZURE_CLIENT_ID }}
+          azure-subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          endpoint: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_TRUSTED_SIGNING_PROFILE }}
+          files-folder: quilt-sync/src-tauri/target/release/bundle
+          files-folder-filter: exe,msi
+          files-folder-recurse: true
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          file-digest: SHA256

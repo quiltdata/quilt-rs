@@ -1,76 +1,106 @@
-# Windows Code Signing — Manual Checklist
+# Windows Code Signing — Azure Trusted Signing
 
-This document lists the **remaining manual steps** required to enable
-Windows SmartScreen–trusted distribution for Quilt Sync.
+Windows Authenticode signing for QuiltSync uses **Azure Trusted Signing**
+authenticated via GitHub Actions OIDC. No certificate secrets are stored in
+GitHub — the private key never leaves Azure.
 
-## 1. Purchase the Certificate
+## How it works
 
-- Buy **DigiCert Standard Code Signing – Organization (OV)**
-- Legal name: **Quilt Data, Inc.** (use exact casing)
-- Term: **1 year** (upgrade later if needed)
+1. GitHub Actions requests an OIDC token from GitHub's identity provider
+2. `azure/login` exchanges that token for an Azure access token (federated
+   identity, no client secret)
+3. After the Tauri build, `azure/trusted-signing-action` sends the built
+   `.exe` and `.msi` artifacts to Azure for signing
+4. Azure returns the signed files; the private key is never exposed to the
+   runner
 
-Reference:
+## Azure setup (one-time)
 
-- <https://www.digicert.com/code-signing/>
+### 1. Create an Azure Trusted Signing account
 
-## 2. Complete DigiCert Organization Verification
+In the [Azure portal](https://portal.azure.com):
 
-- Provide Articles of Incorporation or state registry link
-- Complete DigiCert email or phone verification
-- Optional but recommended: obtain a **D-U-N-S Number**
+- Search for **Trusted Signing**
+- Create a new account (choose a region close to your runners, e.g. East US)
+- Note the **endpoint URL** (e.g. `https://eus.codesigning.azure.net`)
 
-Reference:
+Reference: <https://learn.microsoft.com/azure/trusted-signing/quickstart>
 
-- <https://www.dnb.com/duns.html>
+### 2. Create a Certificate Profile
 
-## 3. Export the Certificate
+Inside the Trusted Signing account:
 
-- Export the issued certificate as **PFX (.pfx)**
-- Protect with a strong password
-- Confirm support for:
-  - SHA-256
-  - Windows Authenticode
-  - RFC3161 timestamping
+- Create a **Certificate Profile** of type **Public Trust**
+- Set the **Organization** to `Quilt Data, Inc.` (exact casing)
+- Note the **profile name**
 
-Reference:
+### 3. Create an App Registration
 
-- <https://learn.microsoft.com/windows/win32/seccrypto/code-signing>
+In **Azure Active Directory (Entra ID)**:
 
-## 4. Configure GitHub Repository Secrets
+- Create a new **App Registration**
+- Note the **Application (client) ID** and **Directory (tenant) ID**
 
-Add the following **Actions secrets**:
+### 4. Add a Federated Credential
 
-- `WINDOWS_PFX_BASE64` — base64-encoded `.pfx`
-- `WINDOWS_PFX_PASSWORD` — PFX password
+On the App Registration → **Certificates & secrets → Federated credentials**:
 
-Notes:
+- Add a credential for **GitHub Actions**
+- Organization: `quiltdata`
+- Repository: `quilt-rs`
+- Entity: **Environment** → `<your environment name>` (matches
+  `inputs.environment` in the workflow)
+- Note: if you don't use environments, use **Branch** and set `main`
 
-- These secrets are required only for Windows builds
-- Tauri updater signing secrets remain unchanged
+### 5. Assign the signing role
 
-## 5. Run a Signed Release Build
+On the **Certificate Profile** resource → **Access control (IAM)**:
 
-- Push a version tag (e.g. `v0.13.1`)
-- Confirm GitHub Actions:
-  - Builds Windows installers
-  - Signs all `.exe` and `.msi` files
-- Verify signatures manually (see step 6)
+- Add role assignment: **Trusted Signing Certificate Profile Signer**
+- Assign to the App Registration (service principal) created above
 
-## 6. One-Time Manual Verification
+## GitHub configuration
 
-- Download installer from GitHub Releases
-- Right-click → **Properties → Digital Signatures**
-- Confirm publisher displays **Quilt Data, Inc.**
+### Variables to add
 
-Reference:
+Settings → Secrets and variables → Actions → Variables:
 
-- <https://learn.microsoft.com/windows/security/operating-system-security/virus-and-threat-protection/microsoft-defender-smartscreen>
+| Variable | Value |
+| --- | --- |
+| `AZURE_TENANT_ID` | Directory (tenant) ID from the App Registration |
+| `AZURE_CLIENT_ID` | Application (client) ID from the App Registration |
+| `AZURE_SUBSCRIPTION_ID` | Azure subscription ID |
+| `AZURE_TRUSTED_SIGNING_ENDPOINT` | Endpoint URL (e.g. `https://eus.codesigning.azure.net`) |
+| `AZURE_TRUSTED_SIGNING_ACCOUNT` | Trusted Signing account name |
+| `AZURE_TRUSTED_SIGNING_PROFILE` | Certificate profile name |
 
-## 7. Preserve SmartScreen Reputation
+### Secrets to remove (no longer needed)
 
-- Do not change:
-  - Publisher name
-  - Certificate subject
-- Renew before expiration using the same organization identity
+- `WINDOWS_PFX_BASE64`
+- `WINDOWS_PFX_PASSWORD`
 
-Changing identities resets SmartScreen reputation.
+## Verification
+
+After a signed release build:
+
+- Download the installer from GitHub Releases
+- Right-click → **Properties → Digital Signatures** — confirm publisher shows
+  **Quilt Data, Inc.**
+- Or in PowerShell:
+  `Get-AuthenticodeSignature .\QuiltSync_x.y.z_x64-setup.exe`
+- Signing history is also visible in the Azure portal under the Certificate
+  Profile
+
+## SmartScreen reputation
+
+Azure Trusted Signing issues **Public Trust** certificates (equivalent to EV),
+which carry immediate SmartScreen trust — no reputation-building period
+required.
+
+To maintain trust:
+
+- Do not change the publisher name or certificate subject
+- Renew the certificate profile before expiration using the same organization
+  identity
+
+Changing organization identity resets SmartScreen reputation.
