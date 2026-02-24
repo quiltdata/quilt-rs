@@ -113,6 +113,10 @@ impl DomainLineageIo {
                     std::io::ErrorKind::NotFound => Error::LineageMissing,
                     _ => Error::Io(inner_err),
                 },
+                Error::FileRead { path, source } => match source.kind() {
+                    std::io::ErrorKind::NotFound => Error::LineageMissing,
+                    _ => Error::FileRead { path, source },
+                },
                 other => other,
             })?;
 
@@ -165,6 +169,10 @@ impl DomainLineageIo {
             Err(Error::Io(e)) => match e.kind() {
                 std::io::ErrorKind::NotFound => self.write(storage, DomainLineage::new(home)).await,
                 _ => Err(Error::Io(e)),
+            },
+            Err(Error::FileRead { path, source }) => match source.kind() {
+                std::io::ErrorKind::NotFound => self.write(storage, DomainLineage::new(home)).await,
+                _ => Err(Error::FileRead { path, source }),
             },
             Err(e) => Err(e),
         }

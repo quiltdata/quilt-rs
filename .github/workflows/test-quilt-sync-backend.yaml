@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - "quilt-sync/src-tauri/**"
+      - "!quilt-sync/src-tauri/**/*.md"
       - "quilt-sync/*.toml"
       - "quilt-sync/Cargo.*"
       - "rust-toolchain.toml"
@@ -18,6 +19,9 @@ jobs:
     name: Code Quality (Ubuntu)
     if: github.ref != 'refs/heads/main'
     runs-on: ubuntu-24.04
+    env:
+      # Use mold linker on Linux to avoid OOM crashes on memory-constrained CI runners
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -28,6 +32,9 @@ jobs:
       - name: Setup Rust for development
         uses: ./.github/actions/setup-rust-dev
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Format
         run: cargo fmt --check
         working-directory: ./quilt-sync/src-tauri
@@ -37,7 +44,7 @@ jobs:
         working-directory: ./quilt-sync/src-tauri
 
       - name: Test
-        run: cargo test --verbose
+        run: cargo nextest run
         working-directory: ./quilt-sync/src-tauri
         env:
           RUST_BACKTRACE: 1
@@ -48,6 +55,9 @@ jobs:
   cross-platform:
     name: Cross-Platform Tests
     if: github.ref == 'refs/heads/main'
+    env:
+      # Use mold linker on Linux to avoid OOM crashes on memory-constrained CI runners
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
     strategy:
       matrix:
         platform: [ubuntu-24.04, macos-15, windows-latest]
@@ -65,8 +75,11 @@ jobs:
         with:
           targets: ${{ matrix.platform == 'macos-15' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Test
-        run: cargo test --verbose
+        run: cargo nextest run
         working-directory: ./quilt-sync/src-tauri
         env:
           RUST_BACKTRACE: 1

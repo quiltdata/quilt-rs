@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'quilt-sync/src/**'
+      - '!quilt-sync/src/**/*.md'
       - 'quilt-sync/*.json'
       - '.github/workflows/test-quilt-sync-frontend.yaml'
 

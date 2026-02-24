@@ -1,104 +1,76 @@
-# Windows Code Signing — Azure Artifact Signing (Authoritative)
+# Windows Code Signing — Manual Checklist
 
-This document defines the **single, authoritative process** for
-Windows Authenticode signing for Quilt Sync.
+This document lists the **remaining manual steps** required to enable
+Windows SmartScreen–trusted distribution for Quilt Sync.
 
-**Quilt Data, Inc.** is a **10-year-old U.S. company** and uses
-**Azure Artifact Signing (Trusted Signing)** exclusively.
+## 1. Purchase the Certificate
 
-## Overview
-
-- Trust model: **Microsoft-managed signing (Public Trust)**
-- Key management: **Keys never leave Azure**
-- CI authentication: **GitHub → Azure (OIDC)**
-- Artifacts that must be signed:
-  - `.exe` (NSIS installer)
-  - `.msi`
-
-This signing satisfies:
-
-- Windows Authenticode requirements
-- Microsoft Defender SmartScreen
+- Buy **DigiCert Standard Code Signing – Organization (OV)**
+- Legal name: **Quilt Data, Inc.** (use exact casing)
+- Term: **1 year** (upgrade later if needed)
 
 Reference:
 
-- <https://azure.microsoft.com/products/artifact-signing>
+- <https://www.digicert.com/code-signing/>
 
-## 1. Prerequisites
+## 2. Complete DigiCert Organization Verification
 
-- Azure subscription owned by **Quilt Data, Inc.**
-  - 1Password: Quilt -> Shared -> Microsoft SharePoint 365
-  - ID: <Ernest.Prabhakar@quiltdata.com>
-  - Contact email: <ernest@quilt.bio>
-- Azure tenant with long-standing, verifiable history
-- GitHub repository with Actions enabled
-
-## 2. Create Azure Artifact Signing Resource
-
-- Create an **Artifact Signing** resource in Azure
-  - Subscription: Azure subscription 1
-  - Resource group: QuiltSync
-  - Account: quilt
-- Trust profile: **Public Trust (Windows Authenticode)**
-- Publisher identity: **Quilt Data, Inc.**
-- Region: US East
+- Provide Articles of Incorporation or state registry link
+- Complete DigiCert email or phone verification
+- Optional but recommended: obtain a **D-U-N-S Number**
 
 Reference:
 
-- <https://learn.microsoft.com/azure/security/trusted-signing/overview>
+- <https://www.dnb.com/duns.html>
 
-## 3. Configure GitHub → Azure Authentication
+## 3. Export the Certificate
 
-- Use **GitHub OIDC** (required; no client secrets)
-- Create a federated credential for the GitHub repository
-- Grant the identity permission to the Artifact Signing resource
-
-Reference:
-
-- <https://learn.microsoft.com/azure/developer/github/connect-from-azure>
-
-## 4. Configure CI for Azure Signing
-
-### 4.1 Forbidden legacy configuration
-
-The following **must not exist** in GitHub Secrets:
-
-- `WINDOWS_PFX_BASE64`
-- `WINDOWS_PFX_PASSWORD`
-
-PFX-based signing is intentionally disallowed.
-
-### 4.2 Azure signing integration
-
-- Use the Azure Artifact Signing GitHub Action **or** signtool integration
-- Sign **all** Windows outputs:
-  - `*.exe`
-  - `*.msi`
+- Export the issued certificate as **PFX (.pfx)**
+- Protect with a strong password
+- Confirm support for:
+  - SHA-256
+  - Windows Authenticode
+  - RFC3161 timestamping
 
 Reference:
 
-- <https://github.com/Azure/artifact-signing-action>
+- <https://learn.microsoft.com/windows/win32/seccrypto/code-signing>
+
+## 4. Configure GitHub Repository Secrets
+
+Add the following **Actions secrets**:
+
+- `WINDOWS_PFX_BASE64` — base64-encoded `.pfx`
+- `WINDOWS_PFX_PASSWORD` — PFX password
+
+Notes:
+
+- These secrets are required only for Windows builds
+- Tauri updater signing secrets remain unchanged
 
 ## 5. Run a Signed Release Build
 
-- Push a version tag (e.g. `v0.14.0`)
+- Push a version tag (e.g. `v0.13.1`)
 - Confirm GitHub Actions:
   - Builds Windows installers
-  - Signs via Azure Artifact Signing
-  - Publishes signed artifacts to GitHub Releases
+  - Signs all `.exe` and `.msi` files
+- Verify signatures manually (see step 6)
 
-## 6. One-Time Verification
+## 6. One-Time Manual Verification
 
 - Download installer from GitHub Releases
 - Right-click → **Properties → Digital Signatures**
-- Publisher must show **Microsoft Trusted Signing**
+- Confirm publisher displays **Quilt Data, Inc.**
 
-## 7. Reputation & Operational Rules
+Reference:
 
-- Do not rotate:
-  - Azure tenant
-  - Artifact Signing resource
-  - Trust profile
+- <https://learn.microsoft.com/windows/security/operating-system-security/virus-and-threat-protection/microsoft-defender-smartscreen>
 
-The Azure signing resource is the **long-term SmartScreen reputation anchor**.
-Changing identities resets reputation.
+## 7. Preserve SmartScreen Reputation
+
+- Do not change:
+  - Publisher name
+  - Certificate subject
+- Renew before expiration using the same organization identity
+
+Changing identities resets SmartScreen reputation.

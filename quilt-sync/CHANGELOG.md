@@ -3,19 +3,43 @@
      Use GitHub autolinks for PR references.
      Use nested lists when there are multiple PR links.
      Put quilt-rs updates under `### quilt-rs` section.
+     Use alpha pre-release versions (e.g. v0.13.2-alpha1) instead of [Unreleased]
+     to keep changelog in sync with Cargo.toml version.
 -->
 # Changelog
+
+## [v0.13.2-alpha1] - 2026-02-23
+
+### Added
+
+- Commit page now pre-fills the message field with an
+  auto-generated summary of changed files (<https://github.com/quiltdata/quilt-rs/pull/504>)
+- Add Windows code signing for release installers (<https://github.com/quiltdata/quilt-rs/pull/484>)
+
+## [v0.13.1] - 2026-02-19
+
+### Fixed
+
+- Fixed deep link handler failing on macOS/Linux
+  due to `tauri://` scheme not matching `http` check (<https://github.com/quiltdata/quilt-rs/pull/491>)
+
+### quilt-rs
+
+- Updated [from v0.27.0 to v0.27.1](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.27.0...quilt-rs/v0.27.1)
+  (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+  - Fixed stale Parquet manifest cache preventing app startup (<https://github.com/quiltdata/quilt-rs/pull/492>)
 
 ## [v0.13.0]
 
 ### Changed
 
-- Updated to use quilt-rs v0.27.0 with JSONL manifest format migration
+- Updated to use quilt-rs v0.27.0 with JSONL manifest format
+  migration (<https://github.com/quiltdata/quilt-rs/pull/476>)
 
 ### quilt-rs
 
 - Updated [from v0.26.0 to v0.27.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.26.0...quilt-rs/v0.27.0)
-  (see [../quilt-rs/CHANGELOG.md#v0.27.0](../quilt-rs/CHANGELOG.md#v0.27.0))
+  (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
   - Migrated manifest format from Parquet to JSONL for improved performance
     and compatibility
 
@@ -23,32 +47,35 @@
 
 ### Fixed
 
-- Fixed redirect after package pull to avoid 'package already installed' error
+- Fixed redirect after package pull to avoid
+  'package already installed' error (<https://github.com/quiltdata/quilt-rs/pull/459>)
 
 ### quilt-rs
 
 - Updated [from v0.25.0 to v0.26.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.25.0...quilt-rs/v0.26.0)
-  (see [../quilt-rs/CHANGELOG.md#v0.26.0](../quilt-rs/CHANGELOG.md#v0.26.0))
+  (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
   - Fixed commit logic to respect crc64Checksums configuration from host config
 
 ## [v0.11.2]
 
 ### Fixed
 
-- Fixed Windows deep link navigation issue when app is launched via deep link
+- Fixed Windows deep link navigation issue when app is launched
+  via deep link (<https://github.com/quiltdata/quilt-rs/pull/455>)
 
 ## [v0.11.1]
 
 ### Changed
 
-- Bumped patch release version to test auto-updater functionality
+- Bumped patch release version to test auto-updater
+  functionality (<https://github.com/quiltdata/quilt-rs/pull/454>)
 - Minor dependency updates
 
 ## [v0.11.0]
 
 ### Added
 
-- Added auto-updater functionality for seamless application updates (#447)
+- Added auto-updater functionality for seamless application updates (<https://github.com/quiltdata/quilt-rs/pull/447>)
 
 ## [v0.10.0]
 
@@ -72,7 +99,7 @@ This version increment consolidates many small changes from previous patch relea
 ### quilt-rs
 
 - Updated from [v0.24.0 to v0.25.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.24.0...quilt-rs/v0.25.0)
-  (see [../quilt-rs/CHANGELOG.md#v0.25.0](../quilt-rs/CHANGELOG.md#v0.25.0))
+  (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
   - Support for timestamp tags in package URIs
   - Export `Tag` enum and `LATEST_TAG` constant
 
@@ -98,7 +125,7 @@ This version increment consolidates many small changes from previous patch relea
 ### quilt-rs
 
 - Updated from v0.21.1 to [v0.24.0](https://github.com/quiltdata/quilt-rs/releases/tag/quilt-rs%2Fv0.24.0)
-  (see [../quilt-rs/CHANGELOG.md#v0.24.0](../quilt-rs/CHANGELOG.md#v0.24.0))
+  (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
   - Fixed `quilt+s3://` URL parsing with `:tag` syntax
   - Fixed hash mismatch for packages with diacritic characters
   - Support for reading manifest with CRC64/NVMe checksums

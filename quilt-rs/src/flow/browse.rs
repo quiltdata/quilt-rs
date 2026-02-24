@@ -1,5 +1,6 @@
 use tracing::debug;
 use tracing::info;
+use tracing::warn;
 
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
@@ -7,6 +8,7 @@ use crate::manifest::Manifest;
 use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::uri::S3Uri;
+use crate::Error;
 use crate::Res;
 
 async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res<Manifest> {
@@ -15,6 +17,27 @@ async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res<Ma
         .get_object_stream(&manifest_uri.origin, &s3_uri)
         .await?;
     Manifest::from_reader(contents.body.into_async_read()).await
+}
+
+async fn fetch_and_cache(
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    manifest_uri: &ManifestUri,
+    cache_path: &std::path::Path,
+) -> Res<Manifest> {
+    debug!(
+        "⏳ Fetching JSONL manifest {} from remote…",
+        manifest_uri.display()
+    );
+    let manifest = fetch_jsonl(remote, manifest_uri).await?;
+    debug!("✔️ Fetched JSONL manifest");
+
+    let jsonl_content = manifest.to_jsonlines();
+    storage
+        .write_file(cache_path, jsonl_content.as_bytes())
+        .await?;
+    debug!("✔️ JSONL manifest written to {}", cache_path.display());
+    Ok(manifest)
 }
 
 /// If remote manifest is already cached we return it.
@@ -40,31 +63,30 @@ pub async fn cache_remote_manifest(
     let manifest_path = cache_path.clone();
 
     if !storage.exists(&cache_path).await {
-        debug!("🔍 Manifest does not exist in cache, fetching from remote");
-        debug!(
-            "⏳ Fetching JSONL manifest {} from remote…",
-            manifest_uri.display()
-        );
-        let manifest = fetch_jsonl(remote, manifest_uri).await?;
-        debug!("✔️ Fetched JSONL manifest");
-
-        // Write JSONL to cache
-        let jsonl_content = manifest.to_jsonlines();
-        storage
-            .write_file(&cache_path, jsonl_content.as_bytes())
-            .await?;
-        debug!("✔️ JSONL manifest written to {}", cache_path.display());
-    } else {
-        debug!("✔️ Manifest exists already in {}", cache_path.display());
+        let manifest = fetch_and_cache(storage, remote, manifest_uri, &cache_path).await?;
+        info!("✔️ Successfully cached:\n{:?}", manifest.header);
+        return Ok(manifest);
     }
 
-    info!("✔️ Manifest {} was written …", manifest_uri.display());
+    debug!("✔️ Manifest exists already in {}", cache_path.display());
 
-    let manifest = Manifest::from_path(storage, &manifest_path).await?;
-
-    info!("✔️ … and, Successfully cached:\n{:?}", manifest.header);
-
-    Ok(manifest)
+    match Manifest::from_path(storage, &manifest_path).await {
+        Ok(manifest) => {
+            info!("✔️ Successfully cached:\n{:?}", manifest.header);
+            Ok(manifest)
+        }
+        Err(Error::ManifestLoad { source, .. }) => {
+            // Cached file is unreadable (e.g. legacy Parquet format), re-fetch
+            warn!(
+                "Cached manifest at {} is invalid, re-fetching: {}",
+                manifest_path.display(),
+                source
+            );
+            storage.remove_file(&manifest_path).await?;
+            fetch_and_cache(storage, remote, manifest_uri, &cache_path).await
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// Alias for the `cache_remote_manifest`.
@@ -90,6 +112,7 @@ mod tests {
     use crate::fixtures;
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
+    use crate::io::storage::LocalStorage;
 
     /// Verifies that when a manifest is already cached,
     /// the `browse_remote_manifest` function retrieves it from the cache
@@ -109,7 +132,7 @@ mod tests {
 
         // Prepare the reference manifest file.
         // It is copied into the cache path to simulate a cached manifest.
-        let jsonl = std::fs::read(fixtures::manifest::checksummed()?)?;
+        let jsonl = std::fs::read(fixtures::manifest::path()?)?;
         let storage = MockStorage::default();
         storage.write_file(&cache_path, &jsonl).await?;
 
@@ -156,6 +179,63 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies that when a cached manifest is invalid but the remote
+    /// has a valid JSONL manifest, the stale cache is replaced and
+    /// the manifest is returned successfully.
+    #[test(tokio::test)]
+    async fn test_if_cached_invalid_recovers_from_remote() -> Res {
+        let (paths, _temp_dir) = DomainPaths::from_temp_dir()?;
+        let storage = LocalStorage::new();
+
+        let manifest_uri = ManifestUri {
+            bucket: "a".to_string(),
+            namespace: ("f", "b").into(),
+            hash: "stale_hash".to_string(),
+            origin: None,
+        };
+
+        // Write invalid data to simulate a stale Parquet cache
+        let cache_path = paths.manifest_cache(&manifest_uri.bucket, &manifest_uri.hash);
+        paths
+            .scaffold_for_caching(&storage, &manifest_uri.bucket)
+            .await?;
+        storage.write_file(&cache_path, b"PAR1_invalid").await?;
+
+        // Set up valid JSONL on the remote
+        let jsonl = storage.read_file(fixtures::manifest::path()?).await?;
+        let remote = MockRemote::default();
+        let remote_uri = S3Uri::from_str(&format!(
+            "s3://{}/.quilt/packages/{}",
+            manifest_uri.bucket, manifest_uri.hash
+        ))?;
+        remote
+            .put_object(&manifest_uri.origin, &remote_uri, jsonl)
+            .await?;
+
+        // Should recover: delete stale cache, re-fetch, succeed
+        let manifest = cache_remote_manifest(&paths, &storage, &remote, &manifest_uri).await?;
+
+        assert_eq!(manifest.header.message, Some("Initial".to_string()));
+        assert_eq!(manifest.rows.len(), 10);
+        assert!(manifest.get_record(&PathBuf::from("e0-0.txt")).is_some());
+
+        // Verify the cache file was replaced with valid JSONL
+        let cached_bytes = storage.read_file(&cache_path).await?;
+        let first_line = std::str::from_utf8(&cached_bytes)
+            .expect("cached file should be valid UTF-8")
+            .lines()
+            .next()
+            .expect("cached file should not be empty");
+        serde_json::from_str::<serde_json::Value>(first_line)
+            .expect("cached file should contain valid JSON");
+
+        // Verify the cached file can be loaded as a manifest
+        let reloaded = Manifest::from_path(&storage, &cache_path).await?;
+        assert_eq!(reloaded.rows.len(), 10);
+
+        Ok(())
+    }
+
     /// Verifies that when a manifest is not cached,
     /// and the manifest exists remotely in JSONL format,
     /// it is downloaded and cached directly in JSONL format.
@@ -173,7 +253,7 @@ mod tests {
 
         // Simulate the remote JSONL manifest.
         // The JSONL data is loaded from a mocked fixture and placed in the remote location.
-        let jsonl = std::fs::read(fixtures::manifest::checksummed()?)?;
+        let jsonl = std::fs::read(fixtures::manifest::path()?)?;
         let remote = MockRemote::default();
         let remote_uri = S3Uri::from_str(&format!(
             "s3://{}/.quilt/packages/{}",
