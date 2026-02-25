@@ -240,7 +240,15 @@ mod tests {
 
         let err = result.unwrap_err();
         if let Error::DirectoryCreate { source, .. } = err {
-            assert_eq!(source.kind(), std::io::ErrorKind::PermissionDenied);
+            // macOS (SIP) returns ReadOnlyFilesystem; Linux returns PermissionDenied
+            assert!(
+                matches!(
+                    source.kind(),
+                    std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem
+                ),
+                "Expected PermissionDenied or ReadOnlyFilesystem, got: {:?}",
+                source.kind()
+            );
         } else {
             panic!("Expected DirectoryCreate error, got: {err:?}");
         }

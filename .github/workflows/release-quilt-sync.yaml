@@ -13,6 +13,7 @@ jobs:
     name: Build Release
     permissions:
       contents: write
+      id-token: write  # required for Azure OIDC token request
     strategy:
       fail-fast: false
       matrix:
@@ -85,3 +86,31 @@ jobs:
           # Auto updater configuration - generates latest.json for update checks
           updaterJsonKeepUniversal: true
           updaterJsonPreferNsis: false
+
+      # Windows Authenticode code signing via Azure Trusted Signing.
+      # We authenticate immediately before signing (not before the build) so the
+      # OIDC token hasn't expired after the ~25 minute build.
+      # See docs/windows-signing.md for setup instructions.
+      - name: Azure login (OIDC)
+        if: matrix.platform == 'windows-latest'
+        uses: azure/login@v2
+        with:
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign Windows artifacts with Azure Trusted Signing
+        if: matrix.platform == 'windows-latest'
+        uses: azure/trusted-signing-action@v0
+        with:
+          azure-tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          azure-client-id: ${{ vars.AZURE_CLIENT_ID }}
+          endpoint: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_TRUSTED_SIGNING_PROFILE }}
+          files-folder: target/release/bundle
+          files-folder-filter: exe,msi
+          files-folder-recurse: true
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          file-digest: SHA256
