@@ -8,13 +8,18 @@
 -->
 # Changelog
 
+## [v0.14.0] - 2026-02-25
+
+### Added
+
+- Add Windows code signing for release installers (<https://github.com/quiltdata/quilt-rs/pull/484>)
+
 ## [v0.13.2] - 2026-02-25
 
 ### Added
 
 - Commit page now pre-fills the message field with an
   auto-generated summary of changed files (<https://github.com/quiltdata/quilt-rs/pull/504>)
-- Add Windows code signing for release installers (<https://github.com/quiltdata/quilt-rs/pull/484>)
 
 ## [v0.13.1] - 2026-02-19
 
