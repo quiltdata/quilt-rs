@@ -244,8 +244,7 @@ mod tests {
             assert!(
                 matches!(
                     source.kind(),
-                    std::io::ErrorKind::PermissionDenied
-                        | std::io::ErrorKind::ReadOnlyFilesystem
+                    std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem
                 ),
                 "Expected PermissionDenied or ReadOnlyFilesystem, got: {:?}",
                 source.kind()
