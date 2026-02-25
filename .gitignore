@@ -7,4 +7,3 @@
 # ```
 target/
 tarpaulin-report.html
-.env
