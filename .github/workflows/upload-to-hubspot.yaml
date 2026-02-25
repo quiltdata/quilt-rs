@@ -18,12 +18,24 @@
 #   - HUBSPOT_ACCESS_TOKEN: HubSpot private app token with Files + HubDB write scopes
 #   - GITHUB_TOKEN: Automatically provided by GitHub Actions (for downloading releases)
 #
+# Optional secrets (for automated cache invalidation of latest.json):
+#   HubSpot does not provide an API to purge CDN cache for HubFS files; overwriting
+#   updates the file but the CDN may still serve a cached copy. To automate invalidation:
+#   - CLOUDFLARE_ZONE_ID: Cloudflare zone ID for quilt.bio (if the domain is behind Cloudflare)
+#   - CLOUDFLARE_API_TOKEN: Cloudflare API token with "Cache Purge" permission
+#   If both are set, the workflow purges the cache for https://www.quilt.bio/hubfs/latest.json
+#   after each upload. For full automation (upload + fresh latest.json), use Cloudflare
+#   in front of quilt.bio and add these secrets; otherwise purge that URL manually after each release.
+#
 # Process:
 #   1. Downloads all assets from specified GitHub release
 #   2. Modifies latest.json URLs to point to HubFS locations
-#   3. Uploads all assets (including modified latest.json) to HubFS
-#   4. Extracts version and platform-specific URLs from processed latest.json
-#   5. Creates new HubDB row with release metadata and download URLs
+#   3. Replaces latest.json in place via Files API v3 (get by path + PUT replace by ID)
+#      so https://www.quilt.bio/hubfs/latest.json is always the current file (no timestamped copies).
+#   4. Uploads other release assets to HubFS (filemanager API).
+#   5. Optionally purges CDN cache for latest.json (when Cloudflare secrets are set)
+#   6. Extracts version and platform-specific URLs from processed latest.json
+#   7. Creates new HubDB row with release metadata and download URLs
 #
 name: Upload QuiltSync Assets to HubSpot
 
@@ -108,7 +120,65 @@ jobs:
           echo "=== Modified latest.json ==="
           cat ./release-assets/latest.json
 
-      - name: Upload assets to HubSpot
+      - name: Upload latest.json (replace in place)
+        env:
+          HUBSPOT_TOKEN: ${{ secrets.HUBSPOT_ACCESS_TOKEN }}
+        run: |
+          if [ -z "$HUBSPOT_TOKEN" ]; then
+            echo "Error: HUBSPOT_ACCESS_TOKEN secret is not set"
+            exit 1
+          fi
+          # Use Files API v3 to replace existing latest.json by ID so the URL stays
+          # https://www.quilt.bio/hubfs/latest.json. The filemanager upload creates
+          # timestamped copies (e.g. latest-Feb-25-2026-...) instead of overwriting.
+          echo "Ensuring latest.json is replaced at ${HUBFS_ROOT_URL}/latest.json (Files API v3)..."
+
+          # Try to get existing file by path (try /latest.json then latest.json)
+          for path in "%2Flatest.json" "latest.json"; do
+            stat_resp=$(curl -s -w "\n%{http_code}" \
+              -H "Authorization: Bearer $HUBSPOT_TOKEN" \
+              "$HUBSPOT_API_BASE/files/v3/files/stat/$path")
+            stat_code=$(echo "$stat_resp" | tail -n1)
+            stat_body=$(echo "$stat_resp" | head -n -1)
+            if [[ "$stat_code" -eq 200 ]]; then
+              file_id=$(echo "$stat_body" | jq -r '.file.id // empty')
+              if [ -n "$file_id" ] && [ "$file_id" != "null" ]; then
+                echo "Found existing file id=$file_id, replacing content..."
+                replace_resp=$(curl -s -w "\n%{http_code}" -X PUT \
+                  -H "Authorization: Bearer $HUBSPOT_TOKEN" \
+                  -F "file=@./release-assets/latest.json" \
+                  -F 'options={"access":"PUBLIC_NOT_INDEXABLE"}' \
+                  "$HUBSPOT_API_BASE/files/v3/files/$file_id")
+                replace_code=$(echo "$replace_resp" | tail -n1)
+                if [[ "$replace_code" -ge 200 && "$replace_code" -lt 300 ]]; then
+                  echo "✅ Replaced latest.json in place (same URL)"
+                  exit 0
+                else
+                  echo "❌ Replace failed (HTTP $replace_code): $(echo "$replace_resp" | head -n -1)"
+                  exit 1
+                fi
+              fi
+            fi
+          done
+
+          # No existing file: create with exact name via Files API v3
+          echo "No existing latest.json found; creating new file with name latest.json..."
+          create_resp=$(curl -s -w "\n%{http_code}" -X POST \
+            -H "Authorization: Bearer $HUBSPOT_TOKEN" \
+            -F "file=@./release-assets/latest.json" \
+            -F "fileName=latest.json" \
+            -F "folderPath=/" \
+            -F 'options={"access":"PUBLIC_NOT_INDEXABLE"}' \
+            "$HUBSPOT_API_BASE/files/v3/files")
+          create_code=$(echo "$create_resp" | tail -n1)
+          if [[ "$create_code" -ge 200 && "$create_code" -lt 300 ]]; then
+            echo "✅ Created latest.json at ${HUBFS_ROOT_URL}/latest.json"
+          else
+            echo "❌ Create failed (HTTP $create_code): $(echo "$create_resp" | head -n -1)"
+            exit 1
+          fi
+
+      - name: Upload other assets to HubSpot
         env:
           HUBSPOT_TOKEN: ${{ secrets.HUBSPOT_ACCESS_TOKEN }}
         run: |
@@ -120,14 +190,11 @@ jobs:
           upload_file() {
             local file_path="$1"
             local file_name=$(basename "$file_path")
-
-            # Special handling for latest.json - upload to root
+            # Skip latest.json (already uploaded in previous step)
             if [ "$file_name" = "latest.json" ]; then
-              local target_path="/latest.json"
-            else
-              local target_path="${HUBFS_BASE_PATH}/${file_name}"
+              return 0
             fi
-
+            local target_path="${HUBFS_BASE_PATH}/${file_name}"
             local folder_path=$(dirname "$target_path" | sed 's|\\|/|g')
 
             echo "Uploading: $file_name to $target_path"
@@ -154,7 +221,6 @@ jobs:
             fi
           }
 
-          # Upload all files in release-assets directory
           upload_count=0
           failed_count=0
 
@@ -178,6 +244,33 @@ jobs:
           fi
 
           echo "🎉 All assets uploaded successfully to HubSpot"
+
+      - name: Purge CDN cache for latest.json
+        env:
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          LATEST_JSON_URL: "https://www.quilt.bio/hubfs/latest.json"
+        run: |
+          if [ -n "$CLOUDFLARE_ZONE_ID" ] && [ -n "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "Purging Cloudflare cache for latest.json..."
+            response=$(curl -s -w "\n%{http_code}" -X POST \
+              "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/purge_cache" \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data "{\"files\":[\"${LATEST_JSON_URL}\"]}")
+            http_code=$(echo "$response" | tail -n1)
+            body=$(echo "$response" | head -n -1)
+            if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
+              echo "✅ Cache purged for ${LATEST_JSON_URL}"
+            else
+              echo "⚠️ Cache purge returned HTTP $http_code (non-fatal): $body"
+            fi
+          else
+            echo "📄 latest.json was updated at ${LATEST_JSON_URL}"
+            echo "   HubSpot does not offer cache purge for HubFS; the CDN may still serve an old copy."
+            echo "   For automated invalidation: put the domain behind Cloudflare and set repo secrets"
+            echo "   CLOUDFLARE_ZONE_ID and CLOUDFLARE_API_TOKEN (Cache Purge). Otherwise purge that URL manually."
+          fi
 
       - name: Update HubDB table
         env:
