@@ -109,7 +109,7 @@ jobs:
           endpoint: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}
           trusted-signing-account-name: ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT }}
           certificate-profile-name: ${{ vars.AZURE_TRUSTED_SIGNING_PROFILE }}
-          files-folder: quilt-sync/src-tauri/target/release/bundle
+          files-folder: target/release/bundle
           files-folder-filter: exe,msi
           files-folder-recurse: true
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
