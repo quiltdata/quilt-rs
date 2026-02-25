@@ -101,7 +101,7 @@ jobs:
 
       - name: Sign Windows artifacts with Azure Trusted Signing
         if: matrix.platform == 'windows-latest'
-        uses: azure/trusted-signing-action@v0
+        uses: azure/trusted-signing-action@v1
         with:
           azure-tenant-id: ${{ vars.AZURE_TENANT_ID }}
           azure-client-id: ${{ vars.AZURE_CLIENT_ID }}
