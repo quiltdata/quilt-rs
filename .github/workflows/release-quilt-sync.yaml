@@ -57,18 +57,6 @@ jobs:
         run: npm install
         working-directory: ./quilt-sync
 
-      # Windows Authenticode code signing via Azure Trusted Signing.
-      # We authenticate to Azure using GitHub's OIDC token (no stored secrets),
-      # then sign the built installers post-build using the managed signing service.
-      # See docs/windows-signing.md for setup instructions.
-      - name: Azure login (OIDC)
-        if: matrix.platform == 'windows-latest'
-        uses: azure/login@v2
-        with:
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-
       - name: Build the app
         uses: tauri-apps/tauri-action@v0
         env:
@@ -98,6 +86,18 @@ jobs:
           # Auto updater configuration - generates latest.json for update checks
           updaterJsonKeepUniversal: true
           updaterJsonPreferNsis: false
+
+      # Windows Authenticode code signing via Azure Trusted Signing.
+      # We authenticate immediately before signing (not before the build) so the
+      # OIDC token hasn't expired after the ~25 minute build.
+      # See docs/windows-signing.md for setup instructions.
+      - name: Azure login (OIDC)
+        if: matrix.platform == 'windows-latest'
+        uses: azure/login@v2
+        with:
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Sign Windows artifacts with Azure Trusted Signing
         if: matrix.platform == 'windows-latest'
