@@ -10,6 +10,10 @@
 
 ## [v0.13.2] - 2026-02-25
 
+### Fixed
+
+- Fix missing macOS updater artifacts by adding `app` bundle target (regression from <https://github.com/quiltdata/quilt-rs/pull/503>)
+
 ### Added
 
 - Commit page now pre-fills the message field with an
