@@ -3,9 +3,11 @@
 ## Overview
 
 Quilt is a data package management system that provides Git-like version control
-semantics for data files. It implements content-addressed storage with immutable
-objects and supports distributed collaboration through remote storage backends
-(primarily S3).
+semantics for data files. Packages can be extremely large (thousands of files,
+terabytes of data), so the system is designed for partial downloads and
+incremental modifications. It implements content-addressed storage with
+immutable objects and supports distributed collaboration through remote storage
+backends (primarily S3).
 
 ## Mental Model
 
@@ -44,6 +46,13 @@ The `.quilt` directory serves as the local repository for package management:
   deduplicated by hash
 - **lineage.json**: Tracks package installations, modifications, and commit history
 
+## Domain
+
+A Domain is the top-level envelope for the entire system: a set of namespaces,
+packages, and lineage rooted at a single directory. In code, this is represented
+by `LocalDomain` (resolving filesystem paths and tracking all installed
+packages within the `.quilt` directory).
+
 ## Core Data Structures
 
 ### ManifestRow
@@ -76,7 +85,10 @@ A manifest is a collection of ManifestRows that describes a complete package
 state. Each row represents a file with:
 
 - **logical_key**: Virtual path inside the package (user-visible file path)
-- **physical_key**: Actual storage location URL
+- **physical_key**: Actual storage location URL — a URI that can be
+  dereferenced to get a bag of bytes. Physical keys are intended to be
+  read-only and immutable (though not enforced). On local filesystems there
+  is no versioning; immutability is enforced by content-addressing only.
   - `s3://bucket/path` for remote storage (after push)
   - `file:///path/to/local/objects/hash` for local storage (before push)
 
@@ -276,6 +288,12 @@ Return: Updated PackageLineage
 - `ObjectHash` enum provides unified interface
 
 ## State Management
+
+### Storage: Versioned vs Flat
+
+S3 stores are versioned — each revision of an object gets a `versionId`.
+Local stores are flat and simply overwrite objects. When using a flat store,
+the registry caches each known version to avoid overwrites.
 
 ### Local vs Remote State
 
