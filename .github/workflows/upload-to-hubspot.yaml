@@ -20,7 +20,8 @@
 # Process:
 #   1. Downloads all assets from specified GitHub release
 #   2. Modifies latest.json URLs to point to HubFS locations
-#   3. Uploads all assets (including modified latest.json) to HubFS
+#   3. Uploads all assets to HubFS with overwrite (latest.json goes to root for a
+#      stable URL; other assets go to a version-specific folder)
 #   4. Extracts version from latest.json and platform-specific URLs from release asset filenames
 #   5. Creates new HubDB row with release metadata and download URLs
 #
@@ -120,31 +121,32 @@ jobs:
             local file_path="$1"
             local file_name=$(basename "$file_path")
 
-            # Special handling for latest.json - upload to root
+            # latest.json goes to root so it has a stable URL;
+            # other assets go to a version-specific folder.
             if [ "$file_name" = "latest.json" ]; then
-              local target_path="/latest.json"
+              local folder_path="/"
             else
-              local target_path="${HUBFS_BASE_PATH}/${file_name}"
+              local folder_path=$(dirname "${HUBFS_BASE_PATH}/${file_name}" | sed 's|\\|/|g')
             fi
 
-            local folder_path=$(dirname "$target_path" | sed 's|\\|/|g')
-
-            echo "Uploading: $file_name to $target_path"
+            local expected_url="${HUBFS_ROOT_URL}${folder_path%/}/${file_name}"
+            echo "Uploading: $file_name -> $expected_url"
 
             response=$(curl -s -w "\n%{http_code}" \
               -X POST \
               -H "Authorization: Bearer $HUBSPOT_TOKEN" \
               -F "file=@$file_path" \
+              -F "fileName=$file_name" \
               -F "folderPath=$folder_path" \
-              -F "options={\"access\":\"PUBLIC_NOT_INDEXABLE\"}" \
-              "$HUBSPOT_API_BASE/filemanager/api/v3/files/upload?overwrite=true")
+              -F 'options={"access":"PUBLIC_NOT_INDEXABLE","overwrite":true,"duplicateValidationStrategy":"NONE","duplicateValidationScope":"EXACT_FOLDER"}' \
+              "$HUBSPOT_API_BASE/files/v3/files")
 
             http_code=$(echo "$response" | tail -n1)
             body=$(echo "$response" | head -n -1)
 
             if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
               echo "✅ Successfully uploaded: $file_name"
-              echo "📄 Expected URL: ${HUBFS_ROOT_URL}${target_path}"
+              echo "📄 Expected URL: $expected_url"
               return 0
             else
               echo "❌ Failed to upload: $file_name (HTTP $http_code)"
@@ -153,7 +155,6 @@ jobs:
             fi
           }
 
-          # Upload all files in release-assets directory
           upload_count=0
           failed_count=0
 
