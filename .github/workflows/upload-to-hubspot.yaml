@@ -129,7 +129,8 @@ jobs:
               local folder_path=$(dirname "${HUBFS_BASE_PATH}/${file_name}" | sed 's|\\|/|g')
             fi
 
-            echo "Uploading: $file_name to $folder_path/$file_name"
+            local expected_url="${HUBFS_ROOT_URL}${folder_path%/}/${file_name}"
+            echo "Uploading: $file_name -> $expected_url"
 
             response=$(curl -s -w "\n%{http_code}" \
               -X POST \
@@ -145,7 +146,7 @@ jobs:
 
             if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
               echo "✅ Successfully uploaded: $file_name"
-              echo "📄 Expected URL: ${HUBFS_ROOT_URL}${folder_path}/${file_name}"
+              echo "📄 Expected URL: $expected_url"
               return 0
             else
               echo "❌ Failed to upload: $file_name (HTTP $http_code)"
