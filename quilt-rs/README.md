@@ -48,7 +48,7 @@ Supports multiple algorithms via `checksum::ObjectHash`:
 
 ## Further Reading
 
-- [Architecture](../ARCHITECTURE.md) — detailed design, data structures, and workflow
+- [Architecture](../docs/ARCHITECTURE.md) — detailed design, data structures, and workflow
   internals
 - [API docs](https://docs.rs/quilt-rs) — full API reference
 - [quiltdata.com](https://www.quiltdata.com) — product documentation
