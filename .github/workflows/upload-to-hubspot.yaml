@@ -22,7 +22,7 @@
 #   2. Modifies latest.json URLs to point to HubFS locations
 #   3. Replaces latest.json in place via Files API v3 (stat by path + PUT replace by ID)
 #      so https://www.quilt.bio/hubfs/latest.json stays at the same URL (no timestamped copies)
-#   4. Uploads other release assets to HubFS (filemanager API)
+#   4. Uploads other release assets to HubFS (Files API v3)
 #   5. Extracts version from latest.json and platform-specific URLs from release asset filenames
 #   6. Creates new HubDB row with release metadata and download URLs
 #
@@ -191,9 +191,10 @@ jobs:
               -X POST \
               -H "Authorization: Bearer $HUBSPOT_TOKEN" \
               -F "file=@$file_path" \
+              -F "fileName=$file_name" \
               -F "folderPath=$folder_path" \
-              -F "options={\"access\":\"PUBLIC_NOT_INDEXABLE\"}" \
-              "$HUBSPOT_API_BASE/filemanager/api/v3/files/upload?overwrite=true")
+              -F 'options={"access":"PUBLIC_NOT_INDEXABLE"}' \
+              "$HUBSPOT_API_BASE/files/v3/files")
 
             http_code=$(echo "$response" | tail -n1)
             body=$(echo "$response" | head -n -1)
