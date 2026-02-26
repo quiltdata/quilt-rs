@@ -8,6 +8,12 @@
 -->
 # Changelog
 
+## [v0.14.1] - 2026-02-26
+
+### Changed
+
+- Upgrade Azure code signing action to v1 (Artifact Signing) (<https://github.com/quiltdata/quilt-rs/pull/513>)
+
 ## [v0.14.0] - 2026-02-25
 
 ### Added
