@@ -3,9 +3,11 @@
 ## Overview
 
 Quilt is a data package management system that provides Git-like version control
-semantics for data files. It implements content-addressed storage with immutable
-objects and supports distributed collaboration through remote storage backends
-(primarily S3).
+semantics for data files. Packages can be extremely large (thousands of files,
+terabytes of data), so the system is designed for partial downloads and
+incremental modifications. It implements content-addressed storage with
+immutable objects and supports distributed collaboration through remote storage
+backends (primarily S3).
 
 ## Mental Model
 
@@ -286,6 +288,12 @@ Return: Updated PackageLineage
 - `ObjectHash` enum provides unified interface
 
 ## State Management
+
+### Storage: Versioned vs Flat
+
+S3 stores are versioned — each revision of an object gets a `versionId`.
+Local stores are flat and simply overwrite objects. When using a flat store,
+the registry caches each known version to avoid overwrites.
 
 ### Local vs Remote State
 
