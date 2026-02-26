@@ -20,9 +20,9 @@
 # Process:
 #   1. Downloads all assets from specified GitHub release
 #   2. Modifies latest.json URLs to point to HubFS locations
-#   3. Replaces latest.json in place via Files API v3 (stat by path + PUT replace by ID)
-#      so https://www.quilt.bio/hubfs/latest.json stays at the same URL (no timestamped copies)
-#   4. Uploads other release assets to HubFS (Files API v3)
+#   3. Uploads latest.json with overwrite, keeping a stable URL
+#      at https://www.quilt.bio/hubfs/latest.json (no timestamped copies)
+#   4. Uploads other release assets to HubFS
 #   5. Extracts version from latest.json and platform-specific URLs from release asset filenames
 #   6. Creates new HubDB row with release metadata and download URLs
 #
@@ -118,51 +118,22 @@ jobs:
             exit 1
           fi
 
-          # Use Files API v3 to replace existing latest.json by ID so the URL stays
-          # https://www.quilt.bio/hubfs/latest.json. The filemanager upload creates
-          # timestamped copies (e.g. latest-Feb-25-2026-...) instead of overwriting.
-          echo "Ensuring latest.json is replaced at ${HUBFS_ROOT_URL}/latest.json (Files API v3)..."
+          # Upload with overwrite + NONE duplicate strategy so a single POST
+          # creates or replaces the file, keeping the URL stable.
+          echo "Uploading latest.json to ${HUBFS_ROOT_URL}/latest.json..."
 
-          # Try to get existing file by path (%2F = URL-encoded leading /)
-          stat_resp=$(curl -s -w "\n%{http_code}" \
-            -H "Authorization: Bearer $HUBSPOT_TOKEN" \
-            "$HUBSPOT_API_BASE/files/v3/files/stat/%2Flatest.json")
-          stat_code=$(echo "$stat_resp" | tail -n1)
-          stat_body=$(echo "$stat_resp" | head -n -1)
-          if [[ "$stat_code" -eq 200 ]]; then
-            file_id=$(echo "$stat_body" | jq -r '.file.id // empty')
-            if [ -n "$file_id" ] && [ "$file_id" != "null" ]; then
-              echo "Found existing file id=$file_id, replacing content..."
-              replace_resp=$(curl -s -w "\n%{http_code}" -X PUT \
-                -H "Authorization: Bearer $HUBSPOT_TOKEN" \
-                -F "file=@./release-assets/latest.json" \
-                -F 'options={"access":"PUBLIC_NOT_INDEXABLE"}' \
-                "$HUBSPOT_API_BASE/files/v3/files/$file_id")
-              replace_code=$(echo "$replace_resp" | tail -n1)
-              if [[ "$replace_code" -ge 200 && "$replace_code" -lt 300 ]]; then
-                echo "✅ Replaced latest.json in place (same URL)"
-                exit 0
-              else
-                echo "❌ Replace failed (HTTP $replace_code): $(echo "$replace_resp" | head -n -1)"
-                exit 1
-              fi
-            fi
-          fi
-
-          # No existing file: create with exact name via Files API v3
-          echo "No existing latest.json found; creating new file..."
-          create_resp=$(curl -s -w "\n%{http_code}" -X POST \
+          response=$(curl -s -w "\n%{http_code}" -X POST \
             -H "Authorization: Bearer $HUBSPOT_TOKEN" \
             -F "file=@./release-assets/latest.json" \
             -F "fileName=latest.json" \
             -F "folderPath=/" \
-            -F 'options={"access":"PUBLIC_NOT_INDEXABLE"}' \
+            -F 'options={"access":"PUBLIC_NOT_INDEXABLE","overwrite":true,"duplicateValidationStrategy":"NONE","duplicateValidationScope":"EXACT_FOLDER"}' \
             "$HUBSPOT_API_BASE/files/v3/files")
-          create_code=$(echo "$create_resp" | tail -n1)
-          if [[ "$create_code" -ge 200 && "$create_code" -lt 300 ]]; then
-            echo "✅ Created latest.json at ${HUBFS_ROOT_URL}/latest.json"
+          http_code=$(echo "$response" | tail -n1)
+          if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
+            echo "✅ Uploaded latest.json"
           else
-            echo "❌ Create failed (HTTP $create_code): $(echo "$create_resp" | head -n -1)"
+            echo "❌ Failed to upload latest.json (HTTP $http_code): $(echo "$response" | head -n -1)"
             exit 1
           fi
 
@@ -193,7 +164,7 @@ jobs:
               -F "file=@$file_path" \
               -F "fileName=$file_name" \
               -F "folderPath=$folder_path" \
-              -F 'options={"access":"PUBLIC_NOT_INDEXABLE"}' \
+              -F 'options={"access":"PUBLIC_NOT_INDEXABLE","overwrite":true,"duplicateValidationStrategy":"NONE","duplicateValidationScope":"EXACT_FOLDER"}' \
               "$HUBSPOT_API_BASE/files/v3/files")
 
             http_code=$(echo "$response" | tail -n1)
