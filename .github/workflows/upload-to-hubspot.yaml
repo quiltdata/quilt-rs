@@ -20,11 +20,10 @@
 # Process:
 #   1. Downloads all assets from specified GitHub release
 #   2. Modifies latest.json URLs to point to HubFS locations
-#   3. Uploads latest.json with overwrite, keeping a stable URL
-#      at https://www.quilt.bio/hubfs/latest.json (no timestamped copies)
-#   4. Uploads other release assets to HubFS
-#   5. Extracts version from latest.json and platform-specific URLs from release asset filenames
-#   6. Creates new HubDB row with release metadata and download URLs
+#   3. Uploads all assets to HubFS with overwrite (latest.json goes to root for a
+#      stable URL; other assets go to a version-specific folder)
+#   4. Extracts version from latest.json and platform-specific URLs from release asset filenames
+#   5. Creates new HubDB row with release metadata and download URLs
 #
 name: Upload QuiltSync Assets to HubSpot
 
@@ -109,35 +108,7 @@ jobs:
           echo "=== Modified latest.json ==="
           cat ./release-assets/latest.json
 
-      - name: Upload latest.json (replace in place)
-        env:
-          HUBSPOT_TOKEN: ${{ secrets.HUBSPOT_ACCESS_TOKEN }}
-        run: |
-          if [ -z "$HUBSPOT_TOKEN" ]; then
-            echo "Error: HUBSPOT_ACCESS_TOKEN secret is not set"
-            exit 1
-          fi
-
-          # Upload with overwrite + NONE duplicate strategy so a single POST
-          # creates or replaces the file, keeping the URL stable.
-          echo "Uploading latest.json to ${HUBFS_ROOT_URL}/latest.json..."
-
-          response=$(curl -s -w "\n%{http_code}" -X POST \
-            -H "Authorization: Bearer $HUBSPOT_TOKEN" \
-            -F "file=@./release-assets/latest.json" \
-            -F "fileName=latest.json" \
-            -F "folderPath=/" \
-            -F 'options={"access":"PUBLIC_NOT_INDEXABLE","overwrite":true,"duplicateValidationStrategy":"NONE","duplicateValidationScope":"EXACT_FOLDER"}' \
-            "$HUBSPOT_API_BASE/files/v3/files")
-          http_code=$(echo "$response" | tail -n1)
-          if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
-            echo "✅ Uploaded latest.json"
-          else
-            echo "❌ Failed to upload latest.json (HTTP $http_code): $(echo "$response" | head -n -1)"
-            exit 1
-          fi
-
-      - name: Upload other assets to HubSpot
+      - name: Upload assets to HubSpot
         env:
           HUBSPOT_TOKEN: ${{ secrets.HUBSPOT_ACCESS_TOKEN }}
         run: |
@@ -149,14 +120,16 @@ jobs:
           upload_file() {
             local file_path="$1"
             local file_name=$(basename "$file_path")
-            # Skip latest.json (already uploaded in previous step)
-            if [ "$file_name" = "latest.json" ]; then
-              return 0
-            fi
-            local target_path="${HUBFS_BASE_PATH}/${file_name}"
-            local folder_path=$(dirname "$target_path" | sed 's|\\|/|g')
 
-            echo "Uploading: $file_name to $target_path"
+            # latest.json goes to root so it has a stable URL;
+            # other assets go to a version-specific folder.
+            if [ "$file_name" = "latest.json" ]; then
+              local folder_path="/"
+            else
+              local folder_path=$(dirname "${HUBFS_BASE_PATH}/${file_name}" | sed 's|\\|/|g')
+            fi
+
+            echo "Uploading: $file_name to $folder_path/$file_name"
 
             response=$(curl -s -w "\n%{http_code}" \
               -X POST \
@@ -172,7 +145,7 @@ jobs:
 
             if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
               echo "✅ Successfully uploaded: $file_name"
-              echo "📄 Expected URL: ${HUBFS_ROOT_URL}${target_path}"
+              echo "📄 Expected URL: ${HUBFS_ROOT_URL}${folder_path}/${file_name}"
               return 0
             else
               echo "❌ Failed to upload: $file_name (HTTP $http_code)"
