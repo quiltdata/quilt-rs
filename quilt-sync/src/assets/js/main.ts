@@ -7,6 +7,9 @@ type Namespace = string;
 
 type Html = string;
 
+const DISMISS_DURATION_MS = 5 * 60 * 1000;
+const STORAGE_KEY_UPDATE_DISMISSED_AT = "updateDismissedAt";
+
 const SELECTOR_ERASE_AUTH = ".js-erase-auth";
 const SELECTOR_DEBUG_DOT_QUILT = ".js-debug-dot-quilt";
 const SELECTOR_DEBUG_LOGS = ".js-debug-logs";
@@ -591,6 +594,17 @@ window.addEventListener(EVENT_PAGE_READY, () => {
   }
 });
 
+function isUpdateDismissed() {
+  const dismissedAt = localStorage.getItem(STORAGE_KEY_UPDATE_DISMISSED_AT);
+  if (!dismissedAt) return false;
+  return Date.now() - Number(dismissedAt) < DISMISS_DURATION_MS;
+}
+
+function dismissUpdate() {
+  localStorage.setItem(STORAGE_KEY_UPDATE_DISMISSED_AT, String(Date.now()));
+  notify("");
+}
+
 async function downloadUpdate(update: Awaited<ReturnType<typeof check>>) {
   notify('<div class="update-bar"><span>Downloading update…</span></div>');
   try {
@@ -631,9 +645,7 @@ function showInstallNotification(update: Awaited<ReturnType<typeof check>>) {
   installButton?.addEventListener("click", () => installUpdate(update));
 
   const dismissButton = findElement(SELECTOR_UPDATE_DISMISS, outputElement);
-  dismissButton?.addEventListener("click", () => {
-    notify("");
-  });
+  dismissButton?.addEventListener("click", dismissUpdate);
 }
 
 function showUpdateNotification(version: string, update: Awaited<ReturnType<typeof check>>) {
@@ -652,12 +664,12 @@ function showUpdateNotification(version: string, update: Awaited<ReturnType<type
   downloadButton?.addEventListener("click", () => downloadUpdate(update));
 
   const dismissButton = findElement(SELECTOR_UPDATE_DISMISS, outputElement);
-  dismissButton?.addEventListener("click", () => {
-    notify("");
-  });
+  dismissButton?.addEventListener("click", dismissUpdate);
 }
 
 async function checkForUpdates() {
+  if (isUpdateDismissed()) return;
+
   try {
     const update = await check();
     if (update) {
