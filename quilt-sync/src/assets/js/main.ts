@@ -585,24 +585,50 @@ window.addEventListener(EVENT_PAGE_READY, () => {
   }
 });
 
-async function checkForUpdates() {
-  try {
-    const update = await check();
-    if (update) {
-      notify(
-        `<div class="success">Update available: ${update.version}. Downloading...</div>`,
-      );
+function showUpdateNotification(version: string, update: Awaited<ReturnType<typeof check>>) {
+  const outputElement = findElement(SELECTOR_NOTIFY);
+  if (!outputElement) return;
+
+  outputElement.innerHTML = `<div class="js-update-bar update-bar">
+    <span>Update available: ${version}</span>
+    <div class="update-bar--actions">
+      <button class="qui-button primary js-update-download"><span>Download</span></button>
+      <button class="qui-button js-update-dismiss"><span>Dismiss</span></button>
+    </div>
+  </div>`;
+
+  outputElement
+    .querySelector(".js-update-download")
+    ?.addEventListener("click", async () => {
+      outputElement.innerHTML =
+        '<div class="js-update-bar update-bar"><span>Downloading update...</span></div>';
       try {
-        await update.downloadAndInstall();
-        notify(
-          `<div class="success">Update downloaded successfully. Restarting...</div>`,
-        );
+        await update?.downloadAndInstall();
+        outputElement.innerHTML =
+          '<div class="success">Update downloaded successfully. Restarting...</div>';
         await relaunch();
       } catch (downloadError) {
         notify(
           `<div class="error">Failed to download/install update: ${downloadError}</div>`,
         );
       }
+    });
+
+  outputElement
+    .querySelector(".js-update-dismiss")
+    ?.addEventListener("click", () => {
+      outputElement.innerHTML = "";
+    });
+}
+
+async function checkForUpdates() {
+  // TODO: remove this test call before merging
+  showUpdateNotification("0.99.0-test", null);
+
+  try {
+    const update = await check();
+    if (update) {
+      showUpdateNotification(update.version, update);
     }
   } catch (error) {
     notify(

@@ -25,7 +25,7 @@
     background: #fff;
     box-shadow: var(--q-ui-shadows-popup);
     margin: auto;
-    max-width: 30%;
+    max-width: 50%;
     padding: var(--q-ui-size-2);
     z-index: 1;
   }
@@ -40,5 +40,18 @@
 
   .success {
     color: var(--q-ui-palette-success);
+  }
+
+  .update-bar {
+    align-items: center;
+    display: flex;
+    gap: var(--q-ui-size-2);
+    justify-content: space-between;
+  }
+
+  .update-bar--actions {
+    display: flex;
+    flex-shrink: 0;
+    gap: var(--q-ui-size-1);
   }
 }
