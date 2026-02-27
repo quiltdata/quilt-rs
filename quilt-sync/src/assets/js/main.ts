@@ -658,9 +658,6 @@ function showUpdateNotification(version: string, update: Awaited<ReturnType<type
 }
 
 async function checkForUpdates() {
-  // TODO: remove this test call before merging
-  showUpdateNotification("0.99.0-test", null);
-
   try {
     const update = await check();
     if (update) {

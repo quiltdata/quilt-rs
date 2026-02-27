@@ -8,6 +8,12 @@
 -->
 # Changelog
 
+## [v0.14.2-alpha1] - 2026-02-27
+
+### Changed
+
+- Show update-available notification with Download/Dismiss buttons instead of auto-installing updates
+
 ## [v0.14.1] - 2026-02-26
 
 ### Changed
