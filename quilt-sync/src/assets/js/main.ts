@@ -22,6 +22,7 @@ const SELECTOR_NOTIFY = "#notify";
 const SELECTOR_NOTIFY_SUCCESS = ".js-success";
 const SELECTOR_UPDATE_DISMISS = ".js-update-dismiss";
 const SELECTOR_UPDATE_DOWNLOAD = ".js-update-download";
+const SELECTOR_UPDATE_INSTALL = ".js-update-install";
 const SELECTOR_OPEN_DIRECTORY_PICKER = ".js-open-directory-picker";
 const SELECTOR_OPEN_IN_DEFAULT_APPLICATION = ".js-open-in-default-application";
 const SELECTOR_OPEN_IN_FILE_BROWSER = ".js-open-in-file-browser";
@@ -79,6 +80,7 @@ type Selector =
   | typeof SELECTOR_SETUP
   | typeof SELECTOR_UPDATE_DISMISS
   | typeof SELECTOR_UPDATE_DOWNLOAD
+  | typeof SELECTOR_UPDATE_INSTALL
   | typeof SELECTOR_WORKFLOW_NULL
   | typeof SELECTOR_WORKFLOW_VALUE;
 
@@ -589,19 +591,49 @@ window.addEventListener(EVENT_PAGE_READY, () => {
   }
 });
 
-async function downloadAndInstall(update: Awaited<ReturnType<typeof check>>) {
+async function downloadUpdate(update: Awaited<ReturnType<typeof check>>) {
   notify('<div class="update-bar"><span>Downloading update…</span></div>');
   try {
-    await update?.downloadAndInstall();
+    await update?.download();
+    showInstallNotification(update);
+  } catch (error) {
     notify(
-      '<div class="success">Update downloaded successfully. Restarting…</div>',
-    );
-    await relaunch();
-  } catch (downloadError) {
-    notify(
-      `<div class="error">Failed to download/install update: ${downloadError}</div>`,
+      `<div class="error">Failed to download update: ${error}</div>`,
     );
   }
+}
+
+async function installUpdate(update: Awaited<ReturnType<typeof check>>) {
+  notify('<div class="update-bar"><span>Installing update…</span></div>');
+  try {
+    await update?.install();
+    await relaunch();
+  } catch (error) {
+    notify(
+      `<div class="error">Failed to install update: ${error}</div>`,
+    );
+  }
+}
+
+function showInstallNotification(update: Awaited<ReturnType<typeof check>>) {
+  notify(`<div class="update-bar">
+    <span>Update downloaded</span>
+    <div class="update-bar--actions">
+      <button class="qui-button primary js-update-install"><span>Install & Restart</span></button>
+      <button class="qui-button js-update-dismiss"><span>Dismiss</span></button>
+    </div>
+  </div>`);
+
+  const outputElement = findElement(SELECTOR_NOTIFY);
+  if (!outputElement) return;
+
+  const installButton = findElement(SELECTOR_UPDATE_INSTALL, outputElement);
+  installButton?.addEventListener("click", () => installUpdate(update));
+
+  const dismissButton = findElement(SELECTOR_UPDATE_DISMISS, outputElement);
+  dismissButton?.addEventListener("click", () => {
+    notify("");
+  });
 }
 
 function showUpdateNotification(version: string, update: Awaited<ReturnType<typeof check>>) {
@@ -617,7 +649,7 @@ function showUpdateNotification(version: string, update: Awaited<ReturnType<type
   if (!outputElement) return;
 
   const downloadButton = findElement(SELECTOR_UPDATE_DOWNLOAD, outputElement);
-  downloadButton?.addEventListener("click", () => downloadAndInstall(update));
+  downloadButton?.addEventListener("click", () => downloadUpdate(update));
 
   const dismissButton = findElement(SELECTOR_UPDATE_DISMISS, outputElement);
   dismissButton?.addEventListener("click", () => {
