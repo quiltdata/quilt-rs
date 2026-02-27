@@ -47,13 +47,13 @@
   .update-bar {
     align-items: center;
     display: flex;
-    gap: var(--q-ui-size-2);
+    gap: var(--q-ui-size-8);
     justify-content: space-between;
   }
 
   .update-bar--actions {
     display: flex;
     flex-shrink: 0;
-    gap: var(--q-ui-size-1);
+    gap: var(--q-ui-size-2);
   }
 }
