@@ -12,7 +12,8 @@
 
 ### Changed
 
-- Show update-available notification with Download/Dismiss buttons instead of auto-installing updates
+- Show update notification with Download/Dismiss buttons
+  instead of auto-installing updates
 
 ## [v0.14.1] - 2026-02-26
 
