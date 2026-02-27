@@ -14,6 +14,7 @@
 
 - Show update notification with Download/Dismiss buttons
   instead of auto-installing updates
+  (<https://github.com/quiltdata/quilt-rs/pull/520>)
 
 ## [v0.14.1] - 2026-02-26
 
