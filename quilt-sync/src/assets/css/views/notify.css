@@ -25,6 +25,8 @@
     background: #fff;
     box-shadow: var(--q-ui-shadows-popup);
     margin: auto;
+    width: fit-content;
+    min-width: 30%;
     max-width: 50%;
     padding: var(--q-ui-size-2);
     z-index: 1;
