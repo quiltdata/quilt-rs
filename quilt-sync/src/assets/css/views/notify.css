@@ -51,7 +51,7 @@
     justify-content: space-between;
   }
 
-  .update-bar--actions {
+  .update-bar-actions {
     display: flex;
     flex-shrink: 0;
     gap: var(--q-ui-size-2);

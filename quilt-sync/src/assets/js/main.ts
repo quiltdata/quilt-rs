@@ -611,9 +611,7 @@ async function downloadUpdate(update: Awaited<ReturnType<typeof check>>) {
     await update?.download();
     showInstallNotification(update);
   } catch (error) {
-    notify(
-      `<div class="error">Failed to download update: ${error}</div>`,
-    );
+    notify(`<div class="error">Failed to download update: ${error}</div>`);
   }
 }
 
@@ -623,16 +621,14 @@ async function installUpdate(update: Awaited<ReturnType<typeof check>>) {
     await update?.install();
     await relaunch();
   } catch (error) {
-    notify(
-      `<div class="error">Failed to install update: ${error}</div>`,
-    );
+    notify(`<div class="error">Failed to install update: ${error}</div>`);
   }
 }
 
 function showInstallNotification(update: Awaited<ReturnType<typeof check>>) {
   notify(`<div class="update-bar">
     <span>Update downloaded</span>
-    <div class="update-bar--actions">
+    <div class="update-bar-actions">
       <button class="qui-button primary js-update-install"><span>Install & Restart</span></button>
       <button class="qui-button js-update-dismiss"><span>Dismiss</span></button>
     </div>
@@ -648,10 +644,13 @@ function showInstallNotification(update: Awaited<ReturnType<typeof check>>) {
   dismissButton?.addEventListener("click", dismissUpdate);
 }
 
-function showUpdateNotification(version: string, update: Awaited<ReturnType<typeof check>>) {
+function showUpdateNotification(
+  version: string,
+  update: Awaited<ReturnType<typeof check>>,
+) {
   notify(`<div class="update-bar">
     <span>Update available: ${version}</span>
-    <div class="update-bar--actions">
+    <div class="update-bar-actions">
       <button class="qui-button primary js-update-download"><span>Download</span></button>
       <button class="qui-button js-update-dismiss"><span>Dismiss</span></button>
     </div>
