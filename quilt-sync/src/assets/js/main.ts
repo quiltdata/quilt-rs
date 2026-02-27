@@ -586,26 +586,26 @@ window.addEventListener(EVENT_PAGE_READY, () => {
 });
 
 function showUpdateNotification(version: string, update: Awaited<ReturnType<typeof check>>) {
-  const outputElement = findElement(SELECTOR_NOTIFY);
-  if (!outputElement) return;
-
-  outputElement.innerHTML = `<div class="js-update-bar update-bar">
+  notify(`<div class="update-bar">
     <span>Update available: ${version}</span>
     <div class="update-bar--actions">
       <button class="qui-button primary js-update-download"><span>Download</span></button>
       <button class="qui-button js-update-dismiss"><span>Dismiss</span></button>
     </div>
-  </div>`;
+  </div>`);
+
+  const outputElement = findElement(SELECTOR_NOTIFY);
+  if (!outputElement) return;
 
   outputElement
     .querySelector(".js-update-download")
     ?.addEventListener("click", async () => {
-      outputElement.innerHTML =
-        '<div class="js-update-bar update-bar"><span>Downloading update...</span></div>';
+      notify('<div class="update-bar"><span>Downloading update…</span></div>');
       try {
         await update?.downloadAndInstall();
-        outputElement.innerHTML =
-          '<div class="success">Update downloaded successfully. Restarting...</div>';
+        notify(
+          '<div class="success">Update downloaded successfully. Restarting...</div>',
+        );
         await relaunch();
       } catch (downloadError) {
         notify(
@@ -617,7 +617,7 @@ function showUpdateNotification(version: string, update: Awaited<ReturnType<type
   outputElement
     .querySelector(".js-update-dismiss")
     ?.addEventListener("click", () => {
-      outputElement.innerHTML = "";
+      notify("");
     });
 }
 
