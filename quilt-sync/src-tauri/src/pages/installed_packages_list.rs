@@ -18,7 +18,6 @@ use crate::ui::Icon;
 
 #[derive(Debug)]
 enum PackageError {
-    Ok,
     NoOrigin,
     StatusFailed,
 }
@@ -29,7 +28,7 @@ struct InstalledPackage {
     origin: Option<url::Url>,
     origin_host: Option<quilt::uri::Host>,
     remote: quilt::uri::ManifestUri,
-    error: PackageError,
+    error: Option<PackageError>,
     status: UpstreamState,
 }
 
@@ -65,7 +64,7 @@ impl From<InstalledPackage> for TmplInstalledPackage<'_> {
             status,
         } = value;
         TmplInstalledPackage {
-            button_commit: if matches!(error, PackageError::Ok) {
+            button_commit: if error.is_none() {
                 Some(Self::button_commit(&namespace))
             } else {
                 None
@@ -80,7 +79,7 @@ impl From<InstalledPackage> for TmplInstalledPackage<'_> {
             button_open_remote: Self::button_open_remote(origin.as_ref(), &status),
             button_sync: Self::button_sync(&namespace, &status),
             button_uninstall: Self::button_uninstall(&namespace),
-            is_error: !matches!(error, PackageError::Ok),
+            is_error: error.is_some(),
             namespace,
             remote,
         }
@@ -158,11 +157,11 @@ impl<'a> TmplInstalledPackage<'a> {
 
     fn button_error_action(
         namespace: &Namespace,
-        error: &PackageError,
+        error: &Option<PackageError>,
         origin_host: Option<&quilt::uri::Host>,
     ) -> Option<btn::TmplButton<'a>> {
         match error {
-            PackageError::NoOrigin => Some(
+            Some(PackageError::NoOrigin) => Some(
                 btn::TmplButton::builder()
                     .set_data("namespace", namespace.to_string())
                     .set_icon(Icon::Warning)
@@ -171,7 +170,7 @@ impl<'a> TmplInstalledPackage<'a> {
                     .set_color(btn::Color::Warning)
                     .set_size(btn::Size::Small),
             ),
-            PackageError::StatusFailed => {
+            Some(PackageError::StatusFailed) => {
                 let origin_host = origin_host?;
                 Some(
                     btn::TmplButton::builder()
@@ -182,7 +181,7 @@ impl<'a> TmplInstalledPackage<'a> {
                         .set_href(Paths::Login(origin_host.clone())),
                 )
             }
-            PackageError::Ok => None,
+            None => None,
         }
     }
 
@@ -255,7 +254,7 @@ impl ViewInstalledPackagesList {
         let uri = quilt::uri::S3PackageUri::from(&lineage.remote);
 
         let (origin, origin_host, upstream_state, error) = if lineage.remote.origin.is_none() {
-            (None, None, UpstreamState::Error, PackageError::NoOrigin)
+            (None, None, UpstreamState::Error, Some(PackageError::NoOrigin))
         } else {
             let origin_host = debug_tools::try_remote_origin_host(&lineage.remote)?;
             tracing.add_host(&origin_host);
@@ -264,13 +263,13 @@ impl ViewInstalledPackagesList {
                 .get_installed_package_status(installed_package, None)
                 .await
             {
-                Ok(status) => (status.upstream_state, PackageError::Ok),
+                Ok(status) => (status.upstream_state, None),
                 Err(err) => {
                     warn!(
                         "Failed to get status for {}: {err}",
                         installed_package.namespace
                     );
-                    (UpstreamState::Error, PackageError::StatusFailed)
+                    (UpstreamState::Error, Some(PackageError::StatusFailed))
                 }
             };
             (Some(origin_url), Some(origin_host), upstream_state, error)
@@ -326,7 +325,7 @@ mod tests {
             remote: ManifestUri::try_from(S3PackageUri::try_from(
                 format!("quilt+s3://test#package={namespace}@abcdef").as_str(),
             )?)?,
-            error: PackageError::Ok,
+            error: None,
             status,
         })
     }
@@ -452,7 +451,7 @@ mod tests {
             remote: ManifestUri::try_from(S3PackageUri::try_from(
                 format!("quilt+s3://test#package={namespace}@abcdef").as_str(),
             )?)?,
-            error,
+            error: Some(error),
             status: UpstreamState::Error,
         })
     }
