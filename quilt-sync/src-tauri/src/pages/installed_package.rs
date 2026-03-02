@@ -174,8 +174,17 @@ impl ViewInstalledPackage {
             .get_installed_package_lineage(&installed_package)
             .await?;
 
-        let has_origin = lineage.remote.origin.is_some();
-        let status = if has_origin {
+        // TODO: just use remote_manifest?
+        let uri = quilt::uri::S3PackageUri::from(&lineage.remote);
+        let origin_host = match debug_tools::try_remote_origin_host(&lineage.remote) {
+            Ok(host) => {
+                tracing.add_host(&host);
+                Some(host)
+            }
+            Err(_) => None,
+        };
+
+        let status = if origin_host.is_some() {
             model
                 .get_installed_package_status(&installed_package, None)
                 .await?
@@ -188,16 +197,6 @@ impl ViewInstalledPackage {
         let manifest_entries = model
             .get_installed_package_records(&installed_package)
             .await?;
-
-        // TODO: just use remote_manifest?
-        let uri = quilt::uri::S3PackageUri::from(&lineage.remote);
-        let origin_host = if has_origin {
-            let host = debug_tools::try_remote_origin_host(&lineage.remote)?;
-            tracing.add_host(&host);
-            Some(host)
-        } else {
-            None
-        };
 
         let mut entries_list = Vec::new();
         for (filename, change) in modified_entries {
