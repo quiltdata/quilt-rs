@@ -18,7 +18,7 @@ use crate::ui::Icon;
 
 #[derive(Debug)]
 enum PackageError {
-    None,
+    Ok,
     NoOrigin,
     StatusFailed,
 }
@@ -76,7 +76,7 @@ impl From<InstalledPackage> for TmplInstalledPackage<'_> {
             button_open_remote: Self::button_open_remote(origin.as_ref(), &status),
             button_sync: Self::button_sync(&namespace, &status),
             button_uninstall: Self::button_uninstall(&namespace),
-            is_error: !matches!(error, PackageError::None),
+            is_error: !matches!(error, PackageError::Ok),
             namespace,
             remote,
         }
@@ -176,7 +176,7 @@ impl<'a> TmplInstalledPackage<'a> {
                         .set_href(Paths::Login(origin_host.clone())),
                 )
             }
-            PackageError::None => None,
+            PackageError::Ok => None,
         }
     }
 
@@ -258,7 +258,7 @@ impl ViewInstalledPackagesList {
                 .get_installed_package_status(installed_package, None)
                 .await
             {
-                Ok(status) => (status.upstream_state, PackageError::None),
+                Ok(status) => (status.upstream_state, PackageError::Ok),
                 Err(err) => {
                     warn!(
                         "Failed to get status for {}: {err}",
@@ -325,7 +325,7 @@ mod tests {
             remote: ManifestUri::try_from(S3PackageUri::try_from(
                 format!("quilt+s3://test#package={namespace}@abcdef").as_str(),
             )?)?,
-            error: PackageError::None,
+            error: PackageError::Ok,
             status,
         })
     }
