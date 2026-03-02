@@ -185,9 +185,16 @@ impl ViewInstalledPackage {
         };
 
         let status = if origin_host.is_some() {
-            model
+            match model
                 .get_installed_package_status(&installed_package, None)
-                .await?
+                .await
+            {
+                Ok(status) => status,
+                Err(err) => {
+                    warn!("Failed to get status for {namespace}: {err}");
+                    quilt::lineage::InstalledPackageStatus::error()
+                }
+            }
         } else {
             quilt::lineage::InstalledPackageStatus::error()
         };
