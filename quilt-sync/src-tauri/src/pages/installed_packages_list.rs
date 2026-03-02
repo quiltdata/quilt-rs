@@ -19,7 +19,7 @@ use crate::ui::Icon;
 #[derive(Debug)]
 struct InstalledPackage {
     namespace: Namespace,
-    origin: url::Url,
+    origin: Option<url::Url>,
     remote: quilt::uri::ManifestUri,
     status: UpstreamState,
 }
@@ -36,7 +36,7 @@ struct TmplInstalledPackage<'a> {
     button_commit: btn::TmplButton<'a>,
     button_merge: Option<btn::TmplButton<'a>>,
     button_open_local: btn::TmplButton<'a>,
-    button_open_remote: btn::TmplButton<'a>,
+    button_open_remote: Option<btn::TmplButton<'a>>,
     button_sync: Option<btn::TmplButton<'a>>,
     button_uninstall: btn::TmplButton<'a>,
     namespace: quilt::uri::Namespace,
@@ -55,7 +55,7 @@ impl From<InstalledPackage> for TmplInstalledPackage<'_> {
             button_commit: Self::button_commit(&namespace),
             button_merge: Self::button_merge(&namespace, &status),
             button_open_local: Self::button_open_local(&namespace),
-            button_open_remote: Self::button_open_remote(&origin),
+            button_open_remote: Self::button_open_remote(origin.as_ref(), &status),
             button_sync: Self::button_sync(&namespace, &status),
             button_uninstall: Self::button_uninstall(&namespace),
             namespace,
@@ -74,13 +74,22 @@ impl<'a> TmplInstalledPackage<'a> {
             .set_size(btn::Size::Small)
     }
 
-    fn button_open_remote(origin: &url::Url) -> btn::TmplButton<'a> {
-        btn::TmplButton::builder()
-            .set_data("url", origin.to_string())
-            .set_icon(Icon::OpenInBrowser)
-            .set_js(btn::JsSelector::OpenInWebBrowser)
-            .set_label(t!("buttons.open_package_in_catalog"))
-            .set_size(btn::Size::Small)
+    fn button_open_remote(
+        origin: Option<&url::Url>,
+        status: &UpstreamState,
+    ) -> Option<btn::TmplButton<'a>> {
+        if matches!(status, UpstreamState::Error) {
+            return None;
+        }
+        let origin = origin?;
+        Some(
+            btn::TmplButton::builder()
+                .set_data("url", origin.to_string())
+                .set_icon(Icon::OpenInBrowser)
+                .set_js(btn::JsSelector::OpenInWebBrowser)
+                .set_label(t!("buttons.open_package_in_catalog"))
+                .set_size(btn::Size::Small),
+        )
     }
 
     fn button_commit(namespace: &Namespace) -> btn::TmplButton<'a> {
@@ -191,27 +200,32 @@ impl ViewInstalledPackagesList {
             .get_installed_package_lineage(installed_package)
             .await?;
         let uri = quilt::uri::S3PackageUri::from(&lineage.remote);
-        let origin_host = debug_tools::try_remote_origin_host(&lineage.remote)?;
 
-        tracing.add_host(&origin_host);
-
-        let upstream_state = match model
-            .get_installed_package_status(installed_package, None)
-            .await
-        {
-            Ok(status) => status.upstream_state,
-            Err(err) => {
-                warn!(
-                    "Failed to get status for {}: {err}",
-                    installed_package.namespace
-                );
-                UpstreamState::Error
-            }
+        let (origin, upstream_state) = if lineage.remote.origin.is_none() {
+            (None, UpstreamState::Error)
+        } else {
+            let origin_host = debug_tools::try_remote_origin_host(&lineage.remote)?;
+            tracing.add_host(&origin_host);
+            let origin_url = uri.display_for_host(&origin_host)?;
+            let upstream_state = match model
+                .get_installed_package_status(installed_package, None)
+                .await
+            {
+                Ok(status) => status.upstream_state,
+                Err(err) => {
+                    warn!(
+                        "Failed to get status for {}: {err}",
+                        installed_package.namespace
+                    );
+                    UpstreamState::Error
+                }
+            };
+            (Some(origin_url), upstream_state)
         };
 
         Ok(InstalledPackage {
             namespace: installed_package.namespace.clone(),
-            origin: uri.display_for_host(&origin_host)?,
+            origin,
             remote: lineage.remote,
             status: upstream_state,
         })
@@ -252,7 +266,7 @@ mod tests {
     fn create_test_package(namespace: &str, status: UpstreamState) -> Result<InstalledPackage> {
         Ok(InstalledPackage {
             namespace: namespace.try_into().unwrap(),
-            origin: url::Url::parse("https://test.quilt.dev").unwrap(),
+            origin: Some(url::Url::parse("https://test.quilt.dev").unwrap()),
             remote: ManifestUri::try_from(S3PackageUri::try_from(
                 format!("quilt+s3://test#package={namespace}@abcdef").as_str(),
             )?)?,
@@ -370,10 +384,11 @@ mod tests {
         let error_tmpl = TmplInstalledPackage::from(error_package);
         let error_html = error_tmpl.to_string();
 
-        // Error status should not show push, pull, or merge buttons
+        // Error status should not show push, pull, merge, or "Open in Catalog" buttons
         assert!(!error_html.contains(r#"js-packages-push"#));
         assert!(!error_html.contains(r#"js-packages-pull"#));
         assert!(!error_html.contains(r#"href="merge.html"#));
+        assert!(!error_html.contains(r#"js-open-in-web-browser"#));
 
         // But should still have common buttons
         assert!(error_html.contains(r#"href="commit.html#namespace=test/error""#));

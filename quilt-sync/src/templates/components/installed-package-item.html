@@ -13,7 +13,9 @@
   <div class="menu">
     <ul class="menu-list">
       <li class="menu-item">{{ button_open_local | safe }}</li>
+      {% if let Some(button_open_remote) = button_open_remote %}
       <li class="menu-item">{{ button_open_remote | safe }}</li>
+      {% endif %}
 
       <li class="menu-item menu-divider" />
 

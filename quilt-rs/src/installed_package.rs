@@ -95,16 +95,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     pub async fn status(&self, host_config_opt: Option<HostConfig>) -> Res<InstalledPackageStatus> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
 
-        // Status compares local state with remote, but without an origin
-        // we can't reach the remote or determine its preferred checksum algorithm.
-        let has_origin = lineage.remote.origin.is_some();
-        let lineage = match flow::refresh_latest_hash(lineage, &self.remote).await {
-            Ok(lineage) => lineage,
-            Err(_) if !has_origin && host_config_opt.is_none() => {
-                return Ok(InstalledPackageStatus::error());
-            }
-            Err(err) => return Err(err),
-        };
+        let lineage = flow::refresh_latest_hash(lineage, &self.remote).await?;
         let manifest = self.manifest().await?;
 
         let host_config =
