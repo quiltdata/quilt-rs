@@ -322,12 +322,17 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
         for entry in entries_list {
             entries.push(entry::TmplEntry::from(entry).set_checkbox(false));
         }
+        let layout = Layout::builder(view.globals)
+            .set_breadcrumbs(Self::breadcrumbs(&uri))
+            .set_actions(Self::actions(&uri, origin.as_ref()))
+            .set_uri(Some(uri.clone()));
+        let layout = if matches!(status, UpstreamState::Error) {
+            layout
+        } else {
+            layout.set_primary_action(Self::primary_button(&uri, &status))
+        };
         TmplPageInstalledPackage {
-            layout: Layout::builder(view.globals)
-                .set_primary_action(Self::primary_button(&uri, &status))
-                .set_breadcrumbs(Self::breadcrumbs(&uri))
-                .set_actions(Self::actions(&uri, origin.as_ref()))
-                .set_uri(Some(uri.clone())),
+            layout,
             status: TmplStatus::new(&uri.namespace, &status, origin_host.as_ref()),
             entries,
             toolbar: {
