@@ -451,4 +451,32 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_view_no_origin() -> Result {
+        let html = (ViewInstalledPackage {
+            entries_list: vec![],
+            origin: None,
+            origin_host: None,
+            status: quilt::lineage::UpstreamState::Error,
+            uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
+            globals: Globals::default(),
+        })
+        .render()?;
+
+        // Should show "Set origin" button
+        assert!(html.contains(r#"js-set-origin"#));
+        assert!(html.contains(r#"warning"#));
+
+        // Should not show commit button
+        assert!(!html.contains(r#"href="commit.html"#));
+
+        // Should not show "Open in Catalog" action
+        assert!(!html.contains("Open in Catalog"));
+
+        // Should still show basic page structure
+        assert!(html.contains(r#"data-testid="installed-package-entries""#));
+
+        Ok(())
+    }
 }
