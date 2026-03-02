@@ -457,7 +457,7 @@ window.addEventListener(EVENT_PAGE_READY, () => {
   );
 
   listen(SELECTOR_SET_ORIGIN, ["namespace"], async (data) => {
-    const origin = window.prompt("Enter catalog origin (e.g. open.quilt.bio):");
+    const origin = window.prompt("Enter catalog origin (e.g. open.quilt.bio):")?.trim();
     if (!origin) return;
     await execPageCommand(CMD_SET_ORIGIN, { ...data, origin });
   });
