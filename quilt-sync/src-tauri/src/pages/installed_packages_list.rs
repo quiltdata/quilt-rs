@@ -171,8 +171,9 @@ impl<'a> TmplInstalledPackage<'a> {
                 let origin_host = origin_host?;
                 Some(
                     btn::TmplButton::builder()
-                        .set_icon(Icon::OpenInBrowser)
+                        .set_icon(Icon::Warning)
                         .set_label(t!("error.login"))
+                        .set_color(btn::Color::Warning)
                         .set_size(btn::Size::Small)
                         .set_href(Paths::Login(origin_host.clone())),
                 )
