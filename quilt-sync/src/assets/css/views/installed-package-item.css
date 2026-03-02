@@ -10,6 +10,10 @@
     background: var(--q-ui-palette-action-hover);
   }
 
+  &.error {
+    border-left: 3px solid var(--q-ui-palette-error);
+  }
+
   .link {
     flex-grow: 1;
     overflow: hidden;

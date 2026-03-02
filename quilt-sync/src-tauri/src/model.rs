@@ -167,6 +167,14 @@ pub trait QuiltModel {
         Ok(package.reset_to_latest().await?)
     }
 
+    async fn set_origin(
+        &self,
+        package: &quilt::InstalledPackage,
+        origin: quilt::uri::Host,
+    ) -> Result<(), Error> {
+        Ok(package.set_origin(origin).await?)
+    }
+
     async fn package_install(
         &self,
         remote_manifest: &quilt::uri::ManifestUri,
@@ -448,6 +456,19 @@ pub async fn package_pull(
         .await?
         .unwrap_or_else(|| panic!("Package {namespace} not found"));
     model.package_pull(&installed_package, host_config).await?;
+    Ok(())
+}
+
+pub async fn set_origin(
+    model: &impl QuiltModel,
+    namespace: &quilt::uri::Namespace,
+    origin: quilt::uri::Host,
+) -> Result<(), Error> {
+    let installed_package = model
+        .get_installed_package(namespace)
+        .await?
+        .ok_or_else(|| Error::Quilt(quilt::Error::PackageNotInstalled(namespace.clone())))?;
+    model.set_origin(&installed_package, origin).await?;
     Ok(())
 }
 

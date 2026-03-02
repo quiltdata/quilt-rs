@@ -26,6 +26,7 @@ pub struct ViewInstalledPackage {
     entries_list: Vec<entry::ViewEntry>,
     globals: Globals,
     origin: Option<url::Url>,
+    origin_host: Option<quilt::uri::Host>,
     status: UpstreamState,
     uri: S3PackageUri,
 }
@@ -38,7 +39,11 @@ struct TmplStatus<'a> {
 }
 
 impl TmplStatus<'_> {
-    fn new(namespace: &Namespace, status: &UpstreamState) -> Option<Self> {
+    fn new(
+        namespace: &Namespace,
+        status: &UpstreamState,
+        origin_host: Option<&quilt::uri::Host>,
+    ) -> Option<Self> {
         match status {
             UpstreamState::Ahead => Some(TmplStatus {
                 description: t!("installed_package_status.ahead"),
@@ -64,12 +69,20 @@ impl TmplStatus<'_> {
                     .set_color(btn::Color::Primary)
                     .set_href(Paths::Merge(namespace.clone())),
             }),
-            UpstreamState::Error => Some(TmplStatus {
-                description: t!("installed_package_status.error"),
-                button: btn::TmplButton::builder()
-                    .set_label(t!("installed_package_status.error"))
-                    .set_disabled(),
-            }),
+            UpstreamState::Error => {
+                let button = match origin_host {
+                    Some(host) => btn::TmplButton::builder()
+                        .set_label(t!("error.login"))
+                        .set_href(Paths::Login(host.clone())),
+                    None => btn::TmplButton::builder()
+                        .set_label(t!("installed_package_status.error"))
+                        .set_disabled(),
+                };
+                Some(TmplStatus {
+                    description: t!("installed_package_status.error"),
+                    button,
+                })
+            }
             UpstreamState::UpToDate => None,
         }
     }
@@ -267,6 +280,11 @@ impl ViewInstalledPackage {
             entries_list,
             globals: app.globals(),
             origin,
+            origin_host: if has_origin {
+                Some(origin_host)
+            } else {
+                None
+            },
             status: status.upstream_state,
             uri: uri.clone(),
         })
@@ -286,6 +304,7 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
         let ViewInstalledPackage {
             entries_list,
             origin,
+            origin_host,
             status,
             uri,
             ..
@@ -303,7 +322,7 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
                 .set_breadcrumbs(Self::breadcrumbs(&uri))
                 .set_actions(Self::actions(&uri, origin.as_ref()))
                 .set_uri(Some(uri.clone())),
-            status: TmplStatus::new(&uri.namespace, &status),
+            status: TmplStatus::new(&uri.namespace, &status, origin_host.as_ref()),
             entries,
             toolbar: {
                 if has_remote_entries {
@@ -339,6 +358,7 @@ mod tests {
         let html = (ViewInstalledPackage {
             entries_list: vec![],
             origin: Some(url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?),
+            origin_host: Some("test.quilt.dev".parse().unwrap()),
             status: quilt::lineage::UpstreamState::UpToDate,
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
             globals: Globals::default(),
@@ -400,6 +420,7 @@ mod tests {
         let view = ViewInstalledPackage {
             entries_list,
             origin: Some(url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?),
+            origin_host: Some("test.quilt.dev".parse().unwrap()),
             status: quilt::lineage::UpstreamState::UpToDate,
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
             globals: Globals::default(),

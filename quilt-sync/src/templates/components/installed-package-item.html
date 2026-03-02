@@ -2,7 +2,7 @@
   @import url("/assets/css/views/installed-package-item.css");
 </style>
 
-<li class="qui-installed-package-item">
+<li class="qui-installed-package-item {%+ if is_error %}error{% endif %}">
   <a class="link" href="{{ Paths::InstalledPackage(namespace.clone()) }}">
     <span class="item-primary">{{ namespace }}</span>
     <span class="item-secondary">
@@ -31,6 +31,12 @@
       <li class="menu-item menu-divider" />
 
       <li class="menu-item">{{ button_merge | safe }}</li>
+      {% endif %}
+      <!-- -->
+      {% if let Some(button_error_action) = button_error_action %}
+      <li class="menu-item menu-divider" />
+
+      <li class="menu-item">{{ button_error_action | safe }}</li>
       {% endif %}
 
       <li class="menu-item menu-divider" />

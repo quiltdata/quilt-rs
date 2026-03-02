@@ -516,6 +516,34 @@ pub async fn package_uninstall(
     )
 }
 
+async fn set_origin_command(m: &model::Model, namespace: &str, origin: &str) -> Result<(), Error> {
+    let namespace = quilt::uri::Namespace::try_from(namespace)?;
+    let origin = quilt::uri::Host::from_str(origin)?;
+    model::set_origin(m, &namespace, origin).await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_origin(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    namespace: String,
+    origin: String,
+) -> Result<String, String> {
+    tracing.track(MixpanelEvent::PackageInstalled).await;
+    let m: &model::Model = &m;
+
+    let msg_init = format!("Setting origin for {namespace}");
+    let msg_ok = format!("Successfully set origin for {namespace}");
+    let msg_err = |err: &Error| format!("Failed to set origin: {err}");
+
+    TmplNotify::new(msg_init).map(
+        set_origin_command(m, &namespace, &origin).await,
+        msg_ok,
+        msg_err,
+    )
+}
+
 async fn login_command(
     m: &model::Model,
     host: &str,

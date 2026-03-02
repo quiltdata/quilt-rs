@@ -19,6 +19,7 @@ use crate::manifest::Manifest;
 use crate::manifest::Workflow;
 use crate::paths;
 use crate::paths::copy_cached_to_installed;
+use crate::uri::Host;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::uri::S3Uri;
@@ -293,6 +294,13 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(lineage.remote)
+    }
+
+    pub async fn set_origin(&self, origin: Host) -> Res {
+        let (_, mut lineage) = self.lineage.read(&self.storage).await?;
+        lineage.remote.origin = Some(origin);
+        self.lineage.write(&self.storage, lineage).await?;
+        Ok(())
     }
 
     pub async fn resolve_workflow(&self, workflow_id: Option<String>) -> Res<Option<Workflow>> {

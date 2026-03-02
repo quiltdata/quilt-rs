@@ -34,6 +34,7 @@ const SELECTOR_PACKAGE_RESET_LOCAL = ".js-packages-reset-local";
 const SELECTOR_PACKAGE_UNINSTALL = ".js-packages-uninstall";
 const SELECTOR_PATHS_INSTALL = ".js-paths-install";
 const SELECTOR_REVEAL_IN_FILE_BROWSER = ".js-reveal-in-file-browser";
+const SELECTOR_SET_ORIGIN = ".js-set-origin";
 const SELECTOR_SETUP = ".js-setup";
 const SELECTOR_WORKFLOW_NULL = ".js-workflow-null";
 const SELECTOR_WORKFLOW_VALUE = ".js-workflow-value";
@@ -74,6 +75,7 @@ type Selector =
   | typeof SELECTOR_PATHS_INSTALL
   | typeof SELECTOR_REFRESH
   | typeof SELECTOR_REVEAL_IN_FILE_BROWSER
+  | typeof SELECTOR_SET_ORIGIN
   | typeof SELECTOR_SETUP
   | typeof SELECTOR_WORKFLOW_NULL
   | typeof SELECTOR_WORKFLOW_VALUE;
@@ -94,6 +96,7 @@ const CMD_PACKAGE_PUSH = "package_push";
 const CMD_PACKAGE_RESET_LOCAL = "reset_local";
 const CMD_PACKAGE_UNINSTALL = "package_uninstall";
 const CMD_REVEAL_IN_FILE_BROWSER = "reveal_in_file_browser";
+const CMD_SET_ORIGIN = "set_origin";
 const CMD_SETUP = "setup";
 
 type Command =
@@ -113,6 +116,7 @@ type Command =
   | typeof CMD_PACKAGE_RESET_LOCAL
   | typeof CMD_PACKAGE_UNINSTALL
   | typeof CMD_REVEAL_IN_FILE_BROWSER
+  | typeof CMD_SET_ORIGIN
   | typeof CMD_SETUP;
 
 function handleError(e: Error | unknown) {
@@ -442,6 +446,12 @@ window.addEventListener(EVENT_PAGE_READY, () => {
   listen(SELECTOR_PACKAGE_UNINSTALL, ["namespace"], (data) =>
     execPageCommand(CMD_PACKAGE_UNINSTALL, data, ROUTE_INSTALLED_PACKAGES_LIST),
   );
+
+  listen(SELECTOR_SET_ORIGIN, ["namespace"], async (data) => {
+    const origin = window.prompt("Enter catalog origin (e.g. open.quilt.bio):");
+    if (!origin) return;
+    await execPageCommand(CMD_SET_ORIGIN, { ...data, origin });
+  });
 
   listen(SELECTOR_PACKAGE_CERTIFY_LATEST, ["namespace"], (data) =>
     execPageCommand(
