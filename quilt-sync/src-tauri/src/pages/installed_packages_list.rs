@@ -267,12 +267,7 @@ impl ViewInstalledPackagesList {
                     (UpstreamState::Error, PackageError::StatusFailed)
                 }
             };
-            (
-                Some(origin_url),
-                Some(origin_host),
-                upstream_state,
-                error,
-            )
+            (Some(origin_url), Some(origin_host), upstream_state, error)
         };
 
         Ok(InstalledPackage {
