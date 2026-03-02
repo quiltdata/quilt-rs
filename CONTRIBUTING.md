@@ -3,8 +3,13 @@
 This repository contains multiple projects in a unified workspace:
 
 - **[quilt-rs](quilt-rs/)** - Rust library for accessing Quilt data packages
+  (built on [aws-sdk-rust](https://github.com/awslabs/aws-sdk-rust) and
+  [Tokio](https://tokio.rs/))
 - **[quilt-cli](quilt-cli/)** - Command-line interface for Quilt data packages
-- **[quilt-sync](quilt-sync/)** - Cross-platform desktop GUI application (QuiltSync)
+  (built with [clap](https://github.com/clap-rs/clap))
+- **[quilt-sync](quilt-sync/)** - Cross-platform desktop GUI application built
+  with [Tauri](https://tauri.app/) and vanilla JavaScript (no frontend framework)
+  (QuiltSync)
 
 ## Project-Specific Contributing Guides
 
