@@ -33,6 +33,7 @@ impl std::fmt::Display for Output {
             UpstreamState::Behind => "Your commits are behind the remote",
             UpstreamState::Ahead => "Your commits are ahead of the remote",
             UpstreamState::Diverged => "Your commits are detached from the remote",
+            UpstreamState::Error => "Unable to check remote status",
         };
 
         output.push(discrete_state.to_string());

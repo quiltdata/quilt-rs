@@ -24,6 +24,7 @@ pub enum UpstreamState {
     Behind,
     Ahead,
     Diverged,
+    Error,
 }
 
 /// Status of the package and working directory of the package

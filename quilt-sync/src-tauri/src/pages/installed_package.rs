@@ -64,6 +64,12 @@ impl TmplStatus<'_> {
                     .set_color(btn::Color::Primary)
                     .set_href(Paths::Merge(namespace.clone())),
             }),
+            UpstreamState::Error => Some(TmplStatus {
+                description: t!("installed_package_status.error"),
+                button: btn::TmplButton::builder()
+                    .set_label(t!("installed_package_status.error"))
+                    .set_disabled(),
+            }),
             UpstreamState::UpToDate => None,
         }
     }
@@ -147,9 +153,16 @@ impl ViewInstalledPackage {
             .get_installed_package_lineage(&installed_package)
             .await?;
 
-        let status = model
-            .get_installed_package_status(&installed_package, None)
-            .await?;
+        let status = if lineage.remote.origin.is_none() {
+            quilt::lineage::InstalledPackageStatus::new(
+                UpstreamState::Error,
+                Default::default(),
+            )
+        } else {
+            model
+                .get_installed_package_status(&installed_package, None)
+                .await?
+        };
 
         let modified_entries = &status.changes;
         let installed_paths = &lineage.paths;
