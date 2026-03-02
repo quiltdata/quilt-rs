@@ -161,9 +161,10 @@ impl<'a> TmplInstalledPackage<'a> {
             PackageError::NoOrigin => Some(
                 btn::TmplButton::builder()
                     .set_data("namespace", namespace.to_string())
-                    .set_icon(Icon::OpenInBrowser)
+                    .set_icon(Icon::Warning)
                     .set_js(btn::JsSelector::SetOrigin)
                     .set_label(t!("buttons.set_origin"))
+                    .set_color(btn::Color::Warning)
                     .set_size(btn::Size::Small),
             ),
             PackageError::StatusFailed => {

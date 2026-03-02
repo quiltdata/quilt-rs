@@ -66,6 +66,8 @@ pub enum JsSelector {
 pub enum Color {
     #[template(source = "primary", ext = "txt")]
     Primary,
+    #[template(source = "warning", ext = "txt")]
+    Warning,
 }
 
 #[derive(Template)]
