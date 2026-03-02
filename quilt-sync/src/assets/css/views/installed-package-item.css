@@ -13,7 +13,8 @@
 
   &.error {
     background: rgb(239 83 80 / 8%);
-    border-left-color: var(--q-ui-palette-error);
+    border: 1px solid rgb(239 83 80 / 20%);
+    border-left: var(--q-ui-size-4) solid var(--q-ui-palette-error);
   }
 
   .link {
