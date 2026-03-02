@@ -3,8 +3,7 @@
   display: flex;
   justify-content: space-between;
   list-style: none;
-  border-left: var(--q-ui-size-4) solid transparent;
-  padding: 0 var(--q-ui-size-4) 0 0;
+  padding: 0 var(--q-ui-size-4) 0 var(--q-ui-size-4);
   position: relative;
 
   &:hover {
@@ -14,7 +13,16 @@
   &.error {
     background: rgb(239 83 80 / 8%);
     border: 1px solid rgb(239 83 80 / 20%);
-    border-left: var(--q-ui-size-4) solid var(--q-ui-palette-error);
+  }
+
+  &.error::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: var(--q-ui-size-4);
+    background: var(--q-ui-palette-error);
   }
 
   .link {
