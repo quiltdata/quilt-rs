@@ -165,28 +165,55 @@ impl ViewInstalledPackagesList {
         let list = model.get_installed_packages_list().await?;
         let mut installed_packages_list = Vec::new();
         for installed_package in list {
-            let status = model
-                .get_installed_package_status(&installed_package, None)
-                .await?;
-            let lineage = model
-                .get_installed_package_lineage(&installed_package)
-                .await?;
-            let uri = quilt::uri::S3PackageUri::from(&lineage.remote);
-            let origin_host = debug_tools::try_remote_origin_host(&lineage.remote)?;
-
-            tracing.add_host(&origin_host);
-
-            installed_packages_list.push(InstalledPackage {
-                namespace: installed_package.namespace,
-                origin: uri.display_for_host(&origin_host)?,
-                remote: lineage.remote,
-                status: status.upstream_state,
-            });
+            match Self::load_package(model, tracing, &installed_package).await {
+                Ok(pkg) => installed_packages_list.push(pkg),
+                Err(err) => {
+                    warn!(
+                        "Failed to load package {}: {err}",
+                        installed_package.namespace
+                    );
+                }
+            }
         }
         debug!("Packages list is {:?}", installed_packages_list);
         Ok(ViewInstalledPackagesList {
             installed_packages_list,
             globals: app.globals(),
+        })
+    }
+
+    async fn load_package(
+        model: &impl QuiltModel,
+        tracing: &crate::telemetry::Telemetry,
+        installed_package: &quilt::InstalledPackage,
+    ) -> Result<InstalledPackage, Error> {
+        let lineage = model
+            .get_installed_package_lineage(installed_package)
+            .await?;
+        let uri = quilt::uri::S3PackageUri::from(&lineage.remote);
+        let origin_host = debug_tools::try_remote_origin_host(&lineage.remote)?;
+
+        tracing.add_host(&origin_host);
+
+        let upstream_state = match model
+            .get_installed_package_status(installed_package, None)
+            .await
+        {
+            Ok(status) => status.upstream_state,
+            Err(err) => {
+                warn!(
+                    "Failed to get status for {}: {err}",
+                    installed_package.namespace
+                );
+                UpstreamState::Error
+            }
+        };
+
+        Ok(InstalledPackage {
+            namespace: installed_package.namespace.clone(),
+            origin: uri.display_for_host(&origin_host)?,
+            remote: lineage.remote,
+            status: upstream_state,
         })
     }
 
@@ -333,6 +360,25 @@ mod tests {
         let uptodate_html = uptodate_tmpl.to_string();
         assert!(!uptodate_html.contains(r#"merge"#));
         assert!(!uptodate_html.contains(r#"href="merge.html"#));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_error_status_hides_sync_and_merge_buttons() -> Result<()> {
+        let error_package = create_test_package("test/error", UpstreamState::Error)?;
+        let error_tmpl = TmplInstalledPackage::from(error_package);
+        let error_html = error_tmpl.to_string();
+
+        // Error status should not show push, pull, or merge buttons
+        assert!(!error_html.contains(r#"js-packages-push"#));
+        assert!(!error_html.contains(r#"js-packages-pull"#));
+        assert!(!error_html.contains(r#"href="merge.html"#));
+
+        // But should still have common buttons
+        assert!(error_html.contains(r#"href="commit.html#namespace=test/error""#));
+        assert!(error_html.contains(r#"js-open-in-file-browser"#));
+        assert!(error_html.contains(r#"js-packages-uninstall"#));
 
         Ok(())
     }
