@@ -3,7 +3,7 @@
   display: flex;
   justify-content: space-between;
   list-style: none;
-  padding: 0 var(--q-ui-size-4) 0 0;
+  border-left: var(--q-ui-size-4) solid transparent;
   position: relative;
 
   &:hover {
@@ -11,7 +11,7 @@
   }
 
   &.error {
-    border-left: 3px solid var(--q-ui-palette-error);
+    border-left-color: var(--q-ui-palette-error);
   }
 
   .link {
