@@ -530,7 +530,7 @@ pub async fn set_origin(
     namespace: String,
     origin: String,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::PackageInstalled).await;
+    tracing.track(MixpanelEvent::OriginSet).await;
     let m: &model::Model = &m;
 
     let msg_init = format!("Setting origin for {namespace}");
