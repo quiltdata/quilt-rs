@@ -42,7 +42,7 @@ pub struct ViewInstalledPackagesList {
 #[derive(Template)]
 #[template(path = "./components/installed-package-item.html")]
 struct TmplInstalledPackage<'a> {
-    button_commit: btn::TmplButton<'a>,
+    button_commit: Option<btn::TmplButton<'a>>,
     button_error_action: Option<btn::TmplButton<'a>>,
     button_merge: Option<btn::TmplButton<'a>>,
     button_open_local: btn::TmplButton<'a>,
@@ -65,7 +65,11 @@ impl From<InstalledPackage> for TmplInstalledPackage<'_> {
             status,
         } = value;
         TmplInstalledPackage {
-            button_commit: Self::button_commit(&namespace),
+            button_commit: if matches!(error, PackageError::Ok) {
+                Some(Self::button_commit(&namespace))
+            } else {
+                None
+            },
             button_error_action: Self::button_error_action(
                 &namespace,
                 &error,
@@ -472,8 +476,10 @@ mod tests {
         // Should show Login button for StatusFailed
         assert!(error_html.contains(r#"href="login.html#host=test.quilt.dev""#));
 
+        // Should not show commit button for error-state packages
+        assert!(!error_html.contains(r#"href="commit.html"#));
+
         // But should still have common buttons
-        assert!(error_html.contains(r#"href="commit.html#namespace=test/error""#));
         assert!(error_html.contains(r#"js-open-in-file-browser"#));
         assert!(error_html.contains(r#"js-packages-uninstall"#));
 

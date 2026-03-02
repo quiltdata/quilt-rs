@@ -19,7 +19,9 @@
 
       <li class="menu-item menu-divider" />
 
+      {% if let Some(button_commit) = button_commit %}
       <li class="menu-item">{{ button_commit | safe }}</li>
+      {% endif %}
 
       {% if let Some(button_sync) = button_sync %}
       <li class="menu-item menu-divider" />
