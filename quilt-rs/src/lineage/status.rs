@@ -44,4 +44,11 @@ impl InstalledPackageStatus {
             changes,
         }
     }
+
+    pub fn error() -> Self {
+        Self {
+            upstream_state: UpstreamState::Error,
+            changes: Default::default(),
+        }
+    }
 }

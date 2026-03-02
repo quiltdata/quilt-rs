@@ -153,16 +153,9 @@ impl ViewInstalledPackage {
             .get_installed_package_lineage(&installed_package)
             .await?;
 
-        let status = if lineage.remote.origin.is_none() {
-            quilt::lineage::InstalledPackageStatus::new(
-                UpstreamState::Error,
-                Default::default(),
-            )
-        } else {
-            model
-                .get_installed_package_status(&installed_package, None)
-                .await?
-        };
+        let status = model
+            .get_installed_package_status(&installed_package, None)
+            .await?;
 
         let modified_entries = &status.changes;
         let installed_paths = &lineage.paths;
