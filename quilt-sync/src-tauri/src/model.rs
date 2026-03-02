@@ -520,7 +520,7 @@ pub mod mocks {
             bucket: "quilt-example".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "6c3758a4d2bf8fe730be5d12f5e095950dc123c373f55f66ca4b3ced74772b22".to_string(),
-            origin: None,
+            origin: Some("test.quilt.dev".parse().unwrap()),
         };
         model.expect_get_installed_package().returning(move |_| {
             Ok(Some(

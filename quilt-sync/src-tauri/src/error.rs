@@ -60,6 +60,9 @@ pub enum Error {
 
     #[error("Mixpanel serialization error: {0}")]
     MixpanelSer(String),
+
+    #[error("Package has no catalog origin")]
+    MissingOrigin,
 }
 
 impl From<quilt::Error> for Error {

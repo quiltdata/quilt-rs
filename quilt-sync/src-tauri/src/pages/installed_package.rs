@@ -188,11 +188,13 @@ impl ViewInstalledPackage {
 
         // TODO: just use remote_manifest?
         let uri = quilt::uri::S3PackageUri::from(&lineage.remote);
-        let origin_host = debug_tools::try_remote_origin_host(&lineage.remote)?;
-
-        if has_origin {
-            tracing.add_host(&origin_host);
-        }
+        let origin_host = if has_origin {
+            let host = debug_tools::try_remote_origin_host(&lineage.remote)?;
+            tracing.add_host(&host);
+            Some(host)
+        } else {
+            None
+        };
 
         let mut entries_list = Vec::new();
         for (filename, change) in modified_entries {
@@ -200,7 +202,10 @@ impl ViewInstalledPackage {
                 path: Some(filename.to_owned()),
                 ..uri.clone()
             };
-            let origin = entry_uri.display_for_host(&origin_host)?;
+            let origin = match &origin_host {
+                Some(host) => Some(entry_uri.display_for_host(host)?),
+                None => None,
+            };
             entries_list.push(entry::ViewEntry {
                 filename: filename.clone(),
                 size: match &change {
@@ -224,7 +229,10 @@ impl ViewInstalledPackage {
                     path: Some(filename.to_owned()),
                     ..uri.clone()
                 };
-                let origin = entry_uri.display_for_host(&origin_host)?;
+                let origin = match &origin_host {
+                    Some(host) => Some(entry_uri.display_for_host(host)?),
+                    None => None,
+                };
                 entries_list.push(entry::ViewEntry {
                     filename: filename.clone(),
                     origin,
@@ -254,7 +262,10 @@ impl ViewInstalledPackage {
                 path: Some(filename.clone()),
                 ..uri.clone()
             };
-            let origin = entry_uri.display_for_host(&origin_host)?;
+            let origin = match &origin_host {
+                Some(host) => Some(entry_uri.display_for_host(host)?),
+                None => None,
+            };
             entries_list.push(entry::ViewEntry {
                 filename,
                 size: row.size,
@@ -270,21 +281,16 @@ impl ViewInstalledPackage {
         // Sort entries by filename
         entries_list.sort_by(|a, b| a.filename.cmp(&b.filename));
 
-        let origin = if has_origin {
-            Some(uri.display_for_host(&origin_host)?)
-        } else {
-            None
+        let origin = match &origin_host {
+            Some(host) => Some(uri.display_for_host(host)?),
+            None => None,
         };
 
         Ok(ViewInstalledPackage {
             entries_list,
             globals: app.globals(),
             origin,
-            origin_host: if has_origin {
-                Some(origin_host)
-            } else {
-                None
-            },
+            origin_host,
             status: status.upstream_state,
             uri: uri.clone(),
         })
@@ -412,7 +418,7 @@ mod tests {
                 size: *size_bytes,
                 status: entry::EntryStatus::Pristine,
                 uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
-                origin: url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?,
+                origin: Some(url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?),
             });
         }
 
