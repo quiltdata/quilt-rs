@@ -75,8 +75,11 @@ impl TmplStatus<'_> {
                         .set_label(t!("error.login"))
                         .set_href(Paths::Login(host.clone())),
                     None => btn::TmplButton::builder()
-                        .set_label(t!("installed_package_status.error"))
-                        .set_disabled(),
+                        .set_data("namespace", namespace.to_string())
+                        .set_icon(Icon::Warning)
+                        .set_js(btn::JsSelector::SetOrigin)
+                        .set_label(t!("buttons.set_origin"))
+                        .set_color(btn::Color::Warning),
                 };
                 Some(TmplStatus {
                     description: t!("installed_package_status.error"),
