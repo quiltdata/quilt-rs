@@ -12,6 +12,7 @@
   }
 
   &.error {
+    background: rgb(239 83 80 / 8%);
     border-left-color: var(--q-ui-palette-error);
   }
 
