@@ -245,34 +245,40 @@ impl ViewInstalledPackagesList {
         let lineage = model
             .get_installed_package_lineage(installed_package)
             .await?;
-        let uri = quilt::uri::S3PackageUri::from(&lineage.remote);
 
-        let (origin, origin_host, upstream_state, error) = if lineage.remote.origin.is_none() {
-            (None, None, UpstreamState::Error, Some(PackageError::NoOrigin))
-        } else {
-            let origin_host = debug_tools::try_remote_origin_host(&lineage.remote)?;
-            tracing.add_host(&origin_host);
-            let origin_url = uri.display_for_host(&origin_host)?;
-            let (upstream_state, error) = match model
-                .get_installed_package_status(installed_package, None)
-                .await
-            {
-                Ok(status) => (status.upstream_state, None),
-                Err(err) => {
-                    warn!(
-                        "Failed to get status for {}: {err}",
-                        installed_package.namespace
-                    );
-                    (UpstreamState::Error, Some(PackageError::StatusFailed))
-                }
-            };
-            (Some(origin_url), Some(origin_host), upstream_state, error)
+        if lineage.remote.origin.is_none() {
+            return Ok(InstalledPackage {
+                namespace: installed_package.namespace.clone(),
+                origin: None,
+                origin_host: None,
+                remote: lineage.remote,
+                error: Some(PackageError::NoOrigin),
+                status: UpstreamState::Error,
+            });
+        }
+
+        let origin_host = debug_tools::try_remote_origin_host(&lineage.remote)?;
+        tracing.add_host(&origin_host);
+        let uri = quilt::uri::S3PackageUri::from(&lineage.remote);
+        let origin_url = uri.display_for_host(&origin_host)?;
+        let (upstream_state, error) = match model
+            .get_installed_package_status(installed_package, None)
+            .await
+        {
+            Ok(status) => (status.upstream_state, None),
+            Err(err) => {
+                warn!(
+                    "Failed to get status for {}: {err}",
+                    installed_package.namespace
+                );
+                (UpstreamState::Error, Some(PackageError::StatusFailed))
+            }
         };
 
         Ok(InstalledPackage {
             namespace: installed_package.namespace.clone(),
-            origin,
-            origin_host,
+            origin: Some(origin_url),
+            origin_host: Some(origin_host),
             remote: lineage.remote,
             error,
             status: upstream_state,
