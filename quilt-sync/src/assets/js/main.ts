@@ -673,26 +673,28 @@ function showSetOriginForm(namespace: Namespace, currentOrigin: string = "") {
   const input = findElement(
     SELECTOR_ORIGIN_INPUT,
     outputElement,
-  ) as HTMLInputElement;
+  ) as HTMLInputElement | null;
+  if (!input) return;
+
   if (currentOrigin) {
     input.value = currentOrigin;
   }
-  input?.focus();
+  input.focus();
 
   const hint = findElement(SELECTOR_ORIGIN_HINT, outputElement);
 
   const showError = () => {
-    input?.classList.add("error");
+    input.classList.add("error");
     hint?.classList.add("visible");
   };
 
   const hideError = () => {
-    input?.classList.remove("error");
+    input.classList.remove("error");
     hint?.classList.remove("visible");
   };
 
   const submit = () => {
-    const origin = input?.value.trim();
+    const origin = input.value.trim();
     if (!origin) return;
     if (!isValidHostname(origin)) {
       showError();
@@ -711,7 +713,7 @@ function showSetOriginForm(namespace: Namespace, currentOrigin: string = "") {
   const cancelButton = findElement(SELECTOR_ORIGIN_CANCEL, outputElement);
   cancelButton?.addEventListener("click", cancel);
 
-  input?.addEventListener("keydown", (event) => {
+  input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       submit();
     } else if (event.key === "Escape") {
@@ -719,7 +721,7 @@ function showSetOriginForm(namespace: Namespace, currentOrigin: string = "") {
     }
   });
 
-  input?.addEventListener("input", hideError);
+  input.addEventListener("input", hideError);
 }
 
 function showInstallNotification(update: Awaited<ReturnType<typeof check>>) {
