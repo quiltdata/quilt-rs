@@ -8,6 +8,14 @@
 -->
 # Changelog
 
+## [v0.14.3] - 2026-03-03
+
+### Fixed
+
+- Replace `window.prompt` with inline form for setting catalog origin,
+  fixing broken prompt on macOS in Tauri
+  (<https://github.com/quiltdata/quilt-rs/pull/529>)
+
 ## [v0.14.2] - 2026-03-03
 
 ### Changed
