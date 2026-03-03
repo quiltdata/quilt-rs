@@ -74,6 +74,10 @@
     padding: var(--q-ui-size-1) var(--q-ui-size-2);
   }
 
+  .origin-input.error {
+    border-color: var(--q-ui-palette-error);
+  }
+
   .origin-form-actions {
     display: flex;
     flex-shrink: 0;

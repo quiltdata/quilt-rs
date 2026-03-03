@@ -640,6 +640,12 @@ async function installUpdate(update: Awaited<ReturnType<typeof check>>) {
   }
 }
 
+const HOSTNAME_PATTERN = /^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+$/;
+
+function isValidHostname(value: string) {
+  return HOSTNAME_PATTERN.test(value);
+}
+
 function showSetOriginForm(namespace: Namespace, currentOrigin: string = "") {
   notify(`<div class="origin-form">
     <label>Catalog origin</label>
@@ -662,6 +668,10 @@ function showSetOriginForm(namespace: Namespace, currentOrigin: string = "") {
   const submit = () => {
     const origin = input?.value.trim();
     if (!origin) return;
+    if (!isValidHostname(origin)) {
+      input.classList.add("error");
+      return;
+    }
     execPageCommand(CMD_SET_ORIGIN, { namespace, origin }).catch(handleError);
   };
 
@@ -681,6 +691,10 @@ function showSetOriginForm(namespace: Namespace, currentOrigin: string = "") {
     } else if (event.key === "Escape") {
       cancel();
     }
+  });
+
+  input?.addEventListener("input", () => {
+    input.classList.remove("error");
   });
 }
 
