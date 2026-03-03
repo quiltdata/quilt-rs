@@ -147,8 +147,8 @@ impl<'a> TmplInstalledPackage<'a> {
         status: &UpstreamState,
         origin_host: Option<&quilt::uri::Host>,
     ) -> Option<btn::TmplButton<'a>> {
-        match (status, origin_host) {
-            (_, None) => Some(
+        match origin_host {
+            None => Some(
                 btn::TmplButton::builder()
                     .set_data("namespace", namespace.to_string())
                     .set_icon(Icon::Warning)
@@ -157,15 +157,17 @@ impl<'a> TmplInstalledPackage<'a> {
                     .set_color(btn::Color::Warning)
                     .set_size(btn::Size::Small),
             ),
-            (UpstreamState::Error, Some(host)) => Some(
-                btn::TmplButton::builder()
-                    .set_icon(Icon::Warning)
-                    .set_label(t!("error.login"))
-                    .set_color(btn::Color::Warning)
-                    .set_size(btn::Size::Small)
-                    .set_href(Paths::Login(host.clone())),
-            ),
-            _ => None,
+            Some(host) => match status {
+                UpstreamState::Error => Some(
+                    btn::TmplButton::builder()
+                        .set_icon(Icon::Warning)
+                        .set_label(t!("error.login"))
+                        .set_color(btn::Color::Warning)
+                        .set_size(btn::Size::Small)
+                        .set_href(Paths::Login(host.clone())),
+                ),
+                _ => None,
+            },
         }
     }
 
