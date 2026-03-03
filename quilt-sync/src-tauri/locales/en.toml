@@ -31,6 +31,7 @@ ahead = 'Your commits are ahead of the remote'
 behind = 'Your commits are behind the remote'
 diverged = 'Your commits are detached from the remote'
 error = 'Unable to check remote status'
+no_origin = 'No catalog origin configured'
 
 [commit]
 message = 'Message'

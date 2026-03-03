@@ -69,25 +69,25 @@ impl TmplStatus<'_> {
                     .set_color(btn::Color::Primary)
                     .set_href(Paths::Merge(namespace.clone())),
             }),
-            UpstreamState::Error => {
-                let button = match origin_host {
-                    Some(host) => btn::TmplButton::builder()
+            UpstreamState::Error => match origin_host {
+                Some(host) => Some(TmplStatus {
+                    description: t!("installed_package_status.error"),
+                    button: btn::TmplButton::builder()
                         .set_label(t!("error.login"))
                         .set_icon(Icon::Warning)
                         .set_color(btn::Color::Warning)
                         .set_href(Paths::Login(host.clone())),
-                    None => btn::TmplButton::builder()
+                }),
+                None => Some(TmplStatus {
+                    description: t!("installed_package_status.no_origin"),
+                    button: btn::TmplButton::builder()
                         .set_data("namespace", namespace.to_string())
                         .set_icon(Icon::Warning)
                         .set_js(btn::JsSelector::SetOrigin)
                         .set_label(t!("buttons.set_origin"))
                         .set_color(btn::Color::Warning),
-                };
-                Some(TmplStatus {
-                    description: t!("installed_package_status.error"),
-                    button,
-                })
-            }
+                }),
+            },
             UpstreamState::UpToDate => None,
         }
     }
