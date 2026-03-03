@@ -76,7 +76,7 @@ impl From<InstalledPackage> for TmplInstalledPackage<'_> {
             ),
             button_merge: Self::button_merge(&namespace, &status),
             button_open_local: Self::button_open_local(&namespace),
-            button_open_remote: Self::button_open_remote(origin.as_ref(), &status),
+            button_open_remote: Self::button_open_remote(origin.as_ref()),
             button_sync: Self::button_sync(&namespace, &status),
             button_uninstall: Self::button_uninstall(&namespace),
             is_error: error.is_some(),
@@ -96,13 +96,7 @@ impl<'a> TmplInstalledPackage<'a> {
             .set_size(btn::Size::Small)
     }
 
-    fn button_open_remote(
-        origin: Option<&url::Url>,
-        status: &UpstreamState,
-    ) -> Option<btn::TmplButton<'a>> {
-        if matches!(status, UpstreamState::Error) {
-            return None;
-        }
+    fn button_open_remote(origin: Option<&url::Url>) -> Option<btn::TmplButton<'a>> {
         let origin = origin?;
         Some(
             btn::TmplButton::builder()
@@ -466,11 +460,13 @@ mod tests {
         // Error status should show red border
         assert!(error_html.contains("qui-installed-package-item error"));
 
-        // Error status should not show push, pull, merge, or "Open in Catalog" buttons
+        // Error status should not show push, pull, or merge buttons
         assert!(!error_html.contains(r#"js-packages-push"#));
         assert!(!error_html.contains(r#"js-packages-pull"#));
         assert!(!error_html.contains(r#"href="merge.html"#));
-        assert!(!error_html.contains(r#"js-open-in-web-browser"#));
+
+        // Should still show "Open in Catalog" since origin is valid
+        assert!(error_html.contains(r#"js-open-in-web-browser"#));
 
         // Should show Login button for StatusFailed
         assert!(error_html.contains(r#"href="login.html#host=test.quilt.dev""#));
