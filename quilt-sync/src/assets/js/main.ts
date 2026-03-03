@@ -659,6 +659,11 @@ function showSetOriginForm(namespace: Namespace, currentOrigin: string = "") {
   const outputElement = findElement(SELECTOR_NOTIFY);
   if (!outputElement) return;
 
+  const form = outputElement.firstElementChild;
+  form?.addEventListener("click", (event) => {
+    event.stopPropagation();
+  });
+
   const input = findElement(
     SELECTOR_ORIGIN_INPUT,
     outputElement,
