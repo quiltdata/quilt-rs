@@ -19,6 +19,13 @@
   instead of failing, remove bogus open.quilt.bio fallback
   (<https://github.com/quiltdata/quilt-rs/pull/523>)
 
+### quilt-rs
+
+- Updated [from v0.27.1 to v0.27.2](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.27.1...quilt-rs/v0.27.2)
+  (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+  - Add `UpstreamState::Error` variant and
+    `InstalledPackage::set_origin()` for packages without catalog origin
+
 ## [v0.14.1] - 2026-02-26
 
 ### Changed
