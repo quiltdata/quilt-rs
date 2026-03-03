@@ -12,7 +12,8 @@
 
   &.error {
     background: rgb(239 83 80 / 8%);
-    border: 1px solid rgb(239 83 80 / 20%);
+    outline: 1px solid rgb(239 83 80 / 20%);
+    outline-offset: -1px;
   }
 
   &.error:hover {

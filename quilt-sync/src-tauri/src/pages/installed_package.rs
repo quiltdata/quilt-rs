@@ -73,6 +73,8 @@ impl TmplStatus<'_> {
                 let button = match origin_host {
                     Some(host) => btn::TmplButton::builder()
                         .set_label(t!("error.login"))
+                        .set_icon(Icon::Warning)
+                        .set_color(btn::Color::Warning)
                         .set_href(Paths::Login(host.clone())),
                     None => btn::TmplButton::builder()
                         .set_data("namespace", namespace.to_string())
