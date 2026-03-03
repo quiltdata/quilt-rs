@@ -25,6 +25,8 @@
   }
 
   .action {
+    display: flex;
+    gap: var(--q-ui-size-2);
     margin-left: 8px;
   }
 }

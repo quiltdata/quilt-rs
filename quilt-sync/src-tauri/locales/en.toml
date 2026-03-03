@@ -76,6 +76,7 @@ push_package = 'Push'
 merge_package = 'Merge'
 install_selected_paths = 'Download selected paths'
 set_origin = 'Set origin'
+change_origin = 'Change origin'
 
 [debug_toolbar]
 dot_quilt_button = 'Open .quilt/'

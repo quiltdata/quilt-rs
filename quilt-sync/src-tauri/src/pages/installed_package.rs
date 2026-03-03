@@ -36,6 +36,7 @@ pub struct ViewInstalledPackage {
 struct TmplStatus<'a> {
     description: Cow<'a, str>,
     button: btn::TmplButton<'a>,
+    secondary_button: Option<btn::TmplButton<'a>>,
 }
 
 impl TmplStatus<'_> {
@@ -52,6 +53,7 @@ impl TmplStatus<'_> {
                     .set_js(btn::JsSelector::PackagesPush)
                     .set_label(t!("buttons.push_package"))
                     .set_color(btn::Color::Primary),
+                secondary_button: None,
             }),
             UpstreamState::Behind => Some(TmplStatus {
                 description: t!("installed_package_status.behind"),
@@ -60,6 +62,7 @@ impl TmplStatus<'_> {
                     .set_js(btn::JsSelector::PackagesPull)
                     .set_label(t!("buttons.pull_package"))
                     .set_color(btn::Color::Primary),
+                secondary_button: None,
             }),
             UpstreamState::Diverged => Some(TmplStatus {
                 description: t!("installed_package_status.diverged"),
@@ -68,6 +71,7 @@ impl TmplStatus<'_> {
                     .set_label(t!("buttons.merge_package"))
                     .set_color(btn::Color::Primary)
                     .set_href(Paths::Merge(namespace.clone())),
+                secondary_button: None,
             }),
             UpstreamState::Error => match origin_host {
                 Some(host) => Some(TmplStatus {
@@ -77,6 +81,12 @@ impl TmplStatus<'_> {
                         .set_icon(Icon::Warning)
                         .set_color(btn::Color::Warning)
                         .set_href(Paths::Login(host.clone())),
+                    secondary_button: Some(
+                        btn::TmplButton::builder()
+                            .set_data("namespace", namespace.to_string())
+                            .set_js(btn::JsSelector::SetOrigin)
+                            .set_label(t!("buttons.change_origin")),
+                    ),
                 }),
                 None => Some(TmplStatus {
                     description: t!("installed_package_status.no_origin"),
@@ -86,6 +96,7 @@ impl TmplStatus<'_> {
                         .set_js(btn::JsSelector::SetOrigin)
                         .set_label(t!("buttons.set_origin"))
                         .set_color(btn::Color::Warning),
+                    secondary_button: None,
                 }),
             },
             UpstreamState::UpToDate => None,
