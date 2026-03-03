@@ -90,4 +90,8 @@
   .menu-divider + .menu-item {
     margin-left: 12px;
   }
+
+  .menu-divider + .menu-divider {
+    display: none;
+  }
 }
