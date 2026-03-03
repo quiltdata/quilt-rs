@@ -71,14 +71,14 @@ type Selector =
   | typeof SELECTOR_NOTIFY
   | typeof SELECTOR_NOTIFY_SUCCESS
   | typeof SELECTOR_OPEN_COMMIT_PAGE
-  | typeof SELECTOR_ORIGIN_CANCEL
-  | typeof SELECTOR_ORIGIN_HINT
-  | typeof SELECTOR_ORIGIN_INPUT
-  | typeof SELECTOR_ORIGIN_SUBMIT
   | typeof SELECTOR_OPEN_DIRECTORY_PICKER
   | typeof SELECTOR_OPEN_IN_DEFAULT_APPLICATION
   | typeof SELECTOR_OPEN_IN_FILE_BROWSER
   | typeof SELECTOR_OPEN_IN_WEB_BROWSER
+  | typeof SELECTOR_ORIGIN_CANCEL
+  | typeof SELECTOR_ORIGIN_HINT
+  | typeof SELECTOR_ORIGIN_INPUT
+  | typeof SELECTOR_ORIGIN_SUBMIT
   | typeof SELECTOR_PACKAGE_CERTIFY_LATEST
   | typeof SELECTOR_PACKAGE_COMMIT
   | typeof SELECTOR_PACKAGE_INSTALL
@@ -652,7 +652,7 @@ function showSetOriginForm(namespace: Namespace, currentOrigin: string = "") {
   notify(`<div class="origin-form">
     <label>Catalog origin</label>
     <div class="origin-input-group">
-      <input class="origin-input js-origin-input" type="text" placeholder="open.quilt.bio" value="${currentOrigin}" />
+      <input class="origin-input js-origin-input" type="text" placeholder="open.quilt.bio" />
       <span class="origin-hint js-origin-hint">Enter a valid hostname, e.g. open.quilt.bio</span>
     </div>
     <div class="origin-form-actions">
@@ -673,6 +673,9 @@ function showSetOriginForm(namespace: Namespace, currentOrigin: string = "") {
     SELECTOR_ORIGIN_INPUT,
     outputElement,
   ) as HTMLInputElement;
+  if (currentOrigin) {
+    input.value = currentOrigin;
+  }
   input?.focus();
 
   const hint = findElement(SELECTOR_ORIGIN_HINT, outputElement);
