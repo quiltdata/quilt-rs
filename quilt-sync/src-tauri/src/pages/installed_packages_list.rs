@@ -17,18 +17,11 @@ use crate::ui::layout::Layout;
 use crate::ui::Icon;
 
 #[derive(Debug)]
-enum PackageError {
-    NoOrigin,
-    StatusFailed,
-}
-
-#[derive(Debug)]
 struct InstalledPackage {
     namespace: Namespace,
     origin: Option<url::Url>,
     origin_host: Option<quilt::uri::Host>,
     remote: quilt::uri::ManifestUri,
-    error: Option<PackageError>,
     status: UpstreamState,
 }
 
@@ -60,18 +53,18 @@ impl From<InstalledPackage> for TmplInstalledPackage<'_> {
             origin,
             origin_host,
             remote,
-            error,
             status,
         } = value;
+        let is_error = status == UpstreamState::Error;
         TmplInstalledPackage {
-            button_commit: if error.is_none() {
+            button_commit: if !is_error {
                 Some(Self::button_commit(&namespace))
             } else {
                 None
             },
             button_error_action: Self::button_error_action(
                 &namespace,
-                &error,
+                &status,
                 origin_host.as_ref(),
             ),
             button_merge: Self::button_merge(&namespace, &status),
@@ -79,7 +72,7 @@ impl From<InstalledPackage> for TmplInstalledPackage<'_> {
             button_open_remote: Self::button_open_remote(origin.as_ref()),
             button_sync: Self::button_sync(&namespace, &status),
             button_uninstall: Self::button_uninstall(&namespace),
-            is_error: error.is_some(),
+            is_error,
             namespace,
             remote,
         }
@@ -151,11 +144,11 @@ impl<'a> TmplInstalledPackage<'a> {
 
     fn button_error_action(
         namespace: &Namespace,
-        error: &Option<PackageError>,
+        status: &UpstreamState,
         origin_host: Option<&quilt::uri::Host>,
     ) -> Option<btn::TmplButton<'a>> {
-        match error {
-            Some(PackageError::NoOrigin) => Some(
+        match (status, origin_host) {
+            (_, None) => Some(
                 btn::TmplButton::builder()
                     .set_data("namespace", namespace.to_string())
                     .set_icon(Icon::Warning)
@@ -164,18 +157,15 @@ impl<'a> TmplInstalledPackage<'a> {
                     .set_color(btn::Color::Warning)
                     .set_size(btn::Size::Small),
             ),
-            Some(PackageError::StatusFailed) => {
-                let origin_host = origin_host?;
-                Some(
-                    btn::TmplButton::builder()
-                        .set_icon(Icon::Warning)
-                        .set_label(t!("error.login"))
-                        .set_color(btn::Color::Warning)
-                        .set_size(btn::Size::Small)
-                        .set_href(Paths::Login(origin_host.clone())),
-                )
-            }
-            None => None,
+            (UpstreamState::Error, Some(host)) => Some(
+                btn::TmplButton::builder()
+                    .set_icon(Icon::Warning)
+                    .set_label(t!("error.login"))
+                    .set_color(btn::Color::Warning)
+                    .set_size(btn::Size::Small)
+                    .set_href(Paths::Login(host.clone())),
+            ),
+            _ => None,
         }
     }
 
@@ -252,7 +242,6 @@ impl ViewInstalledPackagesList {
                 origin: None,
                 origin_host: None,
                 remote: lineage.remote,
-                error: Some(PackageError::NoOrigin),
                 status: UpstreamState::Error,
             });
         }
@@ -261,17 +250,17 @@ impl ViewInstalledPackagesList {
         tracing.add_host(&origin_host);
         let uri = quilt::uri::S3PackageUri::from(&lineage.remote);
         let origin_url = uri.display_for_host(&origin_host)?;
-        let (upstream_state, error) = match model
+        let status = match model
             .get_installed_package_status(installed_package, None)
             .await
         {
-            Ok(status) => (status.upstream_state, None),
+            Ok(status) => status.upstream_state,
             Err(err) => {
                 warn!(
                     "Failed to get status for {}: {err}",
                     installed_package.namespace
                 );
-                (UpstreamState::Error, Some(PackageError::StatusFailed))
+                UpstreamState::Error
             }
         };
 
@@ -280,8 +269,7 @@ impl ViewInstalledPackagesList {
             origin: Some(origin_url),
             origin_host: Some(origin_host),
             remote: lineage.remote,
-            error,
-            status: upstream_state,
+            status,
         })
     }
 
@@ -325,7 +313,6 @@ mod tests {
             remote: ManifestUri::try_from(S3PackageUri::try_from(
                 format!("quilt+s3://test#package={namespace}@abcdef").as_str(),
             )?)?,
-            error: None,
             status,
         })
     }
@@ -434,32 +421,21 @@ mod tests {
         Ok(())
     }
 
-    fn create_test_package_with_error(
-        namespace: &str,
-        error: PackageError,
-    ) -> Result<InstalledPackage> {
+    fn create_test_package_no_origin(namespace: &str) -> Result<InstalledPackage> {
         Ok(InstalledPackage {
             namespace: namespace.try_into().unwrap(),
-            origin: match &error {
-                PackageError::NoOrigin => None,
-                _ => Some(url::Url::parse("https://test.quilt.dev").unwrap()),
-            },
-            origin_host: match &error {
-                PackageError::NoOrigin => None,
-                _ => Some("test.quilt.dev".parse().unwrap()),
-            },
+            origin: None,
+            origin_host: None,
             remote: ManifestUri::try_from(S3PackageUri::try_from(
                 format!("quilt+s3://test#package={namespace}@abcdef").as_str(),
             )?)?,
-            error: Some(error),
             status: UpstreamState::Error,
         })
     }
 
     #[test]
     fn test_error_status_hides_sync_and_merge_buttons() -> Result<()> {
-        let error_package =
-            create_test_package_with_error("test/error", PackageError::StatusFailed)?;
+        let error_package = create_test_package("test/error", UpstreamState::Error)?;
         let error_tmpl = TmplInstalledPackage::from(error_package);
         let error_html = error_tmpl.to_string();
 
@@ -489,8 +465,7 @@ mod tests {
 
     #[test]
     fn test_no_origin_shows_set_origin_button() -> Result<()> {
-        let no_origin_package =
-            create_test_package_with_error("test/noorigin", PackageError::NoOrigin)?;
+        let no_origin_package = create_test_package_no_origin("test/noorigin")?;
         let no_origin_tmpl = TmplInstalledPackage::from(no_origin_package);
         let no_origin_html = no_origin_tmpl.to_string();
 
