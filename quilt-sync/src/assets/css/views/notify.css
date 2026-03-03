@@ -67,6 +67,11 @@
     flex-shrink: 0;
   }
 
+  .origin-input-group {
+    display: flex;
+    flex-direction: column;
+  }
+
   .origin-input {
     border: 1px solid var(--q-ui-palette-border);
     border-radius: var(--q-ui-radius);
@@ -76,6 +81,16 @@
 
   .origin-input.error {
     border-color: var(--q-ui-palette-error);
+  }
+
+  .origin-hint {
+    color: var(--q-ui-palette-error);
+    display: none;
+    font-size: 0.85em;
+  }
+
+  .origin-hint.visible {
+    display: block;
   }
 
   .origin-form-actions {

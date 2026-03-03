@@ -24,6 +24,7 @@ const SELECTOR_METADATA_INPUT = "#metadata";
 const SELECTOR_NOTIFY = "#notify";
 const SELECTOR_NOTIFY_SUCCESS = ".js-success";
 const SELECTOR_ORIGIN_CANCEL = ".js-origin-cancel";
+const SELECTOR_ORIGIN_HINT = ".js-origin-hint";
 const SELECTOR_ORIGIN_INPUT = ".js-origin-input";
 const SELECTOR_ORIGIN_SUBMIT = ".js-origin-submit";
 const SELECTOR_UPDATE_DISMISS = ".js-update-dismiss";
@@ -71,6 +72,7 @@ type Selector =
   | typeof SELECTOR_NOTIFY_SUCCESS
   | typeof SELECTOR_OPEN_COMMIT_PAGE
   | typeof SELECTOR_ORIGIN_CANCEL
+  | typeof SELECTOR_ORIGIN_HINT
   | typeof SELECTOR_ORIGIN_INPUT
   | typeof SELECTOR_ORIGIN_SUBMIT
   | typeof SELECTOR_OPEN_DIRECTORY_PICKER
@@ -649,7 +651,10 @@ function isValidHostname(value: string) {
 function showSetOriginForm(namespace: Namespace, currentOrigin: string = "") {
   notify(`<div class="origin-form">
     <label>Catalog origin</label>
-    <input class="origin-input js-origin-input" type="text" placeholder="open.quilt.bio" value="${currentOrigin}" />
+    <div class="origin-input-group">
+      <input class="origin-input js-origin-input" type="text" placeholder="open.quilt.bio" value="${currentOrigin}" />
+      <span class="origin-hint js-origin-hint">Enter a valid hostname, e.g. open.quilt.bio</span>
+    </div>
     <div class="origin-form-actions">
       <button class="qui-button primary js-origin-submit"><span>Submit</span></button>
       <button class="qui-button js-origin-cancel"><span>Cancel</span></button>
@@ -670,11 +675,23 @@ function showSetOriginForm(namespace: Namespace, currentOrigin: string = "") {
   ) as HTMLInputElement;
   input?.focus();
 
+  const hint = findElement(SELECTOR_ORIGIN_HINT, outputElement);
+
+  const showError = () => {
+    input?.classList.add("error");
+    hint?.classList.add("visible");
+  };
+
+  const hideError = () => {
+    input?.classList.remove("error");
+    hint?.classList.remove("visible");
+  };
+
   const submit = () => {
     const origin = input?.value.trim();
     if (!origin) return;
     if (!isValidHostname(origin)) {
-      input.classList.add("error");
+      showError();
       return;
     }
     execPageCommand(CMD_SET_ORIGIN, { namespace, origin }).catch(handleError);
@@ -698,9 +715,7 @@ function showSetOriginForm(namespace: Namespace, currentOrigin: string = "") {
     }
   });
 
-  input?.addEventListener("input", () => {
-    input.classList.remove("error");
-  });
+  input?.addEventListener("input", hideError);
 }
 
 function showInstallNotification(update: Awaited<ReturnType<typeof check>>) {
