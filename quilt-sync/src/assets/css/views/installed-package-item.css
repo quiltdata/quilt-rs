@@ -21,14 +21,14 @@
     left: 0;
     top: 0;
     bottom: 0;
-    width: var(--q-ui-size-4);
+    width: var(--q-ui-size-2);
     background: var(--q-ui-palette-error);
   }
 
   .link {
     flex-grow: 1;
     overflow: hidden;
-    padding: 14px var(--q-ui-size-2) 14px var(--q-ui-size-4);
+    padding: 14px var(--q-ui-size-2) 14px 0;
     text-decoration: none;
     color: inherit;
   }
