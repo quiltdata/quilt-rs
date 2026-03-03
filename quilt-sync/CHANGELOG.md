@@ -8,6 +8,14 @@
 -->
 # Changelog
 
+## [v0.14.2-alpha2] - 2026-03-02
+
+### Changed
+
+- Gracefully handle packages without catalog origin: show "Set origin" button
+  instead of failing, remove bogus open.quilt.bio fallback
+  (<https://github.com/quiltdata/quilt-rs/pull/523>)
+
 ## [v0.14.2-alpha1] - 2026-02-27
 
 ### Changed

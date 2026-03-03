@@ -39,6 +39,16 @@
     background: var(--q-ui-palette-primary);
   }
 
+  &.warning {
+    color: #fff;
+    background: var(--q-ui-palette-warning);
+  }
+
+  &.warning[disabled]:hover {
+    color: #fff;
+    background: var(--q-ui-palette-warning);
+  }
+
   &.link {
     background: transparent;
     border: 0;
@@ -92,7 +102,9 @@
   }
 
   &.primary .qui-icon,
-  &.primary .icon {
+  &.primary .icon,
+  &.warning .qui-icon,
+  &.warning .icon {
     filter: invert(1);
   }
 

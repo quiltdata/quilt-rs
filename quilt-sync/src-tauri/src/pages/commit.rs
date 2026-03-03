@@ -230,7 +230,7 @@ impl ViewCommit {
         for (filename, change) in &status.changes {
             let mut uri = quilt::uri::S3PackageUri::from(&lineage.remote);
             uri.path = Some(filename.clone());
-            let origin = uri.display_for_host(&origin_host)?;
+            let origin = Some(uri.display_for_host(&origin_host)?);
 
             entries_modified.push(entry::ViewEntry {
                 filename: filename.clone(),
@@ -259,7 +259,7 @@ impl ViewCommit {
                 path: Some(filename.clone()),
                 ..uri.clone()
             };
-            let origin = entry_uri.display_for_host(&origin_host)?;
+            let origin = Some(entry_uri.display_for_host(&origin_host)?);
             entries_rest.push(entry::ViewEntry {
                 filename: filename.clone(),
                 size: row.size,

@@ -34,7 +34,7 @@ pub struct ViewEntry {
     pub size: u64,
     pub status: EntryStatus,
     pub uri: quilt::uri::S3PackageUri,
-    pub origin: url::Url,
+    pub origin: Option<url::Url>,
 }
 
 #[derive(Template)]
@@ -80,17 +80,19 @@ impl From<ViewEntry> for TmplEntry<'_> {
                     .set_icon(Icon::FolderOpen),
             );
         }
-        if matches!(view.status, EntryStatus::Remote)
-            || matches!(view.status, EntryStatus::Pristine)
-        {
-            actions.push(
-                btn::TmplButton::builder()
-                    .set_js(btn::JsSelector::OpenInWebBrowser)
-                    .set_label(t!("buttons.open_entry_in_catalog"))
-                    .set_size(btn::Size::Small)
-                    .set_data("url", view.origin.to_string())
-                    .set_icon(Icon::OpenInBrowser),
-            );
+        if let Some(origin) = view.origin {
+            if matches!(view.status, EntryStatus::Remote)
+                || matches!(view.status, EntryStatus::Pristine)
+            {
+                actions.push(
+                    btn::TmplButton::builder()
+                        .set_js(btn::JsSelector::OpenInWebBrowser)
+                        .set_label(t!("buttons.open_entry_in_catalog"))
+                        .set_size(btn::Size::Small)
+                        .set_data("url", origin.to_string())
+                        .set_icon(Icon::OpenInBrowser),
+                );
+            }
         }
         TmplEntry {
             filename: view.filename,
@@ -148,8 +150,10 @@ mod tests {
     fn create_entry() -> ViewEntry {
         ViewEntry {
             filename: PathBuf::from("TEST"),
-            origin: url::Url::parse("https://test.quilt.dev/b/b/packages/a/b/tree/latest/TEST")
-                .unwrap(),
+            origin: Some(
+                url::Url::parse("https://test.quilt.dev/b/b/packages/a/b/tree/latest/TEST")
+                    .unwrap(),
+            ),
             size: 0,
             status: EntryStatus::Modified,
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://b#package=a/b").unwrap(),

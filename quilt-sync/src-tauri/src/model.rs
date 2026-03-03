@@ -167,6 +167,14 @@ pub trait QuiltModel {
         Ok(package.reset_to_latest().await?)
     }
 
+    async fn set_origin(
+        &self,
+        package: &quilt::InstalledPackage,
+        origin: quilt::uri::Host,
+    ) -> Result<(), Error> {
+        Ok(package.set_origin(origin).await?)
+    }
+
     async fn package_install(
         &self,
         remote_manifest: &quilt::uri::ManifestUri,
@@ -451,6 +459,19 @@ pub async fn package_pull(
     Ok(())
 }
 
+pub async fn set_origin(
+    model: &impl QuiltModel,
+    namespace: &quilt::uri::Namespace,
+    origin: quilt::uri::Host,
+) -> Result<(), Error> {
+    let installed_package = model
+        .get_installed_package(namespace)
+        .await?
+        .ok_or_else(|| Error::Quilt(quilt::Error::PackageNotInstalled(namespace.clone())))?;
+    model.set_origin(&installed_package, origin).await?;
+    Ok(())
+}
+
 pub async fn login(
     model: &impl QuiltModel,
     host: &quilt::uri::Host,
@@ -499,7 +520,7 @@ pub mod mocks {
             bucket: "quilt-example".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "6c3758a4d2bf8fe730be5d12f5e095950dc123c373f55f66ca4b3ced74772b22".to_string(),
-            origin: None,
+            origin: Some("test.quilt.dev".parse().unwrap()),
         };
         model.expect_get_installed_package().returning(move |_| {
             Ok(Some(

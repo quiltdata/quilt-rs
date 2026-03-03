@@ -58,12 +58,16 @@ pub enum JsSelector {
     DirectoryPicker,
     #[template(source = "js-reveal-in-file-browser", ext = "txt")]
     RevealInFileBrowser,
+    #[template(source = "js-set-origin", ext = "txt")]
+    SetOrigin,
 }
 
 #[derive(Template)]
 pub enum Color {
     #[template(source = "primary", ext = "txt")]
     Primary,
+    #[template(source = "warning", ext = "txt")]
+    Warning,
 }
 
 #[derive(Template)]

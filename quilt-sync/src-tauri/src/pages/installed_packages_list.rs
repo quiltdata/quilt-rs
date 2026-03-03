@@ -19,7 +19,8 @@ use crate::ui::Icon;
 #[derive(Debug)]
 struct InstalledPackage {
     namespace: Namespace,
-    origin: url::Url,
+    origin: Option<url::Url>,
+    origin_host: Option<quilt::uri::Host>,
     remote: quilt::uri::ManifestUri,
     status: UpstreamState,
 }
@@ -33,12 +34,14 @@ pub struct ViewInstalledPackagesList {
 #[derive(Template)]
 #[template(path = "./components/installed-package-item.html")]
 struct TmplInstalledPackage<'a> {
-    button_commit: btn::TmplButton<'a>,
+    button_commit: Option<btn::TmplButton<'a>>,
+    button_error_action: Option<btn::TmplButton<'a>>,
     button_merge: Option<btn::TmplButton<'a>>,
     button_open_local: btn::TmplButton<'a>,
-    button_open_remote: btn::TmplButton<'a>,
+    button_open_remote: Option<btn::TmplButton<'a>>,
     button_sync: Option<btn::TmplButton<'a>>,
     button_uninstall: btn::TmplButton<'a>,
+    is_error: bool,
     namespace: quilt::uri::Namespace,
     remote: quilt::uri::ManifestUri,
 }
@@ -48,16 +51,28 @@ impl From<InstalledPackage> for TmplInstalledPackage<'_> {
         let InstalledPackage {
             namespace,
             origin,
+            origin_host,
             remote,
             status,
         } = value;
+        let is_error = status == UpstreamState::Error;
         TmplInstalledPackage {
-            button_commit: Self::button_commit(&namespace),
+            button_commit: if !is_error {
+                Some(Self::button_commit(&namespace))
+            } else {
+                None
+            },
+            button_error_action: Self::button_error_action(
+                &namespace,
+                &status,
+                origin_host.as_ref(),
+            ),
             button_merge: Self::button_merge(&namespace, &status),
             button_open_local: Self::button_open_local(&namespace),
-            button_open_remote: Self::button_open_remote(&origin),
+            button_open_remote: Self::button_open_remote(origin.as_ref()),
             button_sync: Self::button_sync(&namespace, &status),
             button_uninstall: Self::button_uninstall(&namespace),
+            is_error,
             namespace,
             remote,
         }
@@ -74,13 +89,16 @@ impl<'a> TmplInstalledPackage<'a> {
             .set_size(btn::Size::Small)
     }
 
-    fn button_open_remote(origin: &url::Url) -> btn::TmplButton<'a> {
-        btn::TmplButton::builder()
-            .set_data("url", origin.to_string())
-            .set_icon(Icon::OpenInBrowser)
-            .set_js(btn::JsSelector::OpenInWebBrowser)
-            .set_label(t!("buttons.open_package_in_catalog"))
-            .set_size(btn::Size::Small)
+    fn button_open_remote(origin: Option<&url::Url>) -> Option<btn::TmplButton<'a>> {
+        let origin = origin?;
+        Some(
+            btn::TmplButton::builder()
+                .set_data("url", origin.to_string())
+                .set_icon(Icon::OpenInBrowser)
+                .set_js(btn::JsSelector::OpenInWebBrowser)
+                .set_label(t!("buttons.open_package_in_catalog"))
+                .set_size(btn::Size::Small),
+        )
     }
 
     fn button_commit(namespace: &Namespace) -> btn::TmplButton<'a> {
@@ -121,6 +139,35 @@ impl<'a> TmplInstalledPackage<'a> {
                     .set_size(btn::Size::Small),
             ),
             _ => None,
+        }
+    }
+
+    fn button_error_action(
+        namespace: &Namespace,
+        status: &UpstreamState,
+        origin_host: Option<&quilt::uri::Host>,
+    ) -> Option<btn::TmplButton<'a>> {
+        match origin_host {
+            None => Some(
+                btn::TmplButton::builder()
+                    .set_data("namespace", namespace.to_string())
+                    .set_icon(Icon::Warning)
+                    .set_js(btn::JsSelector::SetOrigin)
+                    .set_label(t!("buttons.set_origin"))
+                    .set_color(btn::Color::Warning)
+                    .set_size(btn::Size::Small),
+            ),
+            Some(host) => match status {
+                UpstreamState::Error => Some(
+                    btn::TmplButton::builder()
+                        .set_icon(Icon::Warning)
+                        .set_label(t!("error.login"))
+                        .set_color(btn::Color::Warning)
+                        .set_size(btn::Size::Small)
+                        .set_href(Paths::Login(host.clone())),
+                ),
+                _ => None,
+            },
         }
     }
 
@@ -165,28 +212,66 @@ impl ViewInstalledPackagesList {
         let list = model.get_installed_packages_list().await?;
         let mut installed_packages_list = Vec::new();
         for installed_package in list {
-            let status = model
-                .get_installed_package_status(&installed_package, None)
-                .await?;
-            let lineage = model
-                .get_installed_package_lineage(&installed_package)
-                .await?;
-            let uri = quilt::uri::S3PackageUri::from(&lineage.remote);
-            let origin_host = debug_tools::try_remote_origin_host(&lineage.remote)?;
-
-            tracing.add_host(&origin_host);
-
-            installed_packages_list.push(InstalledPackage {
-                namespace: installed_package.namespace,
-                origin: uri.display_for_host(&origin_host)?,
-                remote: lineage.remote,
-                status: status.upstream_state,
-            });
+            match Self::load_package(model, tracing, &installed_package).await {
+                Ok(pkg) => installed_packages_list.push(pkg),
+                Err(err) => {
+                    warn!(
+                        "Failed to load package {}: {err}",
+                        installed_package.namespace
+                    );
+                }
+            }
         }
         debug!("Packages list is {:?}", installed_packages_list);
         Ok(ViewInstalledPackagesList {
             installed_packages_list,
             globals: app.globals(),
+        })
+    }
+
+    async fn load_package(
+        model: &impl QuiltModel,
+        tracing: &crate::telemetry::Telemetry,
+        installed_package: &quilt::InstalledPackage,
+    ) -> Result<InstalledPackage, Error> {
+        let lineage = model
+            .get_installed_package_lineage(installed_package)
+            .await?;
+
+        if lineage.remote.origin.is_none() {
+            return Ok(InstalledPackage {
+                namespace: installed_package.namespace.clone(),
+                origin: None,
+                origin_host: None,
+                remote: lineage.remote,
+                status: UpstreamState::Error,
+            });
+        }
+
+        let origin_host = debug_tools::try_remote_origin_host(&lineage.remote)?;
+        tracing.add_host(&origin_host);
+        let uri = quilt::uri::S3PackageUri::from(&lineage.remote);
+        let origin_url = uri.display_for_host(&origin_host)?;
+        let status = match model
+            .get_installed_package_status(installed_package, None)
+            .await
+        {
+            Ok(status) => status.upstream_state,
+            Err(err) => {
+                warn!(
+                    "Failed to get status for {}: {err}",
+                    installed_package.namespace
+                );
+                UpstreamState::Error
+            }
+        };
+
+        Ok(InstalledPackage {
+            namespace: installed_package.namespace.clone(),
+            origin: Some(origin_url),
+            origin_host: Some(origin_host),
+            remote: lineage.remote,
+            status,
         })
     }
 
@@ -225,7 +310,8 @@ mod tests {
     fn create_test_package(namespace: &str, status: UpstreamState) -> Result<InstalledPackage> {
         Ok(InstalledPackage {
             namespace: namespace.try_into().unwrap(),
-            origin: url::Url::parse("https://test.quilt.dev").unwrap(),
+            origin: Some(url::Url::parse("https://test.quilt.dev").unwrap()),
+            origin_host: Some("test.quilt.dev".parse().unwrap()),
             remote: ManifestUri::try_from(S3PackageUri::try_from(
                 format!("quilt+s3://test#package={namespace}@abcdef").as_str(),
             )?)?,
@@ -333,6 +419,67 @@ mod tests {
         let uptodate_html = uptodate_tmpl.to_string();
         assert!(!uptodate_html.contains(r#"merge"#));
         assert!(!uptodate_html.contains(r#"href="merge.html"#));
+
+        Ok(())
+    }
+
+    fn create_test_package_no_origin(namespace: &str) -> Result<InstalledPackage> {
+        Ok(InstalledPackage {
+            namespace: namespace.try_into().unwrap(),
+            origin: None,
+            origin_host: None,
+            remote: ManifestUri::try_from(S3PackageUri::try_from(
+                format!("quilt+s3://test#package={namespace}@abcdef").as_str(),
+            )?)?,
+            status: UpstreamState::Error,
+        })
+    }
+
+    #[test]
+    fn test_error_status_hides_sync_and_merge_buttons() -> Result<()> {
+        let error_package = create_test_package("test/error", UpstreamState::Error)?;
+        let error_tmpl = TmplInstalledPackage::from(error_package);
+        let error_html = error_tmpl.to_string();
+
+        // Error status should show red border
+        assert!(error_html.contains("qui-installed-package-item error"));
+
+        // Error status should not show push, pull, or merge buttons
+        assert!(!error_html.contains(r#"js-packages-push"#));
+        assert!(!error_html.contains(r#"js-packages-pull"#));
+        assert!(!error_html.contains(r#"href="merge.html"#));
+
+        // Should still show "Open in Catalog" since origin is valid
+        assert!(error_html.contains(r#"js-open-in-web-browser"#));
+
+        // Should show Login button for StatusFailed
+        assert!(error_html.contains(r#"href="login.html#host=test.quilt.dev""#));
+
+        // Should not show commit button for error-state packages
+        assert!(!error_html.contains(r#"href="commit.html"#));
+
+        // But should still have common buttons
+        assert!(error_html.contains(r#"js-open-in-file-browser"#));
+        assert!(error_html.contains(r#"js-packages-uninstall"#));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_no_origin_shows_set_origin_button() -> Result<()> {
+        let no_origin_package = create_test_package_no_origin("test/noorigin")?;
+        let no_origin_tmpl = TmplInstalledPackage::from(no_origin_package);
+        let no_origin_html = no_origin_tmpl.to_string();
+
+        // Should show error styling
+        assert!(no_origin_html.contains("qui-installed-package-item error"));
+
+        // Should show "Set origin" button
+        assert!(no_origin_html.contains(r#"js-set-origin"#));
+        assert!(no_origin_html.contains(r#"data-namespace="test/noorigin""#));
+
+        // Should NOT show Login button
+        assert!(!no_origin_html.contains(r#"href="login.html"#));
 
         Ok(())
     }

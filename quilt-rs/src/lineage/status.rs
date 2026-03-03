@@ -24,6 +24,7 @@ pub enum UpstreamState {
     Behind,
     Ahead,
     Diverged,
+    Error,
 }
 
 /// Status of the package and working directory of the package
@@ -41,6 +42,13 @@ impl InstalledPackageStatus {
         Self {
             upstream_state,
             changes,
+        }
+    }
+
+    pub fn error() -> Self {
+        Self {
+            upstream_state: UpstreamState::Error,
+            changes: Default::default(),
         }
     }
 }

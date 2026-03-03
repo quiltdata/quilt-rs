@@ -5,6 +5,11 @@
 <div class="qui-status">
   <div class="root">
     <h2 class="description">{{ description }}</h2>
-    <div class="action">{{ button | safe }}</div>
+    <div class="action">
+      {{ button | safe }}
+      {% if let Some(secondary_button) = secondary_button %}
+        {{ secondary_button | safe }}
+      {% endif %}
+    </div>
   </div>
 </div>
