@@ -486,4 +486,28 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_view_status_failed() -> Result {
+        let html = (ViewInstalledPackage {
+            entries_list: vec![],
+            origin: Some(url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?),
+            origin_host: Some("test.quilt.dev".parse().unwrap()),
+            status: quilt::lineage::UpstreamState::Error,
+            uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
+            globals: Globals::default(),
+        })
+        .render()?;
+
+        // Should show Login button
+        assert!(html.contains(r#"href="login.html#host=test.quilt.dev""#));
+
+        // Should not show commit button
+        assert!(!html.contains(r#"href="commit.html"#));
+
+        // Should still show "Open in Catalog" since origin is valid
+        assert!(html.contains("Open in Catalog"));
+
+        Ok(())
+    }
 }
