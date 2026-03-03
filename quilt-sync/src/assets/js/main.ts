@@ -23,6 +23,9 @@ const SELECTOR_METADATA = ".js-metadata";
 const SELECTOR_METADATA_INPUT = "#metadata";
 const SELECTOR_NOTIFY = "#notify";
 const SELECTOR_NOTIFY_SUCCESS = ".js-success";
+const SELECTOR_ORIGIN_CANCEL = ".js-origin-cancel";
+const SELECTOR_ORIGIN_INPUT = ".js-origin-input";
+const SELECTOR_ORIGIN_SUBMIT = ".js-origin-submit";
 const SELECTOR_UPDATE_DISMISS = ".js-update-dismiss";
 const SELECTOR_UPDATE_DOWNLOAD = ".js-update-download";
 const SELECTOR_UPDATE_INSTALL = ".js-update-install";
@@ -67,6 +70,9 @@ type Selector =
   | typeof SELECTOR_NOTIFY
   | typeof SELECTOR_NOTIFY_SUCCESS
   | typeof SELECTOR_OPEN_COMMIT_PAGE
+  | typeof SELECTOR_ORIGIN_CANCEL
+  | typeof SELECTOR_ORIGIN_INPUT
+  | typeof SELECTOR_ORIGIN_SUBMIT
   | typeof SELECTOR_OPEN_DIRECTORY_PICKER
   | typeof SELECTOR_OPEN_IN_DEFAULT_APPLICATION
   | typeof SELECTOR_OPEN_IN_FILE_BROWSER
@@ -456,10 +462,9 @@ window.addEventListener(EVENT_PAGE_READY, () => {
     execPageCommand(CMD_PACKAGE_UNINSTALL, data, ROUTE_INSTALLED_PACKAGES_LIST),
   );
 
-  listen(SELECTOR_SET_ORIGIN, ["namespace"], async (data) => {
-    const origin = window.prompt("Enter catalog origin (e.g. open.quilt.bio):")?.trim();
-    if (!origin) return;
-    await execPageCommand(CMD_SET_ORIGIN, { ...data, origin });
+  listen(SELECTOR_SET_ORIGIN, ["namespace"], async (data, button) => {
+    const currentOrigin = button.getAttribute("data-origin") ?? "";
+    showSetOriginForm(data.namespace, currentOrigin);
   });
 
   listen(SELECTOR_PACKAGE_CERTIFY_LATEST, ["namespace"], (data) =>
@@ -633,6 +638,50 @@ async function installUpdate(update: Awaited<ReturnType<typeof check>>) {
   } catch (error) {
     notify(`<div class="error">Failed to install update: ${error}</div>`);
   }
+}
+
+function showSetOriginForm(namespace: Namespace, currentOrigin: string = "") {
+  notify(`<div class="origin-form">
+    <label>Catalog origin</label>
+    <input class="origin-input js-origin-input" type="text" placeholder="open.quilt.bio" value="${currentOrigin}" />
+    <div class="origin-form-actions">
+      <button class="qui-button primary js-origin-submit"><span>Submit</span></button>
+      <button class="qui-button js-origin-cancel"><span>Cancel</span></button>
+    </div>
+  </div>`);
+
+  const outputElement = findElement(SELECTOR_NOTIFY);
+  if (!outputElement) return;
+
+  const input = findElement(
+    SELECTOR_ORIGIN_INPUT,
+    outputElement,
+  ) as HTMLInputElement;
+  input?.focus();
+
+  const submit = () => {
+    const origin = input?.value.trim();
+    if (!origin) return;
+    execPageCommand(CMD_SET_ORIGIN, { namespace, origin }).catch(handleError);
+  };
+
+  const cancel = () => {
+    notify("");
+  };
+
+  const submitButton = findElement(SELECTOR_ORIGIN_SUBMIT, outputElement);
+  submitButton?.addEventListener("click", submit);
+
+  const cancelButton = findElement(SELECTOR_ORIGIN_CANCEL, outputElement);
+  cancelButton?.addEventListener("click", cancel);
+
+  input?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      submit();
+    } else if (event.key === "Escape") {
+      cancel();
+    }
+  });
 }
 
 function showInstallNotification(update: Awaited<ReturnType<typeof check>>) {

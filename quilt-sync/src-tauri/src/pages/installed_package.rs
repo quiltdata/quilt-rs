@@ -84,6 +84,7 @@ impl TmplStatus<'_> {
                     secondary_button: Some(
                         btn::TmplButton::builder()
                             .set_data("namespace", namespace.to_string())
+                            .set_data("origin", host.to_string())
                             .set_js(btn::JsSelector::SetOrigin)
                             .set_label(t!("buttons.change_origin")),
                     ),

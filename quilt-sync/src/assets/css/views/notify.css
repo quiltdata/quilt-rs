@@ -56,4 +56,27 @@
     flex-shrink: 0;
     gap: var(--q-ui-size-2);
   }
+
+  .origin-form {
+    align-items: center;
+    display: flex;
+    gap: var(--q-ui-size-2);
+  }
+
+  .origin-form label {
+    flex-shrink: 0;
+  }
+
+  .origin-input {
+    border: 1px solid var(--q-ui-palette-border);
+    border-radius: var(--q-ui-radius);
+    font: inherit;
+    padding: var(--q-ui-size-1) var(--q-ui-size-2);
+  }
+
+  .origin-form-actions {
+    display: flex;
+    flex-shrink: 0;
+    gap: var(--q-ui-size-2);
+  }
 }
