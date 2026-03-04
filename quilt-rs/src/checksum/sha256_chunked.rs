@@ -32,7 +32,7 @@ const MULTIPART_THRESHOLD: u64 = 8 * 1024 * 1024;
 /// Examines if chunksum size is suitable to split file and get less chunks then supported.
 /// If not, we tries to increas chunksum until it find chunk size that can split into reasonable
 /// number of chunks (`MPU_MAX_PARTS`).
-pub fn chunksize_and_parts(file_size: u64) -> (u64, u64) {
+pub(crate) fn chunksize_and_parts(file_size: u64) -> (u64, u64) {
     let mut chunksize = MULTIPART_THRESHOLD;
     let mut num_parts = file_size.div_ceil(chunksize);
 
