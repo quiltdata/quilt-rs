@@ -12,7 +12,7 @@ license = "UNLICENSED"
 
 [build-dependencies]
 # Keep the verbose notation, because it will be (re-)written by tauri-build anyway
-tauri-build = { version = "2.5.5", features = [] }
+tauri-build = { version = "2.5.6", features = [] }
 
 [dependencies]
 askama = "0.15.4"
@@ -31,7 +31,7 @@ mixpanel-rs = "0.3.1"
 serde.workspace = true
 serde_json.workspace = true
 serde_qs = "1.0.0"
-tauri = { version = "2.10.2", features = ["test", "devtools"] }
+tauri = { version = "2.10.3", features = ["test", "devtools"] }
 tauri-plugin-deep-link = "2.4.7"
 tauri-plugin-process = "2.3.1"
 tauri-plugin-shell = "2.3.5"
