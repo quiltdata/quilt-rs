@@ -25,7 +25,7 @@ pub use hash::Hash;
 pub use remote::hash_sha256_checksum;
 pub use sha256::Sha256Hash;
 pub use sha256::MULTIHASH_SHA256;
-pub use sha256_chunked::get_checksum_chunksize_and_parts;
+pub use sha256_chunked::chunksize_and_parts;
 pub use sha256_chunked::Sha256ChunkedHash;
 pub use sha256_chunked::MULTIHASH_SHA256_CHUNKED;
 

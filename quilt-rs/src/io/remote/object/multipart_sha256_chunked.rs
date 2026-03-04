@@ -7,7 +7,7 @@ use aws_sdk_s3::types::CompletedMultipartUpload;
 use aws_sdk_s3::types::CompletedPart;
 use aws_smithy_types::byte_stream::Length;
 
-use crate::checksum::get_checksum_chunksize_and_parts;
+use crate::checksum::chunksize_and_parts;
 use crate::checksum::ObjectHash;
 use crate::checksum::Sha256ChunkedHash;
 use crate::uri::S3Uri;
@@ -20,7 +20,7 @@ pub async fn multipart_upload_and_sha256_chunksum(
     dest_uri: &S3Uri,
     size: u64,
 ) -> Res<(S3Uri, ObjectHash)> {
-    let (chunksize, num_chunks) = get_checksum_chunksize_and_parts(size);
+    let (chunksize, num_chunks) = chunksize_and_parts(size);
     let upload_id = client
         .create_multipart_upload()
         .bucket(&dest_uri.bucket)
