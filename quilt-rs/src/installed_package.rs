@@ -456,7 +456,7 @@ mod tests {
 
         // Set up a valid cached manifest
         let reference_manifest = crate::fixtures::manifest::path();
-        let cached_manifest = paths.manifest_cache("test-bucket", &test_hash);
+        let cached_manifest = paths.cached_manifest("test-bucket", &test_hash);
         storage.copy(reference_manifest?, cached_manifest).await?;
 
         // Create a corrupted installed manifest

@@ -256,7 +256,7 @@ pub async fn commit_package(
         new_files.len()
     );
     let stream = stream_local_with_changes(manifest, removed_keys, modified_keys, new_files).await;
-    let dest_dir = paths.installed_manifests(&namespace);
+    let dest_dir = paths.installed_manifests_dir(&namespace);
     let (manifest_path, new_top_hash) =
         build_manifest_from_rows_stream(storage, dest_dir, header, stream).await?;
     info!(
