@@ -97,6 +97,7 @@ fn main() {
             commands::package_uninstall,
             commands::reset_local,
             commands::reveal_in_file_browser,
+            commands::set_origin,
             commands::setup,
         ])
         .run(tauri::generate_context!())

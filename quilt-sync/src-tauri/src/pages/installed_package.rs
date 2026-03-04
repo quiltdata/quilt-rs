@@ -25,7 +25,8 @@ use crate::Result;
 pub struct ViewInstalledPackage {
     entries_list: Vec<entry::ViewEntry>,
     globals: Globals,
-    origin: url::Url,
+    origin: Option<url::Url>,
+    origin_host: Option<quilt::uri::Host>,
     status: UpstreamState,
     uri: S3PackageUri,
 }
@@ -35,10 +36,15 @@ pub struct ViewInstalledPackage {
 struct TmplStatus<'a> {
     description: Cow<'a, str>,
     button: btn::TmplButton<'a>,
+    secondary_button: Option<btn::TmplButton<'a>>,
 }
 
 impl TmplStatus<'_> {
-    fn new(namespace: &Namespace, status: &UpstreamState) -> Option<Self> {
+    fn new(
+        namespace: &Namespace,
+        status: &UpstreamState,
+        origin_host: Option<&quilt::uri::Host>,
+    ) -> Option<Self> {
         match status {
             UpstreamState::Ahead => Some(TmplStatus {
                 description: t!("installed_package_status.ahead"),
@@ -47,6 +53,7 @@ impl TmplStatus<'_> {
                     .set_js(btn::JsSelector::PackagesPush)
                     .set_label(t!("buttons.push_package"))
                     .set_color(btn::Color::Primary),
+                secondary_button: None,
             }),
             UpstreamState::Behind => Some(TmplStatus {
                 description: t!("installed_package_status.behind"),
@@ -55,6 +62,7 @@ impl TmplStatus<'_> {
                     .set_js(btn::JsSelector::PackagesPull)
                     .set_label(t!("buttons.pull_package"))
                     .set_color(btn::Color::Primary),
+                secondary_button: None,
             }),
             UpstreamState::Diverged => Some(TmplStatus {
                 description: t!("installed_package_status.diverged"),
@@ -63,7 +71,35 @@ impl TmplStatus<'_> {
                     .set_label(t!("buttons.merge_package"))
                     .set_color(btn::Color::Primary)
                     .set_href(Paths::Merge(namespace.clone())),
+                secondary_button: None,
             }),
+            UpstreamState::Error => match origin_host {
+                Some(host) => Some(TmplStatus {
+                    description: t!("installed_package_status.error"),
+                    button: btn::TmplButton::builder()
+                        .set_label(t!("error.login"))
+                        .set_icon(Icon::Warning)
+                        .set_color(btn::Color::Warning)
+                        .set_href(Paths::Login(host.clone())),
+                    secondary_button: Some(
+                        btn::TmplButton::builder()
+                            .set_data("namespace", namespace.to_string())
+                            .set_data("origin", host.to_string())
+                            .set_js(btn::JsSelector::SetOrigin)
+                            .set_label(t!("buttons.change_origin")),
+                    ),
+                }),
+                None => Some(TmplStatus {
+                    description: t!("installed_package_status.no_origin"),
+                    button: btn::TmplButton::builder()
+                        .set_data("namespace", namespace.to_string())
+                        .set_icon(Icon::Warning)
+                        .set_js(btn::JsSelector::SetOrigin)
+                        .set_label(t!("buttons.set_origin"))
+                        .set_color(btn::Color::Warning),
+                    secondary_button: None,
+                }),
+            },
             UpstreamState::UpToDate => None,
         }
     }
@@ -110,24 +146,29 @@ impl<'a> TmplPageInstalledPackage<'a> {
         }
     }
 
-    fn actions(uri: &S3PackageUri, origin: &url::Url) -> Vec<btn::TmplButton<'a>> {
-        vec![
-            btn::TmplButton::builder()
-                .set_data("namespace", uri.namespace.to_string())
-                .set_icon(Icon::FolderOpen)
-                .set_js(btn::JsSelector::OpenInFileBrowser)
-                .set_label(t!("buttons.open_package_in_file_browser")),
-            btn::TmplButton::builder()
-                .set_data("url", origin.to_string())
-                .set_icon(Icon::OpenInBrowser)
-                .set_js(btn::JsSelector::OpenInWebBrowser)
-                .set_label(t!("buttons.open_package_in_catalog")),
+    fn actions(uri: &S3PackageUri, origin: Option<&url::Url>) -> Vec<btn::TmplButton<'a>> {
+        let mut actions = vec![btn::TmplButton::builder()
+            .set_data("namespace", uri.namespace.to_string())
+            .set_icon(Icon::FolderOpen)
+            .set_js(btn::JsSelector::OpenInFileBrowser)
+            .set_label(t!("buttons.open_package_in_file_browser"))];
+        if let Some(origin) = origin {
+            actions.push(
+                btn::TmplButton::builder()
+                    .set_data("url", origin.to_string())
+                    .set_icon(Icon::OpenInBrowser)
+                    .set_js(btn::JsSelector::OpenInWebBrowser)
+                    .set_label(t!("buttons.open_package_in_catalog")),
+            );
+        }
+        actions.push(
             btn::TmplButton::builder()
                 .set_data("namespace", uri.namespace.to_string())
                 .set_icon(Icon::Block)
                 .set_js(btn::JsSelector::PackagesUninstall)
                 .set_label(t!("buttons.uninstall_package")),
-        ]
+        );
+        actions
     }
 }
 
@@ -147,9 +188,30 @@ impl ViewInstalledPackage {
             .get_installed_package_lineage(&installed_package)
             .await?;
 
-        let status = model
-            .get_installed_package_status(&installed_package, None)
-            .await?;
+        // TODO: just use remote_manifest?
+        let uri = quilt::uri::S3PackageUri::from(&lineage.remote);
+        let origin_host = match debug_tools::try_remote_origin_host(&lineage.remote) {
+            Ok(host) => {
+                tracing.add_host(&host);
+                Some(host)
+            }
+            Err(_) => None,
+        };
+
+        let status = if origin_host.is_some() {
+            match model
+                .get_installed_package_status(&installed_package, None)
+                .await
+            {
+                Ok(status) => status,
+                Err(err) => {
+                    warn!("Failed to get status for {namespace}: {err}");
+                    quilt::lineage::InstalledPackageStatus::error()
+                }
+            }
+        } else {
+            quilt::lineage::InstalledPackageStatus::error()
+        };
 
         let modified_entries = &status.changes;
         let installed_paths = &lineage.paths;
@@ -157,19 +219,16 @@ impl ViewInstalledPackage {
             .get_installed_package_records(&installed_package)
             .await?;
 
-        // TODO: just use remote_manifest?
-        let uri = quilt::uri::S3PackageUri::from(&lineage.remote);
-        let origin_host = debug_tools::try_remote_origin_host(&lineage.remote)?;
-
-        tracing.add_host(&origin_host);
-
         let mut entries_list = Vec::new();
         for (filename, change) in modified_entries {
             let entry_uri = quilt::uri::S3PackageUri {
                 path: Some(filename.to_owned()),
                 ..uri.clone()
             };
-            let origin = entry_uri.display_for_host(&origin_host)?;
+            let origin = match &origin_host {
+                Some(host) => Some(entry_uri.display_for_host(host)?),
+                None => None,
+            };
             entries_list.push(entry::ViewEntry {
                 filename: filename.clone(),
                 size: match &change {
@@ -193,7 +252,10 @@ impl ViewInstalledPackage {
                     path: Some(filename.to_owned()),
                     ..uri.clone()
                 };
-                let origin = entry_uri.display_for_host(&origin_host)?;
+                let origin = match &origin_host {
+                    Some(host) => Some(entry_uri.display_for_host(host)?),
+                    None => None,
+                };
                 entries_list.push(entry::ViewEntry {
                     filename: filename.clone(),
                     origin,
@@ -223,7 +285,10 @@ impl ViewInstalledPackage {
                 path: Some(filename.clone()),
                 ..uri.clone()
             };
-            let origin = entry_uri.display_for_host(&origin_host)?;
+            let origin = match &origin_host {
+                Some(host) => Some(entry_uri.display_for_host(host)?),
+                None => None,
+            };
             entries_list.push(entry::ViewEntry {
                 filename,
                 size: row.size,
@@ -239,10 +304,16 @@ impl ViewInstalledPackage {
         // Sort entries by filename
         entries_list.sort_by(|a, b| a.filename.cmp(&b.filename));
 
+        let origin = match &origin_host {
+            Some(host) => Some(uri.display_for_host(host)?),
+            None => None,
+        };
+
         Ok(ViewInstalledPackage {
             entries_list,
             globals: app.globals(),
-            origin: uri.display_for_host(&origin_host)?,
+            origin,
+            origin_host,
             status: status.upstream_state,
             uri: uri.clone(),
         })
@@ -262,6 +333,7 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
         let ViewInstalledPackage {
             entries_list,
             origin,
+            origin_host,
             status,
             uri,
             ..
@@ -273,13 +345,18 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
         for entry in entries_list {
             entries.push(entry::TmplEntry::from(entry).set_checkbox(false));
         }
+        let layout = Layout::builder(view.globals)
+            .set_breadcrumbs(Self::breadcrumbs(&uri))
+            .set_actions(Self::actions(&uri, origin.as_ref()))
+            .set_uri(Some(uri.clone()));
+        let layout = if matches!(status, UpstreamState::Error) {
+            layout
+        } else {
+            layout.set_primary_action(Self::primary_button(&uri, &status))
+        };
         TmplPageInstalledPackage {
-            layout: Layout::builder(view.globals)
-                .set_primary_action(Self::primary_button(&uri, &status))
-                .set_breadcrumbs(Self::breadcrumbs(&uri))
-                .set_actions(Self::actions(&uri, &origin))
-                .set_uri(Some(uri.clone())),
-            status: TmplStatus::new(&uri.namespace, &status),
+            layout,
+            status: TmplStatus::new(&uri.namespace, &status, origin_host.as_ref()),
             entries,
             toolbar: {
                 if has_remote_entries {
@@ -314,7 +391,8 @@ mod tests {
     fn test_view() -> Result {
         let html = (ViewInstalledPackage {
             entries_list: vec![],
-            origin: url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?,
+            origin: Some(url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?),
+            origin_host: Some("test.quilt.dev".parse().unwrap()),
             status: quilt::lineage::UpstreamState::UpToDate,
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
             globals: Globals::default(),
@@ -368,14 +446,15 @@ mod tests {
                 size: *size_bytes,
                 status: entry::EntryStatus::Pristine,
                 uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
-                origin: url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?,
+                origin: Some(url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?),
             });
         }
 
         // Create the ViewInstalledPackage with our test entries
         let view = ViewInstalledPackage {
             entries_list,
-            origin: url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?,
+            origin: Some(url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?),
+            origin_host: Some("test.quilt.dev".parse().unwrap()),
             status: quilt::lineage::UpstreamState::UpToDate,
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
             globals: Globals::default(),
@@ -390,6 +469,58 @@ mod tests {
                 "<p class=\"text-secondary\">Downloaded, {size_str}</p>"
             )));
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_view_no_origin() -> Result {
+        let html = (ViewInstalledPackage {
+            entries_list: vec![],
+            origin: None,
+            origin_host: None,
+            status: quilt::lineage::UpstreamState::Error,
+            uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
+            globals: Globals::default(),
+        })
+        .render()?;
+
+        // Should show "Set origin" button
+        assert!(html.contains(r#"js-set-origin"#));
+        assert!(html.contains(r#"warning"#));
+
+        // Should not show commit button
+        assert!(!html.contains(r#"href="commit.html"#));
+
+        // Should not show "Open in Catalog" action
+        assert!(!html.contains("Open in Catalog"));
+
+        // Should still show basic page structure
+        assert!(html.contains(r#"data-testid="installed-package-entries""#));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_view_status_failed() -> Result {
+        let html = (ViewInstalledPackage {
+            entries_list: vec![],
+            origin: Some(url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?),
+            origin_host: Some("test.quilt.dev".parse().unwrap()),
+            status: quilt::lineage::UpstreamState::Error,
+            uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
+            globals: Globals::default(),
+        })
+        .render()?;
+
+        // Should show Login button
+        assert!(html.contains(r#"href="login.html#host=test.quilt.dev""#));
+
+        // Should not show commit button
+        assert!(!html.contains(r#"href="commit.html"#));
+
+        // Should still show "Open in Catalog" since origin is valid
+        assert!(html.contains("Open in Catalog"));
 
         Ok(())
     }

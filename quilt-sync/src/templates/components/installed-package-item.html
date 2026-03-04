@@ -2,7 +2,7 @@
   @import url("/assets/css/views/installed-package-item.css");
 </style>
 
-<li class="qui-installed-package-item">
+<li class="qui-installed-package-item {%+ if is_error %}error{% endif %}">
   <a class="link" href="{{ Paths::InstalledPackage(namespace.clone()) }}">
     <span class="item-primary">{{ namespace }}</span>
     <span class="item-secondary">
@@ -13,11 +13,15 @@
   <div class="menu">
     <ul class="menu-list">
       <li class="menu-item">{{ button_open_local | safe }}</li>
+      {% if let Some(button_open_remote) = button_open_remote %}
       <li class="menu-item">{{ button_open_remote | safe }}</li>
+      {% endif %}
 
       <li class="menu-item menu-divider" />
 
+      {% if let Some(button_commit) = button_commit %}
       <li class="menu-item">{{ button_commit | safe }}</li>
+      {% endif %}
 
       {% if let Some(button_sync) = button_sync %}
       <li class="menu-item menu-divider" />
@@ -29,6 +33,12 @@
       <li class="menu-item menu-divider" />
 
       <li class="menu-item">{{ button_merge | safe }}</li>
+      {% endif %}
+      <!-- -->
+      {% if let Some(button_error_action) = button_error_action %}
+      <li class="menu-item menu-divider" />
+
+      <li class="menu-item">{{ button_error_action | safe }}</li>
       {% endif %}
 
       <li class="menu-item menu-divider" />

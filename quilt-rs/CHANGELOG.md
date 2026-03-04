@@ -7,6 +7,15 @@
 -->
 # Changelog
 
+## [v0.27.2] - 2026-03-03
+
+### Added
+
+- Add `UpstreamState::Error` variant for packages that cannot check remote status
+  (<https://github.com/quiltdata/quilt-rs/pull/523>)
+- Add `InstalledPackage::set_origin()` method to update a package's catalog origin
+  (<https://github.com/quiltdata/quilt-rs/pull/523>)
+
 ## [v0.27.1] - 2026-02-18
 
 ### Added

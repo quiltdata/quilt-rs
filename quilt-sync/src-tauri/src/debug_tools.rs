@@ -2,7 +2,7 @@ use crate::quilt;
 use crate::Error;
 
 pub fn try_remote_origin_host(uri: &quilt::uri::ManifestUri) -> Result<quilt::uri::Host, Error> {
-    Ok(uri.origin.clone().unwrap_or("open.quilt.bio".parse()?))
+    uri.origin.clone().ok_or(Error::MissingOrigin)
 }
 
 #[cfg(test)]
@@ -47,17 +47,17 @@ mod tests {
             "custom.quilt.org"
         );
 
-        // Test with default origin
+        // Test with no origin returns MissingOrigin error
         let manifest_without_origin = quilt::uri::ManifestUri {
             bucket: "bucket".to_string(),
             origin: None,
             hash: "abcdef".to_string(),
             namespace: ("foo", "bar").into(),
         };
-        assert_eq!(
-            try_remote_origin_host(&manifest_without_origin)?.to_string(),
-            "open.quilt.bio"
-        );
+        assert!(matches!(
+            try_remote_origin_host(&manifest_without_origin),
+            Err(Error::MissingOrigin)
+        ));
 
         Ok(())
     }

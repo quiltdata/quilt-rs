@@ -30,6 +30,8 @@ converge = 'Converge'
 ahead = 'Your commits are ahead of the remote'
 behind = 'Your commits are behind the remote'
 diverged = 'Your commits are detached from the remote'
+error = 'Unable to check remote status'
+no_origin = 'No catalog origin configured'
 
 [commit]
 message = 'Message'
@@ -73,6 +75,8 @@ pull_package = 'Pull'
 push_package = 'Push'
 merge_package = 'Merge'
 install_selected_paths = 'Download selected paths'
+set_origin = 'Set origin'
+change_origin = 'Change origin'
 
 [debug_toolbar]
 dot_quilt_button = 'Open .quilt/'

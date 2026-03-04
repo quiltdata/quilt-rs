@@ -8,13 +8,31 @@
 -->
 # Changelog
 
-## [v0.14.2-alpha1] - 2026-02-27
+## [v0.14.3] - 2026-03-03
+
+### Fixed
+
+- Replace `window.prompt` with inline form for setting catalog origin,
+  fixing broken prompt on macOS in Tauri
+  (<https://github.com/quiltdata/quilt-rs/pull/529>)
+
+## [v0.14.2] - 2026-03-03
 
 ### Changed
 
 - Show update notification with Download/Dismiss buttons
   instead of auto-installing updates
   (<https://github.com/quiltdata/quilt-rs/pull/520>)
+- Gracefully handle packages without catalog origin: show "Set origin" button
+  instead of failing, remove bogus open.quilt.bio fallback
+  (<https://github.com/quiltdata/quilt-rs/pull/523>)
+
+### quilt-rs
+
+- Updated [from v0.27.1 to v0.27.2](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.27.1...quilt-rs/v0.27.2)
+  (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+  - Add `UpstreamState::Error` variant and
+    `InstalledPackage::set_origin()` for packages without catalog origin
 
 ## [v0.14.1] - 2026-02-26
 
