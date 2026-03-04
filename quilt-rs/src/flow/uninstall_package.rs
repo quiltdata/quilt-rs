@@ -26,7 +26,7 @@ pub async fn uninstall_package(
     debug!("✔️ Package removed from lineage");
 
     debug!("⏳ Removing installed manifests");
-    let manifest_path = paths.installed_manifests(&namespace);
+    let manifest_path = paths.installed_manifests_dir(&namespace);
     storage.remove_dir_all(&manifest_path).await?;
     debug!("✔️ Removed manifests at: {}", manifest_path.display());
 

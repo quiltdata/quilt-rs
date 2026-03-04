@@ -57,7 +57,7 @@ pub async fn cache_remote_manifest(
     // return cached manifest
 
     // let manifest_uri = resolve_manifest_uri(remote, uri).await?;
-    let cache_dir = paths.manifest_cache_dir(&manifest_uri.bucket);
+    let cache_dir = paths.cached_manifests_dir(&manifest_uri.bucket);
     let cache_path = cache_dir.join(&manifest_uri.hash);
 
     let manifest_path = cache_path.clone();
@@ -128,7 +128,7 @@ mod tests {
             hash: "deadbeef".to_string(), // We use it for path location, but it's not used for verification
             origin: None,
         };
-        let cache_path = paths.manifest_cache(&manifest_uri.bucket, &manifest_uri.hash);
+        let cache_path = paths.cached_manifest(&manifest_uri.bucket, &manifest_uri.hash);
 
         // Prepare the reference manifest file.
         // It is copied into the cache path to simulate a cached manifest.
@@ -166,7 +166,7 @@ mod tests {
             hash: "invalid_hash".to_string(),
             origin: None,
         };
-        let cache_path = paths.manifest_cache(&manifest.bucket, &manifest.hash);
+        let cache_path = paths.cached_manifest(&manifest.bucket, &manifest.hash);
         let storage = MockStorage::default();
         storage.write_file(cache_path, &Vec::new()).await?;
 
@@ -195,7 +195,7 @@ mod tests {
         };
 
         // Write invalid data to simulate a stale Parquet cache
-        let cache_path = paths.manifest_cache(&manifest_uri.bucket, &manifest_uri.hash);
+        let cache_path = paths.cached_manifest(&manifest_uri.bucket, &manifest_uri.hash);
         paths
             .scaffold_for_caching(&storage, &manifest_uri.bucket)
             .await?;

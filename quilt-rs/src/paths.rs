@@ -63,12 +63,11 @@ impl DomainPaths {
     /// Path to the installed manifest
     // TODO: pass `ManifestUri`
     pub fn installed_manifest(&self, namespace: &Namespace, hash: &str) -> PathBuf {
-        self.installed_manifests(namespace).join(hash)
+        self.installed_manifests_dir(namespace).join(hash)
     }
 
-    // TODO: rename to `installed_manifests_dir`
     /// Directory for storing installed manifests
-    pub fn installed_manifests(&self, namespace: &Namespace) -> PathBuf {
+    pub fn installed_manifests_dir(&self, namespace: &Namespace) -> PathBuf {
         self.root_dir
             .join(INSTALLED_DIR)
             .join(namespace.to_string())
@@ -79,15 +78,14 @@ impl DomainPaths {
         self.root_dir.join(LINEAGE_FILE)
     }
 
-    // TODO: rename to `cached_manifest`
     /// Path to the manifest cached in semi-temporary directory
     // TODO: pass `ManifestUri`
-    pub fn manifest_cache(&self, bucket: &str, hash: &str) -> PathBuf {
+    pub fn cached_manifest(&self, bucket: &str, hash: &str) -> PathBuf {
         self.root_dir.join(MANIFEST_DIR).join(bucket).join(hash)
     }
 
     /// Directory for storing cached manifests for a bucket
-    pub fn manifest_cache_dir(&self, bucket: &str) -> PathBuf {
+    pub fn cached_manifests_dir(&self, bucket: &str) -> PathBuf {
         self.root_dir.join(MANIFEST_DIR).join(bucket)
     }
 
@@ -116,7 +114,7 @@ impl DomainPaths {
         paths.extend(self.required());
         paths.extend(vec![
             package_home(home, namespace),
-            self.installed_manifests(namespace),
+            self.installed_manifests_dir(namespace),
         ]);
         Ok(paths)
     }
@@ -134,7 +132,7 @@ impl DomainPaths {
     fn required_for_caching(&self, bucket: &str) -> Vec<PathBuf> {
         let mut paths = vec![];
         paths.extend(self.required());
-        paths.extend(vec![self.manifest_cache_dir(bucket)]);
+        paths.extend(vec![self.cached_manifests_dir(bucket)]);
         paths
     }
 
@@ -156,7 +154,7 @@ pub async fn copy_cached_to_installed(
 ) -> Res {
     match storage
         .copy(
-            paths.manifest_cache(&manifest_uri.bucket, &manifest_uri.hash),
+            paths.cached_manifest(&manifest_uri.bucket, &manifest_uri.hash),
             paths.installed_manifest(&manifest_uri.namespace, &manifest_uri.hash),
         )
         .await

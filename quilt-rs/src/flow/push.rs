@@ -127,7 +127,7 @@ pub async fn push_package(
         )
         .await,
     );
-    let dest_dir = paths.manifest_cache_dir(&manifest_uri.bucket);
+    let dest_dir = paths.cached_manifests_dir(&manifest_uri.bucket);
     let (cache_path, top_hash) =
         build_manifest_from_rows_stream(storage, dest_dir, local_manifest.header.clone(), stream)
             .await?;
