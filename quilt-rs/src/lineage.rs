@@ -104,10 +104,11 @@ impl DomainLineageIo {
     }
 
     pub async fn read(&self, storage: &impl Storage) -> Res<DomainLineage> {
-        if !storage.exists(&self.path).await {
-            return Err(Error::LineageMissing);
-        }
-        let bytes = storage.read_bytes(&self.path).await?;
+        let bytes = match storage.read_bytes(&self.path).await {
+            Ok(bytes) => bytes,
+            Err(_) if !storage.exists(&self.path).await => return Err(Error::LineageMissing),
+            Err(e) => return Err(e),
+        };
         DomainLineage::from_slice(&bytes)
     }
 
@@ -148,13 +149,17 @@ impl DomainLineageIo {
         storage: &impl Storage,
         home: impl AsRef<Path>,
     ) -> Res<DomainLineage> {
-        if !storage.exists(&self.path).await {
-            return self.write(storage, DomainLineage::new(home)).await;
+        match storage.read_bytes(&self.path).await {
+            Ok(bytes) => {
+                let mut lineage: DomainLineage = serde_json::from_slice(&bytes)?;
+                lineage.home = home.into();
+                self.write(storage, lineage).await
+            }
+            Err(_) if !storage.exists(&self.path).await => {
+                self.write(storage, DomainLineage::new(home)).await
+            }
+            Err(e) => Err(e),
         }
-        let bytes = storage.read_bytes(&self.path).await?;
-        let mut lineage: DomainLineage = serde_json::from_slice(&bytes)?;
-        lineage.home = home.into();
-        self.write(storage, lineage).await
     }
 
     pub async fn write(
