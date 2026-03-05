@@ -150,7 +150,7 @@ impl DomainLineageIo {
     ) -> Res<DomainLineage> {
         match storage.read_bytes(&self.path).await {
             Ok(bytes) => {
-                let mut lineage: DomainLineage = serde_json::from_slice(&bytes)?;
+                let mut lineage = DomainLineage::from_slice(&bytes)?;
                 lineage.home = home.into();
                 self.write(storage, lineage).await
             }
