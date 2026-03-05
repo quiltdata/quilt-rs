@@ -81,19 +81,10 @@ pub trait Storage {
         to: impl AsRef<Path> + Send,
     ) -> impl Future<Output = Res> + Send;
 
-    /// Writes bytes srteam to a file
+    /// Writes byte stream to a file
     fn write_byte_stream(
         &self,
         path: impl AsRef<Path> + Send + Sync,
         body: ByteStream,
-    ) -> impl Future<Output = Res> + Send + Sync;
-
-    /// Writes bytes to a file
-    /// Prefer using `write_byte_stream`.
-    // TODO: Remove it in favor of `self.write_byte_stream`
-    fn write_file(
-        &self,
-        path: impl AsRef<Path> + Send + Sync,
-        bytes: &[u8],
     ) -> impl Future<Output = Res> + Send + Sync;
 }

@@ -103,13 +103,6 @@ impl Storage for MockStorage {
         Ok(DateTime::<Utc>::from(modified))
     }
 
-    /// Overwrite the `write` method
-    async fn write_file(&self, path: impl AsRef<Path>, bytes: &[u8]) -> Res {
-        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
-        create_parent(&rel_path).await?;
-        Ok(fs::write(rel_path, bytes).await?)
-    }
-
     async fn open_file(&self, path: impl AsRef<Path>) -> Res<fs::File> {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
         Ok(fs::File::open(rel_path).await?)

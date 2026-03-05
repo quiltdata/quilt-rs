@@ -11,41 +11,6 @@ use crate::Res;
 
 use super::Storage;
 
-async fn write(path: impl AsRef<Path> + Send, bytes: &[u8]) -> Res {
-    let path = path.as_ref();
-    let Some(parent) = path.parent() else {
-        return Err(Error::MissingParentPath(path.to_owned()));
-    };
-
-    fs::create_dir_all(&parent)
-        .await
-        .map_err(|source| Error::DirectoryCreate {
-            path: parent.to_path_buf(),
-            source,
-        })?;
-
-    // TODO: Write to a temporary location, then move.
-    let mut file = fs::File::create(&path)
-        .await
-        .map_err(|source| Error::FileWrite {
-            path: path.to_path_buf(),
-            source,
-        })?;
-
-    file.write_all(bytes)
-        .await
-        .map_err(|source| Error::FileWrite {
-            path: path.to_path_buf(),
-            source,
-        })?;
-    file.flush().await.map_err(|source| Error::FileWrite {
-        path: path.to_path_buf(),
-        source,
-    })?;
-
-    Ok(())
-}
-
 /// Implementation of the `Storage` trait for the local filesystem
 #[derive(Clone, Debug)]
 pub struct LocalStorage {}
@@ -140,9 +105,6 @@ impl Storage for LocalStorage {
         Ok(())
     }
 
-    async fn write_file(&self, path: impl AsRef<Path> + Send, bytes: &[u8]) -> Res {
-        write(path, bytes).await
-    }
 }
 
 impl Default for LocalStorage {
