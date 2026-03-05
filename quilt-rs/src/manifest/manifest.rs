@@ -11,6 +11,7 @@ use tokio::io::BufReader;
 use crate::checksum;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamRowsChunk;
+use crate::io::storage::ByteStream;
 use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
@@ -369,6 +370,12 @@ impl Manifest {
             self.rows.push(row);
             Ok(None)
         }
+    }
+}
+
+impl From<&Manifest> for ByteStream {
+    fn from(manifest: &Manifest) -> Self {
+        manifest.to_jsonlines().into_bytes().into()
     }
 }
 

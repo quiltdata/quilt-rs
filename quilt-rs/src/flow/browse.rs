@@ -1,3 +1,4 @@
+use aws_sdk_s3::primitives::ByteStream;
 use tracing::debug;
 use tracing::info;
 use tracing::warn;
@@ -32,9 +33,8 @@ async fn fetch_and_cache(
     let manifest = fetch_jsonl(remote, manifest_uri).await?;
     debug!("✔️ Fetched JSONL manifest");
 
-    let jsonl_content = manifest.to_jsonlines();
     storage
-        .write_byte_stream(cache_path, jsonl_content.into_bytes().into())
+        .write_byte_stream(cache_path, ByteStream::from(&manifest))
         .await?;
     debug!("✔️ JSONL manifest written to {}", cache_path.display());
     Ok(manifest)

@@ -383,10 +383,9 @@ mod tests {
         assert_eq!(hex::encode(hash.digest()), expected_empty_hash);
 
         // Test with typical hash digest size (32 bytes for SHA256) to ensure no regression
-        let sample_digest = [0u8; 32]; // 32 bytes of zeros
         let digest_path = Path::new("digest_test.bin");
         storage
-            .write_byte_stream(digest_path, sample_digest.to_vec().into())
+            .write_byte_stream(digest_path, ByteStream::from_static(&[0u8; 32]))
             .await?;
 
         let file2 = storage.open_file(digest_path).await?;
