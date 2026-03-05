@@ -226,7 +226,9 @@ mod tests {
         let object_path = domain_paths.object(hash.digest());
         let absolute_path = home.join(object_path);
         // Path is `.quilt/objects/HASH`
-        storage.write_byte_stream(absolute_path, ByteStream::default()).await?;
+        storage
+            .write_byte_stream(absolute_path, ByteStream::default())
+            .await?;
 
         // Lineage does not track anything before the installation
         assert!(lineage.paths.is_empty());

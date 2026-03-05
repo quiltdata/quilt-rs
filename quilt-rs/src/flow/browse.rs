@@ -136,9 +136,7 @@ mod tests {
         // It is copied into the cache path to simulate a cached manifest.
         let jsonl = std::fs::read(fixtures::manifest::path()?)?;
         let storage = MockStorage::default();
-        storage
-            .write_byte_stream(&cache_path, jsonl.into())
-            .await?;
+        storage.write_byte_stream(&cache_path, jsonl.into()).await?;
 
         // Although there is no direct assertion for `remote.expect_get_object().never()`,
         // we know the remote is not called because a missing key would throw an error.
@@ -210,7 +208,12 @@ mod tests {
             .await?;
 
         // Set up valid JSONL on the remote
-        let jsonl = storage.read_byte_stream(fixtures::manifest::path()?).await?.collect().await?.to_vec();
+        let jsonl = storage
+            .read_byte_stream(fixtures::manifest::path()?)
+            .await?
+            .collect()
+            .await?
+            .to_vec();
         let remote = MockRemote::default();
         let remote_uri = S3Uri::from_str(&format!(
             "s3://{}/.quilt/packages/{}",
@@ -228,7 +231,12 @@ mod tests {
         assert!(manifest.get_record(&PathBuf::from("e0-0.txt")).is_some());
 
         // Verify the cache file was replaced with valid JSONL
-        let cached_bytes = storage.read_byte_stream(&cache_path).await?.collect().await?.to_vec();
+        let cached_bytes = storage
+            .read_byte_stream(&cache_path)
+            .await?
+            .collect()
+            .await?
+            .to_vec();
         let first_line = std::str::from_utf8(&cached_bytes)
             .expect("cached file should be valid UTF-8")
             .lines()

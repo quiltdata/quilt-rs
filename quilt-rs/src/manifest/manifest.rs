@@ -451,7 +451,9 @@ mod tests {
     async fn test_manifest_from_reader_empty() -> Res {
         let storage = MockStorage::default();
         let path = PathBuf::from("empty_manifest.jsonl");
-        storage.write_byte_stream(&path, ByteStream::default()).await?;
+        storage
+            .write_byte_stream(&path, ByteStream::default())
+            .await?;
         let file = storage.open_file(&path).await?;
 
         let result = Manifest::from_reader(file).await;
@@ -468,7 +470,9 @@ mod tests {
         let storage = MockStorage::default();
         let invalid_content = b"\xFF\xFF\xFF\xFF"; // Invalid UTF-8 bytes
         let path = PathBuf::from("invalid_utf8_manifest.jsonl");
-        storage.write_byte_stream(&path, ByteStream::from_static(invalid_content)).await?;
+        storage
+            .write_byte_stream(&path, ByteStream::from_static(invalid_content))
+            .await?;
         let file = storage.open_file(&path).await?;
 
         let result = Manifest::from_reader(file).await;

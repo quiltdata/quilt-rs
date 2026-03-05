@@ -246,10 +246,7 @@ mod tests {
         );
         let storage = MockStorage::default();
         storage
-            .write_byte_stream(
-                PathBuf::from(manifest_key),
-                ByteStream::from_static(b"foo"),
-            )
+            .write_byte_stream(PathBuf::from(manifest_key), ByteStream::from_static(b"foo"))
             .await?;
 
         let remote = MockRemote::default();

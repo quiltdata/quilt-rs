@@ -145,10 +145,7 @@ mod tests {
             .await?;
 
         storage
-            .write_byte_stream(
-                working_dir.join(&readme_logical_key),
-                ByteStream::default(),
-            )
+            .write_byte_stream(working_dir.join(&readme_logical_key), ByteStream::default())
             .await?;
 
         {

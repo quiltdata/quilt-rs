@@ -50,7 +50,12 @@ impl<S: Storage> AuthIo<S> {
             debug!("No tokens file found");
             return Ok(None);
         }
-        let bytes = self.storage.read_byte_stream(&tokens_path).await?.collect().await?;
+        let bytes = self
+            .storage
+            .read_byte_stream(&tokens_path)
+            .await?
+            .collect()
+            .await?;
         let tokens = serde_json::from_slice(&bytes.to_vec())?;
 
         debug!("✔️ Successfully read tokens");
@@ -63,7 +68,9 @@ impl<S: Storage> AuthIo<S> {
         debug!("⏳ Writing auth tokens to {:?}", tokens_path);
 
         let contents = serde_json::to_vec(tokens)?;
-        self.storage.write_byte_stream(&tokens_path, contents.into()).await?;
+        self.storage
+            .write_byte_stream(&tokens_path, contents.into())
+            .await?;
 
         debug!("✔️ Successfully wrote tokens: {:?}", tokens);
 
@@ -78,7 +85,12 @@ impl<S: Storage> AuthIo<S> {
             warn!("No credentials file found");
             return Ok(None);
         }
-        let bytes = self.storage.read_byte_stream(&credentials_path).await?.collect().await?;
+        let bytes = self
+            .storage
+            .read_byte_stream(&credentials_path)
+            .await?
+            .collect()
+            .await?;
         let credentials: Credentials = serde_json::from_slice(&bytes.to_vec())?;
 
         // Check if credentials are expired

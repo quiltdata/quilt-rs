@@ -490,7 +490,12 @@ mod tests {
         );
 
         // Verify the corrupted file was replaced with good data
-        let fixed_manifest_content = storage.read_byte_stream(&installed_manifest).await?.collect().await?.to_vec();
+        let fixed_manifest_content = storage
+            .read_byte_stream(&installed_manifest)
+            .await?
+            .collect()
+            .await?
+            .to_vec();
         assert!(
             fixed_manifest_content.len() > 10,
             "Installed manifest should be fixed"

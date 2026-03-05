@@ -107,7 +107,6 @@ impl Storage for LocalStorage {
 
         Ok(())
     }
-
 }
 
 impl Default for LocalStorage {
