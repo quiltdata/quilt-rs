@@ -188,7 +188,9 @@ mod tests {
         let storage = LocalStorage::default();
 
         assert!(fs::metadata(&dest).await.is_err());
-        storage.write_file(&dest, b"anything").await?;
+        storage
+            .write_byte_stream(&dest, ByteStream::from_static(b"anything"))
+            .await?;
         assert!(fs::metadata(dest).await.is_ok());
 
         Ok(())
@@ -247,7 +249,9 @@ mod tests {
     #[test(tokio::test)]
     async fn test_write_no_parent() -> Res {
         let storage = LocalStorage::default();
-        let result = storage.write_file("", b"test").await;
+        let result = storage
+            .write_byte_stream("", ByteStream::from_static(b"test"))
+            .await;
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),
@@ -272,7 +276,9 @@ mod tests {
         fs::set_permissions(&readonly_dir, perms).await?;
 
         let storage = LocalStorage::default();
-        let result = storage.write_file(&test_file, b"test").await;
+        let result = storage
+            .write_byte_stream(&test_file, ByteStream::from_static(b"test"))
+            .await;
 
         // Should fail with permission denied
         assert!(result.is_err());

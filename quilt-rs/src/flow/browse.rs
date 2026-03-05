@@ -109,6 +109,8 @@ mod tests {
 
     use test_log::test;
 
+    use aws_sdk_s3::primitives::ByteStream;
+
     use crate::fixtures;
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
@@ -134,7 +136,9 @@ mod tests {
         // It is copied into the cache path to simulate a cached manifest.
         let jsonl = std::fs::read(fixtures::manifest::path()?)?;
         let storage = MockStorage::default();
-        storage.write_file(&cache_path, &jsonl).await?;
+        storage
+            .write_byte_stream(&cache_path, jsonl.into())
+            .await?;
 
         // Although there is no direct assertion for `remote.expect_get_object().never()`,
         // we know the remote is not called because a missing key would throw an error.
@@ -168,7 +172,9 @@ mod tests {
         };
         let cache_path = paths.cached_manifest(&manifest.bucket, &manifest.hash);
         let storage = MockStorage::default();
-        storage.write_file(cache_path, &Vec::new()).await?;
+        storage
+            .write_byte_stream(cache_path, ByteStream::default())
+            .await?;
 
         let remote = MockRemote::default();
 
@@ -199,7 +205,9 @@ mod tests {
         paths
             .scaffold_for_caching(&storage, &manifest_uri.bucket)
             .await?;
-        storage.write_file(&cache_path, b"PAR1_invalid").await?;
+        storage
+            .write_byte_stream(&cache_path, ByteStream::from_static(b"PAR1_invalid"))
+            .await?;
 
         // Set up valid JSONL on the remote
         let jsonl = storage.read_byte_stream(fixtures::manifest::path()?).await?.collect().await?.to_vec();

@@ -370,9 +370,13 @@ mod tests {
         // We trust that the hash is correct, so we can skip the actual file content
         let storage = MockStorage::default();
         let object_path_1 = home.join(domain_paths.object(row_1.hash.digest()));
-        storage.write_file(object_path_1, &Vec::new()).await?;
+        storage
+            .write_byte_stream(object_path_1, ByteStream::default())
+            .await?;
         let object_path_3 = home.join(domain_paths.object(row_3.hash.digest()));
-        storage.write_file(object_path_3, &Vec::new()).await?;
+        storage
+            .write_byte_stream(object_path_3, ByteStream::default())
+            .await?;
 
         // Simulate the remote object
         let remote = MockRemote::default();

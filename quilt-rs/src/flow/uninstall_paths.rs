@@ -55,6 +55,8 @@ mod tests {
 
     use std::collections::BTreeMap;
 
+    use aws_sdk_s3::primitives::ByteStream;
+
     use crate::fixtures;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::PathState;
@@ -90,16 +92,22 @@ mod tests {
 
         let storage = MockStorage::default();
         storage
-            .write_file(&logical_key_zero, fixtures::objects::zero_bytes())
-            .await?;
-        storage
-            .write_file(
-                &logical_key_less_than_8mb,
-                fixtures::objects::less_than_8mb(),
+            .write_byte_stream(
+                &logical_key_zero,
+                ByteStream::from_static(fixtures::objects::zero_bytes()),
             )
             .await?;
         storage
-            .write_file(&logical_key_nested, fixtures::objects::nested())
+            .write_byte_stream(
+                &logical_key_less_than_8mb,
+                ByteStream::from_static(fixtures::objects::less_than_8mb()),
+            )
+            .await?;
+        storage
+            .write_byte_stream(
+                &logical_key_nested,
+                ByteStream::from_static(fixtures::objects::nested()),
+            )
             .await?;
 
         assert!(storage.exists(&logical_key_nested).await);

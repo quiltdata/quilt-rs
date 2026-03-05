@@ -196,6 +196,8 @@ mod tests {
 
     use std::path::PathBuf;
 
+    use aws_sdk_s3::primitives::ByteStream;
+
     use crate::fixtures;
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
@@ -244,7 +246,10 @@ mod tests {
         );
         let storage = MockStorage::default();
         storage
-            .write_file(PathBuf::from(manifest_key), b"foo")
+            .write_byte_stream(
+                PathBuf::from(manifest_key),
+                ByteStream::from_static(b"foo"),
+            )
             .await?;
 
         let remote = MockRemote::default();
@@ -336,7 +341,10 @@ mod tests {
 
         for i in 0..10 {
             let file_path = PathBuf::from(format!("/b/a/r{}", i));
-            remote.storage.write_file(&file_path, file_content).await?;
+            remote
+                .storage
+                .write_byte_stream(&file_path, ByteStream::from_static(file_content))
+                .await?;
 
             manifest
                 .insert_record(ManifestRow {

@@ -57,6 +57,8 @@ mod tests {
 
     use test_log::test;
 
+    use aws_sdk_s3::primitives::ByteStream;
+
     use quilt_rs::io::storage::LocalStorage;
     use quilt_rs::io::storage::Storage;
     use std::path::PathBuf;
@@ -146,7 +148,10 @@ mod tests {
 
         // Step 3: Change e0-0.txt content
         storage
-            .write_file(&e0_file_path, b"Emperor-Drainage8-Presoak\n")
+            .write_byte_stream(
+                &e0_file_path,
+                ByteStream::from_static(b"Emperor-Drainage8-Presoak\n"),
+            )
             .await?;
 
         m.commit(commit::Input {
@@ -174,7 +179,10 @@ mod tests {
 
         // Step 5: Revert e0-0.txt content
         storage
-            .write_file(&e0_file_path, b"Thu Feb 29 19:07:56 PST 2024\n")
+            .write_byte_stream(
+                &e0_file_path,
+                ByteStream::from_static(b"Thu Feb 29 19:07:56 PST 2024\n"),
+            )
             .await?;
 
         m.commit(commit::Input {
@@ -233,7 +241,10 @@ mod tests {
 
         // Step 3: Change 1.txt content
         storage
-            .write_file(&file_path, b"Emperor-Drainage8-Presoak\n")
+            .write_byte_stream(
+                &file_path,
+                ByteStream::from_static(b"Emperor-Drainage8-Presoak\n"),
+            )
             .await?;
 
         m.commit(commit::Input {
@@ -261,7 +272,10 @@ mod tests {
 
         // Step 5: Revert 1.txt content
         storage
-            .write_file(&file_path, b"jue 27 nov 2025 16:36:45 CET\n")
+            .write_byte_stream(
+                &file_path,
+                ByteStream::from_static(b"jue 27 nov 2025 16:36:45 CET\n"),
+            )
             .await?;
 
         m.commit(commit::Input {
