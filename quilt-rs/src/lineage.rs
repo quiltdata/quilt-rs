@@ -104,12 +104,11 @@ impl DomainLineageIo {
     }
 
     pub async fn read(&self, storage: &impl Storage) -> Res<DomainLineage> {
-        let bytes = match storage.read_bytes(&self.path).await {
-            Ok(bytes) => bytes,
-            Err(_) if !storage.exists(&self.path).await => return Err(Error::LineageMissing),
-            Err(e) => return Err(e),
-        };
-        DomainLineage::from_slice(&bytes)
+        match storage.read_bytes(&self.path).await {
+            Ok(bytes) => DomainLineage::from_slice(&bytes),
+            Err(_) if !storage.exists(&self.path).await => Err(Error::LineageMissing),
+            Err(e) => Err(e),
+        }
     }
 
     /// Read a specific package lineage from the domain lineage
