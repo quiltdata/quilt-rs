@@ -320,7 +320,7 @@ mod tests {
         storage
             .write_byte_stream(
                 &file_path,
-                br###"{"packages":{},"home":"/home/directory"}"###.to_vec().into(),
+                ByteStream::from_static(br###"{"packages":{},"home":"/home/directory"}"###),
             )
             .await?;
         let lineage = DomainLineageIo::new(file_path).read(&storage).await?;

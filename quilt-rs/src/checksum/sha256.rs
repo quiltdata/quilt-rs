@@ -211,7 +211,7 @@ mod tests {
         let test_path = Path::new("test_file.txt");
 
         // Write test data to mock storage
-        storage.write_byte_stream(test_path, test_data.to_vec().into()).await?;
+        storage.write_byte_stream(test_path, ByteStream::from_static(test_data)).await?;
 
         // Test from_file method
         let file = storage.open_file(test_path).await?;
@@ -260,7 +260,7 @@ mod tests {
         let test_path = Path::new("checksum_test.txt");
 
         // Write test data to mock storage
-        storage.write_byte_stream(test_path, bytes.to_vec().into()).await?;
+        storage.write_byte_stream(test_path, ByteStream::from_static(bytes)).await?;
 
         // Test from_file method
         let file = storage.open_file(test_path).await?;
@@ -286,7 +286,7 @@ mod tests {
         let test_path = Path::new("less_than_8mb.txt");
 
         // Write test data to mock storage
-        storage.write_byte_stream(test_path, bytes.to_vec().into()).await?;
+        storage.write_byte_stream(test_path, ByteStream::from_static(bytes)).await?;
 
         // Test from_file method
         let file = storage.open_file(test_path).await?;
@@ -303,7 +303,7 @@ mod tests {
         let test_path = Path::new("conversion_test.txt");
 
         // Write test data to mock storage
-        storage.write_byte_stream(test_path, bytes.to_vec().into()).await?;
+        storage.write_byte_stream(test_path, ByteStream::from_static(bytes)).await?;
 
         // Test Sha256Hash conversions
         let file = storage.open_file(test_path).await?;
@@ -360,7 +360,7 @@ mod tests {
 
         // Test with empty file (0 bytes) - simulates hash.digest() returning empty data
         let empty_path = Path::new("empty_test.bin");
-        storage.write_byte_stream(empty_path, b"".to_vec().into()).await?;
+        storage.write_byte_stream(empty_path, ByteStream::default()).await?;
 
         let file = storage.open_file(empty_path).await?;
         let hash = Sha256Hash::from_async_read(file).await?;

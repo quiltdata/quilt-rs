@@ -444,7 +444,7 @@ mod tests {
         let storage = MockStorage::default();
         let test_data = b"test data for Hash trait";
         let test_path = Path::new("hash_trait_test.txt");
-        storage.write_byte_stream(test_path, test_data.to_vec().into()).await?;
+        storage.write_byte_stream(test_path, ByteStream::from_static(test_data)).await?;
 
         // Test Hash trait implementation and consistent from_file signatures
         let file = storage.open_file(test_path).await?;
@@ -485,7 +485,7 @@ mod tests {
         let storage = MockStorage::default();
         let file_content = b"anything";
         let file_path = Path::new("foo");
-        storage.write_byte_stream(file_path, file_content.to_vec().into()).await?;
+        storage.write_byte_stream(file_path, ByteStream::from_static(file_content)).await?;
 
         let file = storage.open_file(file_path).await?;
         let hash: Multihash<256> = Sha256Hash::from_file(file).await?.into();
@@ -507,7 +507,7 @@ mod tests {
         let storage = MockStorage::default();
         let file_content = b"anything";
         let file_path = Path::new("foo");
-        storage.write_byte_stream(file_path, file_content.to_vec().into()).await?;
+        storage.write_byte_stream(file_path, ByteStream::from_static(file_content)).await?;
 
         // Calculate the actual hash first
         let file = storage.open_file(file_path).await?;
@@ -534,7 +534,7 @@ mod tests {
         let storage = MockStorage::default();
         let file_content = b"anything";
         let file_path = Path::new("foo");
-        storage.write_byte_stream(file_path, file_content.to_vec().into()).await?;
+        storage.write_byte_stream(file_path, ByteStream::from_static(file_content)).await?;
 
         // Since ObjectHash now validates hash types, we cannot create invalid hashes
         // This test is no longer relevant as the type system prevents invalid hash codes
@@ -581,7 +581,7 @@ mod tests {
 
         let file_content = crate::fixtures::objects::less_than_8mb();
         let file_path = Path::new("foo");
-        storage.write_byte_stream(file_path, file_content.to_vec().into()).await?;
+        storage.write_byte_stream(file_path, ByteStream::from_static(file_content)).await?;
 
         let logical_key = PathBuf::from("bar");
 
@@ -606,7 +606,7 @@ mod tests {
         // Create file with initial content
         let test_path = Path::new("foo");
         let initial_content = b"lorem ipsum";
-        storage.write_byte_stream(test_path, initial_content.to_vec().into()).await?;
+        storage.write_byte_stream(test_path, ByteStream::from_static(initial_content)).await?;
 
         let sha256_host_config = HostConfig::default_sha256_chunked();
         let crc64_host_config = HostConfig::default_crc64();
@@ -656,7 +656,7 @@ mod tests {
         // Create file with initial content
         let test_path = Path::new("foo");
         let initial_content = b"lorem ipsum";
-        storage.write_byte_stream(test_path, initial_content.to_vec().into()).await?;
+        storage.write_byte_stream(test_path, ByteStream::from_static(initial_content)).await?;
 
         let sha256_host_config = HostConfig::default_sha256_chunked();
         let crc64_host_config = HostConfig::default_crc64();
@@ -679,7 +679,7 @@ mod tests {
 
         // Now rewrite file with less_than_8mb fixture content
         let fixture_content = crate::fixtures::objects::less_than_8mb();
-        storage.write_byte_stream(test_path, fixture_content.to_vec().into()).await?;
+        storage.write_byte_stream(test_path, ByteStream::from_static(fixture_content)).await?;
 
         let result = verify_hash(
             &storage,

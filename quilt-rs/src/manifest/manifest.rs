@@ -434,7 +434,7 @@ mod tests {
         let invalid_content = r#"{"invalid": "json"}"#;
         let path = PathBuf::from("invalid_manifest.jsonl");
         storage
-            .write_byte_stream(&path, invalid_content.as_bytes().to_vec().into())
+            .write_byte_stream(&path, ByteStream::from_static(invalid_content.as_bytes()))
             .await?;
         let file = storage.open_file(&path).await?;
 
@@ -451,7 +451,7 @@ mod tests {
     async fn test_manifest_from_reader_empty() -> Res {
         let storage = MockStorage::default();
         let path = PathBuf::from("empty_manifest.jsonl");
-        storage.write_byte_stream(&path, b"".to_vec().into()).await?;
+        storage.write_byte_stream(&path, ByteStream::default()).await?;
         let file = storage.open_file(&path).await?;
 
         let result = Manifest::from_reader(file).await;
@@ -468,7 +468,7 @@ mod tests {
         let storage = MockStorage::default();
         let invalid_content = b"\xFF\xFF\xFF\xFF"; // Invalid UTF-8 bytes
         let path = PathBuf::from("invalid_utf8_manifest.jsonl");
-        storage.write_byte_stream(&path, invalid_content.to_vec().into()).await?;
+        storage.write_byte_stream(&path, ByteStream::from_static(invalid_content)).await?;
         let file = storage.open_file(&path).await?;
 
         let result = Manifest::from_reader(file).await;
@@ -486,7 +486,7 @@ mod tests {
         let invalid_content = r#"{"version": "v1"}"#;
         let path = PathBuf::from("unsupported_version_manifest.jsonl");
         storage
-            .write_byte_stream(&path, invalid_content.as_bytes().to_vec().into())
+            .write_byte_stream(&path, ByteStream::from_static(invalid_content.as_bytes()))
             .await?;
         let file = storage.open_file(&path).await?;
 
@@ -506,7 +506,7 @@ mod tests {
 {"invalid": "row"}"#;
         let path = PathBuf::from("invalid_row_manifest.jsonl");
         storage
-            .write_byte_stream(&path, invalid_content.as_bytes().to_vec().into())
+            .write_byte_stream(&path, ByteStream::from_static(invalid_content.as_bytes()))
             .await?;
         let file = storage.open_file(&path).await?;
 
@@ -526,7 +526,7 @@ mod tests {
 {"logical_key": "test.txt", "physical_keys": [], "size": 0, "hash": {"type": "SHA256", "value": "abc123"}, "meta": {}}"#;
         let path = PathBuf::from("empty_physical_keys_manifest.jsonl");
         storage
-            .write_byte_stream(&path, invalid_content.as_bytes().to_vec().into())
+            .write_byte_stream(&path, ByteStream::from_static(invalid_content.as_bytes()))
             .await?;
         let file = storage.open_file(&path).await?;
 

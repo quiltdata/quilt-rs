@@ -262,7 +262,7 @@ mod tests {
         let test_path = Path::new("test_file.txt");
 
         // Write test data to mock storage
-        storage.write_byte_stream(test_path, test_data.to_vec().into()).await?;
+        storage.write_byte_stream(test_path, ByteStream::from_static(test_data)).await?;
 
         // Test from_file method
         let file = storage.open_file(test_path).await?;
@@ -279,7 +279,7 @@ mod tests {
         // Test that different data produces different hashes
         let different_data = crate::fixtures::objects::zero_bytes();
         let different_path = Path::new("different_file.txt");
-        storage.write_byte_stream(different_path, different_data.to_vec().into()).await?;
+        storage.write_byte_stream(different_path, ByteStream::from_static(different_data)).await?;
 
         let different_file = storage.open_file(different_path).await?;
         let different_hash = Crc64Hash::from_async_read(different_file).await?;
@@ -295,7 +295,7 @@ mod tests {
         // Test with known data to verify CRC64-NVMe implementation
         let test_data = b"hello world";
         let test_path = Path::new("hello_world.txt");
-        storage.write_byte_stream(test_path, test_data.to_vec().into()).await?;
+        storage.write_byte_stream(test_path, ByteStream::from_static(test_data)).await?;
 
         let file1 = storage.open_file(test_path).await?;
         let hash = Crc64Hash::from_async_read(file1).await?;
@@ -311,7 +311,7 @@ mod tests {
         // Different input should give different output
         let different_data = b"hello world!";
         let different_path = Path::new("hello_world_exclamation.txt");
-        storage.write_byte_stream(different_path, different_data.to_vec().into()).await?;
+        storage.write_byte_stream(different_path, ByteStream::from_static(different_data)).await?;
 
         let file3 = storage.open_file(different_path).await?;
         let hash3 = Crc64Hash::from_async_read(file3).await?;
