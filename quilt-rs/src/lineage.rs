@@ -164,7 +164,7 @@ impl DomainLineageIo {
     ) -> Res<DomainLineage> {
         let contents = serde_json::to_string_pretty(&lineage)?;
         storage
-            .write_file(self.path.clone(), contents.as_bytes())
+            .write_byte_stream(self.path.clone(), contents.into_bytes().into())
             .await?;
         Ok(lineage)
     }

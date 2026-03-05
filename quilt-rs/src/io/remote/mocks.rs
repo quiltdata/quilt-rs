@@ -80,7 +80,7 @@ impl Remote for MockRemote {
         let key = s3_uri.to_string();
         log::debug!("Mocking {key} put request");
         let contents_vec = contents.into().collect().await?.to_vec();
-        self.storage.write_file(key, &contents_vec).await
+        self.storage.write_byte_stream(key, contents_vec.into()).await
     }
 
     async fn resolve_url(&self, host: &Option<Host>, s3_uri: &S3Uri) -> Res<S3Uri> {

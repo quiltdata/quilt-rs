@@ -185,6 +185,7 @@ mod tests {
     use super::*;
     use test_log::test;
 
+    use aws_sdk_s3::primitives::ByteStream;
     use std::path::PathBuf;
     use std::str::FromStr;
 
@@ -225,7 +226,7 @@ mod tests {
         let object_path = domain_paths.object(hash.digest());
         let absolute_path = home.join(object_path);
         // Path is `.quilt/objects/HASH`
-        storage.write_file(absolute_path, &Vec::new()).await?;
+        storage.write_byte_stream(absolute_path, ByteStream::default()).await?;
 
         // Lineage does not track anything before the installation
         assert!(lineage.paths.is_empty());

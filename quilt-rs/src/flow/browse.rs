@@ -34,7 +34,7 @@ async fn fetch_and_cache(
 
     let jsonl_content = manifest.to_jsonlines();
     storage
-        .write_file(cache_path, jsonl_content.as_bytes())
+        .write_byte_stream(cache_path, jsonl_content.into_bytes().into())
         .await?;
     debug!("✔️ JSONL manifest written to {}", cache_path.display());
     Ok(manifest)
