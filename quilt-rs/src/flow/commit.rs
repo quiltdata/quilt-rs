@@ -523,13 +523,13 @@ mod tests {
         storage
             .write_byte_stream(
                 PathBuf::from("one/two two/three three three/READ ME.md"),
-                ByteStream::from_static("This is the README.".as_bytes()),
+                ByteStream::from_static(b"This is the README."),
             )
             .await?;
         storage
             .write_byte_stream(
                 PathBuf::from(format!(".quilt/objects/{}", hex::encode(hash.digest()))),
-                ByteStream::from_static("This is the README.".as_bytes()),
+                ByteStream::from_static(b"This is the README."),
             )
             .await?;
 
