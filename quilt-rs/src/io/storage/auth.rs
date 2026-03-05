@@ -7,6 +7,7 @@ use tracing::warn;
 
 use crate::io::storage::LocalStorage;
 use crate::io::storage::Storage;
+use crate::io::storage::StorageExt;
 
 use crate::paths::AUTH_CREDENTIALS;
 use crate::paths::AUTH_TOKENS;
@@ -50,13 +51,8 @@ impl<S: Storage> AuthIo<S> {
             debug!("No tokens file found");
             return Ok(None);
         }
-        let bytes = self
-            .storage
-            .read_byte_stream(&tokens_path)
-            .await?
-            .collect()
-            .await?;
-        let tokens = serde_json::from_slice(&bytes.to_vec())?;
+        let bytes = self.storage.read_bytes(&tokens_path).await?;
+        let tokens = serde_json::from_slice(&bytes)?;
 
         debug!("✔️ Successfully read tokens");
 
@@ -85,13 +81,8 @@ impl<S: Storage> AuthIo<S> {
             warn!("No credentials file found");
             return Ok(None);
         }
-        let bytes = self
-            .storage
-            .read_byte_stream(&credentials_path)
-            .await?
-            .collect()
-            .await?;
-        let credentials: Credentials = serde_json::from_slice(&bytes.to_vec())?;
+        let bytes = self.storage.read_bytes(&credentials_path).await?;
+        let credentials: Credentials = serde_json::from_slice(&bytes)?;
 
         // Check if credentials are expired
         if credentials.expires_at <= chrono::Utc::now() {

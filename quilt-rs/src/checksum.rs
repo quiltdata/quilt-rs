@@ -219,6 +219,7 @@ mod tests {
     use crate::io::storage::mocks::MockStorage;
     use crate::io::storage::LocalStorage;
     use crate::io::storage::Storage;
+    use crate::io::storage::StorageExt;
     use crate::Error;
     use crate::Res;
 
@@ -575,16 +576,7 @@ mod tests {
         assert_eq!(row.hash.algorithm(), MULTIHASH_CRC64_NVME);
         assert_eq!(row.logical_key, logical_key);
 
-        assert_eq!(
-            row.size,
-            storage
-                .read_byte_stream(file_path)
-                .await?
-                .collect()
-                .await?
-                .to_vec()
-                .len() as u64
-        );
+        assert_eq!(row.size, storage.read_bytes(file_path).await?.len() as u64);
         assert_eq!(row.hash.to_string(), "LZmmpqbBItw=");
 
         Ok(())
@@ -649,12 +641,7 @@ mod tests {
         );
 
         let fixture_path = Path::new("fixtures/user-settings.mkfg");
-        let fixture_content = local_storage
-            .read_byte_stream(fixture_path)
-            .await?
-            .collect()
-            .await?
-            .to_vec();
+        let fixture_content = local_storage.read_bytes(fixture_path).await?;
         storage
             .write_byte_stream(test_path, fixture_content.clone().into())
             .await?;

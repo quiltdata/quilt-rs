@@ -115,6 +115,7 @@ mod tests {
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::io::storage::LocalStorage;
+    use crate::io::storage::StorageExt;
 
     /// Verifies that when a manifest is already cached,
     /// the `browse_remote_manifest` function retrieves it from the cache
@@ -208,12 +209,7 @@ mod tests {
             .await?;
 
         // Set up valid JSONL on the remote
-        let jsonl = storage
-            .read_byte_stream(fixtures::manifest::path()?)
-            .await?
-            .collect()
-            .await?
-            .to_vec();
+        let jsonl = storage.read_bytes(fixtures::manifest::path()?).await?;
         let remote = MockRemote::default();
         let remote_uri = S3Uri::from_str(&format!(
             "s3://{}/.quilt/packages/{}",
@@ -231,12 +227,7 @@ mod tests {
         assert!(manifest.get_record(&PathBuf::from("e0-0.txt")).is_some());
 
         // Verify the cache file was replaced with valid JSONL
-        let cached_bytes = storage
-            .read_byte_stream(&cache_path)
-            .await?
-            .collect()
-            .await?
-            .to_vec();
+        let cached_bytes = storage.read_bytes(&cache_path).await?;
         let first_line = std::str::from_utf8(&cached_bytes)
             .expect("cached file should be valid UTF-8")
             .lines()

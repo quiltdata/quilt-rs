@@ -88,3 +88,20 @@ pub trait Storage {
         body: ByteStream,
     ) -> impl Future<Output = Res> + Send + Sync;
 }
+
+/// Convenience methods on top of `Storage`.
+///
+/// Automatically implemented for all `Storage` types.
+pub trait StorageExt: Storage {
+    /// Read the entire contents of a file into a byte vector.
+    fn read_bytes(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+    ) -> impl Future<Output = Res<Vec<u8>>>;
+}
+
+impl<T: Storage> StorageExt for T {
+    async fn read_bytes(&self, path: impl AsRef<Path> + Send + Sync) -> Res<Vec<u8>> {
+        Ok(self.read_byte_stream(path).await?.collect().await?.to_vec())
+    }
+}

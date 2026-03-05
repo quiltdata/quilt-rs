@@ -13,6 +13,7 @@ use tracing::log;
 use tempfile::TempDir;
 
 use crate::io::storage::Storage;
+use crate::io::storage::StorageExt;
 use crate::paths;
 use crate::uri::Namespace;
 use crate::Error;
@@ -106,12 +107,8 @@ impl DomainLineageIo {
         if !storage.exists(&self.path).await {
             return Err(Error::LineageMissing);
         }
-        let bytes = storage
-            .read_byte_stream(&self.path)
-            .await?
-            .collect()
-            .await?;
-        DomainLineage::from_slice(&bytes.to_vec())
+        let bytes = storage.read_bytes(&self.path).await?;
+        DomainLineage::from_slice(&bytes)
     }
 
     /// Read a specific package lineage from the domain lineage
@@ -154,12 +151,8 @@ impl DomainLineageIo {
         if !storage.exists(&self.path).await {
             return self.write(storage, DomainLineage::new(home)).await;
         }
-        let bytes = storage
-            .read_byte_stream(&self.path)
-            .await?
-            .collect()
-            .await?;
-        let mut lineage: DomainLineage = serde_json::from_slice(&bytes.to_vec())?;
+        let bytes = storage.read_bytes(&self.path).await?;
+        let mut lineage: DomainLineage = serde_json::from_slice(&bytes)?;
         lineage.home = home.into();
         self.write(storage, lineage).await
     }
@@ -388,12 +381,7 @@ mod tests {
             )
             .await?;
         assert!(storage.exists(&file_path).await);
-        let file_contents = storage
-            .read_byte_stream(&file_path)
-            .await?
-            .collect()
-            .await?
-            .to_vec();
+        let file_contents = storage.read_bytes(&file_path).await?;
         let lineage = DomainLineage::from_slice(&file_contents)?;
 
         assert_eq!(lineage.as_ref(), &PathBuf::from("/tmp/working_dir"));
