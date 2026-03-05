@@ -57,7 +57,7 @@ mod tests {
 
     use test_log::test;
 
-    use aws_sdk_s3::primitives::ByteStream;
+    use quilt_rs::io::storage::ByteStream;
 
     use quilt_rs::io::storage::LocalStorage;
     use quilt_rs::io::storage::Storage;

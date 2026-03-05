@@ -130,6 +130,7 @@ impl Storage for MockStorage {
         mut body: ByteStream,
     ) -> Res {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        create_parent(&rel_path).await?;
         let mut file = fs::File::create(&rel_path).await?;
         while let Some(bytes) = body.try_next().await? {
             file.write_all(&bytes).await?;

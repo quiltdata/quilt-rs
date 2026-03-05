@@ -5,7 +5,7 @@
 use std::future::Future;
 use std::path::Path;
 
-use aws_sdk_s3::primitives::ByteStream;
+pub use aws_sdk_s3::primitives::ByteStream;
 use chrono::DateTime;
 use chrono::Utc;
 use tokio::fs::File;

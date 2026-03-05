@@ -99,7 +99,7 @@ mod tests {
 
     use crate::cli::model::install_package_into_temp_dir;
 
-    use aws_sdk_s3::primitives::ByteStream;
+    use quilt_rs::io::storage::ByteStream;
 
     use quilt_rs::io::storage::LocalStorage;
     use quilt_rs::io::storage::Storage;
