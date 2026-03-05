@@ -97,7 +97,7 @@ impl Storage for LocalStorage {
         mut body: ByteStream,
     ) -> Res {
         if let Some(parent) = path.as_ref().parent() {
-            fs::create_dir_all(parent).await?;
+            self.create_dir_all(parent).await?;
         }
         let mut file = fs::File::create(&path).await?;
         while let Some(bytes) = body.try_next().await? {
