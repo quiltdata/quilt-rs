@@ -145,6 +145,8 @@ mod tests {
 
     use std::path::Path;
 
+    use aws_sdk_s3::primitives::ByteStream;
+
     use crate::io::storage::mocks::MockStorage;
     use crate::io::storage::Storage;
 
@@ -209,7 +211,9 @@ mod tests {
         let test_path = Path::new("test_file.txt");
 
         // Write test data to mock storage
-        storage.write_file(test_path, test_data).await?;
+        storage
+            .write_byte_stream(test_path, ByteStream::from_static(test_data))
+            .await?;
 
         // Test from_file method
         let file = storage.open_file(test_path).await?;
@@ -258,7 +262,9 @@ mod tests {
         let test_path = Path::new("checksum_test.txt");
 
         // Write test data to mock storage
-        storage.write_file(test_path, bytes).await?;
+        storage
+            .write_byte_stream(test_path, ByteStream::from_static(bytes))
+            .await?;
 
         // Test from_file method
         let file = storage.open_file(test_path).await?;
@@ -284,7 +290,9 @@ mod tests {
         let test_path = Path::new("less_than_8mb.txt");
 
         // Write test data to mock storage
-        storage.write_file(test_path, bytes).await?;
+        storage
+            .write_byte_stream(test_path, ByteStream::from_static(bytes))
+            .await?;
 
         // Test from_file method
         let file = storage.open_file(test_path).await?;
@@ -301,7 +309,9 @@ mod tests {
         let test_path = Path::new("conversion_test.txt");
 
         // Write test data to mock storage
-        storage.write_file(test_path, bytes).await?;
+        storage
+            .write_byte_stream(test_path, ByteStream::from_static(bytes))
+            .await?;
 
         // Test Sha256Hash conversions
         let file = storage.open_file(test_path).await?;
@@ -358,7 +368,9 @@ mod tests {
 
         // Test with empty file (0 bytes) - simulates hash.digest() returning empty data
         let empty_path = Path::new("empty_test.bin");
-        storage.write_file(empty_path, b"").await?;
+        storage
+            .write_byte_stream(empty_path, ByteStream::default())
+            .await?;
 
         let file = storage.open_file(empty_path).await?;
         let hash = Sha256Hash::from_async_read(file).await?;
@@ -371,9 +383,10 @@ mod tests {
         assert_eq!(hex::encode(hash.digest()), expected_empty_hash);
 
         // Test with typical hash digest size (32 bytes for SHA256) to ensure no regression
-        let sample_digest = [0u8; 32]; // 32 bytes of zeros
         let digest_path = Path::new("digest_test.bin");
-        storage.write_file(digest_path, &sample_digest).await?;
+        storage
+            .write_byte_stream(digest_path, ByteStream::from_static(&[0u8; 32]))
+            .await?;
 
         let file2 = storage.open_file(digest_path).await?;
         let hash2 = Sha256Hash::from_async_read(file2).await?;

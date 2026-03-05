@@ -1,3 +1,4 @@
+use aws_sdk_s3::primitives::ByteStream;
 use tracing::debug;
 use tracing::info;
 use tracing::warn;
@@ -32,9 +33,8 @@ async fn fetch_and_cache(
     let manifest = fetch_jsonl(remote, manifest_uri).await?;
     debug!("✔️ Fetched JSONL manifest");
 
-    let jsonl_content = manifest.to_jsonlines();
     storage
-        .write_file(cache_path, jsonl_content.as_bytes())
+        .write_byte_stream(cache_path, ByteStream::from(&manifest))
         .await?;
     debug!("✔️ JSONL manifest written to {}", cache_path.display());
     Ok(manifest)
@@ -109,10 +109,13 @@ mod tests {
 
     use test_log::test;
 
+    use aws_sdk_s3::primitives::ByteStream;
+
     use crate::fixtures;
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::io::storage::LocalStorage;
+    use crate::io::storage::StorageExt;
 
     /// Verifies that when a manifest is already cached,
     /// the `browse_remote_manifest` function retrieves it from the cache
@@ -132,9 +135,9 @@ mod tests {
 
         // Prepare the reference manifest file.
         // It is copied into the cache path to simulate a cached manifest.
-        let jsonl = std::fs::read(fixtures::manifest::path()?)?;
+        let jsonl = ByteStream::from_path(fixtures::manifest::path()?).await?;
         let storage = MockStorage::default();
-        storage.write_file(&cache_path, &jsonl).await?;
+        storage.write_byte_stream(&cache_path, jsonl).await?;
 
         // Although there is no direct assertion for `remote.expect_get_object().never()`,
         // we know the remote is not called because a missing key would throw an error.
@@ -168,7 +171,9 @@ mod tests {
         };
         let cache_path = paths.cached_manifest(&manifest.bucket, &manifest.hash);
         let storage = MockStorage::default();
-        storage.write_file(cache_path, &Vec::new()).await?;
+        storage
+            .write_byte_stream(cache_path, ByteStream::default())
+            .await?;
 
         let remote = MockRemote::default();
 
@@ -199,10 +204,12 @@ mod tests {
         paths
             .scaffold_for_caching(&storage, &manifest_uri.bucket)
             .await?;
-        storage.write_file(&cache_path, b"PAR1_invalid").await?;
+        storage
+            .write_byte_stream(&cache_path, ByteStream::from_static(b"PAR1_invalid"))
+            .await?;
 
         // Set up valid JSONL on the remote
-        let jsonl = storage.read_file(fixtures::manifest::path()?).await?;
+        let jsonl = storage.read_bytes(fixtures::manifest::path()?).await?;
         let remote = MockRemote::default();
         let remote_uri = S3Uri::from_str(&format!(
             "s3://{}/.quilt/packages/{}",
@@ -220,7 +227,7 @@ mod tests {
         assert!(manifest.get_record(&PathBuf::from("e0-0.txt")).is_some());
 
         // Verify the cache file was replaced with valid JSONL
-        let cached_bytes = storage.read_file(&cache_path).await?;
+        let cached_bytes = storage.read_bytes(&cache_path).await?;
         let first_line = std::str::from_utf8(&cached_bytes)
             .expect("cached file should be valid UTF-8")
             .lines()

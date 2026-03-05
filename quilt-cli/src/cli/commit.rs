@@ -81,6 +81,8 @@ mod tests {
 
     use crate::cli::model::install_package_into_temp_dir;
 
+    use quilt_rs::io::storage::ByteStream;
+
     use quilt_rs::io::storage::LocalStorage;
     use quilt_rs::io::storage::Storage;
 
@@ -335,7 +337,10 @@ mod tests {
         let working_dir = installed_package.package_home().await?;
         let storage = LocalStorage::new();
         storage
-            .write_file(working_dir.join(timestamp_logical_key), b"1697916638")
+            .write_byte_stream(
+                working_dir.join(timestamp_logical_key),
+                ByteStream::from_static(b"1697916638"),
+            )
             .await
             .expect("Failed to write timestamp.txt to the installed package working directory");
         {

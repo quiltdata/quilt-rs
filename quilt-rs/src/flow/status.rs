@@ -196,6 +196,8 @@ mod tests {
 
     use std::collections::BTreeMap;
 
+    use aws_sdk_s3::primitives::ByteStream;
+
     use crate::checksum::Crc64Hash;
     use crate::checksum::Sha256ChunkedHash;
     use crate::fixtures;
@@ -311,9 +313,9 @@ mod tests {
         };
         let working_dir = storage.temp_dir.as_ref().join(PathBuf::from("foo/bar"));
         storage
-            .write_file(
+            .write_byte_stream(
                 working_dir.join(&logical_key),
-                fixtures::objects::less_than_8mb(),
+                ByteStream::from_static(fixtures::objects::less_than_8mb()),
             )
             .await?;
 
@@ -357,7 +359,10 @@ mod tests {
         let logical_key = PathBuf::from("inside/package/file.pq");
         let physical_key = working_dir.join(&logical_key);
         storage
-            .write_file(&physical_key, fixtures::objects::less_than_8mb())
+            .write_byte_stream(
+                &physical_key,
+                ByteStream::from_static(fixtures::objects::less_than_8mb()),
+            )
             .await?;
 
         let (_, status) = create_status(
@@ -395,9 +400,9 @@ mod tests {
         let working_dir = storage.temp_dir.as_ref();
         let file_path = PathBuf::from("some.pq");
         storage
-            .write_file(
+            .write_byte_stream(
                 working_dir.join(&file_path),
-                fixtures::objects::less_than_8mb(),
+                ByteStream::from_static(fixtures::objects::less_than_8mb()),
             )
             .await?;
 

@@ -245,9 +245,8 @@ pub async fn build_manifest_from_rows_stream(
     // Create JSONL manifest
     let manifest = Manifest { header, rows };
 
-    let jsonl_content = manifest.to_jsonlines();
     storage
-        .write_file(&temp_path, jsonl_content.as_bytes())
+        .write_byte_stream(&temp_path, ByteStream::from(&manifest))
         .await?;
 
     let top_hash = top_hasher.finalize();

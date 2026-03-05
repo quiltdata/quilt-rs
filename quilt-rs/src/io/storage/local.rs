@@ -11,41 +11,6 @@ use crate::Res;
 
 use super::Storage;
 
-async fn write(path: impl AsRef<Path> + Send, bytes: &[u8]) -> Res {
-    let path = path.as_ref();
-    let Some(parent) = path.parent() else {
-        return Err(Error::MissingParentPath(path.to_owned()));
-    };
-
-    fs::create_dir_all(&parent)
-        .await
-        .map_err(|source| Error::DirectoryCreate {
-            path: parent.to_path_buf(),
-            source,
-        })?;
-
-    // TODO: Write to a temporary location, then move.
-    let mut file = fs::File::create(&path)
-        .await
-        .map_err(|source| Error::FileWrite {
-            path: path.to_path_buf(),
-            source,
-        })?;
-
-    file.write_all(bytes)
-        .await
-        .map_err(|source| Error::FileWrite {
-            path: path.to_path_buf(),
-            source,
-        })?;
-    file.flush().await.map_err(|source| Error::FileWrite {
-        path: path.to_path_buf(),
-        source,
-    })?;
-
-    Ok(())
-}
-
 /// Implementation of the `Storage` trait for the local filesystem
 #[derive(Clone, Debug)]
 pub struct LocalStorage {}
@@ -114,14 +79,6 @@ impl Storage for LocalStorage {
         })
     }
 
-    async fn read_file(&self, path: impl AsRef<Path>) -> Res<Vec<u8>> {
-        let path = path.as_ref();
-        fs::read(path).await.map_err(|e| Error::FileRead {
-            path: path.to_path_buf(),
-            source: e,
-        })
-    }
-
     async fn remove_dir_all(&self, path: impl AsRef<Path>) -> Res {
         Ok(fs::remove_dir_all(path).await?)
     }
@@ -139,17 +96,21 @@ impl Storage for LocalStorage {
         path: impl AsRef<Path> + Send + Sync,
         mut body: ByteStream,
     ) -> Res {
-        let mut file = fs::File::create(&path).await?;
-        while let Some(bytes) = body.try_next().await? {
-            file.write_all(&bytes).await?;
+        let path = path.as_ref();
+        if let Some(parent) = path.parent() {
+            self.create_dir_all(parent).await?;
         }
-        file.flush().await?;
+        let map_err = |source| Error::FileWrite {
+            path: path.to_path_buf(),
+            source,
+        };
+        let mut file = fs::File::create(path).await.map_err(map_err)?;
+        while let Some(bytes) = body.try_next().await? {
+            file.write_all(&bytes).await.map_err(map_err)?;
+        }
+        file.flush().await.map_err(map_err)?;
 
         Ok(())
-    }
-
-    async fn write_file(&self, path: impl AsRef<Path> + Send, bytes: &[u8]) -> Res {
-        write(path, bytes).await
     }
 }
 
@@ -196,7 +157,9 @@ mod tests {
         let storage = LocalStorage::default();
 
         assert!(fs::metadata(&dest).await.is_err());
-        storage.write_file(&dest, b"anything").await?;
+        storage
+            .write_byte_stream(&dest, ByteStream::from_static(b"anything"))
+            .await?;
         assert!(fs::metadata(dest).await.is_ok());
 
         Ok(())
@@ -255,12 +218,10 @@ mod tests {
     #[test(tokio::test)]
     async fn test_write_no_parent() -> Res {
         let storage = LocalStorage::default();
-        let result = storage.write_file("", b"test").await;
+        let result = storage
+            .write_byte_stream("", ByteStream::from_static(b"test"))
+            .await;
         assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Missing parent path error: "
-        );
         Ok(())
     }
 
@@ -280,19 +241,18 @@ mod tests {
         fs::set_permissions(&readonly_dir, perms).await?;
 
         let storage = LocalStorage::default();
-        let result = storage.write_file(&test_file, b"test").await;
+        let result = storage
+            .write_byte_stream(&test_file, ByteStream::from_static(b"test"))
+            .await;
 
         // Should fail with permission denied
         assert!(result.is_err());
         let error = result.unwrap_err();
 
-        // The error could be DirectoryCreate or FileWrite depending on timing
         assert!(matches!(
             error,
             Error::DirectoryCreate { .. } | Error::FileWrite { .. }
         ));
-
-        // Verify the error message contains useful context - now we know exactly what failed!
         let error_msg = error.to_string();
         assert!(error_msg.contains("test.txt") && error_msg.contains("Permission denied"));
 

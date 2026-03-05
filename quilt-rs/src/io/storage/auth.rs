@@ -7,6 +7,8 @@ use tracing::warn;
 
 use crate::io::storage::LocalStorage;
 use crate::io::storage::Storage;
+use crate::io::storage::StorageExt;
+
 use crate::paths::AUTH_CREDENTIALS;
 use crate::paths::AUTH_TOKENS;
 use crate::Res;
@@ -32,7 +34,7 @@ pub struct AuthIo<S: Storage = LocalStorage> {
     dir: PathBuf,
 }
 
-impl<S: Storage> AuthIo<S> {
+impl<S: Storage + Sync> AuthIo<S> {
     fn tokens_path(&self) -> PathBuf {
         self.dir.join(AUTH_TOKENS)
     }
@@ -49,8 +51,8 @@ impl<S: Storage> AuthIo<S> {
             debug!("No tokens file found");
             return Ok(None);
         }
-        let contents = self.storage.read_file(&tokens_path).await?;
-        let tokens = serde_json::from_slice(&contents)?;
+        let bytes = self.storage.read_bytes(&tokens_path).await?;
+        let tokens = serde_json::from_slice(&bytes)?;
 
         debug!("✔️ Successfully read tokens");
 
@@ -62,7 +64,9 @@ impl<S: Storage> AuthIo<S> {
         debug!("⏳ Writing auth tokens to {:?}", tokens_path);
 
         let contents = serde_json::to_vec(tokens)?;
-        self.storage.write_file(&tokens_path, &contents).await?;
+        self.storage
+            .write_byte_stream(&tokens_path, contents.into())
+            .await?;
 
         debug!("✔️ Successfully wrote tokens: {:?}", tokens);
 
@@ -77,8 +81,8 @@ impl<S: Storage> AuthIo<S> {
             warn!("No credentials file found");
             return Ok(None);
         }
-        let contents = self.storage.read_file(&credentials_path).await?;
-        let credentials: Credentials = serde_json::from_slice(&contents)?;
+        let bytes = self.storage.read_bytes(&credentials_path).await?;
+        let credentials: Credentials = serde_json::from_slice(&bytes)?;
 
         // Check if credentials are expired
         if credentials.expires_at <= chrono::Utc::now() {
@@ -97,7 +101,7 @@ impl<S: Storage> AuthIo<S> {
 
         let contents = serde_json::to_vec(credentials)?;
         self.storage
-            .write_file(&credentials_path, &contents)
+            .write_byte_stream(&credentials_path, contents.into())
             .await?;
 
         debug!("✔️ Successfully wrote credentials: {:?}", credentials);

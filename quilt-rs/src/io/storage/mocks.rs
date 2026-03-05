@@ -103,13 +103,6 @@ impl Storage for MockStorage {
         Ok(DateTime::<Utc>::from(modified))
     }
 
-    /// Overwrite the `write` method
-    async fn write_file(&self, path: impl AsRef<Path>, bytes: &[u8]) -> Res {
-        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
-        create_parent(&rel_path).await?;
-        Ok(fs::write(rel_path, bytes).await?)
-    }
-
     async fn open_file(&self, path: impl AsRef<Path>) -> Res<fs::File> {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
         Ok(fs::File::open(rel_path).await?)
@@ -126,11 +119,6 @@ impl Storage for MockStorage {
         Ok(fs::read_dir(&rel_path).await?)
     }
 
-    async fn read_file(&self, path: impl AsRef<Path>) -> Res<Vec<u8>> {
-        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
-        Ok(fs::read(&rel_path).await?)
-    }
-
     async fn read_byte_stream(&self, path: impl AsRef<Path> + Send + Sync) -> Res<ByteStream> {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
         Ok(ByteStream::from_path(rel_path).await?)
@@ -142,6 +130,7 @@ impl Storage for MockStorage {
         mut body: ByteStream,
     ) -> Res {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        create_parent(&rel_path).await?;
         let mut file = fs::File::create(&rel_path).await?;
         while let Some(bytes) = body.try_next().await? {
             file.write_all(&bytes).await?;

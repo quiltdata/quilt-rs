@@ -99,6 +99,8 @@ mod tests {
 
     use crate::cli::model::install_package_into_temp_dir;
 
+    use quilt_rs::io::storage::ByteStream;
+
     use quilt_rs::io::storage::LocalStorage;
     use quilt_rs::io::storage::Storage;
 
@@ -138,13 +140,12 @@ mod tests {
         let working_dir = installed_package.package_home().await?;
         let storage = LocalStorage::new();
 
-        let empty_content = Vec::new();
         storage
-            .write_file(working_dir.join(new_key), &empty_content)
+            .write_byte_stream(working_dir.join(new_key), ByteStream::default())
             .await?;
 
         storage
-            .write_file(working_dir.join(&readme_logical_key), &empty_content)
+            .write_byte_stream(working_dir.join(&readme_logical_key), ByteStream::default())
             .await?;
 
         {

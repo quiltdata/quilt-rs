@@ -5,7 +5,7 @@
 use std::future::Future;
 use std::path::Path;
 
-use aws_sdk_s3::primitives::ByteStream;
+pub use aws_sdk_s3::primitives::ByteStream;
 use chrono::DateTime;
 use chrono::Utc;
 use tokio::fs::File;
@@ -65,14 +65,6 @@ pub trait Storage {
         path: impl AsRef<Path> + Send + Sync,
     ) -> impl Future<Output = Res<ReadDir>> + Send + Sync;
 
-    /// Reads the entire contents of a file into a bytes vector.
-    /// Prefer using `read_byte_stream`.
-    // TODO: Remove it in favor of `self.read_byte_stream`
-    fn read_file(
-        &self,
-        path: impl AsRef<Path> + Send + Sync,
-    ) -> impl Future<Output = Res<Vec<u8>>> + Send + Sync;
-
     /// Removes a directory at this path, after removing all its contents.
     fn remove_dir_all(&self, path: impl AsRef<Path> + Send) -> impl Future<Output = Res> + Send;
 
@@ -89,19 +81,27 @@ pub trait Storage {
         to: impl AsRef<Path> + Send,
     ) -> impl Future<Output = Res> + Send;
 
-    /// Writes bytes srteam to a file
+    /// Writes byte stream to a file
     fn write_byte_stream(
         &self,
         path: impl AsRef<Path> + Send + Sync,
         body: ByteStream,
     ) -> impl Future<Output = Res> + Send + Sync;
+}
 
-    /// Writes bytes to a file
-    /// Prefer using `write_byte_stream`.
-    // TODO: Remove it in favor of `self.write_byte_stream`
-    fn write_file(
+/// Convenience methods on top of `Storage`.
+///
+/// Automatically implemented for all `Storage` types.
+pub trait StorageExt: Storage {
+    /// Read the entire contents of a file into a byte vector.
+    fn read_bytes(
         &self,
         path: impl AsRef<Path> + Send + Sync,
-        bytes: &[u8],
-    ) -> impl Future<Output = Res> + Send + Sync;
+    ) -> impl Future<Output = Res<Vec<u8>>> + Send + Sync;
+}
+
+impl<T: Storage + Sync> StorageExt for T {
+    async fn read_bytes(&self, path: impl AsRef<Path> + Send + Sync) -> Res<Vec<u8>> {
+        Ok(self.read_byte_stream(path).await?.collect().await?.to_vec())
+    }
 }

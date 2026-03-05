@@ -294,6 +294,8 @@ mod tests {
 
     use std::collections::BTreeMap;
 
+    use aws_sdk_s3::primitives::ByteStream;
+
     use crate::fixtures;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::Change;
@@ -445,7 +447,7 @@ mod tests {
 
         let storage = MockStorage::default();
         storage
-            .write_file(PathBuf::from("/working-dir/foo"), &Vec::new())
+            .write_byte_stream(PathBuf::from("/working-dir/foo"), ByteStream::default())
             .await?;
 
         let status = InstalledPackageStatus {
@@ -519,15 +521,15 @@ mod tests {
 
         let storage = MockStorage::default();
         storage
-            .write_file(
+            .write_byte_stream(
                 PathBuf::from("one/two two/three three three/READ ME.md"),
-                "This is the README.".as_bytes(),
+                ByteStream::from_static(b"This is the README."),
             )
             .await?;
         storage
-            .write_file(
+            .write_byte_stream(
                 PathBuf::from(format!(".quilt/objects/{}", hex::encode(hash.digest()))),
-                "This is the README.".as_bytes(),
+                ByteStream::from_static(b"This is the README."),
             )
             .await?;
 
@@ -574,9 +576,9 @@ mod tests {
     async fn test_modifying_and_commit() -> Res {
         let storage = MockStorage::default();
         storage
-            .write_file(
+            .write_byte_stream(
                 PathBuf::from("/working-dir/one/two two/three three three/READ ME.md"),
-                fixtures::objects::less_than_8mb(),
+                ByteStream::from_static(fixtures::objects::less_than_8mb()),
             )
             .await?;
 

@@ -131,7 +131,7 @@ pub struct Auth<S: Storage = LocalStorage> {
     pub storage: S,
 }
 
-impl<S: Storage + Clone> Auth<S> {
+impl<S: Storage + Sync + Clone> Auth<S> {
     pub fn new(paths: DomainPaths, storage: S) -> Self {
         Self { paths, storage }
     }

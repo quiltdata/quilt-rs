@@ -326,7 +326,10 @@ mod tests {
 
     use test_log::test;
 
+    use aws_sdk_s3::primitives::ByteStream;
+
     use crate::io::remote::mocks::MockRemote;
+    use crate::io::storage::StorageExt;
     use crate::lineage::DomainLineageIo;
     use crate::lineage::Home;
     use crate::lineage::PackageLineageIo;
@@ -366,14 +369,17 @@ mod tests {
             test_hash, "foo", "bar"
         );
         storage
-            .write_file(&paths.lineage(), lineage_json.as_bytes())
+            .write_byte_stream(&paths.lineage(), lineage_json.into_bytes().into())
             .await?;
 
         // Copy manifest to the expected path
         let test_manifest_path = paths.installed_manifest(&namespace, &test_hash);
         let test_manifest = r#"{"version": "v0"}"#;
         storage
-            .write_file(&test_manifest_path, test_manifest.as_bytes())
+            .write_byte_stream(
+                &test_manifest_path,
+                ByteStream::from_static(test_manifest.as_bytes()),
+            )
             .await?;
 
         let domain_lineage_io = DomainLineageIo::new(paths.lineage());
@@ -451,7 +457,7 @@ mod tests {
             test_hash, "foo", "bar"
         );
         storage
-            .write_file(&paths.lineage(), lineage_json.as_bytes())
+            .write_byte_stream(&paths.lineage(), lineage_json.into_bytes().into())
             .await?;
 
         // Set up a valid cached manifest
@@ -462,7 +468,10 @@ mod tests {
         // Create a corrupted installed manifest
         let installed_manifest = paths.installed_manifest(&namespace, &test_hash);
         storage
-            .write_file(&installed_manifest, b"corrupted data")
+            .write_byte_stream(
+                &installed_manifest,
+                ByteStream::from_static(b"corrupted data"),
+            )
             .await?;
 
         let domain_lineage_io = DomainLineageIo::new(paths.lineage());
@@ -482,7 +491,7 @@ mod tests {
         );
 
         // Verify the corrupted file was replaced with good data
-        let fixed_manifest_content = storage.read_file(&installed_manifest).await?;
+        let fixed_manifest_content = storage.read_bytes(&installed_manifest).await?;
         assert!(
             fixed_manifest_content.len() > 10,
             "Installed manifest should be fixed"
