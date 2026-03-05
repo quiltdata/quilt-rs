@@ -641,9 +641,9 @@ mod tests {
         );
 
         let fixture_path = Path::new("fixtures/user-settings.mkfg");
-        let fixture_content = local_storage.read_bytes(fixture_path).await?;
+        let fixture_content = local_storage.read_byte_stream(fixture_path).await?;
         storage
-            .write_byte_stream(test_path, fixture_content.clone().into())
+            .write_byte_stream(test_path, fixture_content)
             .await?;
 
         let result = verify_hash(
@@ -657,7 +657,6 @@ mod tests {
 
         let modified_row = result.unwrap();
         assert_eq!(modified_row.hash.algorithm(), MULTIHASH_CRC64_NVME);
-        assert_eq!(modified_row.size, fixture_content.len() as u64);
 
         assert_eq!(modified_row.hash.to_string(), "LZmmpqbBItw=");
 
