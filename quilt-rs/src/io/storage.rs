@@ -97,10 +97,10 @@ pub trait StorageExt: Storage {
     fn read_bytes(
         &self,
         path: impl AsRef<Path> + Send + Sync,
-    ) -> impl Future<Output = Res<Vec<u8>>>;
+    ) -> impl Future<Output = Res<Vec<u8>>> + Send + Sync;
 }
 
-impl<T: Storage> StorageExt for T {
+impl<T: Storage + Sync> StorageExt for T {
     async fn read_bytes(&self, path: impl AsRef<Path> + Send + Sync) -> Res<Vec<u8>> {
         Ok(self.read_byte_stream(path).await?.collect().await?.to_vec())
     }

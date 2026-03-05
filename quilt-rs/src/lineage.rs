@@ -103,7 +103,7 @@ impl DomainLineageIo {
         DomainLineageIo { path }
     }
 
-    pub async fn read(&self, storage: &impl Storage) -> Res<DomainLineage> {
+    pub async fn read(&self, storage: &(impl Storage + Sync)) -> Res<DomainLineage> {
         match storage.read_bytes(&self.path).await {
             Ok(bytes) => DomainLineage::from_slice(&bytes),
             Err(_) if !storage.exists(&self.path).await => Err(Error::LineageMissing),
@@ -114,7 +114,7 @@ impl DomainLineageIo {
     /// Read a specific package lineage from the domain lineage
     pub async fn read_package_lineage(
         &self,
-        storage: &impl Storage,
+        storage: &(impl Storage + Sync),
         namespace: &Namespace,
     ) -> Res<(PathBuf, PackageLineage)> {
         let domain_lineage = self.read(storage).await?;
@@ -131,7 +131,7 @@ impl DomainLineageIo {
     /// Write a specific package lineage to the domain lineage
     pub async fn write_package_lineage(
         &self,
-        storage: &impl Storage,
+        storage: &(impl Storage + Sync),
         namespace: &Namespace,
         package_lineage: PackageLineage,
     ) -> Res<PackageLineage> {
@@ -145,7 +145,7 @@ impl DomainLineageIo {
 
     pub async fn set_home(
         &self,
-        storage: &impl Storage,
+        storage: &(impl Storage + Sync),
         home: impl AsRef<Path>,
     ) -> Res<DomainLineage> {
         match storage.read_bytes(&self.path).await {
@@ -163,7 +163,7 @@ impl DomainLineageIo {
 
     pub async fn write(
         &self,
-        storage: &impl Storage,
+        storage: &(impl Storage + Sync),
         lineage: DomainLineage,
     ) -> Res<DomainLineage> {
         let contents = serde_json::to_string_pretty(&lineage)?;
@@ -194,27 +194,27 @@ impl PackageLineageIo {
         }
     }
 
-    pub async fn read(&self, storage: &impl Storage) -> Res<(PathBuf, PackageLineage)> {
+    pub async fn read(&self, storage: &(impl Storage + Sync)) -> Res<(PathBuf, PackageLineage)> {
         self.domain_lineage
             .read_package_lineage(storage, &self.namespace)
             .await
     }
 
-    pub async fn package_home(&self, storage: &impl Storage) -> Res<PathBuf> {
+    pub async fn package_home(&self, storage: &(impl Storage + Sync)) -> Res<PathBuf> {
         Ok(self
             .domain_home(storage)
             .await?
             .join(self.namespace.to_string()))
     }
 
-    pub async fn domain_home(&self, storage: &impl Storage) -> Res<Home> {
+    pub async fn domain_home(&self, storage: &(impl Storage + Sync)) -> Res<Home> {
         let domain_lineage = self.domain_lineage.read(storage).await?;
         Ok(domain_lineage.home)
     }
 
     pub async fn write(
         &self,
-        storage: &impl Storage,
+        storage: &(impl Storage + Sync),
         lineage: PackageLineage,
     ) -> Res<PackageLineage> {
         self.domain_lineage

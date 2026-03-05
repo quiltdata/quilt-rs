@@ -34,7 +34,7 @@ pub struct AuthIo<S: Storage = LocalStorage> {
     dir: PathBuf,
 }
 
-impl<S: Storage> AuthIo<S> {
+impl<S: Storage + Sync> AuthIo<S> {
     fn tokens_path(&self) -> PathBuf {
         self.dir.join(AUTH_TOKENS)
     }
