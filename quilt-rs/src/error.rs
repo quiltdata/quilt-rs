@@ -152,7 +152,6 @@ pub enum Error {
     #[error("Missing HTTP header: {0}")]
     MissingHTTPHeader(String),
 
-
     #[error("Multihash error: {0}")]
     Multihash(#[from] multihash::Error),
 
