@@ -332,14 +332,11 @@ mod tests {
     async fn test_crc64_hash_user_settings_fixture() -> crate::Res {
         let storage = MockStorage::default();
 
-        // Test with the known fixture file
-        let fixture_path = Path::new("fixtures/user-settings.mkfg");
-        let file_content = std::fs::read(fixture_path)?;
-
         // Write fixture content to mock storage
         let test_path = Path::new("user-settings.mkfg");
+        let fixture_path = Path::new("fixtures/user-settings.mkfg");
         storage
-            .write_byte_stream(test_path, file_content.into())
+            .write_byte_stream(test_path, ByteStream::from_path(fixture_path).await?)
             .await?;
 
         // Calculate hash from file
