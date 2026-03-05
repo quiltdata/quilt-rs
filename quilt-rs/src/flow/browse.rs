@@ -135,9 +135,9 @@ mod tests {
 
         // Prepare the reference manifest file.
         // It is copied into the cache path to simulate a cached manifest.
-        let jsonl = std::fs::read(fixtures::manifest::path()?)?;
+        let jsonl = ByteStream::from_path(fixtures::manifest::path()?).await?;
         let storage = MockStorage::default();
-        storage.write_byte_stream(&cache_path, jsonl.into()).await?;
+        storage.write_byte_stream(&cache_path, jsonl).await?;
 
         // Although there is no direct assertion for `remote.expect_get_object().never()`,
         // we know the remote is not called because a missing key would throw an error.
