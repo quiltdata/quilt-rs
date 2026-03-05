@@ -225,6 +225,7 @@ mod tests {
 
     use test_log::test;
 
+    use aws_sdk_s3::primitives::ByteStream;
     use aws_smithy_types::base64;
 
     use crate::checksum::Sha256ChunkedHash;
@@ -317,9 +318,9 @@ mod tests {
         let storage = MockStorage::default();
         let file_path = PathBuf::from("foo");
         storage
-            .write_file(
+            .write_byte_stream(
                 &file_path,
-                br###"{"packages":{},"home":"/home/directory"}"###.as_ref(),
+                br###"{"packages":{},"home":"/home/directory"}"###.to_vec().into(),
             )
             .await?;
         let lineage = DomainLineageIo::new(file_path).read(&storage).await?;
