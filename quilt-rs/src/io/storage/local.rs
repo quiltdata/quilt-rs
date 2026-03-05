@@ -96,14 +96,19 @@ impl Storage for LocalStorage {
         path: impl AsRef<Path> + Send + Sync,
         mut body: ByteStream,
     ) -> Res {
-        if let Some(parent) = path.as_ref().parent() {
+        let path = path.as_ref();
+        if let Some(parent) = path.parent() {
             self.create_dir_all(parent).await?;
         }
-        let mut file = fs::File::create(&path).await?;
+        let map_err = |source| Error::FileWrite {
+            path: path.to_path_buf(),
+            source,
+        };
+        let mut file = fs::File::create(path).await.map_err(map_err)?;
         while let Some(bytes) = body.try_next().await? {
-            file.write_all(&bytes).await?;
+            file.write_all(&bytes).await.map_err(map_err)?;
         }
-        file.flush().await?;
+        file.flush().await.map_err(map_err)?;
 
         Ok(())
     }
@@ -244,8 +249,9 @@ mod tests {
         assert!(result.is_err());
         let error = result.unwrap_err();
 
+        assert!(matches!(error, Error::DirectoryCreate { .. } | Error::FileWrite { .. }));
         let error_msg = error.to_string();
-        assert!(error_msg.contains("Permission denied"));
+        assert!(error_msg.contains("test.txt") && error_msg.contains("Permission denied"));
 
         // Restore permissions for cleanup
         let mut perms = fs::metadata(&readonly_dir).await?.permissions();
