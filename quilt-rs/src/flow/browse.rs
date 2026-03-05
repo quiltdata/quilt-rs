@@ -202,7 +202,7 @@ mod tests {
         storage.write_file(&cache_path, b"PAR1_invalid").await?;
 
         // Set up valid JSONL on the remote
-        let jsonl = storage.read_file(fixtures::manifest::path()?).await?;
+        let jsonl = storage.read_byte_stream(fixtures::manifest::path()?).await?.collect().await?.to_vec();
         let remote = MockRemote::default();
         let remote_uri = S3Uri::from_str(&format!(
             "s3://{}/.quilt/packages/{}",
@@ -220,7 +220,7 @@ mod tests {
         assert!(manifest.get_record(&PathBuf::from("e0-0.txt")).is_some());
 
         // Verify the cache file was replaced with valid JSONL
-        let cached_bytes = storage.read_file(&cache_path).await?;
+        let cached_bytes = storage.read_byte_stream(&cache_path).await?.collect().await?.to_vec();
         let first_line = std::str::from_utf8(&cached_bytes)
             .expect("cached file should be valid UTF-8")
             .lines()

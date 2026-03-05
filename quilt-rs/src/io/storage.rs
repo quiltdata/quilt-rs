@@ -65,14 +65,6 @@ pub trait Storage {
         path: impl AsRef<Path> + Send + Sync,
     ) -> impl Future<Output = Res<ReadDir>> + Send + Sync;
 
-    /// Reads the entire contents of a file into a bytes vector.
-    /// Prefer using `read_byte_stream`.
-    // TODO: Remove it in favor of `self.read_byte_stream`
-    fn read_file(
-        &self,
-        path: impl AsRef<Path> + Send + Sync,
-    ) -> impl Future<Output = Res<Vec<u8>>> + Send + Sync;
-
     /// Removes a directory at this path, after removing all its contents.
     fn remove_dir_all(&self, path: impl AsRef<Path> + Send) -> impl Future<Output = Res> + Send;
 

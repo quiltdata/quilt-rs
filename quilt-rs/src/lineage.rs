@@ -105,21 +105,10 @@ impl DomainLineageIo {
     }
 
     pub async fn read(&self, storage: &impl Storage) -> Res<DomainLineage> {
-        let contents = storage
-            .read_file(&self.path)
-            .await
-            .map_err(|err| match err {
-                Error::Io(inner_err) => match inner_err.kind() {
-                    std::io::ErrorKind::NotFound => Error::LineageMissing,
-                    _ => Error::Io(inner_err),
-                },
-                Error::FileRead { path, source } => match source.kind() {
-                    std::io::ErrorKind::NotFound => Error::LineageMissing,
-                    _ => Error::FileRead { path, source },
-                },
-                other => other,
-            })?;
-
+        if !storage.exists(&self.path).await {
+            return Err(Error::LineageMissing);
+        }
+        let contents = storage.read_byte_stream(&self.path).await?.collect().await?.to_vec();
         DomainLineage::try_from(contents)
     }
 
@@ -160,22 +149,13 @@ impl DomainLineageIo {
         storage: &impl Storage,
         home: impl AsRef<Path>,
     ) -> Res<DomainLineage> {
-        match storage.read_file(&self.path).await {
-            Ok(contents) => {
-                let mut lineage: DomainLineage = serde_json::from_slice(&contents)?;
-                lineage.home = home.into();
-                self.write(storage, lineage).await
-            }
-            Err(Error::Io(e)) => match e.kind() {
-                std::io::ErrorKind::NotFound => self.write(storage, DomainLineage::new(home)).await,
-                _ => Err(Error::Io(e)),
-            },
-            Err(Error::FileRead { path, source }) => match source.kind() {
-                std::io::ErrorKind::NotFound => self.write(storage, DomainLineage::new(home)).await,
-                _ => Err(Error::FileRead { path, source }),
-            },
-            Err(e) => Err(e),
+        if !storage.exists(&self.path).await {
+            return self.write(storage, DomainLineage::new(home)).await;
         }
+        let contents = storage.read_byte_stream(&self.path).await?.collect().await?.to_vec();
+        let mut lineage: DomainLineage = serde_json::from_slice(&contents)?;
+        lineage.home = home.into();
+        self.write(storage, lineage).await
     }
 
     pub async fn write(
@@ -404,7 +384,7 @@ mod tests {
             )
             .await?;
         assert!(storage.exists(&file_path).await);
-        let file_contents = storage.read_file(&file_path).await?;
+        let file_contents = storage.read_byte_stream(&file_path).await?.collect().await?.to_vec();
         let lineage = DomainLineage::try_from(file_contents)?;
 
         assert_eq!(lineage.as_ref(), &PathBuf::from("/tmp/working_dir"));

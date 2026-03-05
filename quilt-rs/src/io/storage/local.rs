@@ -114,14 +114,6 @@ impl Storage for LocalStorage {
         })
     }
 
-    async fn read_file(&self, path: impl AsRef<Path>) -> Res<Vec<u8>> {
-        let path = path.as_ref();
-        fs::read(path).await.map_err(|e| Error::FileRead {
-            path: path.to_path_buf(),
-            source: e,
-        })
-    }
-
     async fn remove_dir_all(&self, path: impl AsRef<Path>) -> Res {
         Ok(fs::remove_dir_all(path).await?)
     }
