@@ -50,8 +50,8 @@ impl<S: Storage> AuthIo<S> {
             debug!("No tokens file found");
             return Ok(None);
         }
-        let contents = self.storage.read_byte_stream(&tokens_path).await?.collect().await?.to_vec();
-        let tokens = serde_json::from_slice(&contents)?;
+        let bytes = self.storage.read_byte_stream(&tokens_path).await?.collect().await?;
+        let tokens = serde_json::from_slice(&bytes.to_vec())?;
 
         debug!("✔️ Successfully read tokens");
 
@@ -78,8 +78,8 @@ impl<S: Storage> AuthIo<S> {
             warn!("No credentials file found");
             return Ok(None);
         }
-        let contents = self.storage.read_byte_stream(&credentials_path).await?.collect().await?.to_vec();
-        let credentials: Credentials = serde_json::from_slice(&contents)?;
+        let bytes = self.storage.read_byte_stream(&credentials_path).await?.collect().await?;
+        let credentials: Credentials = serde_json::from_slice(&bytes.to_vec())?;
 
         // Check if credentials are expired
         if credentials.expires_at <= chrono::Utc::now() {

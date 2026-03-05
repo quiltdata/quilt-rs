@@ -71,11 +71,9 @@ impl AsRef<PathBuf> for DomainLineage {
     }
 }
 
-impl TryFrom<Vec<u8>> for DomainLineage {
-    type Error = Error;
-
-    fn try_from(input: Vec<u8>) -> Result<Self, Self::Error> {
-        let result: Result<Self, serde_json::Error> = serde_json::from_slice(&input);
+impl DomainLineage {
+    pub fn from_slice(input: &[u8]) -> Res<Self> {
+        let result: Result<Self, serde_json::Error> = serde_json::from_slice(input);
 
         match result {
             Ok(lineage) => {
@@ -85,12 +83,13 @@ impl TryFrom<Vec<u8>> for DomainLineage {
                 Ok(lineage)
             }
             Err(err) => {
-                log::error!("Failed to parse `Vec<u8>` for `DomainLineage` in `{input:?}`");
+                log::error!("Failed to parse DomainLineage from `{input:?}`");
                 Err(Error::LineageParse(err))
             }
         }
     }
 }
+
 
 /// Wrapper for reading and writing `DomainLineage`
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -108,8 +107,8 @@ impl DomainLineageIo {
         if !storage.exists(&self.path).await {
             return Err(Error::LineageMissing);
         }
-        let contents = storage.read_byte_stream(&self.path).await?.collect().await?.to_vec();
-        DomainLineage::try_from(contents)
+        let bytes = storage.read_byte_stream(&self.path).await?.collect().await?;
+        DomainLineage::from_slice(&bytes.to_vec())
     }
 
     /// Read a specific package lineage from the domain lineage
@@ -152,8 +151,8 @@ impl DomainLineageIo {
         if !storage.exists(&self.path).await {
             return self.write(storage, DomainLineage::new(home)).await;
         }
-        let contents = storage.read_byte_stream(&self.path).await?.collect().await?.to_vec();
-        let mut lineage: DomainLineage = serde_json::from_slice(&contents)?;
+        let bytes = storage.read_byte_stream(&self.path).await?.collect().await?;
+        let mut lineage: DomainLineage = serde_json::from_slice(&bytes.to_vec())?;
         lineage.home = home.into();
         self.write(storage, lineage).await
     }
@@ -235,7 +234,7 @@ mod tests {
     #[test]
     fn test_syntax_error() {
         assert_eq!(
-            DomainLineage::try_from(b"err".to_vec())
+            DomainLineage::from_slice(b"err")
                 .unwrap_err()
                 .to_string(),
             "Failed to parse lineage file: expected value at line 1 column 1".to_string()
@@ -246,12 +245,12 @@ mod tests {
     fn test_wrong_key() {
         // NOTE: @fiskus I don't think this is developer friendly
         //       I'd like to remove serde(default), so this test fails
-        assert!(DomainLineage::try_from(br#"{"notkey": 123}"#.to_vec()).is_err());
+        assert!(DomainLineage::from_slice(br#"{"notkey": 123}"#).is_err());
     }
 
     #[test]
     fn test_wrong_value() {
-        assert!(DomainLineage::try_from(br#"{"packages": 123}"#.to_vec())
+        assert!(DomainLineage::from_slice(br#"{"packages": 123}"#)
             .unwrap_err()
             .to_string()
             .starts_with("Failed to parse lineage file: invalid type:"));
@@ -260,7 +259,7 @@ mod tests {
     #[test]
     fn test_missing_working_directory() {
         assert_eq!(
-            DomainLineage::try_from(br###"{"packages":{}}"###.to_vec())
+            DomainLineage::from_slice(br###"{"packages":{}}"###)
                 .unwrap_err()
                 .to_string(),
             "Domain lineage missing Home directory".to_string()
@@ -270,7 +269,7 @@ mod tests {
     #[test]
     fn test_with_working_directory() -> Res {
         let lineage =
-            DomainLineage::try_from(br###"{"packages":{},"home":"/tmp/working_dir"}"###.to_vec())
+            DomainLineage::from_slice(br###"{"packages":{},"home":"/tmp/working_dir"}"###)
                 .unwrap();
         assert_eq!(lineage.as_ref(), &PathBuf::from("/tmp/working_dir"));
         Ok(())
@@ -385,7 +384,7 @@ mod tests {
             .await?;
         assert!(storage.exists(&file_path).await);
         let file_contents = storage.read_byte_stream(&file_path).await?.collect().await?.to_vec();
-        let lineage = DomainLineage::try_from(file_contents)?;
+        let lineage = DomainLineage::from_slice(&file_contents)?;
 
         assert_eq!(lineage.as_ref(), &PathBuf::from("/tmp/working_dir"));
 
