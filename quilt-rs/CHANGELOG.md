@@ -7,6 +7,18 @@
 -->
 # Changelog
 
+## [v0.27.3-alpha1] - 2026-03-05
+
+### Changed
+
+- Remove `read_file` and `write_file` from `Storage` trait in favor of `read_byte_stream` and `write_byte_stream`
+- Add `StorageExt` trait with `read_bytes` convenience method
+- `write_byte_stream` now creates parent directories automatically
+
+### Removed
+
+- Remove unused `MissingParentPath` error variant
+
 ## [v0.27.2] - 2026-03-03
 
 ### Added
