@@ -11,13 +11,14 @@
 
 ### Changed
 
-- `write_byte_stream` now uses atomic writes (write to temp file, sync, then rename) to prevent corruption on interruption
+- `write_byte_stream` now uses atomic writes to prevent corruption
 
 ## [v0.27.3-alpha1] - 2026-03-05
 
 ### Changed
 
-- Remove `read_file` and `write_file` from `Storage` trait in favor of `read_byte_stream` and `write_byte_stream`
+- Remove `read_file` and `write_file` from `Storage` trait
+  in favor of `read_byte_stream` and `write_byte_stream`
 - Add `StorageExt` trait with `read_bytes` convenience method
 - `write_byte_stream` now creates parent directories automatically
 
