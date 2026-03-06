@@ -15,19 +15,33 @@ use super::Storage;
 /// Create a temporary file in `dir` and return its path.
 ///
 /// The temp file lives on the same filesystem as the target so that
-/// a subsequent `rename` is always atomic. `target` is used for error
-/// reporting only.
-fn temp_path_in(dir: &Path) -> Res<PathBuf> {
-    let map_err = |source| Error::FileWrite {
-        path: dir.to_path_buf(),
-        source,
-    };
+/// a subsequent `rename` is always atomic.
+fn temp_path_in(dir: &Path) -> std::io::Result<PathBuf> {
     // We only need the path — the fd is closed and we write via tokio.
-    let (_, temp_path) = tempfile::NamedTempFile::new_in(dir)
-        .map_err(map_err)?
-        .keep()
-        .map_err(|e| map_err(e.error))?;
+    let (_, temp_path) = tempfile::NamedTempFile::new_in(dir)?.keep()?;
     Ok(temp_path)
+}
+
+/// Write `body` to a temp file, then atomically rename to `path`.
+///
+/// On failure the temp file is cleaned up.
+async fn atomic_write(path: &Path, mut body: ByteStream) -> std::io::Result<()> {
+    let parent = path.parent().unwrap_or(Path::new("."));
+    fs::create_dir_all(parent).await?;
+    let tmp = temp_path_in(parent)?;
+    let result = async {
+        let mut file = fs::File::create(&tmp).await?;
+        while let Some(bytes) = body.try_next().await.map_err(std::io::Error::other)? {
+            file.write_all(&bytes).await?;
+        }
+        file.flush().await?;
+        fs::rename(&tmp, path).await
+    }
+    .await;
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 /// Implementation of the `Storage` trait for the local filesystem
@@ -113,40 +127,13 @@ impl Storage for LocalStorage {
     async fn write_byte_stream(
         &self,
         path: impl AsRef<Path> + Send + Sync,
-        mut body: ByteStream,
+        body: ByteStream,
     ) -> Res {
         let path = path.as_ref();
-        let parent = path.parent().unwrap_or(Path::new("."));
-        self.create_dir_all(parent).await?;
-        let tmp = temp_path_in(parent)?;
-        let map_err = |source| Error::FileWrite {
+        atomic_write(path, body).await.map_err(|source| Error::FileWrite {
             path: path.to_path_buf(),
             source,
-        };
-        let write_result = async {
-            let mut file = fs::File::create(&tmp).await.map_err(map_err)?;
-            while let Some(bytes) = body.try_next().await.map_err(|e| map_err(e.into()))? {
-                file.write_all(&bytes).await.map_err(map_err)?;
-            }
-            file.flush().await.map_err(map_err)?;
-            Ok::<(), crate::Error>(())
-        }
-        .await;
-
-        if let Err(e) = write_result {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(e);
-        }
-
-        fs::rename(&tmp, path).await.map_err(|source| {
-            let _ = std::fs::remove_file(&tmp);
-            Error::FileWrite {
-                path: path.to_path_buf(),
-                source,
-            }
-        })?;
-
-        Ok(())
+        })
     }
 }
 
