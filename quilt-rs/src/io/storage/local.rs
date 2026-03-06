@@ -274,10 +274,7 @@ mod tests {
         assert!(result.is_err());
         let error = result.unwrap_err();
 
-        assert!(matches!(
-            error,
-            Error::DirectoryCreate { .. } | Error::FileWrite { .. }
-        ));
+        assert!(matches!(error, Error::FileWrite { .. }));
         let error_msg = error.to_string();
         assert!(error_msg.contains("readonly") && error_msg.contains("Permission denied"));
 
