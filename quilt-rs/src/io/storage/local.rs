@@ -39,7 +39,7 @@ async fn atomic_write(path: &Path, mut body: ByteStream) -> std::io::Result<()> 
     }
     .await;
     if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
+        std::fs::remove_file(&tmp)?;
     }
     result
 }
