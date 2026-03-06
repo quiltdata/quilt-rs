@@ -12,18 +12,18 @@ use crate::Res;
 
 use super::Storage;
 
-/// Create a temporary file path in the same directory as `path`.
+/// Create a temporary file in `dir` and return its path.
 ///
-/// Uses the same parent directory so that `rename` is always atomic
-/// (same filesystem).
-fn temp_path_for(path: &Path) -> Res<PathBuf> {
-    let parent = path.parent().unwrap_or(Path::new("."));
+/// The temp file lives on the same filesystem as the target so that
+/// a subsequent `rename` is always atomic. `target` is used for error
+/// reporting only.
+fn temp_path_in(dir: &Path, target: &Path) -> Res<PathBuf> {
     let map_err = |source| Error::FileWrite {
-        path: path.to_path_buf(),
+        path: target.to_path_buf(),
         source,
     };
     // We only need the path — the fd is closed and we write via tokio.
-    let (_, temp_path) = tempfile::NamedTempFile::new_in(parent)
+    let (_, temp_path) = tempfile::NamedTempFile::new_in(dir)
         .map_err(map_err)?
         .keep()
         .map_err(|e| map_err(e.error))?;
@@ -116,10 +116,9 @@ impl Storage for LocalStorage {
         mut body: ByteStream,
     ) -> Res {
         let path = path.as_ref();
-        if let Some(parent) = path.parent() {
-            self.create_dir_all(parent).await?;
-        }
-        let tmp = temp_path_for(path)?;
+        let parent = path.parent().unwrap_or(Path::new("."));
+        self.create_dir_all(parent).await?;
+        let tmp = temp_path_in(parent, path)?;
         let map_err = |source| Error::FileWrite {
             path: path.to_path_buf(),
             source,
