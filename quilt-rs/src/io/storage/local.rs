@@ -12,23 +12,27 @@ use crate::Res;
 
 use super::Storage;
 
-/// Create a temporary file in `dir` and return its path.
+/// Create a temporary file in `dir` and return its handle and path.
 ///
 /// The temp file lives on the same filesystem as the target so that
 /// a subsequent `rename` is always atomic.
-fn temp_path_in(dir: &Path) -> std::io::Result<PathBuf> {
-    // We only need the path — the fd is closed and we write via tokio.
-    let (_, temp_path) = tempfile::NamedTempFile::new_in(dir)?.keep()?;
-    Ok(temp_path)
+fn temp_file_in(dir: &Path) -> std::io::Result<(fs::File, PathBuf)> {
+    let (file, path) = tempfile::NamedTempFile::new_in(dir)?.keep()?;
+    Ok((fs::File::from_std(file), path))
 }
 
-/// Write `body` into `tmp`, flush to disk, then rename to `dest`.
-async fn write_and_rename(tmp: &Path, dest: &Path, mut body: ByteStream) -> std::io::Result<()> {
-    let mut file = fs::File::create(tmp).await?;
+/// Write `body` into `file`, flush to disk, then rename `tmp` to `dest`.
+async fn write_and_rename(
+    mut file: fs::File,
+    tmp: &Path,
+    dest: &Path,
+    mut body: ByteStream,
+) -> std::io::Result<()> {
     while let Some(bytes) = body.try_next().await.map_err(std::io::Error::other)? {
         file.write_all(&bytes).await?;
     }
     file.sync_all().await?;
+    drop(file);
     fs::rename(tmp, dest).await
 }
 
@@ -38,8 +42,8 @@ async fn write_and_rename(tmp: &Path, dest: &Path, mut body: ByteStream) -> std:
 async fn atomic_write(path: &Path, body: ByteStream) -> std::io::Result<()> {
     let parent = path.parent().unwrap_or(Path::new("."));
     fs::create_dir_all(parent).await?;
-    let tmp = temp_path_in(parent)?;
-    if let Err(e) = write_and_rename(&tmp, path, body).await {
+    let (file, tmp) = temp_file_in(parent)?;
+    if let Err(e) = write_and_rename(file, &tmp, path, body).await {
         // Prefer the original write/rename error over a cleanup failure.
         let _ = std::fs::remove_file(&tmp);
         return Err(e);
