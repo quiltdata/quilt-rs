@@ -132,10 +132,12 @@ impl Storage for LocalStorage {
         body: ByteStream,
     ) -> Res {
         let path = path.as_ref();
-        atomic_write(path, body).await.map_err(|source| Error::FileWrite {
-            path: path.to_path_buf(),
-            source,
-        })
+        atomic_write(path, body)
+            .await
+            .map_err(|source| Error::FileWrite {
+                path: path.to_path_buf(),
+                source,
+            })
     }
 }
 
