@@ -17,9 +17,9 @@ use super::Storage;
 /// The temp file lives on the same filesystem as the target so that
 /// a subsequent `rename` is always atomic. `target` is used for error
 /// reporting only.
-fn temp_path_in(dir: &Path, target: &Path) -> Res<PathBuf> {
+fn temp_path_in(dir: &Path) -> Res<PathBuf> {
     let map_err = |source| Error::FileWrite {
-        path: target.to_path_buf(),
+        path: dir.to_path_buf(),
         source,
     };
     // We only need the path — the fd is closed and we write via tokio.
@@ -118,7 +118,7 @@ impl Storage for LocalStorage {
         let path = path.as_ref();
         let parent = path.parent().unwrap_or(Path::new("."));
         self.create_dir_all(parent).await?;
-        let tmp = temp_path_in(parent, path)?;
+        let tmp = temp_path_in(parent)?;
         let map_err = |source| Error::FileWrite {
             path: path.to_path_buf(),
             source,
@@ -290,7 +290,7 @@ mod tests {
             Error::DirectoryCreate { .. } | Error::FileWrite { .. }
         ));
         let error_msg = error.to_string();
-        assert!(error_msg.contains("test.txt") && error_msg.contains("Permission denied"));
+        assert!(error_msg.contains("readonly") && error_msg.contains("Permission denied"));
 
         // Restore permissions for cleanup
         let mut perms = fs::metadata(&readonly_dir).await?.permissions();
