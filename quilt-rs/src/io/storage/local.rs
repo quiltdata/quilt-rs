@@ -36,11 +36,10 @@ async fn atomic_write(path: &Path, body: ByteStream) -> std::io::Result<()> {
     let parent = path.parent().unwrap_or(Path::new("."));
     fs::create_dir_all(parent).await?;
     let (file, tmp) = temp_file_in(parent)?;
-    if let Err(e) = write_stream(file, body).await {
-        // Prefer the original write/rename error over a cleanup failure.
+    write_stream(file, body).await.inspect_err(|_| {
+        // Clean up temp file; prefer the original error over a cleanup failure.
         let _ = std::fs::remove_file(&tmp);
-        return Err(e);
-    }
+    })?;
     fs::rename(&tmp, path).await
 }
 
