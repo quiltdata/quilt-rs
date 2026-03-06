@@ -38,8 +38,10 @@ async fn atomic_write(path: &Path, mut body: ByteStream) -> std::io::Result<()> 
         fs::rename(&tmp, path).await
     }
     .await;
-    if result.is_err() {
-        std::fs::remove_file(&tmp)?;
+    if let Err(e) = result {
+        // Prefer the original write/rename error over a cleanup failure.
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
     }
     result
 }
