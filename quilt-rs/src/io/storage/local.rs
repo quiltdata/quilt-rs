@@ -21,19 +21,12 @@ fn temp_file_in(dir: &Path) -> std::io::Result<(fs::File, PathBuf)> {
     Ok((fs::File::from_std(file), path))
 }
 
-/// Write `body` into `file`, flush to disk, then rename `tmp` to `dest`.
-async fn write_and_rename(
-    mut file: fs::File,
-    tmp: &Path,
-    dest: &Path,
-    mut body: ByteStream,
-) -> std::io::Result<()> {
+/// Write `body` into `file` and flush to disk.
+async fn write_stream(mut file: fs::File, mut body: ByteStream) -> std::io::Result<()> {
     while let Some(bytes) = body.try_next().await.map_err(std::io::Error::other)? {
         file.write_all(&bytes).await?;
     }
-    file.sync_all().await?;
-    drop(file);
-    fs::rename(tmp, dest).await
+    file.sync_all().await
 }
 
 /// Write `body` to a temp file, then atomically rename to `path`.
@@ -43,12 +36,12 @@ async fn atomic_write(path: &Path, body: ByteStream) -> std::io::Result<()> {
     let parent = path.parent().unwrap_or(Path::new("."));
     fs::create_dir_all(parent).await?;
     let (file, tmp) = temp_file_in(parent)?;
-    if let Err(e) = write_and_rename(file, &tmp, path, body).await {
+    if let Err(e) = write_stream(file, body).await {
         // Prefer the original write/rename error over a cleanup failure.
         let _ = std::fs::remove_file(&tmp);
         return Err(e);
     }
-    Ok(())
+    fs::rename(&tmp, path).await
 }
 
 /// Implementation of the `Storage` trait for the local filesystem
