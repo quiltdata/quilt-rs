@@ -284,4 +284,60 @@ mod tests {
 
         Ok(())
     }
+
+    #[test(tokio::test)]
+    async fn test_write_overwrites_existing_file() -> Res {
+        let temp_dir = tempdir()?;
+        let dest = temp_dir.path().join("data.txt");
+        let storage = LocalStorage::default();
+
+        storage
+            .write_byte_stream(&dest, ByteStream::from_static(b"original"))
+            .await?;
+        storage
+            .write_byte_stream(&dest, ByteStream::from_static(b"updated"))
+            .await?;
+
+        assert_eq!(fs::read(&dest).await?, b"updated");
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_write_leaves_no_temp_files() -> Res {
+        let temp_dir = tempdir()?;
+        let dest = temp_dir.path().join("data.txt");
+        let storage = LocalStorage::default();
+
+        // Successful write
+        storage
+            .write_byte_stream(&dest, ByteStream::from_static(b"hello"))
+            .await?;
+
+        let entries: Vec<_> = std::fs::read_dir(temp_dir.path())?
+            .filter_map(|e| e.ok())
+            .collect();
+        assert_eq!(entries.len(), 1, "only the target file should exist");
+        assert_eq!(entries[0].file_name(), "data.txt");
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_failed_write_leaves_no_temp_files() -> Res {
+        let temp_dir = tempdir()?;
+        let storage = LocalStorage::default();
+
+        // Write to empty filename (rename will fail)
+        let invalid = temp_dir.path().join("");
+        let _ = storage
+            .write_byte_stream(&invalid, ByteStream::from_static(b"data"))
+            .await;
+
+        let entries: Vec<_> = std::fs::read_dir(temp_dir.path())?
+            .filter_map(|e| e.ok())
+            .collect();
+        assert!(entries.is_empty(), "temp file should be cleaned up");
+
+        Ok(())
+    }
 }
