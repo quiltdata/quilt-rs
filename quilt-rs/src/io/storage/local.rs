@@ -36,11 +36,11 @@ async fn atomic_write(path: &Path, body: ByteStream) -> std::io::Result<()> {
     let parent = path.parent().unwrap_or(Path::new("."));
     fs::create_dir_all(parent).await?;
     let (file, tmp) = temp_file_in(parent)?;
-    write_stream(file, body).await.inspect_err(|_| {
-        // Clean up temp file; prefer the original error over a cleanup failure.
+    let cleanup = |_: &std::io::Error| {
         let _ = std::fs::remove_file(&tmp);
-    })?;
-    fs::rename(&tmp, path).await
+    };
+    write_stream(file, body).await.inspect_err(cleanup)?;
+    fs::rename(&tmp, path).await.inspect_err(cleanup)
 }
 
 /// Implementation of the `Storage` trait for the local filesystem
