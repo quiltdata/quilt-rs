@@ -125,7 +125,7 @@ impl Storage for LocalStorage {
         };
         let write_result = async {
             let mut file = fs::File::create(&tmp).await.map_err(map_err)?;
-            while let Some(bytes) = body.try_next().await? {
+            while let Some(bytes) = body.try_next().await.map_err(|e| map_err(e.into()))? {
                 file.write_all(&bytes).await.map_err(map_err)?;
             }
             file.flush().await.map_err(map_err)?;
