@@ -34,7 +34,7 @@ async fn atomic_write(path: &Path, mut body: ByteStream) -> std::io::Result<()> 
         while let Some(bytes) = body.try_next().await.map_err(std::io::Error::other)? {
             file.write_all(&bytes).await?;
         }
-        file.flush().await?;
+        file.sync_all().await?;
         fs::rename(&tmp, path).await
     }
     .await;
