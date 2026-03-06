@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::path::PathBuf;
 
 use aws_sdk_s3::primitives::ByteStream;
 use chrono::DateTime;
@@ -10,6 +11,24 @@ use crate::Error;
 use crate::Res;
 
 use super::Storage;
+
+/// Create a temporary file path in the same directory as `path`.
+///
+/// Uses the same parent directory so that `rename` is always atomic
+/// (same filesystem).
+fn temp_path_for(path: &Path) -> Res<PathBuf> {
+    let parent = path.parent().unwrap_or(Path::new("."));
+    let map_err = |source| Error::FileWrite {
+        path: path.to_path_buf(),
+        source,
+    };
+    // We only need the path — the fd is closed and we write via tokio.
+    let (_, temp_path) = tempfile::NamedTempFile::new_in(parent)
+        .map_err(map_err)?
+        .keep()
+        .map_err(|e| map_err(e.error))?;
+    Ok(temp_path)
+}
 
 /// Implementation of the `Storage` trait for the local filesystem
 #[derive(Clone, Debug)]
@@ -100,15 +119,33 @@ impl Storage for LocalStorage {
         if let Some(parent) = path.parent() {
             self.create_dir_all(parent).await?;
         }
+        let tmp = temp_path_for(path)?;
         let map_err = |source| Error::FileWrite {
             path: path.to_path_buf(),
             source,
         };
-        let mut file = fs::File::create(path).await.map_err(map_err)?;
-        while let Some(bytes) = body.try_next().await? {
-            file.write_all(&bytes).await.map_err(map_err)?;
+        let write_result = async {
+            let mut file = fs::File::create(&tmp).await.map_err(map_err)?;
+            while let Some(bytes) = body.try_next().await? {
+                file.write_all(&bytes).await.map_err(map_err)?;
+            }
+            file.flush().await.map_err(map_err)?;
+            Ok::<(), crate::Error>(())
         }
-        file.flush().await.map_err(map_err)?;
+        .await;
+
+        if let Err(e) = write_result {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
+
+        fs::rename(&tmp, path).await.map_err(|source| {
+            let _ = std::fs::remove_file(&tmp);
+            Error::FileWrite {
+                path: path.to_path_buf(),
+                source,
+            }
+        })?;
 
         Ok(())
     }
