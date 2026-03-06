@@ -23,11 +23,7 @@ fn temp_path_in(dir: &Path) -> std::io::Result<PathBuf> {
 }
 
 /// Write `body` into `tmp`, flush to disk, then rename to `dest`.
-async fn write_and_rename(
-    tmp: &Path,
-    dest: &Path,
-    mut body: ByteStream,
-) -> std::io::Result<()> {
+async fn write_and_rename(tmp: &Path, dest: &Path, mut body: ByteStream) -> std::io::Result<()> {
     let mut file = fs::File::create(tmp).await?;
     while let Some(bytes) = body.try_next().await.map_err(std::io::Error::other)? {
         file.write_all(&bytes).await?;
