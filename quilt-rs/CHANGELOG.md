@@ -7,6 +7,12 @@
 -->
 # Changelog
 
+## [v0.27.3-alpha2] - 2026-03-06
+
+### Changed
+
+- `write_byte_stream` now uses atomic writes (write to temp file, sync, then rename) to prevent corruption on interruption
+
 ## [v0.27.3-alpha1] - 2026-03-05
 
 ### Changed
