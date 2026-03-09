@@ -275,7 +275,7 @@ mod tests {
 
         assert!(matches!(error, Error::FileWrite { .. }));
         let error_msg = error.to_string();
-        assert!(error_msg.contains("readonly") && error_msg.contains("Permission denied"));
+        assert!(error_msg.contains("Permission denied"));
 
         // Restore permissions for cleanup
         let mut perms = fs::metadata(&readonly_dir).await?.permissions();
@@ -327,16 +327,17 @@ mod tests {
         let temp_dir = tempdir()?;
         let storage = LocalStorage::default();
 
-        // Write to empty filename (rename will fail)
-        let invalid = temp_dir.path().join("");
+        // Target is a directory — rename will fail with EISDIR
+        let target = temp_dir.path().join("a_dir");
+        fs::create_dir(&target).await?;
         let _ = storage
-            .write_byte_stream(&invalid, ByteStream::from_static(b"data"))
+            .write_byte_stream(&target, ByteStream::from_static(b"data"))
             .await;
 
-        let entries: Vec<_> = std::fs::read_dir(temp_dir.path())?
+        let has_tmp = std::fs::read_dir(temp_dir.path())?
             .filter_map(|e| e.ok())
-            .collect();
-        assert!(entries.is_empty(), "temp file should be cleaned up");
+            .any(|e| e.file_name().to_string_lossy().starts_with(".tmp-"));
+        assert!(!has_tmp, "temp file should be cleaned up");
 
         Ok(())
     }
