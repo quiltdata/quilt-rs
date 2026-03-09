@@ -7,14 +7,7 @@
 -->
 # Changelog
 
-## [v0.27.3-alpha2] - 2026-03-09
-
-### Changed
-
-- `write_byte_stream` now uses atomic writes (temp file + rename)
-  to prevent corruption on interruption
-
-## [v0.27.3-alpha1] - 2026-03-05
+## [v0.27.3] - 2026-03-09
 
 ### Changed
 
@@ -22,6 +15,8 @@
   in favor of `read_byte_stream` and `write_byte_stream`
 - Add `StorageExt` trait with `read_bytes` convenience method
 - `write_byte_stream` now creates parent directories automatically
+- `write_byte_stream` now uses atomic writes (temp file + rename)
+  to prevent corruption on interruption
 
 ### Removed
 
