@@ -40,10 +40,15 @@ fn navigate_to_package(app_handle: &AppHandle, uri_str: &str) -> Result {
     navigate_to_url(app_handle, redirect_url)
 }
 
+/// Auth callback parameters parsed from a `quilt://` URL.
+struct AuthParams {
+    code: String,
+    host: quilt::uri::Host,
+    redirect: Option<String>,
+}
+
 /// Parse auth callback query parameters from a `quilt://` URL.
-///
-/// Returns `(code, host)` on success.
-fn parse_auth_params(url: &Url) -> Result<(String, quilt::uri::Host)> {
+fn parse_auth_params(url: &Url) -> Result<AuthParams> {
     let code = url
         .query_pairs()
         .find(|(k, _)| k == "code")
@@ -56,20 +61,31 @@ fn parse_auth_params(url: &Url) -> Result<(String, quilt::uri::Host)> {
         .map(|(_, v)| v.into_owned())
         .ok_or_else(|| Error::General("Missing 'host' parameter in auth callback".into()))?;
 
+    let redirect = url
+        .query_pairs()
+        .find(|(k, _)| k == "redirect")
+        .map(|(_, v)| v.into_owned());
+
     let host = quilt::uri::Host::from_str(&host_str)?;
-    Ok((code, host))
+    Ok(AuthParams {
+        code,
+        host,
+        redirect,
+    })
 }
 
-/// Handle `quilt://auth/callback?code=...&host=...` by logging in and navigating to the login page
+/// Handle `quilt://auth/callback?code=...&host=...&redirect=...` deep link
 fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
-    let (code, host) = parse_auth_params(url)?;
+    let params = parse_auth_params(url)?;
     let handle = app_handle.clone();
-    let host_str = host.to_string();
+    let host_str = params.host.to_string();
 
     tauri::async_runtime::spawn(async move {
         info!("Auth callback for host: {}", host_str);
         let m = handle.state::<model::Model>();
-        if let Err(err) = commands::login_command(&m, &host_str, code, None, &handle).await {
+        if let Err(err) =
+            commands::login_command(&m, &host_str, params.code, params.redirect, &handle).await
+        {
             error!("Failed to login via deep link: {}", err);
         }
     });
@@ -182,9 +198,24 @@ mod tests {
     #[test]
     fn test_parse_auth_params() {
         let url = Url::parse("quilt://auth/callback?code=ABC123&host=test.quilt.dev").unwrap();
-        let (code, host) = parse_auth_params(&url).unwrap();
-        assert_eq!(code, "ABC123");
-        assert_eq!(host.to_string(), "test.quilt.dev");
+        let params = parse_auth_params(&url).unwrap();
+        assert_eq!(params.code, "ABC123");
+        assert_eq!(params.host.to_string(), "test.quilt.dev");
+        assert_eq!(params.redirect, None);
+    }
+
+    #[test]
+    fn test_parse_auth_params_with_redirect() {
+        let url = Url::parse(
+            "quilt://auth/callback?code=ABC123&host=test.quilt.dev&redirect=https%3A%2F%2Flocalhost%3A1234%2Fpages%2Fremote-package.html"
+        ).unwrap();
+        let params = parse_auth_params(&url).unwrap();
+        assert_eq!(params.code, "ABC123");
+        assert_eq!(params.host.to_string(), "test.quilt.dev");
+        assert_eq!(
+            params.redirect.as_deref(),
+            Some("https://localhost:1234/pages/remote-package.html")
+        );
     }
 
     #[test]
