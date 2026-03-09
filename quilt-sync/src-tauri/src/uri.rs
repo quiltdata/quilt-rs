@@ -102,7 +102,9 @@ pub fn handle_deep_link_url(app_handle: &AppHandle, url_str: &str) -> Result {
         "quilt" => login_with_code(app_handle, &url),
         scheme => {
             error!("Unknown deep link scheme: {}", scheme);
-            Err(Error::General(format!("Unknown deep link scheme: {scheme}")))
+            Err(Error::General(format!(
+                "Unknown deep link scheme: {scheme}"
+            )))
         }
     }
 }
