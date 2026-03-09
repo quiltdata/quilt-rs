@@ -36,7 +36,7 @@ fn main() {
             if let Err(err) = match argv.get(1) {
                 Some(uri_str) => {
                     debug!("uri_str: {:?}", uri_str);
-                    uri::navigate_to_uri(app, uri_str).map_err(|err| Error::PackageUri(err.into()))
+                    uri::handle_deep_link_url(app, uri_str)
                 }
                 None => Ok(()),
             } {
@@ -56,8 +56,10 @@ fn main() {
 
             // This is for runtime registering
             #[cfg(desktop)]
-            if let Err(err) = app.deep_link().register("quilt+s3") {
-                error!("Failed to register deep link: {}", err);
+            for scheme in ["quilt+s3", "quilt"] {
+                if let Err(err) = app.deep_link().register(scheme) {
+                    error!("Failed to register deep link for {}: {}", scheme, err);
+                }
             }
 
             let data_dir = app

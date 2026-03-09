@@ -544,7 +544,7 @@ pub async fn set_origin(
     )
 }
 
-async fn login_command(
+pub(crate) async fn login_command(
     m: &model::Model,
     host: &str,
     code: String,

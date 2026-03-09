@@ -1,8 +1,12 @@
+use std::str::FromStr;
+
 use tauri::AppHandle;
 use tauri::Manager;
 use tauri_plugin_deep_link::DeepLinkExt;
 use url::Url;
 
+use crate::commands;
+use crate::model;
 use crate::quilt;
 use crate::routes;
 use crate::telemetry::prelude::*;
@@ -17,7 +21,7 @@ fn get_remote_package_url(current_url: &Url, uri_str: &str) -> Result<Url> {
     ))
 }
 
-fn navigate_to_url<R: tauri::Runtime>(app_handle: &AppHandle<R>, url: Url) -> Result {
+fn navigate_to_url(app_handle: &AppHandle, url: Url) -> Result {
     match app_handle.get_webview_window("main") {
         Some(win) => {
             win.navigate(url)?;
@@ -29,14 +33,65 @@ fn navigate_to_url<R: tauri::Runtime>(app_handle: &AppHandle<R>, url: Url) -> Re
 }
 
 /// Navigate to a Quilt package URI by parsing it and redirecting to the package page
-pub fn navigate_to_uri<R: tauri::Runtime>(app_handle: &AppHandle<R>, uri_str: &str) -> Result {
+fn navigate_to_package(app_handle: &AppHandle, uri_str: &str) -> Result {
     let win = app_handle.get_webview_window("main").ok_or(Error::Window)?;
     let current_url = win.url()?;
     let redirect_url = get_remote_package_url(&current_url, uri_str)?;
     navigate_to_url(app_handle, redirect_url)
 }
 
-async fn wait_for_main_window<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> Result<()> {
+/// Parse auth callback query parameters from a `quilt://` URL.
+///
+/// Returns `(code, host)` on success.
+fn parse_auth_params(url: &Url) -> Result<(String, quilt::uri::Host)> {
+    let code = url
+        .query_pairs()
+        .find(|(k, _)| k == "code")
+        .map(|(_, v)| v.into_owned())
+        .ok_or_else(|| Error::General("Missing 'code' parameter in auth callback".into()))?;
+
+    let host_str = url
+        .query_pairs()
+        .find(|(k, _)| k == "host")
+        .map(|(_, v)| v.into_owned())
+        .ok_or_else(|| Error::General("Missing 'host' parameter in auth callback".into()))?;
+
+    let host = quilt::uri::Host::from_str(&host_str)?;
+    Ok((code, host))
+}
+
+/// Handle `quilt://auth/callback?code=...&host=...` by logging in and navigating to the login page
+fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
+    let (code, host) = parse_auth_params(url)?;
+    let handle = app_handle.clone();
+    let host_str = host.to_string();
+
+    tauri::async_runtime::spawn(async move {
+        info!("Auth callback for host: {}", host_str);
+        let m = handle.state::<model::Model>();
+        if let Err(err) = commands::login_command(&m, &host_str, code, None, &handle).await {
+            error!("Failed to login via deep link: {}", err);
+        }
+    });
+
+    Ok(())
+}
+
+/// Dispatch a deep link URL to the appropriate handler based on scheme
+pub fn handle_deep_link_url(app_handle: &AppHandle, url_str: &str) -> Result {
+    let url: Url = url_str.parse().map_err(Error::ParseUrl)?;
+
+    match url.scheme() {
+        "quilt+s3" => navigate_to_package(app_handle, url_str),
+        "quilt" => login_with_code(app_handle, &url),
+        scheme => {
+            error!("Unknown deep link scheme: {}", scheme);
+            Err(Error::General(format!("Unknown deep link scheme: {scheme}")))
+        }
+    }
+}
+
+async fn wait_for_main_window(app_handle: &AppHandle) -> Result<()> {
     let mut attempts = 0;
     const MAX_ATTEMPTS: u32 = 10;
     const RETRY_DELAY_MS: u64 = 200;
@@ -61,7 +116,7 @@ async fn wait_for_main_window<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> R
     Err(Error::Window)
 }
 
-fn handle_deep_link_navigation<R: tauri::Runtime>(app_handle: &AppHandle<R>, urls: Vec<Url>) {
+fn handle_deep_link_navigation(app_handle: &AppHandle, urls: Vec<Url>) {
     let Some(first_url) = urls.first() else {
         return;
     };
@@ -72,7 +127,7 @@ fn handle_deep_link_navigation<R: tauri::Runtime>(app_handle: &AppHandle<R>, url
     tauri::async_runtime::spawn(async move {
         match wait_for_main_window(&handle).await {
             Ok(()) => {
-                if let Err(err) = navigate_to_uri(&handle, &url_str) {
+                if let Err(err) = handle_deep_link_url(&handle, &url_str) {
                     error!("Failed to handle deep link '{}': {}", url_str, err);
                 }
             }
@@ -121,6 +176,28 @@ mod tests {
         let uri_str = "invalid-uri";
 
         let result = get_remote_package_url(&current_url, uri_str);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_auth_params() {
+        let url = Url::parse("quilt://auth/callback?code=ABC123&host=test.quilt.dev").unwrap();
+        let (code, host) = parse_auth_params(&url).unwrap();
+        assert_eq!(code, "ABC123");
+        assert_eq!(host.to_string(), "test.quilt.dev");
+    }
+
+    #[test]
+    fn test_parse_auth_params_missing_code() {
+        let url = Url::parse("quilt://auth/callback?host=test.quilt.dev").unwrap();
+        let result = parse_auth_params(&url);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_auth_params_missing_host() {
+        let url = Url::parse("quilt://auth/callback?code=ABC123").unwrap();
+        let result = parse_auth_params(&url);
         assert!(result.is_err());
     }
 }
