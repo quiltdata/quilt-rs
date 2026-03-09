@@ -40,6 +40,7 @@ tokio.workspace = true
 tokio-stream.workspace = true
 tracing.workspace = true
 url.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 tokio-test.workspace = true

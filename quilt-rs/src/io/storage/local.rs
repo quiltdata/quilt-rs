@@ -1,15 +1,47 @@
 use std::path::Path;
+use std::path::PathBuf;
 
 use aws_sdk_s3::primitives::ByteStream;
 use chrono::DateTime;
 use chrono::Utc;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
+use uuid::Uuid;
 
 use crate::Error;
 use crate::Res;
 
 use super::Storage;
+
+/// Generate a unique file path in `dir` for use as a temp file.
+///
+/// Same directory as the target ensures `rename` is atomic (same filesystem).
+fn temp_path_in(dir: &Path) -> PathBuf {
+    dir.join(format!(".tmp-{}", Uuid::new_v4()))
+}
+
+/// Write `body` to a file at `path` and sync to disk.
+async fn write_stream(path: &Path, mut body: ByteStream) -> std::io::Result<()> {
+    let mut file = fs::File::create(path).await?;
+    while let Some(bytes) = body.try_next().await.map_err(std::io::Error::other)? {
+        file.write_all(&bytes).await?;
+    }
+    file.sync_all().await
+}
+
+/// Write `body` to a temp file, then atomically rename to `path`.
+///
+/// On failure the temp file is cleaned up.
+async fn atomic_write(path: &Path, body: ByteStream) -> std::io::Result<()> {
+    let parent = path.parent().unwrap_or(Path::new("."));
+    fs::create_dir_all(parent).await?;
+    let tmp = temp_path_in(parent);
+    let cleanup = |_: &std::io::Error| {
+        let _ = std::fs::remove_file(&tmp);
+    };
+    write_stream(&tmp, body).await.inspect_err(cleanup)?;
+    fs::rename(&tmp, path).await.inspect_err(cleanup)
+}
 
 /// Implementation of the `Storage` trait for the local filesystem
 #[derive(Clone, Debug)]
@@ -94,23 +126,15 @@ impl Storage for LocalStorage {
     async fn write_byte_stream(
         &self,
         path: impl AsRef<Path> + Send + Sync,
-        mut body: ByteStream,
+        body: ByteStream,
     ) -> Res {
         let path = path.as_ref();
-        if let Some(parent) = path.parent() {
-            self.create_dir_all(parent).await?;
-        }
-        let map_err = |source| Error::FileWrite {
-            path: path.to_path_buf(),
-            source,
-        };
-        let mut file = fs::File::create(path).await.map_err(map_err)?;
-        while let Some(bytes) = body.try_next().await? {
-            file.write_all(&bytes).await.map_err(map_err)?;
-        }
-        file.flush().await.map_err(map_err)?;
-
-        Ok(())
+        atomic_write(path, body)
+            .await
+            .map_err(|source| Error::FileWrite {
+                path: path.to_path_buf(),
+                source,
+            })
     }
 }
 
@@ -249,17 +273,71 @@ mod tests {
         assert!(result.is_err());
         let error = result.unwrap_err();
 
-        assert!(matches!(
-            error,
-            Error::DirectoryCreate { .. } | Error::FileWrite { .. }
-        ));
+        assert!(matches!(error, Error::FileWrite { .. }));
         let error_msg = error.to_string();
-        assert!(error_msg.contains("test.txt") && error_msg.contains("Permission denied"));
+        assert!(error_msg.contains("Permission denied"));
 
         // Restore permissions for cleanup
         let mut perms = fs::metadata(&readonly_dir).await?.permissions();
         perms.set_mode(0o755);
         fs::set_permissions(&readonly_dir, perms).await?;
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_write_overwrites_existing_file() -> Res {
+        let temp_dir = tempdir()?;
+        let dest = temp_dir.path().join("data.txt");
+        let storage = LocalStorage::default();
+
+        storage
+            .write_byte_stream(&dest, ByteStream::from_static(b"original"))
+            .await?;
+        storage
+            .write_byte_stream(&dest, ByteStream::from_static(b"updated"))
+            .await?;
+
+        assert_eq!(fs::read(&dest).await?, b"updated");
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_write_leaves_no_temp_files() -> Res {
+        let temp_dir = tempdir()?;
+        let dest = temp_dir.path().join("data.txt");
+        let storage = LocalStorage::default();
+
+        // Successful write
+        storage
+            .write_byte_stream(&dest, ByteStream::from_static(b"hello"))
+            .await?;
+
+        let entries: Vec<_> = std::fs::read_dir(temp_dir.path())?
+            .filter_map(|e| e.ok())
+            .collect();
+        assert_eq!(entries.len(), 1, "only the target file should exist");
+        assert_eq!(entries[0].file_name(), "data.txt");
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_failed_write_leaves_no_temp_files() -> Res {
+        let temp_dir = tempdir()?;
+        let storage = LocalStorage::default();
+
+        // Target is a directory — rename will fail with EISDIR
+        let target = temp_dir.path().join("a_dir");
+        fs::create_dir(&target).await?;
+        let _ = storage
+            .write_byte_stream(&target, ByteStream::from_static(b"data"))
+            .await;
+
+        let has_tmp = std::fs::read_dir(temp_dir.path())?
+            .filter_map(|e| e.ok())
+            .any(|e| e.file_name().to_string_lossy().starts_with(".tmp-"));
+        assert!(!has_tmp, "temp file should be cleaned up");
 
         Ok(())
     }

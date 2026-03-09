@@ -4789,6 +4789,7 @@ dependencies = [
  "tokio-test",
  "tracing",
  "url",
+ "uuid",
 ]
 
 [[package]]
