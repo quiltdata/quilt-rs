@@ -6,23 +6,23 @@ use chrono::DateTime;
 use chrono::Utc;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
+use uuid::Uuid;
 
 use crate::Error;
 use crate::Res;
 
 use super::Storage;
 
-/// Create a temporary file in `dir` and return its handle and path.
+/// Generate a unique file path in `dir` for use as a temp file.
 ///
-/// The temp file lives on the same filesystem as the target so that
-/// a subsequent `rename` is always atomic.
-fn temp_file_in(dir: &Path) -> std::io::Result<(fs::File, PathBuf)> {
-    let (file, path) = tempfile::NamedTempFile::new_in(dir)?.keep()?;
-    Ok((fs::File::from_std(file), path))
+/// Same directory as the target ensures `rename` is atomic (same filesystem).
+fn temp_path_in(dir: &Path) -> PathBuf {
+    dir.join(format!(".tmp-{}", Uuid::new_v4()))
 }
 
-/// Write `body` into `file` and flush to disk.
-async fn write_stream(mut file: fs::File, mut body: ByteStream) -> std::io::Result<()> {
+/// Write `body` to a file at `path` and sync to disk.
+async fn write_stream(path: &Path, mut body: ByteStream) -> std::io::Result<()> {
+    let mut file = fs::File::create(path).await?;
     while let Some(bytes) = body.try_next().await.map_err(std::io::Error::other)? {
         file.write_all(&bytes).await?;
     }
@@ -35,11 +35,11 @@ async fn write_stream(mut file: fs::File, mut body: ByteStream) -> std::io::Resu
 async fn atomic_write(path: &Path, body: ByteStream) -> std::io::Result<()> {
     let parent = path.parent().unwrap_or(Path::new("."));
     fs::create_dir_all(parent).await?;
-    let (file, tmp) = temp_file_in(parent)?;
+    let tmp = temp_path_in(parent);
     let cleanup = |_: &std::io::Error| {
         let _ = std::fs::remove_file(&tmp);
     };
-    write_stream(file, body).await.inspect_err(cleanup)?;
+    write_stream(&tmp, body).await.inspect_err(cleanup)?;
     fs::rename(&tmp, path).await.inspect_err(cleanup)
 }
 
