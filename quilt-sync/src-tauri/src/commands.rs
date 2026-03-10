@@ -644,9 +644,7 @@ pub async fn login_oauth(
         .await
         .map_err(|e| e.to_string())?;
 
-    let request = oauth_state
-        .start_login(&host_parsed, &client_id)
-        .await;
+    let request = oauth_state.start_login(&host_parsed, &client_id).await;
 
     model::open_in_web_browser(&request.authorize_url).map_err(|e| e.to_string())?;
 

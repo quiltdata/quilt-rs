@@ -92,7 +92,10 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
         let oauth_state = handle.state::<OAuthState>();
         let m = handle.state::<model::Model>();
 
-        let result = match oauth_state.take_params(&host, auth_params.code.clone()).await {
+        let result = match oauth_state
+            .take_params(&host, auth_params.code.clone())
+            .await
+        {
             Some(oauth_params) => {
                 info!("OAuth 2.1 callback for host: {}", host_str);
                 model::login_oauth(&*m, &host, oauth_params).await
@@ -105,9 +108,7 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
 
         match result {
             Ok(()) => {
-                if let Err(err) =
-                    commands::navigate_after_login(&handle, &redirect)
-                {
+                if let Err(err) = commands::navigate_after_login(&handle, &redirect) {
                     error!("Failed to redirect after login: {}", err);
                 }
             }
@@ -196,7 +197,10 @@ pub fn setup_deep_link_handler(app_handle: &AppHandle) {
         // On Linux, the single-instance plugin already handles deep links
         // via argv. Skip on_open_url to avoid duplicate handling.
         if cfg!(target_os = "linux") {
-            debug!("Skipping on_open_url (handled by single-instance): {:?}", urls);
+            debug!(
+                "Skipping on_open_url (handled by single-instance): {:?}",
+                urls
+            );
             return;
         }
         info!("Processing runtime deep link: {:?}", urls);

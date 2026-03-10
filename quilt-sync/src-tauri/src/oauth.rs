@@ -39,11 +39,7 @@ impl OAuthState {
     ///
     /// Generates a PKCE challenge, stores the verifier, and returns
     /// the authorization URL to open in the browser.
-    pub async fn start_login(
-        &self,
-        host: &quilt::uri::Host,
-        client_id: &str,
-    ) -> AuthorizeRequest {
+    pub async fn start_login(&self, host: &quilt::uri::Host, client_id: &str) -> AuthorizeRequest {
         let pkce = quilt::auth::pkce_challenge();
         let redirect_uri = redirect_uri(host);
         let state = quilt::auth::random_state();
@@ -91,8 +87,7 @@ impl OAuthState {
                 p
             }
             None => {
-                let keys: Vec<String> =
-                    self.pending.lock().await.keys().cloned().collect();
+                let keys: Vec<String> = self.pending.lock().await.keys().cloned().collect();
                 warn!("No pending OAuth state for {host_key}. Pending hosts: {keys:?}");
                 return None;
             }

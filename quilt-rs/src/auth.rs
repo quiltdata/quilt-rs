@@ -339,7 +339,10 @@ impl<S: Storage + Sync + Clone> Auth<S> {
         info!("⏳ Registering new OAuth client for {}", host);
         let client = register_client(http_client, host, redirect_uri).await?;
         auth_io.write_client(&client).await?;
-        info!("✔️ Registered OAuth client for {}: {}", host, client.client_id);
+        info!(
+            "✔️ Registered OAuth client for {}: {}",
+            host, client.client_id
+        );
 
         Ok(client)
     }
@@ -355,10 +358,12 @@ impl<S: Storage + Sync + Clone> Auth<S> {
     ) -> Res {
         info!("⏳ OAuth login for host {}", host);
 
-        let tokens = exchange_oauth_code(http_client, host, &params).await.map_err(|e| {
-            warn!("❌ Failed to exchange OAuth code for {}: {}", host, e);
-            e
-        })?;
+        let tokens = exchange_oauth_code(http_client, host, &params)
+            .await
+            .map_err(|e| {
+                warn!("❌ Failed to exchange OAuth code for {}: {}", host, e);
+                e
+            })?;
 
         self.save_tokens(host, &tokens).await.map_err(|e| {
             warn!("❌ Failed to save tokens for {}: {}", host, e);
@@ -810,7 +815,8 @@ mod tests {
             client_id: CLIENT_ID.to_string(),
         };
 
-        auth.login_oauth(&OAuthTestHttpClient, &host, params).await?;
+        auth.login_oauth(&OAuthTestHttpClient, &host, params)
+            .await?;
         Ok(())
     }
 
