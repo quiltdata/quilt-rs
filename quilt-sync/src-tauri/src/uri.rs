@@ -79,12 +79,17 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
     let params = parse_auth_params(url)?;
     let handle = app_handle.clone();
     let host_str = params.host.to_string();
+    let redirect = params.redirect.unwrap_or_else(|| {
+        let win = handle.get_webview_window("main").unwrap();
+        let current_url = win.url().unwrap();
+        routes::from_url(routes::Paths::InstalledPackagesList, current_url).to_string()
+    });
 
     tauri::async_runtime::spawn(async move {
         info!("Auth callback for host: {}", host_str);
         let m = handle.state::<model::Model>();
         if let Err(err) =
-            commands::login_command(&m, &host_str, params.code, params.redirect, &handle).await
+            commands::login_command(&m, &host_str, params.code, Some(redirect), &handle).await
         {
             error!("Failed to login via deep link: {}", err);
         }
