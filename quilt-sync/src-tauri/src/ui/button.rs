@@ -34,6 +34,8 @@ pub enum JsSelector {
     ResetLocal,
     #[template(source = "js-login", ext = "txt")]
     Login,
+    #[template(source = "js-login-oauth", ext = "txt")]
+    LoginOAuth,
     #[template(source = "js-entries-install", ext = "txt")]
     EntriesInstall,
     #[template(source = "js-refresh", ext = "txt")]
