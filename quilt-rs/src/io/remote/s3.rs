@@ -113,6 +113,10 @@ impl RemoteS3 {
         self.auth.login(&self.http, host, refresh_token).await
     }
 
+    pub async fn login_oauth(&self, host: &Host, params: crate::auth::OAuthParams) -> Res {
+        self.auth.login_oauth(&self.http, host, params).await
+    }
+
     async fn get_region_for_bucket(&self, bucket: &str) -> Res<Region> {
         {
             if let Some(region) = self

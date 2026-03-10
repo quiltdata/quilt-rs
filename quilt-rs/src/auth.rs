@@ -10,6 +10,25 @@ use tracing::error;
 use tracing::info;
 use tracing::warn;
 
+/// Parameters for the OAuth 2.1 Authorization Code flow with PKCE.
+pub struct OAuthParams {
+    /// The authorization code from the callback
+    pub code: String,
+    /// The PKCE code verifier generated before the auth request
+    pub code_verifier: String,
+    /// The redirect URI used in the authorization request
+    pub redirect_uri: String,
+    /// The OAuth client ID
+    pub client_id: String,
+}
+
+/// Derive the connect server token endpoint from the catalog host.
+///
+/// E.g., `test.quilt.dev` → `https://connect-test.quilt.dev/auth/token`
+fn connect_token_url(host: &Host) -> String {
+    format!("https://connect-{host}/auth/token")
+}
+
 use crate::error::AuthError;
 use crate::io::storage::auth::AuthIo;
 use crate::io::storage::auth::Credentials;
@@ -106,6 +125,24 @@ async fn get_auth_tokens(
     Ok(tokens)
 }
 
+async fn exchange_oauth_code(
+    http_client: &impl HttpClient,
+    host: &Host,
+    params: &OAuthParams,
+) -> Res<Tokens> {
+    let token_url = connect_token_url(host);
+
+    let mut form_data: HashMap<String, String> = HashMap::new();
+    form_data.insert("grant_type".to_string(), "authorization_code".to_string());
+    form_data.insert("code".to_string(), params.code.clone());
+    form_data.insert("code_verifier".to_string(), params.code_verifier.clone());
+    form_data.insert("redirect_uri".to_string(), params.redirect_uri.clone());
+    form_data.insert("client_id".to_string(), params.client_id.clone());
+
+    let tokens_json: RemoteTokens = http_client.post(&token_url, &form_data).await?;
+    Ok(Tokens::from(tokens_json))
+}
+
 async fn refresh_credentials(
     http_client: &impl HttpClient,
     host: &Host,
@@ -169,6 +206,38 @@ impl<S: Storage + Sync + Clone> Auth<S> {
         }
 
         info!("✔️ Successfully logged in and authenticated to {}", host);
+        Ok(())
+    }
+
+    /// Login using OAuth 2.1 Authorization Code flow with PKCE.
+    ///
+    /// Exchanges the authorization code for tokens, then fetches S3 credentials.
+    pub async fn login_oauth<T: HttpClient>(
+        &self,
+        http_client: &T,
+        host: &Host,
+        params: OAuthParams,
+    ) -> Res {
+        info!("⏳ OAuth login for host {}", host);
+
+        let tokens = exchange_oauth_code(http_client, host, &params).await.map_err(|e| {
+            warn!("❌ Failed to exchange OAuth code for {}: {}", host, e);
+            e
+        })?;
+
+        self.save_tokens(host, &tokens).await.map_err(|e| {
+            warn!("❌ Failed to save tokens for {}: {}", host, e);
+            e
+        })?;
+
+        self.refresh_credentials(http_client, host, &tokens.access_token)
+            .await
+            .map_err(|e| {
+                warn!("❌ Failed to refresh credentials for {}: {}", host, e);
+                e
+            })?;
+
+        info!("✔️ OAuth login successful for {}", host);
         Ok(())
     }
 
@@ -457,5 +526,110 @@ mod tests {
 
         let error = serde_json::from_str::<RemoteCredentials>(invalid_json).unwrap_err();
         assert!(error.to_string().contains("Invalid RFC3339 date"));
+    }
+
+    const AUTH_CODE: &str = "test-auth-code";
+    const CODE_VERIFIER: &str = "test-code-verifier-that-is-at-least-43-characters-long";
+    const CLIENT_ID: &str = "test-client-id";
+    const REDIRECT_URI: &str = "quilt://auth/callback?host=test.quilt.dev";
+
+    struct OAuthTestHttpClient;
+
+    #[async_trait]
+    impl HttpClient for OAuthTestHttpClient {
+        async fn get<T: serde::de::DeserializeOwned>(
+            &self,
+            url: &str,
+            auth_token: Option<&str>,
+        ) -> Res<T> {
+            let registry = get_registry();
+
+            match url {
+                u if u == format!("https://{}/config.json", get_host()) => {
+                    let config = QuiltStackConfig {
+                        registry_url: format!("https://{registry}").parse()?,
+                    };
+                    Ok(serde_json::from_value(serde_json::to_value(config)?)?)
+                }
+                u if u == format!("https://{registry}/api/auth/get_credentials") => {
+                    assert_eq!(auth_token, Some(ACCESS_TOKEN));
+                    let creds = RemoteCredentials {
+                        access_key_id: "oauth-access-key".to_string(),
+                        secret_access_key: "oauth-secret-key".to_string(),
+                        session_token: "oauth-session-token".to_string(),
+                        expiration: chrono::DateTime::from_timestamp(TIMESTAMP, 0).unwrap(),
+                    };
+                    Ok(serde_json::from_value(serde_json::to_value(creds)?)?)
+                }
+                _ => panic!("Unexpected GET URL: {url}"),
+            }
+        }
+
+        async fn head(&self, _url: &str) -> Res<HeaderMap> {
+            unimplemented!()
+        }
+
+        async fn post<T: serde::de::DeserializeOwned>(
+            &self,
+            url: &str,
+            form_data: &HashMap<String, String>,
+        ) -> Res<T> {
+            assert_eq!(url, connect_token_url(&get_host()));
+            assert_eq!(form_data.get("grant_type").unwrap(), "authorization_code");
+            assert_eq!(form_data.get("code").unwrap(), AUTH_CODE);
+            assert_eq!(form_data.get("code_verifier").unwrap(), CODE_VERIFIER);
+            assert_eq!(form_data.get("redirect_uri").unwrap(), REDIRECT_URI);
+            assert_eq!(form_data.get("client_id").unwrap(), CLIENT_ID);
+
+            let tokens = RemoteTokens {
+                access_token: ACCESS_TOKEN.to_string(),
+                refresh_token: "oauth-refresh-token".to_string(),
+                expires_at: chrono::DateTime::from_timestamp(TIMESTAMP, 0).unwrap(),
+            };
+            Ok(serde_json::from_value(serde_json::to_value(tokens)?)?)
+        }
+    }
+
+    #[test]
+    fn test_connect_token_url() {
+        let host: Host = "test.quilt.dev".parse().unwrap();
+        assert_eq!(
+            connect_token_url(&host),
+            "https://connect-test.quilt.dev/auth/token"
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn test_exchange_oauth_code() {
+        let client = OAuthTestHttpClient;
+        let params = OAuthParams {
+            code: AUTH_CODE.to_string(),
+            code_verifier: CODE_VERIFIER.to_string(),
+            redirect_uri: REDIRECT_URI.to_string(),
+            client_id: CLIENT_ID.to_string(),
+        };
+        let tokens = exchange_oauth_code(&client, &get_host(), &params)
+            .await
+            .unwrap();
+        assert_eq!(tokens.access_token, ACCESS_TOKEN);
+        assert_eq!(tokens.refresh_token, "oauth-refresh-token");
+    }
+
+    #[test(tokio::test)]
+    async fn test_login_oauth() -> Res {
+        let storage = MockStorage::default();
+        let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
+        let auth = Auth::new(paths, storage);
+        let host = get_host();
+
+        let params = OAuthParams {
+            code: AUTH_CODE.to_string(),
+            code_verifier: CODE_VERIFIER.to_string(),
+            redirect_uri: REDIRECT_URI.to_string(),
+            client_id: CLIENT_ID.to_string(),
+        };
+
+        auth.login_oauth(&OAuthTestHttpClient, &host, params).await?;
+        Ok(())
     }
 }
