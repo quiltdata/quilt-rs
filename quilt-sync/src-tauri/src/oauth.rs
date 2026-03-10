@@ -39,7 +39,7 @@ impl OAuthState {
         let redirect_uri = format!("quilt://auth/callback?host={host}");
 
         let authorize_url = format!(
-            "https://connect-{host}/auth/authorize?\
+            "https://{host}/connect/authorize?\
              client_id={CLIENT_ID}\
              &redirect_uri={redirect_uri}\
              &code_challenge={challenge}\

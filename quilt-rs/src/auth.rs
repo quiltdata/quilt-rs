@@ -51,11 +51,25 @@ pub fn pkce_challenge() -> PkceChallenge {
     }
 }
 
+/// Derive the connect server hostname from the catalog host.
+///
+/// The connect hostname is `<stack>-connect.<domain>`, where `<stack>` is the
+/// first label of the catalog hostname.
+///
+/// E.g., `test.quilt.dev` → `test-connect.quilt.dev`
+pub fn connect_host(host: &Host) -> String {
+    let s = host.to_string();
+    match s.split_once('.') {
+        Some((stack, domain)) => format!("{stack}-connect.{domain}"),
+        None => format!("{s}-connect"),
+    }
+}
+
 /// Derive the connect server token endpoint from the catalog host.
 ///
-/// E.g., `test.quilt.dev` → `https://connect-test.quilt.dev/auth/token`
+/// E.g., `test.quilt.dev` → `https://test-connect.quilt.dev/auth/token`
 fn connect_token_url(host: &Host) -> String {
-    format!("https://connect-{host}/auth/token")
+    format!("https://{}/auth/token", connect_host(host))
 }
 
 use crate::error::AuthError;
@@ -620,11 +634,17 @@ mod tests {
     }
 
     #[test]
+    fn test_connect_host() {
+        let host: Host = "test.quilt.dev".parse().unwrap();
+        assert_eq!(connect_host(&host), "test-connect.quilt.dev");
+    }
+
+    #[test]
     fn test_connect_token_url() {
         let host: Host = "test.quilt.dev".parse().unwrap();
         assert_eq!(
             connect_token_url(&host),
-            "https://connect-test.quilt.dev/auth/token"
+            "https://test-connect.quilt.dev/auth/token"
         );
     }
 
