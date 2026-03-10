@@ -1,5 +1,10 @@
 use std::collections::HashMap;
 
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
+use sha2::Digest;
+use sha2::Sha256;
+
 use crate::io::remote::client::HttpClient;
 use chrono::serde::ts_seconds;
 use serde::Deserialize;
@@ -20,6 +25,30 @@ pub struct OAuthParams {
     pub redirect_uri: String,
     /// The OAuth client ID
     pub client_id: String,
+}
+
+/// PKCE code verifier and challenge pair (RFC 7636).
+pub struct PkceChallenge {
+    /// Random verifier string — send to token endpoint
+    pub code_verifier: String,
+    /// S256 hash of verifier — send in the authorize URL
+    pub code_challenge: String,
+}
+
+/// Generate a PKCE code verifier and its S256 challenge.
+///
+/// The verifier is 32 random bytes, base64url-encoded (43 characters).
+pub fn pkce_challenge() -> PkceChallenge {
+    let mut random_bytes = [0u8; 32];
+    getrandom::fill(&mut random_bytes).expect("failed to generate random bytes");
+
+    let code_verifier = URL_SAFE_NO_PAD.encode(random_bytes);
+    let code_challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(code_verifier.as_bytes()));
+
+    PkceChallenge {
+        code_verifier,
+        code_challenge,
+    }
 }
 
 /// Derive the connect server token endpoint from the catalog host.
@@ -613,6 +642,26 @@ mod tests {
             .unwrap();
         assert_eq!(tokens.access_token, ACCESS_TOKEN);
         assert_eq!(tokens.refresh_token, "oauth-refresh-token");
+    }
+
+    #[test]
+    fn test_pkce_challenge() {
+        let pkce = pkce_challenge();
+
+        // Verifier should be 43 characters (32 bytes base64url-encoded without padding)
+        assert_eq!(pkce.code_verifier.len(), 43);
+
+        // Challenge should be 43 characters (SHA-256 is 32 bytes, base64url-encoded)
+        assert_eq!(pkce.code_challenge.len(), 43);
+
+        // Verify the challenge is the S256 hash of the verifier
+        let expected_challenge =
+            URL_SAFE_NO_PAD.encode(Sha256::digest(pkce.code_verifier.as_bytes()));
+        assert_eq!(pkce.code_challenge, expected_challenge);
+
+        // Two calls should produce different verifiers
+        let pkce2 = pkce_challenge();
+        assert_ne!(pkce.code_verifier, pkce2.code_verifier);
     }
 
     #[test(tokio::test)]
