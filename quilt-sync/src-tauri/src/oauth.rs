@@ -26,41 +26,50 @@ pub struct AuthorizeRequest {
     pub authorize_url: String,
 }
 
-/// Default OAuth client ID for QuiltSync desktop app.
-const CLIENT_ID: &str = "quiltsync";
+/// The redirect URI for QuiltSync OAuth callbacks.
+///
+/// TODO: switch to `quilt://auth/callback` once the server supports custom URI schemes.
+/// For now, uses an https host from the Connect server's redirect_uri allowlist.
+pub fn redirect_uri(host: &quilt::uri::Host) -> String {
+    format!("https://claude.ai/callback?host={host}")
+}
 
 impl OAuthState {
     /// Start an OAuth login flow for the given host.
     ///
     /// Generates a PKCE challenge, stores the verifier, and returns
     /// the authorization URL to open in the browser.
-    pub async fn start_login(&self, host: &quilt::uri::Host) -> AuthorizeRequest {
+    pub async fn start_login(
+        &self,
+        host: &quilt::uri::Host,
+        client_id: &str,
+    ) -> AuthorizeRequest {
         let pkce = quilt::auth::pkce_challenge();
-        let redirect_uri = format!("quilt://auth/callback?host={host}");
+        let redirect_uri = redirect_uri(host);
+        let state = quilt::auth::random_state();
 
         let authorize_url = format!(
             "https://{host}/connect/authorize?\
-             client_id={CLIENT_ID}\
+             client_id={client_id}\
              &redirect_uri={redirect_uri}\
              &code_challenge={challenge}\
              &code_challenge_method=S256\
              &response_type=code\
-             &scope=platform",
+             &scope=platform\
+             &state={state}",
             challenge = pkce.code_challenge,
         );
 
         let pending = PendingAuth {
             code_verifier: pkce.code_verifier,
             redirect_uri,
-            client_id: CLIENT_ID.to_string(),
+            client_id: client_id.to_string(),
         };
 
-        self.pending
-            .lock()
-            .await
-            .insert(host.to_string(), pending);
+        let host_key = host.to_string();
+        self.pending.lock().await.insert(host_key.clone(), pending);
 
-        debug!("Started OAuth login for {host}");
+        info!("Stored pending OAuth state for {host_key}");
 
         AuthorizeRequest { authorize_url }
     }
@@ -74,7 +83,20 @@ impl OAuthState {
         host: &quilt::uri::Host,
         code: String,
     ) -> Option<quilt::auth::OAuthParams> {
-        let pending = self.pending.lock().await.remove(&host.to_string())?;
+        let host_key = host.to_string();
+        let pending = self.pending.lock().await.remove(&host_key);
+        let pending = match pending {
+            Some(p) => {
+                info!("Found pending OAuth state for {host_key}");
+                p
+            }
+            None => {
+                let keys: Vec<String> =
+                    self.pending.lock().await.keys().cloned().collect();
+                warn!("No pending OAuth state for {host_key}. Pending hosts: {keys:?}");
+                return None;
+            }
+        };
 
         Some(quilt::auth::OAuthParams {
             code,

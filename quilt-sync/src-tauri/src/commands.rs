@@ -624,9 +624,11 @@ pub async fn login(
     )
 }
 
-/// Initiate OAuth 2.1 login: generate PKCE, store verifier, open browser.
+/// Initiate OAuth 2.1 login: register client via DCR if needed,
+/// generate PKCE, store verifier, open browser.
 #[tauri::command]
 pub async fn login_oauth(
+    m: tauri::State<'_, model::Model>,
     oauth_state: tauri::State<'_, OAuthState>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     host: String,
@@ -637,7 +639,14 @@ pub async fn login_oauth(
         .track(MixpanelEvent::UserLoggedIn { host: host.clone() })
         .await;
 
-    let request = oauth_state.start_login(&host_parsed).await;
+    let redirect_uri = crate::oauth::redirect_uri(&host_parsed);
+    let client_id = model::get_or_register_client(&*m, &host_parsed, &redirect_uri)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let request = oauth_state
+        .start_login(&host_parsed, &client_id)
+        .await;
 
     model::open_in_web_browser(&request.authorize_url).map_err(|e| e.to_string())?;
 

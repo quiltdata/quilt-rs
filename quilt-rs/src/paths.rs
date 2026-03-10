@@ -14,6 +14,7 @@ use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::Res;
 
+pub const AUTH_CLIENT: &str = "client.json";
 pub const AUTH_CREDENTIALS: &str = "credentials.json";
 pub const AUTH_DIR: &str = ".auth";
 pub const AUTH_TOKENS: &str = "tokens.json";

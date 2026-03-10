@@ -36,7 +36,7 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             if let Err(err) = match argv.get(1) {
                 Some(uri_str) => {
-                    debug!("uri_str: {:?}", uri_str);
+                    info!("Single-instance deep link: {:?}", uri_str);
                     uri::handle_deep_link_url(app, uri_str)
                 }
                 None => Ok(()),

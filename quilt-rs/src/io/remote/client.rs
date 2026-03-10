@@ -15,6 +15,11 @@ pub trait HttpClient: Send + Sync {
         url: &str,
         form_data: &HashMap<String, String>,
     ) -> Res<T>;
+    async fn post_json<T: DeserializeOwned, B: serde::Serialize + Send + Sync>(
+        &self,
+        url: &str,
+        body: &B,
+    ) -> Res<T>;
 }
 
 #[derive(Clone, Debug)]
@@ -75,6 +80,24 @@ impl HttpClient for ReqwestClient {
             .post(url)
             .header("User-Agent", USER_AGENT)
             .form(form_data)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(response.error_for_status().unwrap_err().into());
+        }
+        Ok(response.json().await?)
+    }
+
+    async fn post_json<T: DeserializeOwned, B: serde::Serialize + Send + Sync>(
+        &self,
+        url: &str,
+        body: &B,
+    ) -> Res<T> {
+        let response = self
+            .client
+            .post(url)
+            .header("User-Agent", USER_AGENT)
+            .json(body)
             .send()
             .await?;
         if !response.status().is_success() {

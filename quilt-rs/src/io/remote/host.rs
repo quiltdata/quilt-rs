@@ -167,6 +167,14 @@ mod tests {
         ) -> Res<T> {
             unimplemented!("post not needed for host config tests")
         }
+
+        async fn post_json<T: DeserializeOwned, B: serde::Serialize + Send + Sync>(
+            &self,
+            _url: &str,
+            _body: &B,
+        ) -> Res<T> {
+            unimplemented!("post_json not needed for host config tests")
+        }
     }
 
     #[test(tokio::test)]

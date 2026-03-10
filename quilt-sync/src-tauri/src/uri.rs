@@ -77,6 +77,7 @@ fn parse_auth_params(url: &Url) -> Result<AuthParams> {
 
 /// Handle `quilt://auth/callback?code=...&host=...&redirect=...` deep link
 fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
+    debug!("login_with_code: parsing auth params from {}", url);
     let auth_params = parse_auth_params(url)?;
     let handle = app_handle.clone();
     let host = auth_params.host.clone();
@@ -121,6 +122,7 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
 
 /// Dispatch a deep link URL to the appropriate handler based on scheme
 pub fn handle_deep_link_url(app_handle: &AppHandle, url_str: &str) -> Result {
+    info!("handle_deep_link_url: {}", url_str);
     let url: Url = url_str.parse().map_err(Error::ParseUrl)?;
 
     match url.scheme() {
@@ -191,12 +193,18 @@ pub fn setup_deep_link_handler(app_handle: &AppHandle) {
     let handle_for_runtime = app_handle.clone();
     deep_link.on_open_url(move |event| {
         let urls = event.urls();
-        debug!("Processing runtime deep link: {:?}", urls);
+        // On Linux, the single-instance plugin already handles deep links
+        // via argv. Skip on_open_url to avoid duplicate handling.
+        if cfg!(target_os = "linux") {
+            debug!("Skipping on_open_url (handled by single-instance): {:?}", urls);
+            return;
+        }
+        info!("Processing runtime deep link: {:?}", urls);
         handle_deep_link_navigation(&handle_for_runtime, urls);
     });
 
     if let Ok(Some(urls)) = deep_link.get_current() {
-        debug!("Processing startup deep link: {:?}", urls);
+        info!("Processing startup deep link: {:?}", urls);
         handle_deep_link_navigation(app_handle, urls);
     }
 }

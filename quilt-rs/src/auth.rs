@@ -51,6 +51,13 @@ pub fn pkce_challenge() -> PkceChallenge {
     }
 }
 
+/// Generate a random state string for OAuth CSRF protection.
+pub fn random_state() -> String {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).expect("failed to generate random bytes");
+    URL_SAFE_NO_PAD.encode(bytes)
+}
+
 /// Derive the connect server hostname from the catalog host.
 ///
 /// The connect hostname is `<stack>-connect.<domain>`, where `<stack>` is the
@@ -72,9 +79,50 @@ fn connect_token_url(host: &Host) -> String {
     format!("https://{}/auth/token", connect_host(host))
 }
 
+/// Derive the connect server registration endpoint from the catalog host.
+fn connect_register_url(host: &Host) -> String {
+    format!("https://{}/auth/register", connect_host(host))
+}
+
+/// DCR request body (RFC 7591).
+#[derive(Serialize)]
+struct DcrRequest {
+    client_name: String,
+    redirect_uris: Vec<String>,
+    token_endpoint_auth_method: String,
+}
+
+/// DCR response body (subset of fields we need).
+#[derive(Deserialize, Serialize)]
+struct DcrResponse {
+    client_id: String,
+}
+
+/// Register a public OAuth client via Dynamic Client Registration.
+async fn register_client(
+    http_client: &impl HttpClient,
+    host: &Host,
+    redirect_uri: &str,
+) -> Res<OAuthClient> {
+    let register_url = connect_register_url(host);
+
+    let request = DcrRequest {
+        client_name: "QuiltSync".to_string(),
+        redirect_uris: vec![redirect_uri.to_string()],
+        token_endpoint_auth_method: "none".to_string(),
+    };
+
+    let response: DcrResponse = http_client.post_json(&register_url, &request).await?;
+
+    Ok(OAuthClient {
+        client_id: response.client_id,
+    })
+}
+
 use crate::error::AuthError;
 use crate::io::storage::auth::AuthIo;
 use crate::io::storage::auth::Credentials;
+use crate::io::storage::auth::OAuthClient;
 use crate::io::storage::auth::Tokens;
 use crate::io::storage::LocalStorage;
 use crate::io::storage::Storage;
@@ -97,6 +145,28 @@ impl From<RemoteTokens> for Tokens {
             access_token: raw.access_token,
             refresh_token: raw.refresh_token,
             expires_at: raw.expires_at,
+        }
+    }
+}
+
+/// Token response from the Connect OAuth token endpoint.
+///
+/// Uses `expires_in` (seconds until expiry) per RFC 6749,
+/// unlike `RemoteTokens` which uses `expires_at` (Unix timestamp).
+#[derive(Deserialize, Serialize, Debug)]
+struct OAuthTokenResponse {
+    access_token: String,
+    refresh_token: String,
+    expires_in: i64,
+}
+
+impl From<OAuthTokenResponse> for Tokens {
+    fn from(raw: OAuthTokenResponse) -> Self {
+        let expires_at = chrono::Utc::now() + chrono::Duration::seconds(raw.expires_in);
+        Tokens {
+            access_token: raw.access_token,
+            refresh_token: raw.refresh_token,
+            expires_at,
         }
     }
 }
@@ -182,7 +252,7 @@ async fn exchange_oauth_code(
     form_data.insert("redirect_uri".to_string(), params.redirect_uri.clone());
     form_data.insert("client_id".to_string(), params.client_id.clone());
 
-    let tokens_json: RemoteTokens = http_client.post(&token_url, &form_data).await?;
+    let tokens_json: OAuthTokenResponse = http_client.post(&token_url, &form_data).await?;
     Ok(Tokens::from(tokens_json))
 }
 
@@ -250,6 +320,28 @@ impl<S: Storage + Sync + Clone> Auth<S> {
 
         info!("✔️ Successfully logged in and authenticated to {}", host);
         Ok(())
+    }
+
+    /// Get a stored OAuth client_id for the host, or register a new one via DCR.
+    pub async fn get_or_register_client<T: HttpClient>(
+        &self,
+        http_client: &T,
+        host: &Host,
+        redirect_uri: &str,
+    ) -> Res<OAuthClient> {
+        let auth_io = AuthIo::new(self.storage.clone(), self.paths.auth_host(host));
+
+        if let Some(client) = auth_io.read_client().await? {
+            info!("✔️ Found existing OAuth client for {}", host);
+            return Ok(client);
+        }
+
+        info!("⏳ Registering new OAuth client for {}", host);
+        let client = register_client(http_client, host, redirect_uri).await?;
+        auth_io.write_client(&client).await?;
+        info!("✔️ Registered OAuth client for {}: {}", host, client.client_id);
+
+        Ok(client)
     }
 
     /// Login using OAuth 2.1 Authorization Code flow with PKCE.
@@ -465,6 +557,14 @@ mod tests {
             };
             Ok(serde_json::from_value(serde_json::to_value(tokens)?)?)
         }
+
+        async fn post_json<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
+            &self,
+            _url: &str,
+            _body: &B,
+        ) -> Res<T> {
+            unimplemented!("post_json is not used in this test")
+        }
     }
 
     #[test(tokio::test)]
@@ -624,12 +724,24 @@ mod tests {
             assert_eq!(form_data.get("redirect_uri").unwrap(), REDIRECT_URI);
             assert_eq!(form_data.get("client_id").unwrap(), CLIENT_ID);
 
-            let tokens = RemoteTokens {
+            let tokens = OAuthTokenResponse {
                 access_token: ACCESS_TOKEN.to_string(),
                 refresh_token: "oauth-refresh-token".to_string(),
-                expires_at: chrono::DateTime::from_timestamp(TIMESTAMP, 0).unwrap(),
+                expires_in: 3600,
             };
-            Ok(serde_json::from_value(serde_json::to_value(tokens)?)?)
+            Ok(serde_json::from_value(serde_json::to_value(&tokens)?)?)
+        }
+
+        async fn post_json<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
+            &self,
+            url: &str,
+            _body: &B,
+        ) -> Res<T> {
+            assert_eq!(url, connect_register_url(&get_host()));
+            let response = DcrResponse {
+                client_id: "test-dcr-client-id".to_string(),
+            };
+            Ok(serde_json::from_value(serde_json::to_value(response)?)?)
         }
     }
 
@@ -699,6 +811,28 @@ mod tests {
         };
 
         auth.login_oauth(&OAuthTestHttpClient, &host, params).await?;
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_get_or_register_client() -> Res {
+        let storage = MockStorage::default();
+        let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
+        let auth = Auth::new(paths, storage);
+        let host = get_host();
+
+        // First call registers via DCR
+        let client = auth
+            .get_or_register_client(&OAuthTestHttpClient, &host, REDIRECT_URI)
+            .await?;
+        assert_eq!(client.client_id, "test-dcr-client-id");
+
+        // Second call reads from storage (no DCR call)
+        let client2 = auth
+            .get_or_register_client(&OAuthTestHttpClient, &host, REDIRECT_URI)
+            .await?;
+        assert_eq!(client2.client_id, "test-dcr-client-id");
+
         Ok(())
     }
 }
