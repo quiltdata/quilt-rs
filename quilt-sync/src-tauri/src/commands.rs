@@ -8,6 +8,7 @@ use tokio::sync;
 
 use crate::app;
 use crate::model;
+use crate::oauth::OAuthState;
 use crate::pages;
 use crate::quilt;
 use crate::routes;
@@ -544,6 +545,44 @@ pub async fn set_origin(
     )
 }
 
+/// Navigate to a location after successful login.
+pub(crate) fn navigate_after_login(
+    app_handle: &tauri::AppHandle,
+    location: &str,
+) -> Result<(), Error> {
+    debug!("Attempting to redirect after login to: {}", location);
+    match app_handle.get_webview_window("main") {
+        Some(win) => match location.parse::<routes::Paths>() {
+            Ok(page_path) => match win.url() {
+                Ok(win_url) => {
+                    let redirect_url = routes::from_url(page_path, win_url);
+                    debug!("Redirecting to: {}", redirect_url);
+                    if let Err(e) = win.navigate(redirect_url) {
+                        error!("Failed to navigate after login: {}", e);
+                        return Err(e.into());
+                    }
+                    Ok(())
+                }
+                Err(e) => {
+                    error!("Failed to get window URL for redirect: {}", e);
+                    Err(e.into())
+                }
+            },
+            Err(e) => {
+                error!(
+                    "Failed to parse location '{}' for redirect: {}",
+                    location, e
+                );
+                Err(e)
+            }
+        },
+        None => {
+            error!("Main window not found for post-login redirect");
+            Ok(())
+        }
+    }
+}
+
 pub(crate) async fn login_command(
     m: &model::Model,
     host: &str,
@@ -554,37 +593,8 @@ pub(crate) async fn login_command(
     let host = quilt::uri::Host::from_str(host)?;
     model::login(m, &host, code).await?;
 
-    // Handle navigation on success
     if let Some(location) = location {
-        debug!("Attempting to redirect after login to: {}", location);
-        match app_handle.get_webview_window("main") {
-            Some(win) => match location.parse::<routes::Paths>() {
-                Ok(page_path) => match win.url() {
-                    Ok(win_url) => {
-                        let redirect_url = routes::from_url(page_path, win_url);
-                        debug!("Redirecting to: {}", redirect_url);
-                        if let Err(e) = win.navigate(redirect_url) {
-                            error!("Failed to navigate after login: {}", e);
-                            return Err(e.into());
-                        }
-                    }
-                    Err(e) => {
-                        error!("Failed to get window URL for redirect: {}", e);
-                        return Err(e.into());
-                    }
-                },
-                Err(e) => {
-                    error!(
-                        "Failed to parse location '{}' for redirect: {}",
-                        location, e
-                    );
-                    return Err(e);
-                }
-            },
-            None => {
-                error!("Main window not found for post-login redirect");
-            }
-        }
+        navigate_after_login(app_handle, &location)?;
     }
 
     Ok(())
@@ -612,6 +622,26 @@ pub async fn login(
         msg_ok,
         msg_err,
     )
+}
+
+/// Initiate OAuth 2.1 login: generate PKCE, store verifier, open browser.
+#[tauri::command]
+pub async fn login_oauth(
+    oauth_state: tauri::State<'_, OAuthState>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    host: String,
+) -> Result<String, String> {
+    let host_parsed = quilt::uri::Host::from_str(&host).map_err(|e| e.to_string())?;
+
+    tracing
+        .track(MixpanelEvent::UserLoggedIn { host: host.clone() })
+        .await;
+
+    let request = oauth_state.start_login(&host_parsed).await;
+
+    model::open_in_web_browser(&request.authorize_url).map_err(|e| e.to_string())?;
+
+    Ok(format!("Opening browser for OAuth login to {host}"))
 }
 
 async fn setup_command(m: &model::Model, directory: &str) -> Result<quilt::lineage::Home, Error> {

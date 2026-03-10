@@ -7,6 +7,7 @@ use url::Url;
 
 use crate::commands;
 use crate::model;
+use crate::oauth::OAuthState;
 use crate::quilt;
 use crate::routes;
 use crate::telemetry::prelude::*;
@@ -76,22 +77,42 @@ fn parse_auth_params(url: &Url) -> Result<AuthParams> {
 
 /// Handle `quilt://auth/callback?code=...&host=...&redirect=...` deep link
 fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
-    let params = parse_auth_params(url)?;
+    let auth_params = parse_auth_params(url)?;
     let handle = app_handle.clone();
-    let host_str = params.host.to_string();
-    let redirect = params.redirect.unwrap_or_else(|| {
+    let host = auth_params.host.clone();
+    let host_str = host.to_string();
+    let redirect = auth_params.redirect.unwrap_or_else(|| {
         let win = handle.get_webview_window("main").unwrap();
         let current_url = win.url().unwrap();
         routes::from_url(routes::Paths::InstalledPackagesList, current_url).to_string()
     });
 
     tauri::async_runtime::spawn(async move {
-        info!("Auth callback for host: {}", host_str);
+        let oauth_state = handle.state::<OAuthState>();
         let m = handle.state::<model::Model>();
-        if let Err(err) =
-            commands::login_command(&m, &host_str, params.code, Some(redirect), &handle).await
-        {
-            error!("Failed to login via deep link: {}", err);
+
+        let result = match oauth_state.take_params(&host, auth_params.code.clone()).await {
+            Some(oauth_params) => {
+                info!("OAuth 2.1 callback for host: {}", host_str);
+                model::login_oauth(&*m, &host, oauth_params).await
+            }
+            None => {
+                info!("Device flow callback for host: {}", host_str);
+                model::login(&*m, &host, auth_params.code).await
+            }
+        };
+
+        match result {
+            Ok(()) => {
+                if let Err(err) =
+                    commands::navigate_after_login(&handle, &redirect)
+                {
+                    error!("Failed to redirect after login: {}", err);
+                }
+            }
+            Err(err) => {
+                error!("Failed to login via deep link: {}", err);
+            }
         }
     });
 

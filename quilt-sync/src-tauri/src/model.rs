@@ -487,6 +487,21 @@ pub async fn login(
     Ok(())
 }
 
+pub async fn login_oauth(
+    model: &impl QuiltModel,
+    host: &quilt::uri::Host,
+    params: quilt::auth::OAuthParams,
+) -> Result<(), Error> {
+    model
+        .get_quilt()
+        .lock()
+        .await
+        .get_remote()
+        .login_oauth(host, params)
+        .await?;
+    Ok(())
+}
+
 #[cfg(test)]
 pub mod mocks {
     use super::*;
