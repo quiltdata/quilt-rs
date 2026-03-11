@@ -93,7 +93,10 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
     let state = auth_params.state;
     let redirect = auth_params.redirect.unwrap_or_else(|| {
         let fallback = routes::Paths::InstalledPackagesList.to_string();
-        match handle.get_webview_window("main").and_then(|win| win.url().ok()) {
+        match handle
+            .get_webview_window("main")
+            .and_then(|win| win.url().ok())
+        {
             Some(url) => routes::from_url(routes::Paths::InstalledPackagesList, url).to_string(),
             None => {
                 warn!("Main window unavailable for redirect fallback, using default");
