@@ -117,6 +117,12 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
 
         match result {
             Ok(()) => {
+                let telemetry = handle.state::<crate::telemetry::Telemetry>();
+                telemetry
+                    .track(crate::telemetry::MixpanelEvent::UserLoggedIn {
+                        host: host_str.clone(),
+                    })
+                    .await;
                 if let Err(err) = commands::navigate_after_login(&handle, &redirect) {
                     error!("Failed to redirect after login: {}", err);
                 }
@@ -246,10 +252,8 @@ mod tests {
 
     #[test]
     fn test_parse_auth_params() {
-        let url = Url::parse(
-            "quilt://auth/callback?code=ABC123&host=test.quilt.dev&state=xyz",
-        )
-        .unwrap();
+        let url =
+            Url::parse("quilt://auth/callback?code=ABC123&host=test.quilt.dev&state=xyz").unwrap();
         let params = parse_auth_params(&url).unwrap();
         assert_eq!(params.code, "ABC123");
         assert_eq!(params.state, "xyz");
@@ -274,8 +278,7 @@ mod tests {
 
     #[test]
     fn test_parse_auth_params_missing_code() {
-        let url =
-            Url::parse("quilt://auth/callback?host=test.quilt.dev&state=xyz").unwrap();
+        let url = Url::parse("quilt://auth/callback?host=test.quilt.dev&state=xyz").unwrap();
         let result = parse_auth_params(&url);
         assert!(result.is_err());
     }
@@ -289,8 +292,7 @@ mod tests {
 
     #[test]
     fn test_parse_auth_params_missing_state() {
-        let url =
-            Url::parse("quilt://auth/callback?code=ABC123&host=test.quilt.dev").unwrap();
+        let url = Url::parse("quilt://auth/callback?code=ABC123&host=test.quilt.dev").unwrap();
         let result = parse_auth_params(&url);
         assert!(result.is_err());
     }

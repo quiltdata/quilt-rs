@@ -636,7 +636,7 @@ pub async fn login_oauth(
     let host_parsed = quilt::uri::Host::from_str(&host).map_err(|e| e.to_string())?;
 
     tracing
-        .track(MixpanelEvent::UserLoggedIn { host: host.clone() })
+        .track(MixpanelEvent::OAuthLoginInitiated { host: host.clone() })
         .await;
 
     let redirect_uri = crate::oauth::redirect_uri(&host_parsed);
