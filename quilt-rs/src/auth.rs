@@ -848,18 +848,12 @@ mod tests {
         assert_eq!(client2.client_id, "test-dcr-client-id");
 
         // Third call with different redirect_uri re-registers
+        let new_redirect = "quilt://auth/callback?host=other.quilt.dev";
         let client3 = auth
-            .get_or_register_client(
-                &OAuthTestHttpClient,
-                &host,
-                "quilt://auth/callback?host=test.quilt.dev",
-            )
+            .get_or_register_client(&OAuthTestHttpClient, &host, new_redirect)
             .await?;
         assert_eq!(client3.client_id, "test-dcr-client-id");
-        assert_eq!(
-            client3.redirect_uri,
-            "quilt://auth/callback?host=test.quilt.dev"
-        );
+        assert_eq!(client3.redirect_uri, new_redirect);
 
         Ok(())
     }
