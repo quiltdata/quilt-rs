@@ -44,6 +44,7 @@ fn navigate_to_package(app_handle: &AppHandle, uri_str: &str) -> Result {
 /// Auth callback parameters parsed from a `quilt://` URL.
 struct AuthParams {
     code: String,
+    state: String,
     host: quilt::uri::Host,
     redirect: Option<String>,
 }
@@ -62,6 +63,12 @@ fn parse_auth_params(url: &Url) -> Result<AuthParams> {
         .map(|(_, v)| v.into_owned())
         .ok_or_else(|| Error::General("Missing 'host' parameter in auth callback".into()))?;
 
+    let state = url
+        .query_pairs()
+        .find(|(k, _)| k == "state")
+        .map(|(_, v)| v.into_owned())
+        .ok_or_else(|| Error::General("Missing 'state' parameter in auth callback".into()))?;
+
     let redirect = url
         .query_pairs()
         .find(|(k, _)| k == "redirect")
@@ -70,6 +77,7 @@ fn parse_auth_params(url: &Url) -> Result<AuthParams> {
     let host = quilt::uri::Host::from_str(&host_str)?;
     Ok(AuthParams {
         code,
+        state,
         host,
         redirect,
     })
@@ -82,6 +90,7 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
     let handle = app_handle.clone();
     let host = auth_params.host.clone();
     let host_str = host.to_string();
+    let state = auth_params.state;
     let redirect = auth_params.redirect.unwrap_or_else(|| {
         let win = handle.get_webview_window("main").unwrap();
         let current_url = win.url().unwrap();
@@ -93,7 +102,7 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
         let m = handle.state::<model::Model>();
 
         let result = match oauth_state
-            .take_params(&host, auth_params.code.clone())
+            .take_params(&host, auth_params.code.clone(), &state)
             .await
         {
             Some(oauth_params) => {
@@ -237,9 +246,13 @@ mod tests {
 
     #[test]
     fn test_parse_auth_params() {
-        let url = Url::parse("quilt://auth/callback?code=ABC123&host=test.quilt.dev").unwrap();
+        let url = Url::parse(
+            "quilt://auth/callback?code=ABC123&host=test.quilt.dev&state=xyz",
+        )
+        .unwrap();
         let params = parse_auth_params(&url).unwrap();
         assert_eq!(params.code, "ABC123");
+        assert_eq!(params.state, "xyz");
         assert_eq!(params.host.to_string(), "test.quilt.dev");
         assert_eq!(params.redirect, None);
     }
@@ -247,10 +260,11 @@ mod tests {
     #[test]
     fn test_parse_auth_params_with_redirect() {
         let url = Url::parse(
-            "quilt://auth/callback?code=ABC123&host=test.quilt.dev&redirect=https%3A%2F%2Flocalhost%3A1234%2Fpages%2Fremote-package.html"
+            "quilt://auth/callback?code=ABC123&host=test.quilt.dev&state=xyz&redirect=https%3A%2F%2Flocalhost%3A1234%2Fpages%2Fremote-package.html"
         ).unwrap();
         let params = parse_auth_params(&url).unwrap();
         assert_eq!(params.code, "ABC123");
+        assert_eq!(params.state, "xyz");
         assert_eq!(params.host.to_string(), "test.quilt.dev");
         assert_eq!(
             params.redirect.as_deref(),
@@ -260,14 +274,23 @@ mod tests {
 
     #[test]
     fn test_parse_auth_params_missing_code() {
-        let url = Url::parse("quilt://auth/callback?host=test.quilt.dev").unwrap();
+        let url =
+            Url::parse("quilt://auth/callback?host=test.quilt.dev&state=xyz").unwrap();
         let result = parse_auth_params(&url);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_parse_auth_params_missing_host() {
-        let url = Url::parse("quilt://auth/callback?code=ABC123").unwrap();
+        let url = Url::parse("quilt://auth/callback?code=ABC123&state=xyz").unwrap();
+        let result = parse_auth_params(&url);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_auth_params_missing_state() {
+        let url =
+            Url::parse("quilt://auth/callback?code=ABC123&host=test.quilt.dev").unwrap();
         let result = parse_auth_params(&url);
         assert!(result.is_err());
     }

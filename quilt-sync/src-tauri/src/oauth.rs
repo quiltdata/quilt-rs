@@ -19,6 +19,7 @@ struct PendingAuth {
     code_verifier: String,
     redirect_uri: String,
     client_id: String,
+    state: String,
 }
 
 /// The URL and related data needed to open the browser for OAuth login.
@@ -64,6 +65,7 @@ impl OAuthState {
             code_verifier: pkce.code_verifier,
             redirect_uri,
             client_id: client_id.to_string(),
+            state: state.clone(),
         };
 
         let host_key = host.to_string();
@@ -82,6 +84,7 @@ impl OAuthState {
         &self,
         host: &quilt::uri::Host,
         code: String,
+        state: &str,
     ) -> Option<quilt::auth::OAuthParams> {
         let host_key = host.to_string();
         let mut guard = self.pending.lock().await;
@@ -97,6 +100,11 @@ impl OAuthState {
             }
         };
         drop(guard);
+
+        if pending.state != state {
+            warn!("OAuth state mismatch for {host_key}: possible CSRF attack");
+            return None;
+        }
 
         Some(quilt::auth::OAuthParams {
             code,
