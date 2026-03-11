@@ -54,7 +54,10 @@ impl OAuthState {
              &response_type=code\
              &scope=platform\
              &state={state}",
-            challenge = pkce.code_challenge,
+            client_id = urlencoding::encode(client_id),
+            redirect_uri = urlencoding::encode(&redirect_uri),
+            challenge = urlencoding::encode(&pkce.code_challenge),
+            state = urlencoding::encode(&state),
         );
 
         let pending = PendingAuth {
