@@ -38,10 +38,10 @@ pub fn redirect_uri(host: &quilt::uri::Host) -> String {
 }
 
 impl OAuthState {
-    /// Start an OAuth login flow for the given host.
+    /// Build an Authorization Request (RFC 6749 §4.1.1) with PKCE (RFC 7636 §4.3).
     ///
-    /// Generates a PKCE challenge, stores the verifier, and returns
-    /// the authorization URL to open in the browser.
+    /// Generates a PKCE challenge and a `state` token, stores them as
+    /// pending auth, and returns the authorization URL to open in the browser.
     pub async fn start_login(&self, host: &quilt::uri::Host, client_id: &str) -> AuthorizeRequest {
         let pkce = quilt::auth::pkce_challenge();
         let redirect_uri = redirect_uri(host);
@@ -78,10 +78,11 @@ impl OAuthState {
         AuthorizeRequest { authorize_url }
     }
 
-    /// Complete an OAuth login by exchanging the authorization code.
+    /// Handle the Authorization Response (RFC 6749 §4.1.2) and verify
+    /// the `state` parameter for CSRF protection (RFC 6749 §10.12).
     ///
     /// Returns:
-    /// - `Ok(Some(params))` — pending state matched, proceed with OAuth token exchange
+    /// - `Ok(Some(params))` — state matched, proceed with Token Request
     /// - `Ok(None)` — no pending state for this host (device flow callback)
     /// - `Err(_)` — state mismatch, possible CSRF attack; abort
     pub async fn take_params(
