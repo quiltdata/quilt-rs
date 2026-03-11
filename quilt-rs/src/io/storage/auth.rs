@@ -9,6 +9,7 @@ use crate::io::storage::LocalStorage;
 use crate::io::storage::Storage;
 use crate::io::storage::StorageExt;
 
+use crate::paths::AUTH_CLIENT;
 use crate::paths::AUTH_CREDENTIALS;
 use crate::paths::AUTH_TOKENS;
 use crate::Res;
@@ -28,6 +29,13 @@ pub struct Credentials {
     pub expires_at: chrono::DateTime<chrono::Utc>,
 }
 
+/// OAuth client registration data (persisted per host via DCR).
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct OAuthClient {
+    pub client_id: String,
+    pub redirect_uri: String,
+}
+
 #[derive(Deserialize, Serialize, Debug)]
 pub struct AuthIo<S: Storage = LocalStorage> {
     storage: S,
@@ -35,6 +43,10 @@ pub struct AuthIo<S: Storage = LocalStorage> {
 }
 
 impl<S: Storage + Sync> AuthIo<S> {
+    fn client_path(&self) -> PathBuf {
+        self.dir.join(AUTH_CLIENT)
+    }
+
     fn tokens_path(&self) -> PathBuf {
         self.dir.join(AUTH_TOKENS)
     }
@@ -105,6 +117,36 @@ impl<S: Storage + Sync> AuthIo<S> {
             .await?;
 
         debug!("✔️ Successfully wrote credentials: {:?}", credentials);
+
+        Ok(())
+    }
+
+    pub async fn read_client(&self) -> Res<Option<OAuthClient>> {
+        let path = self.client_path();
+        debug!("⏳ Reading OAuth client from {:?}", path);
+
+        if !self.storage.exists(&path).await {
+            debug!("No client file found");
+            return Ok(None);
+        }
+        let bytes = self.storage.read_bytes(&path).await?;
+        let client = serde_json::from_slice(&bytes)?;
+
+        debug!("✔️ Successfully read OAuth client");
+
+        Ok(Some(client))
+    }
+
+    pub async fn write_client(&self, client: &OAuthClient) -> Res {
+        let path = self.client_path();
+        debug!("⏳ Writing OAuth client to {:?}", path);
+
+        let contents = serde_json::to_vec(client)?;
+        self.storage
+            .write_byte_stream(&path, contents.into())
+            .await?;
+
+        debug!("✔️ Successfully wrote OAuth client: {:?}", client);
 
         Ok(())
     }

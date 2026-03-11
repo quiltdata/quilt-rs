@@ -32,6 +32,9 @@ pub enum MixpanelEvent {
     LatestCertified,
     LocalReset,
     OriginSet,
+    OAuthLoginInitiated {
+        host: String,
+    },
     UserLoggedIn {
         host: String,
     },

@@ -8,6 +8,13 @@
 -->
 # Changelog
 
+## [v0.14.4-alpha1] - 2026-03-11
+
+### Added
+
+- Browser-based OAuth login via `quilt://` deep link callback
+  (<https://github.com/quiltdata/quilt-rs/pull/539>)
+
 ## [v0.14.3] - 2026-03-03
 
 ### Fixed

@@ -7,6 +7,13 @@
 -->
 # Changelog
 
+## [v0.27.4-alpha1] - 2026-03-11
+
+### Added
+
+- OAuth 2.1 Authorization Code flow with PKCE and Dynamic Client Registration
+  (<https://github.com/quiltdata/quilt-rs/pull/539>)
+
 ## [v0.27.3] - 2026-03-09
 
 ### Changed

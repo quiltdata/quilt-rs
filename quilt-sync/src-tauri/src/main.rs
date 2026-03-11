@@ -13,6 +13,7 @@ mod debug_tools;
 mod env;
 mod error;
 mod model;
+mod oauth;
 mod pages;
 mod quilt;
 mod routes;
@@ -35,8 +36,8 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             if let Err(err) = match argv.get(1) {
                 Some(uri_str) => {
-                    debug!("uri_str: {:?}", uri_str);
-                    uri::navigate_to_uri(app, uri_str).map_err(|err| Error::PackageUri(err.into()))
+                    info!("Single-instance deep link: {:?}", uri_str);
+                    uri::handle_deep_link_url(app, uri_str)
                 }
                 None => Ok(()),
             } {
@@ -56,8 +57,10 @@ fn main() {
 
             // This is for runtime registering
             #[cfg(desktop)]
-            if let Err(err) = app.deep_link().register("quilt+s3") {
-                error!("Failed to register deep link: {}", err);
+            for scheme in ["quilt+s3", "quilt"] {
+                if let Err(err) = app.deep_link().register(scheme) {
+                    error!("Failed to register deep link for {}: {}", scheme, err);
+                }
             }
 
             let data_dir = app
@@ -73,6 +76,7 @@ fn main() {
             app.manage(sync::Mutex::new(app.handle().clone()));
             app.manage(AppAssets::create(package_info, logs_dir));
             app.manage(telemetry);
+            app.manage(oauth::OAuthState::default());
 
             uri::setup_deep_link_handler(app.handle());
 
@@ -86,6 +90,7 @@ fn main() {
             commands::load_empty,
             commands::load_page,
             commands::login,
+            commands::login_oauth,
             commands::open_directory_picker,
             commands::open_in_default_application,
             commands::open_in_file_browser,

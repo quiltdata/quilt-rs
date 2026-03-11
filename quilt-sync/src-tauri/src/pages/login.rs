@@ -26,6 +26,7 @@ pub struct TmplPageLogin<'a> {
     instructions: Cow<'a, str>,
     layout: Layout<'a>,
     location: Option<String>,
+    login_oauth: btn::TmplButton<'a>,
     open_catalog: btn::TmplButton<'a>,
 }
 
@@ -47,6 +48,16 @@ impl<'a> TmplPageLogin<'a> {
             .set_data("url", format!("https://{host}/code"))
             .set_label(t!("login.open_browser"))
     }
+
+    pub fn login_oauth(host: &Host) -> btn::TmplButton<'a> {
+        btn::TmplButton::builder()
+            .set_js(btn::JsSelector::LoginOAuth)
+            .set_size(btn::Size::Large)
+            .set_color(btn::Color::Primary)
+            .set_icon(Icon::OpenInBrowser)
+            .set_data("host", host.to_string())
+            .set_label(t!("login.login_oauth"))
+    }
 }
 
 impl From<ViewLogin> for TmplPageLogin<'_> {
@@ -55,6 +66,7 @@ impl From<ViewLogin> for TmplPageLogin<'_> {
             instructions: t!("login.code_instruction", s => view.host.to_string()),
             layout: Layout::new(view.globals, Some(Self::primary_button())),
             location: view.location,
+            login_oauth: Self::login_oauth(&view.host),
             open_catalog: Self::open_catalog(&view.host),
             host: view.host,
         }

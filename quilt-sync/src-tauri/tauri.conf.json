@@ -22,7 +22,7 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["quilt+s3"]
+        "schemes": ["quilt+s3", "quilt"]
       }
     },
     "updater": {

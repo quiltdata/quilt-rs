@@ -14,6 +14,7 @@ use tracing::info;
 use tracing::warn;
 
 use crate::auth;
+use crate::auth::OAuthParams;
 use crate::checksum::ObjectHash;
 use crate::error::AuthError;
 use crate::error::S3Error;
@@ -25,6 +26,7 @@ use crate::io::remote::HostConfig;
 use crate::io::remote::HttpClient;
 use crate::io::remote::Remote;
 use crate::io::storage::auth::AuthIo;
+use crate::io::storage::auth::OAuthClient;
 use crate::io::storage::LocalStorage;
 use crate::paths::DomainPaths;
 use crate::uri::Host;
@@ -111,6 +113,20 @@ impl RemoteS3 {
 
     pub async fn login(&self, host: &Host, refresh_token: String) -> Res {
         self.auth.login(&self.http, host, refresh_token).await
+    }
+
+    pub async fn login_oauth(&self, host: &Host, params: OAuthParams) -> Res {
+        self.auth.login_oauth(&self.http, host, params).await
+    }
+
+    pub async fn get_or_register_client(
+        &self,
+        host: &Host,
+        redirect_uri: &str,
+    ) -> Res<OAuthClient> {
+        self.auth
+            .get_or_register_client(&self.http, host, redirect_uri)
+            .await
     }
 
     async fn get_region_for_bucket(&self, bucket: &str) -> Res<Region> {
