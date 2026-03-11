@@ -28,10 +28,11 @@ pub struct AuthorizeRequest {
 
 /// The redirect URI for QuiltSync OAuth callbacks.
 ///
-/// TODO: switch to `quilt://auth/callback` once the server supports custom URI schemes.
-/// For now, uses an https host from the Connect server's redirect_uri allowlist.
+/// The Connect server redirects here after the user authorizes.
+/// The `quilt://` scheme is registered as a deep link, so the OS
+/// routes the callback to QuiltSync where `uri::login_with_code` handles it.
 pub fn redirect_uri(host: &quilt::uri::Host) -> String {
-    format!("https://claude.ai/callback?host={host}")
+    format!("quilt://auth/callback?host={host}")
 }
 
 impl OAuthState {
@@ -80,18 +81,19 @@ impl OAuthState {
         code: String,
     ) -> Option<quilt::auth::OAuthParams> {
         let host_key = host.to_string();
-        let pending = self.pending.lock().await.remove(&host_key);
-        let pending = match pending {
+        let mut guard = self.pending.lock().await;
+        let pending = match guard.remove(&host_key) {
             Some(p) => {
                 info!("Found pending OAuth state for {host_key}");
                 p
             }
             None => {
-                let keys: Vec<String> = self.pending.lock().await.keys().cloned().collect();
+                let keys: Vec<String> = guard.keys().cloned().collect();
                 warn!("No pending OAuth state for {host_key}. Pending hosts: {keys:?}");
                 return None;
             }
         };
+        drop(guard);
 
         Some(quilt::auth::OAuthParams {
             code,
