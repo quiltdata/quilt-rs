@@ -609,6 +609,7 @@ pub async fn login(
     location: Option<String>,
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
 ) -> Result<String, String> {
+    // TODO: move to success callback (currently fires before outcome is known)
     tracing
         .track(MixpanelEvent::UserLoggedIn { host: host.clone() })
         .await;
