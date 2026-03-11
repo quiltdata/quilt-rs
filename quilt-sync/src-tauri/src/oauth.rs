@@ -47,8 +47,9 @@ impl OAuthState {
         let redirect_uri = redirect_uri(host);
         let state = quilt::auth::random_state();
 
+        let base = quilt::auth::catalog_authorize_url(host);
         let authorize_url = format!(
-            "https://{host}/connect/authorize?\
+            "{base}?\
              client_id={client_id}\
              &redirect_uri={redirect_uri}\
              &code_challenge={challenge}\

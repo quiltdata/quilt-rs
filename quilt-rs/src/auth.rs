@@ -70,10 +70,24 @@ pub fn random_state() -> String {
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
-/// Derive the connect server hostname from the catalog host.
+// --- OAuth endpoint URLs ---
+//
+// OAuth uses two different hostnames derived from the catalog host:
+//
+// 1. **Catalog host** (`test.quilt.dev`) — the authorize endpoint lives here
+//    because the user's browser session (cookies) is on the catalog.
+//
+// 2. **Connect host** (`test-connect.quilt.dev`) — the token exchange and
+//    client registration (DCR) endpoints live on a separate subdomain.
+
+/// Authorize endpoint on the catalog host.
 ///
-/// The connect hostname is `<stack>-connect.<domain>`, where `<stack>` is the
-/// first label of the catalog hostname.
+/// E.g., `test.quilt.dev` → `https://test.quilt.dev/connect/authorize`
+pub fn catalog_authorize_url(host: &Host) -> String {
+    format!("https://{host}/connect/authorize")
+}
+
+/// Derive the connect server hostname from the catalog host.
 ///
 /// E.g., `test.quilt.dev` → `test-connect.quilt.dev`
 pub fn connect_host(host: &Host) -> String {
@@ -84,14 +98,14 @@ pub fn connect_host(host: &Host) -> String {
     }
 }
 
-/// Derive the connect server token endpoint from the catalog host.
+/// Token endpoint on the connect host.
 ///
 /// E.g., `test.quilt.dev` → `https://test-connect.quilt.dev/auth/token`
 fn connect_token_url(host: &Host) -> String {
     format!("https://{}/auth/token", connect_host(host))
 }
 
-/// Derive the connect server registration endpoint from the catalog host.
+/// Client registration (DCR) endpoint on the connect host.
 fn connect_register_url(host: &Host) -> String {
     format!("https://{}/auth/register", connect_host(host))
 }
@@ -751,13 +765,14 @@ mod tests {
         ) -> Res<T> {
             assert_eq!(url, connect_register_url(&get_host()));
             let json = serde_json::to_value(body)?;
+            assert_eq!(json["client_name"], "QuiltSync");
+            assert_eq!(json["token_endpoint_auth_method"], "none");
             let redirect_uris = json["redirect_uris"].as_array().expect("redirect_uris");
             assert_eq!(redirect_uris.len(), 1);
-            // Verify the DCR request includes a redirect_uri
             assert!(redirect_uris[0]
                 .as_str()
                 .unwrap()
-                .starts_with("quilt://auth/callback"));
+                .starts_with("quilt://auth/callback?host="));
             let response = DcrResponse {
                 client_id: "test-dcr-client-id".to_string(),
             };

@@ -635,10 +635,6 @@ pub async fn login_oauth(
 ) -> Result<String, String> {
     let host_parsed = quilt::uri::Host::from_str(&host).map_err(|e| e.to_string())?;
 
-    tracing
-        .track(MixpanelEvent::OAuthLoginInitiated { host: host.clone() })
-        .await;
-
     let redirect_uri = crate::oauth::redirect_uri(&host_parsed);
     let client_id = model::get_or_register_client(&*m, &host_parsed, &redirect_uri)
         .await
@@ -647,6 +643,10 @@ pub async fn login_oauth(
     let request = oauth_state.start_login(&host_parsed, &client_id).await;
 
     model::open_in_web_browser(&request.authorize_url).map_err(|e| e.to_string())?;
+
+    tracing
+        .track(MixpanelEvent::OAuthLoginInitiated { host: host.clone() })
+        .await;
 
     Ok(format!("Opening browser for OAuth login to {host}"))
 }
