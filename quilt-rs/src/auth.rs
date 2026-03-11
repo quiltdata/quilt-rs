@@ -747,9 +747,14 @@ mod tests {
         async fn post_json<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
             &self,
             url: &str,
-            _body: &B,
+            body: &B,
         ) -> Res<T> {
             assert_eq!(url, connect_register_url(&get_host()));
+            let json = serde_json::to_value(body)?;
+            let redirect_uris = json["redirect_uris"].as_array().expect("redirect_uris");
+            assert_eq!(redirect_uris.len(), 1);
+            // Verify the DCR request includes a redirect_uri
+            assert!(redirect_uris[0].as_str().unwrap().starts_with("quilt://auth/callback"));
             let response = DcrResponse {
                 client_id: "test-dcr-client-id".to_string(),
             };
