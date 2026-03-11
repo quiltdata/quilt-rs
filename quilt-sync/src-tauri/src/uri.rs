@@ -134,6 +134,10 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
             }
             Err(err) => {
                 error!("Failed to login via deep link: {}", err);
+                let login_page = routes::Paths::Login(host).to_string();
+                if let Err(nav_err) = commands::navigate_after_login(&handle, &login_page) {
+                    error!("Failed to navigate to login page: {}", nav_err);
+                }
             }
         }
     });
