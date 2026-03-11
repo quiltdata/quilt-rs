@@ -754,7 +754,10 @@ mod tests {
             let redirect_uris = json["redirect_uris"].as_array().expect("redirect_uris");
             assert_eq!(redirect_uris.len(), 1);
             // Verify the DCR request includes a redirect_uri
-            assert!(redirect_uris[0].as_str().unwrap().starts_with("quilt://auth/callback"));
+            assert!(redirect_uris[0]
+                .as_str()
+                .unwrap()
+                .starts_with("quilt://auth/callback"));
             let response = DcrResponse {
                 client_id: "test-dcr-client-id".to_string(),
             };

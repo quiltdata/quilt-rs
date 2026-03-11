@@ -122,7 +122,10 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
                 model::login(&*m, &host, auth_params.code).await
             }
             Err(err) => {
-                error!("OAuth state mismatch for {}, aborting callback: {}", host_str, err);
+                error!(
+                    "OAuth state mismatch for {}, aborting callback: {}",
+                    host_str, err
+                );
                 Err(err)
             }
         };
