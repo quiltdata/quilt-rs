@@ -14,6 +14,7 @@ use tracing::info;
 use tracing::warn;
 
 use crate::auth;
+use crate::auth::OAuthParams;
 use crate::checksum::ObjectHash;
 use crate::error::AuthError;
 use crate::error::S3Error;
@@ -114,7 +115,7 @@ impl RemoteS3 {
         self.auth.login(&self.http, host, refresh_token).await
     }
 
-    pub async fn login_oauth(&self, host: &Host, params: crate::auth::OAuthParams) -> Res {
+    pub async fn login_oauth(&self, host: &Host, params: OAuthParams) -> Res {
         self.auth.login_oauth(&self.http, host, params).await
     }
 

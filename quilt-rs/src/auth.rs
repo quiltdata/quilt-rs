@@ -5,7 +5,18 @@ use base64::Engine;
 use sha2::Digest;
 use sha2::Sha256;
 
+use crate::error::AuthError;
 use crate::io::remote::client::HttpClient;
+use crate::io::storage::auth::AuthIo;
+use crate::io::storage::auth::Credentials;
+use crate::io::storage::auth::OAuthClient;
+use crate::io::storage::auth::Tokens;
+use crate::io::storage::LocalStorage;
+use crate::io::storage::Storage;
+use crate::paths::DomainPaths;
+use crate::uri::Host;
+use crate::Error;
+use crate::Res;
 use chrono::serde::ts_seconds;
 use serde::Deserialize;
 use serde::Deserializer;
@@ -119,18 +130,6 @@ async fn register_client(
         redirect_uri: redirect_uri.to_string(),
     })
 }
-
-use crate::error::AuthError;
-use crate::io::storage::auth::AuthIo;
-use crate::io::storage::auth::Credentials;
-use crate::io::storage::auth::OAuthClient;
-use crate::io::storage::auth::Tokens;
-use crate::io::storage::LocalStorage;
-use crate::io::storage::Storage;
-use crate::paths::DomainPaths;
-use crate::uri::Host;
-use crate::Error;
-use crate::Res;
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct RemoteTokens {

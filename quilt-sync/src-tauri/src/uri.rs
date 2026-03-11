@@ -92,9 +92,14 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
     let host_str = host.to_string();
     let state = auth_params.state;
     let redirect = auth_params.redirect.unwrap_or_else(|| {
-        let win = handle.get_webview_window("main").unwrap();
-        let current_url = win.url().unwrap();
-        routes::from_url(routes::Paths::InstalledPackagesList, current_url).to_string()
+        let fallback = routes::Paths::InstalledPackagesList.to_string();
+        match handle.get_webview_window("main").and_then(|win| win.url().ok()) {
+            Some(url) => routes::from_url(routes::Paths::InstalledPackagesList, url).to_string(),
+            None => {
+                warn!("Main window unavailable for redirect fallback, using default");
+                fallback
+            }
+        }
     });
 
     tauri::async_runtime::spawn(async move {
@@ -138,7 +143,7 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
 
 /// Dispatch a deep link URL to the appropriate handler based on scheme
 pub fn handle_deep_link_url(app_handle: &AppHandle, url_str: &str) -> Result {
-    info!("handle_deep_link_url: {}", url_str);
+    debug!("handle_deep_link_url: {}", url_str);
     let url: Url = url_str.parse().map_err(Error::ParseUrl)?;
 
     match url.scheme() {
