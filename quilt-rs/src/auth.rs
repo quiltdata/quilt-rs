@@ -116,6 +116,7 @@ async fn register_client(
 
     Ok(OAuthClient {
         client_id: response.client_id,
+        redirect_uri: redirect_uri.to_string(),
     })
 }
 
@@ -332,8 +333,14 @@ impl<S: Storage + Sync + Clone> Auth<S> {
         let auth_io = AuthIo::new(self.storage.clone(), self.paths.auth_host(host));
 
         if let Some(client) = auth_io.read_client().await? {
-            info!("✔️ Found existing OAuth client for {}", host);
-            return Ok(client);
+            if client.redirect_uri == redirect_uri {
+                info!("✔️ Found existing OAuth client for {}", host);
+                return Ok(client);
+            }
+            info!(
+                "⚠️ Cached client has stale redirect_uri, re-registering for {}",
+                host
+            );
         }
 
         info!("⏳ Registering new OAuth client for {}", host);
@@ -832,12 +839,20 @@ mod tests {
             .get_or_register_client(&OAuthTestHttpClient, &host, REDIRECT_URI)
             .await?;
         assert_eq!(client.client_id, "test-dcr-client-id");
+        assert_eq!(client.redirect_uri, REDIRECT_URI);
 
-        // Second call reads from storage (no DCR call)
+        // Second call with same redirect_uri reads from storage (no DCR call)
         let client2 = auth
             .get_or_register_client(&OAuthTestHttpClient, &host, REDIRECT_URI)
             .await?;
         assert_eq!(client2.client_id, "test-dcr-client-id");
+
+        // Third call with different redirect_uri re-registers
+        let client3 = auth
+            .get_or_register_client(&OAuthTestHttpClient, &host, "quilt://auth/callback?host=test.quilt.dev")
+            .await?;
+        assert_eq!(client3.client_id, "test-dcr-client-id");
+        assert_eq!(client3.redirect_uri, "quilt://auth/callback?host=test.quilt.dev");
 
         Ok(())
     }

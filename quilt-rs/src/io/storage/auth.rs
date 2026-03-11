@@ -33,6 +33,7 @@ pub struct Credentials {
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct OAuthClient {
     pub client_id: String,
+    pub redirect_uri: String,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
