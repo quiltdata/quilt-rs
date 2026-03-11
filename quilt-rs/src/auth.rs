@@ -48,9 +48,10 @@ pub struct PkceChallenge {
 
 /// Generate a PKCE code verifier and its S256 challenge.
 ///
-/// The verifier is 32 random bytes, base64url-encoded (43 characters).
+/// The verifier is 64 random bytes, base64url-encoded (86 characters),
+/// well within RFC 7636 §4.1's 43–128 character range.
 pub fn pkce_challenge() -> PkceChallenge {
-    let mut random_bytes = [0u8; 32];
+    let mut random_bytes = [0u8; 64];
     getrandom::fill(&mut random_bytes).expect("failed to generate random bytes");
 
     let code_verifier = URL_SAFE_NO_PAD.encode(random_bytes);
@@ -791,8 +792,8 @@ mod tests {
     fn test_pkce_challenge() {
         let pkce = pkce_challenge();
 
-        // Verifier should be 43 characters (32 bytes base64url-encoded without padding)
-        assert_eq!(pkce.code_verifier.len(), 43);
+        // Verifier should be 86 characters (64 bytes base64url-encoded without padding)
+        assert_eq!(pkce.code_verifier.len(), 86);
 
         // Challenge should be 43 characters (SHA-256 is 32 bytes, base64url-encoded)
         assert_eq!(pkce.code_challenge.len(), 43);
