@@ -55,6 +55,9 @@ pub enum Error {
     #[error("General error: {0}")]
     General(String),
 
+    #[error("OAuth error: {0}")]
+    OAuth(String),
+
     #[error("Mixpanel error: {0}")]
     Mixpanel(#[from] mixpanel_rs::error::Error),
 

@@ -113,13 +113,17 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
             .take_params(&host, auth_params.code.clone(), &state)
             .await
         {
-            Some(oauth_params) => {
+            Ok(Some(oauth_params)) => {
                 info!("OAuth 2.1 callback for host: {}", host_str);
                 model::login_oauth(&*m, &host, oauth_params).await
             }
-            None => {
+            Ok(None) => {
                 info!("Device flow callback for host: {}", host_str);
                 model::login(&*m, &host, auth_params.code).await
+            }
+            Err(err) => {
+                error!("OAuth state mismatch for {}, aborting callback: {}", host_str, err);
+                Err(err)
             }
         };
 

@@ -4,6 +4,7 @@ use tokio::sync::Mutex;
 
 use crate::quilt;
 use crate::telemetry::prelude::*;
+use crate::Error;
 
 /// Pending OAuth authorization state, keyed by host.
 ///
@@ -78,14 +79,16 @@ impl OAuthState {
 
     /// Complete an OAuth login by exchanging the authorization code.
     ///
-    /// Returns `None` if there is no pending auth for the host
-    /// (e.g. the user never initiated login or it was already consumed).
+    /// Returns:
+    /// - `Ok(Some(params))` — pending state matched, proceed with OAuth token exchange
+    /// - `Ok(None)` — no pending state for this host (device flow callback)
+    /// - `Err(_)` — state mismatch, possible CSRF attack; abort
     pub async fn take_params(
         &self,
         host: &quilt::uri::Host,
         code: String,
         state: &str,
-    ) -> Option<quilt::auth::OAuthParams> {
+    ) -> Result<Option<quilt::auth::OAuthParams>, Error> {
         let host_key = host.to_string();
         let mut guard = self.pending.lock().await;
         let pending = match guard.remove(&host_key) {
@@ -96,21 +99,23 @@ impl OAuthState {
             None => {
                 let keys: Vec<String> = guard.keys().cloned().collect();
                 warn!("No pending OAuth state for {host_key}. Pending hosts: {keys:?}");
-                return None;
+                return Ok(None);
             }
         };
         drop(guard);
 
         if pending.state != state {
             warn!("OAuth state mismatch for {host_key}: possible CSRF attack");
-            return None;
+            return Err(Error::OAuth(format!(
+                "State mismatch for {host_key}: possible CSRF attack"
+            )));
         }
 
-        Some(quilt::auth::OAuthParams {
+        Ok(Some(quilt::auth::OAuthParams {
             code,
             code_verifier: pending.code_verifier,
             redirect_uri: pending.redirect_uri,
             client_id: pending.client_id,
-        })
+        }))
     }
 }
