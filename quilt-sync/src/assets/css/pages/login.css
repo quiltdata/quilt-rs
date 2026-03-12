@@ -13,43 +13,6 @@
     max-width: 640px;
   }
 
-  .form {
-    display: grid;
-    grid-template-rows: auto;
-    row-gap: 16px;
-  }
-
-  .field {
-    border: 1px solid var(--q-ui-palette-border);
-    border-radius: 4px;
-    margin: 0;
-    position: relative;
-  }
-
-  .label {
-    background: var(--q-ui-palette-background-primary);
-    position: absolute;
-    left: 0;
-    top: -12px;
-    padding: 0 4px;
-    transform: scale(0.75);
-  }
-
-  .input {
-    background: transparent;
-    border: 0;
-    box-sizing: border-box;
-    font-size: 1rem;
-    padding: 8px 14px;
-    width: 100%;
-  }
-
-  .title {
-    font-size: 1.2rem;
-    margin: 0 0 16px;
-    text-align: center;
-  }
-
   .message {
     font-size: 1rem;
     margin: 0 0 24px;

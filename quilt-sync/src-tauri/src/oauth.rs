@@ -21,6 +21,7 @@ struct PendingAuth {
     redirect_uri: String,
     client_id: String,
     state: String,
+    location: Option<String>,
 }
 
 /// The URL and related data needed to open the browser for OAuth login.
@@ -42,7 +43,12 @@ impl OAuthState {
     ///
     /// Generates a PKCE challenge and a `state` token, stores them as
     /// pending auth, and returns the authorization URL to open in the browser.
-    pub async fn start_login(&self, host: &quilt::uri::Host, client_id: &str) -> AuthorizeRequest {
+    pub async fn start_login(
+        &self,
+        host: &quilt::uri::Host,
+        client_id: &str,
+        location: Option<String>,
+    ) -> AuthorizeRequest {
         let pkce = quilt::auth::pkce_challenge();
         let redirect_uri = redirect_uri(host);
         let state = quilt::auth::random_state();
@@ -68,6 +74,7 @@ impl OAuthState {
             redirect_uri,
             client_id: client_id.to_string(),
             state: state.clone(),
+            location,
         };
 
         let host_key = host.to_string();
@@ -90,7 +97,7 @@ impl OAuthState {
         host: &quilt::uri::Host,
         code: String,
         state: &str,
-    ) -> Result<Option<quilt::auth::OAuthParams>, Error> {
+    ) -> Result<Option<(quilt::auth::OAuthParams, Option<String>)>, Error> {
         let host_key = host.to_string();
         let mut guard = self.pending.lock().await;
         let pending = match guard.remove(&host_key) {
@@ -113,11 +120,14 @@ impl OAuthState {
             )));
         }
 
-        Ok(Some(quilt::auth::OAuthParams {
-            code,
-            code_verifier: pending.code_verifier,
-            redirect_uri: pending.redirect_uri,
-            client_id: pending.client_id,
-        }))
+        Ok(Some((
+            quilt::auth::OAuthParams {
+                code,
+                code_verifier: pending.code_verifier,
+                redirect_uri: pending.redirect_uri,
+                client_id: pending.client_id,
+            },
+            pending.location,
+        )))
     }
 }
