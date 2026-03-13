@@ -97,6 +97,8 @@ pub enum Paths {
     InstalledPackagesList,
     #[serde(rename = "login")]
     Login(quilt::uri::Host),
+    #[serde(rename = "login_error")]
+    LoginError(quilt::uri::Host),
     #[serde(rename = "merge")]
     Merge(quilt::uri::Namespace),
     #[serde(rename = "remote_package")]
@@ -119,6 +121,9 @@ impl fmt::Display for Paths {
             }
             Paths::Login(host) => {
                 write!(f, "login.html#host={host}")
+            }
+            Paths::LoginError(host) => {
+                write!(f, "login-error.html#host={host}")
             }
             Paths::Merge(namespace) => {
                 write!(f, "merge.html#namespace={namespace}")
@@ -175,6 +180,11 @@ pub fn from_url(path: Paths, mut url: Url) -> url::Url {
             url.set_fragment(Some(&format!("host={host}")));
             url
         }
+        Paths::LoginError(host) => {
+            url.set_path("pages/login-error.html");
+            url.set_fragment(Some(&format!("host={host}")));
+            url
+        }
         Paths::Merge(namespace) => {
             url.set_path("pages/merge.html");
             url.set_fragment(Some(&format!("namespace={namespace}")));
@@ -212,6 +222,10 @@ impl str::FromStr for Paths {
             "login.html" => {
                 let host = parse_host(location)?;
                 Ok(Paths::Login(host))
+            }
+            "login-error.html" => {
+                let host = parse_host(location)?;
+                Ok(Paths::LoginError(host))
             }
             "merge.html" => {
                 let namespace = parse_namespace(location)?;
