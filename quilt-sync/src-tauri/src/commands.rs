@@ -583,7 +583,6 @@ pub(crate) fn navigate_after_login(
     }
 }
 
-
 /// Initiate OAuth 2.1 login: register client via DCR if needed,
 /// generate PKCE, store verifier, open browser.
 #[tauri::command]
