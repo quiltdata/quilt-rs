@@ -8,6 +8,12 @@
 -->
 # Changelog
 
+## [v0.14.4-alpha2] - 2026-03-13
+
+### Removed
+
+- Remove paste-code authentication from QuiltSync in favor of OAuth
+
 ## [v0.14.4-alpha1] - 2026-03-11
 
 ### Added
