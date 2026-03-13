@@ -120,7 +120,6 @@ type Command =
   | typeof CMD_ERASE_AUTH
   | typeof CMD_DEBUG_DOT_QUILT
   | typeof CMD_DEBUG_LOGS
-  | typeof CMD_LOGIN
   | typeof CMD_LOGIN_OAUTH
   | typeof CMD_OPEN_DIRECTORY_PICKER
   | typeof CMD_OPEN_IN_DEFAULT_APPLICATION
