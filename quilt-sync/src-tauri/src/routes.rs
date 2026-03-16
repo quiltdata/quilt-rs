@@ -350,6 +350,25 @@ mod tests {
     }
 
     #[test]
+    fn test_login_error() -> Result<()> {
+        let host: Host = "test.quilt.dev".parse()?;
+        let error = "Auth failed: invalid_grant (token expired)";
+        let page_url = from_url(
+            Paths::LoginError(host.clone(), error.to_string()),
+            Url::parse("http://test:1234/")?,
+        );
+        let page_url_str = page_url.as_str();
+        assert!(page_url_str.starts_with(
+            "http://test:1234/pages/login-error.html#host=test.quilt.dev&error="
+        ));
+
+        let route: Paths = page_url_str.parse()?;
+        assert_eq!(route, Paths::LoginError(host, error.to_string()));
+
+        Ok(())
+    }
+
+    #[test]
     fn test_merge() -> Result<()> {
         let page_url = from_url(
             Paths::Merge(("foo", "bar").into()),
