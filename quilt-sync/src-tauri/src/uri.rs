@@ -113,40 +113,47 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
             .take_params(&host, auth_params.code.clone(), &state)
             .await
         {
-            Ok(Some(oauth_params)) => {
+            Ok(Some((oauth_params, stored_location))) => {
                 info!("OAuth 2.1 callback for host: {}", host_str);
-                model::login_oauth(&*m, &host, oauth_params).await
+                let login_result = model::login_oauth(&*m, &host, oauth_params).await;
+                (login_result, stored_location)
             }
             Ok(None) => {
                 info!("Device flow callback for host: {}", host_str);
-                model::login(&*m, &host, auth_params.code).await
+                (model::login(&*m, &host, auth_params.code).await, None)
             }
             Err(err) => {
                 error!(
                     "OAuth state mismatch for {}, aborting callback: {}",
                     host_str, err
                 );
-                Err(err)
+                (Err(err), None)
             }
         };
 
         match result {
-            Ok(()) => {
+            (Ok(()), stored_location) => {
+                let final_redirect = stored_location.unwrap_or(redirect);
                 let telemetry = handle.state::<crate::telemetry::Telemetry>();
                 telemetry
                     .track(crate::telemetry::MixpanelEvent::UserLoggedIn {
                         host: host_str.clone(),
                     })
                     .await;
-                if let Err(err) = commands::navigate_after_login(&handle, &redirect) {
+                if let Err(err) = commands::navigate_after_login(&handle, &final_redirect) {
                     error!("Failed to redirect after login: {}", err);
                 }
             }
-            Err(err) => {
+            (Err(err), _) => {
                 error!("Failed to login via deep link: {}", err);
-                let login_page = routes::Paths::Login(host).to_string();
-                if let Err(nav_err) = commands::navigate_after_login(&handle, &login_page) {
-                    error!("Failed to navigate to login page: {}", nav_err);
+                let error_path = routes::Paths::LoginError(host, err.to_string());
+                if let Some(win) = handle.get_webview_window("main") {
+                    if let Ok(win_url) = win.url() {
+                        let error_url = routes::from_url(error_path, win_url);
+                        if let Err(nav_err) = win.navigate(error_url) {
+                            error!("Failed to navigate to error page: {}", nav_err);
+                        }
+                    }
                 }
             }
         }

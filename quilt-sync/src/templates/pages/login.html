@@ -1,6 +1,6 @@
 {% extends "./components/layout.html" %}
 
-{% block children %} 
+{% block children %}
   <style>
     @import url("/assets/css/pages/login.css");
   </style>
@@ -8,27 +8,6 @@
   <div class="qui-page-login container">
     <div class="main">
       <p class="message">{{ login_oauth | safe }}</p>
-
-      <hr class="divider" />
-
-      <p class="message">{{ instructions }}</p>
-      <p class="message">{{ open_catalog | safe }}</p>
-
-      <form id="form" class="form" onsubmit="event.preventDefault();">
-        <input name="host" hidden value="{{ host }}" />
-
-        {% if let Some(location) = location %}
-          <input name="location" hidden value="{{ location }}" />
-        {% endif %}
-
-        <p class="field">
-          <label class="label" for="code">
-            {{ t!("login.code") }}
-          </label>
-          <input class="input" id="code" name="code" required />
-        </p>
-      </form>
-
     </div>
   </div>
 {% endblock %}

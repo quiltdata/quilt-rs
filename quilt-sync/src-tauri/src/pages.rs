@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use crate::quilt;
+use crate::quilt::error::AuthError;
 use crate::routes::Paths;
 
 mod commit;
@@ -42,9 +44,18 @@ pub async fn load(
         Paths::InstalledPackagesList => ViewInstalledPackagesList::create(model, app, tracing)
             .await?
             .render(),
+        // location is None here: this path is reached via href buttons
+        // (error page "Login", package error status). After login the user
+        // returns to InstalledPackagesList, which is the right default.
+        // The LoginRequired path in load_page_command passes the real
+        // location so redirect-back works for the main auth flow.
         Paths::Login(host) => ViewLogin::create(app, tracing, host.clone(), None)
             .await?
             .render(),
+        Paths::LoginError(host, error) => Err(Error::Quilt(quilt::Error::Auth(
+            host.clone(),
+            AuthError::CredentialsRead(error.clone()),
+        ))),
         Paths::Merge(namespace) => ViewMerge::create(model, app, tracing, namespace)
             .await?
             .render(),

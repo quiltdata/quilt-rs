@@ -583,48 +583,6 @@ pub(crate) fn navigate_after_login(
     }
 }
 
-pub(crate) async fn login_command(
-    m: &model::Model,
-    host: &str,
-    code: String,
-    location: Option<String>,
-    app_handle: &tauri::AppHandle,
-) -> Result<(), Error> {
-    let host = quilt::uri::Host::from_str(host)?;
-    model::login(m, &host, code).await?;
-
-    if let Some(location) = location {
-        navigate_after_login(app_handle, &location)?;
-    }
-
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn login(
-    m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
-    host: String,
-    code: String,
-    location: Option<String>,
-    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
-) -> Result<String, String> {
-    // TODO: move to success callback (currently fires before outcome is known)
-    tracing
-        .track(MixpanelEvent::UserLoggedIn { host: host.clone() })
-        .await;
-    let msg_init = format!("Login with code for host {host}");
-    let msg_ok = format!("Successfully logged in to {host}");
-    let msg_err = |err: &Error| format!("Failed to login: {err}");
-
-    let app_handle = app_handle.lock().await;
-    TmplNotify::new(msg_init).map(
-        login_command(&m, &host, code, location, &app_handle).await,
-        msg_ok,
-        msg_err,
-    )
-}
-
 /// Initiate OAuth 2.1 login: register client via DCR if needed,
 /// generate PKCE, store verifier, open browser.
 #[tauri::command]
@@ -633,6 +591,7 @@ pub async fn login_oauth(
     oauth_state: tauri::State<'_, OAuthState>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     host: String,
+    location: Option<String>,
 ) -> Result<String, String> {
     let host_parsed = quilt::uri::Host::from_str(&host).map_err(|e| e.to_string())?;
 
@@ -641,7 +600,9 @@ pub async fn login_oauth(
         .await
         .map_err(|e| e.to_string())?;
 
-    let request = oauth_state.start_login(&host_parsed, &client_id).await;
+    let request = oauth_state
+        .start_login(&host_parsed, &client_id, location)
+        .await;
 
     model::open_in_web_browser(&request.authorize_url).map_err(|e| e.to_string())?;
 

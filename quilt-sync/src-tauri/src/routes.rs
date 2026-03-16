@@ -70,6 +70,23 @@ fn parse_host(location: &str) -> Result<quilt::uri::Host, Error> {
 }
 
 #[derive(Debug, serde::Deserialize)]
+struct FragmentLoginErrorParsed {
+    pub host: quilt::uri::Host,
+    pub error: String,
+}
+
+fn parse_login_error(location: &str) -> Result<(quilt::uri::Host, String), Error> {
+    let uri = Url::parse(location)?;
+    match uri.fragment() {
+        Some(n) => {
+            let qs: FragmentLoginErrorParsed = serde_qs::from_str(n)?;
+            Ok((qs.host, qs.error))
+        }
+        None => Err(Error::PageUrl(RouteError::MissingHostFragment(uri))),
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
 struct FragmentRemotePackage {
     pub uri: String,
 }
@@ -97,6 +114,8 @@ pub enum Paths {
     InstalledPackagesList,
     #[serde(rename = "login")]
     Login(quilt::uri::Host),
+    #[serde(rename = "login_error")]
+    LoginError(quilt::uri::Host, String),
     #[serde(rename = "merge")]
     Merge(quilt::uri::Namespace),
     #[serde(rename = "remote_package")]
@@ -119,6 +138,10 @@ impl fmt::Display for Paths {
             }
             Paths::Login(host) => {
                 write!(f, "login.html#host={host}")
+            }
+            Paths::LoginError(host, error) => {
+                let error_encoded = urlencoding::encode(error);
+                write!(f, "login-error.html#host={host}&error={error_encoded}")
             }
             Paths::Merge(namespace) => {
                 write!(f, "merge.html#namespace={namespace}")
@@ -175,6 +198,12 @@ pub fn from_url(path: Paths, mut url: Url) -> url::Url {
             url.set_fragment(Some(&format!("host={host}")));
             url
         }
+        Paths::LoginError(host, ref error) => {
+            let error_encoded = urlencoding::encode(error);
+            url.set_path("pages/login-error.html");
+            url.set_fragment(Some(&format!("host={host}&error={error_encoded}")));
+            url
+        }
         Paths::Merge(namespace) => {
             url.set_path("pages/merge.html");
             url.set_fragment(Some(&format!("namespace={namespace}")));
@@ -212,6 +241,10 @@ impl str::FromStr for Paths {
             "login.html" => {
                 let host = parse_host(location)?;
                 Ok(Paths::Login(host))
+            }
+            "login-error.html" => {
+                let (host, error) = parse_login_error(location)?;
+                Ok(Paths::LoginError(host, error))
             }
             "merge.html" => {
                 let namespace = parse_namespace(location)?;
@@ -312,6 +345,24 @@ mod tests {
 
         assert_eq!(route, Paths::Login(host));
         assert_eq!(format!("{route}"), "login.html#host=test.quilt.dev");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_login_error() -> Result<()> {
+        let host: Host = "test.quilt.dev".parse()?;
+        let error = "Auth failed: invalid_grant (token expired)";
+        let page_url = from_url(
+            Paths::LoginError(host.clone(), error.to_string()),
+            Url::parse("http://test:1234/")?,
+        );
+        let page_url_str = page_url.as_str();
+        assert!(page_url_str
+            .starts_with("http://test:1234/pages/login-error.html#host=test.quilt.dev&error="));
+
+        let route: Paths = page_url_str.parse()?;
+        assert_eq!(route, Paths::LoginError(host, error.to_string()));
 
         Ok(())
     }
