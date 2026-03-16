@@ -358,9 +358,8 @@ mod tests {
             Url::parse("http://test:1234/")?,
         );
         let page_url_str = page_url.as_str();
-        assert!(page_url_str.starts_with(
-            "http://test:1234/pages/login-error.html#host=test.quilt.dev&error="
-        ));
+        assert!(page_url_str
+            .starts_with("http://test:1234/pages/login-error.html#host=test.quilt.dev&error="));
 
         let route: Paths = page_url_str.parse()?;
         assert_eq!(route, Paths::LoginError(host, error.to_string()));
