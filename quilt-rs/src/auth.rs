@@ -289,6 +289,24 @@ async fn exchange_oauth_code(
     Ok(Tokens::from(tokens_json))
 }
 
+/// Refresh Token Request (RFC 6749 §6) — exchange a refresh token for new tokens.
+async fn refresh_oauth_tokens(
+    http_client: &impl HttpClient,
+    host: &Host,
+    refresh_token: &str,
+    client_id: &str,
+) -> Res<Tokens> {
+    let token_url = connect_token_url(host);
+
+    let mut form_data: HashMap<String, String> = HashMap::new();
+    form_data.insert("grant_type".to_string(), "refresh_token".to_string());
+    form_data.insert("refresh_token".to_string(), refresh_token.to_string());
+    form_data.insert("client_id".to_string(), client_id.to_string());
+
+    let tokens_json: OAuthTokenResponse = http_client.post(&token_url, &form_data).await?;
+    Ok(Tokens::from(tokens_json))
+}
+
 async fn refresh_credentials(
     http_client: &impl HttpClient,
     host: &Host,
@@ -443,6 +461,30 @@ impl<S: Storage + Sync + Clone> Auth<S> {
         Ok(())
     }
 
+    /// Use the refresh token to obtain new access + refresh tokens from the
+    /// Connect token endpoint (RFC 6749 §6), then persist them.
+    async fn refresh_tokens<T: HttpClient>(
+        &self,
+        http_client: &T,
+        auth_io: &AuthIo<S>,
+        host: &Host,
+        tokens: &Tokens,
+    ) -> Res<Tokens> {
+        let client = auth_io
+            .read_client()
+            .await?
+            .ok_or(crate::Error::LoginRequired(Some(host.to_owned())))?;
+
+        let new_tokens =
+            refresh_oauth_tokens(http_client, host, &tokens.refresh_token, &client.client_id)
+                .await?;
+
+        auth_io.write_tokens(&new_tokens).await?;
+        info!("✔️ Successfully refreshed tokens for {}", host);
+
+        Ok(new_tokens)
+    }
+
     async fn refresh_credentials<T: HttpClient>(
         &self,
         http_client: &T,
@@ -487,39 +529,56 @@ impl<S: Storage + Sync + Clone> Auth<S> {
             }
         }
 
-        match auth_io.read_tokens().await {
-            Ok(Some(tokens)) => {
-                info!(
-                    "⏳ Refreshing credentials using existing tokens for {}",
-                    host
-                );
-                match self
-                    .refresh_credentials(http_client, host, &tokens.access_token)
-                    .await
-                {
-                    Ok(creds) => {
-                        info!("✔️ Successfully refreshed credentials for {}", host);
-                        Ok(creds)
-                    }
-                    Err(e) => {
-                        warn!("❌ Failed to refresh credentials for {}: {}", host, e);
-                        Err(Error::Auth(
-                            host.to_owned(),
-                            AuthError::CredentialsRefresh(e.to_string()),
-                        ))
-                    }
-                }
-            }
+        let tokens = match auth_io.read_tokens().await {
+            Ok(Some(tokens)) => tokens,
             Ok(None) => {
                 warn!("❌ No tokens found for {}, login required", host);
-                Err(crate::Error::LoginRequired(Some(host.to_owned())))
+                return Err(crate::Error::LoginRequired(Some(host.to_owned())));
             }
             Err(e) => {
                 error!("❌ Failed to read tokens for {}: {}", host, e);
-                Err(Error::Auth(
+                return Err(Error::Auth(
                     host.to_owned(),
                     AuthError::TokensRead(e.to_string()),
-                ))
+                ));
+            }
+        };
+
+        // If the access token is expired, try to refresh it using the refresh token.
+        let access_token = if tokens.expires_at <= chrono::Utc::now() {
+            info!("⏳ Access token expired for {}, refreshing via refresh token", host);
+            match self.refresh_tokens(http_client, &auth_io, host, &tokens).await {
+                Ok(new_tokens) => new_tokens.access_token,
+                Err(e) => {
+                    warn!(
+                        "❌ Failed to refresh tokens for {}, login required: {}",
+                        host, e
+                    );
+                    return Err(crate::Error::LoginRequired(Some(host.to_owned())));
+                }
+            }
+        } else {
+            tokens.access_token
+        };
+
+        info!(
+            "⏳ Refreshing credentials using access token for {}",
+            host
+        );
+        match self
+            .refresh_credentials(http_client, host, &access_token)
+            .await
+        {
+            Ok(creds) => {
+                info!("✔️ Successfully refreshed credentials for {}", host);
+                Ok(creds)
+            }
+            Err(e) => {
+                warn!(
+                    "❌ Failed to refresh credentials for {}, login required: {}",
+                    host, e
+                );
+                Err(crate::Error::LoginRequired(Some(host.to_owned())))
             }
         }
     }
