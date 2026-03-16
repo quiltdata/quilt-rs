@@ -47,9 +47,9 @@ pub async fn load(
         Paths::Login(host) => ViewLogin::create(app, tracing, host.clone(), None)
             .await?
             .render(),
-        Paths::LoginError(host) => Err(Error::Quilt(quilt::Error::Auth(
+        Paths::LoginError(host, error) => Err(Error::Quilt(quilt::Error::Auth(
             host.clone(),
-            AuthError::CredentialsRead("Login failed".to_string()),
+            AuthError::CredentialsRead(error.clone()),
         ))),
         Paths::Merge(namespace) => ViewMerge::create(model, app, tracing, namespace)
             .await?

@@ -70,6 +70,23 @@ fn parse_host(location: &str) -> Result<quilt::uri::Host, Error> {
 }
 
 #[derive(Debug, serde::Deserialize)]
+struct FragmentLoginErrorParsed {
+    pub host: quilt::uri::Host,
+    pub error: String,
+}
+
+fn parse_login_error(location: &str) -> Result<(quilt::uri::Host, String), Error> {
+    let uri = Url::parse(location)?;
+    match uri.fragment() {
+        Some(n) => {
+            let qs: FragmentLoginErrorParsed = serde_qs::from_str(n)?;
+            Ok((qs.host, qs.error))
+        }
+        None => Err(Error::PageUrl(RouteError::MissingHostFragment(uri))),
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
 struct FragmentRemotePackage {
     pub uri: String,
 }
@@ -98,7 +115,7 @@ pub enum Paths {
     #[serde(rename = "login")]
     Login(quilt::uri::Host),
     #[serde(rename = "login_error")]
-    LoginError(quilt::uri::Host),
+    LoginError(quilt::uri::Host, String),
     #[serde(rename = "merge")]
     Merge(quilt::uri::Namespace),
     #[serde(rename = "remote_package")]
@@ -122,8 +139,9 @@ impl fmt::Display for Paths {
             Paths::Login(host) => {
                 write!(f, "login.html#host={host}")
             }
-            Paths::LoginError(host) => {
-                write!(f, "login-error.html#host={host}")
+            Paths::LoginError(host, error) => {
+                let error_encoded = urlencoding::encode(error);
+                write!(f, "login-error.html#host={host}&error={error_encoded}")
             }
             Paths::Merge(namespace) => {
                 write!(f, "merge.html#namespace={namespace}")
@@ -180,9 +198,10 @@ pub fn from_url(path: Paths, mut url: Url) -> url::Url {
             url.set_fragment(Some(&format!("host={host}")));
             url
         }
-        Paths::LoginError(host) => {
+        Paths::LoginError(host, ref error) => {
+            let error_encoded = urlencoding::encode(error);
             url.set_path("pages/login-error.html");
-            url.set_fragment(Some(&format!("host={host}")));
+            url.set_fragment(Some(&format!("host={host}&error={error_encoded}")));
             url
         }
         Paths::Merge(namespace) => {
@@ -224,8 +243,8 @@ impl str::FromStr for Paths {
                 Ok(Paths::Login(host))
             }
             "login-error.html" => {
-                let host = parse_host(location)?;
-                Ok(Paths::LoginError(host))
+                let (host, error) = parse_login_error(location)?;
+                Ok(Paths::LoginError(host, error))
             }
             "merge.html" => {
                 let namespace = parse_namespace(location)?;

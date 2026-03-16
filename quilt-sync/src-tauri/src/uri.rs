@@ -146,7 +146,7 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
             }
             (Err(err), _) => {
                 error!("Failed to login via deep link: {}", err);
-                let error_path = routes::Paths::LoginError(host);
+                let error_path = routes::Paths::LoginError(host, err.to_string());
                 if let Some(win) = handle.get_webview_window("main") {
                     if let Ok(win_url) = win.url() {
                         let error_url = routes::from_url(error_path, win_url);
