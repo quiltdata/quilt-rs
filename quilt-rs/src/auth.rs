@@ -181,26 +181,35 @@ impl From<RemoteTokens> for Tokens {
     }
 }
 
+/// Fallback TTL (seconds) when the token endpoint omits `expires_in`.
+///
+/// RFC 6749 §5.1 marks `expires_in` as RECOMMENDED, not required.
+/// We use 1 hour as a conservative default that avoids both excessive
+/// refresh loops (too short) and stale-token errors (too long).
+const DEFAULT_EXPIRES_IN: i64 = 3600;
+
+fn default_expires_in() -> i64 {
+    DEFAULT_EXPIRES_IN
+}
+
 /// Token response from the Connect OAuth token endpoint.
 ///
 /// Uses `expires_in` (seconds until expiry) per RFC 6749,
 /// unlike `RemoteTokens` which uses `expires_at` (Unix timestamp).
+///
+/// `refresh_token` is `Option` because RFC 6749 §6 allows the server to omit
+/// it when rotating tokens; callers are responsible for falling back to the
+/// previous refresh token in that case.
+///
+/// `expires_in` is optional per RFC 6749 §5.1 (RECOMMENDED, not required);
+/// defaults to [`DEFAULT_EXPIRES_IN`] when absent.
 #[derive(Deserialize, Serialize, Debug)]
 struct OAuthTokenResponse {
     access_token: String,
-    refresh_token: String,
+    #[serde(default)]
+    refresh_token: Option<String>,
+    #[serde(default = "default_expires_in")]
     expires_in: i64,
-}
-
-impl From<OAuthTokenResponse> for Tokens {
-    fn from(raw: OAuthTokenResponse) -> Self {
-        let expires_at = chrono::Utc::now() + chrono::Duration::seconds(raw.expires_in);
-        Tokens {
-            access_token: raw.access_token,
-            refresh_token: raw.refresh_token,
-            expires_at,
-        }
-    }
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -285,8 +294,18 @@ async fn exchange_oauth_code(
     form_data.insert("redirect_uri".to_string(), params.redirect_uri.clone());
     form_data.insert("client_id".to_string(), params.client_id.clone());
 
-    let tokens_json: OAuthTokenResponse = http_client.post(&token_url, &form_data).await?;
-    Ok(Tokens::from(tokens_json))
+    let response: OAuthTokenResponse = http_client.post(&token_url, &form_data).await?;
+    let expires_at = chrono::Utc::now() + chrono::Duration::seconds(response.expires_in);
+    Ok(Tokens {
+        access_token: response.access_token,
+        refresh_token: response.refresh_token.ok_or_else(|| {
+            Error::Auth(
+                host.to_owned(),
+                AuthError::TokensRefresh("server did not return a refresh token".to_string()),
+            )
+        })?,
+        expires_at,
+    })
 }
 
 /// Refresh Token Request (RFC 6749 §6) — exchange a refresh token for new tokens.
@@ -303,8 +322,16 @@ async fn refresh_oauth_tokens(
     form_data.insert("refresh_token".to_string(), refresh_token.to_string());
     form_data.insert("client_id".to_string(), client_id.to_string());
 
-    let tokens_json: OAuthTokenResponse = http_client.post(&token_url, &form_data).await?;
-    Ok(Tokens::from(tokens_json))
+    let response: OAuthTokenResponse = http_client.post(&token_url, &form_data).await?;
+    let expires_at = chrono::Utc::now() + chrono::Duration::seconds(response.expires_in);
+    Ok(Tokens {
+        access_token: response.access_token,
+        // RFC 6749 §6: server MAY omit the refresh token — retain the previous one if so.
+        refresh_token: response
+            .refresh_token
+            .unwrap_or_else(|| refresh_token.to_string()),
+        expires_at,
+    })
 }
 
 async fn refresh_credentials(
@@ -324,6 +351,30 @@ async fn refresh_credentials(
     let credentials = Credentials::from(creds_json);
 
     Ok(credentials)
+}
+
+/// Returns true when an error from the Connect **token endpoint** means the
+/// user must log in again.
+///
+/// Includes HTTP 400 because RFC 6749 §5.2 specifies that a revoked or
+/// expired refresh token produces `400 invalid_grant`, not 401.
+fn is_token_auth_error(e: &Error) -> bool {
+    matches!(
+        e,
+        Error::Reqwest(re) if re.status().is_some_and(|s| s == 400 || s == 401 || s == 403)
+    )
+}
+
+/// Returns true when an error from the registry **credentials endpoint** means
+/// the user must log in again.
+///
+/// Only 401/403 — a 400 from the registry means a malformed request (client
+/// bug), not an auth failure, so it should propagate rather than prompt login.
+fn is_credentials_auth_error(e: &Error) -> bool {
+    matches!(
+        e,
+        Error::Reqwest(re) if re.status().is_some_and(|s| s == 401 || s == 403)
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -545,27 +596,33 @@ impl<S: Storage + Sync + Clone> Auth<S> {
         };
 
         // If the access token is expired, try to refresh it using the refresh token.
-        let access_token = if tokens.expires_at <= chrono::Utc::now() {
-            info!(
-                "⏳ Access token expired for {}, refreshing via refresh token",
-                host
-            );
-            match self
-                .refresh_tokens(http_client, &auth_io, host, &tokens)
-                .await
-            {
-                Ok(new_tokens) => new_tokens.access_token,
-                Err(e) => {
-                    warn!(
-                        "❌ Failed to refresh tokens for {}, login required: {}",
-                        host, e
-                    );
-                    return Err(crate::Error::LoginRequired(Some(host.to_owned())));
+        let access_token =
+            if tokens.expires_at <= chrono::Utc::now() + chrono::Duration::seconds(60) {
+                info!(
+                    "⏳ Access token expired for {}, refreshing via refresh token",
+                    host
+                );
+                match self
+                    .refresh_tokens(http_client, &auth_io, host, &tokens)
+                    .await
+                {
+                    Ok(new_tokens) => new_tokens.access_token,
+                    Err(e) => {
+                        if is_token_auth_error(&e) {
+                            warn!(
+                                "❌ Auth error refreshing tokens for {}, login required: {}",
+                                host, e
+                            );
+                            return Err(crate::Error::LoginRequired(Some(host.to_owned())));
+                        } else {
+                            warn!("❌ Failed to refresh tokens for {}: {}", host, e);
+                            return Err(e);
+                        }
+                    }
                 }
-            }
-        } else {
-            tokens.access_token
-        };
+            } else {
+                tokens.access_token
+            };
 
         info!("⏳ Refreshing credentials using access token for {}", host);
         match self
@@ -577,11 +634,16 @@ impl<S: Storage + Sync + Clone> Auth<S> {
                 Ok(creds)
             }
             Err(e) => {
-                warn!(
-                    "❌ Failed to refresh credentials for {}, login required: {}",
-                    host, e
-                );
-                Err(crate::Error::LoginRequired(Some(host.to_owned())))
+                if is_credentials_auth_error(&e) {
+                    warn!(
+                        "❌ Auth error refreshing credentials for {}, login required: {}",
+                        host, e
+                    );
+                    Err(crate::Error::LoginRequired(Some(host.to_owned())))
+                } else {
+                    warn!("❌ Failed to refresh credentials for {}: {}", host, e);
+                    Err(e)
+                }
             }
         }
     }
@@ -782,7 +844,18 @@ mod tests {
     const CLIENT_ID: &str = "test-client-id";
     const REDIRECT_URI: &str = "quilt://auth/callback?host=test.quilt.dev";
 
-    struct OAuthTestHttpClient;
+    struct OAuthTestHttpClient {
+        /// The access token expected when hitting the credentials endpoint.
+        expected_credentials_token: &'static str,
+    }
+
+    impl Default for OAuthTestHttpClient {
+        fn default() -> Self {
+            Self {
+                expected_credentials_token: ACCESS_TOKEN,
+            }
+        }
+    }
 
     #[async_trait]
     impl HttpClient for OAuthTestHttpClient {
@@ -801,7 +874,7 @@ mod tests {
                     Ok(serde_json::from_value(serde_json::to_value(config)?)?)
                 }
                 u if u == format!("https://{registry}/api/auth/get_credentials") => {
-                    assert_eq!(auth_token, Some(ACCESS_TOKEN));
+                    assert_eq!(auth_token, Some(self.expected_credentials_token));
                     let creds = RemoteCredentials {
                         access_key_id: "oauth-access-key".to_string(),
                         secret_access_key: "oauth-secret-key".to_string(),
@@ -824,16 +897,29 @@ mod tests {
             form_data: &HashMap<String, String>,
         ) -> Res<T> {
             assert_eq!(url, connect_token_url(&get_host()));
-            assert_eq!(form_data.get("grant_type").unwrap(), "authorization_code");
-            assert_eq!(form_data.get("code").unwrap(), AUTH_CODE);
-            assert_eq!(form_data.get("code_verifier").unwrap(), CODE_VERIFIER);
-            assert_eq!(form_data.get("redirect_uri").unwrap(), REDIRECT_URI);
-            assert_eq!(form_data.get("client_id").unwrap(), CLIENT_ID);
 
-            let tokens = OAuthTokenResponse {
-                access_token: ACCESS_TOKEN.to_string(),
-                refresh_token: "oauth-refresh-token".to_string(),
-                expires_in: 3600,
+            let tokens = match form_data.get("grant_type").map(String::as_str) {
+                Some("authorization_code") => {
+                    assert_eq!(form_data.get("code").unwrap(), AUTH_CODE);
+                    assert_eq!(form_data.get("code_verifier").unwrap(), CODE_VERIFIER);
+                    assert_eq!(form_data.get("redirect_uri").unwrap(), REDIRECT_URI);
+                    assert_eq!(form_data.get("client_id").unwrap(), CLIENT_ID);
+                    OAuthTokenResponse {
+                        access_token: ACCESS_TOKEN.to_string(),
+                        refresh_token: Some("oauth-refresh-token".to_string()),
+                        expires_in: 3600,
+                    }
+                }
+                Some("refresh_token") => {
+                    assert_eq!(form_data.get("refresh_token").unwrap(), REFRESH_TOKEN);
+                    assert_eq!(form_data.get("client_id").unwrap(), CLIENT_ID);
+                    OAuthTokenResponse {
+                        access_token: "refreshed-access-token".to_string(),
+                        refresh_token: Some("new-refresh-token".to_string()),
+                        expires_in: 3600,
+                    }
+                }
+                other => panic!("Unexpected grant_type: {other:?}"),
             };
             Ok(serde_json::from_value(serde_json::to_value(&tokens)?)?)
         }
@@ -877,7 +963,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_exchange_oauth_code() {
-        let client = OAuthTestHttpClient;
+        let client = OAuthTestHttpClient::default();
         let params = OAuthParams {
             code: AUTH_CODE.to_string(),
             code_verifier: CODE_VERIFIER.to_string(),
@@ -911,6 +997,18 @@ mod tests {
         assert_ne!(pkce.code_verifier, pkce2.code_verifier);
     }
 
+    // RFC 7636 §4.1: code verifier must use only unreserved chars: ALPHA / DIGIT / "-" / "." / "_" / "~"
+    #[test]
+    fn test_pkce_verifier_charset_rfc7636() {
+        let pkce = pkce_challenge();
+        for ch in pkce.code_verifier.chars() {
+            assert!(
+                ch.is_ascii_alphanumeric() || matches!(ch, '-' | '.' | '_' | '~'),
+                "code_verifier contains char '{ch}' not allowed by RFC 7636 §4.1"
+            );
+        }
+    }
+
     #[test(tokio::test)]
     async fn test_login_oauth() -> Res {
         let storage = MockStorage::default();
@@ -925,8 +1023,183 @@ mod tests {
             client_id: CLIENT_ID.to_string(),
         };
 
-        auth.login_oauth(&OAuthTestHttpClient, &host, params)
+        auth.login_oauth(&OAuthTestHttpClient::default(), &host, params)
             .await?;
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_refresh_oauth_tokens() -> Res {
+        let tokens = refresh_oauth_tokens(
+            &OAuthTestHttpClient::default(),
+            &get_host(),
+            REFRESH_TOKEN,
+            CLIENT_ID,
+        )
+        .await?;
+        assert_eq!(tokens.access_token, "refreshed-access-token");
+        assert_eq!(tokens.refresh_token, "new-refresh-token");
+        Ok(())
+    }
+
+    // RFC 6749 §6: if the server omits `refresh_token` in the refresh response,
+    // the client MUST retain the previous refresh token.
+    #[test(tokio::test)]
+    async fn test_refresh_oauth_tokens_retains_old_when_omitted() -> Res {
+        struct NoRefreshTokenClient;
+
+        #[async_trait]
+        impl HttpClient for NoRefreshTokenClient {
+            async fn get<T: serde::de::DeserializeOwned>(
+                &self,
+                _: &str,
+                _: Option<&str>,
+            ) -> Res<T> {
+                unimplemented!()
+            }
+            async fn head(&self, _: &str) -> Res<reqwest::header::HeaderMap> {
+                unimplemented!()
+            }
+            async fn post<T: serde::de::DeserializeOwned>(
+                &self,
+                _: &str,
+                _: &HashMap<String, String>,
+            ) -> Res<T> {
+                let resp = OAuthTokenResponse {
+                    access_token: "new-access-token".to_string(),
+                    refresh_token: None, // server omits refresh_token
+                    expires_in: DEFAULT_EXPIRES_IN,
+                };
+                Ok(serde_json::from_value(serde_json::to_value(resp)?)?)
+            }
+            async fn post_json<
+                T: serde::de::DeserializeOwned,
+                B: serde::Serialize + Send + Sync,
+            >(
+                &self,
+                _: &str,
+                _: &B,
+            ) -> Res<T> {
+                unimplemented!()
+            }
+        }
+
+        let tokens =
+            refresh_oauth_tokens(&NoRefreshTokenClient, &get_host(), REFRESH_TOKEN, CLIENT_ID)
+                .await?;
+        assert_eq!(tokens.access_token, "new-access-token");
+        // Old refresh token must be retained
+        assert_eq!(tokens.refresh_token, REFRESH_TOKEN);
+        Ok(())
+    }
+
+    // RFC 6749 §4.1.4 + §5.1: initial code exchange MUST return a refresh_token;
+    // if the server omits it the client should surface an error (not silently proceed).
+    #[test(tokio::test)]
+    async fn test_exchange_oauth_code_errors_when_refresh_token_missing() {
+        struct NoRefreshTokenClient;
+
+        #[async_trait]
+        impl HttpClient for NoRefreshTokenClient {
+            async fn get<T: serde::de::DeserializeOwned>(
+                &self,
+                _: &str,
+                _: Option<&str>,
+            ) -> Res<T> {
+                unimplemented!()
+            }
+            async fn head(&self, _: &str) -> Res<reqwest::header::HeaderMap> {
+                unimplemented!()
+            }
+            async fn post<T: serde::de::DeserializeOwned>(
+                &self,
+                _: &str,
+                _: &HashMap<String, String>,
+            ) -> Res<T> {
+                let resp = OAuthTokenResponse {
+                    access_token: ACCESS_TOKEN.to_string(),
+                    refresh_token: None,
+                    expires_in: DEFAULT_EXPIRES_IN,
+                };
+                Ok(serde_json::from_value(serde_json::to_value(resp)?)?)
+            }
+            async fn post_json<
+                T: serde::de::DeserializeOwned,
+                B: serde::Serialize + Send + Sync,
+            >(
+                &self,
+                _: &str,
+                _: &B,
+            ) -> Res<T> {
+                unimplemented!()
+            }
+        }
+
+        let params = OAuthParams {
+            code: AUTH_CODE.to_string(),
+            code_verifier: CODE_VERIFIER.to_string(),
+            redirect_uri: REDIRECT_URI.to_string(),
+            client_id: CLIENT_ID.to_string(),
+        };
+        let result = exchange_oauth_code(&NoRefreshTokenClient, &get_host(), &params).await;
+        assert!(
+            matches!(result, Err(Error::Auth(_, AuthError::TokensRefresh(_)))),
+            "expected TokensRefresh error, got: {result:?}"
+        );
+    }
+
+    // RFC 6749 §5.1: `expires_in` is RECOMMENDED, not required. If omitted,
+    // the client should fall back to a safe default rather than failing.
+    #[test]
+    fn test_oauth_token_response_missing_expires_in() {
+        let json = r#"{"access_token":"tok","refresh_token":"ref"}"#;
+        let resp: OAuthTokenResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.expires_in, DEFAULT_EXPIRES_IN);
+    }
+
+    const REFRESHED_ACCESS_TOKEN: &str = "refreshed-access-token";
+
+    #[test(tokio::test)]
+    async fn test_get_credentials_or_refresh_with_expired_token() -> Res {
+        // Use LocalStorage + a real TempDir so all storage.clone() calls share
+        // the same filesystem paths (MockStorage::clone() creates a new TempDir each time).
+        let temp_dir = tempfile::TempDir::new()?;
+        let paths = DomainPaths::new(temp_dir.path().to_path_buf());
+        let auth = Auth::new(paths.clone(), LocalStorage::default());
+        let host = get_host();
+
+        // Seed an expired access token and a stored OAuth client.
+        let auth_io = AuthIo::new(LocalStorage::default(), paths.auth_host(&host));
+        auth_io
+            .write_tokens(&Tokens {
+                access_token: "expired-access-token".to_string(),
+                refresh_token: REFRESH_TOKEN.to_string(),
+                expires_at: chrono::Utc::now() - chrono::Duration::seconds(300),
+            })
+            .await?;
+        auth_io
+            .write_client(&OAuthClient {
+                client_id: CLIENT_ID.to_string(),
+                redirect_uri: REDIRECT_URI.to_string(),
+            })
+            .await?;
+
+        let client = OAuthTestHttpClient {
+            expected_credentials_token: REFRESHED_ACCESS_TOKEN,
+        };
+        let creds = auth.get_credentials_or_refresh(&client, &host).await?;
+
+        // Credentials should come from the refreshed access token.
+        assert_eq!(creds.access_key, "oauth-access-key");
+
+        // Verify the new tokens were persisted by reading them back.
+        let persisted = auth_io
+            .read_tokens()
+            .await?
+            .expect("tokens should be persisted");
+        assert_eq!(persisted.access_token, REFRESHED_ACCESS_TOKEN);
+        assert_eq!(persisted.refresh_token, "new-refresh-token");
+
         Ok(())
     }
 
@@ -939,21 +1212,21 @@ mod tests {
 
         // First call registers via DCR
         let client = auth
-            .get_or_register_client(&OAuthTestHttpClient, &host, REDIRECT_URI)
+            .get_or_register_client(&OAuthTestHttpClient::default(), &host, REDIRECT_URI)
             .await?;
         assert_eq!(client.client_id, "test-dcr-client-id");
         assert_eq!(client.redirect_uri, REDIRECT_URI);
 
         // Second call with same redirect_uri reads from storage (no DCR call)
         let client2 = auth
-            .get_or_register_client(&OAuthTestHttpClient, &host, REDIRECT_URI)
+            .get_or_register_client(&OAuthTestHttpClient::default(), &host, REDIRECT_URI)
             .await?;
         assert_eq!(client2.client_id, "test-dcr-client-id");
 
         // Third call with different redirect_uri re-registers
         let new_redirect = "quilt://auth/callback?host=other.quilt.dev";
         let client3 = auth
-            .get_or_register_client(&OAuthTestHttpClient, &host, new_redirect)
+            .get_or_register_client(&OAuthTestHttpClient::default(), &host, new_redirect)
             .await?;
         assert_eq!(client3.client_id, "test-dcr-client-id");
         assert_eq!(client3.redirect_uri, new_redirect);
