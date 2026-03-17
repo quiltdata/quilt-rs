@@ -546,8 +546,14 @@ impl<S: Storage + Sync + Clone> Auth<S> {
 
         // If the access token is expired, try to refresh it using the refresh token.
         let access_token = if tokens.expires_at <= chrono::Utc::now() {
-            info!("⏳ Access token expired for {}, refreshing via refresh token", host);
-            match self.refresh_tokens(http_client, &auth_io, host, &tokens).await {
+            info!(
+                "⏳ Access token expired for {}, refreshing via refresh token",
+                host
+            );
+            match self
+                .refresh_tokens(http_client, &auth_io, host, &tokens)
+                .await
+            {
                 Ok(new_tokens) => new_tokens.access_token,
                 Err(e) => {
                     warn!(
@@ -561,10 +567,7 @@ impl<S: Storage + Sync + Clone> Auth<S> {
             tokens.access_token
         };
 
-        info!(
-            "⏳ Refreshing credentials using access token for {}",
-            host
-        );
+        info!("⏳ Refreshing credentials using access token for {}", host);
         match self
             .refresh_credentials(http_client, host, &access_token)
             .await

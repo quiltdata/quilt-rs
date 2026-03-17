@@ -3,24 +3,48 @@
 Review of the OAuth 2.1 Authorization Code + PKCE login implementation
 across `quilt-rs` (library) and `quilt-sync` (Tauri app).
 
+## Critical
+
+### Code-based login removed from QuiltSync UI
+
+The login page (`login.html`) only shows the OAuth button — the old
+code-paste form was removed entirely. Not all stacks have been updated
+to support OAuth/Connect yet. Users on older stacks have no way to
+log in from QuiltSync.
+
+The CLI still supports code-based login (`quilt_rs login --host H --code C`),
+and the backend `Auth::login()` method that accepts a refresh token is
+still present in `quilt-rs/src/auth.rs`. The gap is only in the
+QuiltSync UI.
+
+**Action:** bring back the code-paste input as a fallback on the login
+page, either always visible or shown when OAuth fails / when the stack
+doesn't advertise Connect support.
+
+### Manual testing needed for token refresh flow
+
+The automatic token refresh via `refresh_oauth_tokens` is new and
+has not been tested against a real Connect server yet. Before merging,
+manually verify:
+
+1. Log in via OAuth on a Connect-enabled stack.
+2. Wait for the access token to expire (or manually edit the stored
+   `tokens.json` to set `expires_at` in the past).
+3. Trigger an S3 operation (e.g. pull a package).
+4. Confirm that QuiltSync refreshes tokens transparently without
+   showing the login page.
+
 ## Issues
 
-### No token expiry check before using access tokens
+### ~~No token expiry check before using access tokens~~ (FIXED)
 
-`get_credentials_or_refresh` in `quilt-rs/src/auth.rs` checks if
-**credentials** are expired, but when it falls back to stored tokens
-it never checks if the **access token** itself has expired.
-A stale access token will hit the credentials endpoint and produce
-a confusing `CredentialsRefresh` error instead of triggering re-login
-or a token refresh.
+Fixed: `get_credentials_or_refresh` now checks `tokens.expires_at`
+before using the access token.
 
-### No refresh token rotation
+### ~~No refresh token rotation~~ (FIXED)
 
-When the access token expires the code doesn't use the `refresh_token`
-to obtain new tokens from the Connect token endpoint.
-The `refresh_token` is only used in the legacy `login()` path
-(which hits the registry's `/api/token`).
-Once the OAuth access token expires the user must re-login from scratch.
+Fixed: added `refresh_oauth_tokens` which exchanges the refresh token
+for new tokens via the Connect token endpoint (RFC 6749 §6).
 
 ### Pending OAuth state has no expiry or cleanup
 
