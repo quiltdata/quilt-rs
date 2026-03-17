@@ -43,7 +43,11 @@ workflow_source = 'Use the workflow ID from '
 namespace = 'Name'
 
 [login]
+code = 'Code'
+code_instruction = 'Or visit https://%{s}/code to get your code:'
 login_oauth = 'Log in with browser'
+open_browser = 'Open browser'
+submit = 'Submit code and Log in'
 
 [merge]
 certify = 'Certify latest'

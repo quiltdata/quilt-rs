@@ -32,6 +32,8 @@ pub enum JsSelector {
     CertifyLatest,
     #[template(source = "js-packages-reset-local", ext = "txt")]
     ResetLocal,
+    #[template(source = "js-login", ext = "txt")]
+    Login,
     #[template(source = "js-login-oauth", ext = "txt")]
     LoginOAuth,
     #[template(source = "js-entries-install", ext = "txt")]

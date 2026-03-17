@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use askama::Template;
 use rust_i18n::t;
 
@@ -20,11 +22,33 @@ pub struct ViewLogin {
 #[derive(Template)]
 #[template(path = "./pages/login.html")]
 pub struct TmplPageLogin<'a> {
-    login_oauth: btn::TmplButton<'a>,
+    host: Host,
+    instructions: Cow<'a, str>,
     layout: Layout<'a>,
+    location: Option<String>,
+    login_oauth: btn::TmplButton<'a>,
+    open_catalog: btn::TmplButton<'a>,
 }
 
 impl<'a> TmplPageLogin<'a> {
+    pub fn submit_button() -> btn::TmplButton<'a> {
+        btn::TmplButton::builder()
+            .set_js(btn::JsSelector::Login)
+            .set_size(btn::Size::Large)
+            .set_color(btn::Color::Primary)
+            .set_data("form", "#form")
+            .set_label(t!("login.submit"))
+            .set_icon(Icon::Done)
+    }
+
+    pub fn open_catalog(host: &Host) -> btn::TmplButton<'a> {
+        btn::TmplButton::builder()
+            .set_js(btn::JsSelector::OpenInWebBrowser)
+            .set_icon(Icon::OpenInBrowser)
+            .set_data("url", format!("https://{host}/code"))
+            .set_label(t!("login.open_browser"))
+    }
+
     pub fn login_oauth(host: &Host, location: Option<&str>) -> btn::TmplButton<'a> {
         let btn = btn::TmplButton::builder()
             .set_js(btn::JsSelector::LoginOAuth)
@@ -43,8 +67,12 @@ impl<'a> TmplPageLogin<'a> {
 impl From<ViewLogin> for TmplPageLogin<'_> {
     fn from(view: ViewLogin) -> Self {
         TmplPageLogin {
+            instructions: t!("login.code_instruction", s => view.host.to_string()),
+            layout: Layout::new(view.globals, Some(Self::submit_button())),
             login_oauth: Self::login_oauth(&view.host, view.location.as_deref()),
-            layout: Layout::new(view.globals, None),
+            open_catalog: Self::open_catalog(&view.host),
+            location: view.location,
+            host: view.host,
         }
     }
 }
@@ -94,14 +122,24 @@ mod tests {
 
         let html = view.render()?;
 
-        // Check for OAuth login button
+        // Check for OAuth login button with location
         assert!(html.contains(r#"js-login-oauth"#));
         assert!(html.contains(&format!(r#"data-host="{host}""#)));
-        assert!(html.contains(r#"data-location="installed-packages-list.html""#));
+        assert!(html.contains(r#"data-location="installed-packages-list.html"#));
 
-        // Ensure paste-code form is gone
-        assert!(!html.contains(r#"id="code""#));
-        assert!(!html.contains(r#"class="qui-button js-login""#));
+        // Check for code input form
+        assert!(html.contains(r#"id="code""#));
+        assert!(html.contains(r#"js-login"#));
+        assert!(html.contains(r##"data-form="#form""##));
+
+        // Check for open browser button
+        assert!(html.contains(r#"js-open-in-web-browser"#));
+        assert!(html.contains(&format!(r#"data-url="https://{host}/code""#)));
+
+        // Check for instructions text
+        assert!(html.contains(&format!(
+            "Or visit https://{host}/code to get your code:"
+        )));
 
         Ok(())
     }
@@ -130,6 +168,31 @@ mod tests {
         assert!(html.contains(r#"js-login-oauth"#));
         assert!(html.contains(r#"data-host="test.quilt.dev""#));
         assert!(!html.contains(r#"data-location"#));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_submit_button() -> Result {
+        let btn = TmplPageLogin::submit_button();
+        let html = btn.to_string();
+
+        assert!(html.contains(r#"js-login"#));
+        assert!(html.contains(r##"data-form="#form""##));
+        assert!(html.contains(r#"primary"#));
+        assert!(html.contains(r#"large"#));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_open_catalog_button() -> Result {
+        let host: Host = "test.quilt.dev".parse()?;
+        let btn = TmplPageLogin::open_catalog(&host);
+        let html = btn.to_string();
+
+        assert!(html.contains(r#"js-open-in-web-browser"#));
+        assert!(html.contains(r#"data-url="https://test.quilt.dev/code""#));
 
         Ok(())
     }
