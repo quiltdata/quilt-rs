@@ -353,17 +353,27 @@ async fn refresh_credentials(
     Ok(credentials)
 }
 
-/// Returns true if the error represents an authentication failure that requires
-/// the user to log in again.
+/// Returns true when an error from the Connect **token endpoint** means the
+/// user must log in again.
 ///
-/// Matches:
-/// - HTTP 401 / 403 — invalid or expired access token on the registry endpoint
-/// - HTTP 400 — RFC 6749 §5.2 `invalid_grant` from the Connect token endpoint
-///   (revoked or expired refresh token); the token endpoint returns 400, not 401
-fn is_auth_error(e: &Error) -> bool {
+/// Includes HTTP 400 because RFC 6749 §5.2 specifies that a revoked or
+/// expired refresh token produces `400 invalid_grant`, not 401.
+fn is_token_auth_error(e: &Error) -> bool {
     matches!(
         e,
         Error::Reqwest(re) if re.status().is_some_and(|s| s == 400 || s == 401 || s == 403)
+    )
+}
+
+/// Returns true when an error from the registry **credentials endpoint** means
+/// the user must log in again.
+///
+/// Only 401/403 — a 400 from the registry means a malformed request (client
+/// bug), not an auth failure, so it should propagate rather than prompt login.
+fn is_credentials_auth_error(e: &Error) -> bool {
+    matches!(
+        e,
+        Error::Reqwest(re) if re.status().is_some_and(|s| s == 401 || s == 403)
     )
 }
 
@@ -598,7 +608,7 @@ impl<S: Storage + Sync + Clone> Auth<S> {
                 {
                     Ok(new_tokens) => new_tokens.access_token,
                     Err(e) => {
-                        if is_auth_error(&e) {
+                        if is_token_auth_error(&e) {
                             warn!(
                                 "❌ Auth error refreshing tokens for {}, login required: {}",
                                 host, e
@@ -624,7 +634,7 @@ impl<S: Storage + Sync + Clone> Auth<S> {
                 Ok(creds)
             }
             Err(e) => {
-                if is_auth_error(&e) {
+                if is_credentials_auth_error(&e) {
                     warn!(
                         "❌ Auth error refreshing credentials for {}, login required: {}",
                         host, e
