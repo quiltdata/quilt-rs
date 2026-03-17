@@ -580,7 +580,7 @@ impl<S: Storage + Sync + Clone> Auth<S> {
                 let is_auth_error = matches!(
                     &e,
                     Error::Reqwest(re) if re.status()
-                        .map_or(false, |s| s == 401 || s == 403)
+                        .is_some_and(|s| s == 401 || s == 403)
                 );
                 if is_auth_error {
                     warn!(
@@ -834,16 +834,29 @@ mod tests {
             form_data: &HashMap<String, String>,
         ) -> Res<T> {
             assert_eq!(url, connect_token_url(&get_host()));
-            assert_eq!(form_data.get("grant_type").unwrap(), "authorization_code");
-            assert_eq!(form_data.get("code").unwrap(), AUTH_CODE);
-            assert_eq!(form_data.get("code_verifier").unwrap(), CODE_VERIFIER);
-            assert_eq!(form_data.get("redirect_uri").unwrap(), REDIRECT_URI);
-            assert_eq!(form_data.get("client_id").unwrap(), CLIENT_ID);
 
-            let tokens = OAuthTokenResponse {
-                access_token: ACCESS_TOKEN.to_string(),
-                refresh_token: "oauth-refresh-token".to_string(),
-                expires_in: 3600,
+            let tokens = match form_data.get("grant_type").map(String::as_str) {
+                Some("authorization_code") => {
+                    assert_eq!(form_data.get("code").unwrap(), AUTH_CODE);
+                    assert_eq!(form_data.get("code_verifier").unwrap(), CODE_VERIFIER);
+                    assert_eq!(form_data.get("redirect_uri").unwrap(), REDIRECT_URI);
+                    assert_eq!(form_data.get("client_id").unwrap(), CLIENT_ID);
+                    OAuthTokenResponse {
+                        access_token: ACCESS_TOKEN.to_string(),
+                        refresh_token: "oauth-refresh-token".to_string(),
+                        expires_in: 3600,
+                    }
+                }
+                Some("refresh_token") => {
+                    assert_eq!(form_data.get("refresh_token").unwrap(), REFRESH_TOKEN);
+                    assert_eq!(form_data.get("client_id").unwrap(), CLIENT_ID);
+                    OAuthTokenResponse {
+                        access_token: "refreshed-access-token".to_string(),
+                        refresh_token: "new-refresh-token".to_string(),
+                        expires_in: 3600,
+                    }
+                }
+                other => panic!("Unexpected grant_type: {other:?}"),
             };
             Ok(serde_json::from_value(serde_json::to_value(&tokens)?)?)
         }
@@ -937,6 +950,113 @@ mod tests {
 
         auth.login_oauth(&OAuthTestHttpClient, &host, params)
             .await?;
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_refresh_oauth_tokens() -> Res {
+        let tokens =
+            refresh_oauth_tokens(&OAuthTestHttpClient, &get_host(), REFRESH_TOKEN, CLIENT_ID)
+                .await?;
+        assert_eq!(tokens.access_token, "refreshed-access-token");
+        assert_eq!(tokens.refresh_token, "new-refresh-token");
+        Ok(())
+    }
+
+    const REFRESHED_ACCESS_TOKEN: &str = "refreshed-access-token";
+
+    struct RefreshTokenHttpClient;
+
+    #[async_trait]
+    impl HttpClient for RefreshTokenHttpClient {
+        async fn get<T: serde::de::DeserializeOwned>(
+            &self,
+            url: &str,
+            auth_token: Option<&str>,
+        ) -> Res<T> {
+            let registry = get_registry();
+            match url {
+                u if u == format!("https://{}/config.json", get_host()) => {
+                    let config = QuiltStackConfig {
+                        registry_url: format!("https://{registry}").parse()?,
+                    };
+                    Ok(serde_json::from_value(serde_json::to_value(config)?)?)
+                }
+                u if u == format!("https://{registry}/api/auth/get_credentials") => {
+                    assert_eq!(auth_token, Some(REFRESHED_ACCESS_TOKEN));
+                    let creds = RemoteCredentials {
+                        access_key_id: "oauth-access-key".to_string(),
+                        secret_access_key: "oauth-secret-key".to_string(),
+                        session_token: "oauth-session-token".to_string(),
+                        expiration: chrono::DateTime::from_timestamp(TIMESTAMP, 0).unwrap(),
+                    };
+                    Ok(serde_json::from_value(serde_json::to_value(creds)?)?)
+                }
+                _ => panic!("Unexpected GET URL: {url}"),
+            }
+        }
+
+        async fn head(&self, _url: &str) -> Res<reqwest::header::HeaderMap> {
+            unimplemented!()
+        }
+
+        async fn post<T: serde::de::DeserializeOwned>(
+            &self,
+            url: &str,
+            form_data: &HashMap<String, String>,
+        ) -> Res<T> {
+            assert_eq!(url, connect_token_url(&get_host()));
+            assert_eq!(form_data.get("grant_type").map(String::as_str), Some("refresh_token"));
+            assert_eq!(form_data.get("refresh_token").unwrap(), REFRESH_TOKEN);
+            assert_eq!(form_data.get("client_id").unwrap(), CLIENT_ID);
+            let tokens = OAuthTokenResponse {
+                access_token: REFRESHED_ACCESS_TOKEN.to_string(),
+                refresh_token: "new-refresh-token".to_string(),
+                expires_in: 3600,
+            };
+            Ok(serde_json::from_value(serde_json::to_value(tokens)?)?)
+        }
+
+        async fn post_json<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
+            &self,
+            _url: &str,
+            _body: &B,
+        ) -> Res<T> {
+            unimplemented!()
+        }
+    }
+
+    #[test(tokio::test)]
+    async fn test_get_credentials_or_refresh_with_expired_token() -> Res {
+        // Use LocalStorage + a real TempDir so all storage.clone() calls share
+        // the same filesystem paths (MockStorage::clone() creates a new TempDir each time).
+        let temp_dir = tempfile::TempDir::new()?;
+        let paths = DomainPaths::new(temp_dir.path().to_path_buf());
+        let auth = Auth::new(paths.clone(), LocalStorage::default());
+        let host = get_host();
+
+        // Seed an expired access token and a stored OAuth client.
+        let auth_io = AuthIo::new(LocalStorage::default(), paths.auth_host(&host));
+        auth_io
+            .write_tokens(&Tokens {
+                access_token: "expired-access-token".to_string(),
+                refresh_token: REFRESH_TOKEN.to_string(),
+                expires_at: chrono::Utc::now() - chrono::Duration::seconds(300),
+            })
+            .await?;
+        auth_io
+            .write_client(&OAuthClient {
+                client_id: CLIENT_ID.to_string(),
+                redirect_uri: REDIRECT_URI.to_string(),
+            })
+            .await?;
+
+        let creds = auth
+            .get_credentials_or_refresh(&RefreshTokenHttpClient, &host)
+            .await?;
+
+        // Credentials should come from the refreshed access token.
+        assert_eq!(creds.access_key, "oauth-access-key");
         Ok(())
     }
 
