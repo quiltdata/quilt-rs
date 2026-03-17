@@ -534,9 +534,19 @@ window.addEventListener(EVENT_PAGE_READY, () => {
     ),
   );
 
-  listen(SELECTOR_LOGIN, ["form"], (data) =>
-    execFormCommand(CMD_LOGIN, collectFormData(data.form as SELECTOR_FORM)),
-  );
+  listen(SELECTOR_LOGIN, ["form"], async (data) => {
+    const formData = collectFormData(data.form as SELECTOR_FORM);
+    const layout = findElement("#layout");
+    layout?.setAttribute("disabled", "disabled");
+    const notification: Html = await invoke(CMD_LOGIN, formData);
+    layout?.removeAttribute("disabled");
+    if (!notify(notification)) return;
+    // Rust's login_command calls navigate_after_login when location is present;
+    // only navigate from JS when there is no location to avoid a double navigation.
+    if (!formData.location) {
+      await navigate(ROUTE_INSTALLED_PACKAGES_LIST);
+    }
+  });
 
   listen(SELECTOR_LOGIN_OAUTH, ["host"], (data, button) => {
     const location = button.getAttribute("data-location");
