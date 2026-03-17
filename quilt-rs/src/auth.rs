@@ -286,9 +286,7 @@ async fn exchange_oauth_code(
         refresh_token: response.refresh_token.ok_or_else(|| {
             Error::Auth(
                 host.to_owned(),
-                AuthError::TokensRefresh(
-                    "server did not return a refresh token".to_string(),
-                ),
+                AuthError::TokensRefresh("server did not return a refresh token".to_string()),
             )
         })?,
         expires_at,
@@ -821,7 +819,9 @@ mod tests {
 
     impl Default for OAuthTestHttpClient {
         fn default() -> Self {
-            Self { expected_credentials_token: ACCESS_TOKEN }
+            Self {
+                expected_credentials_token: ACCESS_TOKEN,
+            }
         }
     }
 
@@ -986,9 +986,13 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_refresh_oauth_tokens() -> Res {
-        let tokens =
-            refresh_oauth_tokens(&OAuthTestHttpClient::default(), &get_host(), REFRESH_TOKEN, CLIENT_ID)
-                .await?;
+        let tokens = refresh_oauth_tokens(
+            &OAuthTestHttpClient::default(),
+            &get_host(),
+            REFRESH_TOKEN,
+            CLIENT_ID,
+        )
+        .await?;
         assert_eq!(tokens.access_token, "refreshed-access-token");
         assert_eq!(tokens.refresh_token, "new-refresh-token");
         Ok(())
@@ -1021,10 +1025,10 @@ mod tests {
             })
             .await?;
 
-        let client = OAuthTestHttpClient { expected_credentials_token: REFRESHED_ACCESS_TOKEN };
-        let creds = auth
-            .get_credentials_or_refresh(&client, &host)
-            .await?;
+        let client = OAuthTestHttpClient {
+            expected_credentials_token: REFRESHED_ACCESS_TOKEN,
+        };
+        let creds = auth.get_credentials_or_refresh(&client, &host).await?;
 
         // Credentials should come from the refreshed access token.
         assert_eq!(creds.access_key, "oauth-access-key");
