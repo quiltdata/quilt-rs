@@ -42,6 +42,7 @@ fn navigate_to_package(app_handle: &AppHandle, uri_str: &str) -> Result {
 }
 
 /// Auth callback parameters parsed from a `quilt://` URL.
+#[derive(Debug)]
 struct AuthParams {
     code: String,
     state: String,
@@ -51,6 +52,18 @@ struct AuthParams {
 
 /// Parse auth callback query parameters from a `quilt://` URL.
 fn parse_auth_params(url: &Url) -> Result<AuthParams> {
+    // RFC 6749 §4.1.2.1: check for error response before looking for `code`.
+    if let Some((_, error)) = url.query_pairs().find(|(k, _)| k == "error") {
+        let description = url
+            .query_pairs()
+            .find(|(k, _)| k == "error_description")
+            .map(|(_, v)| format!(": {v}"))
+            .unwrap_or_default();
+        return Err(Error::General(format!(
+            "OAuth error — {error}{description}"
+        )));
+    }
+
     let code = url
         .query_pairs()
         .find(|(k, _)| k == "code")
@@ -321,5 +334,32 @@ mod tests {
         let url = Url::parse("quilt://auth/callback?code=ABC123&host=test.quilt.dev").unwrap();
         let result = parse_auth_params(&url);
         assert!(result.is_err());
+    }
+
+    // RFC 6749 §4.1.2.1: error response (e.g. user denied access) must surface
+    // the OAuth error instead of a generic "Missing 'code' parameter" message.
+    #[test]
+    fn test_parse_auth_params_error_response() {
+        let url = Url::parse(
+            "quilt://auth/callback?error=access_denied&error_description=User+denied+access",
+        )
+        .unwrap();
+        let err = parse_auth_params(&url).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("access_denied"),
+            "expected error code in message: {msg}"
+        );
+        assert!(
+            msg.contains("User denied access"),
+            "expected description in message: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_parse_auth_params_error_without_description() {
+        let url = Url::parse("quilt://auth/callback?error=server_error").unwrap();
+        let err = parse_auth_params(&url).unwrap_err();
+        assert!(err.to_string().contains("server_error"));
     }
 }
