@@ -30,9 +30,10 @@
     background: var(--q-ui-palette-background-primary);
     position: absolute;
     left: 0;
-    top: -12px;
+    top: -0.5em;
     padding: 0 4px;
     transform: scale(0.75);
+    transform-origin: left center;
   }
 
   .input {
