@@ -59,7 +59,9 @@ fn parse_auth_params(url: &Url) -> Result<AuthParams> {
             .find(|(k, _)| k == "error_description")
             .map(|(_, v)| format!(": {v}"))
             .unwrap_or_default();
-        return Err(Error::General(format!("OAuth error — {error}{description}")));
+        return Err(Error::General(format!(
+            "OAuth error — {error}{description}"
+        )));
     }
 
     let code = url
@@ -344,14 +346,19 @@ mod tests {
         .unwrap();
         let err = parse_auth_params(&url).unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("access_denied"), "expected error code in message: {msg}");
-        assert!(msg.contains("User denied access"), "expected description in message: {msg}");
+        assert!(
+            msg.contains("access_denied"),
+            "expected error code in message: {msg}"
+        );
+        assert!(
+            msg.contains("User denied access"),
+            "expected description in message: {msg}"
+        );
     }
 
     #[test]
     fn test_parse_auth_params_error_without_description() {
-        let url =
-            Url::parse("quilt://auth/callback?error=server_error").unwrap();
+        let url = Url::parse("quilt://auth/callback?error=server_error").unwrap();
         let err = parse_auth_params(&url).unwrap_err();
         assert!(err.to_string().contains("server_error"));
     }
