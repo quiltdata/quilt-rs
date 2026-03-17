@@ -185,22 +185,16 @@ impl From<RemoteTokens> for Tokens {
 ///
 /// Uses `expires_in` (seconds until expiry) per RFC 6749,
 /// unlike `RemoteTokens` which uses `expires_at` (Unix timestamp).
+///
+/// `refresh_token` is `Option` because RFC 6749 §6 allows the server to omit
+/// it when rotating tokens; callers are responsible for falling back to the
+/// previous refresh token in that case.
 #[derive(Deserialize, Serialize, Debug)]
 struct OAuthTokenResponse {
     access_token: String,
-    refresh_token: String,
+    #[serde(default)]
+    refresh_token: Option<String>,
     expires_in: i64,
-}
-
-impl From<OAuthTokenResponse> for Tokens {
-    fn from(raw: OAuthTokenResponse) -> Self {
-        let expires_at = chrono::Utc::now() + chrono::Duration::seconds(raw.expires_in);
-        Tokens {
-            access_token: raw.access_token,
-            refresh_token: raw.refresh_token,
-            expires_at,
-        }
-    }
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -285,8 +279,20 @@ async fn exchange_oauth_code(
     form_data.insert("redirect_uri".to_string(), params.redirect_uri.clone());
     form_data.insert("client_id".to_string(), params.client_id.clone());
 
-    let tokens_json: OAuthTokenResponse = http_client.post(&token_url, &form_data).await?;
-    Ok(Tokens::from(tokens_json))
+    let response: OAuthTokenResponse = http_client.post(&token_url, &form_data).await?;
+    let expires_at = chrono::Utc::now() + chrono::Duration::seconds(response.expires_in);
+    Ok(Tokens {
+        access_token: response.access_token,
+        refresh_token: response.refresh_token.ok_or_else(|| {
+            Error::Auth(
+                host.to_owned(),
+                AuthError::TokensRefresh(
+                    "server did not return a refresh token".to_string(),
+                ),
+            )
+        })?,
+        expires_at,
+    })
 }
 
 /// Refresh Token Request (RFC 6749 §6) — exchange a refresh token for new tokens.
@@ -303,8 +309,16 @@ async fn refresh_oauth_tokens(
     form_data.insert("refresh_token".to_string(), refresh_token.to_string());
     form_data.insert("client_id".to_string(), client_id.to_string());
 
-    let tokens_json: OAuthTokenResponse = http_client.post(&token_url, &form_data).await?;
-    Ok(Tokens::from(tokens_json))
+    let response: OAuthTokenResponse = http_client.post(&token_url, &form_data).await?;
+    let expires_at = chrono::Utc::now() + chrono::Duration::seconds(response.expires_in);
+    Ok(Tokens {
+        access_token: response.access_token,
+        // RFC 6749 §6: server MAY omit the refresh token — retain the previous one if so.
+        refresh_token: response
+            .refresh_token
+            .unwrap_or_else(|| refresh_token.to_string()),
+        expires_at,
+    })
 }
 
 async fn refresh_credentials(
@@ -851,7 +865,7 @@ mod tests {
                     assert_eq!(form_data.get("client_id").unwrap(), CLIENT_ID);
                     OAuthTokenResponse {
                         access_token: ACCESS_TOKEN.to_string(),
-                        refresh_token: "oauth-refresh-token".to_string(),
+                        refresh_token: Some("oauth-refresh-token".to_string()),
                         expires_in: 3600,
                     }
                 }
@@ -860,7 +874,7 @@ mod tests {
                     assert_eq!(form_data.get("client_id").unwrap(), CLIENT_ID);
                     OAuthTokenResponse {
                         access_token: "refreshed-access-token".to_string(),
-                        refresh_token: "new-refresh-token".to_string(),
+                        refresh_token: Some("new-refresh-token".to_string()),
                         expires_in: 3600,
                     }
                 }
@@ -1022,7 +1036,7 @@ mod tests {
             assert_eq!(form_data.get("client_id").unwrap(), CLIENT_ID);
             let tokens = OAuthTokenResponse {
                 access_token: REFRESHED_ACCESS_TOKEN.to_string(),
-                refresh_token: "new-refresh-token".to_string(),
+                refresh_token: Some("new-refresh-token".to_string()),
                 expires_in: 3600,
             };
             Ok(serde_json::from_value(serde_json::to_value(tokens)?)?)
