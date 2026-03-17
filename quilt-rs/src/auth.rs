@@ -557,11 +557,21 @@ impl<S: Storage + Sync + Clone> Auth<S> {
                 {
                     Ok(new_tokens) => new_tokens.access_token,
                     Err(e) => {
-                        warn!(
-                            "❌ Failed to refresh tokens for {}, login required: {}",
-                            host, e
+                        let is_auth_error = matches!(
+                            &e,
+                            Error::Reqwest(re) if re.status()
+                                .is_some_and(|s| s == 401 || s == 403)
                         );
-                        return Err(crate::Error::LoginRequired(Some(host.to_owned())));
+                        if is_auth_error {
+                            warn!(
+                                "❌ Auth error refreshing tokens for {}, login required: {}",
+                                host, e
+                            );
+                            return Err(crate::Error::LoginRequired(Some(host.to_owned())));
+                        } else {
+                            warn!("❌ Failed to refresh tokens for {}: {}", host, e);
+                            return Err(e);
+                        }
                     }
                 }
             } else {
