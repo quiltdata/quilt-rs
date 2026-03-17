@@ -545,27 +545,28 @@ impl<S: Storage + Sync + Clone> Auth<S> {
         };
 
         // If the access token is expired, try to refresh it using the refresh token.
-        let access_token = if tokens.expires_at <= chrono::Utc::now() + chrono::Duration::seconds(60) {
-            info!(
-                "⏳ Access token expired for {}, refreshing via refresh token",
-                host
-            );
-            match self
-                .refresh_tokens(http_client, &auth_io, host, &tokens)
-                .await
-            {
-                Ok(new_tokens) => new_tokens.access_token,
-                Err(e) => {
-                    warn!(
-                        "❌ Failed to refresh tokens for {}, login required: {}",
-                        host, e
-                    );
-                    return Err(crate::Error::LoginRequired(Some(host.to_owned())));
+        let access_token =
+            if tokens.expires_at <= chrono::Utc::now() + chrono::Duration::seconds(60) {
+                info!(
+                    "⏳ Access token expired for {}, refreshing via refresh token",
+                    host
+                );
+                match self
+                    .refresh_tokens(http_client, &auth_io, host, &tokens)
+                    .await
+                {
+                    Ok(new_tokens) => new_tokens.access_token,
+                    Err(e) => {
+                        warn!(
+                            "❌ Failed to refresh tokens for {}, login required: {}",
+                            host, e
+                        );
+                        return Err(crate::Error::LoginRequired(Some(host.to_owned())));
+                    }
                 }
-            }
-        } else {
-            tokens.access_token
-        };
+            } else {
+                tokens.access_token
+            };
 
         info!("⏳ Refreshing credentials using access token for {}", host);
         match self
@@ -1006,7 +1007,10 @@ mod tests {
             form_data: &HashMap<String, String>,
         ) -> Res<T> {
             assert_eq!(url, connect_token_url(&get_host()));
-            assert_eq!(form_data.get("grant_type").map(String::as_str), Some("refresh_token"));
+            assert_eq!(
+                form_data.get("grant_type").map(String::as_str),
+                Some("refresh_token")
+            );
             assert_eq!(form_data.get("refresh_token").unwrap(), REFRESH_TOKEN);
             assert_eq!(form_data.get("client_id").unwrap(), CLIENT_ID);
             let tokens = OAuthTokenResponse {
