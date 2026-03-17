@@ -577,11 +577,21 @@ impl<S: Storage + Sync + Clone> Auth<S> {
                 Ok(creds)
             }
             Err(e) => {
-                warn!(
-                    "❌ Failed to refresh credentials for {}, login required: {}",
-                    host, e
+                let is_auth_error = matches!(
+                    &e,
+                    Error::Reqwest(re) if re.status()
+                        .map_or(false, |s| s == 401 || s == 403)
                 );
-                Err(crate::Error::LoginRequired(Some(host.to_owned())))
+                if is_auth_error {
+                    warn!(
+                        "❌ Auth error refreshing credentials for {}, login required: {}",
+                        host, e
+                    );
+                    Err(crate::Error::LoginRequired(Some(host.to_owned())))
+                } else {
+                    warn!("❌ Failed to refresh credentials for {}: {}", host, e);
+                    Err(e)
+                }
             }
         }
     }
