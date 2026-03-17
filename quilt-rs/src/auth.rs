@@ -340,6 +340,13 @@ async fn refresh_credentials(
     Ok(credentials)
 }
 
+fn is_auth_error(e: &Error) -> bool {
+    matches!(
+        e,
+        Error::Reqwest(re) if re.status().is_some_and(|s| s == 401 || s == 403)
+    )
+}
+
 #[derive(Debug, Clone)]
 pub struct Auth<S: Storage = LocalStorage> {
     pub paths: DomainPaths,
@@ -518,13 +525,6 @@ impl<S: Storage + Sync + Clone> Auth<S> {
         Ok(credentials)
     }
 
-    fn is_auth_error(e: &Error) -> bool {
-        matches!(
-            e,
-            Error::Reqwest(re) if re.status().is_some_and(|s| s == 401 || s == 403)
-        )
-    }
-
     pub async fn get_credentials_or_refresh<T: HttpClient>(
         &self,
         http_client: &T,
@@ -578,7 +578,7 @@ impl<S: Storage + Sync + Clone> Auth<S> {
                 {
                     Ok(new_tokens) => new_tokens.access_token,
                     Err(e) => {
-                        if Self::is_auth_error(&e) {
+                        if is_auth_error(&e) {
                             warn!(
                                 "❌ Auth error refreshing tokens for {}, login required: {}",
                                 host, e
@@ -604,7 +604,7 @@ impl<S: Storage + Sync + Clone> Auth<S> {
                 Ok(creds)
             }
             Err(e) => {
-                if Self::is_auth_error(&e) {
+                if is_auth_error(&e) {
                     warn!(
                         "❌ Auth error refreshing credentials for {}, login required: {}",
                         host, e
@@ -814,7 +814,16 @@ mod tests {
     const CLIENT_ID: &str = "test-client-id";
     const REDIRECT_URI: &str = "quilt://auth/callback?host=test.quilt.dev";
 
-    struct OAuthTestHttpClient;
+    struct OAuthTestHttpClient {
+        /// The access token expected when hitting the credentials endpoint.
+        expected_credentials_token: &'static str,
+    }
+
+    impl Default for OAuthTestHttpClient {
+        fn default() -> Self {
+            Self { expected_credentials_token: ACCESS_TOKEN }
+        }
+    }
 
     #[async_trait]
     impl HttpClient for OAuthTestHttpClient {
@@ -833,7 +842,7 @@ mod tests {
                     Ok(serde_json::from_value(serde_json::to_value(config)?)?)
                 }
                 u if u == format!("https://{registry}/api/auth/get_credentials") => {
-                    assert_eq!(auth_token, Some(ACCESS_TOKEN));
+                    assert_eq!(auth_token, Some(self.expected_credentials_token));
                     let creds = RemoteCredentials {
                         access_key_id: "oauth-access-key".to_string(),
                         secret_access_key: "oauth-secret-key".to_string(),
@@ -922,7 +931,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_exchange_oauth_code() {
-        let client = OAuthTestHttpClient;
+        let client = OAuthTestHttpClient::default();
         let params = OAuthParams {
             code: AUTH_CODE.to_string(),
             code_verifier: CODE_VERIFIER.to_string(),
@@ -970,7 +979,7 @@ mod tests {
             client_id: CLIENT_ID.to_string(),
         };
 
-        auth.login_oauth(&OAuthTestHttpClient, &host, params)
+        auth.login_oauth(&OAuthTestHttpClient::default(), &host, params)
             .await?;
         Ok(())
     }
@@ -978,7 +987,7 @@ mod tests {
     #[test(tokio::test)]
     async fn test_refresh_oauth_tokens() -> Res {
         let tokens =
-            refresh_oauth_tokens(&OAuthTestHttpClient, &get_host(), REFRESH_TOKEN, CLIENT_ID)
+            refresh_oauth_tokens(&OAuthTestHttpClient::default(), &get_host(), REFRESH_TOKEN, CLIENT_ID)
                 .await?;
         assert_eq!(tokens.access_token, "refreshed-access-token");
         assert_eq!(tokens.refresh_token, "new-refresh-token");
@@ -986,70 +995,6 @@ mod tests {
     }
 
     const REFRESHED_ACCESS_TOKEN: &str = "refreshed-access-token";
-
-    struct RefreshTokenHttpClient;
-
-    #[async_trait]
-    impl HttpClient for RefreshTokenHttpClient {
-        async fn get<T: serde::de::DeserializeOwned>(
-            &self,
-            url: &str,
-            auth_token: Option<&str>,
-        ) -> Res<T> {
-            let registry = get_registry();
-            match url {
-                u if u == format!("https://{}/config.json", get_host()) => {
-                    let config = QuiltStackConfig {
-                        registry_url: format!("https://{registry}").parse()?,
-                    };
-                    Ok(serde_json::from_value(serde_json::to_value(config)?)?)
-                }
-                u if u == format!("https://{registry}/api/auth/get_credentials") => {
-                    assert_eq!(auth_token, Some(REFRESHED_ACCESS_TOKEN));
-                    let creds = RemoteCredentials {
-                        access_key_id: "oauth-access-key".to_string(),
-                        secret_access_key: "oauth-secret-key".to_string(),
-                        session_token: "oauth-session-token".to_string(),
-                        expiration: chrono::DateTime::from_timestamp(TIMESTAMP, 0).unwrap(),
-                    };
-                    Ok(serde_json::from_value(serde_json::to_value(creds)?)?)
-                }
-                _ => panic!("Unexpected GET URL: {url}"),
-            }
-        }
-
-        async fn head(&self, _url: &str) -> Res<reqwest::header::HeaderMap> {
-            unimplemented!()
-        }
-
-        async fn post<T: serde::de::DeserializeOwned>(
-            &self,
-            url: &str,
-            form_data: &HashMap<String, String>,
-        ) -> Res<T> {
-            assert_eq!(url, connect_token_url(&get_host()));
-            assert_eq!(
-                form_data.get("grant_type").map(String::as_str),
-                Some("refresh_token")
-            );
-            assert_eq!(form_data.get("refresh_token").unwrap(), REFRESH_TOKEN);
-            assert_eq!(form_data.get("client_id").unwrap(), CLIENT_ID);
-            let tokens = OAuthTokenResponse {
-                access_token: REFRESHED_ACCESS_TOKEN.to_string(),
-                refresh_token: Some("new-refresh-token".to_string()),
-                expires_in: 3600,
-            };
-            Ok(serde_json::from_value(serde_json::to_value(tokens)?)?)
-        }
-
-        async fn post_json<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
-            &self,
-            _url: &str,
-            _body: &B,
-        ) -> Res<T> {
-            unimplemented!()
-        }
-    }
 
     #[test(tokio::test)]
     async fn test_get_credentials_or_refresh_with_expired_token() -> Res {
@@ -1076,8 +1021,9 @@ mod tests {
             })
             .await?;
 
+        let client = OAuthTestHttpClient { expected_credentials_token: REFRESHED_ACCESS_TOKEN };
         let creds = auth
-            .get_credentials_or_refresh(&RefreshTokenHttpClient, &host)
+            .get_credentials_or_refresh(&client, &host)
             .await?;
 
         // Credentials should come from the refreshed access token.
@@ -1103,21 +1049,21 @@ mod tests {
 
         // First call registers via DCR
         let client = auth
-            .get_or_register_client(&OAuthTestHttpClient, &host, REDIRECT_URI)
+            .get_or_register_client(&OAuthTestHttpClient::default(), &host, REDIRECT_URI)
             .await?;
         assert_eq!(client.client_id, "test-dcr-client-id");
         assert_eq!(client.redirect_uri, REDIRECT_URI);
 
         // Second call with same redirect_uri reads from storage (no DCR call)
         let client2 = auth
-            .get_or_register_client(&OAuthTestHttpClient, &host, REDIRECT_URI)
+            .get_or_register_client(&OAuthTestHttpClient::default(), &host, REDIRECT_URI)
             .await?;
         assert_eq!(client2.client_id, "test-dcr-client-id");
 
         // Third call with different redirect_uri re-registers
         let new_redirect = "quilt://auth/callback?host=other.quilt.dev";
         let client3 = auth
-            .get_or_register_client(&OAuthTestHttpClient, &host, new_redirect)
+            .get_or_register_client(&OAuthTestHttpClient::default(), &host, new_redirect)
             .await?;
         assert_eq!(client3.client_id, "test-dcr-client-id");
         assert_eq!(client3.redirect_uri, new_redirect);
