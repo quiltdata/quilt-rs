@@ -338,10 +338,17 @@ async fn refresh_credentials(
     Ok(credentials)
 }
 
+/// Returns true if the error represents an authentication failure that requires
+/// the user to log in again.
+///
+/// Matches:
+/// - HTTP 401 / 403 — invalid or expired access token on the registry endpoint
+/// - HTTP 400 — RFC 6749 §5.2 `invalid_grant` from the Connect token endpoint
+///   (revoked or expired refresh token); the token endpoint returns 400, not 401
 fn is_auth_error(e: &Error) -> bool {
     matches!(
         e,
-        Error::Reqwest(re) if re.status().is_some_and(|s| s == 401 || s == 403)
+        Error::Reqwest(re) if re.status().is_some_and(|s| s == 400 || s == 401 || s == 403)
     )
 }
 
