@@ -137,9 +137,7 @@ mod tests {
         assert!(html.contains(&format!(r#"data-url="https://{host}/code""#)));
 
         // Check for instructions text
-        assert!(html.contains(&format!(
-            "Or visit https://{host}/code to get your code:"
-        )));
+        assert!(html.contains(&format!("Or visit https://{host}/code to get your code:")));
 
         Ok(())
     }
