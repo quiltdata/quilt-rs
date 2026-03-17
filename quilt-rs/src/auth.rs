@@ -181,6 +181,17 @@ impl From<RemoteTokens> for Tokens {
     }
 }
 
+/// Fallback TTL (seconds) when the token endpoint omits `expires_in`.
+///
+/// RFC 6749 §5.1 marks `expires_in` as RECOMMENDED, not required.
+/// We use 1 hour as a conservative default that avoids both excessive
+/// refresh loops (too short) and stale-token errors (too long).
+const DEFAULT_EXPIRES_IN: i64 = 3600;
+
+fn default_expires_in() -> i64 {
+    DEFAULT_EXPIRES_IN
+}
+
 /// Token response from the Connect OAuth token endpoint.
 ///
 /// Uses `expires_in` (seconds until expiry) per RFC 6749,
@@ -189,11 +200,15 @@ impl From<RemoteTokens> for Tokens {
 /// `refresh_token` is `Option` because RFC 6749 §6 allows the server to omit
 /// it when rotating tokens; callers are responsible for falling back to the
 /// previous refresh token in that case.
+///
+/// `expires_in` is optional per RFC 6749 §5.1 (RECOMMENDED, not required);
+/// defaults to [`DEFAULT_EXPIRES_IN`] when absent.
 #[derive(Deserialize, Serialize, Debug)]
 struct OAuthTokenResponse {
     access_token: String,
     #[serde(default)]
     refresh_token: Option<String>,
+    #[serde(default = "default_expires_in")]
     expires_in: i64,
 }
 
@@ -972,6 +987,18 @@ mod tests {
         assert_ne!(pkce.code_verifier, pkce2.code_verifier);
     }
 
+    // RFC 7636 §4.1: code verifier must use only unreserved chars: ALPHA / DIGIT / "-" / "." / "_" / "~"
+    #[test]
+    fn test_pkce_verifier_charset_rfc7636() {
+        let pkce = pkce_challenge();
+        for ch in pkce.code_verifier.chars() {
+            assert!(
+                ch.is_ascii_alphanumeric() || matches!(ch, '-' | '.' | '_' | '~'),
+                "code_verifier contains char '{ch}' not allowed by RFC 7636 §4.1"
+            );
+        }
+    }
+
     #[test(tokio::test)]
     async fn test_login_oauth() -> Res {
         let storage = MockStorage::default();
@@ -1003,6 +1030,121 @@ mod tests {
         assert_eq!(tokens.access_token, "refreshed-access-token");
         assert_eq!(tokens.refresh_token, "new-refresh-token");
         Ok(())
+    }
+
+    // RFC 6749 §6: if the server omits `refresh_token` in the refresh response,
+    // the client MUST retain the previous refresh token.
+    #[test(tokio::test)]
+    async fn test_refresh_oauth_tokens_retains_old_when_omitted() -> Res {
+        struct NoRefreshTokenClient;
+
+        #[async_trait]
+        impl HttpClient for NoRefreshTokenClient {
+            async fn get<T: serde::de::DeserializeOwned>(
+                &self,
+                _: &str,
+                _: Option<&str>,
+            ) -> Res<T> {
+                unimplemented!()
+            }
+            async fn head(&self, _: &str) -> Res<reqwest::header::HeaderMap> {
+                unimplemented!()
+            }
+            async fn post<T: serde::de::DeserializeOwned>(
+                &self,
+                _: &str,
+                _: &HashMap<String, String>,
+            ) -> Res<T> {
+                let resp = OAuthTokenResponse {
+                    access_token: "new-access-token".to_string(),
+                    refresh_token: None, // server omits refresh_token
+                    expires_in: DEFAULT_EXPIRES_IN,
+                };
+                Ok(serde_json::from_value(serde_json::to_value(resp)?)?)
+            }
+            async fn post_json<
+                T: serde::de::DeserializeOwned,
+                B: serde::Serialize + Send + Sync,
+            >(
+                &self,
+                _: &str,
+                _: &B,
+            ) -> Res<T> {
+                unimplemented!()
+            }
+        }
+
+        let tokens =
+            refresh_oauth_tokens(&NoRefreshTokenClient, &get_host(), REFRESH_TOKEN, CLIENT_ID)
+                .await?;
+        assert_eq!(tokens.access_token, "new-access-token");
+        // Old refresh token must be retained
+        assert_eq!(tokens.refresh_token, REFRESH_TOKEN);
+        Ok(())
+    }
+
+    // RFC 6749 §4.1.4 + §5.1: initial code exchange MUST return a refresh_token;
+    // if the server omits it the client should surface an error (not silently proceed).
+    #[test(tokio::test)]
+    async fn test_exchange_oauth_code_errors_when_refresh_token_missing() {
+        struct NoRefreshTokenClient;
+
+        #[async_trait]
+        impl HttpClient for NoRefreshTokenClient {
+            async fn get<T: serde::de::DeserializeOwned>(
+                &self,
+                _: &str,
+                _: Option<&str>,
+            ) -> Res<T> {
+                unimplemented!()
+            }
+            async fn head(&self, _: &str) -> Res<reqwest::header::HeaderMap> {
+                unimplemented!()
+            }
+            async fn post<T: serde::de::DeserializeOwned>(
+                &self,
+                _: &str,
+                _: &HashMap<String, String>,
+            ) -> Res<T> {
+                let resp = OAuthTokenResponse {
+                    access_token: ACCESS_TOKEN.to_string(),
+                    refresh_token: None,
+                    expires_in: DEFAULT_EXPIRES_IN,
+                };
+                Ok(serde_json::from_value(serde_json::to_value(resp)?)?)
+            }
+            async fn post_json<
+                T: serde::de::DeserializeOwned,
+                B: serde::Serialize + Send + Sync,
+            >(
+                &self,
+                _: &str,
+                _: &B,
+            ) -> Res<T> {
+                unimplemented!()
+            }
+        }
+
+        let params = OAuthParams {
+            code: AUTH_CODE.to_string(),
+            code_verifier: CODE_VERIFIER.to_string(),
+            redirect_uri: REDIRECT_URI.to_string(),
+            client_id: CLIENT_ID.to_string(),
+        };
+        let result = exchange_oauth_code(&NoRefreshTokenClient, &get_host(), &params).await;
+        assert!(
+            matches!(result, Err(Error::Auth(_, AuthError::TokensRefresh(_)))),
+            "expected TokensRefresh error, got: {result:?}"
+        );
+    }
+
+    // RFC 6749 §5.1: `expires_in` is RECOMMENDED, not required. If omitted,
+    // the client should fall back to a safe default rather than failing.
+    #[test]
+    fn test_oauth_token_response_missing_expires_in() {
+        let json = r#"{"access_token":"tok","refresh_token":"ref"}"#;
+        let resp: OAuthTokenResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.expires_in, DEFAULT_EXPIRES_IN);
     }
 
     const REFRESHED_ACCESS_TOKEN: &str = "refreshed-access-token";
