@@ -309,15 +309,11 @@ async fn exchange_oauth_code(
 }
 
 /// Refresh Token Request (RFC 6749 §6) — exchange a refresh token for new tokens.
-///
-/// `redirect_uri` must be included when it was present in the original
-/// authorization request (RFC 6749 §6 via §4.1.3).
 async fn refresh_oauth_tokens(
     http_client: &impl HttpClient,
     host: &Host,
     refresh_token: &str,
     client_id: &str,
-    redirect_uri: &str,
 ) -> Res<Tokens> {
     let token_url = connect_token_url(host);
 
@@ -325,7 +321,6 @@ async fn refresh_oauth_tokens(
     form_data.insert("grant_type".to_string(), "refresh_token".to_string());
     form_data.insert("refresh_token".to_string(), refresh_token.to_string());
     form_data.insert("client_id".to_string(), client_id.to_string());
-    form_data.insert("redirect_uri".to_string(), redirect_uri.to_string());
 
     let response: OAuthTokenResponse = http_client.post(&token_url, &form_data).await?;
     let expires_at = chrono::Utc::now() + chrono::Duration::seconds(response.expires_in);
@@ -531,14 +526,9 @@ impl<S: Storage + Sync + Clone> Auth<S> {
             .await?
             .ok_or(crate::Error::LoginRequired(Some(host.to_owned())))?;
 
-        let new_tokens = refresh_oauth_tokens(
-            http_client,
-            host,
-            &tokens.refresh_token,
-            &client.client_id,
-            &client.redirect_uri,
-        )
-        .await?;
+        let new_tokens =
+            refresh_oauth_tokens(http_client, host, &tokens.refresh_token, &client.client_id)
+                .await?;
 
         auth_io.write_tokens(&new_tokens).await?;
         info!("✔️ Successfully refreshed tokens for {}", host);
@@ -923,7 +913,6 @@ mod tests {
                 Some("refresh_token") => {
                     assert_eq!(form_data.get("refresh_token").unwrap(), REFRESH_TOKEN);
                     assert_eq!(form_data.get("client_id").unwrap(), CLIENT_ID);
-                    assert_eq!(form_data.get("redirect_uri").unwrap(), REDIRECT_URI);
                     OAuthTokenResponse {
                         access_token: "refreshed-access-token".to_string(),
                         refresh_token: Some("new-refresh-token".to_string()),
@@ -1046,7 +1035,6 @@ mod tests {
             &get_host(),
             REFRESH_TOKEN,
             CLIENT_ID,
-            REDIRECT_URI,
         )
         .await?;
         assert_eq!(tokens.access_token, "refreshed-access-token");
@@ -1096,14 +1084,9 @@ mod tests {
             }
         }
 
-        let tokens = refresh_oauth_tokens(
-            &NoRefreshTokenClient,
-            &get_host(),
-            REFRESH_TOKEN,
-            CLIENT_ID,
-            REDIRECT_URI,
-        )
-        .await?;
+        let tokens =
+            refresh_oauth_tokens(&NoRefreshTokenClient, &get_host(), REFRESH_TOKEN, CLIENT_ID)
+                .await?;
         assert_eq!(tokens.access_token, "new-access-token");
         // Old refresh token must be retained
         assert_eq!(tokens.refresh_token, REFRESH_TOKEN);
