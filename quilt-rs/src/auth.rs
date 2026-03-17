@@ -545,7 +545,7 @@ impl<S: Storage + Sync + Clone> Auth<S> {
         };
 
         // If the access token is expired, try to refresh it using the refresh token.
-        let access_token = if tokens.expires_at <= chrono::Utc::now() {
+        let access_token = if tokens.expires_at <= chrono::Utc::now() + chrono::Duration::seconds(60) {
             info!(
                 "⏳ Access token expired for {}, refreshing via refresh token",
                 host
