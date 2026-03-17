@@ -504,6 +504,13 @@ impl<S: Storage + Sync + Clone> Auth<S> {
         Ok(credentials)
     }
 
+    fn is_auth_error(e: &Error) -> bool {
+        matches!(
+            e,
+            Error::Reqwest(re) if re.status().is_some_and(|s| s == 401 || s == 403)
+        )
+    }
+
     pub async fn get_credentials_or_refresh<T: HttpClient>(
         &self,
         http_client: &T,
@@ -557,12 +564,7 @@ impl<S: Storage + Sync + Clone> Auth<S> {
                 {
                     Ok(new_tokens) => new_tokens.access_token,
                     Err(e) => {
-                        let is_auth_error = matches!(
-                            &e,
-                            Error::Reqwest(re) if re.status()
-                                .is_some_and(|s| s == 401 || s == 403)
-                        );
-                        if is_auth_error {
+                        if Self::is_auth_error(&e) {
                             warn!(
                                 "❌ Auth error refreshing tokens for {}, login required: {}",
                                 host, e
@@ -588,12 +590,7 @@ impl<S: Storage + Sync + Clone> Auth<S> {
                 Ok(creds)
             }
             Err(e) => {
-                let is_auth_error = matches!(
-                    &e,
-                    Error::Reqwest(re) if re.status()
-                        .is_some_and(|s| s == 401 || s == 403)
-                );
-                if is_auth_error {
+                if Self::is_auth_error(&e) {
                     warn!(
                         "❌ Auth error refreshing credentials for {}, login required: {}",
                         host, e
@@ -1071,6 +1068,15 @@ mod tests {
 
         // Credentials should come from the refreshed access token.
         assert_eq!(creds.access_key, "oauth-access-key");
+
+        // Verify the new tokens were persisted by reading them back.
+        let persisted = auth_io
+            .read_tokens()
+            .await?
+            .expect("tokens should be persisted");
+        assert_eq!(persisted.access_token, REFRESHED_ACCESS_TOKEN);
+        assert_eq!(persisted.refresh_token, "new-refresh-token");
+
         Ok(())
     }
 
