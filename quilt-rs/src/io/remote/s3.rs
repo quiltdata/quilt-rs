@@ -1,6 +1,7 @@
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::RwLock;
 
 use aws_config::BehaviorVersion;
@@ -90,7 +91,7 @@ impl RemoteS3 {
             http: crate::io::remote::client::ReqwestClient::new(),
             s3: RwLock::new(HashMap::new()),
             regions: RwLock::new(HashMap::new()),
-            auth: auth::Auth::new(paths, storage),
+            auth: auth::Auth::new(paths, Arc::new(storage)),
         }
     }
 

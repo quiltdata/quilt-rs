@@ -16,6 +16,7 @@
 //! - *Redirect URI* (RFC 6749 §3.1.2) → `OAuthParams::redirect_uri`
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -380,11 +381,11 @@ fn is_credentials_auth_error(e: &Error) -> bool {
 #[derive(Debug, Clone)]
 pub struct Auth<S: Storage = LocalStorage> {
     pub paths: DomainPaths,
-    pub storage: S,
+    pub storage: Arc<S>,
 }
 
-impl<S: Storage + Sync + Clone> Auth<S> {
-    pub fn new(paths: DomainPaths, storage: S) -> Self {
+impl<S: Storage + Send + Sync> Auth<S> {
+    pub fn new(paths: DomainPaths, storage: Arc<S>) -> Self {
         Self { paths, storage }
     }
 
@@ -517,7 +518,7 @@ impl<S: Storage + Sync + Clone> Auth<S> {
     async fn refresh_tokens<T: HttpClient>(
         &self,
         http_client: &T,
-        auth_io: &AuthIo<S>,
+        auth_io: &AuthIo<Arc<S>>,
         host: &Host,
         tokens: &Tokens,
     ) -> Res<Tokens> {
@@ -776,9 +777,9 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_auth_refresh_credentials() -> Res {
-        let storage = MockStorage::default();
+        let storage = Arc::new(MockStorage::default());
         let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
-        let auth = Auth::new(paths.clone(), storage);
+        let auth = Auth::new(paths.clone(), storage.clone());
         let host = get_host();
 
         let credentials = auth
@@ -794,14 +795,16 @@ mod tests {
             chrono::DateTime::from_timestamp(TIMESTAMP, 0).unwrap()
         );
 
-        // TODO: try using Rc<Storage> for every struct that owns a Storage
-        // Verify credentials were written correctly
-        // let auth_io = AuthIo::new(storage, paths.auth_host(&host));
-        // let read_creds = auth_io.read_credentials().await?.unwrap();
-        // assert_eq!(read_creds.access_key, credentials.access_key);
-        // assert_eq!(read_creds.secret_key, credentials.secret_key);
-        // assert_eq!(read_creds.token, credentials.token);
-        // assert_eq!(read_creds.expires_at, credentials.expires_at);
+        // Verify credentials were persisted. Note: read_credentials() filters
+        // expired credentials, so we deserialize directly from the raw bytes.
+        use crate::io::storage::StorageExt;
+        let creds_path = paths.auth_host(&host).join(crate::paths::AUTH_CREDENTIALS);
+        let bytes = storage.read_bytes(&creds_path).await?;
+        let read_creds: Credentials = serde_json::from_slice(&bytes)?;
+        assert_eq!(read_creds.access_key, credentials.access_key);
+        assert_eq!(read_creds.secret_key, credentials.secret_key);
+        assert_eq!(read_creds.token, credentials.token);
+        assert_eq!(read_creds.expires_at, credentials.expires_at);
 
         Ok(())
     }
@@ -1011,7 +1014,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_login_oauth() -> Res {
-        let storage = MockStorage::default();
+        let storage = Arc::new(MockStorage::default());
         let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
         let auth = Auth::new(paths, storage);
         let host = get_host();
@@ -1161,15 +1164,13 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_get_credentials_or_refresh_with_expired_token() -> Res {
-        // Use LocalStorage + a real TempDir so all storage.clone() calls share
-        // the same filesystem paths (MockStorage::clone() creates a new TempDir each time).
-        let temp_dir = tempfile::TempDir::new()?;
-        let paths = DomainPaths::new(temp_dir.path().to_path_buf());
-        let auth = Auth::new(paths.clone(), LocalStorage::default());
+        let storage = Arc::new(MockStorage::default());
+        let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
+        let auth = Auth::new(paths.clone(), storage.clone());
         let host = get_host();
 
         // Seed an expired access token and a stored OAuth client.
-        let auth_io = AuthIo::new(LocalStorage::default(), paths.auth_host(&host));
+        let auth_io = AuthIo::new(storage, paths.auth_host(&host));
         auth_io
             .write_tokens(&Tokens {
                 access_token: "expired-access-token".to_string(),
@@ -1205,7 +1206,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_get_or_register_client() -> Res {
-        let storage = MockStorage::default();
+        let storage = Arc::new(MockStorage::default());
         let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
         let auth = Auth::new(paths, storage);
         let host = get_host();
