@@ -257,4 +257,32 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn tokens_debug_redacts_secrets() {
+        let tokens = Tokens {
+            access_token: "secret-access".to_string(),
+            refresh_token: "secret-refresh".to_string(),
+            expires_at: Utc::now(),
+        };
+        let output = format!("{:?}", tokens);
+        assert!(output.contains("[REDACTED]"));
+        assert!(!output.contains("secret-access"));
+        assert!(!output.contains("secret-refresh"));
+    }
+
+    #[test]
+    fn credentials_debug_redacts_secrets() {
+        let creds = Credentials {
+            access_key: "secret-key".to_string(),
+            secret_key: "secret-secret".to_string(),
+            token: "secret-token".to_string(),
+            expires_at: Utc::now(),
+        };
+        let output = format!("{:?}", creds);
+        assert!(output.contains("[REDACTED]"));
+        assert!(!output.contains("secret-key"));
+        assert!(!output.contains("secret-secret"));
+        assert!(!output.contains("secret-token"));
+    }
 }
