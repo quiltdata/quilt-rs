@@ -13,7 +13,7 @@
 ### Fixed
 
 - Evict expired OAuth state entries (TTL: 10 min) to prevent unbounded memory growth in long-running sessions
-  (<https://github.com/quiltdata/quilt-rs/pull/TODO>)
+  (<https://github.com/quiltdata/quilt-rs/pull/558>)
 
 ## [v0.14.4-alpha3] - 2026-03-17
 
