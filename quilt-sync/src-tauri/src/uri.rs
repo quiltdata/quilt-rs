@@ -10,6 +10,7 @@ use crate::model;
 use crate::oauth::OAuthState;
 use crate::quilt;
 use crate::routes;
+use crate::telemetry::mixpanel::LoginFlow;
 use crate::telemetry::prelude::*;
 use crate::Error;
 use crate::Result;
@@ -129,7 +130,7 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
             Ok(Some((oauth_params, stored_location))) => {
                 info!("OAuth 2.1 callback for host: {}", host_str);
                 let login_result = model::login_oauth(&*m, &host, oauth_params).await;
-                (login_result, stored_location, "oauth")
+                (login_result, stored_location, Some(LoginFlow::OAuth))
             }
             Ok(None) => {
                 info!(
@@ -139,7 +140,7 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
                 (
                     model::login(&*m, &host, auth_params.code).await,
                     None,
-                    "legacy",
+                    Some(LoginFlow::Legacy),
                 )
             }
             Err(err) => {
@@ -147,18 +148,18 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
                     "OAuth state mismatch for {}, aborting callback: {}",
                     host_str, err
                 );
-                (Err(err), None, "oauth")
+                (Err(err), None, None)
             }
         };
 
         match result {
-            (Ok(()), stored_location, flow) => {
+            (Ok(()), stored_location, Some(flow)) => {
                 let final_redirect = stored_location.unwrap_or(redirect);
                 let telemetry = handle.state::<crate::telemetry::Telemetry>();
                 telemetry
                     .track(crate::telemetry::MixpanelEvent::UserLoggedIn {
                         host: host_str.clone(),
-                        flow: flow.to_string(),
+                        flow,
                     })
                     .await;
                 if let Err(err) = commands::navigate_after_login(&handle, &final_redirect) {
@@ -177,6 +178,7 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
                     }
                 }
             }
+            (Ok(()), _, None) => unreachable!("login succeeded but flow is not set"),
         }
     });
 
