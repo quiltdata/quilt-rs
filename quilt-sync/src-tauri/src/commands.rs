@@ -602,8 +602,7 @@ async fn login_command(
         .await;
 
     if let Some(location) = location {
-        navigate_after_login(app_handle, &location)
-            .map_err(|e| Error::PostLogin(e.to_string()))?;
+        navigate_after_login(app_handle, &location).map_err(|e| Error::PostLogin(e.to_string()))?;
     }
 
     Ok(())
