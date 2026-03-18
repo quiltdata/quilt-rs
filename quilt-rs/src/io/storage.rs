@@ -91,11 +91,7 @@ pub trait Storage {
 }
 
 impl<S: Storage + Send + Sync> Storage for Arc<S> {
-    async fn copy(
-        &self,
-        from: impl AsRef<Path> + Send,
-        to: impl AsRef<Path> + Send,
-    ) -> Res<u64> {
+    async fn copy(&self, from: impl AsRef<Path> + Send, to: impl AsRef<Path> + Send) -> Res<u64> {
         (**self).copy(from, to).await
     }
 
@@ -135,11 +131,7 @@ impl<S: Storage + Send + Sync> Storage for Arc<S> {
         (**self).remove_file(path).await
     }
 
-    async fn rename(
-        &self,
-        from: impl AsRef<Path> + Send,
-        to: impl AsRef<Path> + Send,
-    ) -> Res {
+    async fn rename(&self, from: impl AsRef<Path> + Send, to: impl AsRef<Path> + Send) -> Res {
         (**self).rename(from, to).await
     }
 
