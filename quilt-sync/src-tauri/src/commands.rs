@@ -552,7 +552,10 @@ pub(crate) fn navigate_after_login(
 ) -> Result<(), Error> {
     debug!("Attempting to redirect after login to: {}", location);
 
-    let page_path = location.parse::<routes::Paths>()?;
+    let page_path = location.parse::<routes::Paths>().map_err(|e| {
+        error!("Failed to parse location '{}' for redirect: {}", location, e);
+        e
+    })?;
     let win = app_handle.get_webview_window("main").ok_or(Error::Window)?;
     let win_url = win.url()?;
     let redirect_url = routes::from_url(page_path, win_url);
