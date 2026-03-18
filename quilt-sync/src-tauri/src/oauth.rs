@@ -155,11 +155,13 @@ mod tests {
     /// Extract the `state` parameter from the authorization URL returned by
     /// `start_login`, so tests can pass it back to `take_params`.
     fn extract_state(authorize_url: &str) -> String {
-        authorize_url
+        let encoded = authorize_url
             .split("&state=")
             .nth(1)
-            .expect("state param missing")
-            .to_string()
+            .expect("state param missing");
+        urlencoding::decode(encoded)
+            .expect("state is not valid percent-encoding")
+            .into_owned()
     }
 
     #[tokio::test]
@@ -206,6 +208,6 @@ mod tests {
         // The map should now have exactly one entry (the fresh one).
         let guard = oauth.pending.lock().await;
         assert_eq!(guard.len(), 1);
-        assert!(guard.values().next().unwrap().state == urlencoding::decode(&state2).unwrap());
+        assert_eq!(guard.values().next().unwrap().state, state2);
     }
 }
