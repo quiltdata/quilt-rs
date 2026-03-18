@@ -16,6 +16,7 @@
 //! - *Redirect URI* (RFC 6749 §3.1.2) → `OAuthParams::redirect_uri`
 
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -164,12 +165,22 @@ async fn register_client(
     })
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize)]
 pub struct RemoteTokens {
     pub access_token: String,
     pub refresh_token: String,
     #[serde(with = "ts_seconds")]
     pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl fmt::Debug for RemoteTokens {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RemoteTokens")
+            .field("expires_at", &self.expires_at)
+            .field("access_token", &"[REDACTED]")
+            .field("refresh_token", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl From<RemoteTokens> for Tokens {
@@ -204,13 +215,23 @@ fn default_expires_in() -> i64 {
 ///
 /// `expires_in` is optional per RFC 6749 §5.1 (RECOMMENDED, not required);
 /// defaults to [`DEFAULT_EXPIRES_IN`] when absent.
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize)]
 struct OAuthTokenResponse {
     access_token: String,
     #[serde(default)]
     refresh_token: Option<String>,
     #[serde(default = "default_expires_in")]
     expires_in: i64,
+}
+
+impl fmt::Debug for OAuthTokenResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OAuthTokenResponse")
+            .field("expires_in", &self.expires_in)
+            .field("access_token", &"[REDACTED]")
+            .field("refresh_token", &"[REDACTED]")
+            .finish()
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug)]
