@@ -7,6 +7,14 @@
 -->
 # Changelog
 
+## [v0.27.4-alpha2] - 2026-03-18
+
+### Fixed
+
+- Redact secrets (`access_token`, `refresh_token`, `access_key`, `secret_key`,
+  `token`) from debug logs via custom `Debug` impls on `Tokens` and `Credentials`
+  (<https://github.com/quiltdata/quilt-rs/pull/559>)
+
 ## [v0.27.4-alpha1] - 2026-03-11
 
 ### Added
