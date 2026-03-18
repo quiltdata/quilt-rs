@@ -1,10 +1,14 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use tokio::sync::Mutex;
+use tokio::time::Instant;
 
 use crate::quilt;
 use crate::telemetry::prelude::*;
 use crate::Error;
+
+const TTL: Duration = Duration::from_secs(10 * 60);
 
 /// Pending OAuth authorization state, keyed by host.
 ///
@@ -22,6 +26,7 @@ struct PendingAuth {
     client_id: String,
     state: String,
     location: Option<String>,
+    created_at: Instant,
 }
 
 /// The URL and related data needed to open the browser for OAuth login.
@@ -75,10 +80,13 @@ impl OAuthState {
             client_id: client_id.to_string(),
             state: state.clone(),
             location,
+            created_at: Instant::now(),
         };
 
         let host_key = host.to_string();
-        self.pending.lock().await.insert(host_key.clone(), pending);
+        let mut guard = self.pending.lock().await;
+        guard.retain(|_, v| v.created_at.elapsed() < TTL);
+        guard.insert(host_key.clone(), pending);
 
         info!("Stored pending OAuth state for {host_key}");
 
@@ -101,9 +109,13 @@ impl OAuthState {
         let host_key = host.to_string();
         let mut guard = self.pending.lock().await;
         let pending = match guard.remove(&host_key) {
-            Some(p) => {
+            Some(p) if p.created_at.elapsed() < TTL => {
                 info!("Found pending OAuth state for {host_key}");
                 p
+            }
+            Some(_) => {
+                warn!("Pending OAuth state for {host_key} has expired");
+                return Ok(None);
             }
             None => {
                 let keys: Vec<String> = guard.keys().cloned().collect();
@@ -129,5 +141,71 @@ impl OAuthState {
             },
             pending.location,
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_host() -> quilt::uri::Host {
+        "test.quilt.dev".parse().unwrap()
+    }
+
+    /// Extract the `state` parameter from the authorization URL returned by
+    /// `start_login`, so tests can pass it back to `take_params`.
+    fn extract_state(authorize_url: &str) -> String {
+        authorize_url
+            .split("&state=")
+            .nth(1)
+            .expect("state param missing")
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn take_params_succeeds_immediately() {
+        tokio::time::pause();
+        let oauth = OAuthState::default();
+        let host = test_host();
+        let req = oauth.start_login(&host, "client-id", None).await;
+        let state = extract_state(&req.authorize_url);
+        let result = oauth
+            .take_params(&host, "auth-code".to_string(), &state)
+            .await;
+        assert!(result.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn take_params_returns_none_after_ttl() {
+        tokio::time::pause();
+        let oauth = OAuthState::default();
+        let host = test_host();
+        let req = oauth.start_login(&host, "client-id", None).await;
+        let state = extract_state(&req.authorize_url);
+        tokio::time::advance(TTL + Duration::from_secs(1)).await;
+        let result = oauth
+            .take_params(&host, "auth-code".to_string(), &state)
+            .await;
+        assert!(result.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn start_login_evicts_expired_entries() {
+        tokio::time::pause();
+        let oauth = OAuthState::default();
+        let host = test_host();
+
+        // First login — will expire.
+        oauth.start_login(&host, "client-id", None).await;
+
+        // Advance past TTL, then start a second login which should evict the first.
+        tokio::time::advance(TTL + Duration::from_secs(1)).await;
+        let req2 = oauth.start_login(&host, "client-id", None).await;
+        let state2 = extract_state(&req2.authorize_url);
+
+        // The map should now have exactly one entry (the fresh one).
+        let guard = oauth.pending.lock().await;
+        assert_eq!(guard.len(), 1);
+        assert!(guard.values().next().unwrap().state == urlencoding::decode(&state2).unwrap());
     }
 }
