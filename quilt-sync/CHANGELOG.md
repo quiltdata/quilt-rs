@@ -15,7 +15,7 @@
 - Flatten `navigate_after_login` from four nested `match` blocks to
   early-return style; missing main window now returns `Err(Error::Window)`
   instead of silently succeeding
-  (<https://github.com/quiltdata/quilt-rs/pull/TODO>)
+  (<https://github.com/quiltdata/quilt-rs/pull/564>)
 
 ## [v0.14.4-alpha6] - 2026-03-18
 
