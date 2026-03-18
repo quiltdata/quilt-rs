@@ -229,7 +229,10 @@ impl fmt::Debug for OAuthTokenResponse {
         f.debug_struct("OAuthTokenResponse")
             .field("expires_in", &self.expires_in)
             .field("access_token", &"[REDACTED]")
-            .field("refresh_token", &self.refresh_token.as_ref().map(|_| "[REDACTED]"))
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| "[REDACTED]"),
+            )
             .finish()
     }
 }
