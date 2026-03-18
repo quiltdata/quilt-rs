@@ -13,7 +13,7 @@
 
 - `Auth` now holds `Arc<S>` instead of `S`, removing the `Clone` bound on
   `Storage` and ensuring all `AuthIo` instances share the same storage
-  (<https://github.com/quiltdata/quilt-rs/pull/TODO>)
+  (<https://github.com/quiltdata/quilt-rs/pull/563>)
 - Add blanket `Storage` impl for `Arc<S>` so `AuthIo<Arc<S>>` works without
   extra wrapping
 
