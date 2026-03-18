@@ -263,10 +263,7 @@ mod tests {
                     props.get("host"),
                     Some(&Value::String("example.quilt.dev".to_string()))
                 );
-                assert_eq!(
-                    props.get("flow"),
-                    Some(&Value::String("oauth".to_string()))
-                );
+                assert_eq!(props.get("flow"), Some(&Value::String("oauth".to_string())));
                 Ok(())
             }
             _ => Err(Error::MixpanelSer("UserLoggedIn".to_string())),

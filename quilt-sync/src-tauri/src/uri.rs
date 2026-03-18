@@ -136,7 +136,11 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
                     "No pending OAuth state for {}, falling back to legacy code-based login",
                     host_str
                 );
-                (model::login(&*m, &host, auth_params.code).await, None, "legacy")
+                (
+                    model::login(&*m, &host, auth_params.code).await,
+                    None,
+                    "legacy",
+                )
             }
             Err(err) => {
                 error!(
