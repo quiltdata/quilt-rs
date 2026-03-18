@@ -28,7 +28,7 @@ impl fmt::Debug for Tokens {
             .field("expires_at", &self.expires_at)
             .field("access_token", &"[REDACTED]")
             .field("refresh_token", &"[REDACTED]")
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -47,7 +47,7 @@ impl fmt::Debug for Credentials {
             .field("access_key", &"[REDACTED]")
             .field("secret_key", &"[REDACTED]")
             .field("token", &"[REDACTED]")
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
