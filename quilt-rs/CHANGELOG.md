@@ -7,6 +7,12 @@
 -->
 # Changelog
 
+## [v0.27.4-alpha4] - 2026-03-18
+
+### Fixed
+
+- Extend secret redaction to `RemoteTokens`, `OAuthTokenResponse`, and `RemoteCredentials` — transient token and credential response types were still leaking secrets via the derived `Debug` impl
+
 ## [v0.27.4-alpha3] - 2026-03-18
 
 ### Changed

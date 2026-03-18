@@ -16,6 +16,7 @@
 //! - *Redirect URI* (RFC 6749 §3.1.2) → `OAuthParams::redirect_uri`
 
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -164,12 +165,22 @@ async fn register_client(
     })
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize)]
 pub struct RemoteTokens {
     pub access_token: String,
     pub refresh_token: String,
     #[serde(with = "ts_seconds")]
     pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl fmt::Debug for RemoteTokens {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RemoteTokens")
+            .field("expires_at", &self.expires_at)
+            .field("access_token", &"[REDACTED]")
+            .field("refresh_token", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl From<RemoteTokens> for Tokens {
@@ -204,7 +215,7 @@ fn default_expires_in() -> i64 {
 ///
 /// `expires_in` is optional per RFC 6749 §5.1 (RECOMMENDED, not required);
 /// defaults to [`DEFAULT_EXPIRES_IN`] when absent.
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize)]
 struct OAuthTokenResponse {
     access_token: String,
     #[serde(default)]
@@ -213,7 +224,20 @@ struct OAuthTokenResponse {
     expires_in: i64,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+impl fmt::Debug for OAuthTokenResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OAuthTokenResponse")
+            .field("expires_in", &self.expires_in)
+            .field("access_token", &"[REDACTED]")
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .finish()
+    }
+}
+
+#[derive(Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase")]
 struct RemoteCredentials {
     access_key_id: String,
@@ -221,6 +245,17 @@ struct RemoteCredentials {
     expiration: chrono::DateTime<chrono::Utc>,
     secret_access_key: String,
     session_token: String,
+}
+
+impl fmt::Debug for RemoteCredentials {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RemoteCredentials")
+            .field("expiration", &self.expiration)
+            .field("access_key_id", &"[REDACTED]")
+            .field("secret_access_key", &"[REDACTED]")
+            .field("session_token", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl From<RemoteCredentials> for Credentials {
@@ -1242,5 +1277,58 @@ mod tests {
         assert_eq!(client3.redirect_uri, new_redirect);
 
         Ok(())
+    }
+
+    #[test]
+    fn remote_tokens_debug_redacts_secrets() {
+        let tokens = RemoteTokens {
+            access_token: "secret-access".to_string(),
+            refresh_token: "secret-refresh".to_string(),
+            expires_at: chrono::DateTime::from_timestamp(TIMESTAMP, 0).unwrap(),
+        };
+        let output = format!("{:?}", tokens);
+        assert!(output.contains("[REDACTED]"));
+        assert!(!output.contains("secret-access"));
+        assert!(!output.contains("secret-refresh"));
+    }
+
+    #[test]
+    fn oauth_token_response_debug_redacts_secrets() {
+        let response = OAuthTokenResponse {
+            access_token: "secret-access".to_string(),
+            refresh_token: Some("secret-refresh".to_string()),
+            expires_in: 3600,
+        };
+        let output = format!("{:?}", response);
+        assert!(output.contains("[REDACTED]"));
+        assert!(!output.contains("secret-access"));
+        assert!(!output.contains("secret-refresh"));
+    }
+
+    #[test]
+    fn oauth_token_response_debug_none_refresh_token() {
+        let response = OAuthTokenResponse {
+            access_token: "secret-access".to_string(),
+            refresh_token: None,
+            expires_in: 3600,
+        };
+        let output = format!("{:?}", response);
+        assert!(output.contains("refresh_token: None"));
+        assert!(!output.contains("secret-access"));
+    }
+
+    #[test]
+    fn remote_credentials_debug_redacts_secrets() {
+        let creds = RemoteCredentials {
+            access_key_id: "secret-key-id".to_string(),
+            expiration: chrono::DateTime::from_timestamp(TIMESTAMP, 0).unwrap(),
+            secret_access_key: "secret-access-key".to_string(),
+            session_token: "secret-session-token".to_string(),
+        };
+        let output = format!("{:?}", creds);
+        assert!(output.contains("[REDACTED]"));
+        assert!(!output.contains("secret-key-id"));
+        assert!(!output.contains("secret-access-key"));
+        assert!(!output.contains("secret-session-token"));
     }
 }
