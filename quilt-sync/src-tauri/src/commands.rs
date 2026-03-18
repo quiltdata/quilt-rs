@@ -15,7 +15,7 @@ use crate::routes;
 use crate::Error;
 
 use crate::model::QuiltModel;
-use crate::telemetry::{prelude::*, MixpanelEvent};
+use crate::telemetry::{mixpanel::LoginFlow, prelude::*, MixpanelEvent};
 use crate::ui::notify::TmplNotify;
 
 fn get_default_home_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, Error> {
@@ -598,6 +598,7 @@ async fn login_command(
     tracing
         .track(MixpanelEvent::UserLoggedIn {
             host: host.to_string(),
+            flow: LoginFlow::Legacy,
         })
         .await;
 

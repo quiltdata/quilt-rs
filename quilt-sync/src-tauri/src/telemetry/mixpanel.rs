@@ -8,6 +8,13 @@ use serde_json::Value;
 use crate::env;
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LoginFlow {
+    OAuth,
+    Legacy,
+}
+
+#[derive(Debug, Clone, Serialize)]
 #[serde(tag = "t", content = "c")]
 #[serde(rename_all = "snake_case")]
 pub enum MixpanelEvent {
@@ -37,6 +44,7 @@ pub enum MixpanelEvent {
     },
     UserLoggedIn {
         host: String,
+        flow: LoginFlow,
     },
     SetupCompleted,
     ErrorOccurred {
@@ -253,6 +261,7 @@ mod tests {
     fn test_user_logged_in_event() -> Result {
         let event = MixpanelEvent::UserLoggedIn {
             host: "example.quilt.dev".to_string(),
+            flow: LoginFlow::OAuth,
         };
         match event.try_into()? {
             (name, Some(props)) => {
@@ -261,6 +270,7 @@ mod tests {
                     props.get("host"),
                     Some(&Value::String("example.quilt.dev".to_string()))
                 );
+                assert_eq!(props.get("flow"), Some(&Value::String("oauth".to_string())));
                 Ok(())
             }
             _ => Err(Error::MixpanelSer("UserLoggedIn".to_string())),
