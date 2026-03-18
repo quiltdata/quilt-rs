@@ -11,7 +11,7 @@
 
 ### Fixed
 
-- Extend secret redaction to `RemoteTokens` and `OAuthTokenResponse` — transient OAuth response types were still leaking `access_token` and `refresh_token` via the derived `Debug` impl
+- Extend secret redaction to `RemoteTokens`, `OAuthTokenResponse`, and `RemoteCredentials` — transient token and credential response types were still leaking secrets via the derived `Debug` impl
 
 ## [v0.27.4-alpha3] - 2026-03-18
 

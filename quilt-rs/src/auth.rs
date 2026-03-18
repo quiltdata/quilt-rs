@@ -237,7 +237,7 @@ impl fmt::Debug for OAuthTokenResponse {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase")]
 struct RemoteCredentials {
     access_key_id: String,
@@ -245,6 +245,17 @@ struct RemoteCredentials {
     expiration: chrono::DateTime<chrono::Utc>,
     secret_access_key: String,
     session_token: String,
+}
+
+impl fmt::Debug for RemoteCredentials {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RemoteCredentials")
+            .field("expiration", &self.expiration)
+            .field("access_key_id", &"[REDACTED]")
+            .field("secret_access_key", &"[REDACTED]")
+            .field("session_token", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl From<RemoteCredentials> for Credentials {
@@ -1304,5 +1315,20 @@ mod tests {
         let output = format!("{:?}", response);
         assert!(output.contains("refresh_token: None"));
         assert!(!output.contains("secret-access"));
+    }
+
+    #[test]
+    fn remote_credentials_debug_redacts_secrets() {
+        let creds = RemoteCredentials {
+            access_key_id: "secret-key-id".to_string(),
+            expiration: chrono::DateTime::from_timestamp(TIMESTAMP, 0).unwrap(),
+            secret_access_key: "secret-access-key".to_string(),
+            session_token: "secret-session-token".to_string(),
+        };
+        let output = format!("{:?}", creds);
+        assert!(output.contains("[REDACTED]"));
+        assert!(!output.contains("secret-key-id"));
+        assert!(!output.contains("secret-access-key"));
+        assert!(!output.contains("secret-session-token"));
     }
 }
