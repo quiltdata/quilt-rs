@@ -1264,4 +1264,30 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn remote_tokens_debug_redacts_secrets() {
+        let tokens = RemoteTokens {
+            access_token: "secret-access".to_string(),
+            refresh_token: "secret-refresh".to_string(),
+            expires_at: chrono::DateTime::from_timestamp(TIMESTAMP, 0).unwrap(),
+        };
+        let output = format!("{:?}", tokens);
+        assert!(output.contains("[REDACTED]"));
+        assert!(!output.contains("secret-access"));
+        assert!(!output.contains("secret-refresh"));
+    }
+
+    #[test]
+    fn oauth_token_response_debug_redacts_secrets() {
+        let response = OAuthTokenResponse {
+            access_token: "secret-access".to_string(),
+            refresh_token: Some("secret-refresh".to_string()),
+            expires_in: 3600,
+        };
+        let output = format!("{:?}", response);
+        assert!(output.contains("[REDACTED]"));
+        assert!(!output.contains("secret-access"));
+        assert!(!output.contains("secret-refresh"));
+    }
 }
