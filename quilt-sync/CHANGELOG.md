@@ -13,7 +13,7 @@
 ### Fixed
 
 - URL-encode host in OAuth redirect URI to handle special characters correctly
-  (<https://github.com/quiltdata/quilt-rs/pull/TODO>)
+  (<https://github.com/quiltdata/quilt-rs/pull/560>)
 
 ## [v0.14.4-alpha4] - 2026-03-18
 
