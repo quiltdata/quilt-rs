@@ -4,6 +4,7 @@
 
 use std::future::Future;
 use std::path::Path;
+use std::sync::Arc;
 
 pub use aws_sdk_s3::primitives::ByteStream;
 use chrono::DateTime;
@@ -87,6 +88,60 @@ pub trait Storage {
         path: impl AsRef<Path> + Send + Sync,
         body: ByteStream,
     ) -> impl Future<Output = Res> + Send + Sync;
+}
+
+impl<S: Storage + Send + Sync> Storage for Arc<S> {
+    async fn copy(&self, from: impl AsRef<Path> + Send, to: impl AsRef<Path> + Send) -> Res<u64> {
+        (**self).copy(from, to).await
+    }
+
+    async fn create_dir_all(&self, path: impl AsRef<Path> + Send) -> Res {
+        (**self).create_dir_all(path).await
+    }
+
+    async fn create_file(&self, path: impl AsRef<Path>) -> Res<File> {
+        (**self).create_file(path).await
+    }
+
+    async fn exists(&self, path: impl AsRef<Path>) -> bool {
+        (**self).exists(path).await
+    }
+
+    async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Res<DateTime<Utc>> {
+        (**self).modified_timestamp(path).await
+    }
+
+    async fn open_file(&self, path: impl AsRef<Path> + Send) -> Res<File> {
+        (**self).open_file(path).await
+    }
+
+    async fn read_byte_stream(&self, path: impl AsRef<Path> + Send + Sync) -> Res<ByteStream> {
+        (**self).read_byte_stream(path).await
+    }
+
+    async fn read_dir(&self, path: impl AsRef<Path> + Send + Sync) -> Res<ReadDir> {
+        (**self).read_dir(path).await
+    }
+
+    async fn remove_dir_all(&self, path: impl AsRef<Path> + Send) -> Res {
+        (**self).remove_dir_all(path).await
+    }
+
+    async fn remove_file(&self, path: impl AsRef<Path> + Send) -> Result<(), std::io::Error> {
+        (**self).remove_file(path).await
+    }
+
+    async fn rename(&self, from: impl AsRef<Path> + Send, to: impl AsRef<Path> + Send) -> Res {
+        (**self).rename(from, to).await
+    }
+
+    async fn write_byte_stream(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        body: ByteStream,
+    ) -> Res {
+        (**self).write_byte_stream(path, body).await
+    }
 }
 
 /// Convenience methods on top of `Storage`.
