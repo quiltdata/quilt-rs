@@ -89,6 +89,7 @@ fn main() {
             commands::debug_logs,
             commands::load_empty,
             commands::load_page,
+            commands::login,
             commands::login_oauth,
             commands::open_directory_picker,
             commands::open_in_default_application,

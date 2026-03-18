@@ -8,6 +8,13 @@
 -->
 # Changelog
 
+## [v0.14.4-alpha3] - 2026-03-17
+
+### Added
+
+- Restore code-based login as a fallback for stacks that do not support OAuth
+  (<https://github.com/quiltdata/quilt-rs/pull/556>)
+
 ## [v0.14.4-alpha2] - 2026-03-13
 
 ### Removed

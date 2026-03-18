@@ -583,6 +583,52 @@ pub(crate) fn navigate_after_login(
     }
 }
 
+/// Code-based login for legacy stacks that don't support Connect/OAuth.
+async fn login_command(
+    m: &model::Model,
+    tracing: &crate::telemetry::Telemetry,
+    host: &str,
+    code: String,
+    location: Option<String>,
+    app_handle: &tauri::AppHandle,
+) -> Result<(), Error> {
+    let host = quilt::uri::Host::from_str(host)?;
+    model::login(m, &host, code).await?;
+
+    tracing
+        .track(MixpanelEvent::UserLoggedIn {
+            host: host.to_string(),
+        })
+        .await;
+
+    if let Some(location) = location {
+        navigate_after_login(app_handle, &location).map_err(|e| Error::PostLogin(e.to_string()))?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn login(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    host: String,
+    code: String,
+    location: Option<String>,
+    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
+) -> Result<String, String> {
+    let msg_init = format!("Login with code for host {host}");
+    let msg_ok = format!("Successfully logged in to {host}");
+    let msg_err = |err: &Error| format!("Failed to login: {err}");
+
+    let app_handle = app_handle.lock().await;
+    TmplNotify::new(msg_init).map(
+        login_command(&m, &tracing, &host, code, location, &app_handle).await,
+        msg_ok,
+        msg_err,
+    )
+}
+
 /// Initiate OAuth 2.1 login: register client via DCR if needed,
 /// generate PKCE, store verifier, open browser.
 #[tauri::command]

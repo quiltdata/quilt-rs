@@ -18,6 +18,7 @@ const SELECTOR_ENTRIES_CHECKBOX = ".js-entries-checkbox:not(:disabled)";
 const SELECTOR_ENTRIES_INSTALL_SELECTED = ".js-entries-install";
 const SELECTOR_ENTRIES_SELECT_ALL = ".js-entries-select-all";
 const SELECTOR_LAYOUT = "#layout";
+const SELECTOR_LOGIN = ".js-login";
 const SELECTOR_LOGIN_OAUTH = ".js-login-oauth";
 const SELECTOR_METADATA = ".js-metadata";
 const SELECTOR_METADATA_INPUT = "#metadata";
@@ -65,6 +66,7 @@ type Selector =
   | typeof SELECTOR_ENTRIES_INSTALL_SELECTED
   | typeof SELECTOR_ENTRIES_SELECT_ALL
   | typeof SELECTOR_LAYOUT
+  | typeof SELECTOR_LOGIN
   | typeof SELECTOR_LOGIN_OAUTH
   | typeof SELECTOR_METADATA
   | typeof SELECTOR_METADATA_INPUT
@@ -100,6 +102,7 @@ type Selector =
 const CMD_ERASE_AUTH = "erase_auth";
 const CMD_DEBUG_DOT_QUILT = "debug_dot_quilt";
 const CMD_DEBUG_LOGS = "debug_logs";
+const CMD_LOGIN = "login";
 const CMD_LOGIN_OAUTH = "login_oauth";
 const CMD_OPEN_DIRECTORY_PICKER = "open_directory_picker";
 const CMD_OPEN_IN_DEFAULT_APPLICATION = "open_in_default_application";
@@ -120,6 +123,7 @@ type Command =
   | typeof CMD_ERASE_AUTH
   | typeof CMD_DEBUG_DOT_QUILT
   | typeof CMD_DEBUG_LOGS
+  | typeof CMD_LOGIN
   | typeof CMD_LOGIN_OAUTH
   | typeof CMD_OPEN_DIRECTORY_PICKER
   | typeof CMD_OPEN_IN_DEFAULT_APPLICATION
@@ -530,14 +534,25 @@ window.addEventListener(EVENT_PAGE_READY, () => {
     ),
   );
 
+  listen(SELECTOR_LOGIN, ["form"], async (data) => {
+    const formData = collectFormData(data.form as SELECTOR_FORM);
+    const layout = findElement("#layout");
+    layout?.setAttribute("disabled", "disabled");
+    const notification: Html = await invoke(CMD_LOGIN, formData);
+    layout?.removeAttribute("disabled");
+    if (!notify(notification)) return;
+    // Rust's login_command calls navigate_after_login when location is present;
+    // only navigate from JS when there is no location to avoid a double navigation.
+    if (!formData.location) {
+      await navigate(ROUTE_INSTALLED_PACKAGES_LIST);
+    }
+  });
+
   listen(SELECTOR_LOGIN_OAUTH, ["host"], (data, button) => {
     const location = button.getAttribute("data-location");
     const payload = location ? { ...data, location } : data;
     return execInlineCommand(CMD_LOGIN_OAUTH, payload, button);
   });
-
-  // Auto-trigger OAuth login immediately when the login page loads
-  (findElement(SELECTOR_LOGIN_OAUTH) as HTMLButtonElement | null)?.click();
 
   listen(SELECTOR_SETUP, ["form"], (data) =>
     execFormCommand(CMD_SETUP, collectFormData(data.form as SELECTOR_FORM)),

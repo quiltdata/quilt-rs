@@ -66,6 +66,9 @@ pub enum Error {
 
     #[error("Package has no catalog origin")]
     MissingOrigin,
+
+    #[error("Post-login navigation failed: {0}")]
+    PostLogin(String),
 }
 
 impl From<quilt::Error> for Error {
