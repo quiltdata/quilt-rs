@@ -8,6 +8,14 @@
 -->
 # Changelog
 
+## [v0.14.4-alpha8] - 2026-03-18
+
+### Fixed
+
+- Return `Err` instead of `Ok(None)` when an OAuth state entry has expired in
+  `take_params`, preventing a timed-out callback from falling through to the
+  legacy code-based login and bypassing PKCE+CSRF verification
+
 ## [v0.14.4-alpha7] - 2026-03-18
 
 ### Changed
