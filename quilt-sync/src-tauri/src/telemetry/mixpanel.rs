@@ -37,6 +37,7 @@ pub enum MixpanelEvent {
     },
     UserLoggedIn {
         host: String,
+        flow: String,
     },
     SetupCompleted,
     ErrorOccurred {
@@ -253,6 +254,7 @@ mod tests {
     fn test_user_logged_in_event() -> Result {
         let event = MixpanelEvent::UserLoggedIn {
             host: "example.quilt.dev".to_string(),
+            flow: "oauth".to_string(),
         };
         match event.try_into()? {
             (name, Some(props)) => {
@@ -260,6 +262,10 @@ mod tests {
                 assert_eq!(
                     props.get("host"),
                     Some(&Value::String("example.quilt.dev".to_string()))
+                );
+                assert_eq!(
+                    props.get("flow"),
+                    Some(&Value::String("oauth".to_string()))
                 );
                 Ok(())
             }

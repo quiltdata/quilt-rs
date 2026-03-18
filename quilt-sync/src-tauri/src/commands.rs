@@ -598,6 +598,7 @@ async fn login_command(
     tracing
         .track(MixpanelEvent::UserLoggedIn {
             host: host.to_string(),
+            flow: "legacy".to_string(),
         })
         .await;
 

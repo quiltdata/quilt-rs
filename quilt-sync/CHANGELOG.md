@@ -8,6 +8,16 @@
 -->
 # Changelog
 
+## [v0.14.4-alpha6] - 2026-03-18
+
+### Changed
+
+- Clarify log message when falling back to legacy code-based login after OAuth
+  callback with no pending state
+- Add `flow` field (`"oauth"` or `"legacy"`) to the `UserLoggedIn` telemetry
+  event to track which login path was used
+  (<https://github.com/quiltdata/quilt-rs/pull/TODO>)
+
 ## [v0.14.4-alpha5] - 2026-03-18
 
 ### Fixed
