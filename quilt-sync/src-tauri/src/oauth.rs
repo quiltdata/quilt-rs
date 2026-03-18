@@ -40,7 +40,10 @@ pub struct AuthorizeRequest {
 /// The `quilt://` scheme is registered as a deep link, so the OS
 /// routes the callback to QuiltSync where `uri::login_with_code` handles it.
 pub fn redirect_uri(host: &quilt::uri::Host) -> String {
-    format!("quilt://auth/callback?host={host}")
+    format!(
+        "quilt://auth/callback?host={}",
+        urlencoding::encode(&host.to_string())
+    )
 }
 
 impl OAuthState {
@@ -150,6 +153,15 @@ mod tests {
 
     fn test_host() -> quilt::uri::Host {
         "test.quilt.dev".parse().unwrap()
+    }
+
+    #[test]
+    fn redirect_uri_encodes_host() {
+        let host = test_host();
+        assert_eq!(
+            redirect_uri(&host),
+            "quilt://auth/callback?host=test.quilt.dev"
+        );
     }
 
     /// Extract the `state` parameter from the authorization URL returned by
