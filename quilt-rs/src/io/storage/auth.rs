@@ -1,3 +1,4 @@
+use std::fmt;
 use std::path::PathBuf;
 
 use serde::Deserialize;
@@ -14,19 +15,40 @@ use crate::paths::AUTH_CREDENTIALS;
 use crate::paths::AUTH_TOKENS;
 use crate::Res;
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize)]
 pub struct Tokens {
     pub access_token: String,
     pub refresh_token: String,
     pub expires_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+impl fmt::Debug for Tokens {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Tokens")
+            .field("expires_at", &self.expires_at)
+            .field("access_token", &"[REDACTED]")
+            .field("refresh_token", &"[REDACTED]")
+            .finish()
+    }
+}
+
+#[derive(Deserialize, Serialize)]
 pub struct Credentials {
     pub access_key: String,
     pub secret_key: String,
     pub token: String,
     pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Credentials")
+            .field("expires_at", &self.expires_at)
+            .field("access_key", &"[REDACTED]")
+            .field("secret_key", &"[REDACTED]")
+            .field("token", &"[REDACTED]")
+            .finish()
+    }
 }
 
 /// OAuth client registration data (persisted per host via DCR).
@@ -146,7 +168,7 @@ impl<S: Storage + Sync> AuthIo<S> {
             .write_byte_stream(&path, contents.into())
             .await?;
 
-        debug!("✔️ Successfully wrote OAuth client: {:?}", client);
+        debug!("✔️ Successfully wrote OAuth client");
 
         Ok(())
     }
