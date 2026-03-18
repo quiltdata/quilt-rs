@@ -229,7 +229,7 @@ impl fmt::Debug for OAuthTokenResponse {
         f.debug_struct("OAuthTokenResponse")
             .field("expires_in", &self.expires_in)
             .field("access_token", &"[REDACTED]")
-            .field("refresh_token", &"[REDACTED]")
+            .field("refresh_token", &self.refresh_token.as_ref().map(|_| "[REDACTED]"))
             .finish()
     }
 }
@@ -1289,5 +1289,17 @@ mod tests {
         assert!(output.contains("[REDACTED]"));
         assert!(!output.contains("secret-access"));
         assert!(!output.contains("secret-refresh"));
+    }
+
+    #[test]
+    fn oauth_token_response_debug_none_refresh_token() {
+        let response = OAuthTokenResponse {
+            access_token: "secret-access".to_string(),
+            refresh_token: None,
+            expires_in: 3600,
+        };
+        let output = format!("{:?}", response);
+        assert!(output.contains("refresh_token: None"));
+        assert!(!output.contains("secret-access"));
     }
 }
