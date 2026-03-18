@@ -602,7 +602,9 @@ async fn login_command(
         .await;
 
     if let Some(location) = location {
-        navigate_after_login(app_handle, &location)?;
+        if let Err(e) = navigate_after_login(app_handle, &location) {
+            error!("Login succeeded but navigation to '{}' failed: {}", location, e);
+        }
     }
 
     Ok(())
