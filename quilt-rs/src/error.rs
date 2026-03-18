@@ -53,6 +53,9 @@ pub enum AuthError {
 
     #[error("Failed to refresh tokens: {0}")]
     TokensRefresh(String),
+
+    #[error("Failed to exchange authorization code for tokens: {0}")]
+    TokensExchange(String),
 }
 
 /// The error type for this library
