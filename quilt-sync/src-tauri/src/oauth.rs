@@ -195,19 +195,20 @@ mod tests {
     async fn start_login_evicts_expired_entries() {
         tokio::time::pause();
         let oauth = OAuthState::default();
-        let host = test_host();
+        let host_a: quilt::uri::Host = "host-a.quilt.dev".parse().unwrap();
+        let host_b: quilt::uri::Host = "host-b.quilt.dev".parse().unwrap();
 
-        // First login — will expire.
-        oauth.start_login(&host, "client-id", None).await;
+        // Login for host A — will expire.
+        oauth.start_login(&host_a, "client-id", None).await;
 
-        // Advance past TTL, then start a second login which should evict the first.
+        // Advance past TTL, then start a login for host B.
+        // The retain in start_login should evict the stale host A entry.
         tokio::time::advance(TTL + Duration::from_secs(1)).await;
-        let req2 = oauth.start_login(&host, "client-id", None).await;
-        let state2 = extract_state(&req2.authorize_url);
+        oauth.start_login(&host_b, "client-id", None).await;
 
-        // The map should now have exactly one entry (the fresh one).
+        // Only host B should remain; the expired host A entry must be gone.
         let guard = oauth.pending.lock().await;
         assert_eq!(guard.len(), 1);
-        assert_eq!(guard.values().next().unwrap().state, state2);
+        assert!(guard.contains_key("host-b.quilt.dev"));
     }
 }
