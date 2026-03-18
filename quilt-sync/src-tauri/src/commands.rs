@@ -551,36 +551,18 @@ pub(crate) fn navigate_after_login(
     location: &str,
 ) -> Result<(), Error> {
     debug!("Attempting to redirect after login to: {}", location);
-    match app_handle.get_webview_window("main") {
-        Some(win) => match location.parse::<routes::Paths>() {
-            Ok(page_path) => match win.url() {
-                Ok(win_url) => {
-                    let redirect_url = routes::from_url(page_path, win_url);
-                    debug!("Redirecting to: {}", redirect_url);
-                    if let Err(e) = win.navigate(redirect_url) {
-                        error!("Failed to navigate after login: {}", e);
-                        return Err(e.into());
-                    }
-                    Ok(())
-                }
-                Err(e) => {
-                    error!("Failed to get window URL for redirect: {}", e);
-                    Err(e.into())
-                }
-            },
-            Err(e) => {
-                error!(
-                    "Failed to parse location '{}' for redirect: {}",
-                    location, e
-                );
-                Err(e)
-            }
-        },
-        None => {
-            error!("Main window not found for post-login redirect");
-            Ok(())
-        }
-    }
+
+    let page_path = location.parse::<routes::Paths>()?;
+    let win = app_handle
+        .get_webview_window("main")
+        .ok_or(Error::Window)?;
+    let win_url = win.url()?;
+    let redirect_url = routes::from_url(page_path, win_url);
+
+    debug!("Redirecting to: {}", redirect_url);
+    win.navigate(redirect_url)?;
+
+    Ok(())
 }
 
 /// Code-based login for legacy stacks that don't support Connect/OAuth.
