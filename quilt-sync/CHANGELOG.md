@@ -8,6 +8,15 @@
 -->
 # Changelog
 
+## [v0.14.4-alpha9] - 2026-03-18
+
+### Fixed
+
+- Fix silent navigation failure after OAuth login: `navigate_after_login` now
+  handles bare page names (e.g. `"installed-packages-list.html"` stored in
+  `PendingAuth::location`) by constructing a full URL from the window origin,
+  since `routes::Paths::from_str` requires a full URL internally
+
 ## [v0.14.4-alpha8] - 2026-03-18
 
 ### Fixed
