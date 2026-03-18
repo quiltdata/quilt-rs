@@ -164,6 +164,15 @@ mod tests {
         );
     }
 
+    #[test]
+    fn redirect_uri_encodes_ipv6_host() {
+        let host: quilt::uri::Host = "[::1]".parse().unwrap();
+        assert_eq!(
+            redirect_uri(&host),
+            "quilt://auth/callback?host=%5B%3A%3A1%5D"
+        );
+    }
+
     /// Extract the `state` parameter from the authorization URL returned by
     /// `start_login`, so tests can pass it back to `take_params`.
     fn extract_state(authorize_url: &str) -> String {
