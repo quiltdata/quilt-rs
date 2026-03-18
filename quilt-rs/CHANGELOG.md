@@ -11,17 +11,24 @@
 
 ### Changed
 
-- Add `AuthError::TokensExchange` variant for failures during authorization code exchange, replacing the misused `TokensRefresh` variant in that path
-- Use `finish_non_exhaustive()` in all custom `Debug` impls for secret-bearing types to signal intentional field omission
-- Document the single-label prefix assumption in `connect_host`, caller CSRF responsibility in `login_oauth`, and caller ownership of `OAuthParams::client_id`
+- Add `AuthError::TokensExchange` variant for failures during authorization code
+  exchange, replacing the misused `TokensRefresh` variant in that path
+- Use `finish_non_exhaustive()` in all custom `Debug` impls for secret-bearing
+  types to signal intentional field omission
+- Document the single-label prefix assumption in `connect_host`, caller CSRF
+  responsibility in `login_oauth`, and caller ownership of
+  `OAuthParams::client_id`
 - Remove unnecessary `Serialize` derive from `DcrResponse` (response-only type)
-- Log a clearer message when token refresh fails due to missing OAuth client registration
+- Log a clearer message when token refresh fails due to missing OAuth client
+  registration
 
 ## [v0.27.4-alpha4] - 2026-03-18
 
 ### Fixed
 
-- Extend secret redaction to `RemoteTokens`, `OAuthTokenResponse`, and `RemoteCredentials` — transient token and credential response types were still leaking secrets via the derived `Debug` impl
+- Extend secret redaction to `RemoteTokens`, `OAuthTokenResponse`, and
+  `RemoteCredentials` — transient token and credential response types were
+  still leaking secrets via the derived `Debug` impl
 
 ## [v0.27.4-alpha3] - 2026-03-18
 
