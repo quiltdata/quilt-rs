@@ -545,27 +545,17 @@ pub async fn set_origin(
     )
 }
 
-/// Navigate to a location after successful login.
+/// Navigate to a page after successful login.
 pub(crate) fn navigate_after_login(
     app_handle: &tauri::AppHandle,
-    location: &str,
+    path: routes::Paths,
 ) -> Result<(), Error> {
-    debug!("Attempting to redirect after login to: {}", location);
-
-    let page_path = location.parse::<routes::Paths>().map_err(|e| {
-        error!(
-            "Failed to parse location '{}' for redirect: {}",
-            location, e
-        );
-        e
-    })?;
+    debug!("Attempting to redirect after login to: {:?}", path);
     let win = app_handle.get_webview_window("main").ok_or(Error::Window)?;
     let win_url = win.url()?;
-    let redirect_url = routes::from_url(page_path, win_url);
-
+    let redirect_url = routes::from_url(path, win_url);
     debug!("Redirecting to: {}", redirect_url);
     win.navigate(redirect_url)?;
-
     Ok(())
 }
 
@@ -589,7 +579,10 @@ async fn login_command(
         .await;
 
     if let Some(location) = location {
-        navigate_after_login(app_handle, &location).map_err(|e| Error::PostLogin(e.to_string()))?;
+        let path = location
+            .parse::<routes::Paths>()
+            .map_err(|e| Error::PostLogin(e.to_string()))?;
+        navigate_after_login(app_handle, path).map_err(|e| Error::PostLogin(e.to_string()))?;
     }
 
     Ok(())
@@ -633,8 +626,13 @@ pub async fn login_oauth(
         .await
         .map_err(|e| e.to_string())?;
 
+    let location_path = location
+        .as_deref()
+        .map(|loc| loc.parse::<routes::Paths>().map_err(|e| e.to_string()))
+        .transpose()?;
+
     let request = oauth_state
-        .start_login(&host_parsed, &client_id, location)
+        .start_login(&host_parsed, &client_id, location_path)
         .await;
 
     model::open_in_web_browser(&request.authorize_url).map_err(|e| e.to_string())?;

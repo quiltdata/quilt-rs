@@ -22,20 +22,8 @@ pub enum RouteError {
     MissingS3UriQuery(Url),
 }
 
-/// Parse `location` as a URL, accepting both a full URL and a bare page name
-/// such as those produced by [`Paths::to_string`] (e.g.
-/// `"installed-packages-list.html"`). Page files are served under `/pages/`,
-/// so bare names are resolved relative to that path.
-fn location_url(location: &str) -> Result<Url, url::ParseError> {
-    Url::parse(location).or_else(|_| {
-        Url::parse("http://localhost/pages/")
-            .expect("base URL is valid")
-            .join(location)
-    })
-}
-
 fn parse_page(location: &str) -> Result<String, Error> {
-    let uri = location_url(location)?;
+    let uri = Url::parse(location)?;
     // NOTE: it is a temporary variable just to get the last element of it
     let mut segments = match uri.path_segments() {
         Some(segments) => segments,
@@ -54,7 +42,7 @@ struct FragmentNamespaceParsed {
 }
 
 fn parse_namespace(location: &str) -> Result<String, Error> {
-    let uri = location_url(location)?;
+    let uri = Url::parse(location)?;
     let namespace = match uri.fragment() {
         Some(n) => {
             let qs: FragmentNamespaceParsed = serde_qs::from_str(n)?;
@@ -71,7 +59,7 @@ struct FragmentHostParsed {
 }
 
 fn parse_host(location: &str) -> Result<quilt::uri::Host, Error> {
-    let uri = location_url(location)?;
+    let uri = Url::parse(location)?;
     match uri.fragment() {
         Some(n) => {
             let qs: FragmentHostParsed = serde_qs::from_str(n)?;
@@ -88,7 +76,7 @@ struct FragmentLoginErrorParsed {
 }
 
 fn parse_login_error(location: &str) -> Result<(quilt::uri::Host, String), Error> {
-    let uri = location_url(location)?;
+    let uri = Url::parse(location)?;
     match uri.fragment() {
         Some(n) => {
             let qs: FragmentLoginErrorParsed = serde_qs::from_str(n)?;
@@ -104,7 +92,7 @@ struct FragmentRemotePackage {
 }
 
 fn parse_s3_package_uri(location: &str) -> Result<quilt::uri::S3PackageUri, Error> {
-    let uri = location_url(location)?;
+    let uri = Url::parse(location)?;
     match uri.query() {
         Some(n) => {
             let qs: FragmentRemotePackage = serde_qs::from_str(n).unwrap();
@@ -506,26 +494,6 @@ mod tests {
         }
         assert_eq!(list_path.pathname(), "installed_packages_list");
 
-        Ok(())
-    }
-
-    /// `PendingAuth::location` stores bare page names produced by
-    /// `Paths::to_string()`. Verify that `from_str` accepts them so that
-    /// `navigate_after_login` works without a full URL.
-    #[test]
-    fn test_from_str_accepts_bare_page_names() -> Result<()> {
-        assert_eq!(
-            "installed-packages-list.html".parse::<Paths>()?,
-            Paths::InstalledPackagesList
-        );
-        assert_eq!(
-            "setup.html".parse::<Paths>()?,
-            Paths::Setup
-        );
-        assert_eq!(
-            "commit.html#namespace=foo/bar".parse::<Paths>()?,
-            Paths::Commit(("foo", "bar").into())
-        );
         Ok(())
     }
 }
