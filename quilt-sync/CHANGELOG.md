@@ -15,6 +15,7 @@
 - Return `Err` instead of `Ok(None)` when an OAuth state entry has expired in
   `take_params`, preventing a timed-out callback from falling through to the
   legacy code-based login and bypassing PKCE+CSRF verification
+  (<https://github.com/quiltdata/quilt-rs/pull/567>)
 
 ## [v0.14.4-alpha7] - 2026-03-18
 
