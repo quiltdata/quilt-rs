@@ -553,9 +553,7 @@ pub(crate) fn navigate_after_login(
     debug!("Attempting to redirect after login to: {}", location);
 
     let page_path = location.parse::<routes::Paths>()?;
-    let win = app_handle
-        .get_webview_window("main")
-        .ok_or(Error::Window)?;
+    let win = app_handle.get_webview_window("main").ok_or(Error::Window)?;
     let win_url = win.url()?;
     let redirect_url = routes::from_url(page_path, win_url);
 
