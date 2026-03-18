@@ -133,6 +133,9 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
                 (login_result, stored_location, Some(LoginFlow::OAuth))
             }
             Ok(None) => {
+                // No OAuth flow was ever initiated for this host (e.g. a
+                // legacy device-flow callback). Expired state is an Err, so
+                // Ok(None) here means the entry was genuinely absent.
                 info!(
                     "No pending OAuth state for {}, falling back to legacy code-based login",
                     host_str

@@ -101,8 +101,8 @@ impl OAuthState {
     ///
     /// Returns:
     /// - `Ok(Some(params))` — state matched, proceed with Token Request
-    /// - `Ok(None)` — no pending state for this host (device flow callback)
-    /// - `Err(_)` — state mismatch, possible CSRF attack; abort
+    /// - `Ok(None)` — no pending state for this host (legacy device flow callback)
+    /// - `Err(_)` — state expired or mismatched; abort, do not fall back
     pub async fn take_params(
         &self,
         host: &quilt::uri::Host,
@@ -118,7 +118,9 @@ impl OAuthState {
             }
             Some(_) => {
                 warn!("Pending OAuth state for {host_key} has expired");
-                return Ok(None);
+                return Err(Error::OAuth(format!(
+                    "OAuth state for {host_key} has expired; login again to restart the flow"
+                )));
             }
             None => {
                 let keys: Vec<String> = guard.keys().cloned().collect();
@@ -199,7 +201,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn take_params_returns_none_after_ttl() {
+    async fn take_params_errors_after_ttl() {
         tokio::time::pause();
         let oauth = OAuthState::default();
         let host = test_host();
@@ -209,7 +211,10 @@ mod tests {
         let result = oauth
             .take_params(&host, "auth-code".to_string(), &state)
             .await;
-        assert!(result.unwrap().is_none());
+        assert!(
+            matches!(result, Err(Error::OAuth(_))),
+            "expected Err(OAuth) for expired state"
+        );
     }
 
     #[tokio::test]
