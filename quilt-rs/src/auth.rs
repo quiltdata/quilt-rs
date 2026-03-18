@@ -378,10 +378,19 @@ fn is_credentials_auth_error(e: &Error) -> bool {
     )
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Auth<S: Storage = LocalStorage> {
     pub paths: DomainPaths,
     pub storage: Arc<S>,
+}
+
+impl<S: Storage> Clone for Auth<S> {
+    fn clone(&self) -> Self {
+        Self {
+            paths: self.paths.clone(),
+            storage: Arc::clone(&self.storage),
+        }
+    }
 }
 
 impl<S: Storage + Send + Sync> Auth<S> {
