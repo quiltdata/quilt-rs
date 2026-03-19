@@ -5,27 +5,18 @@
      Use alpha pre-release versions (e.g. v0.27.2-alpha1) instead of [Unreleased]
      to keep changelog in sync with Cargo.toml version.
 -->
+<!-- markdownlint-disable MD013 -->
 # Changelog
 
 ## [v0.27.4-alpha5] - 2026-03-18
 
 ### Changed
 
-- Add `AuthError::TokensExchange` variant for failures during authorization code
-  exchange, replacing the misused `TokensRefresh` variant in that path
-  (<https://github.com/quiltdata/quilt-rs/pull/566>)
-- Use `finish_non_exhaustive()` in all custom `Debug` impls for secret-bearing
-  types to signal intentional field omission
-  (<https://github.com/quiltdata/quilt-rs/pull/566>)
-- Document the single-label prefix assumption in `connect_host`, caller CSRF
-  responsibility in `login_oauth`, and caller ownership of
-  `OAuthParams::client_id`
-  (<https://github.com/quiltdata/quilt-rs/pull/566>)
-- Remove unnecessary `Serialize` derive from `DcrResponse` (response-only type)
-  (<https://github.com/quiltdata/quilt-rs/pull/566>)
-- Log a clearer message when token refresh fails due to missing OAuth client
-  registration
-  (<https://github.com/quiltdata/quilt-rs/pull/566>)
+- Add `AuthError::TokensExchange` variant for failures during authorization code exchange, replacing the misused `TokensRefresh` variant in that path (<https://github.com/quiltdata/quilt-rs/pull/566>)
+- Use `finish_non_exhaustive()` in all custom `Debug` impls for secret-bearing types to signal intentional field omission (<https://github.com/quiltdata/quilt-rs/pull/566>)
+- Document the single-label prefix assumption in `connect_host`, caller CSRF responsibility in `login_oauth`, and caller ownership of `OAuthParams::client_id` (<https://github.com/quiltdata/quilt-rs/pull/566>)
+- Remove unnecessary `Serialize` derive from `DcrResponse` (response-only type) (<https://github.com/quiltdata/quilt-rs/pull/566>)
+- Log a clearer message when token refresh fails due to missing OAuth client registration (<https://github.com/quiltdata/quilt-rs/pull/566>)
 
 ## [v0.27.4-alpha4] - 2026-03-18
 
