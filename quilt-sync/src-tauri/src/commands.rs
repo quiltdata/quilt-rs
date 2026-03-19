@@ -62,6 +62,9 @@ async fn load_page_command(
         Err(Error::Quilt(quilt::Error::LoginRequired(Some(host)))) => {
             let warn = "Login is required";
             warn!("{}", warn);
+            // `location` is the full URL from the frontend; it is stored
+            // verbatim in PendingAuth and parsed back into a typed Paths
+            // after a successful OAuth callback (see uri::login_with_code).
             let login_page =
                 pages::ViewLogin::create(app, tracing, host.clone(), Some(location.to_string()))
                     .await?;
@@ -545,27 +548,17 @@ pub async fn set_origin(
     )
 }
 
-/// Navigate to a location after successful login.
+/// Navigate to a page after successful login.
 pub(crate) fn navigate_after_login(
     app_handle: &tauri::AppHandle,
-    location: &str,
+    path: routes::Paths,
 ) -> Result<(), Error> {
-    debug!("Attempting to redirect after login to: {}", location);
-
-    let page_path = location.parse::<routes::Paths>().map_err(|e| {
-        error!(
-            "Failed to parse location '{}' for redirect: {}",
-            location, e
-        );
-        e
-    })?;
+    debug!("Attempting to redirect after login to: {:?}", path);
     let win = app_handle.get_webview_window("main").ok_or(Error::Window)?;
     let win_url = win.url()?;
-    let redirect_url = routes::from_url(page_path, win_url);
-
+    let redirect_url = routes::from_url(path, win_url);
     debug!("Redirecting to: {}", redirect_url);
     win.navigate(redirect_url)?;
-
     Ok(())
 }
 
@@ -589,7 +582,10 @@ async fn login_command(
         .await;
 
     if let Some(location) = location {
-        navigate_after_login(app_handle, &location).map_err(|e| Error::PostLogin(e.to_string()))?;
+        let path = location
+            .parse::<routes::Paths>()
+            .map_err(|e| Error::PostLogin(e.to_string()))?;
+        navigate_after_login(app_handle, path).map_err(|e| Error::PostLogin(e.to_string()))?;
     }
 
     Ok(())

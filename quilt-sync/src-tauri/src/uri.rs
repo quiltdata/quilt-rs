@@ -105,19 +105,15 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
     let host = auth_params.host.clone();
     let host_str = host.to_string();
     let state = auth_params.state;
-    let redirect = auth_params.redirect.unwrap_or_else(|| {
-        let fallback = routes::Paths::InstalledPackagesList.to_string();
-        match handle
-            .get_webview_window("main")
-            .and_then(|win| win.url().ok())
-        {
-            Some(url) => routes::from_url(routes::Paths::InstalledPackagesList, url).to_string(),
-            None => {
-                warn!("Main window unavailable for redirect fallback, using default");
-                fallback
-            }
-        }
-    });
+    let redirect_path: routes::Paths = auth_params
+        .redirect
+        .as_deref()
+        .and_then(|r| {
+            r.parse::<routes::Paths>()
+                .map_err(|err| warn!("Failed to parse redirect '{}': {}", r, err))
+                .ok()
+        })
+        .unwrap_or(routes::Paths::InstalledPackagesList);
 
     tauri::async_runtime::spawn(async move {
         let oauth_state = handle.state::<OAuthState>();
@@ -157,7 +153,21 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
 
         match result {
             (Ok(()), stored_location, Some(flow)) => {
-                let final_redirect = stored_location.unwrap_or(redirect);
+                let final_path = stored_location
+                    .as_deref()
+                    .and_then(|loc| {
+                        loc.parse::<routes::Paths>()
+                            .map_err(|err| {
+                                error!(
+                                    "Login succeeded but stored redirect '{}' \
+                                     is not a valid route: {}; \
+                                     falling back to default page",
+                                    loc, err
+                                )
+                            })
+                            .ok()
+                    })
+                    .unwrap_or(redirect_path);
                 let telemetry = handle.state::<crate::telemetry::Telemetry>();
                 telemetry
                     .track(crate::telemetry::MixpanelEvent::UserLoggedIn {
@@ -165,7 +175,7 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
                         flow,
                     })
                     .await;
-                if let Err(err) = commands::navigate_after_login(&handle, &final_redirect) {
+                if let Err(err) = commands::navigate_after_login(&handle, final_path) {
                     error!("Failed to redirect after login: {}", err);
                 }
             }
