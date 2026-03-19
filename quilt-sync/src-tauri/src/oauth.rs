@@ -15,9 +15,13 @@ const TTL: Duration = Duration::from_secs(10 * 60);
 /// When the user initiates OAuth login, we generate a PKCE challenge
 /// and store the verifier here. When the deep link callback arrives,
 /// we look up the verifier for the host and exchange the code.
+///
+/// Also tracks hosts for which a login page was recently shown, so
+/// legacy device-flow callbacks can be validated against it.
 #[derive(Default)]
 pub struct OAuthState {
     pending: Mutex<HashMap<String, PendingAuth>>,
+    active_login_hosts: Mutex<HashMap<String, Instant>>,
 }
 
 struct PendingAuth {
@@ -146,6 +150,26 @@ impl OAuthState {
             },
             pending.location,
         )))
+    }
+
+    /// Record that the login page was shown for `host`.
+    ///
+    /// Call this whenever the login page is rendered so that
+    /// [`Self::is_login_host_active`] can validate legacy device-flow
+    /// callbacks and reject unsolicited deep links.
+    pub async fn record_login_host(&self, host: &quilt::uri::Host) {
+        let host_key = host.to_string();
+        let mut guard = self.active_login_hosts.lock().await;
+        guard.retain(|_, v| v.elapsed() < TTL);
+        guard.insert(host_key.clone(), Instant::now());
+        debug!("Recorded active login host: {host_key}");
+    }
+
+    /// Returns `true` if the login page was shown for `host` within the TTL.
+    pub async fn is_login_host_active(&self, host: &quilt::uri::Host) -> bool {
+        let host_key = host.to_string();
+        let guard = self.active_login_hosts.lock().await;
+        guard.get(&host_key).map_or(false, |t| t.elapsed() < TTL)
     }
 }
 

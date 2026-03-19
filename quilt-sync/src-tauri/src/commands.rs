@@ -34,6 +34,16 @@ async fn load_page_command(
     let home = get_default_home_dir(app_handle)?;
 
     let path = location.parse::<routes::Paths>()?;
+
+    // Record directly-navigated login pages so the legacy device-flow
+    // callback can validate the host (see uri::login_with_code Ok(None) branch).
+    if let routes::Paths::Login(ref host) = path {
+        app_handle
+            .state::<OAuthState>()
+            .record_login_host(host)
+            .await;
+    }
+
     let page_result = pages::load(m, app, &home, tracing, &path).await;
 
     match page_result {
@@ -62,6 +72,11 @@ async fn load_page_command(
         Err(Error::Quilt(quilt::Error::LoginRequired(Some(host)))) => {
             let warn = "Login is required";
             warn!("{}", warn);
+            // Record the host so the legacy device-flow callback can validate it.
+            app_handle
+                .state::<OAuthState>()
+                .record_login_host(&host)
+                .await;
             // `location` is the full URL from the frontend; it is stored
             // verbatim in PendingAuth and parsed back into a typed Paths
             // after a successful OAuth callback (see uri::login_with_code).
