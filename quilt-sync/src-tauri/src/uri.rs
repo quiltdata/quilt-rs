@@ -132,34 +132,15 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
                 // No OAuth flow was ever initiated for this host (e.g. a
                 // legacy device-flow callback). Expired state is an Err, so
                 // Ok(None) here means the entry was genuinely absent.
-                //
-                // Validate that the login page was recently shown for this
-                // host to reject unsolicited deep links directing the login
-                // to an arbitrary server.
-                if !oauth_state.is_login_host_active(&host).await {
-                    warn!(
-                        "Legacy login callback for {host_str} with no active login session: \
-                         possible unsolicited deep link; ignoring"
-                    );
-                    (
-                        Err(Error::OAuth(format!(
-                            "No active login session for {host_str}; \
-                             please start the login flow from within the app"
-                        ))),
-                        None,
-                        None,
-                    )
-                } else {
-                    info!(
-                        "No pending OAuth state for {}, falling back to legacy code-based login",
-                        host_str
-                    );
-                    (
-                        model::login(&*m, &host, auth_params.code).await,
-                        None,
-                        Some(LoginFlow::Legacy),
-                    )
-                }
+                info!(
+                    "No pending OAuth state for {}, falling back to legacy code-based login",
+                    host_str
+                );
+                (
+                    model::login(&*m, &host, auth_params.code).await,
+                    None,
+                    Some(LoginFlow::Legacy),
+                )
             }
             Err(err) => {
                 error!(
