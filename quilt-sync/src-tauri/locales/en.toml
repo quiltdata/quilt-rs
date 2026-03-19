@@ -95,3 +95,8 @@ dot_quilt = 'Open .quilt directory'
 home = 'Go home'
 login = 'Login'
 refresh = 'Reload page'
+
+[login_error]
+title = 'Login failed'
+retry = 'Try again'
+home = 'Go home'

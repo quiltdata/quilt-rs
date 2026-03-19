@@ -1,0 +1,18 @@
+{% extends "./components/layout.html" %}
+
+{% block children %}
+  <style>
+    @import url("/assets/css/pages/error.css");
+  </style>
+
+  <div class="qui-page-error container">
+    <h1 class="title">{{ t!("login_error.title") }}</h1>
+
+    <p class="message" data-testid="error-msg">{{ error }}</p>
+
+    <div class="button-group">
+      {{ retry | safe }}
+      {{ home | safe }}
+    </div>
+  </div>
+{% endblock %}
