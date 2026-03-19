@@ -91,6 +91,7 @@ show_logs = 'Show logs'
 version = 'Version:'
 
 [error]
+title = 'Something went wrong!'
 dot_quilt = 'Open .quilt directory'
 home = 'Go home'
 login = 'Login'

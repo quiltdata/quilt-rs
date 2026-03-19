@@ -81,7 +81,7 @@ impl ViewError {
         .cloned();
         Ok(ViewError {
             globals: app.globals(),
-            title: "Something went wrong!".into(),
+            title: t!("error.title").into(),
             err: err.to_string(),
             login,
         })
@@ -90,11 +90,12 @@ impl ViewError {
     pub async fn for_login_error(
         app: &impl AppAssets,
         host: quilt::uri::Host,
+        title: String,
         error: String,
     ) -> Result<ViewError> {
         Ok(ViewError {
             globals: app.globals(),
-            title: t!("login_error.title").into(),
+            title,
             err: error,
             login: Some(host),
         })
@@ -122,7 +123,7 @@ pub mod mocks {
             login: None,
         })
         .render()?;
-        let has_error_title = html.contains("Something went wrong!");
+        let has_error_title = html.contains(&*t!("error.title"));
         let has_error_message =
             html.contains(r#"data-testid="error-msg">Quilt error: Unimplemented"#);
         assert!(has_error_title);

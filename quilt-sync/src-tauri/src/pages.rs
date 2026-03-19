@@ -50,8 +50,8 @@ pub async fn load(
         Paths::Login(host) => ViewLogin::create(app, tracing, host.clone(), None)
             .await?
             .render(),
-        Paths::LoginError(host, error) => {
-            ViewError::for_login_error(app, host.clone(), error.clone())
+        Paths::LoginError(host, title, error) => {
+            ViewError::for_login_error(app, host.clone(), title.clone(), error.clone())
                 .await?
                 .render()
         }
