@@ -117,6 +117,9 @@ mod tests {
         let view = ViewLogin {
             globals: Globals::default(),
             host: host.clone(),
+            // NOTE: bare page name used here for test convenience only.
+            // In production, location is always a full URL from the frontend
+            // (see load_page_command in commands.rs).
             location: Some("installed-packages-list.html".to_string()),
         };
 

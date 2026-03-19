@@ -62,6 +62,9 @@ async fn load_page_command(
         Err(Error::Quilt(quilt::Error::LoginRequired(Some(host)))) => {
             let warn = "Login is required";
             warn!("{}", warn);
+            // `location` is the full URL from the frontend; it is stored
+            // verbatim in PendingAuth and parsed back into a typed Paths
+            // after a successful OAuth callback (see uri::login_with_code).
             let login_page =
                 pages::ViewLogin::create(app, tracing, host.clone(), Some(location.to_string()))
                     .await?;
