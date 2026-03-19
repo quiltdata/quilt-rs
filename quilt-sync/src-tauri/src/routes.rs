@@ -95,6 +95,7 @@ fn parse_s3_package_uri(location: &str) -> Result<quilt::uri::S3PackageUri, Erro
     let uri = Url::parse(location)?;
     match uri.query() {
         Some(n) => {
+            // TODO: replace unwrap() with ? to avoid a panic on a malformed uri query param
             let qs: FragmentRemotePackage = serde_qs::from_str(n).unwrap();
             debug!("Pre-parsed URI is {}", qs.uri);
             Ok(quilt::uri::S3PackageUri::try_from(qs.uri.as_str())?)
