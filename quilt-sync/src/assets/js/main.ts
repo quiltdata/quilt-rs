@@ -534,6 +534,9 @@ window.addEventListener(EVENT_PAGE_READY, () => {
     ),
   );
 
+  // TODO: SELECTOR_LOGIN uses inline invoke + manual layout/navigation handling
+  // while SELECTOR_LOGIN_OAUTH uses execInlineCommand. Align both handlers to
+  // the same pattern once the behavioral differences are understood.
   listen(SELECTOR_LOGIN, ["form"], async (data) => {
     const formData = collectFormData(data.form as SELECTOR_FORM);
     const layout = findElement("#layout");

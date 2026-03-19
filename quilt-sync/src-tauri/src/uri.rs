@@ -54,40 +54,40 @@ struct AuthParams {
 
 /// Parse auth callback query parameters from a `quilt://` URL.
 fn parse_auth_params(url: &Url) -> Result<AuthParams> {
+    // Collect into a HashMap keeping the first value for each key, matching
+    // the original .find() semantics and guarding against HTTP Parameter Pollution.
+    let mut params = std::collections::HashMap::new();
+    for (k, v) in url.query_pairs() {
+        params.entry(k).or_insert(v);
+    }
+
     // RFC 6749 §4.1.2.1: check for error response before looking for `code`.
-    if let Some((_, error)) = url.query_pairs().find(|(k, _)| k == "error") {
-        let description = url
-            .query_pairs()
-            .find(|(k, _)| k == "error_description")
-            .map(|(_, v)| format!(": {v}"))
+    if let Some(error) = params.get("error") {
+        let description = params
+            .get("error_description")
+            .map(|v| format!(": {v}"))
             .unwrap_or_default();
         return Err(Error::General(format!(
             "OAuth error — {error}{description}"
         )));
     }
 
-    let code = url
-        .query_pairs()
-        .find(|(k, _)| k == "code")
-        .map(|(_, v)| v.into_owned())
+    let code = params
+        .get("code")
+        .map(|v| v.to_string())
         .ok_or_else(|| Error::General("Missing 'code' parameter in auth callback".into()))?;
 
-    let host_str = url
-        .query_pairs()
-        .find(|(k, _)| k == "host")
-        .map(|(_, v)| v.into_owned())
+    let host_str = params
+        .get("host")
+        .map(|v| v.to_string())
         .ok_or_else(|| Error::General("Missing 'host' parameter in auth callback".into()))?;
 
-    let state = url
-        .query_pairs()
-        .find(|(k, _)| k == "state")
-        .map(|(_, v)| v.into_owned())
+    let state = params
+        .get("state")
+        .map(|v| v.to_string())
         .ok_or_else(|| Error::General("Missing 'state' parameter in auth callback".into()))?;
 
-    let redirect = url
-        .query_pairs()
-        .find(|(k, _)| k == "redirect")
-        .map(|(_, v)| v.into_owned());
+    let redirect = params.get("redirect").map(|v| v.to_string());
 
     let host = quilt::uri::Host::from_str(&host_str)?;
     Ok(AuthParams {
