@@ -62,7 +62,9 @@ fn parse_auth_params(url: &Url) -> Result<AuthParams> {
             .get("error_description")
             .map(|v| format!(": {v}"))
             .unwrap_or_default();
-        return Err(Error::General(format!("OAuth error — {error}{description}")));
+        return Err(Error::General(format!(
+            "OAuth error — {error}{description}"
+        )));
     }
 
     let code = params
