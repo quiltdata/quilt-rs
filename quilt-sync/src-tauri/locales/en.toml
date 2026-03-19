@@ -98,5 +98,3 @@ refresh = 'Reload page'
 
 [login_error]
 title = 'Login failed'
-retry = 'Try again'
-home = 'Go home'

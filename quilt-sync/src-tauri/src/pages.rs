@@ -7,7 +7,6 @@ mod error;
 mod installed_package;
 mod installed_packages_list;
 mod login;
-mod login_error;
 mod merge;
 mod setup;
 
@@ -21,7 +20,6 @@ pub use commit::ViewCommit;
 pub use error::ViewError;
 pub use installed_package::ViewInstalledPackage;
 pub use login::ViewLogin;
-pub use login_error::ViewLoginError;
 pub use merge::ViewMerge;
 pub use setup::ViewSetup;
 
@@ -52,9 +50,11 @@ pub async fn load(
         Paths::Login(host) => ViewLogin::create(app, tracing, host.clone(), None)
             .await?
             .render(),
-        Paths::LoginError(host, error) => ViewLoginError::create(app, host.clone(), error.clone())
-            .await?
-            .render(),
+        Paths::LoginError(host, error) => {
+            ViewError::for_login_error(app, host.clone(), error.clone())
+                .await?
+                .render()
+        }
         Paths::Merge(namespace) => ViewMerge::create(model, app, tracing, namespace)
             .await?
             .render(),
