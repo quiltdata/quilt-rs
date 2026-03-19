@@ -54,7 +54,12 @@ struct AuthParams {
 
 /// Parse auth callback query parameters from a `quilt://` URL.
 fn parse_auth_params(url: &Url) -> Result<AuthParams> {
-    let params: std::collections::HashMap<_, _> = url.query_pairs().collect();
+    // Collect into a HashMap keeping the first value for each key, matching
+    // the original .find() semantics and guarding against HTTP Parameter Pollution.
+    let mut params = std::collections::HashMap::new();
+    for (k, v) in url.query_pairs() {
+        params.entry(k).or_insert(v);
+    }
 
     // RFC 6749 §4.1.2.1: check for error response before looking for `code`.
     if let Some(error) = params.get("error") {
