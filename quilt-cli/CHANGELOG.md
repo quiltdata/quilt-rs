@@ -5,6 +5,7 @@
      Use alpha pre-release versions (e.g. v0.24.1-alpha1) instead of [Unreleased]
      to keep changelog in sync with Cargo.toml version.
 -->
+<!-- markdownlint-disable MD013 -->
 # Changelog
 
 ## [v0.24.0] - 2025-02-04
