@@ -72,15 +72,17 @@ fn parse_host(location: &str) -> Result<quilt::uri::Host, Error> {
 #[derive(Debug, serde::Deserialize)]
 struct FragmentLoginErrorParsed {
     pub host: quilt::uri::Host,
+    #[serde(default)]
+    pub title: Option<String>,
     pub error: String,
 }
 
-fn parse_login_error(location: &str) -> Result<(quilt::uri::Host, String), Error> {
+fn parse_login_error(location: &str) -> Result<(quilt::uri::Host, Option<String>, String), Error> {
     let uri = Url::parse(location)?;
     match uri.fragment() {
         Some(n) => {
             let qs: FragmentLoginErrorParsed = serde_qs::from_str(n)?;
-            Ok((qs.host, qs.error))
+            Ok((qs.host, qs.title, qs.error))
         }
         None => Err(Error::PageUrl(RouteError::MissingHostFragment(uri))),
     }
@@ -116,7 +118,7 @@ pub enum Paths {
     #[serde(rename = "login")]
     Login(quilt::uri::Host),
     #[serde(rename = "login_error")]
-    LoginError(quilt::uri::Host, String),
+    LoginError(quilt::uri::Host, String, String),
     #[serde(rename = "merge")]
     Merge(quilt::uri::Namespace),
     #[serde(rename = "remote_package")]
@@ -140,9 +142,13 @@ impl fmt::Display for Paths {
             Paths::Login(host) => {
                 write!(f, "login.html#host={host}")
             }
-            Paths::LoginError(host, error) => {
+            Paths::LoginError(host, title, error) => {
+                let title_encoded = urlencoding::encode(title);
                 let error_encoded = urlencoding::encode(error);
-                write!(f, "login-error.html#host={host}&error={error_encoded}")
+                write!(
+                    f,
+                    "login-error.html#host={host}&title={title_encoded}&error={error_encoded}"
+                )
             }
             Paths::Merge(namespace) => {
                 write!(f, "merge.html#namespace={namespace}")
@@ -199,10 +205,13 @@ pub fn from_url(path: Paths, mut url: Url) -> url::Url {
             url.set_fragment(Some(&format!("host={host}")));
             url
         }
-        Paths::LoginError(host, ref error) => {
+        Paths::LoginError(host, ref title, ref error) => {
+            let title_encoded = urlencoding::encode(title);
             let error_encoded = urlencoding::encode(error);
             url.set_path("pages/login-error.html");
-            url.set_fragment(Some(&format!("host={host}&error={error_encoded}")));
+            url.set_fragment(Some(&format!(
+                "host={host}&title={title_encoded}&error={error_encoded}"
+            )));
             url
         }
         Paths::Merge(namespace) => {
@@ -244,8 +253,9 @@ impl str::FromStr for Paths {
                 Ok(Paths::Login(host))
             }
             "login-error.html" => {
-                let (host, error) = parse_login_error(location)?;
-                Ok(Paths::LoginError(host, error))
+                let (host, title, error) = parse_login_error(location)?;
+                let title = title.unwrap_or_else(|| "Login failed".into());
+                Ok(Paths::LoginError(host, title, error))
             }
             "merge.html" => {
                 let namespace = parse_namespace(location)?;
@@ -353,18 +363,39 @@ mod tests {
     #[test]
     fn test_login_error() -> Result<()> {
         let host: Host = "test.quilt.dev".parse()?;
+        let title = "Login failed";
         let error = "Auth failed: invalid_grant (token expired)";
         let page_url = from_url(
-            Paths::LoginError(host.clone(), error.to_string()),
+            Paths::LoginError(host.clone(), title.to_string(), error.to_string()),
             Url::parse("http://test:1234/")?,
         );
         let page_url_str = page_url.as_str();
         assert!(page_url_str
-            .starts_with("http://test:1234/pages/login-error.html#host=test.quilt.dev&error="));
+            .starts_with("http://test:1234/pages/login-error.html#host=test.quilt.dev&title="));
 
         let route: Paths = page_url_str.parse()?;
-        assert_eq!(route, Paths::LoginError(host, error.to_string()));
+        assert_eq!(
+            route,
+            Paths::LoginError(host, title.to_string(), error.to_string())
+        );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_login_error_without_title_defaults_to_login_failed() -> Result<()> {
+        let host: Host = "test.quilt.dev".parse()?;
+        let error = "Auth failed";
+        // Old URL format without title — must parse without panicking and default gracefully.
+        let url = format!(
+            "http://test:1234/pages/login-error.html#host={host}&error={}",
+            urlencoding::encode(error)
+        );
+        let route: Paths = url.parse()?;
+        assert_eq!(
+            route,
+            Paths::LoginError(host, "Login failed".to_string(), error.to_string())
+        );
         Ok(())
     }
 

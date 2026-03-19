@@ -1,7 +1,5 @@
 use std::path::Path;
 
-use crate::quilt;
-use crate::quilt::error::AuthError;
 use crate::routes::Paths;
 
 mod commit;
@@ -52,10 +50,11 @@ pub async fn load(
         Paths::Login(host) => ViewLogin::create(app, tracing, host.clone(), None)
             .await?
             .render(),
-        Paths::LoginError(host, error) => Err(Error::Quilt(quilt::Error::Auth(
-            host.clone(),
-            AuthError::CredentialsRead(error.clone()),
-        ))),
+        Paths::LoginError(host, title, error) => {
+            ViewError::for_login_error(app, host.clone(), title.clone(), error.clone())
+                .await?
+                .render()
+        }
         Paths::Merge(namespace) => ViewMerge::create(model, app, tracing, namespace)
             .await?
             .render(),

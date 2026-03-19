@@ -12,7 +12,8 @@ use crate::Result;
 
 #[derive(Debug)]
 pub struct ViewError {
-    err: Error,
+    err: String,
+    title: String,
     globals: Globals,
     login: Option<quilt::uri::Host>,
 }
@@ -21,7 +22,8 @@ pub struct ViewError {
 #[template(path = "./pages/error.html")]
 pub struct TmplPageError<'a> {
     dot_quilt: btn::TmplButton<'a>,
-    err: Error,
+    err: String,
+    title: String,
     home: btn::TmplButton<'a>,
     login: Option<btn::TmplButton<'a>>,
     reload: btn::TmplButton<'a>,
@@ -60,6 +62,7 @@ impl From<ViewError> for TmplPageError<'_> {
         TmplPageError {
             dot_quilt: Self::dot_quilt_button(),
             err: view.err,
+            title: view.title,
             home: Self::home_button(),
             layout: Layout::new(view.globals, None),
             login: view.login.map(Self::login_button),
@@ -78,8 +81,23 @@ impl ViewError {
         .cloned();
         Ok(ViewError {
             globals: app.globals(),
-            err,
+            title: t!("error.title").into(),
+            err: err.to_string(),
             login,
+        })
+    }
+
+    pub async fn for_login_error(
+        app: &impl AppAssets,
+        host: quilt::uri::Host,
+        title: String,
+        error: String,
+    ) -> Result<ViewError> {
+        Ok(ViewError {
+            globals: app.globals(),
+            title,
+            err: error,
+            login: Some(host),
         })
     }
 
@@ -99,16 +117,33 @@ pub mod mocks {
     fn test_view() -> Result {
         let app = app_mocks::create();
         let html = TmplPageError::from(ViewError {
-            err: Error::Quilt(quilt::Error::Unimplemented),
+            err: "Quilt error: Unimplemented".into(),
+            title: "Something went wrong!".into(),
             globals: app.globals(),
             login: None,
         })
         .render()?;
-        let has_error_title = html.contains("Unimplemented");
+        let has_error_title = html.contains(&*t!("error.title"));
         let has_error_message =
             html.contains(r#"data-testid="error-msg">Quilt error: Unimplemented"#);
         assert!(has_error_title);
         assert!(has_error_message);
+        Ok(())
+    }
+
+    #[test]
+    fn test_login_error_view() -> Result {
+        let app = app_mocks::create();
+        let host: quilt::uri::Host = "test.quilt.dev".parse().unwrap();
+        let html = TmplPageError::from(ViewError {
+            err: "Access denied".into(),
+            title: "Login failed".into(),
+            globals: app.globals(),
+            login: Some(host),
+        })
+        .render()?;
+        assert!(html.contains("Login failed"));
+        assert!(html.contains(r#"data-testid="error-msg">Access denied"#));
         Ok(())
     }
 }

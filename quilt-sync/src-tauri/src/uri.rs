@@ -1,5 +1,6 @@
 use std::str::FromStr;
 
+use rust_i18n::t;
 use tauri::AppHandle;
 use tauri::Manager;
 use tauri_plugin_deep_link::DeepLinkExt;
@@ -177,16 +178,52 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
                     .await;
                 if let Err(err) = commands::navigate_after_login(&handle, final_path) {
                     error!("Failed to redirect after login: {}", err);
+                    let error_path = routes::Paths::LoginError(
+                        host.clone(),
+                        t!("error.title").into(),
+                        err.to_string(),
+                    );
+                    if let Some(win) = handle.get_webview_window("main") {
+                        match win.url() {
+                            Ok(win_url) => {
+                                let error_url = routes::from_url(error_path, win_url);
+                                if let Err(nav_err) = win.navigate(error_url) {
+                                    error!(
+                                        "Failed to navigate to error page after login: {}",
+                                        nav_err
+                                    );
+                                }
+                            }
+                            Err(url_err) => {
+                                error!(
+                                    "Failed to get window URL when navigating to error page: {}",
+                                    url_err
+                                );
+                            }
+                        }
+                    }
                 }
             }
             (Err(err), _, _) => {
                 error!("Failed to login via deep link: {}", err);
-                let error_path = routes::Paths::LoginError(host, err.to_string());
+                let error_path = routes::Paths::LoginError(
+                    host,
+                    t!("login_error.title").into(),
+                    err.to_string(),
+                );
                 if let Some(win) = handle.get_webview_window("main") {
-                    if let Ok(win_url) = win.url() {
-                        let error_url = routes::from_url(error_path, win_url);
-                        if let Err(nav_err) = win.navigate(error_url) {
-                            error!("Failed to navigate to error page: {}", nav_err);
+                    match win.url() {
+                        Ok(win_url) => {
+                            let error_url = routes::from_url(error_path, win_url);
+                            if let Err(nav_err) = win.navigate(error_url) {
+                                error!("Failed to navigate to error page: {}", nav_err);
+                            }
+                        }
+                        Err(url_err) => {
+                            error!(
+                                "Failed to get window URL when navigating to error page: {}",
+                                url_err
+                            );
                         }
                     }
                 }

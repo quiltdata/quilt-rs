@@ -8,6 +8,14 @@
 -->
 # Changelog
 
+## [v0.14.4-alpha10] - 2026-03-19
+
+### Fixed
+
+- Show a proper error page instead of an infinite spinner when OAuth login fails,
+  reusing the generic error page with a "Login failed" title
+  (<https://github.com/quiltdata/quilt-rs/pull/569>)
+
 ## [v0.14.4-alpha9] - 2026-03-18
 
 ### Fixed
