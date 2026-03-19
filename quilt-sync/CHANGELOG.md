@@ -8,6 +8,15 @@
 -->
 # Changelog
 
+## [v0.14.4-alpha11] - 2026-03-19
+
+### Fixed
+
+- Reject unsolicited `quilt://auth/callback` deep links with a clear error instead
+  of falling back to the legacy code-based login, which was dead code since the
+  `quilt://` scheme is only used by OAuth 2.1
+  (<https://github.com/quiltdata/quilt-rs/pull/570>)
+
 ## [v0.14.4-alpha10] - 2026-03-19
 
 ### Fixed

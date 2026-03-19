@@ -100,15 +100,15 @@ impl OAuthState {
     /// the `state` parameter for CSRF protection (RFC 6749 §10.12).
     ///
     /// Returns:
-    /// - `Ok(Some(params))` — state matched, proceed with Token Request
-    /// - `Ok(None)` — no pending state for this host (legacy device flow callback)
-    /// - `Err(_)` — state expired or mismatched; abort, do not fall back
+    /// - `Ok(params)` — state matched, proceed with Token Request
+    /// - `Err(_)` — no pending state for this host, state expired, or state
+    ///   mismatched; abort, do not fall back
     pub async fn take_params(
         &self,
         host: &quilt::uri::Host,
         code: String,
         state: &str,
-    ) -> Result<Option<(quilt::auth::OAuthParams, Option<String>)>, Error> {
+    ) -> Result<(quilt::auth::OAuthParams, Option<String>), Error> {
         let host_key = host.to_string();
         let mut guard = self.pending.lock().await;
         let pending = match guard.remove(&host_key) {
@@ -125,7 +125,10 @@ impl OAuthState {
             None => {
                 let keys: Vec<String> = guard.keys().cloned().collect();
                 warn!("No pending OAuth state for {host_key}. Pending hosts: {keys:?}");
-                return Ok(None);
+                return Err(Error::OAuth(format!(
+                    "No active OAuth flow for {host_key}; \
+                     please start the login flow from within the app"
+                )));
             }
         };
         drop(guard);
@@ -137,7 +140,7 @@ impl OAuthState {
             )));
         }
 
-        Ok(Some((
+        Ok((
             quilt::auth::OAuthParams {
                 code,
                 code_verifier: pending.code_verifier,
@@ -145,7 +148,7 @@ impl OAuthState {
                 client_id: pending.client_id,
             },
             pending.location,
-        )))
+        ))
     }
 }
 
@@ -197,7 +200,21 @@ mod tests {
         let result = oauth
             .take_params(&host, "auth-code".to_string(), &state)
             .await;
-        assert!(result.unwrap().is_some());
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn take_params_errors_for_unknown_host() {
+        let oauth = OAuthState::default();
+        let host = test_host();
+        // No start_login call — simulates an unsolicited deep link.
+        let result = oauth
+            .take_params(&host, "auth-code".to_string(), "state")
+            .await;
+        assert!(
+            matches!(result, Err(Error::OAuth(_))),
+            "expected Err(OAuth) for unsolicited callback"
+        );
     }
 
     #[tokio::test]

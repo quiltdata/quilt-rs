@@ -124,36 +124,22 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
             .take_params(&host, auth_params.code.clone(), &state)
             .await
         {
-            Ok(Some((oauth_params, stored_location))) => {
+            Ok((oauth_params, stored_location)) => {
                 info!("OAuth 2.1 callback for host: {}", host_str);
                 let login_result = model::login_oauth(&*m, &host, oauth_params).await;
-                (login_result, stored_location, Some(LoginFlow::OAuth))
-            }
-            Ok(None) => {
-                // No OAuth flow was ever initiated for this host (e.g. a
-                // legacy device-flow callback). Expired state is an Err, so
-                // Ok(None) here means the entry was genuinely absent.
-                info!(
-                    "No pending OAuth state for {}, falling back to legacy code-based login",
-                    host_str
-                );
-                (
-                    model::login(&*m, &host, auth_params.code).await,
-                    None,
-                    Some(LoginFlow::Legacy),
-                )
+                (login_result, stored_location)
             }
             Err(err) => {
                 error!(
-                    "OAuth state mismatch for {}, aborting callback: {}",
+                    "OAuth callback rejected for {}, aborting: {}",
                     host_str, err
                 );
-                (Err(err), None, None)
+                (Err(err), None)
             }
         };
 
         match result {
-            (Ok(()), stored_location, Some(flow)) => {
+            (Ok(()), stored_location) => {
                 let final_path = stored_location
                     .as_deref()
                     .and_then(|loc| {
@@ -173,7 +159,7 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
                 telemetry
                     .track(crate::telemetry::MixpanelEvent::UserLoggedIn {
                         host: host_str.clone(),
-                        flow,
+                        flow: LoginFlow::OAuth,
                     })
                     .await;
                 if let Err(err) = commands::navigate_after_login(&handle, final_path) {
@@ -204,7 +190,7 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
                     }
                 }
             }
-            (Err(err), _, _) => {
+            (Err(err), _) => {
                 error!("Failed to login via deep link: {}", err);
                 let error_path = routes::Paths::LoginError(
                     host,
@@ -228,7 +214,6 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
                     }
                 }
             }
-            (Ok(()), _, None) => unreachable!("login succeeded but flow is not set"),
         }
     });
 
