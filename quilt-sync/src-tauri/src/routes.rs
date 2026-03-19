@@ -145,7 +145,10 @@ impl fmt::Display for Paths {
             Paths::LoginError(host, title, error) => {
                 let title_encoded = urlencoding::encode(title);
                 let error_encoded = urlencoding::encode(error);
-                write!(f, "login-error.html#host={host}&title={title_encoded}&error={error_encoded}")
+                write!(
+                    f,
+                    "login-error.html#host={host}&title={title_encoded}&error={error_encoded}"
+                )
             }
             Paths::Merge(namespace) => {
                 write!(f, "merge.html#namespace={namespace}")
