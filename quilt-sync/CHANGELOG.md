@@ -9,92 +9,33 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.14.4-alpha11] - 2026-03-19
-
-### Fixed
-
-- Reject unsolicited `quilt://auth/callback` deep links with a clear error instead of falling back to the legacy code-based login, which was dead code since the `quilt://` scheme is only used by OAuth 2.1 (<https://github.com/quiltdata/quilt-rs/pull/570>)
-
-## [v0.14.4-alpha10] - 2026-03-19
-
-### Fixed
-
-- Show a proper error page instead of an infinite spinner when OAuth login fails,
-  reusing the generic error page with a "Login failed" title
-  (<https://github.com/quiltdata/quilt-rs/pull/569>)
-
-## [v0.14.4-alpha9] - 2026-03-18
-
-### Fixed
-
-- Fix silent navigation failure after OAuth login: `navigate_after_login` now
-  accepts a typed `routes::Paths` instead of a raw string; on an unexpected
-  redirect value an `error!`-level log is emitted and the user is sent to the
-  default page rather than being left on the login screen
-  (<https://github.com/quiltdata/quilt-rs/pull/568>)
-
-## [v0.14.4-alpha8] - 2026-03-18
-
-### Fixed
-
-- Return `Err` instead of `Ok(None)` when an OAuth state entry has expired in
-  `take_params`, preventing a timed-out callback from falling through to the
-  legacy code-based login and bypassing PKCE+CSRF verification
-  (<https://github.com/quiltdata/quilt-rs/pull/567>)
-
-## [v0.14.4-alpha7] - 2026-03-18
-
-### Changed
-
-- Flatten `navigate_after_login` from four nested `match` blocks to
-  early-return style; missing main window now returns `Err(Error::Window)`
-  instead of silently succeeding
-  (<https://github.com/quiltdata/quilt-rs/pull/564>)
-
-## [v0.14.4-alpha6] - 2026-03-18
-
-### Changed
-
-- Clarify log message when falling back to legacy code-based login after OAuth
-  callback with no pending state
-- Add `flow` field (`"oauth"` or `"legacy"`) to the `UserLoggedIn` telemetry
-  event to track which login path was used
-  (<https://github.com/quiltdata/quilt-rs/pull/562>)
-
-## [v0.14.4-alpha5] - 2026-03-18
-
-### Fixed
-
-- URL-encode host in OAuth redirect URI to handle special characters correctly
-  (<https://github.com/quiltdata/quilt-rs/pull/560>)
-
-## [v0.14.4-alpha4] - 2026-03-18
-
-### Fixed
-
-- Evict expired OAuth state entries (TTL: 10 min) to prevent unbounded
-  memory growth in long-running sessions
-  (<https://github.com/quiltdata/quilt-rs/pull/558>)
-
-## [v0.14.4-alpha3] - 2026-03-17
+## [v0.14.4] - 2026-03-19
 
 ### Added
 
-- Restore code-based login as a fallback for stacks that do not support OAuth
-  (<https://github.com/quiltdata/quilt-rs/pull/556>)
+- Browser-based OAuth 2.1 login via `quilt://` deep link callback with code-based login as a fallback for stacks that do not support OAuth (<https://github.com/quiltdata/quilt-rs/pull/539>)
+- Add `flow` field (`"oauth"` or `"legacy"`) to the `UserLoggedIn` telemetry event to track which login path was used (<https://github.com/quiltdata/quilt-rs/pull/562>)
 
-## [v0.14.4-alpha2] - 2026-03-13
+### Fixed
 
-### Removed
+- Reject unsolicited `quilt://auth/callback` deep links with a clear error instead of falling back to the legacy code-based login (<https://github.com/quiltdata/quilt-rs/pull/570>)
+- Show a proper error page instead of an infinite spinner when OAuth login fails, reusing the generic error page with a "Login failed" title (<https://github.com/quiltdata/quilt-rs/pull/569>)
+- Fix silent navigation failure after OAuth login: `navigate_after_login` now accepts a typed `routes::Paths` instead of a raw string; on an unexpected redirect value an `error!`-level log is emitted and the user is sent to the default page rather than being left on the login screen (<https://github.com/quiltdata/quilt-rs/pull/568>)
+- Return `Err` instead of `Ok(None)` when an OAuth state entry has expired in `take_params`, preventing a timed-out callback from bypassing PKCE+CSRF verification (<https://github.com/quiltdata/quilt-rs/pull/567>)
+- Evict expired OAuth state entries (TTL: 10 min) to prevent unbounded memory growth in long-running sessions (<https://github.com/quiltdata/quilt-rs/pull/558>)
+- URL-encode host in OAuth redirect URI to handle special characters correctly (<https://github.com/quiltdata/quilt-rs/pull/560>)
 
-- Remove paste-code authentication from QuiltSync in favor of OAuth
+### Changed
 
-## [v0.14.4-alpha1] - 2026-03-11
+- Flatten `navigate_after_login` from four nested `match` blocks to early-return style; missing main window now returns `Err(Error::Window)` instead of silently succeeding (<https://github.com/quiltdata/quilt-rs/pull/564>)
 
-### Added
+### quilt-rs
 
-- Browser-based OAuth login via `quilt://` deep link callback
-  (<https://github.com/quiltdata/quilt-rs/pull/539>)
+- Updated [from v0.27.2 to v0.27.4](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.27.2...quilt-rs/v0.27.4) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+  - OAuth 2.1 Authorization Code flow with PKCE and Dynamic Client Registration
+  - Redact secrets (`access_token`, `refresh_token`, etc.) from debug logs via custom `Debug` impls
+  - `Auth` now holds `Arc<S>` instead of `S`, removing the `Clone` bound on `Storage`
+  - Replace `read_file`/`write_file` in `Storage` with `read_byte_stream`/`write_byte_stream`; writes are now atomic (temp file + rename)
 
 ## [v0.14.3] - 2026-03-03
 
