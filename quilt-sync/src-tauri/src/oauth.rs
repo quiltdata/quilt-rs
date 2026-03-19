@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use url::Url;
+
 use tokio::sync::Mutex;
 use tokio::time::Instant;
 
@@ -62,20 +64,19 @@ impl OAuthState {
         let state = quilt::auth::random_state();
 
         let base = quilt::auth::catalog_authorize_url(host);
-        let authorize_url = format!(
-            "{base}?\
-             client_id={client_id}\
-             &redirect_uri={redirect_uri}\
-             &code_challenge={challenge}\
-             &code_challenge_method=S256\
-             &response_type=code\
-             &scope=platform\
-             &state={state}",
-            client_id = urlencoding::encode(client_id),
-            redirect_uri = urlencoding::encode(&redirect_uri),
-            challenge = urlencoding::encode(&pkce.code_challenge),
-            state = urlencoding::encode(&state),
-        );
+        let mut url = Url::parse(&base).unwrap_or_else(|_| {
+            // catalog_authorize_url always returns a valid URL; this is a safeguard.
+            Url::parse("https://invalid").expect("fallback URL is valid")
+        });
+        url.query_pairs_mut()
+            .append_pair("client_id", client_id)
+            .append_pair("redirect_uri", &redirect_uri)
+            .append_pair("code_challenge", &pkce.code_challenge)
+            .append_pair("code_challenge_method", "S256")
+            .append_pair("response_type", "code")
+            .append_pair("scope", "platform")
+            .append_pair("state", &state);
+        let authorize_url = url.into();
 
         let pending = PendingAuth {
             code_verifier: pkce.code_verifier,
