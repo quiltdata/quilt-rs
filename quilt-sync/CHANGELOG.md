@@ -16,6 +16,7 @@
   accepts a typed `routes::Paths` instead of a raw string; on an unexpected
   redirect value an `error!`-level log is emitted and the user is sent to the
   default page rather than being left on the login screen
+  (<https://github.com/quiltdata/quilt-rs/pull/568>)
 
 ## [v0.14.4-alpha8] - 2026-03-18
 
