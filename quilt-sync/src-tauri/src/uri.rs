@@ -153,7 +153,21 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
 
         match result {
             (Ok(()), stored_location, Some(flow)) => {
-                let final_path = stored_location.unwrap_or(redirect_path);
+                let final_path = stored_location
+                    .as_deref()
+                    .and_then(|loc| {
+                        loc.parse::<routes::Paths>()
+                            .map_err(|err| {
+                                error!(
+                                    "Login succeeded but stored redirect '{}' \
+                                     is not a valid route: {}; \
+                                     falling back to default page",
+                                    loc, err
+                                )
+                            })
+                            .ok()
+                    })
+                    .unwrap_or(redirect_path);
                 let telemetry = handle.state::<crate::telemetry::Telemetry>();
                 telemetry
                     .track(crate::telemetry::MixpanelEvent::UserLoggedIn {

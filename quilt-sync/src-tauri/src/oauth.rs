@@ -5,7 +5,6 @@ use tokio::sync::Mutex;
 use tokio::time::Instant;
 
 use crate::quilt;
-use crate::routes;
 use crate::telemetry::prelude::*;
 use crate::Error;
 
@@ -26,7 +25,7 @@ struct PendingAuth {
     redirect_uri: String,
     client_id: String,
     state: String,
-    location: Option<routes::Paths>,
+    location: Option<String>,
     created_at: Instant,
 }
 
@@ -56,7 +55,7 @@ impl OAuthState {
         &self,
         host: &quilt::uri::Host,
         client_id: &str,
-        location: Option<routes::Paths>,
+        location: Option<String>,
     ) -> AuthorizeRequest {
         let pkce = quilt::auth::pkce_challenge();
         let redirect_uri = redirect_uri(host);
@@ -109,7 +108,7 @@ impl OAuthState {
         host: &quilt::uri::Host,
         code: String,
         state: &str,
-    ) -> Result<Option<(quilt::auth::OAuthParams, Option<routes::Paths>)>, Error> {
+    ) -> Result<Option<(quilt::auth::OAuthParams, Option<String>)>, Error> {
         let host_key = host.to_string();
         let mut guard = self.pending.lock().await;
         let pending = match guard.remove(&host_key) {

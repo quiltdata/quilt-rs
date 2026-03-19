@@ -626,13 +626,8 @@ pub async fn login_oauth(
         .await
         .map_err(|e| e.to_string())?;
 
-    let location_path = location
-        .as_deref()
-        .map(|loc| loc.parse::<routes::Paths>().map_err(|e| e.to_string()))
-        .transpose()?;
-
     let request = oauth_state
-        .start_login(&host_parsed, &client_id, location_path)
+        .start_login(&host_parsed, &client_id, location)
         .await;
 
     model::open_in_web_browser(&request.authorize_url).map_err(|e| e.to_string())?;
