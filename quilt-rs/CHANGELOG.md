@@ -7,59 +7,25 @@
 -->
 # Changelog
 
-## [v0.27.4-alpha5] - 2026-03-18
-
-### Changed
-
-- Add `AuthError::TokensExchange` variant for failures during authorization code
-  exchange, replacing the misused `TokensRefresh` variant in that path
-  (<https://github.com/quiltdata/quilt-rs/pull/566>)
-- Use `finish_non_exhaustive()` in all custom `Debug` impls for secret-bearing
-  types to signal intentional field omission
-  (<https://github.com/quiltdata/quilt-rs/pull/566>)
-- Document the single-label prefix assumption in `connect_host`, caller CSRF
-  responsibility in `login_oauth`, and caller ownership of
-  `OAuthParams::client_id`
-  (<https://github.com/quiltdata/quilt-rs/pull/566>)
-- Remove unnecessary `Serialize` derive from `DcrResponse` (response-only type)
-  (<https://github.com/quiltdata/quilt-rs/pull/566>)
-- Log a clearer message when token refresh fails due to missing OAuth client
-  registration
-  (<https://github.com/quiltdata/quilt-rs/pull/566>)
-
-## [v0.27.4-alpha4] - 2026-03-18
-
-### Fixed
-
-- Extend secret redaction to `RemoteTokens`, `OAuthTokenResponse`, and
-  `RemoteCredentials` — transient token and credential response types were
-  still leaking secrets via the derived `Debug` impl
-  (<https://github.com/quiltdata/quilt-rs/pull/565>)
-
-## [v0.27.4-alpha3] - 2026-03-18
-
-### Changed
-
-- `Auth` now holds `Arc<S>` instead of `S`, removing the `Clone` bound on
-  `Storage` and ensuring all `AuthIo` instances share the same storage
-  (<https://github.com/quiltdata/quilt-rs/pull/563>)
-- Add blanket `Storage` impl for `Arc<S>` so `AuthIo<Arc<S>>` works without
-  extra wrapping
-
-## [v0.27.4-alpha2] - 2026-03-18
-
-### Fixed
-
-- Redact secrets (`access_token`, `refresh_token`, `access_key`, `secret_key`,
-  `token`) from debug logs via custom `Debug` impls on `Tokens` and `Credentials`
-  (<https://github.com/quiltdata/quilt-rs/pull/559>)
-
-## [v0.27.4-alpha1] - 2026-03-11
+## [v0.27.4] - 2026-03-19
 
 ### Added
 
-- OAuth 2.1 Authorization Code flow with PKCE and Dynamic Client Registration
-  (<https://github.com/quiltdata/quilt-rs/pull/539>)
+- OAuth 2.1 Authorization Code flow with PKCE and Dynamic Client Registration (<https://github.com/quiltdata/quilt-rs/pull/539>)
+
+### Fixed
+
+- Redact secrets (`access_token`, `refresh_token`, `access_key`, `secret_key`, `token`) from debug logs via custom `Debug` impls on `Tokens` and `Credentials` (<https://github.com/quiltdata/quilt-rs/pull/559>)
+- Extend secret redaction to `RemoteTokens`, `OAuthTokenResponse`, and `RemoteCredentials` — transient token and credential response types were still leaking secrets via the derived `Debug` impl (<https://github.com/quiltdata/quilt-rs/pull/565>)
+
+### Changed
+
+- `Auth` now holds `Arc<S>` instead of `S`, removing the `Clone` bound on `Storage` and ensuring all `AuthIo` instances share the same storage (<https://github.com/quiltdata/quilt-rs/pull/563>)
+- Add blanket `Storage` impl for `Arc<S>` so `AuthIo<Arc<S>>` works without extra wrapping (<https://github.com/quiltdata/quilt-rs/pull/563>)
+- Add `AuthError::TokensExchange` variant for failures during authorization code exchange, replacing the misused `TokensRefresh` variant in that path (<https://github.com/quiltdata/quilt-rs/pull/566>)
+- Use `finish_non_exhaustive()` in all custom `Debug` impls for secret-bearing types to signal intentional field omission (<https://github.com/quiltdata/quilt-rs/pull/566>)
+- Document the single-label prefix assumption in `connect_host`, caller CSRF responsibility in `login_oauth`, and caller ownership of `OAuthParams::client_id` (<https://github.com/quiltdata/quilt-rs/pull/566>)
+- Log a clearer message when token refresh fails due to missing OAuth client registration (<https://github.com/quiltdata/quilt-rs/pull/566>)
 
 ## [v0.27.3] - 2026-03-09
 
