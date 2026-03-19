@@ -13,9 +13,9 @@
 ### Fixed
 
 - Fix silent navigation failure after OAuth login: `navigate_after_login` now
-  handles bare page names (e.g. `"installed-packages-list.html"` stored in
-  `PendingAuth::location`) by constructing a full URL from the window origin,
-  since `routes::Paths::from_str` requires a full URL internally
+  accepts a typed `routes::Paths` instead of a raw string; on an unexpected
+  redirect value an `error!`-level log is emitted and the user is sent to the
+  default page rather than being left on the login screen
 
 ## [v0.14.4-alpha8] - 2026-03-18
 
