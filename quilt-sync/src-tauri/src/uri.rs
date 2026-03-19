@@ -196,6 +196,15 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
                     .await;
                 if let Err(err) = commands::navigate_after_login(&handle, final_path) {
                     error!("Failed to redirect after login: {}", err);
+                    let error_path = routes::Paths::LoginError(host.clone(), err.to_string());
+                    if let Some(win) = handle.get_webview_window("main") {
+                        if let Ok(win_url) = win.url() {
+                            let error_url = routes::from_url(error_path, win_url);
+                            if let Err(nav_err) = win.navigate(error_url) {
+                                error!("Failed to navigate to error page after login: {}", nav_err);
+                            }
+                        }
+                    }
                 }
             }
             (Err(err), _, _) => {
