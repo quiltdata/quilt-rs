@@ -235,6 +235,9 @@ async fn erase_auth_command(app_handle: &tauri::AppHandle, host: &str) -> Result
         }
     } else {
         // Per-host erase
+        if host.contains('/') || host.contains('\\') || host.contains("..") {
+            return Err(Error::General(format!("Invalid host: {host}")));
+        }
         let host_dir = auth_dir.join(host);
         if host_dir.exists() {
             std::fs::remove_dir_all(&host_dir)?;
