@@ -71,6 +71,7 @@ impl<'a> TmplSettings<'a> {
     fn open_home_dir_button() -> btn::TmplButton<'static> {
         btn::TmplButton::builder()
             .set_icon(Icon::FolderOpen)
+            .set_label("Open")
             .set_modificator(btn::Modificator::Link)
             .set_js(btn::JsSelector::OpenHomeDir)
     }
@@ -78,6 +79,7 @@ impl<'a> TmplSettings<'a> {
     fn open_data_dir_button() -> btn::TmplButton<'static> {
         btn::TmplButton::builder()
             .set_icon(Icon::FolderOpen)
+            .set_label("Open")
             .set_modificator(btn::Modificator::Link)
             .set_js(btn::JsSelector::OpenDataDir)
     }
