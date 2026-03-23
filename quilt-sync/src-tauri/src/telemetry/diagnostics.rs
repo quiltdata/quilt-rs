@@ -28,20 +28,7 @@ pub async fn collect(
 ) -> Result<DiagnosticInfo, Error> {
     let globals = app.globals();
     let local_data_dir = app_handle.path().app_local_data_dir()?;
-    let auth_dir = local_data_dir.join(quilt::paths::AUTH_DIR);
-
-    let mut auth_hosts: Vec<String> = Vec::new();
-    if auth_dir.exists() {
-        if let Ok(entries) = std::fs::read_dir(&auth_dir) {
-            for entry in entries.flatten() {
-                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                    if let Some(name) = entry.file_name().to_str() {
-                        auth_hosts.push(name.to_string());
-                    }
-                }
-            }
-        }
-    }
+    let auth_hosts = quilt::paths::list_auth_hosts(&local_data_dir);
 
     let home_dir = m
         .get_quilt()

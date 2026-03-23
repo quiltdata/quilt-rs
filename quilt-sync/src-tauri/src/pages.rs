@@ -83,8 +83,6 @@ pub async fn load(
         }
         Paths::Settings => {
             let data_dir_buf = data_dir.to_path_buf();
-            let auth_dir = data_dir_buf.join(quilt::paths::AUTH_DIR);
-
             let home_dir = model
                 .get_quilt()
                 .lock()
@@ -94,19 +92,7 @@ pub async fn load(
                 .ok()
                 .map(|h| h.as_ref().clone());
 
-            let mut auth_hosts: Vec<String> = Vec::new();
-            if auth_dir.exists() {
-                if let Ok(entries) = std::fs::read_dir(&auth_dir) {
-                    for entry in entries.flatten() {
-                        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                            if let Some(name) = entry.file_name().to_str() {
-                                auth_hosts.push(name.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-            auth_hosts.sort();
+            let auth_hosts = quilt::paths::list_auth_hosts(&data_dir_buf);
 
             let log_level = tracing.log_level();
 
