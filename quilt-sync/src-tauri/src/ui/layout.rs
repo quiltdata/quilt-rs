@@ -1,6 +1,5 @@
 use rust_i18n::t;
 
-use crate::app::Globals;
 use crate::quilt;
 use crate::routes::Paths;
 use crate::ui::btn;
@@ -19,8 +18,8 @@ pub struct Layout<'a> {
 }
 
 impl<'a> Layout<'a> {
-    pub fn new(globals: Globals, primary_action: Option<btn::TmplButton<'a>>) -> Layout<'a> {
-        let layout = Self::builder(globals);
+    pub fn new(primary_action: Option<btn::TmplButton<'a>>) -> Layout<'a> {
+        let layout = Self::builder();
         match primary_action {
             Some(action) => layout.set_primary_action(action),
             None => layout,
@@ -43,7 +42,7 @@ impl<'a> Layout<'a> {
             .set_href(Paths::Settings)
     }
 
-    pub fn builder(_globals: Globals) -> Layout<'a> {
+    pub fn builder() -> Layout<'a> {
         Layout {
             primary_action: None,
             secondary_actions: None,
@@ -97,14 +96,14 @@ mod tests {
             .set_label(Cow::from("Test Action"))
             .set_icon(Icon::Done);
 
-        let layout = Layout::new(Globals::default(), Some(primary_action));
+        let layout = Layout::new(Some(primary_action));
 
         assert!(layout.primary_action.is_some());
     }
 
     #[test]
     fn test_new_without_primary_action() {
-        let layout = Layout::new(Globals::default(), None);
+        let layout = Layout::new(None);
 
         assert!(layout.primary_action.is_none());
     }
@@ -117,7 +116,7 @@ mod tests {
             })],
         };
 
-        let layout = Layout::builder(Globals::default()).set_breadcrumbs(breadcrumbs);
+        let layout = Layout::builder().set_breadcrumbs(breadcrumbs);
 
         assert!(layout.breadcrumbs.is_some());
         if let Some(crumbs) = layout.breadcrumbs {
@@ -131,7 +130,7 @@ mod tests {
             .set_label(Cow::from("Test Button"))
             .set_icon(Icon::Done);
 
-        let layout = Layout::builder(Globals::default()).set_primary_action(button);
+        let layout = Layout::builder().set_primary_action(button);
 
         assert!(layout.primary_action.is_some());
     }
@@ -146,7 +145,7 @@ mod tests {
             .set_icon(Icon::Refresh);
 
         let actions = vec![button1, button2];
-        let layout = Layout::builder(Globals::default()).set_actions(actions);
+        let layout = Layout::builder().set_actions(actions);
 
         assert!(layout.secondary_actions.is_some());
         if let Some(actions) = layout.secondary_actions {
@@ -184,7 +183,7 @@ mod tests {
             .set_label(Cow::from("Secondary"))
             .set_icon(Icon::Refresh);
 
-        let layout = Layout::builder(Globals::default())
+        let layout = Layout::builder()
             .set_breadcrumbs(breadcrumbs)
             .set_primary_action(primary_button)
             .set_actions(vec![secondary_button]);

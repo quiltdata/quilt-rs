@@ -155,7 +155,7 @@ impl From<ViewSettings> for TmplSettings<'_> {
             open_logs_dir: TmplSettings::open_logs_dir_button(&view.globals),
             crash_report: TmplSettings::crash_report_button(),
             email_support: TmplSettings::email_support_button(&view.globals),
-            layout: Layout::builder(view.globals).set_breadcrumbs(TmplSettings::breadcrumbs()),
+            layout: Layout::builder().set_breadcrumbs(TmplSettings::breadcrumbs()),
         }
     }
 }

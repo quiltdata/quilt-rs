@@ -2,7 +2,6 @@ use askama::Template;
 use rust_i18n::t;
 
 use crate::app::AppAssets;
-use crate::app::Globals;
 use crate::error::Error;
 use crate::quilt;
 use crate::routes::Paths;
@@ -14,7 +13,6 @@ use crate::Result;
 pub struct ViewError {
     err: String,
     title: String,
-    globals: Globals,
     login: Option<quilt::uri::Host>,
 }
 
@@ -64,7 +62,7 @@ impl From<ViewError> for TmplPageError<'_> {
             err: view.err,
             title: view.title,
             home: Self::home_button(),
-            layout: Layout::new(view.globals, None),
+            layout: Layout::new(None),
             login: view.login.map(Self::login_button),
             reload: Self::reload_button(),
         }
@@ -72,7 +70,7 @@ impl From<ViewError> for TmplPageError<'_> {
 }
 
 impl ViewError {
-    pub async fn create(app: &impl AppAssets, err: Error) -> Result<ViewError> {
+    pub async fn create(_app: &impl AppAssets, err: Error) -> Result<ViewError> {
         let login = match &err {
             Error::Quilt(quilt::Error::Auth(host, _)) => Some(host),
             Error::Quilt(quilt::Error::S3(host, _)) => host.as_ref(),
@@ -80,7 +78,6 @@ impl ViewError {
         }
         .cloned();
         Ok(ViewError {
-            globals: app.globals(),
             title: t!("error.title").into(),
             err: err.to_string(),
             login,
@@ -88,13 +85,12 @@ impl ViewError {
     }
 
     pub async fn for_login_error(
-        app: &impl AppAssets,
+        _app: &impl AppAssets,
         host: quilt::uri::Host,
         title: String,
         error: String,
     ) -> Result<ViewError> {
         Ok(ViewError {
-            globals: app.globals(),
             title,
             err: error,
             login: Some(host),
@@ -111,15 +107,11 @@ impl ViewError {
 pub mod mocks {
     use super::*;
 
-    use crate::app::mocks as app_mocks;
-
     #[test]
     fn test_view() -> Result {
-        let app = app_mocks::create();
         let html = TmplPageError::from(ViewError {
             err: "Quilt error: Unimplemented".into(),
             title: "Something went wrong!".into(),
-            globals: app.globals(),
             login: None,
         })
         .render()?;
@@ -133,12 +125,10 @@ pub mod mocks {
 
     #[test]
     fn test_login_error_view() -> Result {
-        let app = app_mocks::create();
         let host: quilt::uri::Host = "test.quilt.dev".parse().unwrap();
         let html = TmplPageError::from(ViewError {
             err: "Access denied".into(),
             title: "Login failed".into(),
-            globals: app.globals(),
             login: Some(host),
         })
         .render()?;

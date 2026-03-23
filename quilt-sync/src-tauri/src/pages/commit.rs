@@ -4,7 +4,6 @@ use askama::Template;
 use rust_i18n::t;
 
 use crate::app::AppAssets;
-use crate::app::Globals;
 use crate::debug_tools;
 use crate::error::Error;
 use crate::model::QuiltModel;
@@ -41,7 +40,6 @@ struct ViewCommitWorkflow {
 pub struct ViewCommit {
     entries_modified: Vec<entry::ViewEntry>,
     entries_rest: Vec<entry::ViewEntry>,
-    globals: Globals,
     message: ViewCommitMessage,
     origin: url::Url,
     uri: quilt::uri::S3PackageUri,
@@ -205,7 +203,7 @@ fn generate_commit_message(changes: &ChangeSet) -> ViewCommitMessage {
 impl ViewCommit {
     pub async fn create(
         model: &impl QuiltModel,
-        app: &impl AppAssets,
+        _app: &impl AppAssets,
         tracing: &crate::telemetry::Telemetry,
         namespace: &quilt::uri::Namespace,
     ) -> Result<ViewCommit, Error> {
@@ -277,7 +275,6 @@ impl ViewCommit {
         let uri = quilt::uri::S3PackageUri::from(&lineage.remote);
 
         Ok(ViewCommit {
-            globals: app.globals(),
             entries_modified,
             entries_rest,
             message: generate_commit_message(&status.changes),
@@ -414,7 +411,7 @@ impl From<ViewCommit> for TmplPageCommit<'_> {
             message: view.message,
             user_meta: view.user_meta,
             workflow: Self::workflow(view.workflow, &view.origin, &view.uri),
-            layout: Layout::builder(view.globals)
+            layout: Layout::builder()
                 .set_actions(Self::actions(&view.origin, &view.uri))
                 .set_primary_action(Self::primary_button())
                 .set_breadcrumbs(Self::breadcrumbs(&view.uri))
@@ -431,14 +428,11 @@ mod tests {
 
     use super::*;
 
-    use crate::app::mocks as app_mocks;
     use crate::quilt::manifest::ManifestRow;
 
     #[test]
     fn test_view() -> Result<(), Error> {
-        let app = app_mocks::create();
         let html = ViewCommit {
-            globals: app.globals(),
             entries_modified: vec![],
             entries_rest: vec![],
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
@@ -568,12 +562,10 @@ mod tests {
 
     #[test]
     fn test_workflow_with_value() -> Result<(), Error> {
-        let app = app_mocks::create();
         let workflow_id = "test-workflow-123";
         let workflow_url = url::Url::parse("https://test.quilt.dev/workflows/config.yaml")?;
 
         let html = ViewCommit {
-            globals: app.globals(),
             entries_modified: vec![],
             entries_rest: vec![],
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
@@ -602,11 +594,9 @@ mod tests {
 
     #[test]
     fn test_workflow_null_checked() -> Result<(), Error> {
-        let app = app_mocks::create();
         let workflow_url = url::Url::parse("https://test.quilt.dev/workflows/config.yaml")?;
 
         let html = ViewCommit {
-            globals: app.globals(),
             entries_modified: vec![],
             entries_rest: vec![],
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
@@ -636,10 +626,7 @@ mod tests {
 
     #[test]
     fn test_workflow_not_available() -> Result<(), Error> {
-        let app = app_mocks::create();
-
         let html = ViewCommit {
-            globals: app.globals(),
             entries_modified: vec![],
             entries_rest: vec![],
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,

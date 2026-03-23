@@ -2,7 +2,6 @@ use askama::Template;
 use rust_i18n::t;
 
 use crate::app::AppAssets;
-use crate::app::Globals;
 use crate::debug_tools;
 use crate::error::Error;
 use crate::model::QuiltModel;
@@ -15,7 +14,6 @@ use crate::ui::Icon;
 use quilt::uri::S3PackageUri;
 
 pub struct ViewMerge {
-    globals: Globals,
     origin: url::Url,
     uri: quilt::uri::S3PackageUri,
 }
@@ -85,7 +83,7 @@ impl From<ViewMerge> for TmplPageMerge<'_> {
         TmplPageMerge {
             certify_button: Self::certify_button(&view.uri),
             reset_button: Self::reset_button(&view.uri),
-            layout: Layout::builder(view.globals)
+            layout: Layout::builder()
                 .set_breadcrumbs(Self::breadcrumbs(&view.uri))
                 .set_actions(Self::actions(&view.origin, &view.uri)),
         }
@@ -95,7 +93,7 @@ impl From<ViewMerge> for TmplPageMerge<'_> {
 impl ViewMerge {
     pub async fn create(
         model: &impl QuiltModel,
-        app: &impl AppAssets,
+        _app: &impl AppAssets,
         tracing: &crate::telemetry::Telemetry,
         namespace: &quilt::uri::Namespace,
     ) -> Result<ViewMerge, Error> {
@@ -112,7 +110,6 @@ impl ViewMerge {
         tracing.add_host(&origin_host);
 
         Ok(ViewMerge {
-            globals: app.globals(),
             uri: uri.clone(),
             origin: uri.display_for_host(&origin_host)?,
         })
@@ -140,7 +137,6 @@ mod tests {
 
         // Create the view
         let view = ViewMerge {
-            globals: Globals::default(),
             uri: uri.clone(),
             origin,
         };

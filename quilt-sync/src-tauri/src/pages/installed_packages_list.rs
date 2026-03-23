@@ -2,7 +2,6 @@ use askama::Template;
 use rust_i18n::t;
 
 use crate::app::AppAssets;
-use crate::app::Globals;
 use crate::debug_tools;
 use crate::error::Error;
 use crate::model::QuiltModel;
@@ -28,7 +27,6 @@ struct InstalledPackage {
 #[derive(Debug)]
 pub struct ViewInstalledPackagesList {
     installed_packages_list: Vec<InstalledPackage>,
-    globals: Globals,
 }
 
 #[derive(Template)]
@@ -206,7 +204,7 @@ impl<'a> TmplPageInstalledPackagesList<'a> {
 impl ViewInstalledPackagesList {
     pub async fn create(
         model: &impl QuiltModel,
-        app: &impl AppAssets,
+        _app: &impl AppAssets,
         tracing: &crate::telemetry::Telemetry,
     ) -> Result<ViewInstalledPackagesList, Error> {
         let list = model.get_installed_packages_list().await?;
@@ -225,7 +223,6 @@ impl ViewInstalledPackagesList {
         debug!("Packages list is {:?}", installed_packages_list);
         Ok(ViewInstalledPackagesList {
             installed_packages_list,
-            globals: app.globals(),
         })
     }
 
@@ -291,7 +288,7 @@ impl From<ViewInstalledPackagesList> for TmplPageInstalledPackagesList<'_> {
         }
 
         TmplPageInstalledPackagesList {
-            layout: Layout::builder(view.globals).set_breadcrumbs(Self::breadcrumbs()),
+            layout: Layout::builder().set_breadcrumbs(Self::breadcrumbs()),
             list,
         }
     }
@@ -304,7 +301,6 @@ mod tests {
     use quilt::uri::ManifestUri;
     use quilt::uri::S3PackageUri;
 
-    use crate::app::Globals;
     use crate::Result;
 
     fn create_test_package(namespace: &str, status: UpstreamState) -> Result<InstalledPackage> {
@@ -332,7 +328,6 @@ mod tests {
         // Create view with test packages
         let view = ViewInstalledPackagesList {
             installed_packages_list: packages,
-            globals: Globals::default(),
         };
 
         // Render the view
