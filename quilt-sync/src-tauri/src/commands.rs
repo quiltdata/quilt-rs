@@ -257,7 +257,11 @@ pub async fn erase_auth(
     let msg_ok = format!("Successfully erased auth for {host}");
     let msg_err = |err: &Error| format!("Failed to erase auth: {err}");
 
-    TmplNotify::new(msg_init).map(erase_auth_command(&app_handle, &host).await, msg_ok, msg_err)
+    TmplNotify::new(msg_init).map(
+        erase_auth_command(&app_handle, &host).await,
+        msg_ok,
+        msg_err,
+    )
 }
 
 async fn debug_dot_quilt_command(app_handle: &tauri::AppHandle) -> Result<(), Error> {
@@ -304,9 +308,7 @@ pub async fn debug_logs(
     TmplNotify::new(msg_init).map(debug_logs_command(app).await, msg_ok, msg_err)
 }
 
-async fn open_home_dir_command(
-    m: &model::Model,
-) -> Result<(), Error> {
+async fn open_home_dir_command(m: &model::Model) -> Result<(), Error> {
     let home = m.get_quilt().lock().await.get_home().await?;
     let home_path: &std::path::PathBuf = home.as_ref();
     opener::open_browser(home_path)?;

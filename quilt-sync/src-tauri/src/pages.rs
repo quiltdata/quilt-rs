@@ -147,7 +147,15 @@ mod tests {
 
         let url = "https://l/p/commit.html#namespace=doesnt/matter";
         let path: Paths = url.parse()?;
-        let page = load(&model, &app, &default_home(), &default_data_dir(), &default_telemetry(), &path).await?;
+        let page = load(
+            &model,
+            &app,
+            &default_home(),
+            &default_data_dir(),
+            &default_telemetry(),
+            &path,
+        )
+        .await?;
         assert!(page.contains(r#"<strong class="qui-breadcrumb-current" title="Commit">Commit"#));
         Ok(())
     }
@@ -160,7 +168,15 @@ mod tests {
 
         let url = "https://l/p/installed-package.html#namespace=doesnt/matter";
         let path: Paths = url.parse()?;
-        let page = load(&model, &app, &default_home(), &default_data_dir(), &default_telemetry(), &path).await?;
+        let page = load(
+            &model,
+            &app,
+            &default_home(),
+            &default_data_dir(),
+            &default_telemetry(),
+            &path,
+        )
+        .await?;
         assert!(page.contains(r#"<strong class="qui-breadcrumb-current" title="foo/bar">foo/bar"#));
         Ok(())
     }
@@ -173,7 +189,15 @@ mod tests {
 
         let url = "https://l/p/installed-packages-list.html";
         let path: Paths = url.parse()?;
-        let page = load(&model, &app, &default_home(), &default_data_dir(), &default_telemetry(), &path).await?;
+        let page = load(
+            &model,
+            &app,
+            &default_home(),
+            &default_data_dir(),
+            &default_telemetry(),
+            &path,
+        )
+        .await?;
         assert!(page.contains("any packages"));
         Ok(())
     }
@@ -186,7 +210,15 @@ mod tests {
 
         let url = "https://l/p/merge.html#namespace=doesnt/matter";
         let path: Paths = url.parse()?;
-        let page = load(&model, &app, &default_home(), &default_data_dir(), &default_telemetry(), &path).await?;
+        let page = load(
+            &model,
+            &app,
+            &default_home(),
+            &default_data_dir(),
+            &default_telemetry(),
+            &path,
+        )
+        .await?;
         assert!(page.contains(r#"<strong class="qui-breadcrumb-current" title="Merge">Merge"#));
         Ok(())
     }
@@ -204,7 +236,15 @@ mod tests {
             urlencoding::encode(uri)
         );
         let path: Paths = url.parse()?;
-        let page = load(&model, &app, &default_home(), &default_data_dir(), &default_telemetry(), &path).await?;
+        let page = load(
+            &model,
+            &app,
+            &default_home(),
+            &default_data_dir(),
+            &default_telemetry(),
+            &path,
+        )
+        .await?;
         assert!(page.contains(
             r##"<strong class="qui-breadcrumb-current" title="foo/bar">foo/bar</strong>"##,
         ));
@@ -218,7 +258,15 @@ mod tests {
 
         let url = "https://l/p/setup.html";
         let path: Paths = url.parse()?;
-        let page = load(&model, &app, &default_home(), &default_data_dir(), &default_telemetry(), &path).await?;
+        let page = load(
+            &model,
+            &app,
+            &default_home(),
+            &default_data_dir(),
+            &default_telemetry(),
+            &path,
+        )
+        .await?;
         assert!(page.contains("Set home directory"));
         Ok(())
     }

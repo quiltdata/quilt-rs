@@ -127,11 +127,7 @@ impl<'a> TmplSettings<'a> {
 
     fn email_support_button(globals: &Globals) -> btn::TmplButton<'static> {
         let subject = urlencoding::encode("QuiltSync diagnostic report");
-        let body_str = format!(
-            "QuiltSync v{}, {}",
-            globals.version,
-            std::env::consts::OS,
-        );
+        let body_str = format!("QuiltSync v{}, {}", globals.version, std::env::consts::OS,);
         let body = urlencoding::encode(&body_str);
         let mailto = format!("mailto:support@quilt.bio?subject={subject}&body={body}");
         btn::TmplButton::builder()
@@ -170,8 +166,7 @@ impl From<ViewSettings> for TmplSettings<'_> {
             crash_report: TmplSettings::crash_report_button(),
             diagnostic_logs: TmplSettings::diagnostic_logs_button(),
             email_support: TmplSettings::email_support_button(&view.globals),
-            layout: Layout::builder(view.globals)
-                .set_breadcrumbs(TmplSettings::breadcrumbs()),
+            layout: Layout::builder(view.globals).set_breadcrumbs(TmplSettings::breadcrumbs()),
         }
     }
 }
