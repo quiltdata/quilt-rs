@@ -87,7 +87,7 @@
     border-radius: var(--q-ui-border-radius);
     box-shadow: var(--q-ui-shadows-popup);
     font-size: var(--q-ui-font-size-small);
-    min-width: calc(var(--q-ui-size-10) * 2);
+    min-width: var(--q-ui-size-20);
     max-width: 360px;
     padding: var(--q-ui-size-1) var(--q-ui-size-2);
   }
