@@ -50,6 +50,10 @@ const SELECTOR_SETUP = ".js-setup";
 const SELECTOR_WORKFLOW_NULL = ".js-workflow-null";
 const SELECTOR_WORKFLOW_VALUE = ".js-workflow-value";
 const SELECTOR_REFRESH = ".js-refresh";
+const SELECTOR_CRASH_REPORT = ".js-crash-report";
+const SELECTOR_DIAGNOSTIC_LOGS = ".js-diagnostic-logs";
+const SELECTOR_OPEN_HOME_DIR = ".js-open-home-dir";
+const SELECTOR_OPEN_DATA_DIR = ".js-open-data-dir";
 
 type SELECTOR_FORM = "#form";
 
@@ -97,7 +101,11 @@ type Selector =
   | typeof SELECTOR_UPDATE_DOWNLOAD
   | typeof SELECTOR_UPDATE_INSTALL
   | typeof SELECTOR_WORKFLOW_NULL
-  | typeof SELECTOR_WORKFLOW_VALUE;
+  | typeof SELECTOR_WORKFLOW_VALUE
+  | typeof SELECTOR_CRASH_REPORT
+  | typeof SELECTOR_DIAGNOSTIC_LOGS
+  | typeof SELECTOR_OPEN_HOME_DIR
+  | typeof SELECTOR_OPEN_DATA_DIR;
 
 const CMD_ERASE_AUTH = "erase_auth";
 const CMD_DEBUG_DOT_QUILT = "debug_dot_quilt";
@@ -118,6 +126,10 @@ const CMD_PACKAGE_UNINSTALL = "package_uninstall";
 const CMD_REVEAL_IN_FILE_BROWSER = "reveal_in_file_browser";
 const CMD_SET_ORIGIN = "set_origin";
 const CMD_SETUP = "setup";
+const CMD_CRASH_REPORT = "send_crash_report";
+const CMD_DIAGNOSTIC_LOGS = "save_diagnostic_logs";
+const CMD_OPEN_HOME_DIR = "open_home_dir";
+const CMD_OPEN_DATA_DIR = "open_data_dir";
 
 type Command =
   | typeof CMD_ERASE_AUTH
@@ -138,7 +150,11 @@ type Command =
   | typeof CMD_PACKAGE_UNINSTALL
   | typeof CMD_REVEAL_IN_FILE_BROWSER
   | typeof CMD_SET_ORIGIN
-  | typeof CMD_SETUP;
+  | typeof CMD_SETUP
+  | typeof CMD_CRASH_REPORT
+  | typeof CMD_DIAGNOSTIC_LOGS
+  | typeof CMD_OPEN_HOME_DIR
+  | typeof CMD_OPEN_DATA_DIR;
 
 function handleError(e: Error | unknown) {
   if (e instanceof Error) {
@@ -447,7 +463,7 @@ function listen<T extends string>(
 }
 
 window.addEventListener(EVENT_PAGE_READY, () => {
-  listen(SELECTOR_ERASE_AUTH, [], (data, button) =>
+  listen(SELECTOR_ERASE_AUTH, ["host"], (data, button) =>
     execInlineCommand(CMD_ERASE_AUTH, data, button).then(() =>
       window.location.reload(),
     ),
@@ -458,6 +474,22 @@ window.addEventListener(EVENT_PAGE_READY, () => {
 
   listen(SELECTOR_DEBUG_LOGS, [], (data, button) =>
     execInlineCommand(CMD_DEBUG_LOGS, data, button),
+  );
+
+  listen(SELECTOR_CRASH_REPORT, [], (data, button) =>
+    execInlineCommand(CMD_CRASH_REPORT, data, button),
+  );
+
+  listen(SELECTOR_DIAGNOSTIC_LOGS, [], (data, button) =>
+    execInlineCommand(CMD_DIAGNOSTIC_LOGS, data, button),
+  );
+
+  listen(SELECTOR_OPEN_HOME_DIR, [], (data, button) =>
+    execInlineCommand(CMD_OPEN_HOME_DIR, data, button),
+  );
+
+  listen(SELECTOR_OPEN_DATA_DIR, [], (data, button) =>
+    execInlineCommand(CMD_OPEN_DATA_DIR, data, button),
   );
 
   listen(SELECTOR_PACKAGE_INSTALL, ["uri"], (data) =>

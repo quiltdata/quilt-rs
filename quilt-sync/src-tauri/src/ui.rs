@@ -1,6 +1,5 @@
 pub mod breadcrumbs;
 pub mod button;
-pub mod debug_toolbar;
 pub mod entry;
 pub mod icon;
 pub mod layout;

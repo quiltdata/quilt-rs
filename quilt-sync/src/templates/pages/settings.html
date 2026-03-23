@@ -1,0 +1,71 @@
+{% extends "./components/layout.html" %}
+
+{% block children %}
+  <style>
+    @import url("/assets/css/pages/settings.css");
+  </style>
+
+  <div class="qui-page-settings container">
+
+    <section class="settings-section">
+      <h2 class="section-title">{{ t!("settings.general") }}</h2>
+      <dl class="settings-list">
+        <dt>{{ t!("settings.version") }}</dt>
+        <dd>
+          <span>{{ version }}</span>
+          <span class="divider">,</span>
+          {{ release_notes | safe }}
+        </dd>
+
+        <dt>{{ t!("settings.home_directory") }}</dt>
+        <dd>
+          <span class="path" title="{{ home_dir }}">{{ home_dir }}</span>
+          {{ open_home_dir | safe }}
+        </dd>
+
+        <dt>{{ t!("settings.data_directory") }}</dt>
+        <dd>
+          <span class="path" title="{{ data_dir }}">{{ data_dir }}</span>
+          {{ open_data_dir | safe }}
+        </dd>
+      </dl>
+    </section>
+
+    <section class="settings-section">
+      <h2 class="section-title">{{ t!("settings.account") }}</h2>
+      {% if auth_hosts.is_empty() %}
+        <p class="empty-state">{{ t!("settings.no_hosts") }}</p>
+      {% else %}
+        <dl class="settings-list">
+          {% for host in auth_hosts %}
+            <dt>{{ host.name }}</dt>
+            <dd>{{ host.relogin_button | safe }}</dd>
+          {% endfor %}
+        </dl>
+      {% endif %}
+    </section>
+
+    <section class="settings-section">
+      <h2 class="section-title">{{ t!("settings.diagnostics") }}</h2>
+      <dl class="settings-list">
+        <dt>{{ t!("settings.log_level") }}</dt>
+        <dd>{{ log_level }}</dd>
+
+        <dt>{{ t!("settings.logs_directory") }}</dt>
+        <dd>
+          <span class="path" title="{{ logs_dir }}">{{ logs_dir }}</span>
+          {{ open_logs_dir | safe }}
+        </dd>
+      </dl>
+
+      <div class="settings-actions">
+        {{ crash_report | safe }}
+        {{ diagnostic_logs | safe }}
+        <a class="qui-button link" href="{{ mailto_href }}">
+          <span>{{ t!("settings.email_support") }}</span>
+        </a>
+      </div>
+    </section>
+
+  </div>
+{% endblock %}

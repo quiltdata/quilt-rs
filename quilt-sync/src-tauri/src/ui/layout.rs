@@ -2,18 +2,18 @@ use rust_i18n::t;
 
 use crate::app::Globals;
 use crate::quilt;
+use crate::routes::Paths;
 use crate::ui::btn;
 use crate::ui::crumbs;
-use crate::ui::debug_toolbar;
 use crate::ui::uri;
 use crate::ui::Icon;
 
 #[derive(Default)]
 pub struct Layout<'a> {
     pub breadcrumbs: Option<crumbs::TmplBreadcrumbs<'a>>,
-    pub debug_toolbar: debug_toolbar::TmplDebugToolbar<'a>,
     pub primary_action: Option<btn::TmplButton<'a>>,
     pub refresh_button: btn::TmplButton<'a>,
+    pub settings_button: btn::TmplButton<'a>,
     pub secondary_actions: Option<Vec<btn::TmplButton<'a>>>,
     pub uri: uri::TmplUri<'a>,
 }
@@ -35,13 +35,21 @@ impl<'a> Layout<'a> {
             .set_modificator(btn::Modificator::Link)
     }
 
-    pub fn builder(globals: Globals) -> Layout<'a> {
+    pub fn settings_button() -> btn::TmplButton<'a> {
+        btn::TmplButton::builder()
+            .set_icon(Icon::Gear)
+            .set_label(t!("appbar.settings"))
+            .set_modificator(btn::Modificator::Link)
+            .set_href(Paths::Settings)
+    }
+
+    pub fn builder(_globals: Globals) -> Layout<'a> {
         Layout {
             primary_action: None,
             secondary_actions: None,
             breadcrumbs: None,
-            debug_toolbar: debug_toolbar::TmplDebugToolbar::create(&globals),
             refresh_button: Self::refresh_button(),
+            settings_button: Self::settings_button(),
             uri: uri::TmplUri::new(None),
         }
     }

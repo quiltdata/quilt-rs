@@ -62,6 +62,14 @@ pub enum JsSelector {
     RevealInFileBrowser,
     #[template(source = "js-set-origin", ext = "txt")]
     SetOrigin,
+    #[template(source = "js-crash-report", ext = "txt")]
+    CrashReport,
+    #[template(source = "js-diagnostic-logs", ext = "txt")]
+    DiagnosticLogs,
+    #[template(source = "js-open-home-dir", ext = "txt")]
+    OpenHomeDir,
+    #[template(source = "js-open-data-dir", ext = "txt")]
+    OpenDataDir,
 }
 
 #[derive(Template)]

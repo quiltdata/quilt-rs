@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::path::PathBuf;
 
 use crate::routes::Paths;
 
@@ -8,12 +9,14 @@ mod installed_package;
 mod installed_packages_list;
 mod login;
 mod merge;
+mod settings;
 mod setup;
 
 use crate::app::AppAssets;
 use crate::error::Error;
 use crate::model::install_package_only;
 use crate::model::QuiltModel;
+use crate::quilt;
 use installed_packages_list::ViewInstalledPackagesList;
 
 pub use commit::ViewCommit;
@@ -21,12 +24,14 @@ pub use error::ViewError;
 pub use installed_package::ViewInstalledPackage;
 pub use login::ViewLogin;
 pub use merge::ViewMerge;
+pub use settings::ViewSettings;
 pub use setup::ViewSetup;
 
 pub async fn load(
     model: &impl QuiltModel,
     app: &impl AppAssets,
     default_home: &Path,
+    data_dir: &Path,
     tracing: &crate::telemetry::Telemetry,
     path: &Paths,
 ) -> Result<String, Error> {
@@ -77,6 +82,39 @@ pub async fn load(
                 .await?
                 .render()
         }
+        Paths::Settings => {
+            let data_dir_buf = data_dir.to_path_buf();
+            let auth_dir = data_dir_buf.join(quilt::paths::AUTH_DIR);
+
+            let home_dir = model
+                .get_quilt()
+                .lock()
+                .await
+                .get_home()
+                .await
+                .ok()
+                .map(|h| PathBuf::from(h.as_ref().clone()));
+
+            let mut auth_hosts: Vec<String> = Vec::new();
+            if auth_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&auth_dir) {
+                    for entry in entries.flatten() {
+                        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                            if let Some(name) = entry.file_name().to_str() {
+                                auth_hosts.push(name.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            auth_hosts.sort();
+
+            let log_level = tracing.log_level();
+
+            ViewSettings::create(app, &data_dir_buf, home_dir, log_level, auth_hosts)
+                .await?
+                .render()
+        }
         Paths::Setup => ViewSetup::create(app, default_home).await?.render(),
     }
 }
@@ -94,6 +132,10 @@ mod tests {
         PathBuf::from("/home/user/QuiltSync")
     }
 
+    fn default_data_dir() -> PathBuf {
+        PathBuf::from("/tmp/quiltsync/data")
+    }
+
     fn default_telemetry() -> crate::telemetry::Telemetry {
         crate::telemetry::Telemetry::default()
     }
@@ -106,7 +148,7 @@ mod tests {
 
         let url = "https://l/p/commit.html#namespace=doesnt/matter";
         let path: Paths = url.parse()?;
-        let page = load(&model, &app, &default_home(), &default_telemetry(), &path).await?;
+        let page = load(&model, &app, &default_home(), &default_data_dir(), &default_telemetry(), &path).await?;
         assert!(page.contains(r#"<strong class="qui-breadcrumb-current" title="Commit">Commit"#));
         Ok(())
     }
@@ -119,7 +161,7 @@ mod tests {
 
         let url = "https://l/p/installed-package.html#namespace=doesnt/matter";
         let path: Paths = url.parse()?;
-        let page = load(&model, &app, &default_home(), &default_telemetry(), &path).await?;
+        let page = load(&model, &app, &default_home(), &default_data_dir(), &default_telemetry(), &path).await?;
         assert!(page.contains(r#"<strong class="qui-breadcrumb-current" title="foo/bar">foo/bar"#));
         Ok(())
     }
@@ -132,7 +174,7 @@ mod tests {
 
         let url = "https://l/p/installed-packages-list.html";
         let path: Paths = url.parse()?;
-        let page = load(&model, &app, &default_home(), &default_telemetry(), &path).await?;
+        let page = load(&model, &app, &default_home(), &default_data_dir(), &default_telemetry(), &path).await?;
         assert!(page.contains("any packages"));
         Ok(())
     }
@@ -145,7 +187,7 @@ mod tests {
 
         let url = "https://l/p/merge.html#namespace=doesnt/matter";
         let path: Paths = url.parse()?;
-        let page = load(&model, &app, &default_home(), &default_telemetry(), &path).await?;
+        let page = load(&model, &app, &default_home(), &default_data_dir(), &default_telemetry(), &path).await?;
         assert!(page.contains(r#"<strong class="qui-breadcrumb-current" title="Merge">Merge"#));
         Ok(())
     }
@@ -163,7 +205,7 @@ mod tests {
             urlencoding::encode(uri)
         );
         let path: Paths = url.parse()?;
-        let page = load(&model, &app, &default_home(), &default_telemetry(), &path).await?;
+        let page = load(&model, &app, &default_home(), &default_data_dir(), &default_telemetry(), &path).await?;
         assert!(page.contains(
             r##"<strong class="qui-breadcrumb-current" title="foo/bar">foo/bar</strong>"##,
         ));
@@ -177,7 +219,7 @@ mod tests {
 
         let url = "https://l/p/setup.html";
         let path: Paths = url.parse()?;
-        let page = load(&model, &app, &default_home(), &default_telemetry(), &path).await?;
+        let page = load(&model, &app, &default_home(), &default_data_dir(), &default_telemetry(), &path).await?;
         assert!(page.contains("Set home directory"));
         Ok(())
     }

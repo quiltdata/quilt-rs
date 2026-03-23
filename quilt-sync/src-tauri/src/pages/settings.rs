@@ -1,0 +1,222 @@
+use std::path::PathBuf;
+
+use askama::Template;
+use rust_i18n::t;
+
+use crate::app::AppAssets;
+use crate::app::Globals;
+use crate::error::Error;
+use crate::ui::btn;
+use crate::ui::crumbs;
+use crate::ui::layout::Layout;
+use crate::ui::Icon;
+
+/// A single authenticated host row for the settings page.
+pub struct AuthHost<'a> {
+    pub name: String,
+    pub relogin_button: btn::TmplButton<'a>,
+}
+
+#[derive(Debug)]
+pub struct ViewSettings {
+    globals: Globals,
+    home_dir: Option<PathBuf>,
+    data_dir: PathBuf,
+    auth_hosts: Vec<String>,
+    log_level: String,
+}
+
+#[derive(Template)]
+#[template(path = "./pages/settings.html")]
+pub struct TmplSettings<'a> {
+    layout: Layout<'a>,
+    version: String,
+    release_notes: btn::TmplButton<'a>,
+    home_dir: String,
+    open_home_dir: btn::TmplButton<'a>,
+    data_dir: String,
+    open_data_dir: btn::TmplButton<'a>,
+    auth_hosts: Vec<AuthHost<'a>>,
+    log_level: String,
+    logs_dir: String,
+    open_logs_dir: btn::TmplButton<'a>,
+    crash_report: btn::TmplButton<'a>,
+    diagnostic_logs: btn::TmplButton<'a>,
+    mailto_href: String,
+}
+
+impl<'a> TmplSettings<'a> {
+    fn breadcrumbs() -> crumbs::TmplBreadcrumbs<'a> {
+        crumbs::TmplBreadcrumbs {
+            list: vec![
+                crumbs::Link::home(),
+                crumbs::Current::create(t!("settings.title")),
+            ],
+        }
+    }
+
+    fn release_notes_button(globals: &Globals) -> btn::TmplButton<'static> {
+        let release_url = format!(
+            "https://github.com/quiltdata/quilt-rs/releases/tag/QuiltSync/v{}",
+            globals.version
+        );
+        btn::TmplButton::builder()
+            .set_label(t!("settings.release_notes"))
+            .set_modificator(btn::Modificator::Link)
+            .set_js(btn::JsSelector::OpenInWebBrowser)
+            .set_data("url", release_url.clone())
+            .set_title(release_url)
+    }
+
+    fn open_home_dir_button() -> btn::TmplButton<'static> {
+        btn::TmplButton::builder()
+            .set_icon(Icon::FolderOpen)
+            .set_modificator(btn::Modificator::Link)
+            .set_js(btn::JsSelector::OpenHomeDir)
+    }
+
+    fn open_data_dir_button() -> btn::TmplButton<'static> {
+        btn::TmplButton::builder()
+            .set_icon(Icon::FolderOpen)
+            .set_modificator(btn::Modificator::Link)
+            .set_js(btn::JsSelector::OpenDataDir)
+    }
+
+    fn open_logs_dir_button(globals: &Globals) -> btn::TmplButton<'static> {
+        let logs_dir_path = globals.logs_dir.display().to_string();
+        let button = btn::TmplButton::builder()
+            .set_icon(Icon::FolderOpen)
+            .set_modificator(btn::Modificator::Link)
+            .set_js(btn::JsSelector::DebugLogs)
+            .set_title(logs_dir_path);
+
+        if globals.logs_dir_is_temporary {
+            return button.set_icon(Icon::Warning);
+        }
+
+        button
+    }
+
+    fn crash_report_button() -> btn::TmplButton<'static> {
+        btn::TmplButton::builder()
+            .set_label(t!("settings.send_crash_report"))
+            .set_js(btn::JsSelector::CrashReport)
+    }
+
+    fn diagnostic_logs_button() -> btn::TmplButton<'static> {
+        btn::TmplButton::builder()
+            .set_label(t!("settings.save_diagnostic_logs"))
+            .set_js(btn::JsSelector::DiagnosticLogs)
+    }
+
+    fn relogin_button(host: &str) -> btn::TmplButton<'static> {
+        btn::TmplButton::builder()
+            .set_label(t!("settings.relogin"))
+            .set_modificator(btn::Modificator::Link)
+            .set_js(btn::JsSelector::EraseAuth)
+            .set_data("host", host.to_string())
+    }
+
+    fn mailto_href(globals: &Globals) -> String {
+        let subject = urlencoding::encode("QuiltSync diagnostic report");
+        let body_str = format!(
+            "QuiltSync v{}, {}",
+            globals.version,
+            std::env::consts::OS,
+        );
+        let body = urlencoding::encode(&body_str);
+        format!("mailto:support@quilt.bio?subject={subject}&body={body}")
+    }
+}
+
+impl From<ViewSettings> for TmplSettings<'_> {
+    fn from(view: ViewSettings) -> Self {
+        let auth_hosts: Vec<AuthHost> = view
+            .auth_hosts
+            .iter()
+            .map(|host| AuthHost {
+                relogin_button: TmplSettings::relogin_button(host),
+                name: host.clone(),
+            })
+            .collect();
+
+        TmplSettings {
+            version: view.globals.version.to_string(),
+            release_notes: TmplSettings::release_notes_button(&view.globals),
+            home_dir: view
+                .home_dir
+                .as_ref()
+                .map(|h| h.display().to_string())
+                .unwrap_or_else(|| "Not set".to_string()),
+            open_home_dir: TmplSettings::open_home_dir_button(),
+            data_dir: view.data_dir.display().to_string(),
+            open_data_dir: TmplSettings::open_data_dir_button(),
+            auth_hosts,
+            log_level: view.log_level.clone(),
+            logs_dir: view.globals.logs_dir.display().to_string(),
+            open_logs_dir: TmplSettings::open_logs_dir_button(&view.globals),
+            crash_report: TmplSettings::crash_report_button(),
+            diagnostic_logs: TmplSettings::diagnostic_logs_button(),
+            mailto_href: TmplSettings::mailto_href(&view.globals),
+            layout: Layout::builder(view.globals)
+                .set_breadcrumbs(TmplSettings::breadcrumbs()),
+        }
+    }
+}
+
+impl ViewSettings {
+    pub async fn create(
+        app: &impl AppAssets,
+        data_dir: &PathBuf,
+        home_dir: Option<PathBuf>,
+        log_level: String,
+        auth_hosts: Vec<String>,
+    ) -> Result<ViewSettings, Error> {
+        Ok(ViewSettings {
+            globals: app.globals(),
+            home_dir,
+            data_dir: data_dir.clone(),
+            auth_hosts,
+            log_level,
+        })
+    }
+
+    pub fn render(self) -> Result<String, Error> {
+        Ok(TmplSettings::from(self)
+            .render()?
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" "))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::mocks as app_mocks;
+    use crate::Result;
+
+    #[tokio::test]
+    async fn test_settings_page_rendering() -> Result<()> {
+        let app = app_mocks::create();
+        let data_dir = PathBuf::from("/tmp/quiltsync/data");
+        let home_dir = Some(PathBuf::from("/home/user/QuiltSync"));
+
+        let view = ViewSettings::create(
+            &app,
+            &data_dir,
+            home_dir,
+            "Info".to_string(),
+            vec!["open.quilt.bio".to_string()],
+        )
+        .await?;
+
+        let html = view.render()?;
+
+        assert!(html.contains("Settings"));
+        assert!(html.contains("open.quilt.bio"));
+        assert!(html.contains("/home/user/QuiltSync"));
+
+        Ok(())
+    }
+}

@@ -7,6 +7,7 @@ use tauri::Manager;
 use tokio::sync;
 
 use crate::app;
+use crate::app::AppAssets;
 use crate::model;
 use crate::oauth::OAuthState;
 use crate::pages;
@@ -32,9 +33,10 @@ async fn load_page_command(
     location: &str,
 ) -> Result<String, Error> {
     let home = get_default_home_dir(app_handle)?;
+    let data_dir = app_handle.path().app_local_data_dir()?;
 
     let path = location.parse::<routes::Paths>()?;
-    let page_result = pages::load(m, app, &home, tracing, &path).await;
+    let page_result = pages::load(m, app, &home, &data_dir, tracing, &path).await;
 
     match page_result {
         Ok(output) => {
@@ -223,12 +225,21 @@ pub async fn open_directory_picker(
     }
 }
 
-async fn erase_auth_command(app_handle: &tauri::AppHandle) -> Result<(), Error> {
+async fn erase_auth_command(app_handle: &tauri::AppHandle, host: &str) -> Result<(), Error> {
     let local_data_dir = app_handle.path().app_local_data_dir()?;
     let auth_dir = local_data_dir.join(quilt::paths::AUTH_DIR);
 
-    if auth_dir.exists() {
-        std::fs::remove_dir_all(&auth_dir)?;
+    if host.is_empty() {
+        // Global erase (backward compat)
+        if auth_dir.exists() {
+            std::fs::remove_dir_all(&auth_dir)?;
+        }
+    } else {
+        // Per-host erase
+        let host_dir = auth_dir.join(host);
+        if host_dir.exists() {
+            std::fs::remove_dir_all(&host_dir)?;
+        }
     }
     Ok(())
 }
@@ -237,16 +248,17 @@ async fn erase_auth_command(app_handle: &tauri::AppHandle) -> Result<(), Error> 
 pub async fn erase_auth(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    host: String,
 ) -> Result<String, String> {
     tracing.track(MixpanelEvent::AuthErased).await;
 
     let app_handle = app_handle.lock().await;
 
-    let msg_init = "Erasing auth directory".to_string();
-    let msg_ok = "Successfully erased auth directory".to_string();
-    let msg_err = |err: &Error| format!("Failed to erase auth directory: {err}");
+    let msg_init = format!("Erasing auth for {host}");
+    let msg_ok = format!("Successfully erased auth for {host}");
+    let msg_err = |err: &Error| format!("Failed to erase auth: {err}");
 
-    TmplNotify::new(msg_init).map(erase_auth_command(&app_handle).await, msg_ok, msg_err)
+    TmplNotify::new(msg_init).map(erase_auth_command(&app_handle, &host).await, msg_ok, msg_err)
 }
 
 async fn debug_dot_quilt_command(app_handle: &tauri::AppHandle) -> Result<(), Error> {
@@ -291,6 +303,248 @@ pub async fn debug_logs(
     let msg_err = |err: &Error| format!("Failed to open logs directory: {err}");
 
     TmplNotify::new(msg_init).map(debug_logs_command(app).await, msg_ok, msg_err)
+}
+
+async fn open_home_dir_command(
+    m: &model::Model,
+) -> Result<(), Error> {
+    let home = m.get_quilt().lock().await.get_home().await?;
+    let home_path: &std::path::PathBuf = home.as_ref();
+    opener::open_browser(home_path)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn open_home_dir(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+) -> Result<String, String> {
+    tracing.track(MixpanelEvent::FileBrowserOpened).await;
+    let m: &model::Model = &m;
+
+    let msg_init = "Opening home directory".to_string();
+    let msg_ok = "Successfully opened home directory".to_string();
+    let msg_err = |err: &Error| format!("Failed to open home directory: {err}");
+
+    TmplNotify::new(msg_init).map(open_home_dir_command(m).await, msg_ok, msg_err)
+}
+
+async fn open_data_dir_command(app_handle: &tauri::AppHandle) -> Result<(), Error> {
+    let local_data_dir = app_handle.path().app_local_data_dir()?;
+    opener::open_browser(&local_data_dir)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn open_data_dir(
+    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+) -> Result<String, String> {
+    tracing.track(MixpanelEvent::DebugDotQuiltOpened).await;
+    let app_handle = app_handle.lock().await;
+
+    let msg_init = "Opening data directory".to_string();
+    let msg_ok = "Successfully opened data directory".to_string();
+    let msg_err = |err: &Error| format!("Failed to open data directory: {err}");
+
+    TmplNotify::new(msg_init).map(open_data_dir_command(&app_handle).await, msg_ok, msg_err)
+}
+
+async fn send_crash_report_command(
+    app_handle: &tauri::AppHandle,
+    m: &model::Model,
+    app: &app::App,
+) -> Result<(), Error> {
+    let globals = app.globals();
+    let local_data_dir = app_handle.path().app_local_data_dir()?;
+    let auth_dir = local_data_dir.join(quilt::paths::AUTH_DIR);
+
+    let mut hosts: Vec<String> = Vec::new();
+    if auth_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&auth_dir) {
+            for entry in entries.flatten() {
+                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    if let Some(name) = entry.file_name().to_str() {
+                        hosts.push(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    let home_dir = m
+        .get_quilt()
+        .lock()
+        .await
+        .get_home()
+        .await
+        .ok()
+        .map(|h| h.as_ref().display().to_string())
+        .unwrap_or_default();
+
+    let os_info = std::env::consts::OS;
+    let os_arch = std::env::consts::ARCH;
+
+    sentry::configure_scope(|scope| {
+        scope.set_extra("app_version", globals.version.to_string().into());
+        scope.set_extra("os", format!("{os_info} {os_arch}").into());
+        scope.set_extra("data_dir", local_data_dir.display().to_string().into());
+        scope.set_extra("home_dir", home_dir.into());
+        scope.set_extra(
+            "authenticated_hosts",
+            serde_json::Value::from(hosts).into(),
+        );
+    });
+
+    sentry::capture_message("User crash report", sentry::Level::Error);
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn send_crash_report(
+    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
+    m: tauri::State<'_, model::Model>,
+    app: tauri::State<'_, app::App>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+) -> Result<String, String> {
+    tracing.track(MixpanelEvent::CrashReportSent).await;
+    let app_handle = app_handle.lock().await;
+    let m: &model::Model = &m;
+    let app: &app::App = &app;
+
+    let msg_init = "Sending crash report".to_string();
+    let msg_ok = "Successfully sent crash report".to_string();
+    let msg_err = |err: &Error| format!("Failed to send crash report: {err}");
+
+    TmplNotify::new(msg_init).map(
+        send_crash_report_command(&app_handle, m, app).await,
+        msg_ok,
+        msg_err,
+    )
+}
+
+async fn save_diagnostic_logs_command(
+    app_handle: &tauri::AppHandle,
+    m: &model::Model,
+    app: &app::App,
+) -> Result<(), Error> {
+    use std::io::Write;
+
+    let globals = app.globals();
+    let local_data_dir = app_handle.path().app_local_data_dir()?;
+    let auth_dir = local_data_dir.join(quilt::paths::AUTH_DIR);
+    let logs_dir = globals.logs_dir.clone();
+
+    // Collect metadata
+    let home_dir = m
+        .get_quilt()
+        .lock()
+        .await
+        .get_home()
+        .await
+        .ok()
+        .map(|h| h.as_ref().display().to_string())
+        .unwrap_or_default();
+
+    let os_info = std::env::consts::OS;
+    let os_arch = std::env::consts::ARCH;
+
+    let mut hosts: Vec<String> = Vec::new();
+    if auth_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&auth_dir) {
+            for entry in entries.flatten() {
+                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    if let Some(name) = entry.file_name().to_str() {
+                        hosts.push(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Create zip
+    let temp_dir = std::env::temp_dir();
+    let zip_path = temp_dir.join("quiltsync-diagnostic.zip");
+    let file = std::fs::File::create(&zip_path)?;
+    let mut zip_writer = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    // Write metadata
+    let metadata = serde_json::json!({
+        "version": globals.version.to_string(),
+        "os": format!("{os_info} {os_arch}"),
+        "data_dir": local_data_dir.display().to_string(),
+        "home_dir": home_dir,
+        "authenticated_hosts": hosts,
+    });
+    zip_writer.start_file("metadata.json", options)?;
+    zip_writer.write_all(serde_json::to_string_pretty(&metadata)?.as_bytes())?;
+
+    // Add log files
+    if logs_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&logs_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    let name = format!("logs/{}", entry.file_name().to_string_lossy());
+                    zip_writer.start_file(name, options)?;
+                    let contents = std::fs::read(&path)?;
+                    zip_writer.write_all(&contents)?;
+                }
+            }
+        }
+    }
+
+    // Add data.json (lineage file)
+    let data_json = local_data_dir.join(".quilt").join("data.json");
+    if data_json.exists() {
+        zip_writer.start_file("data.json", options)?;
+        let contents = std::fs::read(&data_json)?;
+        zip_writer.write_all(&contents)?;
+    }
+
+    // Add client.json per host (OAuth client registration — client ID only)
+    for host in &hosts {
+        let client_json = auth_dir.join(host).join(quilt::paths::AUTH_CLIENT);
+        if client_json.exists() {
+            let name = format!("auth/{}/client.json", host);
+            zip_writer.start_file(name, options)?;
+            let contents = std::fs::read(&client_json)?;
+            zip_writer.write_all(&contents)?;
+        }
+    }
+
+    zip_writer.finish()?;
+
+    // Reveal the zip in the file manager
+    opener::open_browser(zip_path.parent().unwrap_or(&temp_dir))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn save_diagnostic_logs(
+    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
+    m: tauri::State<'_, model::Model>,
+    app: tauri::State<'_, app::App>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+) -> Result<String, String> {
+    tracing.track(MixpanelEvent::DiagnosticLogsSaved).await;
+    let app_handle = app_handle.lock().await;
+    let m: &model::Model = &m;
+    let app: &app::App = &app;
+
+    let msg_init = "Saving diagnostic logs".to_string();
+    let msg_ok = "Successfully saved diagnostic logs".to_string();
+    let msg_err = |err: &Error| format!("Failed to save diagnostic logs: {err}");
+
+    TmplNotify::new(msg_init).map(
+        save_diagnostic_logs_command(&app_handle, m, app).await,
+        msg_ok,
+        msg_err,
+    )
 }
 
 async fn reveal_in_file_browser_command(

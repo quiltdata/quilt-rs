@@ -47,6 +47,8 @@ pub enum MixpanelEvent {
         flow: LoginFlow,
     },
     SetupCompleted,
+    CrashReportSent,
+    DiagnosticLogsSaved,
     ErrorOccurred {
         error_type: String,
     },
@@ -211,6 +213,14 @@ mod tests {
 
         let (name, p) = MixpanelEvent::SetupCompleted.try_into()?;
         assert_eq!(name, "setup_completed");
+        assert!(p.is_none());
+
+        let (name, p) = MixpanelEvent::CrashReportSent.try_into()?;
+        assert_eq!(name, "crash_report_sent");
+        assert!(p.is_none());
+
+        let (name, p) = MixpanelEvent::DiagnosticLogsSaved.try_into()?;
+        assert_eq!(name, "diagnostic_logs_saved");
         assert!(p.is_none());
 
         Ok(())

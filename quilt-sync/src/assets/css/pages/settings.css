@@ -1,0 +1,68 @@
+.qui-page-settings {
+  &.container {
+    box-sizing: border-box;
+    flex-grow: 1;
+    margin: auto;
+    max-width: var(--q-ui-container-size);
+    padding: var(--q-ui-size-4);
+    width: 100%;
+  }
+
+  .settings-section {
+    margin-bottom: 32px;
+  }
+
+  .section-title {
+    border-bottom: 1px solid #e0e0e0;
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 16px;
+    padding-bottom: 8px;
+  }
+
+  .settings-list {
+    display: grid;
+    gap: 8px 16px;
+    grid-template-columns: auto 1fr;
+    align-items: baseline;
+    margin: 0;
+  }
+
+  .settings-list dt {
+    color: #666;
+    font-size: 0.875rem;
+    white-space: nowrap;
+  }
+
+  .settings-list dd {
+    align-items: center;
+    display: flex;
+    font-size: 0.875rem;
+    gap: 8px;
+    margin: 0;
+  }
+
+  .path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 400px;
+  }
+
+  .divider {
+    color: #999;
+  }
+
+  .empty-state {
+    color: #999;
+    font-size: 0.875rem;
+    font-style: italic;
+    margin: 0;
+  }
+
+  .settings-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+  }
+}
