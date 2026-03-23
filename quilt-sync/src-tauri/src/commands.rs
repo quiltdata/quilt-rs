@@ -390,11 +390,9 @@ async fn save_diagnostic_logs_command(
     app_handle: &tauri::AppHandle,
     m: &model::Model,
     app: &app::App,
-) -> Result<(), Error> {
+) -> Result<PathBuf, Error> {
     let info = diagnostics::collect(app_handle, m, app).await?;
-    let zip_path = diagnostics::save_diagnostic_zip(info)?;
-    opener::reveal(&zip_path)?;
-    Ok(())
+    diagnostics::save_diagnostic_zip(info)
 }
 
 #[tauri::command]
@@ -409,15 +407,10 @@ pub async fn save_diagnostic_logs(
     let m: &model::Model = &m;
     let app: &app::App = &app;
 
-    let msg_init = "Saving diagnostic logs".to_string();
-    let msg_ok = "Successfully saved diagnostic logs".to_string();
-    let msg_err = |err: &Error| format!("Failed to save diagnostic logs: {err}");
-
-    TmplNotify::new(msg_init).map(
-        save_diagnostic_logs_command(&app_handle, m, app).await,
-        msg_ok,
-        msg_err,
-    )
+    match save_diagnostic_logs_command(&app_handle, m, app).await {
+        Ok(zip_path) => Ok(zip_path.display().to_string()),
+        Err(err) => Err(err.to_string()),
+    }
 }
 
 async fn reveal_in_file_browser_command(

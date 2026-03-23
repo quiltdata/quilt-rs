@@ -109,9 +109,8 @@ relogin_warning = 'This will erase stored credentials for this host. You will ne
 diagnostics = 'Diagnostics'
 log_level = 'Log level'
 logs_directory = 'Logs directory'
-send_crash_report = 'Send crash report'
-save_diagnostic_logs = 'Save diagnostic logs'
-email_support = 'Email support'
+send_crash_report = 'Send to Sentry'
+email_support = 'Email Support'
 
 [error]
 title = 'Something went wrong!'

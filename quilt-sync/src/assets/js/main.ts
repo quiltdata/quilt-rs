@@ -462,6 +462,51 @@ function listen<T extends string>(
   }
 }
 
+function showEmailSupportResult(
+  zipPath: string,
+  version: string,
+  os: string,
+) {
+  const container = document.getElementById("diagnostic-actions");
+  if (!container) return;
+
+  const subject = encodeURIComponent(
+    `Quilt issue report (v${version}, ${os})`,
+  );
+  const body = encodeURIComponent(
+    `Please describe the issue:\n...\n\nDiagnostic logs saved to:\n${zipPath}\nPlease attach this file to this email.`,
+  );
+  const mailtoUrl = `mailto:support@quilt.bio?subject=${subject}&body=${body}`;
+
+  // Keep the crash report button, replace the email support button
+  // with the staged result
+  const crashButton = container.querySelector(
+    SELECTOR_CRASH_REPORT,
+  ) as HTMLElement | null;
+
+  container.innerHTML = "";
+  if (crashButton) container.appendChild(crashButton);
+
+  const result = document.createElement("div");
+  result.className = "email-support-result";
+  result.innerHTML = `<p class="zip-path">Logs saved to: <code>${zipPath}</code></p>
+    <div class="email-support-actions">
+      <button class="qui-button primary js-email-open small" data-url="${mailtoUrl}" type="button"><span>Open Email</span></button>
+      <button class="qui-button js-file-reveal small" data-url="${zipPath}" type="button"><span>Show File</span></button>
+    </div>`;
+  container.appendChild(result);
+
+  // Wire the new buttons
+  result.querySelector(".js-email-open")?.addEventListener("click", async () => {
+    await invoke(CMD_OPEN_IN_WEB_BROWSER, { url: mailtoUrl });
+  });
+  result.querySelector(".js-file-reveal")?.addEventListener("click", async () => {
+    // Open the parent directory so the file manager shows the zip
+    const dir = zipPath.substring(0, zipPath.lastIndexOf("/")) || zipPath;
+    await invoke(CMD_OPEN_IN_WEB_BROWSER, { url: dir });
+  });
+}
+
 window.addEventListener(EVENT_PAGE_READY, () => {
   listen(SELECTOR_ERASE_AUTH, ["host"], (data, button) =>
     execInlineCommand(CMD_ERASE_AUTH, data, button).then(() =>
@@ -480,9 +525,18 @@ window.addEventListener(EVENT_PAGE_READY, () => {
     execInlineCommand(CMD_CRASH_REPORT, data, button),
   );
 
-  listen(SELECTOR_DIAGNOSTIC_LOGS, [], (data, button) =>
-    execInlineCommand(CMD_DIAGNOSTIC_LOGS, data, button),
-  );
+  listen(SELECTOR_DIAGNOSTIC_LOGS, ["version", "os"], async (data, button) => {
+    button.setAttribute("disabled", "disabled");
+    button.querySelector("span")!.textContent = "Collecting logs…";
+    try {
+      const zipPath: string = await invoke(CMD_DIAGNOSTIC_LOGS);
+      showEmailSupportResult(zipPath, data.version, data.os);
+    } catch (error) {
+      handleError(error);
+      button.removeAttribute("disabled");
+      button.querySelector("span")!.textContent = "Email Support";
+    }
+  });
 
   listen(SELECTOR_OPEN_HOME_DIR, [], (data, button) =>
     execInlineCommand(CMD_OPEN_HOME_DIR, data, button),

@@ -42,7 +42,6 @@ pub struct TmplSettings<'a> {
     logs_dir: String,
     open_logs_dir: btn::TmplButton<'a>,
     crash_report: btn::TmplButton<'a>,
-    diagnostic_logs: btn::TmplButton<'a>,
     email_support: btn::TmplButton<'a>,
 }
 
@@ -110,12 +109,6 @@ impl<'a> TmplSettings<'a> {
             .set_js(btn::JsSelector::CrashReport)
     }
 
-    fn diagnostic_logs_button() -> btn::TmplButton<'static> {
-        btn::TmplButton::builder()
-            .set_label(t!("settings.save_diagnostic_logs"))
-            .set_js(btn::JsSelector::DiagnosticLogs)
-    }
-
     fn relogin_button(host: &str) -> btn::TmplButton<'static> {
         btn::TmplButton::builder()
             .set_icon(Icon::Warning)
@@ -126,14 +119,11 @@ impl<'a> TmplSettings<'a> {
     }
 
     fn email_support_button(globals: &Globals) -> btn::TmplButton<'static> {
-        let subject = urlencoding::encode("QuiltSync diagnostic report");
-        let body_str = format!("QuiltSync v{}, {}", globals.version, std::env::consts::OS,);
-        let body = urlencoding::encode(&body_str);
-        let mailto = format!("mailto:support@quilt.bio?subject={subject}&body={body}");
         btn::TmplButton::builder()
             .set_label(t!("settings.email_support"))
-            .set_js(btn::JsSelector::OpenInWebBrowser)
-            .set_data("url", mailto)
+            .set_js(btn::JsSelector::DiagnosticLogs)
+            .set_data("version", globals.version.to_string())
+            .set_data("os", std::env::consts::OS.to_string())
     }
 }
 
@@ -164,7 +154,6 @@ impl From<ViewSettings> for TmplSettings<'_> {
             logs_dir: view.globals.logs_dir.display().to_string(),
             open_logs_dir: TmplSettings::open_logs_dir_button(&view.globals),
             crash_report: TmplSettings::crash_report_button(),
-            diagnostic_logs: TmplSettings::diagnostic_logs_button(),
             email_support: TmplSettings::email_support_button(&view.globals),
             layout: Layout::builder(view.globals).set_breadcrumbs(TmplSettings::breadcrumbs()),
         }
