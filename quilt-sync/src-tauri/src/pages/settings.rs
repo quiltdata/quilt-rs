@@ -119,7 +119,6 @@ impl<'a> TmplSettings<'a> {
         btn::TmplButton::builder()
             .set_icon(Icon::Warning)
             .set_label(t!("settings.relogin"))
-            .set_color(btn::Color::Warning)
             .set_size(btn::Size::Small)
             .set_js(btn::JsSelector::EraseAuth)
             .set_data("host", host.to_string())
