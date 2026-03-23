@@ -42,7 +42,7 @@ pub struct TmplSettings<'a> {
     open_logs_dir: btn::TmplButton<'a>,
     crash_report: btn::TmplButton<'a>,
     diagnostic_logs: btn::TmplButton<'a>,
-    mailto_href: String,
+    email_support: btn::TmplButton<'a>,
 }
 
 impl<'a> TmplSettings<'a> {
@@ -124,7 +124,7 @@ impl<'a> TmplSettings<'a> {
             .set_data("host", host.to_string())
     }
 
-    fn mailto_href(globals: &Globals) -> String {
+    fn email_support_button(globals: &Globals) -> btn::TmplButton<'static> {
         let subject = urlencoding::encode("QuiltSync diagnostic report");
         let body_str = format!(
             "QuiltSync v{}, {}",
@@ -132,7 +132,11 @@ impl<'a> TmplSettings<'a> {
             std::env::consts::OS,
         );
         let body = urlencoding::encode(&body_str);
-        format!("mailto:support@quilt.bio?subject={subject}&body={body}")
+        let mailto = format!("mailto:support@quilt.bio?subject={subject}&body={body}");
+        btn::TmplButton::builder()
+            .set_label(t!("settings.email_support"))
+            .set_js(btn::JsSelector::OpenInWebBrowser)
+            .set_data("url", mailto)
     }
 }
 
@@ -164,7 +168,7 @@ impl From<ViewSettings> for TmplSettings<'_> {
             open_logs_dir: TmplSettings::open_logs_dir_button(&view.globals),
             crash_report: TmplSettings::crash_report_button(),
             diagnostic_logs: TmplSettings::diagnostic_logs_button(),
-            mailto_href: TmplSettings::mailto_href(&view.globals),
+            email_support: TmplSettings::email_support_button(&view.globals),
             layout: Layout::builder(view.globals)
                 .set_breadcrumbs(TmplSettings::breadcrumbs()),
         }

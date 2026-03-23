@@ -67,9 +67,7 @@
       <div class="settings-actions">
         {{ crash_report | safe }}
         {{ diagnostic_logs | safe }}
-        <a class="qui-button link" href="{{ mailto_href }}">
-          <span>{{ t!("settings.email_support") }}</span>
-        </a>
+        {{ email_support | safe }}
       </div>
     </section>
 
