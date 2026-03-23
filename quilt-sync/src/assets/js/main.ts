@@ -532,14 +532,19 @@ window.addEventListener(EVENT_PAGE_READY, () => {
 
   listen(SELECTOR_DIAGNOSTIC_LOGS, ["version", "os"], async (data, button) => {
     button.setAttribute("disabled", "disabled");
-    button.querySelector("span")!.textContent = "Collecting logs…";
+    const span = button.querySelector("span");
+    if (!span) {
+      handleError("Missing text element inside diagnostic logs button");
+      return;
+    }
+    span.textContent = "Collecting logs…";
     try {
       const zipPath: string = await invoke(CMD_DIAGNOSTIC_LOGS);
       showEmailSupportResult(zipPath, data.version, data.os);
     } catch (error) {
       handleError(error);
       button.removeAttribute("disabled");
-      button.querySelector("span")!.textContent = "Email Support";
+      span.textContent = "Email Support";
     }
   });
 
