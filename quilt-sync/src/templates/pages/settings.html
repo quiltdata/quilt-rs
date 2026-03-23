@@ -38,7 +38,14 @@
         <dl class="settings-list">
           {% for host in auth_hosts %}
             <dt>{{ host.name }}</dt>
-            <dd>{{ host.relogin_button | safe }}</dd>
+            <dd>
+              <div class="relogin-popover">
+                {{ host.relogin_button | safe }}
+                <div class="popover-wrapper">
+                  <div class="popover">{{ t!("settings.relogin_warning") }}</div>
+                </div>
+              </div>
+            </dd>
           {% endfor %}
         </dl>
       {% endif %}

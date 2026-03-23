@@ -65,4 +65,39 @@
     gap: 8px;
     margin-top: 16px;
   }
+
+  .relogin-popover {
+    position: relative;
+  }
+
+  .relogin-popover .popover-wrapper {
+    bottom: 100%;
+    display: none;
+    left: 0;
+    padding-bottom: var(--q-ui-size-1);
+    position: absolute;
+  }
+
+  .relogin-popover:hover .popover-wrapper {
+    display: flex;
+  }
+
+  .relogin-popover .popover {
+    animation: popover-enter var(--q-ui-transition-duration-normal) var(--q-ui-transition-type-normal) forwards;
+    background: var(--q-ui-palette-background-primary);
+    border-radius: var(--q-ui-border-radius);
+    box-shadow: var(--q-ui-shadows-popup);
+    font-size: var(--q-ui-font-size-small);
+    max-width: 280px;
+    opacity: 0.7;
+    padding: var(--q-ui-size-1) var(--q-ui-size-2);
+    transform: translateY(var(--q-ui-size-1));
+  }
+
+  @keyframes popover-enter {
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
 }
