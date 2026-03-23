@@ -145,7 +145,7 @@ impl From<ViewSettings> for TmplSettings<'_> {
                 .home_dir
                 .as_ref()
                 .map(|h| h.display().to_string())
-                .unwrap_or_else(|| "Not set".to_string()),
+                .unwrap_or_else(|| t!("settings.not_set").into()),
             open_home_dir: TmplSettings::open_home_dir_button(),
             data_dir: view.data_dir.display().to_string(),
             open_data_dir: TmplSettings::open_data_dir_button(),
