@@ -7,7 +7,6 @@ use tauri::Manager;
 use tokio::sync;
 
 use crate::app;
-use crate::app::AppAssets;
 use crate::model;
 use crate::oauth::OAuthState;
 use crate::pages;
@@ -350,49 +349,23 @@ pub async fn open_data_dir(
     TmplNotify::new(msg_init).map(open_data_dir_command(&app_handle).await, msg_ok, msg_err)
 }
 
+use crate::telemetry::diagnostics;
+
 async fn send_crash_report_command(
     app_handle: &tauri::AppHandle,
     m: &model::Model,
     app: &app::App,
 ) -> Result<(), Error> {
-    let globals = app.globals();
-    let local_data_dir = app_handle.path().app_local_data_dir()?;
-    let auth_dir = local_data_dir.join(quilt::paths::AUTH_DIR);
-
-    let mut hosts: Vec<String> = Vec::new();
-    if auth_dir.exists() {
-        if let Ok(entries) = std::fs::read_dir(&auth_dir) {
-            for entry in entries.flatten() {
-                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                    if let Some(name) = entry.file_name().to_str() {
-                        hosts.push(name.to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    let home_dir = m
-        .get_quilt()
-        .lock()
-        .await
-        .get_home()
-        .await
-        .ok()
-        .map(|h| h.as_ref().display().to_string())
-        .unwrap_or_default();
-
-    let os_info = std::env::consts::OS;
-    let os_arch = std::env::consts::ARCH;
+    let info = diagnostics::collect(app_handle, m, app).await?;
 
     sentry::configure_scope(|scope| {
-        scope.set_extra("app_version", globals.version.to_string().into());
-        scope.set_extra("os", format!("{os_info} {os_arch}").into());
-        scope.set_extra("data_dir", local_data_dir.display().to_string().into());
-        scope.set_extra("home_dir", home_dir.into());
+        scope.set_extra("app_version", info.version.clone().into());
+        scope.set_extra("os", info.os.clone().into());
+        scope.set_extra("data_dir", info.data_dir.display().to_string().into());
+        scope.set_extra("home_dir", info.home_dir.clone().into());
         scope.set_extra(
             "authenticated_hosts",
-            serde_json::Value::from(hosts).into(),
+            serde_json::Value::from(info.auth_hosts),
         );
     });
 
@@ -431,40 +404,11 @@ async fn save_diagnostic_logs_command(
 ) -> Result<(), Error> {
     use std::io::Write;
 
-    let globals = app.globals();
-    let local_data_dir = app_handle.path().app_local_data_dir()?;
-    let auth_dir = local_data_dir.join(quilt::paths::AUTH_DIR);
-    let logs_dir = globals.logs_dir.clone();
+    let info = diagnostics::collect(app_handle, m, app).await?;
+    let auth_dir = info.data_dir.join(quilt::paths::AUTH_DIR);
 
-    // Collect metadata
-    let home_dir = m
-        .get_quilt()
-        .lock()
-        .await
-        .get_home()
-        .await
-        .ok()
-        .map(|h| h.as_ref().display().to_string())
-        .unwrap_or_default();
-
-    let os_info = std::env::consts::OS;
-    let os_arch = std::env::consts::ARCH;
-
-    let mut hosts: Vec<String> = Vec::new();
-    if auth_dir.exists() {
-        if let Ok(entries) = std::fs::read_dir(&auth_dir) {
-            for entry in entries.flatten() {
-                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                    if let Some(name) = entry.file_name().to_str() {
-                        hosts.push(name.to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    // Create zip
-    let temp_dir = std::env::temp_dir();
+    // Create zip in a temporary directory that persists after this function returns
+    let temp_dir = tempfile::tempdir()?.keep();
     let zip_path = temp_dir.join("quiltsync-diagnostic.zip");
     let file = std::fs::File::create(&zip_path)?;
     let mut zip_writer = zip::ZipWriter::new(file);
@@ -473,18 +417,18 @@ async fn save_diagnostic_logs_command(
 
     // Write metadata
     let metadata = serde_json::json!({
-        "version": globals.version.to_string(),
-        "os": format!("{os_info} {os_arch}"),
-        "data_dir": local_data_dir.display().to_string(),
-        "home_dir": home_dir,
-        "authenticated_hosts": hosts,
+        "version": info.version,
+        "os": info.os,
+        "data_dir": info.data_dir.display().to_string(),
+        "home_dir": info.home_dir,
+        "authenticated_hosts": info.auth_hosts,
     });
     zip_writer.start_file("metadata.json", options)?;
     zip_writer.write_all(serde_json::to_string_pretty(&metadata)?.as_bytes())?;
 
     // Add log files
-    if logs_dir.exists() {
-        if let Ok(entries) = std::fs::read_dir(&logs_dir) {
+    if info.logs_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&info.logs_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_file() {
@@ -498,7 +442,7 @@ async fn save_diagnostic_logs_command(
     }
 
     // Add data.json (lineage file)
-    let data_json = local_data_dir.join(".quilt").join("data.json");
+    let data_json = info.data_dir.join(".quilt").join("data.json");
     if data_json.exists() {
         zip_writer.start_file("data.json", options)?;
         let contents = std::fs::read(&data_json)?;
@@ -506,7 +450,7 @@ async fn save_diagnostic_logs_command(
     }
 
     // Add client.json per host (OAuth client registration — client ID only)
-    for host in &hosts {
+    for host in &info.auth_hosts {
         let client_json = auth_dir.join(host).join(quilt::paths::AUTH_CLIENT);
         if client_json.exists() {
             let name = format!("auth/{}/client.json", host);
@@ -519,7 +463,7 @@ async fn save_diagnostic_logs_command(
     zip_writer.finish()?;
 
     // Reveal the zip in the file manager
-    opener::open_browser(zip_path.parent().unwrap_or(&temp_dir))?;
+    opener::reveal(&zip_path)?;
 
     Ok(())
 }

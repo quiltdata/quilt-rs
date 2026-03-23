@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::path::PathBuf;
 
 use crate::routes::Paths;
 
@@ -93,7 +92,7 @@ pub async fn load(
                 .get_home()
                 .await
                 .ok()
-                .map(|h| PathBuf::from(h.as_ref().clone()));
+                .map(|h| h.as_ref().clone());
 
             let mut auth_hosts: Vec<String> = Vec::new();
             if auth_dir.exists() {

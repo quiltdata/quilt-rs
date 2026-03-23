@@ -8,6 +8,7 @@ use semver::Version;
 use crate::quilt;
 use crate::Result;
 
+pub mod diagnostics;
 pub mod mixpanel;
 pub mod sentry;
 pub mod tracing;

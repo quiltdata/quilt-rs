@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::path::PathBuf;
 
 use askama::Template;
@@ -178,7 +179,7 @@ impl From<ViewSettings> for TmplSettings<'_> {
 impl ViewSettings {
     pub async fn create(
         app: &impl AppAssets,
-        data_dir: &PathBuf,
+        data_dir: &Path,
         home_dir: Option<PathBuf>,
         log_level: String,
         auth_hosts: Vec<String>,
@@ -186,7 +187,7 @@ impl ViewSettings {
         Ok(ViewSettings {
             globals: app.globals(),
             home_dir,
-            data_dir: data_dir.clone(),
+            data_dir: data_dir.to_path_buf(),
             auth_hosts,
             log_level,
         })
