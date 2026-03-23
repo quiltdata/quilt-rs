@@ -73,6 +73,7 @@ impl<'a> TmplSettings<'a> {
             .set_icon(Icon::FolderOpen)
             .set_label("Open")
             .set_modificator(btn::Modificator::Link)
+            .set_size(btn::Size::Small)
             .set_js(btn::JsSelector::OpenHomeDir)
     }
 
@@ -81,6 +82,7 @@ impl<'a> TmplSettings<'a> {
             .set_icon(Icon::FolderOpen)
             .set_label("Open")
             .set_modificator(btn::Modificator::Link)
+            .set_size(btn::Size::Small)
             .set_js(btn::JsSelector::OpenDataDir)
     }
 
