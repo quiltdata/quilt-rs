@@ -489,11 +489,16 @@ function showEmailSupportResult(
 
   const result = document.createElement("div");
   result.className = "email-support-result";
-  result.innerHTML = `<p class="zip-path">Logs saved to: <code>${zipPath}</code></p>
+  result.innerHTML = `<p class="zip-path">Logs saved to: <code></code></p>
     <div class="email-support-actions">
-      <button class="qui-button primary js-email-open small" data-url="${mailtoUrl}" type="button"><span>Open Email</span></button>
-      <button class="qui-button js-file-reveal small" data-url="${zipPath}" type="button"><span>Show File</span></button>
+      <button class="qui-button primary js-email-open small" type="button"><span>Open Email</span></button>
+      <button class="qui-button js-file-reveal small" type="button"><span>Show File</span></button>
     </div>`;
+  result.querySelector("code")!.textContent = zipPath;
+  result.querySelector<HTMLButtonElement>(".js-email-open")!.dataset.url =
+    mailtoUrl;
+  result.querySelector<HTMLButtonElement>(".js-file-reveal")!.dataset.url =
+    zipPath;
   container.appendChild(result);
 
   // Wire the new buttons
