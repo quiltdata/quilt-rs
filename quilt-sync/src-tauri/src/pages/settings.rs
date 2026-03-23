@@ -71,7 +71,7 @@ impl<'a> TmplSettings<'a> {
     fn open_home_dir_button() -> btn::TmplButton<'static> {
         btn::TmplButton::builder()
             .set_icon(Icon::FolderOpen)
-            .set_label("Open")
+            .set_label(t!("settings.open"))
             .set_modificator(btn::Modificator::Link)
             .set_size(btn::Size::Small)
             .set_js(btn::JsSelector::OpenHomeDir)
@@ -80,7 +80,7 @@ impl<'a> TmplSettings<'a> {
     fn open_data_dir_button() -> btn::TmplButton<'static> {
         btn::TmplButton::builder()
             .set_icon(Icon::FolderOpen)
-            .set_label("Open")
+            .set_label(t!("settings.open"))
             .set_modificator(btn::Modificator::Link)
             .set_size(btn::Size::Small)
             .set_js(btn::JsSelector::OpenDataDir)
@@ -90,7 +90,7 @@ impl<'a> TmplSettings<'a> {
         let logs_dir_path = globals.logs_dir.display().to_string();
         let button = btn::TmplButton::builder()
             .set_icon(Icon::FolderOpen)
-            .set_label("Open")
+            .set_label(t!("settings.open"))
             .set_modificator(btn::Modificator::Link)
             .set_size(btn::Size::Small)
             .set_js(btn::JsSelector::DebugLogs)

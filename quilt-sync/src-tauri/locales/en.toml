@@ -112,6 +112,7 @@ log_level = 'Log level'
 logs_directory = 'Logs directory'
 send_crash_report = 'Send to Sentry'
 email_support = 'Email Support'
+open = 'Open'
 
 [error]
 title = 'Something went wrong!'
