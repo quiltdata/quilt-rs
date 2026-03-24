@@ -130,7 +130,6 @@ const CMD_SET_ORIGIN = "set_origin";
 const CMD_SETUP = "setup";
 const CMD_COLLECT_LOGS = "collect_diagnostic_logs";
 const CMD_CRASH_REPORT = "send_crash_report";
-const CMD_DIAGNOSTIC_LOGS = "save_diagnostic_logs";
 const CMD_OPEN_HOME_DIR = "open_home_dir";
 const CMD_OPEN_DATA_DIR = "open_data_dir";
 
@@ -156,7 +155,6 @@ type Command =
   | typeof CMD_SETUP
   | typeof CMD_COLLECT_LOGS
   | typeof CMD_CRASH_REPORT
-  | typeof CMD_DIAGNOSTIC_LOGS
   | typeof CMD_OPEN_HOME_DIR
   | typeof CMD_OPEN_DATA_DIR;
 
