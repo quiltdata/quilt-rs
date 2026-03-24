@@ -1,6 +1,7 @@
 //!
 //! Incapsulated knowlegde about directory structure of the files in `.quilt`, packages and working directories.
 
+use std::path::Path;
 use std::path::PathBuf;
 
 #[cfg(test)]
@@ -18,6 +19,28 @@ pub const AUTH_CLIENT: &str = "client.json";
 pub const AUTH_CREDENTIALS: &str = "credentials.json";
 pub const AUTH_DIR: &str = ".auth";
 pub const AUTH_TOKENS: &str = "tokens.json";
+
+/// List authenticated host directories under the given data directory.
+///
+/// Returns a sorted list of directory names found in `<data_dir>/.auth/`.
+// TODO: Also include registries from data.json/Lineage file.
+pub fn list_auth_hosts(data_dir: &Path) -> Vec<String> {
+    let auth_dir = data_dir.join(AUTH_DIR);
+    let mut hosts: Vec<String> = Vec::new();
+    if auth_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&auth_dir) {
+            for entry in entries.flatten() {
+                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    if let Some(name) = entry.file_name().to_str() {
+                        hosts.push(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    hosts.sort();
+    hosts
+}
 
 const LINEAGE_FILE: &str = ".quilt/data.json";
 

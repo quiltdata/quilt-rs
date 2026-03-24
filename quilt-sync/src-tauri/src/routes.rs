@@ -123,6 +123,8 @@ pub enum Paths {
     Merge(quilt::uri::Namespace),
     #[serde(rename = "remote_package")]
     RemotePackage(quilt::uri::S3PackageUri),
+    #[serde(rename = "settings")]
+    Settings,
     #[serde(rename = "setup")]
     Setup,
 }
@@ -157,6 +159,9 @@ impl fmt::Display for Paths {
                 let uri_str = uri.to_string();
                 let uri_encoded = urlencoding::encode(&uri_str);
                 write!(f, "remote-package.html?uri={uri_encoded}")
+            }
+            Paths::Settings => {
+                write!(f, "settings.html")
             }
             Paths::Setup => {
                 write!(f, "setup.html")
@@ -226,6 +231,10 @@ pub fn from_url(path: Paths, mut url: Url) -> url::Url {
             url.set_query(Some(&format!("uri={uri_encoded}")));
             url
         }
+        Paths::Settings => {
+            url.set_path("pages/settings.html");
+            url
+        }
         Paths::Setup => {
             url.set_path("pages/setup.html");
             url
@@ -265,6 +274,7 @@ impl str::FromStr for Paths {
                 let uri = parse_s3_package_uri(location)?;
                 Ok(Paths::RemotePackage(uri))
             }
+            "settings.html" => Ok(Paths::Settings),
             "setup.html" => Ok(Paths::Setup),
             _ => Err(Error::PageNotFound(page)),
         }
@@ -444,6 +454,20 @@ mod tests {
     }
 
     #[test]
+    fn test_settings() -> Result<()> {
+        let page_url = from_url(Paths::Settings, Url::parse("http://test:1234/")?);
+        let page_url_str = page_url.as_str();
+        assert_eq!(page_url_str, "http://test:1234/pages/settings.html");
+
+        let route: Paths = page_url_str.parse()?;
+
+        assert_eq!(route, Paths::Settings);
+        assert_eq!(format!("{route}"), "settings.html");
+
+        Ok(())
+    }
+
+    #[test]
     fn test_setup() -> Result<()> {
         let page_url = from_url(Paths::Setup, Url::parse("http://test:1234/")?);
         let page_url_str = page_url.as_str();
@@ -474,6 +498,9 @@ mod tests {
 
         let merge_path = Paths::Merge(("secret", "repo").into());
         assert_eq!(merge_path.pathname(), "merge");
+
+        let settings_path = Paths::Settings;
+        assert_eq!(settings_path.pathname(), "settings");
 
         let setup_path = Paths::Setup;
         assert_eq!(setup_path.pathname(), "setup");

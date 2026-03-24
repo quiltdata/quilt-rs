@@ -1,6 +1,6 @@
 [package]
 name = "quilt-sync"
-version = "0.14.4"
+version = "0.14.5"
 authors = ["Quilt Data, Inc."]
 description = "Cross-platform desktop application for editing Quilt data packages"
 documentation = "https://docs.quiltdata.com"
@@ -45,6 +45,7 @@ tracing-appender = "0.2.4"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 url.workspace = true
 urlencoding = "2.1.3"
+zip = { version = "4", default-features = false, features = ["deflate"] }
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem

@@ -69,6 +69,9 @@ pub enum Error {
 
     #[error("Post-login navigation failed: {0}")]
     PostLogin(String),
+
+    #[error("Zip error: {0}")]
+    Zip(#[from] zip::result::ZipError),
 }
 
 impl From<quilt::Error> for Error {

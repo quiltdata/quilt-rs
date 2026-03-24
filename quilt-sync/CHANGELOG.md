@@ -9,6 +9,17 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.14.5] - 2026-03-24
+
+### Added
+
+- Send bug and crash reports from the Settings page via Sentry or email (<https://github.com/quiltdata/quilt-rs/pull/581>)
+
+### Changed
+
+- Replace debug toolbar with a dedicated Settings page accessible from the app bar (<https://github.com/quiltdata/quilt-rs/pull/581>)
+- Simplify app initialization: remove `Globals` struct and `AppAssets` trait, use fallible `App::create()` (<https://github.com/quiltdata/quilt-rs/pull/581>)
+
 ## [v0.14.4] - 2026-03-19
 
 ### Added

@@ -3,8 +3,6 @@ use std::borrow::Cow;
 use askama::Template;
 use rust_i18n::t;
 
-use crate::app::AppAssets;
-use crate::app::Globals;
 use crate::error::Error;
 use crate::quilt;
 use crate::quilt::uri::Host;
@@ -14,7 +12,6 @@ use crate::ui::Icon;
 
 #[derive(Debug)]
 pub struct ViewLogin {
-    globals: Globals,
     host: Host,
     location: Option<String>,
 }
@@ -68,7 +65,7 @@ impl From<ViewLogin> for TmplPageLogin<'_> {
     fn from(view: ViewLogin) -> Self {
         TmplPageLogin {
             instructions: t!("login.code_instruction", s => view.host.to_string()),
-            layout: Layout::new(view.globals, Some(Self::submit_button())),
+            layout: Layout::new(Some(Self::submit_button())),
             login_oauth: Self::login_oauth(&view.host, view.location.as_deref()),
             open_catalog: Self::open_catalog(&view.host),
             location: view.location,
@@ -79,17 +76,12 @@ impl From<ViewLogin> for TmplPageLogin<'_> {
 
 impl ViewLogin {
     pub async fn create(
-        app: &impl AppAssets,
         tracing: &crate::telemetry::Telemetry,
         host: quilt::uri::Host,
         location: Option<String>,
     ) -> Result<ViewLogin, Error> {
         tracing.add_host(&host);
-        Ok(ViewLogin {
-            globals: app.globals(),
-            host,
-            location,
-        })
+        Ok(ViewLogin { host, location })
     }
 
     pub fn render(self) -> Result<String, Error> {
@@ -107,7 +99,6 @@ mod tests {
 
     use quilt::uri::Host;
 
-    use crate::app::Globals;
     use crate::Result;
 
     #[test]
@@ -115,7 +106,6 @@ mod tests {
         let host: Host = "test.quilt.dev".parse()?;
 
         let view = ViewLogin {
-            globals: Globals::default(),
             host: host.clone(),
             // NOTE: bare page name used here for test convenience only.
             // In production, location is always a full URL from the frontend

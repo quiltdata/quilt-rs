@@ -4,8 +4,6 @@ use std::path::PathBuf;
 use askama::Template;
 use rust_i18n::t;
 
-use crate::app::AppAssets;
-use crate::app::Globals;
 use crate::error::Error;
 use crate::ui::btn;
 use crate::ui::layout::Layout;
@@ -13,7 +11,6 @@ use crate::ui::Icon;
 
 #[derive(Debug)]
 pub struct ViewSetup {
-    globals: Globals,
     home: PathBuf,
 }
 
@@ -49,16 +46,15 @@ impl From<ViewSetup> for TmplSetup<'_> {
         TmplSetup {
             browse: Self::directory_picker(),
             home: view.home,
-            layout: Layout::new(view.globals, Some(Self::primary_button())),
+            layout: Layout::new(Some(Self::primary_button())),
         }
     }
 }
 
 impl ViewSetup {
-    pub async fn create(app: &impl AppAssets, home: &Path) -> Result<ViewSetup, Error> {
+    pub async fn create(home: &Path) -> Result<ViewSetup, Error> {
         Ok(ViewSetup {
             home: home.to_path_buf(),
-            globals: app.globals(),
         })
     }
 
@@ -83,7 +79,6 @@ mod tests {
 
         // Create the view
         let view = ViewSetup {
-            globals: Globals::default(),
             home: home_dir.clone(),
         };
 

@@ -8,6 +8,7 @@ use semver::Version;
 use crate::quilt;
 use crate::Result;
 
+pub mod diagnostics;
 pub mod mixpanel;
 pub mod sentry;
 pub mod tracing;
@@ -60,6 +61,11 @@ impl Telemetry {
 
     pub fn init(&self) {
         mixpanel::init(&self.mixpanel);
+    }
+
+    /// Returns the current global maximum log level as a human-readable string.
+    pub fn log_level(&self) -> String {
+        ::tracing::level_filters::LevelFilter::current().to_string()
     }
 }
 

@@ -15,6 +15,7 @@ use crate::routes;
 use crate::Error;
 
 use crate::model::QuiltModel;
+use crate::telemetry::diagnostics;
 use crate::telemetry::{mixpanel::LoginFlow, prelude::*, MixpanelEvent};
 use crate::ui::notify::TmplNotify;
 
@@ -32,9 +33,10 @@ async fn load_page_command(
     location: &str,
 ) -> Result<String, Error> {
     let home = get_default_home_dir(app_handle)?;
+    let data_dir = app_handle.path().app_local_data_dir()?;
 
     let path = location.parse::<routes::Paths>()?;
-    let page_result = pages::load(m, app, &home, tracing, &path).await;
+    let page_result = pages::load(m, app, &home, &data_dir, tracing, &path).await;
 
     match page_result {
         Ok(output) => {
@@ -50,7 +52,7 @@ async fn load_page_command(
         Err(Error::Quilt(quilt::Error::LineageMissing | quilt::Error::LineageMissingHome)) => {
             let err = "Lineage file is required";
             error!("{}", err);
-            let setup_page = pages::ViewSetup::create(app, &home).await?;
+            let setup_page = pages::ViewSetup::create(&home).await?;
             tracing
                 .track(MixpanelEvent::PageLoaded {
                     pathname: path.pathname(),
@@ -66,8 +68,7 @@ async fn load_page_command(
             // verbatim in PendingAuth and parsed back into a typed Paths
             // after a successful OAuth callback (see uri::login_with_code).
             let login_page =
-                pages::ViewLogin::create(app, tracing, host.clone(), Some(location.to_string()))
-                    .await?;
+                pages::ViewLogin::create(tracing, host.clone(), Some(location.to_string())).await?;
             tracing
                 .track(MixpanelEvent::PageLoaded {
                     pathname: path.pathname(),
@@ -79,7 +80,7 @@ async fn load_page_command(
         Err(err) => {
             error!("{}", err);
             let error = Some(err.to_string());
-            let error_page = pages::ViewError::create(app, err).await?;
+            let error_page = pages::ViewError::create(err).await?;
             tracing
                 .track(MixpanelEvent::PageLoaded {
                     pathname: path.pathname(),
@@ -109,7 +110,7 @@ pub async fn load_page(
         Ok(result) => Ok(result),
         Err(err) => {
             error!("Failed to load page: {}", err);
-            match pages::ViewError::create(app, err).await {
+            match pages::ViewError::create(err).await {
                 Ok(error_page) => match error_page.render() {
                     Ok(rendered) => Ok(rendered),
                     Err(render_err) => Ok(format!("Critical error: {}", render_err)),
@@ -223,12 +224,26 @@ pub async fn open_directory_picker(
     }
 }
 
-async fn erase_auth_command(app_handle: &tauri::AppHandle) -> Result<(), Error> {
+async fn erase_auth_command(app_handle: &tauri::AppHandle, host: &str) -> Result<(), Error> {
     let local_data_dir = app_handle.path().app_local_data_dir()?;
     let auth_dir = local_data_dir.join(quilt::paths::AUTH_DIR);
 
-    if auth_dir.exists() {
-        std::fs::remove_dir_all(&auth_dir)?;
+    if host.is_empty() {
+        // Global erase (backward compat)
+        if auth_dir.exists() {
+            std::fs::remove_dir_all(&auth_dir)?;
+        }
+    } else {
+        // Per-host erase — canonicalize and verify containment
+        let host_dir = auth_dir.join(host);
+        if host_dir.exists() {
+            let canonical = host_dir.canonicalize()?;
+            let canonical_auth = auth_dir.canonicalize()?;
+            if !canonical.starts_with(&canonical_auth) {
+                return Err(Error::General(format!("Invalid host: {host}")));
+            }
+            std::fs::remove_dir_all(&canonical)?;
+        }
     }
     Ok(())
 }
@@ -237,16 +252,21 @@ async fn erase_auth_command(app_handle: &tauri::AppHandle) -> Result<(), Error> 
 pub async fn erase_auth(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    host: String,
 ) -> Result<String, String> {
     tracing.track(MixpanelEvent::AuthErased).await;
 
     let app_handle = app_handle.lock().await;
 
-    let msg_init = "Erasing auth directory".to_string();
-    let msg_ok = "Successfully erased auth directory".to_string();
-    let msg_err = |err: &Error| format!("Failed to erase auth directory: {err}");
+    let msg_init = format!("Erasing auth for {host}");
+    let msg_ok = format!("Successfully erased auth for {host}");
+    let msg_err = |err: &Error| format!("Failed to erase auth: {err}");
 
-    TmplNotify::new(msg_init).map(erase_auth_command(&app_handle).await, msg_ok, msg_err)
+    TmplNotify::new(msg_init).map(
+        erase_auth_command(&app_handle, &host).await,
+        msg_ok,
+        msg_err,
+    )
 }
 
 async fn debug_dot_quilt_command(app_handle: &tauri::AppHandle) -> Result<(), Error> {
@@ -273,7 +293,7 @@ pub async fn debug_dot_quilt(
 }
 
 async fn debug_logs_command(app: &app::App) -> Result<(), Error> {
-    let logs_dir = app.logs_dir();
+    let logs_dir = &app.logs_dir;
     opener::open_browser(logs_dir.path())?;
     Ok(())
 }
@@ -291,6 +311,111 @@ pub async fn debug_logs(
     let msg_err = |err: &Error| format!("Failed to open logs directory: {err}");
 
     TmplNotify::new(msg_init).map(debug_logs_command(app).await, msg_ok, msg_err)
+}
+
+async fn open_home_dir_command(m: &model::Model) -> Result<(), Error> {
+    let home = m.get_quilt().lock().await.get_home().await?;
+    let home_path: &std::path::PathBuf = home.as_ref();
+    opener::open_browser(home_path)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn open_home_dir(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+) -> Result<String, String> {
+    tracing.track(MixpanelEvent::FileBrowserOpened).await;
+    let m: &model::Model = &m;
+
+    let msg_init = "Opening home directory".to_string();
+    let msg_ok = "Successfully opened home directory".to_string();
+    let msg_err = |err: &Error| format!("Failed to open home directory: {err}");
+
+    TmplNotify::new(msg_init).map(open_home_dir_command(m).await, msg_ok, msg_err)
+}
+
+async fn open_data_dir_command(app_handle: &tauri::AppHandle) -> Result<(), Error> {
+    let local_data_dir = app_handle.path().app_local_data_dir()?;
+    opener::open_browser(&local_data_dir)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn open_data_dir(
+    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+) -> Result<String, String> {
+    tracing.track(MixpanelEvent::FileBrowserOpened).await;
+    let app_handle = app_handle.lock().await;
+
+    let msg_init = "Opening data directory".to_string();
+    let msg_ok = "Successfully opened data directory".to_string();
+    let msg_err = |err: &Error| format!("Failed to open data directory: {err}");
+
+    TmplNotify::new(msg_init).map(open_data_dir_command(&app_handle).await, msg_ok, msg_err)
+}
+
+async fn send_crash_report_command(
+    app_handle: &tauri::AppHandle,
+    m: &model::Model,
+    app: &app::App,
+) -> Result<(), Error> {
+    let info = diagnostics::collect(app_handle, m, app).await?;
+    diagnostics::send_crash_report(info)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn send_crash_report(
+    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
+    m: tauri::State<'_, model::Model>,
+    app: tauri::State<'_, app::App>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+) -> Result<String, String> {
+    tracing.track(MixpanelEvent::CrashReportSent).await;
+    let app_handle = app_handle.lock().await;
+    let m: &model::Model = &m;
+    let app: &app::App = &app;
+
+    let msg_init = "Sending crash report".to_string();
+    let msg_ok = "Successfully sent crash report".to_string();
+    let msg_err = |err: &Error| format!("Failed to send crash report: {err}");
+
+    TmplNotify::new(msg_init).map(
+        send_crash_report_command(&app_handle, m, app).await,
+        msg_ok,
+        msg_err,
+    )
+}
+
+async fn save_diagnostic_logs_command(
+    app_handle: &tauri::AppHandle,
+    m: &model::Model,
+    app: &app::App,
+) -> Result<PathBuf, Error> {
+    let info = diagnostics::collect(app_handle, m, app).await?;
+    tokio::task::spawn_blocking(move || diagnostics::save_diagnostic_zip(info))
+        .await
+        .map_err(|e| Error::General(e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn save_diagnostic_logs(
+    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
+    m: tauri::State<'_, model::Model>,
+    app: tauri::State<'_, app::App>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+) -> Result<String, String> {
+    tracing.track(MixpanelEvent::DiagnosticLogsSaved).await;
+    let app_handle = app_handle.lock().await;
+    let m: &model::Model = &m;
+    let app: &app::App = &app;
+
+    match save_diagnostic_logs_command(&app_handle, m, app).await {
+        Ok(zip_path) => Ok(zip_path.display().to_string()),
+        Err(err) => Err(err.to_string()),
+    }
 }
 
 async fn reveal_in_file_browser_command(

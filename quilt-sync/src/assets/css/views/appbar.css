@@ -23,4 +23,9 @@
     align-items: center;
     display: flex;
   }
+
+  .nav a {
+    color: inherit;
+    text-decoration: none;
+  }
 }

@@ -17,7 +17,10 @@
         <img class="img" src="/assets/img/quilt.png" />
       </a>
       {{ layout.uri | safe }}
-      <div class="nav">{{ layout.refresh_button | safe }}</div>
+      <div class="nav">
+        {{ layout.refresh_button | safe }}
+        {{ layout.settings_button | safe }}
+      </div>
     </div>
   </div>
 
@@ -53,5 +56,5 @@
     <div class="qui-actionbar">{{ primary_action | safe }}</div>
   {% endif %}
 
-  {{ layout.debug_toolbar | safe }}
+
 </div>

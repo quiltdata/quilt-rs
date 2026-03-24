@@ -3,8 +3,6 @@ use std::borrow::Cow;
 use askama::Template;
 use rust_i18n::t;
 
-use crate::app::AppAssets;
-use crate::app::Globals;
 use crate::debug_tools;
 use crate::model::QuiltModel;
 use crate::quilt;
@@ -24,7 +22,6 @@ use crate::Result;
 #[derive(Debug)]
 pub struct ViewInstalledPackage {
     entries_list: Vec<entry::ViewEntry>,
-    globals: Globals,
     origin: Option<url::Url>,
     origin_host: Option<quilt::uri::Host>,
     status: UpstreamState,
@@ -175,7 +172,6 @@ impl<'a> TmplPageInstalledPackage<'a> {
 impl ViewInstalledPackage {
     pub async fn create(
         model: &impl QuiltModel,
-        app: &impl AppAssets,
         tracing: &crate::telemetry::Telemetry,
         namespace: &quilt::uri::Namespace,
     ) -> Result<ViewInstalledPackage> {
@@ -311,7 +307,6 @@ impl ViewInstalledPackage {
 
         Ok(ViewInstalledPackage {
             entries_list,
-            globals: app.globals(),
             origin,
             origin_host,
             status: status.upstream_state,
@@ -345,7 +340,7 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
         for entry in entries_list {
             entries.push(entry::TmplEntry::from(entry).set_checkbox(false));
         }
-        let layout = Layout::builder(view.globals)
+        let layout = Layout::builder()
             .set_breadcrumbs(Self::breadcrumbs(&uri))
             .set_actions(Self::actions(&uri, origin.as_ref()))
             .set_uri(Some(uri.clone()));
@@ -384,7 +379,6 @@ mod tests {
 
     use std::path::PathBuf;
 
-    use crate::app::mocks as app_mocks;
     use crate::model::mocks as model_mocks;
 
     #[test]
@@ -395,7 +389,6 @@ mod tests {
             origin_host: Some("test.quilt.dev".parse().unwrap()),
             status: quilt::lineage::UpstreamState::UpToDate,
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
-            globals: Globals::default(),
         })
         .render()?;
 
@@ -405,13 +398,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_view_entries() -> Result {
-        let app = app_mocks::create();
         let mut model = model_mocks::create();
         model_mocks::mock_installed_package(&mut model);
 
         let installed_package = ViewInstalledPackage::create(
             &model,
-            &app,
             &crate::telemetry::Telemetry::default(),
             &("foo", "bar").into(),
         )
@@ -457,7 +448,6 @@ mod tests {
             origin_host: Some("test.quilt.dev".parse().unwrap()),
             status: quilt::lineage::UpstreamState::UpToDate,
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
-            globals: Globals::default(),
         };
 
         // Render the view to HTML
@@ -481,7 +471,6 @@ mod tests {
             origin_host: None,
             status: quilt::lineage::UpstreamState::Error,
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
-            globals: Globals::default(),
         })
         .render()?;
 
@@ -509,7 +498,6 @@ mod tests {
             origin_host: Some("test.quilt.dev".parse().unwrap()),
             status: quilt::lineage::UpstreamState::Error,
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
-            globals: Globals::default(),
         })
         .render()?;
 
