@@ -13,7 +13,7 @@
 
 ### Added
 
-- Collect diagnostic logs from the Settings page and send them via Sentry (with zip attachment) or email (<https://github.com/quiltdata/quilt-rs/pull/581>)
+- Collect diagnostic logs from the Settings page and send them via Sentry (with zip attachment) or email (<https://github.com/quiltdata/quilt-rs/pull/581>, <https://github.com/quiltdata/quilt-rs/pull/583>)
 
 ### Changed
 
