@@ -25,7 +25,7 @@ impl Default for App {
         use std::path::PathBuf;
         App {
             version: Version::new(0, 0, 999),
-            logs_dir: LogsDir::Permanent(PathBuf::from("/tmp/quiltsync/logs")),
+            logs_dir: LogsDir::Permanent(PathBuf::default()),
         }
     }
 }
