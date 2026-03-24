@@ -73,17 +73,15 @@ pub fn send_crash_report(zip_path: &Path) -> Result<(), Error> {
     sentry::with_scope(
         |scope| {
             if let Some(ref m) = metadata {
-                if let Some(v) = m.get("version").and_then(|v| v.as_str()) {
-                    scope.set_extra("app_version", v.to_string().into());
-                }
-                if let Some(v) = m.get("os").and_then(|v| v.as_str()) {
-                    scope.set_extra("os", v.to_string().into());
-                }
-                if let Some(v) = m.get("data_dir").and_then(|v| v.as_str()) {
-                    scope.set_extra("data_dir", v.to_string().into());
-                }
-                if let Some(v) = m.get("home_dir").and_then(|v| v.as_str()) {
-                    scope.set_extra("home_dir", v.to_string().into());
+                for (json_key, extra_key) in [
+                    ("version", "app_version"),
+                    ("os", "os"),
+                    ("data_dir", "data_dir"),
+                    ("home_dir", "home_dir"),
+                ] {
+                    if let Some(v) = m.get(json_key).and_then(|v| v.as_str()) {
+                        scope.set_extra(extra_key, v.to_string().into());
+                    }
                 }
                 if let Some(v) = m.get("authenticated_hosts") {
                     scope.set_extra("authenticated_hosts", v.clone());
