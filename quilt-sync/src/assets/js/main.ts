@@ -473,17 +473,14 @@ function listen<T extends string>(
 /** Stored zip path after "Collect Logs" succeeds. */
 let collectedZipPath: string | null = null;
 
-function showCollectLogsResult(
-  zipPath: string,
-  labels: { collected: string; showFile: string },
-) {
+function showCollectLogsResult(zipPath: string) {
   const resultDiv = document.getElementById("collect-logs-result");
   if (!resultDiv) return;
 
   resultDiv.hidden = false;
-  resultDiv.innerHTML = `<span class="zip-path-label">${labels.collected}</span>
+  resultDiv.innerHTML = `<span class="zip-path-label">${I18N.logsCollected}</span>
     <code></code>
-    <button class="qui-button link js-file-reveal small" type="button"><img class="qui-icon" src="/assets/img/icons/folder_open.svg" /><span>${labels.showFile}</span></button>`;
+    <button class="qui-button link js-file-reveal small" type="button"><img class="qui-icon" src="/assets/img/icons/folder_open.svg" /><span>${I18N.revealFile}</span></button>`;
   resultDiv.querySelector("code")!.textContent = zipPath;
 
   resultDiv.querySelector(".js-file-reveal")?.addEventListener("click", async () => {
@@ -528,10 +525,7 @@ window.addEventListener(EVENT_PAGE_READY, () => {
     try {
       const zipPath: string = await invoke(CMD_COLLECT_LOGS);
       collectedZipPath = zipPath;
-      showCollectLogsResult(zipPath, {
-        collected: I18N.logsCollected,
-        showFile: I18N.revealFile,
-      });
+      showCollectLogsResult(zipPath);
       enableDeliveryButtons();
     } catch (error) {
       handleError(error);
