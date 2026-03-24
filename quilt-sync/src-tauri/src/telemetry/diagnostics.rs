@@ -44,7 +44,7 @@ pub async fn collect(
         os: format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),
         data_dir: local_data_dir,
         home_dir,
-        logs_dir: app.logs_dir_path(),
+        logs_dir: app.logs_dir().path().to_path_buf(),
         auth_hosts,
     })
 }

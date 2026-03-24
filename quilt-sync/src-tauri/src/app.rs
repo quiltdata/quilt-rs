@@ -1,7 +1,6 @@
 use mockall::predicate::*;
 use mockall::*;
 use semver::Version;
-use std::path::PathBuf;
 use tauri::PackageInfo;
 
 use crate::telemetry::prelude::*;
@@ -15,8 +14,7 @@ pub struct App {
 #[automock]
 pub trait AppAssets {
     fn version(&self) -> Version;
-    fn logs_dir_path(&self) -> PathBuf;
-    fn logs_dir_is_temporary(&self) -> bool;
+    fn logs_dir(&self) -> &LogsDir;
 }
 
 impl AppAssets for App {
@@ -24,12 +22,8 @@ impl AppAssets for App {
         self.version.clone()
     }
 
-    fn logs_dir_path(&self) -> PathBuf {
-        self.logs_dir.path().to_path_buf()
-    }
-
-    fn logs_dir_is_temporary(&self) -> bool {
-        matches!(self.logs_dir, LogsDir::Temporary(_))
+    fn logs_dir(&self) -> &LogsDir {
+        &self.logs_dir
     }
 }
 
@@ -41,23 +35,20 @@ impl App {
             logs_dir,
         }
     }
-
-    pub fn logs_dir(&self) -> &LogsDir {
-        &self.logs_dir
-    }
 }
 
 #[cfg(test)]
 pub mod mocks {
+    use std::path::PathBuf;
+
     use super::*;
 
     pub fn create() -> MockAppAssets {
         let mut app = MockAppAssets::new();
         app.expect_version()
             .return_const(semver::Version::parse("0.0.999").unwrap());
-        app.expect_logs_dir_path()
-            .return_const(PathBuf::from("/tmp/quiltsync/logs"));
-        app.expect_logs_dir_is_temporary().return_const(false);
+        app.expect_logs_dir()
+            .return_const(LogsDir::Permanent(PathBuf::from("/tmp/quiltsync/logs")));
         app
     }
 }

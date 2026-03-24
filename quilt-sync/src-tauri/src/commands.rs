@@ -7,6 +7,7 @@ use tauri::Manager;
 use tokio::sync;
 
 use crate::app;
+use crate::app::AppAssets;
 use crate::model;
 use crate::oauth::OAuthState;
 use crate::pages;

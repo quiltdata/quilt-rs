@@ -8,6 +8,7 @@ use semver::Version;
 
 use crate::app::AppAssets;
 use crate::error::Error;
+use crate::telemetry::LogsDir;
 use crate::ui::btn;
 use crate::ui::crumbs;
 use crate::ui::layout::Layout;
@@ -19,11 +20,9 @@ pub struct AuthHost<'a> {
     pub relogin_button: btn::TmplButton<'a>,
 }
 
-#[derive(Debug)]
-pub struct ViewSettings {
+pub struct ViewSettings<'a> {
     version: Version,
-    logs_dir: PathBuf,
-    logs_dir_is_temporary: bool,
+    logs_dir: &'a LogsDir,
     home_dir: Option<PathBuf>,
     data_dir: PathBuf,
     auth_hosts: Vec<String>,
@@ -89,17 +88,16 @@ impl<'a> TmplSettings<'a> {
             .set_js(btn::JsSelector::OpenDataDir)
     }
 
-    fn open_logs_dir_button(logs_dir: &Path, is_temporary: bool) -> btn::TmplButton<'static> {
-        let logs_dir_path = logs_dir.display().to_string();
+    fn open_logs_dir_button(logs_dir: &LogsDir) -> btn::TmplButton<'static> {
         let button = btn::TmplButton::builder()
             .set_icon(Icon::FolderOpen)
             .set_label(t!("settings.open"))
             .set_modificator(btn::Modificator::Link)
             .set_size(btn::Size::Small)
             .set_js(btn::JsSelector::DebugLogs)
-            .set_title(logs_dir_path);
+            .set_title(logs_dir.path().display().to_string());
 
-        if is_temporary {
+        if matches!(logs_dir, LogsDir::Temporary(_)) {
             return button.set_icon(Icon::Warning);
         }
 
@@ -130,8 +128,8 @@ impl<'a> TmplSettings<'a> {
     }
 }
 
-impl From<ViewSettings> for TmplSettings<'_> {
-    fn from(view: ViewSettings) -> Self {
+impl From<ViewSettings<'_>> for TmplSettings<'_> {
+    fn from(view: ViewSettings<'_>) -> Self {
         let auth_hosts: Vec<AuthHost> = view
             .auth_hosts
             .iter()
@@ -154,8 +152,8 @@ impl From<ViewSettings> for TmplSettings<'_> {
             open_data_dir: TmplSettings::open_data_dir_button(),
             auth_hosts,
             log_level: view.log_level.clone(),
-            logs_dir: view.logs_dir.display().to_string(),
-            open_logs_dir: TmplSettings::open_logs_dir_button(&view.logs_dir, view.logs_dir_is_temporary),
+            logs_dir: view.logs_dir.path().display().to_string(),
+            open_logs_dir: TmplSettings::open_logs_dir_button(&view.logs_dir),
             crash_report: TmplSettings::crash_report_button(),
             email_support: TmplSettings::email_support_button(&view.version),
             layout: Layout::builder().set_breadcrumbs(TmplSettings::breadcrumbs()),
@@ -163,18 +161,17 @@ impl From<ViewSettings> for TmplSettings<'_> {
     }
 }
 
-impl ViewSettings {
+impl<'a> ViewSettings<'a> {
     pub async fn create(
-        app: &impl AppAssets,
+        app: &'a impl AppAssets,
         data_dir: &Path,
         home_dir: Option<PathBuf>,
         log_level: String,
         auth_hosts: Vec<String>,
-    ) -> Result<ViewSettings, Error> {
+    ) -> Result<ViewSettings<'a>, Error> {
         Ok(ViewSettings {
             version: app.version(),
-            logs_dir: app.logs_dir_path(),
-            logs_dir_is_temporary: app.logs_dir_is_temporary(),
+            logs_dir: app.logs_dir(),
             home_dir,
             data_dir: data_dir.to_path_buf(),
             auth_hosts,
