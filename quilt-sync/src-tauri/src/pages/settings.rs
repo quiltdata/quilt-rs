@@ -196,7 +196,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_settings_page_rendering() -> Result<()> {
-        let app = App::default();
+        let app = App::create()?;
         let data_dir = PathBuf::from("/tmp/quiltsync/data");
         let home_dir = Some(PathBuf::from("/home/user/QuiltSync"));
 

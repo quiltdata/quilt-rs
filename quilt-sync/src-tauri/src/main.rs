@@ -74,7 +74,7 @@ fn main() {
 
             app.manage(Model::create(data_dir));
             app.manage(sync::Mutex::new(app.handle().clone()));
-            app.manage(App::create(package_info, logs_dir));
+            app.manage(App::new(package_info, logs_dir));
             app.manage(telemetry);
             app.manage(oauth::OAuthState::default());
 
