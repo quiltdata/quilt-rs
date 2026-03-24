@@ -79,17 +79,6 @@ install_selected_paths = 'Download selected paths'
 set_origin = 'Set origin'
 change_origin = 'Change origin'
 
-[debug_toolbar]
-dot_quilt_button = 'Open .quilt/'
-dot_quilt_title = 'Lineage and  cache files:'
-logs_directory = 'Logs directory:'
-release_notes = 'Release notes'
-reload_page = 'Reload page'
-reset = 'Reset state:'
-reset_auth = 'Re-login'
-show_logs = 'Show logs'
-version = 'Version:'
-
 [settings]
 title = 'Settings'
 general = 'General'
