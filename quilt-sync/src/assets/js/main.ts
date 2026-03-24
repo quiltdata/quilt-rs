@@ -551,14 +551,13 @@ window.addEventListener(EVENT_PAGE_READY, () => {
     }
   });
 
-  listen(SELECTOR_DIAGNOSTIC_LOGS, ["version", "os", "open-email"], async (_data, button) => {
+  listen(SELECTOR_DIAGNOSTIC_LOGS, ["version", "os", "open-email"], async (data) => {
     if (!collectedZipPath) {
       console.warn("Email support requested but no diagnostic zip collected yet");
       return;
     }
-    const data = getCommandDataFromDataAttributes(button, ["version", "os", "open-email"]);
     const subject = encodeURIComponent(
-      `Quilt issue report (v${data.version}, ${data.os})`,
+      `Quilt issue report (v${data["version"]}, ${data["os"]})`,
     );
     const body = encodeURIComponent(
       `Please describe the issue:\n...\n\nDiagnostic logs saved to:\n${collectedZipPath}\nPlease attach this file to this email.`,
