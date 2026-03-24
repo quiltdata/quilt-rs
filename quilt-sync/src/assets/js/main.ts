@@ -50,6 +50,7 @@ const SELECTOR_SETUP = ".js-setup";
 const SELECTOR_WORKFLOW_NULL = ".js-workflow-null";
 const SELECTOR_WORKFLOW_VALUE = ".js-workflow-value";
 const SELECTOR_REFRESH = ".js-refresh";
+const SELECTOR_COLLECT_LOGS = ".js-collect-logs";
 const SELECTOR_CRASH_REPORT = ".js-crash-report";
 const SELECTOR_DIAGNOSTIC_LOGS = ".js-diagnostic-logs";
 const SELECTOR_OPEN_HOME_DIR = ".js-open-home-dir";
@@ -102,6 +103,7 @@ type Selector =
   | typeof SELECTOR_UPDATE_INSTALL
   | typeof SELECTOR_WORKFLOW_NULL
   | typeof SELECTOR_WORKFLOW_VALUE
+  | typeof SELECTOR_COLLECT_LOGS
   | typeof SELECTOR_CRASH_REPORT
   | typeof SELECTOR_DIAGNOSTIC_LOGS
   | typeof SELECTOR_OPEN_HOME_DIR
@@ -126,8 +128,8 @@ const CMD_PACKAGE_UNINSTALL = "package_uninstall";
 const CMD_REVEAL_IN_FILE_BROWSER = "reveal_in_file_browser";
 const CMD_SET_ORIGIN = "set_origin";
 const CMD_SETUP = "setup";
+const CMD_COLLECT_LOGS = "collect_diagnostic_logs";
 const CMD_CRASH_REPORT = "send_crash_report";
-const CMD_DIAGNOSTIC_LOGS = "save_diagnostic_logs";
 const CMD_OPEN_HOME_DIR = "open_home_dir";
 const CMD_OPEN_DATA_DIR = "open_data_dir";
 
@@ -151,8 +153,8 @@ type Command =
   | typeof CMD_REVEAL_IN_FILE_BROWSER
   | typeof CMD_SET_ORIGIN
   | typeof CMD_SETUP
+  | typeof CMD_COLLECT_LOGS
   | typeof CMD_CRASH_REPORT
-  | typeof CMD_DIAGNOSTIC_LOGS
   | typeof CMD_OPEN_HOME_DIR
   | typeof CMD_OPEN_DATA_DIR;
 
@@ -462,60 +464,36 @@ function listen<T extends string>(
   }
 }
 
-function showEmailSupportResult(
+/** Stored zip path after "Collect Logs" succeeds. */
+let collectedZipPath: string | null = null;
+
+function showCollectLogsResult(
   zipPath: string,
-  version: string,
-  os: string,
-  labels: { logsSaved: string; openEmail: string; showFile: string },
+  labels: { collected: string; showFile: string },
 ) {
-  const container = document.getElementById("diagnostic-actions");
-  if (!container) return;
+  const resultDiv = document.getElementById("collect-logs-result");
+  if (!resultDiv) return;
 
-  const subject = encodeURIComponent(
-    `Quilt issue report (v${version}, ${os})`,
-  );
-  const body = encodeURIComponent(
-    `Please describe the issue:\n...\n\nDiagnostic logs saved to:\n${zipPath}\nPlease attach this file to this email.`,
-  );
-  const mailtoUrl = `mailto:support@quilt.bio?subject=${subject}&body=${body}`;
+  resultDiv.hidden = false;
+  resultDiv.innerHTML = `<span class="zip-path-label">${labels.collected}</span>
+    <code></code>
+    <button class="qui-button link js-file-reveal small" type="button"><img class="qui-icon" src="/assets/img/icons/folder_open.svg" /><span>${labels.showFile}</span></button>`;
+  resultDiv.querySelector("code")!.textContent = zipPath;
 
-  // Keep the crash report button and its description, replace the email
-  // support button with the staged result
-  const crashButton = container.querySelector(
-    SELECTOR_CRASH_REPORT,
-  ) as HTMLElement | null;
-  const crashDesc = container.querySelector(
-    ".crash-report-description",
-  ) as HTMLElement | null;
-
-  container.innerHTML = "";
-  if (crashButton) container.appendChild(crashButton);
-  if (crashDesc) container.appendChild(crashDesc);
-
-  const result = document.createElement("div");
-  result.className = "email-support-result";
-  result.innerHTML = `<p class="zip-path">${labels.logsSaved} <code></code></p>
-    <div class="email-support-actions">
-      <button class="qui-button primary js-email-open small" type="button"><span>${labels.openEmail}</span></button>
-      <button class="qui-button js-file-reveal small" type="button"><span>${labels.showFile}</span></button>
-    </div>`;
-  result.querySelector("code")!.textContent = zipPath;
-  result.querySelector<HTMLButtonElement>(".js-email-open")!.dataset.url =
-    mailtoUrl;
-  result.querySelector<HTMLButtonElement>(".js-file-reveal")!.dataset.url =
-    zipPath;
-  container.appendChild(result);
-
-  // Wire the new buttons
-  result.querySelector(".js-email-open")?.addEventListener("click", async () => {
-    await invoke(CMD_OPEN_IN_WEB_BROWSER, { url: mailtoUrl });
-  });
-  result.querySelector(".js-file-reveal")?.addEventListener("click", async () => {
-    // Open the parent directory so the file manager shows the zip
+  resultDiv.querySelector(".js-file-reveal")?.addEventListener("click", async () => {
     const sep = Math.max(zipPath.lastIndexOf("/"), zipPath.lastIndexOf("\\"));
     const dir = sep > 0 ? zipPath.substring(0, sep) : zipPath;
     await invoke(CMD_OPEN_IN_WEB_BROWSER, { url: dir });
   });
+}
+
+function enableDeliveryButtons() {
+  const container = document.getElementById("diagnostic-actions");
+  if (!container) return;
+  for (const selector of [SELECTOR_CRASH_REPORT, SELECTOR_DIAGNOSTIC_LOGS] as Selector[]) {
+    const btn = container.querySelector(selector) as HTMLButtonElement | null;
+    btn?.removeAttribute("disabled");
+  }
 }
 
 window.addEventListener(EVENT_PAGE_READY, () => {
@@ -532,31 +510,60 @@ window.addEventListener(EVENT_PAGE_READY, () => {
     execInlineCommand(CMD_DEBUG_LOGS, data, button),
   );
 
-  listen(SELECTOR_CRASH_REPORT, [], (data, button) =>
-    execInlineCommand(CMD_CRASH_REPORT, data, button),
-  );
-
-  listen(SELECTOR_DIAGNOSTIC_LOGS, ["version", "os", "collecting", "logs-saved", "open-email", "show-file"], async (data, button) => {
+  listen(SELECTOR_COLLECT_LOGS, ["collecting", "collected", "show-file"], async (data, button) => {
     const originalLabel = button.querySelector("span")?.textContent ?? "";
     button.setAttribute("disabled", "disabled");
     const span = button.querySelector("span");
     if (!span) {
-      handleError("Missing text element inside diagnostic logs button");
+      handleError("Missing text element inside collect logs button");
       return;
     }
     span.textContent = data["collecting"];
     try {
-      const zipPath: string = await invoke(CMD_DIAGNOSTIC_LOGS);
-      showEmailSupportResult(zipPath, data.version, data.os, {
-        logsSaved: data["logs-saved"],
-        openEmail: data["open-email"],
+      const zipPath: string = await invoke(CMD_COLLECT_LOGS);
+      collectedZipPath = zipPath;
+      showCollectLogsResult(zipPath, {
+        collected: data["collected"],
         showFile: data["show-file"],
       });
+      enableDeliveryButtons();
     } catch (error) {
       handleError(error);
+    } finally {
       button.removeAttribute("disabled");
       span.textContent = originalLabel;
     }
+  });
+
+  listen(SELECTOR_CRASH_REPORT, [], async (_data, button) => {
+    if (!collectedZipPath) {
+      console.warn("Crash report requested but no diagnostic zip collected yet");
+      return;
+    }
+    button.setAttribute("disabled", "disabled");
+    try {
+      const notification: Html = await invoke(CMD_CRASH_REPORT, { zipPath: collectedZipPath });
+      notify(notification);
+    } catch (error) {
+      handleError(error);
+    } finally {
+      button.removeAttribute("disabled");
+    }
+  });
+
+  listen(SELECTOR_DIAGNOSTIC_LOGS, ["version", "os", "open-email"], async (data) => {
+    if (!collectedZipPath) {
+      console.warn("Email support requested but no diagnostic zip collected yet");
+      return;
+    }
+    const subject = encodeURIComponent(
+      `Quilt issue report (v${data["version"]}, ${data["os"]})`,
+    );
+    const body = encodeURIComponent(
+      `Please describe the issue:\n...\n\nDiagnostic logs saved to:\n${collectedZipPath}\nPlease attach this file to this email.`,
+    );
+    const mailtoUrl = `mailto:support@quilt.bio?subject=${subject}&body=${body}`;
+    await invoke(CMD_OPEN_IN_WEB_BROWSER, { url: mailtoUrl });
   });
 
   listen(SELECTOR_OPEN_HOME_DIR, [], (data, button) =>

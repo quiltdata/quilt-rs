@@ -64,6 +64,8 @@ pub enum JsSelector {
     SetOrigin,
     #[template(source = "js-crash-report", ext = "txt")]
     CrashReport,
+    #[template(source = "js-collect-logs", ext = "txt")]
+    CollectLogs,
     #[template(source = "js-diagnostic-logs", ext = "txt")]
     DiagnosticLogs,
     #[template(source = "js-open-home-dir", ext = "txt")]

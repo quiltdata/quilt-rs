@@ -1,6 +1,8 @@
 use std::io::Write;
+use std::path::Path;
 use std::path::PathBuf;
 
+use sentry::protocol::Attachment;
 use tauri::Manager;
 
 use crate::app::App;
@@ -48,31 +50,65 @@ pub async fn collect(
     })
 }
 
-/// Send a Sentry crash report with diagnostic metadata.
+/// Send a Sentry crash report with the diagnostic zip attached.
+///
+/// Reads the pre-built zip file at `zip_path`, attaches it to the Sentry
+/// event, and sets metadata extras from `metadata.json` inside the zip.
 ///
 /// Returns an error if the Sentry client is not initialized (e.g. DSN not
 /// configured or offline), so callers can inform the user instead of
 /// silently pretending the report was sent.
-pub fn send_crash_report(info: DiagnosticInfo) -> Result<(), Error> {
+pub fn send_crash_report(zip_path: &Path) -> Result<(), Error> {
     if sentry::Hub::current().client().is_none() {
         return Err(Error::General(
             "Sentry is not initialized — crash report was not sent".to_string(),
         ));
     }
 
-    sentry::configure_scope(|scope| {
-        scope.set_extra("app_version", info.version.clone().into());
-        scope.set_extra("os", info.os.clone().into());
-        scope.set_extra("data_dir", info.data_dir.display().to_string().into());
-        scope.set_extra("home_dir", info.home_dir.clone().into());
-        scope.set_extra(
-            "authenticated_hosts",
-            serde_json::Value::from(info.auth_hosts),
-        );
-    });
+    let zip_bytes = std::fs::read(zip_path)?;
 
-    sentry::capture_message("User crash report", sentry::Level::Error);
+    // Extract metadata extras from the zip's metadata.json
+    let metadata = read_metadata_from_zip(&zip_bytes);
+
+    sentry::with_scope(
+        |scope| {
+            if let Some(ref m) = metadata {
+                for (json_key, extra_key) in [
+                    ("version", "app_version"),
+                    ("os", "os"),
+                    ("data_dir", "data_dir"),
+                    ("home_dir", "home_dir"),
+                ] {
+                    if let Some(v) = m.get(json_key).and_then(|v| v.as_str()) {
+                        scope.set_extra(extra_key, v.to_string().into());
+                    }
+                }
+                if let Some(v) = m.get("authenticated_hosts") {
+                    scope.set_extra("authenticated_hosts", v.clone());
+                }
+            }
+
+            scope.add_attachment(Attachment {
+                buffer: zip_bytes,
+                filename: "quiltsync-diagnostic.zip".to_string(),
+                content_type: Some("application/zip".to_string()),
+                ty: None,
+            });
+        },
+        || {
+            sentry::capture_message("User crash report", sentry::Level::Error);
+        },
+    );
+
     Ok(())
+}
+
+/// Try to read `metadata.json` from inside a zip archive.
+fn read_metadata_from_zip(zip_bytes: &[u8]) -> Option<serde_json::Value> {
+    let cursor = std::io::Cursor::new(zip_bytes);
+    let mut archive = zip::ZipArchive::new(cursor).ok()?;
+    let file = archive.by_name("metadata.json").ok()?;
+    serde_json::from_reader(file).ok()
 }
 
 /// Bundle diagnostic info, logs, and config files into a zip and reveal it.

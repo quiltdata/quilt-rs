@@ -61,40 +61,39 @@
   }
 
   .settings-actions {
-    display: grid;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     gap: 8px;
-    grid-template-columns: auto auto 1fr;
     margin-top: 16px;
+  }
+
+  .actions-divider {
+    align-self: center;
+    color: var(--q-ui-palette-text-secondary);
+    font-size: var(--q-ui-font-size-small);
   }
 
   .crash-report-description {
     color: var(--q-ui-palette-text-secondary);
     font-size: var(--q-ui-font-size-small);
-    grid-column: 1 / -1;
+    width: 100%;
     margin: 0;
   }
 
-  .email-support-result {
-    background: var(--q-ui-palette-background-primary);
-    border: 1px solid var(--q-ui-palette-border);
-    border-radius: var(--q-ui-border-radius);
-    font-size: var(--q-ui-font-size-small);
-    grid-column: 1 / -1;
-    padding: var(--q-ui-size-1) var(--q-ui-size-2);
-  }
-
-  .email-support-result .zip-path {
-    margin: 0 0 var(--q-ui-size-1);
-  }
-
-  .email-support-result code {
-    font-size: var(--q-ui-font-size-small);
-    word-break: break-all;
-  }
-
-  .email-support-actions {
+  .collect-logs-result {
+    align-items: center;
     display: flex;
+    font-size: 0.875rem;
     gap: 8px;
+    width: 100%;
+  }
+
+  .collect-logs-result code {
+    font-size: 0.875rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .relogin-popover {

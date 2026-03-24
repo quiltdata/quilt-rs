@@ -356,40 +356,7 @@ pub async fn open_data_dir(
     TmplNotify::new(msg_init).map(open_data_dir_command(&app_handle).await, msg_ok, msg_err)
 }
 
-async fn send_crash_report_command(
-    app_handle: &tauri::AppHandle,
-    m: &model::Model,
-    app: &app::App,
-) -> Result<(), Error> {
-    let info = diagnostics::collect(app_handle, m, app).await?;
-    diagnostics::send_crash_report(info)?;
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn send_crash_report(
-    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
-    m: tauri::State<'_, model::Model>,
-    app: tauri::State<'_, app::App>,
-    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
-) -> Result<String, String> {
-    tracing.track(MixpanelEvent::CrashReportSent).await;
-    let app_handle = app_handle.lock().await;
-    let m: &model::Model = &m;
-    let app: &app::App = &app;
-
-    let msg_init = "Sending crash report".to_string();
-    let msg_ok = "Successfully sent crash report".to_string();
-    let msg_err = |err: &Error| format!("Failed to send crash report: {err}");
-
-    TmplNotify::new(msg_init).map(
-        send_crash_report_command(&app_handle, m, app).await,
-        msg_ok,
-        msg_err,
-    )
-}
-
-async fn save_diagnostic_logs_command(
+async fn collect_diagnostic_logs_command(
     app_handle: &tauri::AppHandle,
     m: &model::Model,
     app: &app::App,
@@ -401,7 +368,7 @@ async fn save_diagnostic_logs_command(
 }
 
 #[tauri::command]
-pub async fn save_diagnostic_logs(
+pub async fn collect_diagnostic_logs(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     m: tauri::State<'_, model::Model>,
     app: tauri::State<'_, app::App>,
@@ -412,10 +379,35 @@ pub async fn save_diagnostic_logs(
     let m: &model::Model = &m;
     let app: &app::App = &app;
 
-    match save_diagnostic_logs_command(&app_handle, m, app).await {
+    match collect_diagnostic_logs_command(&app_handle, m, app).await {
         Ok(zip_path) => Ok(zip_path.display().to_string()),
         Err(err) => Err(err.to_string()),
     }
+}
+
+#[tauri::command]
+pub async fn send_crash_report(
+    zip_path: String,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+) -> Result<String, String> {
+    tracing.track(MixpanelEvent::CrashReportSent).await;
+
+    let zip_path = PathBuf::from(zip_path);
+    if zip_path.file_name() != Some("quiltsync-diagnostic.zip".as_ref()) {
+        return Err("Invalid diagnostic zip filename".to_string());
+    }
+
+    let msg_init = "Sending crash report".to_string();
+    let msg_ok = "Successfully sent crash report".to_string();
+    let msg_err = |err: &Error| format!("Failed to send crash report: {err}");
+
+    let result =
+        tokio::task::spawn_blocking(move || diagnostics::send_crash_report(zip_path.as_path()))
+            .await
+            .map_err(|e| Error::General(e.to_string()))
+            .and_then(|r| r);
+
+    TmplNotify::new(msg_init).map(result, msg_ok, msg_err)
 }
 
 async fn reveal_in_file_browser_command(

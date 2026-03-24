@@ -43,6 +43,7 @@ pub struct TmplSettings<'a> {
     log_level: String,
     logs_dir: String,
     open_logs_dir: btn::TmplButton<'a>,
+    collect_logs: btn::TmplButton<'a>,
     crash_report: btn::TmplButton<'a>,
     email_support: btn::TmplButton<'a>,
 }
@@ -104,10 +105,20 @@ impl<'a> TmplSettings<'a> {
         button
     }
 
+    fn collect_logs_button() -> btn::TmplButton<'static> {
+        btn::TmplButton::builder()
+            .set_label(t!("settings.collect_logs"))
+            .set_js(btn::JsSelector::CollectLogs)
+            .set_data("collecting", t!("settings.collect_logs_collecting"))
+            .set_data("collected", t!("settings.collect_logs_collected"))
+            .set_data("show-file", t!("settings.email_support_show_file"))
+    }
+
     fn crash_report_button() -> btn::TmplButton<'static> {
         btn::TmplButton::builder()
             .set_label(t!("settings.send_crash_report"))
             .set_js(btn::JsSelector::CrashReport)
+            .set_disabled()
     }
 
     fn relogin_button(host: &str) -> btn::TmplButton<'static> {
@@ -125,10 +136,8 @@ impl<'a> TmplSettings<'a> {
             .set_js(btn::JsSelector::DiagnosticLogs)
             .set_data("version", version.to_string())
             .set_data("os", std::env::consts::OS.to_string())
-            .set_data("collecting", t!("settings.email_support_collecting"))
-            .set_data("logs-saved", t!("settings.email_support_logs_saved"))
             .set_data("open-email", t!("settings.email_support_open"))
-            .set_data("show-file", t!("settings.email_support_show_file"))
+            .set_disabled()
     }
 }
 
@@ -158,6 +167,7 @@ impl From<ViewSettings<'_>> for TmplSettings<'_> {
             log_level: view.log_level.clone(),
             logs_dir: view.logs_dir.path().display().to_string(),
             open_logs_dir: TmplSettings::open_logs_dir_button(view.logs_dir),
+            collect_logs: TmplSettings::collect_logs_button(),
             crash_report: TmplSettings::crash_report_button(),
             email_support: TmplSettings::email_support_button(&view.version),
             layout: Layout::builder().set_breadcrumbs(TmplSettings::breadcrumbs()),
