@@ -15,6 +15,7 @@ use crate::routes;
 use crate::Error;
 
 use crate::model::QuiltModel;
+use crate::telemetry::diagnostics;
 use crate::telemetry::{mixpanel::LoginFlow, prelude::*, MixpanelEvent};
 use crate::ui::notify::TmplNotify;
 
@@ -352,8 +353,6 @@ pub async fn open_data_dir(
 
     TmplNotify::new(msg_init).map(open_data_dir_command(&app_handle).await, msg_ok, msg_err)
 }
-
-use crate::telemetry::diagnostics;
 
 async fn send_crash_report_command(
     app_handle: &tauri::AppHandle,
