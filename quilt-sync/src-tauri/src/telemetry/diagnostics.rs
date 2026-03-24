@@ -68,7 +68,7 @@ pub fn send_crash_report(info: DiagnosticInfo) {
 pub fn save_diagnostic_zip(info: DiagnosticInfo) -> Result<PathBuf, Error> {
     let auth_dir = info.data_dir.join(quilt::paths::AUTH_DIR);
 
-    let zip_path = info.logs_dir.join("quiltsync-diagnostic.zip");
+    let zip_path = info.data_dir.join("quiltsync-diagnostic.zip");
     let file = std::fs::File::create(&zip_path)?;
     let mut zip_writer = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default()
