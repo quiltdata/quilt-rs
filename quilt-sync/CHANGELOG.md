@@ -14,10 +14,19 @@
 ### Added
 
 - Send bug and crash reports from the Settings page via Sentry or email (<https://github.com/quiltdata/quilt-rs/pull/581>)
+- Show warning popovers on re-login buttons for authenticated hosts (<https://github.com/quiltdata/quilt-rs/pull/581>)
+
+### Fixed
+
+- Fix path traversal vulnerability in `erase_auth` command (<https://github.com/quiltdata/quilt-rs/pull/581>)
+- Fix XSS in email support result display (<https://github.com/quiltdata/quilt-rs/pull/581>)
+- Fix temp directory leak in `save_diagnostic_zip` (<https://github.com/quiltdata/quilt-rs/pull/581>)
 
 ### Changed
 
 - Replace debug toolbar with a dedicated Settings page accessible from the app bar (<https://github.com/quiltdata/quilt-rs/pull/581>)
+- Simplify app initialization: remove `Globals` struct and `AppAssets` trait, use fallible `App::create()` (<https://github.com/quiltdata/quilt-rs/pull/581>)
+- Bump `zip` crate from v2 to v4 (<https://github.com/quiltdata/quilt-rs/pull/581>)
 
 ## [v0.14.4] - 2026-03-19
 
