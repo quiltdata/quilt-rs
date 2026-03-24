@@ -102,13 +102,9 @@ logs_directory = 'Logs directory'
 collect_logs = 'Collect Logs'
 then = 'then'
 or = 'or'
-collect_logs_collecting = 'Collecting…'
-collect_logs_collected = 'Logs collected:'
 send_crash_report = 'Send to Sentry'
 send_crash_report_description = 'Sends app version, OS, directory paths, authenticated host names, log files, and OAuth client IDs.'
 email_support = 'Email Support'
-email_support_open = 'Open Email'
-email_support_show_file = 'Reveal'
 open = 'Open'
 
 [error]
