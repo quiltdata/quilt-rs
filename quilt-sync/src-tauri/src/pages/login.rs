@@ -81,10 +81,7 @@ impl ViewLogin {
         location: Option<String>,
     ) -> Result<ViewLogin, Error> {
         tracing.add_host(&host);
-        Ok(ViewLogin {
-            host,
-            location,
-        })
+        Ok(ViewLogin { host, location })
     }
 
     pub fn render(self) -> Result<String, Error> {

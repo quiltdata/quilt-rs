@@ -67,8 +67,7 @@ async fn load_page_command(
             // verbatim in PendingAuth and parsed back into a typed Paths
             // after a successful OAuth callback (see uri::login_with_code).
             let login_page =
-                pages::ViewLogin::create(tracing, host.clone(), Some(location.to_string()))
-                    .await?;
+                pages::ViewLogin::create(tracing, host.clone(), Some(location.to_string())).await?;
             tracing
                 .track(MixpanelEvent::PageLoaded {
                     pathname: path.pathname(),

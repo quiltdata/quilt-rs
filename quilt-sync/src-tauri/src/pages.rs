@@ -59,9 +59,7 @@ pub async fn load(
                 .await?
                 .render()
         }
-        Paths::Merge(namespace) => ViewMerge::create(model, tracing, namespace)
-            .await?
-            .render(),
+        Paths::Merge(namespace) => ViewMerge::create(model, tracing, namespace).await?.render(),
         Paths::RemotePackage(uri) => {
             let installed_package = install_package_only(model, uri).await?;
 
