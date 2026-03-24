@@ -9,6 +9,16 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.14.5] - 2026-03-24
+
+### Added
+
+- Send bug and crash reports from the Settings page via Sentry or email
+
+### Changed
+
+- Replace debug toolbar with a dedicated Settings page accessible from the app bar
+
 ## [v0.14.4] - 2026-03-19
 
 ### Added
