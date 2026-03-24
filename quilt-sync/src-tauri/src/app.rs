@@ -7,12 +7,6 @@ use tauri::PackageInfo;
 use crate::telemetry::prelude::*;
 use crate::telemetry::LogsDir;
 
-#[derive(Debug, Clone)]
-pub struct Globals {
-    pub version: Version,
-    pub logs_dir: PathBuf,
-}
-
 pub struct App {
     version: Version,
     logs_dir: LogsDir,
@@ -20,16 +14,18 @@ pub struct App {
 
 #[automock]
 pub trait AppAssets {
-    fn globals(&self) -> Globals;
+    fn version(&self) -> Version;
+    fn logs_dir_path(&self) -> PathBuf;
     fn logs_dir_is_temporary(&self) -> bool;
 }
 
 impl AppAssets for App {
-    fn globals(&self) -> Globals {
-        Globals {
-            version: self.version.clone(),
-            logs_dir: self.logs_dir.path().to_path_buf(),
-        }
+    fn version(&self) -> Version {
+        self.version.clone()
+    }
+
+    fn logs_dir_path(&self) -> PathBuf {
+        self.logs_dir.path().to_path_buf()
     }
 
     fn logs_dir_is_temporary(&self) -> bool {
@@ -52,25 +48,15 @@ impl App {
 }
 
 #[cfg(test)]
-impl Default for Globals {
-    fn default() -> Self {
-        Globals {
-            version: Version::new(0, 0, 0),
-            logs_dir: PathBuf::from("/tmp/quiltsync/logs"),
-        }
-    }
-}
-
-#[cfg(test)]
 pub mod mocks {
     use super::*;
 
     pub fn create() -> MockAppAssets {
         let mut app = MockAppAssets::new();
-        app.expect_globals().return_const(Globals {
-            version: semver::Version::parse("0.0.999").unwrap(),
-            logs_dir: PathBuf::from("/tmp/quiltsync/logs"),
-        });
+        app.expect_version()
+            .return_const(semver::Version::parse("0.0.999").unwrap());
+        app.expect_logs_dir_path()
+            .return_const(PathBuf::from("/tmp/quiltsync/logs"));
         app.expect_logs_dir_is_temporary().return_const(false);
         app
     }

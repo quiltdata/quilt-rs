@@ -26,7 +26,6 @@ pub async fn collect(
     m: &Model,
     app: &App,
 ) -> Result<DiagnosticInfo, Error> {
-    let globals = app.globals();
     let local_data_dir = app_handle.path().app_local_data_dir()?;
     let auth_hosts = quilt::paths::list_auth_hosts(&local_data_dir);
 
@@ -41,11 +40,11 @@ pub async fn collect(
         .unwrap_or_default();
 
     Ok(DiagnosticInfo {
-        version: globals.version.to_string(),
+        version: app.version().to_string(),
         os: format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),
         data_dir: local_data_dir,
         home_dir,
-        logs_dir: globals.logs_dir,
+        logs_dir: app.logs_dir_path(),
         auth_hosts,
     })
 }

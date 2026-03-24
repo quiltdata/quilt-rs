@@ -4,8 +4,9 @@ use std::path::PathBuf;
 use askama::Template;
 use rust_i18n::t;
 
+use semver::Version;
+
 use crate::app::AppAssets;
-use crate::app::Globals;
 use crate::error::Error;
 use crate::ui::btn;
 use crate::ui::crumbs;
@@ -20,7 +21,8 @@ pub struct AuthHost<'a> {
 
 #[derive(Debug)]
 pub struct ViewSettings {
-    globals: Globals,
+    version: Version,
+    logs_dir: PathBuf,
     logs_dir_is_temporary: bool,
     home_dir: Option<PathBuf>,
     data_dir: PathBuf,
@@ -56,10 +58,10 @@ impl<'a> TmplSettings<'a> {
         }
     }
 
-    fn release_notes_button(globals: &Globals) -> btn::TmplButton<'static> {
+    fn release_notes_button(version: &Version) -> btn::TmplButton<'static> {
         let release_url = format!(
             "https://github.com/quiltdata/quilt-rs/releases/tag/QuiltSync/v{}",
-            globals.version
+            version
         );
         btn::TmplButton::builder()
             .set_label(t!("settings.release_notes"))
@@ -87,8 +89,8 @@ impl<'a> TmplSettings<'a> {
             .set_js(btn::JsSelector::OpenDataDir)
     }
 
-    fn open_logs_dir_button(globals: &Globals, is_temporary: bool) -> btn::TmplButton<'static> {
-        let logs_dir_path = globals.logs_dir.display().to_string();
+    fn open_logs_dir_button(logs_dir: &Path, is_temporary: bool) -> btn::TmplButton<'static> {
+        let logs_dir_path = logs_dir.display().to_string();
         let button = btn::TmplButton::builder()
             .set_icon(Icon::FolderOpen)
             .set_label(t!("settings.open"))
@@ -119,11 +121,11 @@ impl<'a> TmplSettings<'a> {
             .set_data("host", host.to_string())
     }
 
-    fn email_support_button(globals: &Globals) -> btn::TmplButton<'static> {
+    fn email_support_button(version: &Version) -> btn::TmplButton<'static> {
         btn::TmplButton::builder()
             .set_label(t!("settings.email_support"))
             .set_js(btn::JsSelector::DiagnosticLogs)
-            .set_data("version", globals.version.to_string())
+            .set_data("version", version.to_string())
             .set_data("os", std::env::consts::OS.to_string())
     }
 }
@@ -140,8 +142,8 @@ impl From<ViewSettings> for TmplSettings<'_> {
             .collect();
 
         TmplSettings {
-            version: view.globals.version.to_string(),
-            release_notes: TmplSettings::release_notes_button(&view.globals),
+            version: view.version.to_string(),
+            release_notes: TmplSettings::release_notes_button(&view.version),
             home_dir: view
                 .home_dir
                 .as_ref()
@@ -152,10 +154,10 @@ impl From<ViewSettings> for TmplSettings<'_> {
             open_data_dir: TmplSettings::open_data_dir_button(),
             auth_hosts,
             log_level: view.log_level.clone(),
-            logs_dir: view.globals.logs_dir.display().to_string(),
-            open_logs_dir: TmplSettings::open_logs_dir_button(&view.globals, view.logs_dir_is_temporary),
+            logs_dir: view.logs_dir.display().to_string(),
+            open_logs_dir: TmplSettings::open_logs_dir_button(&view.logs_dir, view.logs_dir_is_temporary),
             crash_report: TmplSettings::crash_report_button(),
-            email_support: TmplSettings::email_support_button(&view.globals),
+            email_support: TmplSettings::email_support_button(&view.version),
             layout: Layout::builder().set_breadcrumbs(TmplSettings::breadcrumbs()),
         }
     }
@@ -170,7 +172,8 @@ impl ViewSettings {
         auth_hosts: Vec<String>,
     ) -> Result<ViewSettings, Error> {
         Ok(ViewSettings {
-            globals: app.globals(),
+            version: app.version(),
+            logs_dir: app.logs_dir_path(),
             logs_dir_is_temporary: app.logs_dir_is_temporary(),
             home_dir,
             data_dir: data_dir.to_path_buf(),
