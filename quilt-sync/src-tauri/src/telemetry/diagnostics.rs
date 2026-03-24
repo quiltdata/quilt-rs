@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use tauri::Manager;
 
 use crate::app::App;
-use crate::app::AppAssets;
 use crate::error::Error;
 use crate::model::Model;
 use crate::model::QuiltModel;

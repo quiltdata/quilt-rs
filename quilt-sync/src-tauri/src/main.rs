@@ -21,7 +21,7 @@ mod telemetry;
 mod ui;
 mod uri;
 
-use app::App as AppAssets;
+use app::App;
 use error::Error;
 use model::Model;
 
@@ -74,7 +74,7 @@ fn main() {
 
             app.manage(Model::create(data_dir));
             app.manage(sync::Mutex::new(app.handle().clone()));
-            app.manage(AppAssets::create(package_info, logs_dir));
+            app.manage(App::create(package_info, logs_dir));
             app.manage(telemetry);
             app.manage(oauth::OAuthState::default());
 

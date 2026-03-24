@@ -6,7 +6,7 @@ use rust_i18n::t;
 
 use semver::Version;
 
-use crate::app::AppAssets;
+use crate::app::App;
 use crate::error::Error;
 use crate::telemetry::LogsDir;
 use crate::ui::btn;
@@ -153,7 +153,7 @@ impl From<ViewSettings<'_>> for TmplSettings<'_> {
             auth_hosts,
             log_level: view.log_level.clone(),
             logs_dir: view.logs_dir.path().display().to_string(),
-            open_logs_dir: TmplSettings::open_logs_dir_button(&view.logs_dir),
+            open_logs_dir: TmplSettings::open_logs_dir_button(view.logs_dir),
             crash_report: TmplSettings::crash_report_button(),
             email_support: TmplSettings::email_support_button(&view.version),
             layout: Layout::builder().set_breadcrumbs(TmplSettings::breadcrumbs()),
@@ -163,7 +163,7 @@ impl From<ViewSettings<'_>> for TmplSettings<'_> {
 
 impl<'a> ViewSettings<'a> {
     pub async fn create(
-        app: &'a impl AppAssets,
+        app: &'a App,
         data_dir: &Path,
         home_dir: Option<PathBuf>,
         log_level: String,
@@ -191,12 +191,12 @@ impl<'a> ViewSettings<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::mocks as app_mocks;
+    use crate::app::App;
     use crate::Result;
 
     #[tokio::test]
     async fn test_settings_page_rendering() -> Result<()> {
-        let app = app_mocks::create();
+        let app = App::default();
         let data_dir = PathBuf::from("/tmp/quiltsync/data");
         let home_dir = Some(PathBuf::from("/home/user/QuiltSync"));
 

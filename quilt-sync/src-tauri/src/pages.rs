@@ -11,7 +11,7 @@ mod merge;
 mod settings;
 mod setup;
 
-use crate::app::AppAssets;
+use crate::app::App;
 use crate::error::Error;
 use crate::model::install_package_only;
 use crate::model::QuiltModel;
@@ -28,7 +28,7 @@ pub use setup::ViewSetup;
 
 pub async fn load(
     model: &impl QuiltModel,
-    app: &impl AppAssets,
+    app: &App,
     default_home: &Path,
     data_dir: &Path,
     tracing: &crate::telemetry::Telemetry,
@@ -110,7 +110,7 @@ mod tests {
 
     use std::path::PathBuf;
 
-    use crate::app::mocks as app_mocks;
+    use crate::app::App;
     use crate::model::mocks as model_mocks;
 
     fn default_home() -> PathBuf {
@@ -129,7 +129,7 @@ mod tests {
     async fn test_commit() -> Result<(), Error> {
         let mut model = model_mocks::create();
         model_mocks::mock_installed_package(&mut model);
-        let app = app_mocks::create();
+        let app = App::default();
 
         let url = "https://l/p/commit.html#namespace=doesnt/matter";
         let path: Paths = url.parse()?;
@@ -150,7 +150,7 @@ mod tests {
     async fn test_installed_package() -> Result<(), Error> {
         let mut model = model_mocks::create();
         model_mocks::mock_installed_package(&mut model);
-        let app = app_mocks::create();
+        let app = App::default();
 
         let url = "https://l/p/installed-package.html#namespace=doesnt/matter";
         let path: Paths = url.parse()?;
@@ -171,7 +171,7 @@ mod tests {
     async fn test_installed_packages_list() -> Result<(), Error> {
         let mut model = model_mocks::create();
         model_mocks::mock_installed_packages_list(&mut model);
-        let app = app_mocks::create();
+        let app = App::default();
 
         let url = "https://l/p/installed-packages-list.html";
         let path: Paths = url.parse()?;
@@ -192,7 +192,7 @@ mod tests {
     async fn test_merge() -> Result<(), Error> {
         let mut model = model_mocks::create();
         model_mocks::mock_installed_package(&mut model);
-        let app = app_mocks::create();
+        let app = App::default();
 
         let url = "https://l/p/merge.html#namespace=doesnt/matter";
         let path: Paths = url.parse()?;
@@ -213,7 +213,7 @@ mod tests {
     async fn test_remote_package() -> Result<(), Error> {
         let mut model = model_mocks::create();
         model_mocks::mock_remote_package(&mut model);
-        let app = app_mocks::create();
+        let app = App::default();
 
         let uri =
             "quilt+s3://quilt-example#package=foo/bar@6c3758a4d2bf8fe730be5d12f5e095950dc123c373f55f66ca4b3ced74772b22&path=NAME";
@@ -240,7 +240,7 @@ mod tests {
     #[tokio::test]
     async fn test_setup() -> Result<(), Error> {
         let model = model_mocks::create();
-        let app = app_mocks::create();
+        let app = App::default();
 
         let url = "https://l/p/setup.html";
         let path: Paths = url.parse()?;
