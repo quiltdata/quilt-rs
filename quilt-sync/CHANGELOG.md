@@ -13,11 +13,11 @@
 
 ### Added
 
-- Send bug and crash reports from the Settings page via Sentry or email
+- Send bug and crash reports from the Settings page via Sentry or email (<https://github.com/quiltdata/quilt-rs/pull/581>)
 
 ### Changed
 
-- Replace debug toolbar with a dedicated Settings page accessible from the app bar
+- Replace debug toolbar with a dedicated Settings page accessible from the app bar (<https://github.com/quiltdata/quilt-rs/pull/581>)
 
 ## [v0.14.4] - 2026-03-19
 
