@@ -475,10 +475,9 @@ function showCollectLogsResult(
   if (!resultDiv) return;
 
   resultDiv.hidden = false;
-  resultDiv.innerHTML = `<p class="zip-path">${labels.collected} <code></code></p>
-    <div class="collect-logs-actions">
-      <button class="qui-button js-file-reveal small" type="button"><span>${labels.showFile}</span></button>
-    </div>`;
+  resultDiv.innerHTML = `<span class="zip-path-label">${labels.collected}</span>
+    <code></code>
+    <button class="qui-button link js-file-reveal small" type="button"><img class="qui-icon" src="/assets/img/icons/folder_open.svg" /><span>${labels.showFile}</span></button>`;
   resultDiv.querySelector("code")!.textContent = zipPath;
 
   resultDiv.querySelector(".js-file-reveal")?.addEventListener("click", async () => {

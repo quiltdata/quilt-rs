@@ -82,26 +82,18 @@
   }
 
   .collect-logs-result {
-    background: var(--q-ui-palette-background-primary);
-    border: 1px solid var(--q-ui-palette-border);
-    border-radius: var(--q-ui-border-radius);
-    font-size: var(--q-ui-font-size-small);
+    align-items: center;
+    display: flex;
+    font-size: 0.875rem;
+    gap: 8px;
     width: 100%;
-    padding: var(--q-ui-size-1) var(--q-ui-size-2);
-  }
-
-  .collect-logs-result .zip-path {
-    margin: 0 0 var(--q-ui-size-1);
   }
 
   .collect-logs-result code {
-    font-size: var(--q-ui-font-size-small);
-    word-break: break-all;
-  }
-
-  .collect-logs-actions {
-    display: flex;
-    gap: 8px;
+    font-size: 0.875rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .relogin-popover {
