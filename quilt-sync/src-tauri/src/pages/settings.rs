@@ -21,6 +21,7 @@ pub struct AuthHost<'a> {
 #[derive(Debug)]
 pub struct ViewSettings {
     globals: Globals,
+    logs_dir_is_temporary: bool,
     home_dir: Option<PathBuf>,
     data_dir: PathBuf,
     auth_hosts: Vec<String>,
@@ -86,7 +87,7 @@ impl<'a> TmplSettings<'a> {
             .set_js(btn::JsSelector::OpenDataDir)
     }
 
-    fn open_logs_dir_button(globals: &Globals) -> btn::TmplButton<'static> {
+    fn open_logs_dir_button(globals: &Globals, is_temporary: bool) -> btn::TmplButton<'static> {
         let logs_dir_path = globals.logs_dir.display().to_string();
         let button = btn::TmplButton::builder()
             .set_icon(Icon::FolderOpen)
@@ -96,7 +97,7 @@ impl<'a> TmplSettings<'a> {
             .set_js(btn::JsSelector::DebugLogs)
             .set_title(logs_dir_path);
 
-        if globals.logs_dir_is_temporary {
+        if is_temporary {
             return button.set_icon(Icon::Warning);
         }
 
@@ -152,7 +153,7 @@ impl From<ViewSettings> for TmplSettings<'_> {
             auth_hosts,
             log_level: view.log_level.clone(),
             logs_dir: view.globals.logs_dir.display().to_string(),
-            open_logs_dir: TmplSettings::open_logs_dir_button(&view.globals),
+            open_logs_dir: TmplSettings::open_logs_dir_button(&view.globals, view.logs_dir_is_temporary),
             crash_report: TmplSettings::crash_report_button(),
             email_support: TmplSettings::email_support_button(&view.globals),
             layout: Layout::builder().set_breadcrumbs(TmplSettings::breadcrumbs()),
@@ -170,6 +171,7 @@ impl ViewSettings {
     ) -> Result<ViewSettings, Error> {
         Ok(ViewSettings {
             globals: app.globals(),
+            logs_dir_is_temporary: app.logs_dir_is_temporary(),
             home_dir,
             data_dir: data_dir.to_path_buf(),
             auth_hosts,

@@ -11,7 +11,6 @@ use crate::telemetry::LogsDir;
 pub struct Globals {
     pub version: Version,
     pub logs_dir: PathBuf,
-    pub logs_dir_is_temporary: bool,
 }
 
 pub struct App {
@@ -22,6 +21,7 @@ pub struct App {
 #[automock]
 pub trait AppAssets {
     fn globals(&self) -> Globals;
+    fn logs_dir_is_temporary(&self) -> bool;
 }
 
 impl AppAssets for App {
@@ -29,8 +29,11 @@ impl AppAssets for App {
         Globals {
             version: self.version.clone(),
             logs_dir: self.logs_dir.path().to_path_buf(),
-            logs_dir_is_temporary: matches!(self.logs_dir, LogsDir::Temporary(_)),
         }
+    }
+
+    fn logs_dir_is_temporary(&self) -> bool {
+        matches!(self.logs_dir, LogsDir::Temporary(_))
     }
 }
 
@@ -54,7 +57,6 @@ impl Default for Globals {
         Globals {
             version: Version::new(0, 0, 0),
             logs_dir: PathBuf::from("/tmp/quiltsync/logs"),
-            logs_dir_is_temporary: false,
         }
     }
 }
@@ -68,8 +70,8 @@ pub mod mocks {
         app.expect_globals().return_const(Globals {
             version: semver::Version::parse("0.0.999").unwrap(),
             logs_dir: PathBuf::from("/tmp/quiltsync/logs"),
-            logs_dir_is_temporary: false,
         });
+        app.expect_logs_dir_is_temporary().return_const(false);
         app
     }
 }
