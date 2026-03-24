@@ -537,7 +537,10 @@ window.addEventListener(EVENT_PAGE_READY, () => {
   });
 
   listen(SELECTOR_CRASH_REPORT, [], async (_data, button) => {
-    if (!collectedZipPath) return;
+    if (!collectedZipPath) {
+      console.warn("Crash report requested but no diagnostic zip collected yet");
+      return;
+    }
     button.setAttribute("disabled", "disabled");
     try {
       const notification: Html = await invoke(CMD_CRASH_REPORT, { zipPath: collectedZipPath });
@@ -550,7 +553,10 @@ window.addEventListener(EVENT_PAGE_READY, () => {
   });
 
   listen(SELECTOR_DIAGNOSTIC_LOGS, ["version", "os", "open-email"], async (_data, button) => {
-    if (!collectedZipPath) return;
+    if (!collectedZipPath) {
+      console.warn("Email support requested but no diagnostic zip collected yet");
+      return;
+    }
     const data = getCommandDataFromDataAttributes(button, ["version", "os", "open-email"]);
     const subject = encodeURIComponent(
       `Quilt issue report (v${data.version}, ${data.os})`,
