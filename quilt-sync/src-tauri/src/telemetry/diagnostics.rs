@@ -49,7 +49,17 @@ pub async fn collect(
 }
 
 /// Send a Sentry crash report with diagnostic metadata.
-pub fn send_crash_report(info: DiagnosticInfo) {
+///
+/// Returns an error if the Sentry client is not initialized (e.g. DSN not
+/// configured or offline), so callers can inform the user instead of
+/// silently pretending the report was sent.
+pub fn send_crash_report(info: DiagnosticInfo) -> Result<(), Error> {
+    if sentry::Hub::current().client().is_none() {
+        return Err(Error::General(
+            "Sentry is not initialized — crash report was not sent".to_string(),
+        ));
+    }
+
     sentry::configure_scope(|scope| {
         scope.set_extra("app_version", info.version.clone().into());
         scope.set_extra("os", info.os.clone().into());
@@ -62,6 +72,7 @@ pub fn send_crash_report(info: DiagnosticInfo) {
     });
 
     sentry::capture_message("User crash report", sentry::Level::Error);
+    Ok(())
 }
 
 /// Bundle diagnostic info, logs, and config files into a zip and reveal it.

@@ -362,7 +362,7 @@ async fn send_crash_report_command(
     app: &app::App,
 ) -> Result<(), Error> {
     let info = diagnostics::collect(app_handle, m, app).await?;
-    diagnostics::send_crash_report(info);
+    diagnostics::send_crash_report(info)?;
     Ok(())
 }
 
@@ -395,7 +395,9 @@ async fn save_diagnostic_logs_command(
     app: &app::App,
 ) -> Result<PathBuf, Error> {
     let info = diagnostics::collect(app_handle, m, app).await?;
-    diagnostics::save_diagnostic_zip(info)
+    tokio::task::spawn_blocking(move || diagnostics::save_diagnostic_zip(info))
+        .await
+        .map_err(|e| Error::General(e.to_string()))?
 }
 
 #[tauri::command]
