@@ -61,9 +61,10 @@
   }
 
   .settings-actions {
-    display: grid;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     gap: 8px;
-    grid-template-columns: auto auto auto auto auto 1fr;
     margin-top: 16px;
   }
 
@@ -76,7 +77,7 @@
   .crash-report-description {
     color: var(--q-ui-palette-text-secondary);
     font-size: var(--q-ui-font-size-small);
-    grid-column: 1 / -1;
+    width: 100%;
     margin: 0;
   }
 
@@ -85,7 +86,7 @@
     border: 1px solid var(--q-ui-palette-border);
     border-radius: var(--q-ui-border-radius);
     font-size: var(--q-ui-font-size-small);
-    grid-column: 1 / -1;
+    width: 100%;
     padding: var(--q-ui-size-1) var(--q-ui-size-2);
   }
 
