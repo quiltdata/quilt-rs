@@ -170,8 +170,8 @@ impl<'a> ViewSettings<'a> {
         auth_hosts: Vec<String>,
     ) -> Result<ViewSettings<'a>, Error> {
         Ok(ViewSettings {
-            version: app.version(),
-            logs_dir: app.logs_dir(),
+            version: app.version.clone(),
+            logs_dir: &app.logs_dir,
             home_dir,
             data_dir: data_dir.to_path_buf(),
             auth_hosts,

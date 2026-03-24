@@ -10,14 +10,6 @@ pub struct App {
 }
 
 impl App {
-    pub fn version(&self) -> Version {
-        self.version.clone()
-    }
-
-    pub fn logs_dir(&self) -> &LogsDir {
-        &self.logs_dir
-    }
-
     pub fn create(info: &PackageInfo, logs_dir: LogsDir) -> Self {
         debug!("Logs directory is {}", logs_dir.path().display());
         App {
