@@ -1,7 +1,6 @@
 use askama::Template;
 use rust_i18n::t;
 
-use crate::app::AppAssets;
 use crate::error::Error;
 use crate::quilt;
 use crate::routes::Paths;
@@ -70,7 +69,7 @@ impl From<ViewError> for TmplPageError<'_> {
 }
 
 impl ViewError {
-    pub async fn create(_app: &impl AppAssets, err: Error) -> Result<ViewError> {
+    pub async fn create(err: Error) -> Result<ViewError> {
         let login = match &err {
             Error::Quilt(quilt::Error::Auth(host, _)) => Some(host),
             Error::Quilt(quilt::Error::S3(host, _)) => host.as_ref(),
@@ -85,7 +84,6 @@ impl ViewError {
     }
 
     pub async fn for_login_error(
-        _app: &impl AppAssets,
         host: quilt::uri::Host,
         title: String,
         error: String,

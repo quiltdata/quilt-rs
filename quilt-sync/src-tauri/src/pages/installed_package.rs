@@ -3,7 +3,6 @@ use std::borrow::Cow;
 use askama::Template;
 use rust_i18n::t;
 
-use crate::app::AppAssets;
 use crate::debug_tools;
 use crate::model::QuiltModel;
 use crate::quilt;
@@ -173,7 +172,6 @@ impl<'a> TmplPageInstalledPackage<'a> {
 impl ViewInstalledPackage {
     pub async fn create(
         model: &impl QuiltModel,
-        _app: &impl AppAssets,
         tracing: &crate::telemetry::Telemetry,
         namespace: &quilt::uri::Namespace,
     ) -> Result<ViewInstalledPackage> {
@@ -381,7 +379,6 @@ mod tests {
 
     use std::path::PathBuf;
 
-    use crate::app::mocks as app_mocks;
     use crate::model::mocks as model_mocks;
 
     #[test]
@@ -401,13 +398,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_view_entries() -> Result {
-        let app = app_mocks::create();
         let mut model = model_mocks::create();
         model_mocks::mock_installed_package(&mut model);
 
         let installed_package = ViewInstalledPackage::create(
             &model,
-            &app,
             &crate::telemetry::Telemetry::default(),
             &("foo", "bar").into(),
         )

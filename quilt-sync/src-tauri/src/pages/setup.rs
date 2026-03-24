@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use askama::Template;
 use rust_i18n::t;
 
-use crate::app::AppAssets;
 use crate::error::Error;
 use crate::ui::btn;
 use crate::ui::layout::Layout;
@@ -53,7 +52,7 @@ impl From<ViewSetup> for TmplSetup<'_> {
 }
 
 impl ViewSetup {
-    pub async fn create(_app: &impl AppAssets, home: &Path) -> Result<ViewSetup, Error> {
+    pub async fn create(home: &Path) -> Result<ViewSetup, Error> {
         Ok(ViewSetup {
             home: home.to_path_buf(),
         })

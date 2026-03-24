@@ -3,7 +3,6 @@ use std::borrow::Cow;
 use askama::Template;
 use rust_i18n::t;
 
-use crate::app::AppAssets;
 use crate::error::Error;
 use crate::quilt;
 use crate::quilt::uri::Host;
@@ -77,7 +76,6 @@ impl From<ViewLogin> for TmplPageLogin<'_> {
 
 impl ViewLogin {
     pub async fn create(
-        _app: &impl AppAssets,
         tracing: &crate::telemetry::Telemetry,
         host: quilt::uri::Host,
         location: Option<String>,

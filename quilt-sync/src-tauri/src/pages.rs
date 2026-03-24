@@ -35,15 +35,15 @@ pub async fn load(
     path: &Paths,
 ) -> Result<String, Error> {
     match path {
-        Paths::Commit(namespace) => ViewCommit::create(model, app, tracing, namespace)
+        Paths::Commit(namespace) => ViewCommit::create(model, tracing, namespace)
             .await?
             .render(),
         Paths::InstalledPackage(namespace) => {
-            ViewInstalledPackage::create(model, app, tracing, namespace)
+            ViewInstalledPackage::create(model, tracing, namespace)
                 .await?
                 .render()
         }
-        Paths::InstalledPackagesList => ViewInstalledPackagesList::create(model, app, tracing)
+        Paths::InstalledPackagesList => ViewInstalledPackagesList::create(model, tracing)
             .await?
             .render(),
         // location is None here: this path is reached via href buttons
@@ -51,15 +51,15 @@ pub async fn load(
         // returns to InstalledPackagesList, which is the right default.
         // The LoginRequired path in load_page_command passes the real
         // location so redirect-back works for the main auth flow.
-        Paths::Login(host) => ViewLogin::create(app, tracing, host.clone(), None)
+        Paths::Login(host) => ViewLogin::create(tracing, host.clone(), None)
             .await?
             .render(),
         Paths::LoginError(host, title, error) => {
-            ViewError::for_login_error(app, host.clone(), title.clone(), error.clone())
+            ViewError::for_login_error(host.clone(), title.clone(), error.clone())
                 .await?
                 .render()
         }
-        Paths::Merge(namespace) => ViewMerge::create(model, app, tracing, namespace)
+        Paths::Merge(namespace) => ViewMerge::create(model, tracing, namespace)
             .await?
             .render(),
         Paths::RemotePackage(uri) => {
@@ -77,7 +77,7 @@ pub async fn load(
                     .await?;
             }
 
-            ViewInstalledPackage::create(model, app, tracing, &uri.namespace)
+            ViewInstalledPackage::create(model, tracing, &uri.namespace)
                 .await?
                 .render()
         }
@@ -100,7 +100,7 @@ pub async fn load(
                 .await?
                 .render()
         }
-        Paths::Setup => ViewSetup::create(app, default_home).await?.render(),
+        Paths::Setup => ViewSetup::create(default_home).await?.render(),
     }
 }
 

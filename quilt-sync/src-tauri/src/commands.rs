@@ -51,7 +51,7 @@ async fn load_page_command(
         Err(Error::Quilt(quilt::Error::LineageMissing | quilt::Error::LineageMissingHome)) => {
             let err = "Lineage file is required";
             error!("{}", err);
-            let setup_page = pages::ViewSetup::create(app, &home).await?;
+            let setup_page = pages::ViewSetup::create(&home).await?;
             tracing
                 .track(MixpanelEvent::PageLoaded {
                     pathname: path.pathname(),
@@ -67,7 +67,7 @@ async fn load_page_command(
             // verbatim in PendingAuth and parsed back into a typed Paths
             // after a successful OAuth callback (see uri::login_with_code).
             let login_page =
-                pages::ViewLogin::create(app, tracing, host.clone(), Some(location.to_string()))
+                pages::ViewLogin::create(tracing, host.clone(), Some(location.to_string()))
                     .await?;
             tracing
                 .track(MixpanelEvent::PageLoaded {
@@ -80,7 +80,7 @@ async fn load_page_command(
         Err(err) => {
             error!("{}", err);
             let error = Some(err.to_string());
-            let error_page = pages::ViewError::create(app, err).await?;
+            let error_page = pages::ViewError::create(err).await?;
             tracing
                 .track(MixpanelEvent::PageLoaded {
                     pathname: path.pathname(),
@@ -110,7 +110,7 @@ pub async fn load_page(
         Ok(result) => Ok(result),
         Err(err) => {
             error!("Failed to load page: {}", err);
-            match pages::ViewError::create(app, err).await {
+            match pages::ViewError::create(err).await {
                 Ok(error_page) => match error_page.render() {
                     Ok(rendered) => Ok(rendered),
                     Err(render_err) => Ok(format!("Critical error: {}", render_err)),

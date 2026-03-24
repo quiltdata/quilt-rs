@@ -1,7 +1,6 @@
 use askama::Template;
 use rust_i18n::t;
 
-use crate::app::AppAssets;
 use crate::debug_tools;
 use crate::error::Error;
 use crate::model::QuiltModel;
@@ -204,7 +203,6 @@ impl<'a> TmplPageInstalledPackagesList<'a> {
 impl ViewInstalledPackagesList {
     pub async fn create(
         model: &impl QuiltModel,
-        _app: &impl AppAssets,
         tracing: &crate::telemetry::Telemetry,
     ) -> Result<ViewInstalledPackagesList, Error> {
         let list = model.get_installed_packages_list().await?;

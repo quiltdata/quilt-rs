@@ -1,7 +1,6 @@
 use askama::Template;
 use rust_i18n::t;
 
-use crate::app::AppAssets;
 use crate::debug_tools;
 use crate::error::Error;
 use crate::model::QuiltModel;
@@ -93,7 +92,6 @@ impl From<ViewMerge> for TmplPageMerge<'_> {
 impl ViewMerge {
     pub async fn create(
         model: &impl QuiltModel,
-        _app: &impl AppAssets,
         tracing: &crate::telemetry::Telemetry,
         namespace: &quilt::uri::Namespace,
     ) -> Result<ViewMerge, Error> {
