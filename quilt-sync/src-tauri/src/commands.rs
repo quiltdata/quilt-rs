@@ -346,7 +346,7 @@ pub async fn open_data_dir(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::DebugDotQuiltOpened).await;
+    tracing.track(MixpanelEvent::FileBrowserOpened).await;
     let app_handle = app_handle.lock().await;
 
     let msg_init = "Opening data directory".to_string();

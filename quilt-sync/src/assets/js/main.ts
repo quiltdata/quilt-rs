@@ -507,7 +507,8 @@ function showEmailSupportResult(
   });
   result.querySelector(".js-file-reveal")?.addEventListener("click", async () => {
     // Open the parent directory so the file manager shows the zip
-    const dir = zipPath.substring(0, zipPath.lastIndexOf("/")) || zipPath;
+    const sep = Math.max(zipPath.lastIndexOf("/"), zipPath.lastIndexOf("\\"));
+    const dir = sep > 0 ? zipPath.substring(0, sep) : zipPath;
     await invoke(CMD_OPEN_IN_WEB_BROWSER, { url: dir });
   });
 }
