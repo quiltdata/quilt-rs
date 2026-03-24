@@ -234,13 +234,15 @@ async fn erase_auth_command(app_handle: &tauri::AppHandle, host: &str) -> Result
             std::fs::remove_dir_all(&auth_dir)?;
         }
     } else {
-        // Per-host erase
-        if host.contains('/') || host.contains('\\') || host.contains("..") {
-            return Err(Error::General(format!("Invalid host: {host}")));
-        }
+        // Per-host erase — canonicalize and verify containment
         let host_dir = auth_dir.join(host);
         if host_dir.exists() {
-            std::fs::remove_dir_all(&host_dir)?;
+            let canonical = host_dir.canonicalize()?;
+            let canonical_auth = auth_dir.canonicalize()?;
+            if !canonical.starts_with(&canonical_auth) {
+                return Err(Error::General(format!("Invalid host: {host}")));
+            }
+            std::fs::remove_dir_all(&canonical)?;
         }
     }
     Ok(())
