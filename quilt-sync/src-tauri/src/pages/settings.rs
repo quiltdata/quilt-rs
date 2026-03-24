@@ -109,9 +109,6 @@ impl<'a> TmplSettings<'a> {
         btn::TmplButton::builder()
             .set_label(t!("settings.collect_logs"))
             .set_js(btn::JsSelector::CollectLogs)
-            .set_data("collecting", t!("settings.collect_logs_collecting"))
-            .set_data("collected", t!("settings.collect_logs_collected"))
-            .set_data("show-file", t!("settings.email_support_show_file"))
     }
 
     fn crash_report_button() -> btn::TmplButton<'static> {
@@ -136,7 +133,6 @@ impl<'a> TmplSettings<'a> {
             .set_js(btn::JsSelector::DiagnosticLogs)
             .set_data("version", version.to_string())
             .set_data("os", std::env::consts::OS.to_string())
-            .set_data("open-email", t!("settings.email_support_open"))
             .set_disabled()
     }
 }

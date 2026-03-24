@@ -56,6 +56,12 @@ const SELECTOR_DIAGNOSTIC_LOGS = ".js-diagnostic-logs";
 const SELECTOR_OPEN_HOME_DIR = ".js-open-home-dir";
 const SELECTOR_OPEN_DATA_DIR = ".js-open-data-dir";
 
+const I18N = {
+  collectingLogs: "Collecting\u2026",
+  logsCollected: "Logs collected:",
+  revealFile: "Reveal",
+} as const;
+
 type SELECTOR_FORM = "#form";
 
 type SELECTOR_DIRECTORY_INPUT = "#input";
@@ -510,7 +516,7 @@ window.addEventListener(EVENT_PAGE_READY, () => {
     execInlineCommand(CMD_DEBUG_LOGS, data, button),
   );
 
-  listen(SELECTOR_COLLECT_LOGS, ["collecting", "collected", "show-file"], async (data, button) => {
+  listen(SELECTOR_COLLECT_LOGS, [], async (_data, button) => {
     const originalLabel = button.querySelector("span")?.textContent ?? "";
     button.setAttribute("disabled", "disabled");
     const span = button.querySelector("span");
@@ -518,13 +524,13 @@ window.addEventListener(EVENT_PAGE_READY, () => {
       handleError("Missing text element inside collect logs button");
       return;
     }
-    span.textContent = data["collecting"];
+    span.textContent = I18N.collectingLogs;
     try {
       const zipPath: string = await invoke(CMD_COLLECT_LOGS);
       collectedZipPath = zipPath;
       showCollectLogsResult(zipPath, {
-        collected: data["collected"],
-        showFile: data["show-file"],
+        collected: I18N.logsCollected,
+        showFile: I18N.revealFile,
       });
       enableDeliveryButtons();
     } catch (error) {
@@ -551,7 +557,7 @@ window.addEventListener(EVENT_PAGE_READY, () => {
     }
   });
 
-  listen(SELECTOR_DIAGNOSTIC_LOGS, ["version", "os", "open-email"], async (data) => {
+  listen(SELECTOR_DIAGNOSTIC_LOGS, ["version", "os"], async (data) => {
     if (!collectedZipPath) {
       console.warn("Email support requested but no diagnostic zip collected yet");
       return;
