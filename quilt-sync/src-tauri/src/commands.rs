@@ -392,12 +392,17 @@ pub async fn send_crash_report(
 ) -> Result<String, String> {
     tracing.track(MixpanelEvent::CrashReportSent).await;
 
+    let zip_path = PathBuf::from(zip_path);
+    if zip_path.file_name() != Some("quiltsync-diagnostic.zip".as_ref()) {
+        return Err("Invalid diagnostic zip filename".to_string());
+    }
+
     let msg_init = "Sending crash report".to_string();
     let msg_ok = "Successfully sent crash report".to_string();
     let msg_err = |err: &Error| format!("Failed to send crash report: {err}");
 
     let result =
-        tokio::task::spawn_blocking(move || diagnostics::send_crash_report(PathBuf::from(zip_path).as_path()))
+        tokio::task::spawn_blocking(move || diagnostics::send_crash_report(zip_path.as_path()))
             .await
             .map_err(|e| Error::General(e.to_string()))
             .and_then(|r| r);
