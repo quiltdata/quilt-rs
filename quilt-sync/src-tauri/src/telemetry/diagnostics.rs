@@ -91,7 +91,7 @@ pub fn send_crash_report(zip_path: &Path) -> Result<(), Error> {
             }
 
             scope.add_attachment(Attachment {
-                buffer: zip_bytes.clone(),
+                buffer: zip_bytes,
                 filename: "quiltsync-diagnostic.zip".to_string(),
                 content_type: Some("application/zip".to_string()),
                 ty: None,
