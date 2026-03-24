@@ -65,8 +65,12 @@
       </dl>
 
       <div class="settings-actions" id="diagnostic-actions">
+        {{ collect_logs | safe }}
+        <span class="actions-divider">{{ t!("settings.then") }}</span>
         {{ crash_report | safe }}
+        <span class="actions-divider">{{ t!("settings.or") }}</span>
         {{ email_support | safe }}
+        <div class="collect-logs-result" id="collect-logs-result" hidden></div>
         <p class="crash-report-description">{{ t!("settings.send_crash_report_description") }}</p>
       </div>
     </section>

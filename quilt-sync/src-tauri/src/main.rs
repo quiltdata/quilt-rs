@@ -91,7 +91,7 @@ fn main() {
             commands::load_page,
             commands::open_data_dir,
             commands::open_home_dir,
-            commands::save_diagnostic_logs,
+            commands::collect_diagnostic_logs,
             commands::send_crash_report,
             commands::login,
             commands::login_oauth,

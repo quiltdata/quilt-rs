@@ -13,7 +13,7 @@
 
 ### Added
 
-- Send bug and crash reports from the Settings page via Sentry or email (<https://github.com/quiltdata/quilt-rs/pull/581>)
+- Collect diagnostic logs from the Settings page and send them via Sentry (with zip attachment) or email (<https://github.com/quiltdata/quilt-rs/pull/581>)
 
 ### Changed
 
