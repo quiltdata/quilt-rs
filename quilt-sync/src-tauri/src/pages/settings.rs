@@ -125,6 +125,10 @@ impl<'a> TmplSettings<'a> {
             .set_js(btn::JsSelector::DiagnosticLogs)
             .set_data("version", version.to_string())
             .set_data("os", std::env::consts::OS.to_string())
+            .set_data("collecting", t!("settings.email_support_collecting"))
+            .set_data("logs-saved", t!("settings.email_support_logs_saved"))
+            .set_data("open-email", t!("settings.email_support_open"))
+            .set_data("show-file", t!("settings.email_support_show_file"))
     }
 }
 

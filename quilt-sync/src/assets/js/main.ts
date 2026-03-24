@@ -466,6 +466,7 @@ function showEmailSupportResult(
   zipPath: string,
   version: string,
   os: string,
+  labels: { logsSaved: string; openEmail: string; showFile: string },
 ) {
   const container = document.getElementById("diagnostic-actions");
   if (!container) return;
@@ -478,21 +479,25 @@ function showEmailSupportResult(
   );
   const mailtoUrl = `mailto:support@quilt.bio?subject=${subject}&body=${body}`;
 
-  // Keep the crash report button, replace the email support button
-  // with the staged result
+  // Keep the crash report button and its description, replace the email
+  // support button with the staged result
   const crashButton = container.querySelector(
     SELECTOR_CRASH_REPORT,
+  ) as HTMLElement | null;
+  const crashDesc = container.querySelector(
+    ".crash-report-description",
   ) as HTMLElement | null;
 
   container.innerHTML = "";
   if (crashButton) container.appendChild(crashButton);
+  if (crashDesc) container.appendChild(crashDesc);
 
   const result = document.createElement("div");
   result.className = "email-support-result";
-  result.innerHTML = `<p class="zip-path">Logs saved to: <code></code></p>
+  result.innerHTML = `<p class="zip-path">${labels.logsSaved} <code></code></p>
     <div class="email-support-actions">
-      <button class="qui-button primary js-email-open small" type="button"><span>Open Email</span></button>
-      <button class="qui-button js-file-reveal small" type="button"><span>Show File</span></button>
+      <button class="qui-button primary js-email-open small" type="button"><span>${labels.openEmail}</span></button>
+      <button class="qui-button js-file-reveal small" type="button"><span>${labels.showFile}</span></button>
     </div>`;
   result.querySelector("code")!.textContent = zipPath;
   result.querySelector<HTMLButtonElement>(".js-email-open")!.dataset.url =
@@ -531,21 +536,26 @@ window.addEventListener(EVENT_PAGE_READY, () => {
     execInlineCommand(CMD_CRASH_REPORT, data, button),
   );
 
-  listen(SELECTOR_DIAGNOSTIC_LOGS, ["version", "os"], async (data, button) => {
+  listen(SELECTOR_DIAGNOSTIC_LOGS, ["version", "os", "collecting", "logs-saved", "open-email", "show-file"], async (data, button) => {
+    const originalLabel = button.querySelector("span")?.textContent ?? "";
     button.setAttribute("disabled", "disabled");
     const span = button.querySelector("span");
     if (!span) {
       handleError("Missing text element inside diagnostic logs button");
       return;
     }
-    span.textContent = "Collecting logs…";
+    span.textContent = data["collecting"];
     try {
       const zipPath: string = await invoke(CMD_DIAGNOSTIC_LOGS);
-      showEmailSupportResult(zipPath, data.version, data.os);
+      showEmailSupportResult(zipPath, data.version, data.os, {
+        logsSaved: data["logs-saved"],
+        openEmail: data["open-email"],
+        showFile: data["show-file"],
+      });
     } catch (error) {
       handleError(error);
       button.removeAttribute("disabled");
-      span.textContent = "Email Support";
+      span.textContent = originalLabel;
     }
   });
 
