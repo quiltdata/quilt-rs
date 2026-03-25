@@ -372,10 +372,11 @@ Both use `thiserror` for ergonomic `#[derive(Error)]` definitions.
 ## Security Model
 
 - **Content Integrity**: All content verified against cryptographic hashes
-- **Immutable Objects**: Prevents tampering with historical data
-- **No Secret Storage**: No credentials or sensitive data in manifests
-- **Configurable Backends**: Supports different remote storage authentication
-  methods
+- **Immutable Objects**: Objects in the local store are immutable by convention
+  (content-addressed naming discourages overwriting, but the filesystem does
+  not enforce it)
+- **No Credentials in Manifests**: Manifests contain only file metadata (paths,
+  hashes, sizes). Authentication is handled externally (AWS credentials, OAuth)
 
 ## Extension Points
 
