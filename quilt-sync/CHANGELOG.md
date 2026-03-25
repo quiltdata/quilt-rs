@@ -9,7 +9,7 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.14.5] - 2026-03-24
+## [v0.14.5] - 2026-03-25
 
 ### Added
 
@@ -19,6 +19,7 @@
 
 - Replace debug toolbar with a dedicated Settings page accessible from the app bar (<https://github.com/quiltdata/quilt-rs/pull/581>)
 - Simplify app initialization: remove `Globals` struct and `AppAssets` trait, use fallible `App::create()` (<https://github.com/quiltdata/quilt-rs/pull/581>)
+- Login from a package error state now redirects back to that package instead of the packages list (<https://github.com/quiltdata/quilt-rs/pull/585>)
 
 ## [v0.14.4] - 2026-03-19
 
