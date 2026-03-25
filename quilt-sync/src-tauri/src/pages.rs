@@ -46,11 +46,9 @@ pub async fn load(
         Paths::InstalledPackagesList => ViewInstalledPackagesList::create(model, tracing)
             .await?
             .render(),
-        Paths::Login(host, back) => {
-            ViewLogin::create(tracing, host.clone(), Some(back.clone()))
-                .await?
-                .render()
-        }
+        Paths::Login(host, back) => ViewLogin::create(tracing, host.clone(), Some(back.clone()))
+            .await?
+            .render(),
         Paths::LoginError(host, title, error) => {
             ViewError::for_login_error(host.clone(), title.clone(), error.clone())
                 .await?

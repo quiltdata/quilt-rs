@@ -449,7 +449,9 @@ mod tests {
         assert!(error_html.contains(r#"js-open-in-web-browser"#));
 
         // Should show Login button for StatusFailed
-        assert!(error_html.contains(r#"href="login.html#host=test.quilt.dev&#38;back=installed-packages-list.html""#));
+        assert!(error_html.contains(
+            r#"href="login.html#host=test.quilt.dev&#38;back=installed-packages-list.html""#
+        ));
 
         // Should not show commit button for error-state packages
         assert!(!error_html.contains(r#"href="commit.html"#));
