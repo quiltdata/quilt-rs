@@ -505,7 +505,7 @@ mod tests {
         .render()?;
 
         // Should show Login button
-        assert!(html.contains(r#"href="login.html#host=test.quilt.dev&#38;location=installed-package.html%23namespace%3DA%2FB""#));
+        assert!(html.contains(r#"href="login.html#host=test.quilt.dev&#38;back=installed-package.html%23namespace%3DA%2FB""#));
 
         // Should not show commit button
         assert!(!html.contains(r#"href="commit.html"#));

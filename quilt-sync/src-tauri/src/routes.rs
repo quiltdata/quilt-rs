@@ -56,7 +56,7 @@ fn parse_namespace(location: &str) -> Result<String, Error> {
 #[derive(Debug, serde::Deserialize)]
 struct FragmentLoginParsed {
     pub host: quilt::uri::Host,
-    pub location: String,
+    pub back: String,
 }
 
 fn parse_login(location: &str) -> Result<(quilt::uri::Host, String), Error> {
@@ -64,7 +64,7 @@ fn parse_login(location: &str) -> Result<(quilt::uri::Host, String), Error> {
     match uri.fragment() {
         Some(n) => {
             let qs: FragmentLoginParsed = serde_qs::from_str(n)?;
-            Ok((qs.host, qs.location))
+            Ok((qs.host, qs.back))
         }
         None => Err(Error::PageUrl(RouteError::MissingHostFragment(uri))),
     }
@@ -142,9 +142,9 @@ impl fmt::Display for Paths {
             Paths::InstalledPackagesList => {
                 write!(f, "installed-packages-list.html")
             }
-            Paths::Login(host, location) => {
-                let location_encoded = urlencoding::encode(location);
-                write!(f, "login.html#host={host}&location={location_encoded}")
+            Paths::Login(host, back) => {
+                let back_encoded = urlencoding::encode(back);
+                write!(f, "login.html#host={host}&back={back_encoded}")
             }
             Paths::LoginError(host, title, error) => {
                 let title_encoded = urlencoding::encode(title);
@@ -207,10 +207,10 @@ pub fn from_url(path: Paths, mut url: Url) -> url::Url {
             url.set_path("pages/installed-packages-list.html");
             url
         }
-        Paths::Login(host, ref location) => {
-            let location_encoded = urlencoding::encode(location);
+        Paths::Login(host, ref back) => {
+            let back_encoded = urlencoding::encode(back);
             url.set_path("pages/login.html");
-            url.set_fragment(Some(&format!("host={host}&location={location_encoded}")));
+            url.set_fragment(Some(&format!("host={host}&back={back_encoded}")));
             url
         }
         Paths::LoginError(host, ref title, ref error) => {
@@ -358,23 +358,23 @@ mod tests {
     #[test]
     fn test_login() -> Result<()> {
         let host: Host = "test.quilt.dev".parse()?;
-        let location = Paths::InstalledPackagesList.to_string();
+        let back = Paths::InstalledPackagesList.to_string();
         let page_url = from_url(
-            Paths::Login(host.clone(), location.clone()),
+            Paths::Login(host.clone(), back.clone()),
             Url::parse("http://test:1234/")?,
         );
         let page_url_str = page_url.as_str();
         assert_eq!(
             page_url_str,
-            "http://test:1234/pages/login.html#host=test.quilt.dev&location=installed-packages-list.html"
+            "http://test:1234/pages/login.html#host=test.quilt.dev&back=installed-packages-list.html"
         );
 
         let route: Paths = page_url_str.parse()?;
 
-        assert_eq!(route, Paths::Login(host, location));
+        assert_eq!(route, Paths::Login(host, back));
         assert_eq!(
             format!("{route}"),
-            "login.html#host=test.quilt.dev&location=installed-packages-list.html"
+            "login.html#host=test.quilt.dev&back=installed-packages-list.html"
         );
 
         Ok(())
@@ -567,15 +567,15 @@ mod tests {
     }
 
     #[test]
-    fn test_login_with_encoded_location() -> Result<()> {
+    fn test_login_with_encoded_back() -> Result<()> {
         let host: Host = "test.quilt.dev".parse()?;
-        let location = Paths::InstalledPackage(("foo", "bar").into()).to_string();
+        let back = Paths::InstalledPackage(("foo", "bar").into()).to_string();
         let page_url = from_url(
-            Paths::Login(host.clone(), location.clone()),
+            Paths::Login(host.clone(), back.clone()),
             Url::parse("http://test:1234/")?,
         );
         let route: Paths = page_url.as_str().parse()?;
-        assert_eq!(route, Paths::Login(host, location));
+        assert_eq!(route, Paths::Login(host, back));
         Ok(())
     }
 }

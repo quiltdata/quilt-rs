@@ -27,7 +27,7 @@ struct PendingAuth {
     redirect_uri: String,
     client_id: String,
     state: String,
-    location: Option<String>,
+    back: Option<String>,
     created_at: Instant,
 }
 
@@ -57,7 +57,7 @@ impl OAuthState {
         &self,
         host: &quilt::uri::Host,
         client_id: &str,
-        location: Option<String>,
+        back: Option<String>,
     ) -> AuthorizeRequest {
         let pkce = quilt::auth::pkce_challenge();
         let redirect_uri = redirect_uri(host);
@@ -83,7 +83,7 @@ impl OAuthState {
             redirect_uri,
             client_id: client_id.to_string(),
             state: state.clone(),
-            location,
+            back,
             created_at: Instant::now(),
         };
 
@@ -148,7 +148,7 @@ impl OAuthState {
                 redirect_uri: pending.redirect_uri,
                 client_id: pending.client_id,
             },
-            pending.location,
+            pending.back,
         ))
     }
 }
