@@ -160,7 +160,7 @@ For each path in paths_to_install:
     ↓
   If missing: download from remote physical_key → objects/hash
     ↓
-  Create hardlink: objects/hash → working_dir/logical_key
+  Copy objects/hash → working_dir/logical_key (mutable copy)
     ↓
   Update lineage.paths[logical_key] = PathState {
     timestamp: now,
@@ -358,7 +358,7 @@ Both use `thiserror` for ergonomic `#[derive(Error)]` definitions.
 ## Performance Considerations
 
 - **Deduplication**: Identical content stored once in objects/
-- **Hard Links**: Working directory files link to objects/ (copy-on-write semantics)
+- **Object Cache**: Files downloaded once to objects/, then copied to working directory
 - **Streaming**: Large manifests processed incrementally
 - **Caching**: Remote manifests cached locally in packages/
 - **Lazy Operations**: Hash calculations and downloads performed on-demand
