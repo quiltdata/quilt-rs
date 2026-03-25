@@ -126,10 +126,7 @@ impl<'a> TmplSettings<'a> {
         btn::TmplButton::builder()
             .set_label(t!("settings.relogin"))
             .set_size(btn::Size::Small)
-            .set_href(Paths::Login(
-                host.clone(),
-                Paths::Settings.to_string(),
-            ))
+            .set_href(Paths::Login(host.clone(), Paths::Settings.to_string()))
     }
 
     fn logout_button(host: &Host) -> btn::TmplButton<'static> {
