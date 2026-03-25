@@ -189,6 +189,22 @@ impl Paths {
     }
 }
 
+/// Extract the optional `location` parameter from a login page URL fragment.
+///
+/// Used by `load_page_command` to forward the return-to URL when the login
+/// page is navigated to directly (e.g. after re-login from Settings).
+pub fn parse_login_location(url: &str) -> Option<String> {
+    let parsed = Url::parse(url).ok()?;
+    let fragment = parsed.fragment()?;
+    #[derive(serde::Deserialize)]
+    struct Fragment {
+        #[serde(default)]
+        location: Option<String>,
+    }
+    let frag: Fragment = serde_qs::from_str(fragment).ok()?;
+    frag.location
+}
+
 pub fn from_url(path: Paths, mut url: Url) -> url::Url {
     match path {
         Paths::Commit(namespace) => {
@@ -554,5 +570,19 @@ mod tests {
         assert_eq!(list_path.pathname(), "installed_packages_list");
 
         Ok(())
+    }
+
+    #[test]
+    fn test_parse_login_location_present() {
+        let url = "http://test:1234/pages/login.html#host=open.quilt.bio&location=http%3A%2F%2Ftest%3A1234%2Fpages%2Fsettings.html";
+        let loc = parse_login_location(url);
+        assert_eq!(loc, Some("http://test:1234/pages/settings.html".to_string()));
+    }
+
+    #[test]
+    fn test_parse_login_location_absent() {
+        let url = "http://test:1234/pages/login.html#host=open.quilt.bio";
+        let loc = parse_login_location(url);
+        assert_eq!(loc, None);
     }
 }
