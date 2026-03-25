@@ -179,15 +179,12 @@ function handleError(e: Error | unknown) {
 const ROUTE_INSTALLED_PACKAGES_LIST = "installed-packages-list.html";
 const ROUTE_INSTALLED_PACKAGE = (namespace: Namespace) =>
   `installed-package.html#namespace=${namespace}`;
-const ROUTE_LOGIN = (host: string, back: string) =>
-  `login.html#host=${host}&back=${encodeURIComponent(back)}`;
 const ROUTE_REMOTE_PACKAGE = (uri: string) =>
   `remote-package.html?uri=${encodeURIComponent(uri)}`;
 
 type Route =
   | typeof ROUTE_INSTALLED_PACKAGES_LIST
   | ReturnType<typeof ROUTE_INSTALLED_PACKAGE>
-  | ReturnType<typeof ROUTE_LOGIN>
   | ReturnType<typeof ROUTE_REMOTE_PACKAGE>;
 
 const EVENT_PAGE_READY = "page-is-ready";
@@ -505,7 +502,7 @@ function enableDeliveryButtons() {
 window.addEventListener(EVENT_PAGE_READY, () => {
   listen(SELECTOR_ERASE_AUTH, ["host"], (data, button) =>
     execInlineCommand(CMD_ERASE_AUTH, data, button).then(() => {
-      navigate(ROUTE_LOGIN(data.host, window.location.href));
+      window.location.reload();
     }),
   );
   listen(SELECTOR_DEBUG_DOT_QUILT, [], (data, button) =>

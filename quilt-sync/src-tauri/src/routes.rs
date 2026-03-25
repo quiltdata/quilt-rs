@@ -22,8 +22,19 @@ pub enum RouteError {
     MissingS3UriQuery(Url),
 }
 
+/// Dummy base used to resolve relative URLs such as `"settings.html"` that
+/// come from `Paths::Display` when used as the `back` parameter.
+const RELATIVE_URL_BASE: &str = "http://relative.invalid/";
+
+fn parse_url(location: &str) -> Result<Url, Error> {
+    Url::parse(location).or_else(|_| {
+        let base = Url::parse(RELATIVE_URL_BASE).expect("constant base URL is valid");
+        Ok(base.join(location)?)
+    })
+}
+
 fn parse_page(location: &str) -> Result<String, Error> {
-    let uri = Url::parse(location)?;
+    let uri = parse_url(location)?;
     // NOTE: it is a temporary variable just to get the last element of it
     let mut segments = match uri.path_segments() {
         Some(segments) => segments,
@@ -42,7 +53,7 @@ struct FragmentNamespaceParsed {
 }
 
 fn parse_namespace(location: &str) -> Result<String, Error> {
-    let uri = Url::parse(location)?;
+    let uri = parse_url(location)?;
     let namespace = match uri.fragment() {
         Some(n) => {
             let qs: FragmentNamespaceParsed = serde_qs::from_str(n)?;
@@ -60,7 +71,7 @@ struct FragmentLoginParsed {
 }
 
 fn parse_login(location: &str) -> Result<(quilt::uri::Host, String), Error> {
-    let uri = Url::parse(location)?;
+    let uri = parse_url(location)?;
     match uri.fragment() {
         Some(n) => {
             let qs: FragmentLoginParsed = serde_qs::from_str(n)?;
@@ -79,7 +90,7 @@ struct FragmentLoginErrorParsed {
 }
 
 fn parse_login_error(location: &str) -> Result<(quilt::uri::Host, Option<String>, String), Error> {
-    let uri = Url::parse(location)?;
+    let uri = parse_url(location)?;
     match uri.fragment() {
         Some(n) => {
             let qs: FragmentLoginErrorParsed = serde_qs::from_str(n)?;
@@ -95,7 +106,7 @@ struct FragmentRemotePackage {
 }
 
 fn parse_s3_package_uri(location: &str) -> Result<quilt::uri::S3PackageUri, Error> {
-    let uri = Url::parse(location)?;
+    let uri = parse_url(location)?;
     match uri.query() {
         Some(n) => {
             // TODO: replace unwrap() with ? to avoid a panic on a malformed uri query param

@@ -8,6 +8,7 @@ use semver::Version;
 
 use crate::app::App;
 use crate::error::Error;
+use crate::routes::Paths;
 use crate::telemetry::LogsDir;
 use crate::ui::btn;
 use crate::ui::crumbs;
@@ -18,6 +19,7 @@ use crate::ui::Icon;
 pub struct AuthHost<'a> {
     pub name: String,
     pub relogin_button: btn::TmplButton<'a>,
+    pub logout_button: btn::TmplButton<'a>,
 }
 
 pub struct ViewSettings<'a> {
@@ -120,8 +122,18 @@ impl<'a> TmplSettings<'a> {
 
     fn relogin_button(host: &str) -> btn::TmplButton<'static> {
         btn::TmplButton::builder()
-            .set_icon(Icon::Warning)
             .set_label(t!("settings.relogin"))
+            .set_size(btn::Size::Small)
+            .set_href(Paths::Login(
+                host.parse().expect("authenticated host is valid"),
+                Paths::Settings.to_string(),
+            ))
+    }
+
+    fn logout_button(host: &str) -> btn::TmplButton<'static> {
+        btn::TmplButton::builder()
+            .set_icon(Icon::Warning)
+            .set_label(t!("settings.logout"))
             .set_size(btn::Size::Small)
             .set_js(btn::JsSelector::EraseAuth)
             .set_data("host", host.to_string())
@@ -144,6 +156,7 @@ impl From<ViewSettings<'_>> for TmplSettings<'_> {
             .iter()
             .map(|host| AuthHost {
                 relogin_button: TmplSettings::relogin_button(host),
+                logout_button: TmplSettings::logout_button(host),
                 name: host.clone(),
             })
             .collect();
