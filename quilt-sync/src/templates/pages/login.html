@@ -17,8 +17,8 @@
       <form id="form" class="form" onsubmit="event.preventDefault();">
         <input name="host" hidden value="{{ host }}" />
 
-        {% if let Some(location) = location %}
-          <input name="location" hidden value="{{ location }}" />
+        {% if let Some(back) = back %}
+          <input name="back" hidden value="{{ back }}" />
         {% endif %}
 
         <p class="field">

@@ -161,7 +161,10 @@ impl<'a> TmplInstalledPackage<'a> {
                         .set_label(t!("error.login"))
                         .set_color(btn::Color::Warning)
                         .set_size(btn::Size::Small)
-                        .set_href(Paths::Login(host.clone())),
+                        .set_href(Paths::Login(
+                            host.clone(),
+                            Paths::InstalledPackagesList.to_string(),
+                        )),
                 ),
                 _ => None,
             },
@@ -446,7 +449,9 @@ mod tests {
         assert!(error_html.contains(r#"js-open-in-web-browser"#));
 
         // Should show Login button for StatusFailed
-        assert!(error_html.contains(r#"href="login.html#host=test.quilt.dev""#));
+        assert!(error_html.contains(
+            r#"href="login.html#host=test.quilt.dev&#38;back=installed-packages-list.html""#
+        ));
 
         // Should not show commit button for error-state packages
         assert!(!error_html.contains(r#"href="commit.html"#));

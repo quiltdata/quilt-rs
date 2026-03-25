@@ -501,9 +501,9 @@ function enableDeliveryButtons() {
 
 window.addEventListener(EVENT_PAGE_READY, () => {
   listen(SELECTOR_ERASE_AUTH, ["host"], (data, button) =>
-    execInlineCommand(CMD_ERASE_AUTH, data, button).then(() =>
-      window.location.reload(),
-    ),
+    execInlineCommand(CMD_ERASE_AUTH, data, button).then(() => {
+      window.location.reload();
+    }),
   );
   listen(SELECTOR_DEBUG_DOT_QUILT, [], (data, button) =>
     execInlineCommand(CMD_DEBUG_DOT_QUILT, data, button),
@@ -658,16 +658,16 @@ window.addEventListener(EVENT_PAGE_READY, () => {
     const notification: Html = await invoke(CMD_LOGIN, formData);
     layout?.removeAttribute("disabled");
     if (!notify(notification)) return;
-    // Rust's login_command calls navigate_after_login when location is present;
-    // only navigate from JS when there is no location to avoid a double navigation.
-    if (!formData.location) {
+    // Rust's login_command calls navigate_after_login when back is present;
+    // only navigate from JS when there is no back to avoid a double navigation.
+    if (!formData.back) {
       await navigate(ROUTE_INSTALLED_PACKAGES_LIST);
     }
   });
 
   listen(SELECTOR_LOGIN_OAUTH, ["host"], (data, button) => {
-    const location = button.getAttribute("data-location");
-    const payload = location ? { ...data, location } : data;
+    const back = button.getAttribute("data-back");
+    const payload = back ? { ...data, back } : data;
     return execInlineCommand(CMD_LOGIN_OAUTH, payload, button);
   });
 

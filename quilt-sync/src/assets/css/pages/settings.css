@@ -96,11 +96,11 @@
     white-space: nowrap;
   }
 
-  .relogin-popover {
+  .logout-popover {
     position: relative;
   }
 
-  .relogin-popover .popover-wrapper {
+  .logout-popover .popover-wrapper {
     bottom: 100%;
     display: none;
     left: 0;
@@ -108,11 +108,11 @@
     position: absolute;
   }
 
-  .relogin-popover:hover .popover-wrapper {
+  .logout-popover:hover .popover-wrapper {
     display: flex;
   }
 
-  .relogin-popover .popover {
+  .logout-popover .popover {
     background: var(--q-ui-palette-background-primary);
     border-radius: var(--q-ui-border-radius);
     box-shadow: var(--q-ui-shadows-popup);

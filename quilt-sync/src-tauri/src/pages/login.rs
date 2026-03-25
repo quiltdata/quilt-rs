@@ -13,7 +13,7 @@ use crate::ui::Icon;
 #[derive(Debug)]
 pub struct ViewLogin {
     host: Host,
-    location: Option<String>,
+    back: Option<String>,
 }
 
 #[derive(Template)]
@@ -22,7 +22,7 @@ pub struct TmplPageLogin<'a> {
     host: Host,
     instructions: Cow<'a, str>,
     layout: Layout<'a>,
-    location: Option<String>,
+    back: Option<String>,
     login_oauth: btn::TmplButton<'a>,
     open_catalog: btn::TmplButton<'a>,
 }
@@ -46,7 +46,7 @@ impl<'a> TmplPageLogin<'a> {
             .set_label(t!("login.open_browser"))
     }
 
-    pub fn login_oauth(host: &Host, location: Option<&str>) -> btn::TmplButton<'a> {
+    pub fn login_oauth(host: &Host, back: Option<&str>) -> btn::TmplButton<'a> {
         let btn = btn::TmplButton::builder()
             .set_js(btn::JsSelector::LoginOAuth)
             .set_size(btn::Size::Large)
@@ -54,8 +54,8 @@ impl<'a> TmplPageLogin<'a> {
             .set_icon(Icon::OpenInBrowser)
             .set_data("host", host.to_string())
             .set_label(t!("login.login_oauth"));
-        match location {
-            Some(loc) => btn.set_data("location", loc.to_string()),
+        match back {
+            Some(loc) => btn.set_data("back", loc.to_string()),
             None => btn,
         }
     }
@@ -66,9 +66,9 @@ impl From<ViewLogin> for TmplPageLogin<'_> {
         TmplPageLogin {
             instructions: t!("login.code_instruction", s => view.host.to_string()),
             layout: Layout::new(Some(Self::submit_button())),
-            login_oauth: Self::login_oauth(&view.host, view.location.as_deref()),
+            login_oauth: Self::login_oauth(&view.host, view.back.as_deref()),
             open_catalog: Self::open_catalog(&view.host),
-            location: view.location,
+            back: view.back,
             host: view.host,
         }
     }
@@ -78,10 +78,10 @@ impl ViewLogin {
     pub async fn create(
         tracing: &crate::telemetry::Telemetry,
         host: quilt::uri::Host,
-        location: Option<String>,
+        back: Option<String>,
     ) -> Result<ViewLogin, Error> {
         tracing.add_host(&host);
-        Ok(ViewLogin { host, location })
+        Ok(ViewLogin { host, back })
     }
 
     pub fn render(self) -> Result<String, Error> {
@@ -107,18 +107,15 @@ mod tests {
 
         let view = ViewLogin {
             host: host.clone(),
-            // NOTE: bare page name used here for test convenience only.
-            // In production, location is always a full URL from the frontend
-            // (see load_page_command in commands.rs).
-            location: Some("installed-packages-list.html".to_string()),
+            back: Some("installed-packages-list.html".to_string()),
         };
 
         let html = view.render()?;
 
-        // Check for OAuth login button with location
+        // Check for OAuth login button with back
         assert!(html.contains(r#"js-login-oauth"#));
         assert!(html.contains(&format!(r#"data-host="{host}""#)));
-        assert!(html.contains(r#"data-location="installed-packages-list.html"#));
+        assert!(html.contains(r#"data-back="installed-packages-list.html"#));
 
         // Check for code input form
         assert!(html.contains(r#"id="code""#));
@@ -136,14 +133,14 @@ mod tests {
     }
 
     #[test]
-    fn test_login_oauth_button_with_location() -> Result {
+    fn test_login_oauth_button_with_back() -> Result {
         let host: Host = "test.quilt.dev".parse()?;
         let btn = TmplPageLogin::login_oauth(&host, Some("some-page.html"));
         let html = btn.to_string();
 
         assert!(html.contains(r#"js-login-oauth"#));
         assert!(html.contains(r#"data-host="test.quilt.dev""#));
-        assert!(html.contains(r#"data-location="some-page.html""#));
+        assert!(html.contains(r#"data-back="some-page.html""#));
         assert!(html.contains(r#"primary"#));
         assert!(html.contains(r#"large"#));
 
@@ -151,14 +148,14 @@ mod tests {
     }
 
     #[test]
-    fn test_login_oauth_button_without_location() -> Result {
+    fn test_login_oauth_button_without_back() -> Result {
         let host: Host = "test.quilt.dev".parse()?;
         let btn = TmplPageLogin::login_oauth(&host, None);
         let html = btn.to_string();
 
         assert!(html.contains(r#"js-login-oauth"#));
         assert!(html.contains(r#"data-host="test.quilt.dev""#));
-        assert!(!html.contains(r#"data-location"#));
+        assert!(!html.contains(r#"data-back"#));
 
         Ok(())
     }

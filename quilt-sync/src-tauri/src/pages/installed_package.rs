@@ -77,7 +77,10 @@ impl TmplStatus<'_> {
                         .set_label(t!("error.login"))
                         .set_icon(Icon::Warning)
                         .set_color(btn::Color::Warning)
-                        .set_href(Paths::Login(host.clone())),
+                        .set_href(Paths::Login(
+                            host.clone(),
+                            Paths::InstalledPackage(namespace.clone()).to_string(),
+                        )),
                     secondary_button: Some(
                         btn::TmplButton::builder()
                             .set_data("namespace", namespace.to_string())
@@ -502,7 +505,7 @@ mod tests {
         .render()?;
 
         // Should show Login button
-        assert!(html.contains(r#"href="login.html#host=test.quilt.dev""#));
+        assert!(html.contains(r#"href="login.html#host=test.quilt.dev&#38;back=installed-package.html%23namespace%3DA%2FB""#));
 
         // Should not show commit button
         assert!(!html.contains(r#"href="commit.html"#));

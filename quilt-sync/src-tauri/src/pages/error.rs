@@ -49,7 +49,7 @@ impl<'a> TmplPageError<'a> {
 
     pub fn login_button(host: quilt::uri::Host) -> btn::TmplButton<'a> {
         btn::TmplButton::builder()
-            .set_href(Paths::Login(host))
+            .set_href(Paths::Login(host, Paths::InstalledPackagesList.to_string()))
             .set_label(t!("error.login"))
     }
 }

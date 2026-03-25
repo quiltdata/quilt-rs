@@ -36,6 +36,7 @@ async fn load_page_command(
     let data_dir = app_handle.path().app_local_data_dir()?;
 
     let path = location.parse::<routes::Paths>()?;
+
     let page_result = pages::load(m, app, &home, &data_dir, tracing, &path).await;
 
     match page_result {
@@ -64,9 +65,10 @@ async fn load_page_command(
         Err(Error::Quilt(quilt::Error::LoginRequired(Some(host)))) => {
             let warn = "Login is required";
             warn!("{}", warn);
-            // `location` is the full URL from the frontend; it is stored
-            // verbatim in PendingAuth and parsed back into a typed Paths
-            // after a successful OAuth callback (see uri::login_with_code).
+            // `location` (the page URL) is passed as `back` so the user
+            // returns here after successful login. It is stored verbatim in
+            // PendingAuth and parsed back into a typed Paths after a
+            // successful OAuth callback (see uri::login_with_code).
             let login_page =
                 pages::ViewLogin::create(tracing, host.clone(), Some(location.to_string())).await?;
             tracing
@@ -685,7 +687,7 @@ async fn login_command(
     tracing: &crate::telemetry::Telemetry,
     host: &str,
     code: String,
-    location: Option<String>,
+    back: Option<String>,
     app_handle: &tauri::AppHandle,
 ) -> Result<(), Error> {
     let host = quilt::uri::Host::from_str(host)?;
@@ -698,8 +700,8 @@ async fn login_command(
         })
         .await;
 
-    if let Some(location) = location {
-        let path = location
+    if let Some(back) = back {
+        let path = back
             .parse::<routes::Paths>()
             .map_err(|e| Error::PostLogin(e.to_string()))?;
         navigate_after_login(app_handle, path).map_err(|e| Error::PostLogin(e.to_string()))?;
@@ -714,7 +716,7 @@ pub async fn login(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     host: String,
     code: String,
-    location: Option<String>,
+    back: Option<String>,
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
 ) -> Result<String, String> {
     let msg_init = format!("Login with code for host {host}");
@@ -723,7 +725,7 @@ pub async fn login(
 
     let app_handle = app_handle.lock().await;
     TmplNotify::new(msg_init).map(
-        login_command(&m, &tracing, &host, code, location, &app_handle).await,
+        login_command(&m, &tracing, &host, code, back, &app_handle).await,
         msg_ok,
         msg_err,
     )
@@ -737,7 +739,7 @@ pub async fn login_oauth(
     oauth_state: tauri::State<'_, OAuthState>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     host: String,
-    location: Option<String>,
+    back: Option<String>,
 ) -> Result<String, String> {
     let host_parsed = quilt::uri::Host::from_str(&host).map_err(|e| e.to_string())?;
 
@@ -747,7 +749,7 @@ pub async fn login_oauth(
         .map_err(|e| e.to_string())?;
 
     let request = oauth_state
-        .start_login(&host_parsed, &client_id, location)
+        .start_login(&host_parsed, &client_id, back)
         .await;
 
     model::open_in_web_browser(&request.authorize_url).map_err(|e| e.to_string())?;
