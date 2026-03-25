@@ -1,9 +1,10 @@
-# QuiltSync Artifacts
+# Artifacts
 
 ## App data directory (`$DATA_DIR`)
 
-Path provided by the OS via Tauri's `app_local_data_dir()` for the bundle
-identifier `com.quiltdata.quilt-sync`. Not configurable.
+*QuiltSync only.* Path provided by the OS via Tauri's `app_local_data_dir()`
+for the bundle identifier `com.quiltdata.quilt-sync`. Not configurable.
+CLI and library callers choose their own root directory.
 
 | Platform | Path |
 |----------|------|
@@ -18,16 +19,21 @@ identifier `com.quiltdata.quilt-sync`. Not configurable.
 Where package files (working copies) live. Each installed package occupies
 `<owner>/<package>/` inside it.
 
-Set by the user on the Setup page on first launch, then stored in
+*QuiltSync*: set by the user on the Setup page on first launch, then stored in
 `$DATA_DIR/.quilt/data.json` and read from there on subsequent starts.
 Defaults to `~/QuiltSync` if the user has not configured it yet.
+*CLI/library*: the caller provides the path.
 
 ## Domain (`$DATA_DIR/.quilt/data.json`)
 
-Tracks all installed packages, their remote origins, local commit state, and
-the home directory path. Path is hardcoded relative to `$DATA_DIR`.
+*All components (quilt-rs, quilt-cli, QuiltSync).* Tracks all installed
+packages, their remote origins, local commit state, and the home directory
+path. Path is hardcoded relative to `$DATA_DIR`.
 
 ## Package state (`$DATA_DIR/.quilt/`)
+
+*All components.* Managed by quilt-rs; CLI and QuiltSync use it through the
+library.
 
 | Artifact | Path | Path source |
 |----------|------|-------------|
@@ -37,7 +43,9 @@ the home directory path. Path is hardcoded relative to `$DATA_DIR`.
 
 ## Auth (`$DATA_DIR/.auth/`)
 
-Per-host credentials, one subdirectory per catalog. Wiped by **Debug → Erase auth**.
+*All components.* Managed by quilt-rs; CLI and QuiltSync use it through the
+library. Per-host credentials, one subdirectory per catalog.
+Wiped by **Debug → Erase auth** (QuiltSync).
 
 | Artifact | Path | Path source |
 |----------|------|-------------|
@@ -47,9 +55,12 @@ Per-host credentials, one subdirectory per catalog. Wiped by **Debug → Erase a
 
 ## Logs (`$DATA_DIR/logs/`)
 
-Opened by **Debug → Show logs**. Path is hardcoded relative to `$DATA_DIR`.
+*QuiltSync only.* Opened by **Debug → Show logs**. Path is hardcoded relative
+to `$DATA_DIR`.
 
 ## Remote S3 artifacts
+
+*All components.* Written and read by quilt-rs during push/pull operations.
 
 | S3 key | Description |
 |--------|-------------|

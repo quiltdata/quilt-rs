@@ -1,5 +1,11 @@
 # Quilt Architecture Specification
 
+> **Audience**: Contributors seeking a system overview without reading the code,
+> and technical stakeholders who need to understand exact workflow behavior.
+> Quilt identifies every file and manifest by its cryptographic hash — a small
+> change in any step can break the computed hash, so precise knowledge of what
+> happens at each phase matters.
+
 ## Overview
 
 Quilt is a data package management system that provides Git-like version control
@@ -35,7 +41,7 @@ The `.quilt` directory serves as the local repository for package management:
 │       └── <hash>      # Manifest files (local format)
 ├── objects/            # Local content-addressed object store
 │   └── <sha256>        # Immutable data files
-└── lineage.json        # Package installation and modification tracking
+└── data.json           # Package installation and modification tracking
 ```
 
 ### Directory Responsibilities
@@ -44,7 +50,7 @@ The `.quilt` directory serves as the local repository for package management:
 - **installed/**: Local copies of package manifests, organized by namespace
 - **objects/**: Local object store containing actual file content,
   deduplicated by hash
-- **lineage.json**: Tracks package installations, modifications, and commit history
+- **data.json**: Tracks package installations, modifications, and commit history
 
 ## Domain
 
@@ -136,7 +142,7 @@ copy_cached_to_installed() → .quilt/installed/namespace/hash
     ↓
 resolve_tag("latest") → latest_hash
     ↓
-Update lineage.json:
+Update data.json:
   - packages[namespace] = PackageLineage
   - base_hash = manifest_uri.hash
   - latest_hash = resolved latest
@@ -160,14 +166,14 @@ For each path in paths_to_install:
     ↓
   If missing: download from remote physical_key → objects/hash
     ↓
-  Create hardlink: objects/hash → working_dir/logical_key
+  Copy objects/hash → working_dir/logical_key (mutable copy)
     ↓
   Update lineage.paths[logical_key] = PathState {
     timestamp: now,
     hash: content_hash
   }
     ↓
-Save updated lineage.json
+Save updated data.json
 ```
 
 ### 4. Modification Detection
@@ -216,7 +222,7 @@ build_manifest_from_rows_stream():
     ↓
 Update lineage:
   - commit = CommitState { hash: new_top_hash, timestamp, prev_hashes }
-  - Save lineage.json
+  - Save data.json
     ↓
 Return: Updated PackageLineage
 ```
@@ -255,6 +261,28 @@ Update lineage:
 Return: Updated PackageLineage
 ```
 
+### 7. Uninstall Phase
+
+**Entry Point**: `flow::uninstall_package`
+**Purpose**: Remove package from local tracking and delete working directory files
+
+```text
+flow::uninstall_package(lineage, paths, storage, namespace)
+    ↓
+Remove namespace from lineage.packages
+    ↓
+remove_dir_all(.quilt/installed/namespace/)
+  (deletes all installed manifest files for this package)
+    ↓
+remove_dir_all(home/namespace/)
+  (deletes the working directory with user-visible files)
+    ↓
+NOTE: .quilt/objects/ are NOT removed (shared, may be used by other packages)
+NOTE: .quilt/packages/ cache is NOT removed
+    ↓
+Return: Updated DomainLineage
+```
+
 ## Key Architectural Patterns
 
 ### Content Addressability
@@ -262,12 +290,6 @@ Return: Updated PackageLineage
 - All objects (files and manifests) are identified by cryptographic hash
 - Enables deduplication, integrity verification, and immutable references
 - Physical storage location can change without affecting logical references
-
-### Bidirectional Conversion
-
-- `Row` (legacy Table format) ↔ `ManifestRow` (modern Manifest format)
-- Implemented via `From`/`TryFrom` traits for backward compatibility
-- Allows gradual migration from Table-based to Manifest-based operations
 
 ### Lineage Tracking
 
@@ -297,7 +319,7 @@ the registry caches each known version to avoid overwrites.
 
 ### Local vs Remote State
 
-- **Local State**: lineage.json tracks local modifications and commits
+- **Local State**: data.json tracks local modifications and commits
 - **Remote State**: authoritative package versions in remote storage
 - **Synchronization**: push/pull operations reconcile differences
 
@@ -320,18 +342,29 @@ enum UpstreamState {
 
 ## Error Handling
 
-The system uses comprehensive error types covering:
+Custom error types are scattered across the monorepo but concentrated in two
+locations:
 
-- I/O operations (`Error::Io`)
-- Remote storage (`Error::Remote`)
-- Manifest parsing (`Error::Table`)
-- Hash verification (`Error::Checksum`)
-- Package management (`Error::PackageAlreadyInstalled`)
+- **`quilt-rs/src/error.rs`** — core library errors, grouped by concern:
+  - S3 and remote storage (`S3`, `S3Raw`, `RemoteInit`)
+  - Authentication (`Auth`, `LoginRequired`)
+  - Filesystem I/O (`Io`, `FileRead`, `FileWrite`, `FileCopy`, `FileNotFound`)
+  - Manifest and package management (`ManifestHeader`, `ManifestLoad`, `Table`,
+    `PackageAlreadyInstalled`, `PackageNotInstalled`)
+  - Serialization and parsing (`Json`, `Yaml`, `Utf8`, `UrlParse`)
+  - Workflow operations (`Commit`, `Push`, `Uninstall`)
+  - Lineage and domain state (`LineageMissing`, `LineageParse`)
+  - Integrity (`Checksum`, `ChecksumMissing`)
+
+- **`quilt-sync/src-tauri/src/error.rs`** — Tauri application errors, including
+  UI routing, OAuth, and a `Quilt` variant that wraps the core library errors.
+
+Both use `thiserror` for ergonomic `#[derive(Error)]` definitions.
 
 ## Performance Considerations
 
 - **Deduplication**: Identical content stored once in objects/
-- **Hard Links**: Working directory files link to objects/ (copy-on-write semantics)
+- **Object Cache**: Files downloaded once to objects/, then copied to working directory
 - **Streaming**: Large manifests processed incrementally
 - **Caching**: Remote manifests cached locally in packages/
 - **Lazy Operations**: Hash calculations and downloads performed on-demand
@@ -339,16 +372,8 @@ The system uses comprehensive error types covering:
 ## Security Model
 
 - **Content Integrity**: All content verified against cryptographic hashes
-- **Immutable Objects**: Prevents tampering with historical data
-- **No Secret Storage**: No credentials or sensitive data in manifests
-- **Configurable Backends**: Supports different remote storage authentication
-  methods
-
-## Extension Points
-
-- **Storage Backends**: Pluggable storage implementations (S3, local
-  filesystem, etc.)
-- **Hash Algorithms**: Extensible hash algorithm support
-- **Remote Protocols**: Configurable remote storage protocols
-- **Metadata Schema**: User-defined metadata in manifests
-- **Workflow Integration**: Custom workflow definitions in package headers
+- **Immutable Objects**: Objects in the local store are immutable by convention
+  (content-addressed naming discourages overwriting, but the filesystem does
+  not enforce it)
+- **No Credentials in Manifests**: Manifests contain only file metadata (paths,
+  hashes, sizes). Authentication is handled externally (AWS credentials, OAuth)
