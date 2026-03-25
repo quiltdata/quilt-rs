@@ -6,6 +6,8 @@ use rust_i18n::t;
 
 use semver::Version;
 
+use quilt_rs::uri::Host;
+
 use crate::app::App;
 use crate::error::Error;
 use crate::routes::Paths;
@@ -27,7 +29,7 @@ pub struct ViewSettings<'a> {
     logs_dir: &'a LogsDir,
     home_dir: Option<PathBuf>,
     data_dir: PathBuf,
-    auth_hosts: Vec<String>,
+    auth_hosts: Vec<Host>,
     log_level: String,
 }
 
@@ -120,17 +122,17 @@ impl<'a> TmplSettings<'a> {
             .set_disabled()
     }
 
-    fn relogin_button(host: &str) -> btn::TmplButton<'static> {
+    fn relogin_button(host: &Host) -> btn::TmplButton<'static> {
         btn::TmplButton::builder()
             .set_label(t!("settings.relogin"))
             .set_size(btn::Size::Small)
             .set_href(Paths::Login(
-                host.parse().expect("authenticated host is valid"),
+                host.clone(),
                 Paths::Settings.to_string(),
             ))
     }
 
-    fn logout_button(host: &str) -> btn::TmplButton<'static> {
+    fn logout_button(host: &Host) -> btn::TmplButton<'static> {
         btn::TmplButton::builder()
             .set_icon(Icon::Warning)
             .set_label(t!("settings.logout"))
@@ -157,7 +159,7 @@ impl From<ViewSettings<'_>> for TmplSettings<'_> {
             .map(|host| AuthHost {
                 relogin_button: TmplSettings::relogin_button(host),
                 logout_button: TmplSettings::logout_button(host),
-                name: host.clone(),
+                name: host.to_string(),
             })
             .collect();
 
@@ -192,6 +194,11 @@ impl<'a> ViewSettings<'a> {
         log_level: String,
         auth_hosts: Vec<String>,
     ) -> Result<ViewSettings<'a>, Error> {
+        let auth_hosts: Vec<Host> = auth_hosts
+            .iter()
+            .map(|h| h.parse())
+            .collect::<Result<_, _>>()?;
+
         Ok(ViewSettings {
             version: app.version.clone(),
             logs_dir: &app.logs_dir,
