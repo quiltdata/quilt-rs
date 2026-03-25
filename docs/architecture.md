@@ -1,5 +1,11 @@
 # Quilt Architecture Specification
 
+> **Audience**: Contributors seeking a system overview without reading the code,
+> and technical stakeholders who need to understand exact workflow behavior.
+> Quilt identifies every file and manifest by its cryptographic hash — a small
+> change in any step can break the computed hash, so precise knowledge of what
+> happens at each phase matters.
+
 ## Overview
 
 Quilt is a data package management system that provides Git-like version control
