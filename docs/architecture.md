@@ -285,12 +285,6 @@ Return: Updated DomainLineage
 - Enables deduplication, integrity verification, and immutable references
 - Physical storage location can change without affecting logical references
 
-### Bidirectional Conversion
-
-- `Row` (legacy Table format) ↔ `ManifestRow` (modern Manifest format)
-- Implemented via `From`/`TryFrom` traits for backward compatibility
-- Allows gradual migration from Table-based to Manifest-based operations
-
 ### Lineage Tracking
 
 - `PackageLineage` tracks installation and modification history
