@@ -342,13 +342,24 @@ enum UpstreamState {
 
 ## Error Handling
 
-The system uses comprehensive error types covering:
+Custom error types are scattered across the monorepo but concentrated in two
+locations:
 
-- I/O operations (`Error::Io`)
-- Remote storage (`Error::Remote`)
-- Manifest parsing (`Error::Table`)
-- Hash verification (`Error::Checksum`)
-- Package management (`Error::PackageAlreadyInstalled`)
+- **`quilt-rs/src/error.rs`** — core library errors, grouped by concern:
+  - S3 and remote storage (`S3`, `S3Raw`, `RemoteInit`)
+  - Authentication (`Auth`, `LoginRequired`)
+  - Filesystem I/O (`Io`, `FileRead`, `FileWrite`, `FileCopy`, `FileNotFound`)
+  - Manifest and package management (`ManifestHeader`, `ManifestLoad`, `Table`,
+    `PackageAlreadyInstalled`, `PackageNotInstalled`)
+  - Serialization and parsing (`Json`, `Yaml`, `Utf8`, `UrlParse`)
+  - Workflow operations (`Commit`, `Push`, `Uninstall`)
+  - Lineage and domain state (`LineageMissing`, `LineageParse`)
+  - Integrity (`Checksum`, `ChecksumMissing`)
+
+- **`quilt-sync/src-tauri/src/error.rs`** — Tauri application errors, including
+  UI routing, OAuth, and a `Quilt` variant that wraps the core library errors.
+
+Both use `thiserror` for ergonomic `#[derive(Error)]` definitions.
 
 ## Performance Considerations
 
