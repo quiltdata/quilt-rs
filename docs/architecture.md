@@ -377,12 +377,3 @@ Both use `thiserror` for ergonomic `#[derive(Error)]` definitions.
   not enforce it)
 - **No Credentials in Manifests**: Manifests contain only file metadata (paths,
   hashes, sizes). Authentication is handled externally (AWS credentials, OAuth)
-
-## Extension Points
-
-- **Storage Backends**: Pluggable storage implementations (S3, local
-  filesystem, etc.)
-- **Hash Algorithms**: Extensible hash algorithm support
-- **Remote Protocols**: Configurable remote storage protocols
-- **Metadata Schema**: User-defined metadata in manifests
-- **Workflow Integration**: Custom workflow definitions in package headers
