@@ -35,7 +35,7 @@ The `.quilt` directory serves as the local repository for package management:
 │       └── <hash>      # Manifest files (local format)
 ├── objects/            # Local content-addressed object store
 │   └── <sha256>        # Immutable data files
-└── lineage.json        # Package installation and modification tracking
+└── data.json           # Package installation and modification tracking
 ```
 
 ### Directory Responsibilities
@@ -44,7 +44,7 @@ The `.quilt` directory serves as the local repository for package management:
 - **installed/**: Local copies of package manifests, organized by namespace
 - **objects/**: Local object store containing actual file content,
   deduplicated by hash
-- **lineage.json**: Tracks package installations, modifications, and commit history
+- **data.json**: Tracks package installations, modifications, and commit history
 
 ## Domain
 
@@ -136,7 +136,7 @@ copy_cached_to_installed() → .quilt/installed/namespace/hash
     ↓
 resolve_tag("latest") → latest_hash
     ↓
-Update lineage.json:
+Update data.json:
   - packages[namespace] = PackageLineage
   - base_hash = manifest_uri.hash
   - latest_hash = resolved latest
@@ -167,7 +167,7 @@ For each path in paths_to_install:
     hash: content_hash
   }
     ↓
-Save updated lineage.json
+Save updated data.json
 ```
 
 ### 4. Modification Detection
@@ -216,7 +216,7 @@ build_manifest_from_rows_stream():
     ↓
 Update lineage:
   - commit = CommitState { hash: new_top_hash, timestamp, prev_hashes }
-  - Save lineage.json
+  - Save data.json
     ↓
 Return: Updated PackageLineage
 ```
@@ -253,6 +253,28 @@ Update lineage:
   - latest_hash = updated if certified
     ↓
 Return: Updated PackageLineage
+```
+
+### 7. Uninstall Phase
+
+**Entry Point**: `flow::uninstall_package`
+**Purpose**: Remove package from local tracking and delete working directory files
+
+```text
+flow::uninstall_package(lineage, paths, storage, namespace)
+    ↓
+Remove namespace from lineage.packages
+    ↓
+remove_dir_all(.quilt/installed/namespace/)
+  (deletes all installed manifest files for this package)
+    ↓
+remove_dir_all(home/namespace/)
+  (deletes the working directory with user-visible files)
+    ↓
+NOTE: .quilt/objects/ are NOT removed (shared, may be used by other packages)
+NOTE: .quilt/packages/ cache is NOT removed
+    ↓
+Return: Updated DomainLineage
 ```
 
 ## Key Architectural Patterns
@@ -297,7 +319,7 @@ the registry caches each known version to avoid overwrites.
 
 ### Local vs Remote State
 
-- **Local State**: lineage.json tracks local modifications and commits
+- **Local State**: data.json tracks local modifications and commits
 - **Remote State**: authoritative package versions in remote storage
 - **Synchronization**: push/pull operations reconcile differences
 
