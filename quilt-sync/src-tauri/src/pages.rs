@@ -46,14 +46,11 @@ pub async fn load(
         Paths::InstalledPackagesList => ViewInstalledPackagesList::create(model, tracing)
             .await?
             .render(),
-        // location is None here: this path is reached via href buttons
-        // (error page "Login", package error status). After login the user
-        // returns to InstalledPackagesList, which is the right default.
-        // The LoginRequired path in load_page_command passes the real
-        // location so redirect-back works for the main auth flow.
-        Paths::Login(host) => ViewLogin::create(tracing, host.clone(), None)
-            .await?
-            .render(),
+        Paths::Login(host, location) => {
+            ViewLogin::create(tracing, host.clone(), Some(location.clone()))
+                .await?
+                .render()
+        }
         Paths::LoginError(host, title, error) => {
             ViewError::for_login_error(host.clone(), title.clone(), error.clone())
                 .await?

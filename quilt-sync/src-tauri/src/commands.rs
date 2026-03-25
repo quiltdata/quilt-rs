@@ -37,22 +37,6 @@ async fn load_page_command(
 
     let path = location.parse::<routes::Paths>()?;
 
-    // For direct Login page navigation (e.g., re-login from Settings),
-    // extract the optional `location` fragment parameter so the user
-    // returns to the right page after successful authentication.
-    if let routes::Paths::Login(ref host) = path {
-        let redirect = routes::parse_login_location(location);
-        let login_page = pages::ViewLogin::create(tracing, host.clone(), redirect).await?;
-        debug!("Page loaded successfully, URL: {}", location);
-        tracing
-            .track(MixpanelEvent::PageLoaded {
-                pathname: path.pathname(),
-                error: None,
-            })
-            .await;
-        return Ok(login_page.render()?);
-    }
-
     let page_result = pages::load(m, app, &home, &data_dir, tracing, &path).await;
 
     match page_result {

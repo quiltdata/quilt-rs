@@ -54,16 +54,17 @@ fn parse_namespace(location: &str) -> Result<String, Error> {
 }
 
 #[derive(Debug, serde::Deserialize)]
-struct FragmentHostParsed {
+struct FragmentLoginParsed {
     pub host: quilt::uri::Host,
+    pub location: String,
 }
 
-fn parse_host(location: &str) -> Result<quilt::uri::Host, Error> {
+fn parse_login(location: &str) -> Result<(quilt::uri::Host, String), Error> {
     let uri = Url::parse(location)?;
     match uri.fragment() {
         Some(n) => {
-            let qs: FragmentHostParsed = serde_qs::from_str(n)?;
-            Ok(qs.host)
+            let qs: FragmentLoginParsed = serde_qs::from_str(n)?;
+            Ok((qs.host, qs.location))
         }
         None => Err(Error::PageUrl(RouteError::MissingHostFragment(uri))),
     }
@@ -116,7 +117,7 @@ pub enum Paths {
     #[serde(rename = "installed_packages_list")]
     InstalledPackagesList,
     #[serde(rename = "login")]
-    Login(quilt::uri::Host),
+    Login(quilt::uri::Host, String),
     #[serde(rename = "login_error")]
     LoginError(quilt::uri::Host, String, String),
     #[serde(rename = "merge")]
@@ -141,8 +142,9 @@ impl fmt::Display for Paths {
             Paths::InstalledPackagesList => {
                 write!(f, "installed-packages-list.html")
             }
-            Paths::Login(host) => {
-                write!(f, "login.html#host={host}")
+            Paths::Login(host, location) => {
+                let location_encoded = urlencoding::encode(location);
+                write!(f, "login.html#host={host}&location={location_encoded}")
             }
             Paths::LoginError(host, title, error) => {
                 let title_encoded = urlencoding::encode(title);
@@ -189,22 +191,6 @@ impl Paths {
     }
 }
 
-/// Extract the optional `location` parameter from a login page URL fragment.
-///
-/// Used by `load_page_command` to forward the return-to URL when the login
-/// page is navigated to directly (e.g. after re-login from Settings).
-pub fn parse_login_location(url: &str) -> Option<String> {
-    let parsed = Url::parse(url).ok()?;
-    let fragment = parsed.fragment()?;
-    #[derive(serde::Deserialize)]
-    struct Fragment {
-        #[serde(default)]
-        location: Option<String>,
-    }
-    let frag: Fragment = serde_qs::from_str(fragment).ok()?;
-    frag.location
-}
-
 pub fn from_url(path: Paths, mut url: Url) -> url::Url {
     match path {
         Paths::Commit(namespace) => {
@@ -221,9 +207,10 @@ pub fn from_url(path: Paths, mut url: Url) -> url::Url {
             url.set_path("pages/installed-packages-list.html");
             url
         }
-        Paths::Login(host) => {
+        Paths::Login(host, ref location) => {
+            let location_encoded = urlencoding::encode(location);
             url.set_path("pages/login.html");
-            url.set_fragment(Some(&format!("host={host}")));
+            url.set_fragment(Some(&format!("host={host}&location={location_encoded}")));
             url
         }
         Paths::LoginError(host, ref title, ref error) => {
@@ -274,8 +261,8 @@ impl str::FromStr for Paths {
             }
             "installed-packages-list.html" => Ok(Paths::InstalledPackagesList),
             "login.html" => {
-                let host = parse_host(location)?;
-                Ok(Paths::Login(host))
+                let (host, loc) = parse_login(location)?;
+                Ok(Paths::Login(host, loc))
             }
             "login-error.html" => {
                 let (host, title, error) = parse_login_error(location)?;
@@ -371,17 +358,24 @@ mod tests {
     #[test]
     fn test_login() -> Result<()> {
         let host: Host = "test.quilt.dev".parse()?;
-        let page_url = from_url(Paths::Login(host.clone()), Url::parse("http://test:1234/")?);
+        let location = Paths::InstalledPackagesList.to_string();
+        let page_url = from_url(
+            Paths::Login(host.clone(), location.clone()),
+            Url::parse("http://test:1234/")?,
+        );
         let page_url_str = page_url.as_str();
         assert_eq!(
             page_url_str,
-            "http://test:1234/pages/login.html#host=test.quilt.dev"
+            "http://test:1234/pages/login.html#host=test.quilt.dev&location=installed-packages-list.html"
         );
 
         let route: Paths = page_url_str.parse()?;
 
-        assert_eq!(route, Paths::Login(host));
-        assert_eq!(format!("{route}"), "login.html#host=test.quilt.dev");
+        assert_eq!(route, Paths::Login(host, location));
+        assert_eq!(
+            format!("{route}"),
+            "login.html#host=test.quilt.dev&location=installed-packages-list.html"
+        );
 
         Ok(())
     }
@@ -503,7 +497,7 @@ mod tests {
         let commit_path = Paths::Commit(("sensitive", "namespace").into());
         assert_eq!(commit_path.pathname(), "commit");
 
-        let login_path = Paths::Login("sensitive.host.com".parse()?);
+        let login_path = Paths::Login("sensitive.host.com".parse()?, "secret-page.html".into());
         assert_eq!(login_path.pathname(), "login");
 
         let installed_package_path = Paths::InstalledPackage(("private", "package").into());
@@ -573,16 +567,15 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_login_location_present() {
-        let url = "http://test:1234/pages/login.html#host=open.quilt.bio&location=http%3A%2F%2Ftest%3A1234%2Fpages%2Fsettings.html";
-        let loc = parse_login_location(url);
-        assert_eq!(loc, Some("http://test:1234/pages/settings.html".to_string()));
-    }
-
-    #[test]
-    fn test_parse_login_location_absent() {
-        let url = "http://test:1234/pages/login.html#host=open.quilt.bio";
-        let loc = parse_login_location(url);
-        assert_eq!(loc, None);
+    fn test_login_with_encoded_location() -> Result<()> {
+        let host: Host = "test.quilt.dev".parse()?;
+        let location = Paths::InstalledPackage(("foo", "bar").into()).to_string();
+        let page_url = from_url(
+            Paths::Login(host.clone(), location.clone()),
+            Url::parse("http://test:1234/")?,
+        );
+        let route: Paths = page_url.as_str().parse()?;
+        assert_eq!(route, Paths::Login(host, location));
+        Ok(())
     }
 }
