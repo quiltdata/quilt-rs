@@ -27,6 +27,7 @@ getrandom.workspace = true
 futures.workspace = true
 futures-util.workspace = true
 hex.workspace = true
+ignore.workspace = true
 multibase.workspace = true
 multihash.workspace = true
 percent-encoding.workspace = true

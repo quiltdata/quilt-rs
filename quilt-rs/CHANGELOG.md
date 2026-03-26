@@ -8,6 +8,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.27.5-alpha1] - 2026-03-26
+
+### Added
+
+- Support `.quiltignore` files for excluding files from package status and commits
+
 ## [v0.27.4] - 2026-03-19
 
 ### Added

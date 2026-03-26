@@ -11,6 +11,7 @@ pub mod lineage;
 mod local_domain;
 pub mod manifest;
 pub mod paths;
+pub mod quiltignore;
 pub mod uri;
 
 #[cfg(test)]
