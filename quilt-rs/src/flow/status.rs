@@ -59,8 +59,9 @@ async fn locate_files_in_package_home(
     mut tracked_paths: HashMap<PathBuf, ManifestRow>,
     quiltignore: Option<&Gitignore>,
 ) -> Res<Vec<(PathBuf, WorkdirFile)>> {
+    let package_home = package_home.as_ref();
     let mut queue = VecDeque::new();
-    queue.push_back(package_home.as_ref().to_path_buf());
+    queue.push_back(package_home.to_path_buf());
 
     let mut files = Vec::new();
 
@@ -80,7 +81,7 @@ async fn locate_files_in_package_home(
             if !file_type.is_file() {
                 if file_type.is_dir() {
                     if let Some(gi) = quiltignore {
-                        let rel = file_path.strip_prefix(&package_home)?;
+                        let rel = file_path.strip_prefix(package_home)?;
                         if crate::quiltignore::is_ignored(gi, rel, true) {
                             continue;
                         }
@@ -93,7 +94,7 @@ async fn locate_files_in_package_home(
                 continue;
             }
 
-            let logical_key = file_path.strip_prefix(&package_home)?.to_path_buf();
+            let logical_key = file_path.strip_prefix(package_home)?.to_path_buf();
             if let Some(gi) = quiltignore {
                 if crate::quiltignore::is_ignored(gi, &logical_key, false) {
                     continue;
