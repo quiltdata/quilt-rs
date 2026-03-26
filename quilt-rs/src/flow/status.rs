@@ -192,8 +192,14 @@ pub async fn create_status(
     debug!("✔️ Found {} paths in lineage", orig_paths.len());
 
     let quiltignore = crate::quiltignore::load(package_home.as_ref())?;
-    let files =
-        locate_files_in_package_home(storage, manifest, package_home, orig_paths, quiltignore.as_ref()).await?;
+    let files = locate_files_in_package_home(
+        storage,
+        manifest,
+        package_home,
+        orig_paths,
+        quiltignore.as_ref(),
+    )
+    .await?;
     debug!("✔️ Located files in working directory {:?}", files);
     let changes = fingerprint_files(storage, files, host_config).await?;
     debug!("✔️ Computed file fingerprints {:?}", changes);
@@ -513,7 +519,9 @@ mod tests {
         .await?;
 
         assert!(status.changes.contains_key(&PathBuf::from("keep.txt")));
-        assert!(!status.changes.contains_key(&PathBuf::from("cache/file.txt")));
+        assert!(!status
+            .changes
+            .contains_key(&PathBuf::from("cache/file.txt")));
         Ok(())
     }
 
