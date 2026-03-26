@@ -8,6 +8,20 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.24.1-alpha1] - 2026-03-26
+
+### Added
+
+- Add `quilt create quilt+s3://bucket#package=owner/name [--source ...]` for
+  creating a new local package from a remote package handle without installing
+  an existing revision first
+  (<https://github.com/quiltdata/quilt-rs/pull/590>)
+
+### Changed
+
+- Update to use quilt-rs first-revision package support for create, commit, and
+  push workflows (<https://github.com/quiltdata/quilt-rs/pull/590>)
+
 ## [v0.24.0] - 2025-02-04
 
 ### Changed

@@ -13,6 +13,15 @@
 ### Added
 
 - Support `.quiltignore` files for excluding files from package status and commits
+- Add first-revision package support so packages can be created locally and
+  pushed without installing an existing remote revision first
+  (<https://github.com/quiltdata/quilt-rs/pull/590>)
+
+### Changed
+
+- Split remote package destination from optional remote manifest revision in
+  package lineage and update commit/push/status flows to handle packages with
+  no remote base revision yet (<https://github.com/quiltdata/quilt-rs/pull/590>)
 
 ## [v0.27.4] - 2026-03-19
 
