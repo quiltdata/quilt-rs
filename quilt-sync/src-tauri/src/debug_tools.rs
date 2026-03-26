@@ -5,6 +5,12 @@ pub fn try_remote_origin_host(uri: &quilt::uri::ManifestUri) -> Result<quilt::ur
     uri.origin.clone().ok_or(Error::MissingOrigin)
 }
 
+pub fn try_remote_package_origin_host(
+    remote: &quilt::lineage::RemotePackage,
+) -> Result<quilt::uri::Host, Error> {
+    remote.origin.clone().ok_or(Error::MissingOrigin)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

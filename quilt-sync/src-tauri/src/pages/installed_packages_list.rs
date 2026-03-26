@@ -5,8 +5,10 @@ use crate::debug_tools;
 use crate::error::Error;
 use crate::model::QuiltModel;
 use crate::quilt;
+use crate::quilt::lineage::RemotePackage;
 use crate::quilt::lineage::UpstreamState;
 use crate::quilt::uri::Namespace;
+use crate::quilt::uri::RevisionPointer;
 use crate::routes::Paths;
 use crate::telemetry::prelude::*;
 use crate::ui::btn;
@@ -19,7 +21,7 @@ struct InstalledPackage {
     namespace: Namespace,
     origin: Option<url::Url>,
     origin_host: Option<quilt::uri::Host>,
-    remote: quilt::uri::ManifestUri,
+    remote: RemotePackage,
     status: UpstreamState,
 }
 
@@ -40,7 +42,7 @@ struct TmplInstalledPackage<'a> {
     button_uninstall: btn::TmplButton<'a>,
     is_error: bool,
     namespace: quilt::uri::Namespace,
-    remote: quilt::uri::ManifestUri,
+    remote: RemotePackage,
 }
 
 impl From<InstalledPackage> for TmplInstalledPackage<'_> {
@@ -246,9 +248,15 @@ impl ViewInstalledPackagesList {
             });
         }
 
-        let origin_host = debug_tools::try_remote_origin_host(&lineage.remote)?;
+        let origin_host = debug_tools::try_remote_package_origin_host(&lineage.remote)?;
         tracing.add_host(&origin_host);
-        let uri = quilt::uri::S3PackageUri::from(&lineage.remote);
+        let uri = quilt::uri::S3PackageUri {
+            catalog: lineage.remote.origin.clone(),
+            bucket: lineage.remote.bucket.clone(),
+            namespace: lineage.remote.namespace.clone(),
+            revision: RevisionPointer::default(),
+            path: None,
+        };
         let origin_url = uri.display_for_host(&origin_host)?;
         let status = match model
             .get_installed_package_status(installed_package, None)
@@ -311,7 +319,8 @@ mod tests {
             origin_host: Some("test.quilt.dev".parse().unwrap()),
             remote: ManifestUri::try_from(S3PackageUri::try_from(
                 format!("quilt+s3://test#package={namespace}@abcdef").as_str(),
-            )?)?,
+            )?)?
+            .into(),
             status,
         })
     }
@@ -426,7 +435,8 @@ mod tests {
             origin_host: None,
             remote: ManifestUri::try_from(S3PackageUri::try_from(
                 format!("quilt+s3://test#package={namespace}@abcdef").as_str(),
-            )?)?,
+            )?)?
+            .into(),
             status: UpstreamState::Error,
         })
     }

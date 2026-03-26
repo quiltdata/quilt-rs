@@ -59,9 +59,10 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
     pub async fn manifest(&self) -> Res<Manifest> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
-        let installed_path = self
-            .paths
-            .installed_manifest(&self.namespace, lineage.current_hash());
+        let Some(current_hash) = lineage.current_hash() else {
+            return Ok(Manifest::default());
+        };
+        let installed_path = self.paths.installed_manifest(&self.namespace, current_hash);
         match Manifest::from_path(&self.storage, &installed_path).await {
             Ok(manifest) => return Ok(manifest),
 
@@ -76,11 +77,14 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
         // If installed failed, try to recover from cache
         log::info!("Attempting to recover from cache at {}", &lineage.remote);
+        let Some(remote_manifest_uri) = lineage.remote_manifest_uri() else {
+            return Ok(Manifest::default());
+        };
 
         let cached_manifest =
-            cache_remote_manifest(&self.paths, &self.storage, &self.remote, &lineage.remote)
+            cache_remote_manifest(&self.paths, &self.storage, &self.remote, &remote_manifest_uri)
                 .await?;
-        copy_cached_to_installed(&self.paths, &self.storage, &lineage.remote).await?;
+        copy_cached_to_installed(&self.paths, &self.storage, &remote_manifest_uri).await?;
         Ok(cached_manifest)
     }
 
@@ -123,8 +127,9 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
 
-        self.scaffold_paths_for_caching(&lineage.remote.bucket)
-            .await?;
+        if lineage.remote_hash.is_some() {
+            self.scaffold_paths_for_caching(&lineage.remote.bucket).await?;
+        }
 
         let mut manifest = self.manifest().await?;
         let lineage = flow::install_paths(
@@ -207,8 +212,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             return Err(Error::Push("No commits to push".to_string()));
         }
 
-        self.scaffold_paths_for_caching(&lineage.remote.bucket)
-            .await?;
+        self.scaffold_paths_for_caching(&lineage.remote.bucket).await?;
 
         let manifest = self.manifest().await?;
 
@@ -226,13 +230,21 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         )
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
-        Ok(lineage.remote)
+        Ok(lineage
+            .remote_manifest_uri()
+            .expect("push must produce a remote manifest URI"))
     }
 
     pub async fn pull(&self, host_config_opt: Option<HostConfig>) -> Res<ManifestUri> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+
+        if lineage.remote_hash.is_none() {
+            return Err(Error::Package(
+                "package has no remote revision to pull".to_string(),
+            ));
+        }
 
         self.scaffold_paths_for_caching(&lineage.remote.bucket)
             .await?;
@@ -262,21 +274,33 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         )
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
-        Ok(lineage.remote)
+        Ok(lineage
+            .remote_manifest_uri()
+            .expect("pull must preserve a remote manifest URI"))
     }
 
     pub async fn certify_latest(&self) -> Res<ManifestUri> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
-        let latest_manifest_uri = lineage.remote.clone();
+        let latest_manifest_uri = lineage.remote_manifest_uri().ok_or(Error::Package(
+            "package has no remote revision to certify".to_string(),
+        ))?;
         let lineage = flow::certify_latest(lineage, &self.remote, latest_manifest_uri).await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
-        Ok(lineage.remote)
+        Ok(lineage
+            .remote_manifest_uri()
+            .expect("certify_latest must preserve a remote manifest URI"))
     }
 
     pub async fn reset_to_latest(&self) -> Res<ManifestUri> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+
+        if lineage.remote_hash.is_none() {
+            return Err(Error::Package(
+                "package has no remote revision to reset".to_string(),
+            ));
+        }
 
         self.scaffold_paths_for_caching(&lineage.remote.bucket)
             .await?;
@@ -293,7 +317,9 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         )
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
-        Ok(lineage.remote)
+        Ok(lineage
+            .remote_manifest_uri()
+            .expect("reset_to_latest must preserve a remote manifest URI"))
     }
 
     pub async fn set_origin(&self, origin: Host) -> Res {
@@ -305,7 +331,9 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
     pub async fn resolve_workflow(&self, workflow_id: Option<String>) -> Res<Option<Workflow>> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
-        let remote_uri = lineage.remote;
+        let remote_uri = lineage.remote_manifest_uri().ok_or(Error::Workflow(
+            "package has no remote revision to resolve workflows from".to_string(),
+        ))?;
         let workflows_config_uri = S3Uri {
             key: ".quilt/workflows/config.yml".to_string(),
             ..S3Uri::from(remote_uri.clone())
@@ -355,11 +383,11 @@ mod tests {
                     "test/history": {{
                         "commit": null,
                         "remote": {{
+                            "origin": "test.quilt.dev",
                             "bucket": "bucket",
-                            "namespace": "test/history",
-                            "hash": "{}",
-                            "catalog": "test.quilt.dev"
+                            "namespace": "test/history"
                         }},
+                        "remote_hash": "{}",
                         "base_hash": "{}",
                         "latest_hash": "{}",
                         "paths": {{}}
@@ -443,11 +471,11 @@ mod tests {
                     "test/recovery": {{
                         "commit": null,
                         "remote": {{
+                            "origin": null,
                             "bucket": "test-bucket",
-                            "namespace": "test/recovery",
-                            "hash": "{}",
-                            "catalog": null
+                            "namespace": "test/recovery"
                         }},
+                        "remote_hash": "{}",
                         "base_hash": "{}",
                         "latest_hash": "{}",
                         "paths": {{}}

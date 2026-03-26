@@ -9,6 +9,7 @@ use crate::model::QuiltModel;
 use crate::quilt;
 use crate::quilt::lineage::Change;
 use crate::quilt::lineage::ChangeSet;
+use crate::quilt::uri::RevisionPointer;
 use crate::routes;
 use crate::ui::btn;
 use crate::ui::crumbs;
@@ -217,14 +218,24 @@ impl ViewCommit {
             .get_installed_package_lineage(&installed_package)
             .await?;
 
-        let origin_host = debug_tools::try_remote_origin_host(&lineage.remote)?;
+        let origin_host = debug_tools::try_remote_package_origin_host(&lineage.remote)?;
 
         tracing.add_host(&origin_host);
 
-        let remote_manifest = model.browse_remote_manifest(&lineage.remote).await?;
+        let remote_manifest = match lineage.remote_manifest_uri() {
+            Some(remote_manifest_uri) => model.browse_remote_manifest(&remote_manifest_uri).await?,
+            None => quilt::manifest::Manifest::default(),
+        };
+        let base_uri = quilt::uri::S3PackageUri {
+            catalog: lineage.remote.origin.clone(),
+            bucket: lineage.remote.bucket.clone(),
+            namespace: lineage.remote.namespace.clone(),
+            revision: RevisionPointer::default(),
+            path: None,
+        };
         let mut entries_modified = Vec::new();
         for (filename, change) in &status.changes {
-            let mut uri = quilt::uri::S3PackageUri::from(&lineage.remote);
+            let mut uri = base_uri.clone();
             uri.path = Some(filename.clone());
             let origin = Some(uri.display_for_host(&origin_host)?);
 
@@ -247,7 +258,7 @@ impl ViewCommit {
             .await?;
         let mut entries_rest = Vec::new();
         for (filename, row) in manifest_entries {
-            let uri = quilt::uri::S3PackageUri::from(&lineage.remote);
+            let uri = base_uri.clone();
             if status.changes.contains_key(&filename) {
                 continue;
             }
@@ -270,7 +281,7 @@ impl ViewCommit {
         }
 
         // TODO: just use remote_manifest?
-        let uri = quilt::uri::S3PackageUri::from(&lineage.remote);
+        let uri = base_uri;
 
         Ok(ViewCommit {
             entries_modified,

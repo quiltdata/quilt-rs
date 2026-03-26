@@ -20,6 +20,7 @@ use crate::manifest::ManifestHeader;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
+use crate::uri::S3PackageUri;
 use crate::Res;
 
 /// This is the entrypoint for the lib.
@@ -127,6 +128,22 @@ impl LocalDomain {
         self.create_installed_package(manifest_uri.namespace.clone())
     }
 
+    pub async fn create_package(
+        &self,
+        package_uri: &S3PackageUri,
+        source: Option<&PathBuf>,
+    ) -> Res<InstalledPackage> {
+        debug!("Preparing paths for package creation");
+        self.scaffold_paths_for_caching(&package_uri.bucket).await?;
+        self.scaffold_paths_for_installing(&package_uri.namespace).await?;
+
+        let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
+        let lineage =
+            flow::create_package(lineage, &self.paths, &self.storage, package_uri, source).await?;
+        self.lineage.write(&self.storage, lineage).await?;
+        self.create_installed_package(package_uri.namespace.clone())
+    }
+
     pub async fn uninstall_package(&self, namespace: Namespace) -> Res<()> {
         info!("Uninstalling package: {}", namespace);
 
@@ -221,14 +238,16 @@ mod tests {
                 namespace.clone(),
                 crate::lineage::PackageLineage {
                     commit: None,
-                    remote: ManifestUri {
+                    remote: (&ManifestUri {
                         bucket: "test-bucket".to_string(),
                         namespace: namespace.clone(),
                         hash: "abcdef".to_string(),
                         origin: None,
-                    },
-                    base_hash: "abcdef".to_string(),
-                    latest_hash: "abcdef".to_string(),
+                    })
+                        .into(),
+                    remote_hash: Some("abcdef".to_string()),
+                    base_hash: Some("abcdef".to_string()),
+                    latest_hash: Some("abcdef".to_string()),
                     paths: std::collections::BTreeMap::new(),
                 },
             );

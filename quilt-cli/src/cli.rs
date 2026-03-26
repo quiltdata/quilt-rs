@@ -12,6 +12,7 @@ use quilt_rs::uri::Namespace;
 
 mod browse;
 mod commit;
+mod create;
 mod install;
 mod list;
 mod login;
@@ -87,6 +88,16 @@ enum Commands {
         /// Ex. "my_workflow"
         #[arg(short, long)]
         workflow: Option<String>,
+    },
+    /// Create a new local package bound to a remote destination
+    Create {
+        /// Package handle URI.
+        /// Ex. quilt+s3://bucket#package=foo/bar
+        #[arg(value_name = "PKG_URI")]
+        uri: String,
+        /// Optional source directory to copy into the package home.
+        #[arg(long)]
+        source: Option<PathBuf>,
     },
     /// Install package locally
     Install {
@@ -201,6 +212,12 @@ pub async fn init(args: Args) -> Result<Std, Error> {
 
             log::info!("Committing {args:?}");
             Ok(commit::command(m, args).await)
+        }
+        Commands::Create { uri, source } => {
+            let args = create::Input { uri, source };
+
+            log::info!("Creating {args:?}");
+            Ok(create::command(m, args).await)
         }
         Commands::Install {
             namespace,

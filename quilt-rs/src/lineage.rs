@@ -30,6 +30,7 @@ pub use package::CommitState;
 pub use package::LineagePaths;
 pub use package::PackageLineage;
 pub use package::PathState;
+pub use package::RemotePackage;
 
 mod home;
 pub use home::Home;
@@ -356,14 +357,16 @@ mod tests {
                         ("foo", "bar").into(),
                         PackageLineage {
                             commit: None,
-                            remote: ManifestUri {
+                            remote: (&ManifestUri {
                                 bucket: "bucket".to_string(),
                                 namespace: ("foo", "bar").into(),
                                 hash: "abcdef".to_string(),
                                 origin: None,
-                            },
-                            base_hash: "abcdef".to_string(),
-                            latest_hash: "abcdef".to_string(),
+                            })
+                                .into(),
+                            remote_hash: Some("abcdef".to_string()),
+                            base_hash: Some("abcdef".to_string()),
+                            latest_hash: Some("abcdef".to_string()),
                             paths: BTreeMap::from([(
                                 PathBuf::from("foo"),
                                 PathState {
@@ -413,14 +416,16 @@ mod tests {
         let namespace = Namespace::from(("foo", "bar"));
         let package_lineage = PackageLineage {
             commit: None,
-            remote: ManifestUri {
+            remote: (&ManifestUri {
                 bucket: "bucket".to_string(),
                 namespace: namespace.clone(),
                 hash: "abcdef".to_string(),
                 origin: None,
-            },
-            base_hash: "abcdef".to_string(),
-            latest_hash: "abcdef".to_string(),
+            })
+                .into(),
+            remote_hash: Some("abcdef".to_string()),
+            base_hash: Some("abcdef".to_string()),
+            latest_hash: Some("abcdef".to_string()),
             paths: BTreeMap::new(),
         };
 
@@ -476,14 +481,16 @@ mod tests {
         let namespace = Namespace::from(("foo", "bar"));
         let package_lineage = PackageLineage {
             commit: None,
-            remote: ManifestUri {
+            remote: (&ManifestUri {
                 bucket: "bucket".to_string(),
                 namespace: namespace.clone(),
                 hash: "abcdef".to_string(),
                 origin: None,
-            },
-            base_hash: "abcdef".to_string(),
-            latest_hash: "abcdef".to_string(),
+            })
+                .into(),
+            remote_hash: Some("abcdef".to_string()),
+            base_hash: Some("abcdef".to_string()),
+            latest_hash: Some("abcdef".to_string()),
             paths: BTreeMap::new(),
         };
 

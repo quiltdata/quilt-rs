@@ -29,17 +29,23 @@ pub async fn refresh_latest_hash(
     mut lineage: PackageLineage,
     remote: &impl Remote,
 ) -> Res<PackageLineage> {
+    let Some(current_remote_hash) = lineage.remote_hash.clone() else {
+        return Ok(lineage);
+    };
     let latest = resolve_tag(
         remote,
         &lineage.remote.origin,
-        &lineage.remote.clone().into(),
+        &lineage.remote.package_handle(),
         Tag::Latest,
     )
     .await?;
-    if lineage.latest_hash == latest.hash {
+    if lineage.latest_hash.as_deref() == Some(latest.hash.as_str()) {
         return Ok(lineage);
     }
-    lineage.latest_hash = latest.hash;
+    lineage.latest_hash = Some(latest.hash);
+    if lineage.base_hash.is_none() {
+        lineage.base_hash = Some(current_remote_hash);
+    }
     Ok(lineage)
 }
 
@@ -252,8 +258,8 @@ mod tests {
                 hash: "AAA".to_string(),
                 ..CommitState::default()
             }),
-            base_hash: "AAA".to_string(),
-            latest_hash: "BBB".to_string(),
+            base_hash: Some("AAA".to_string()),
+            latest_hash: Some("BBB".to_string()),
             ..PackageLineage::default()
         };
 
@@ -276,8 +282,8 @@ mod tests {
                 hash: "BBB".to_string(),
                 ..CommitState::default()
             }),
-            base_hash: "AAA".to_string(),
-            latest_hash: "AAA".to_string(),
+            base_hash: Some("AAA".to_string()),
+            latest_hash: Some("AAA".to_string()),
             ..PackageLineage::default()
         };
 
@@ -300,8 +306,8 @@ mod tests {
                 hash: "aaa".to_string(),
                 ..CommitState::default()
             }),
-            base_hash: "bbb".to_string(),
-            latest_hash: "ccc".to_string(),
+            base_hash: Some("bbb".to_string()),
+            latest_hash: Some("ccc".to_string()),
             ..PackageLineage::default()
         };
 

@@ -46,7 +46,14 @@ pub async fn pull_package(
         return Err(Error::Package("package has pending commits".to_string()));
     }
 
-    if lineage.remote.hash != lineage.base_hash {
+    if lineage.remote_hash.is_none() {
+        error!("❌ Package has no remote revision");
+        return Err(Error::Package(
+            "package has no remote revision to pull".to_string(),
+        ));
+    }
+
+    if lineage.remote_hash != lineage.base_hash {
         error!("❌ Package has diverged from remote");
         return Err(Error::Package("package has diverged".to_string()));
     }
@@ -68,14 +75,14 @@ pub async fn pull_package(
     debug!("⏳ Updating lineage hashes");
     // TODO: uninstall_paths() just modified the lineage, so re-reading it here.
     // There needs to be a better way.
-    lineage.remote.hash.clone_from(&lineage.latest_hash);
+    lineage.remote_hash.clone_from(&lineage.latest_hash);
     lineage.base_hash.clone_from(&lineage.latest_hash);
 
     debug!("⏳ Resolving latest manifest");
     let manifest_uri = resolve_tag(
         remote,
         &lineage.remote.origin,
-        &lineage.remote.clone().into(),
+        &lineage.remote.package_handle(),
         Tag::Latest,
     )
     .await?;
@@ -200,11 +207,13 @@ mod tests {
         let storage = MockStorage::default();
         let remote = MockRemote::default();
         let lineage = PackageLineage {
-            remote: ManifestUri {
+            remote: (&ManifestUri {
                 hash: "a".to_string(),
                 ..ManifestUri::default()
-            },
-            base_hash: "b".to_string(),
+            })
+                .into(),
+            remote_hash: Some("a".to_string()),
+            base_hash: Some("b".to_string()),
             ..PackageLineage::default()
         };
         let error = pull_package(
@@ -229,12 +238,14 @@ mod tests {
         let storage = MockStorage::default();
         let remote = MockRemote::default();
         let lineage = PackageLineage {
-            remote: ManifestUri {
+            remote: (&ManifestUri {
                 hash: "a".to_string(),
                 ..ManifestUri::default()
-            },
-            base_hash: "a".to_string(),
-            latest_hash: "a".to_string(),
+            })
+                .into(),
+            remote_hash: Some("a".to_string()),
+            base_hash: Some("a".to_string()),
+            latest_hash: Some("a".to_string()),
             ..PackageLineage::default()
         };
         let error = pull_package(

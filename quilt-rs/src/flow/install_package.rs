@@ -177,22 +177,22 @@ mod tests {
         let installed_package = result.packages.get(&("f", "b").into()).unwrap();
         let tracked = installed_package.remote.clone();
 
-        assert_eq!(installed_package.latest_hash, test_hash);
+        assert_eq!(installed_package.latest_hash, Some(test_hash));
 
         // Verify that the lineage records the installed package
-        assert_eq!(tracked, manifest_uri);
+        assert_eq!(tracked, (&manifest_uri).into());
 
         // Verify that the manifest is stored locally in the immutable manifest directory
         let installed_manifest_path = PathBuf::from(format!(
             ".quilt/installed/{}/{}",
-            tracked.namespace, tracked.hash
+            tracked.namespace, manifest_uri.hash
         ));
         assert!(storage.exists(&installed_manifest_path).await);
 
         // Verify that the manifest is cached locally
         let cached_manifest_path = PathBuf::from(format!(
             ".quilt/packages/{}/{}",
-            tracked.bucket, tracked.hash
+            tracked.bucket, manifest_uri.hash
         ));
         assert!(storage.exists(&cached_manifest_path).await);
         Ok(())

@@ -136,7 +136,7 @@ mod tests {
 
         // Step 2: Verify initial top hash
         let initial_lineage = installed_package.lineage().await?;
-        let initial_hash = initial_lineage.current_hash();
+        let initial_hash = initial_lineage.current_hash().unwrap();
         assert_eq!(
             initial_hash, "4076eb7774f5159aab212302288a2a2a9e59fab69cf4e41e827072fee80fabb4",
             "Initial top hash should match expected value"
@@ -229,7 +229,7 @@ mod tests {
 
         // Step 2: Verify initial top hash
         let initial_lineage = installed_package.lineage().await?;
-        let initial_hash = initial_lineage.current_hash();
+        let initial_hash = initial_lineage.current_hash().unwrap();
         assert_eq!(
             initial_hash, "b427c3867bce2445a988f69f43ad3998237d2fedf6f5e678822acd1a1e8f580a",
             "Initial top hash should match expected value"

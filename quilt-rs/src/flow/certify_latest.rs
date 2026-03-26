@@ -51,20 +51,22 @@ mod tests {
             origin: None,
         };
         let source_lineage = PackageLineage {
-            remote: source_manifest_uri,
+            remote: (&source_manifest_uri).into(),
+            remote_hash: Some(source_manifest_uri.hash.clone()),
             ..PackageLineage::default()
         };
         let resolved_lineage = certify_latest(
             source_lineage.clone(),
             &remote,
-            source_lineage.remote.clone(),
+            source_manifest_uri.clone(),
         )
         .await?;
         assert_eq!(
             resolved_lineage,
             PackageLineage {
-                base_hash: "LATEST_HASH".to_string(),
-                latest_hash: "LATEST_HASH".to_string(),
+                base_hash: Some("LATEST_HASH".to_string()),
+                remote_hash: Some("LATEST_HASH".to_string()),
+                latest_hash: Some("LATEST_HASH".to_string()),
                 ..source_lineage
             }
         );

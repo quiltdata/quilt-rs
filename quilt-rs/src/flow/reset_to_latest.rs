@@ -33,13 +33,13 @@ pub async fn reset_to_latest(
     let latest = resolve_tag(
         remote,
         &lineage.remote.origin,
-        &lineage.remote.clone().into(),
+        &lineage.remote.package_handle(),
         Tag::Latest,
     )
     .await?;
     debug!("✔️ Latest hash resolved: {}", latest.hash);
 
-    if latest.hash == lineage.remote.hash {
+    if lineage.remote_hash.as_deref() == Some(latest.hash.as_str()) {
         info!("✔️ Package is already at latest version");
         return Ok(lineage);
     }
@@ -51,8 +51,8 @@ pub async fn reset_to_latest(
 
     debug!("⏳ Updating lineage hashes");
     // TODO: Should be a method of lineage
-    lineage.latest_hash.clone_from(&latest.hash);
-    lineage.base_hash.clone_from(&latest.hash);
+    lineage.latest_hash = Some(latest.hash.clone());
+    lineage.base_hash = Some(latest.hash.clone());
     debug!("✔️ Updated lineage to latest hash: {}", latest.hash);
 
     debug!("⏳ Caching remote manifest");
@@ -70,7 +70,8 @@ pub async fn reset_to_latest(
         },
     )
     .await?;
-    lineage.remote = latest;
+    lineage.remote = (&latest).into();
+    lineage.remote_hash = Some(latest.hash.clone());
     debug!("✔️ Manifest installed successfully");
 
     debug!("⏳ Checking which paths to reinstall");
@@ -123,7 +124,8 @@ mod tests {
             origin: None,
         };
         let source_lineage = PackageLineage {
-            remote: source_manifest_uri,
+            remote: (&source_manifest_uri).into(),
+            remote_hash: Some(source_manifest_uri.hash.clone()),
             ..PackageLineage::default()
         };
 
@@ -166,7 +168,8 @@ mod tests {
             .await?;
 
         let source_lineage = PackageLineage {
-            remote: manifest_uri,
+            remote: (&manifest_uri).into(),
+            remote_hash: Some(manifest_uri.hash.clone()),
             ..PackageLineage::default()
         };
 
@@ -201,12 +204,10 @@ mod tests {
         assert_eq!(
             resolved_lineage,
             PackageLineage {
-                base_hash: test_hash.to_string(),
-                latest_hash: test_hash.to_string(),
-                remote: ManifestUri {
-                    hash: test_hash.to_string(),
-                    ..source_lineage.remote.clone()
-                },
+                base_hash: Some(test_hash.to_string()),
+                latest_hash: Some(test_hash.to_string()),
+                remote_hash: Some(test_hash.to_string()),
+                remote: source_lineage.remote.clone(),
                 ..source_lineage
             }
         );
