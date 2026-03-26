@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use std::path::Path;
 use std::path::PathBuf;
 
+use ignore::gitignore::Gitignore;
 use tracing::debug;
 use tracing::info;
 use tracing::warn;
@@ -56,9 +57,11 @@ async fn locate_files_in_package_home(
     manifest: &Manifest,
     package_home: impl AsRef<Path>,
     mut tracked_paths: HashMap<PathBuf, ManifestRow>,
+    quiltignore: Option<&Gitignore>,
 ) -> Res<Vec<(PathBuf, WorkdirFile)>> {
+    let package_home = package_home.as_ref();
     let mut queue = VecDeque::new();
-    queue.push_back(package_home.as_ref().to_path_buf());
+    queue.push_back(package_home.to_path_buf());
 
     let mut files = Vec::new();
 
@@ -77,6 +80,12 @@ async fn locate_files_in_package_home(
             let file_type = dir_entry.file_type().await?;
             if !file_type.is_file() {
                 if file_type.is_dir() {
+                    if let Some(gi) = quiltignore {
+                        let rel = file_path.strip_prefix(package_home)?;
+                        if crate::quiltignore::is_ignored(gi, rel, true) {
+                            continue;
+                        }
+                    }
                     queue.push_back(file_path);
                 } else {
                     // TODO: handle symlinks
@@ -85,7 +94,12 @@ async fn locate_files_in_package_home(
                 continue;
             }
 
-            let logical_key = file_path.strip_prefix(&package_home)?.to_path_buf();
+            let logical_key = file_path.strip_prefix(package_home)?.to_path_buf();
+            if let Some(gi) = quiltignore {
+                if crate::quiltignore::is_ignored(gi, &logical_key, false) {
+                    continue;
+                }
+            }
             if let Some(row) = tracked_paths.remove(&logical_key) {
                 files.push((logical_key, WorkdirFile::Tracked(file_path, row)));
             } else if let Some(row) = manifest.get_record(&logical_key) {
@@ -178,7 +192,15 @@ pub async fn create_status(
     }
     debug!("✔️ Found {} paths in lineage", orig_paths.len());
 
-    let files = locate_files_in_package_home(storage, manifest, package_home, orig_paths).await?;
+    let quiltignore = crate::quiltignore::load(package_home.as_ref())?;
+    let files = locate_files_in_package_home(
+        storage,
+        manifest,
+        package_home,
+        orig_paths,
+        quiltignore.as_ref(),
+    )
+    .await?;
     debug!("✔️ Located files in working directory {:?}", files);
     let changes = fingerprint_files(storage, files, host_config).await?;
     debug!("✔️ Computed file fingerprints {:?}", changes);
@@ -431,4 +453,222 @@ mod tests {
     }
 
     // TODO: add tests for every type of chunksum
+
+    #[test(tokio::test)]
+    async fn test_quiltignore_basic_exclusion() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("pkg");
+
+        // Create files
+        storage
+            .write_byte_stream(
+                working_dir.join("data.csv"),
+                ByteStream::from_static(b"csv data"),
+            )
+            .await?;
+        storage
+            .write_byte_stream(
+                working_dir.join("script.py"),
+                ByteStream::from_static(b"python code"),
+            )
+            .await?;
+
+        // Create .quiltignore
+        std::fs::write(working_dir.join(".quiltignore"), "*.py\n").unwrap();
+
+        let (_, status) = create_status(
+            PackageLineage::default(),
+            &storage,
+            &Manifest::default(),
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+
+        assert!(status.changes.contains_key(&PathBuf::from("data.csv")));
+        assert!(!status.changes.contains_key(&PathBuf::from("script.py")));
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_quiltignore_directory_exclusion() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("pkg");
+
+        storage
+            .write_byte_stream(
+                working_dir.join("cache/file.txt"),
+                ByteStream::from_static(b"cached"),
+            )
+            .await?;
+        storage
+            .write_byte_stream(
+                working_dir.join("keep.txt"),
+                ByteStream::from_static(b"keep"),
+            )
+            .await?;
+
+        std::fs::write(working_dir.join(".quiltignore"), "cache/\n").unwrap();
+
+        let (_, status) = create_status(
+            PackageLineage::default(),
+            &storage,
+            &Manifest::default(),
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+
+        assert!(status.changes.contains_key(&PathBuf::from("keep.txt")));
+        assert!(!status
+            .changes
+            .contains_key(&PathBuf::from("cache/file.txt")));
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_quiltignore_negation() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("pkg");
+
+        storage
+            .write_byte_stream(
+                working_dir.join("debug.log"),
+                ByteStream::from_static(b"debug"),
+            )
+            .await?;
+        storage
+            .write_byte_stream(
+                working_dir.join("important.log"),
+                ByteStream::from_static(b"important"),
+            )
+            .await?;
+
+        std::fs::write(working_dir.join(".quiltignore"), "*.log\n!important.log\n").unwrap();
+
+        let (_, status) = create_status(
+            PackageLineage::default(),
+            &storage,
+            &Manifest::default(),
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+
+        assert!(!status.changes.contains_key(&PathBuf::from("debug.log")));
+        assert!(status.changes.contains_key(&PathBuf::from("important.log")));
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_quiltignore_comments_and_blank_lines() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("pkg");
+
+        storage
+            .write_byte_stream(
+                working_dir.join("file.tmp"),
+                ByteStream::from_static(b"tmp"),
+            )
+            .await?;
+        storage
+            .write_byte_stream(
+                working_dir.join("file.txt"),
+                ByteStream::from_static(b"txt"),
+            )
+            .await?;
+
+        std::fs::write(
+            working_dir.join(".quiltignore"),
+            "# this is a comment\n\n*.tmp\n",
+        )
+        .unwrap();
+
+        let (_, status) = create_status(
+            PackageLineage::default(),
+            &storage,
+            &Manifest::default(),
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+
+        assert!(!status.changes.contains_key(&PathBuf::from("file.tmp")));
+        assert!(status.changes.contains_key(&PathBuf::from("file.txt")));
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_quiltignore_self_exclusion() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("pkg");
+
+        storage
+            .write_byte_stream(
+                working_dir.join("data.csv"),
+                ByteStream::from_static(b"data"),
+            )
+            .await?;
+
+        std::fs::write(working_dir.join(".quiltignore"), ".quiltignore\n").unwrap();
+
+        let (_, status) = create_status(
+            PackageLineage::default(),
+            &storage,
+            &Manifest::default(),
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+
+        assert!(status.changes.contains_key(&PathBuf::from("data.csv")));
+        assert!(!status.changes.contains_key(&PathBuf::from(".quiltignore")));
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_quiltignore_tracked_file_becomes_removed() -> Res {
+        let manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let logical_key = PathBuf::from("less-then-8mb.txt");
+        let manifest_record = manifest.get_record(&logical_key).unwrap();
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("pkg");
+
+        let lineage = PackageLineage {
+            paths: BTreeMap::from([(
+                logical_key.clone(),
+                PathState {
+                    hash: manifest_record.hash.clone().into(),
+                    ..PathState::default()
+                },
+            )]),
+            ..PackageLineage::default()
+        };
+
+        // Write the tracked file to disk
+        storage
+            .write_byte_stream(
+                working_dir.join(&logical_key),
+                ByteStream::from_static(fixtures::objects::less_than_8mb()),
+            )
+            .await?;
+
+        // Add a .quiltignore that excludes the tracked file
+        std::fs::write(working_dir.join(".quiltignore"), "*.txt\n").unwrap();
+
+        let (_, status) = create_status(
+            lineage,
+            &storage,
+            &manifest,
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+
+        // The file is ignored by .quiltignore, so it won't be found in the walk.
+        // Since it's in lineage.paths but not found, it appears as Removed.
+        let change = status.changes.get(&logical_key).unwrap();
+        assert!(matches!(change, Change::Removed(_)));
+        Ok(())
+    }
 }
