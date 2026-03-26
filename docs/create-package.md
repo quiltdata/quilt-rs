@@ -12,10 +12,30 @@ files alone.
 Allow a user to initialize a new package from a local directory and push it to
 a remote bucket, without pulling anything first.
 
+## Recommended Implementation Order
+
+Do a small refactor before adding the `create` command itself.
+
+The current code assumes every installed package has an existing remote
+manifest hash. That assumption is embedded in lineage, manifest loading,
+status, commit, and push flows. Adding `create` on top of that with sentinel
+hashes or one-off null checks would spread special cases through the codebase.
+
+Recommended order:
+
+1. Refactor package lineage to separate the remote package handle
+   (`bucket`/`namespace`/`origin`) from the optional current remote manifest
+   revision.
+2. Make manifest loading support a "no prior remote revision" state by using an
+   empty manifest as the base for newly created packages.
+3. Update `status`, `commit`, and `push` to handle the first revision
+   explicitly.
+4. Add the `create` CLI command on top of that model.
+
 ## Proposed Command
 
 ```bash
-quilt create --namespace owner/name --remote quilt+s3://bucket [--source /path/to/dir]
+quilt create quilt+s3://bucket#package=owner/name [--source /path/to/dir]
 ```
 
 Followed by the existing `commit` and `push` workflow.
@@ -26,8 +46,8 @@ Followed by the existing `commit` and `push` workflow.
 
 A new `Commands::Create` variant in `cli.rs` that accepts:
 
-- `--namespace` — the `owner/name` to register locally
-- `--remote` — the target S3 URI (`quilt+s3://bucket`) where it will be pushed
+- `uri` — the target package handle
+  (`quilt+s3://bucket#package=owner/name`) to register locally and push to
 - `--source` *(optional)* — a local directory whose contents are copied into the
   package working directory before the flow returns
 
@@ -39,7 +59,7 @@ bootstraps a `PackageLineage` without pulling a remote manifest. It must:
 - Validate the namespace does not already exist in the domain
 - Construct an empty installed manifest (no rows)
 - Write a synthetic `data.json` entry with:
-  - `remote` pointing at the provided bucket/namespace
+  - `remote` pointing at the provided bucket/namespace from the URI
   - `base_hash` as empty/null (no prior revision)
   - `latest_hash` as empty/null
   - `commit = None` (no local commit yet)
@@ -55,10 +75,17 @@ in the Push Phase). When there is no prior revision, this step must be skipped
 
 ### 4. `PackageLineage` null-remote state
 
-`PackageLineage.remote` is currently a `ManifestUri` that always has a hash.
-It needs to accommodate a "no prior revision" state (e.g., `Option<ManifestUri>`
-or a sentinel). This affects serialization in `data.json` and any code that
-dereferences `remote.hash`.
+`PackageLineage.remote` is currently a `ManifestUri` that combines two
+different concerns:
+
+- the remote package handle (`bucket`, `namespace`, `origin`)
+- the current remote manifest revision (`hash`)
+
+For `create`, these should be modeled separately so a package can have a known
+remote destination without requiring an existing remote revision yet.
+
+This affects serialization in `data.json` and all code that currently assumes
+`remote.hash` always exists.
 
 ## Tests
 
@@ -103,7 +130,7 @@ Integration test mirroring the pattern of `test_install` / `test_commit_valid`:
 ## Workflow After This Change
 
 ```bash
-quilt create --namespace owner/name --remote quilt+s3://my-bucket
+quilt create quilt+s3://my-bucket#package=owner/name
 # working directory home/owner/name/ is created, empty
 
 # user copies files in
