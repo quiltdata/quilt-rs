@@ -184,9 +184,12 @@ Save updated data.json
 ```text
 flow::status(lineage, working_dir)
     ↓
+Load .quiltignore from working_dir (if present)
+    ↓
 locate_files_in_package_home():
   - Scan working directory recursively
-  - Classify each file as: Tracked, NotTracked, New, Removed
+  - Skip ignored directories (prune entire subtrees) and files
+  - Classify each remaining file as: Tracked, NotTracked, New, Removed
     ↓
 fingerprint_files():
   - Calculate hash for each file
@@ -195,6 +198,13 @@ fingerprint_files():
     ↓
 Return: InstalledPackageStatus with ChangeSet
 ```
+
+**Interaction with `.quiltignore`**: Ignored files are excluded from the
+directory walk. If a previously tracked file matches a new `.quiltignore`
+pattern, it will not be found during the walk and will appear as `Removed`.
+This is intentional — `.quiltignore` controls which files belong in the
+package, so an ignored file should not remain in the manifest. This differs
+from `.gitignore`, which does not untrack already-tracked files.
 
 ### 5. Commit Phase
 
