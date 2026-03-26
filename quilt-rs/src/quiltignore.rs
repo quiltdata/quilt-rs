@@ -9,7 +9,7 @@ const QUILTIGNORE: &str = ".quiltignore";
 
 /// Try to load a `.quiltignore` file from the given directory.
 /// Returns `None` if the file does not exist.
-pub fn load(dir: &Path) -> Res<Option<Gitignore>> {
+pub(crate) fn load(dir: &Path) -> Res<Option<Gitignore>> {
     let path = dir.join(QUILTIGNORE);
     if !path.is_file() {
         return Ok(None);
@@ -32,7 +32,7 @@ pub fn load(dir: &Path) -> Res<Option<Gitignore>> {
 /// Check whether the given path should be ignored.
 /// `relative_path` is the logical key (relative to the package home).
 /// `is_dir` must be `true` for directories (so `dir/` patterns work).
-pub fn is_ignored(gitignore: &Gitignore, relative_path: &Path, is_dir: bool) -> bool {
+pub(crate) fn is_ignored(gitignore: &Gitignore, relative_path: &Path, is_dir: bool) -> bool {
     gitignore
         .matched_path_or_any_parents(relative_path, is_dir)
         .is_ignore()
