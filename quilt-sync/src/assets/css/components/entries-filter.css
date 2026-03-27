@@ -3,7 +3,7 @@
   display: flex;
   gap: var(--q-ui-size-3);
   padding: var(--q-ui-size-2) var(--q-ui-size-4);
-  font-size: 0.85rem;
+  font-size: var(--q-ui-font-size-normal);
   opacity: 0.7;
 }
 

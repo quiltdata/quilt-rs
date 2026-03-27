@@ -1,5 +1,6 @@
 <style>
   @import "/assets/css/views/entries-toolbar.css";
+  @import "/assets/css/components/entries-filter.css";
 </style>
 
 <div class="qui-entries-toolbar {%+ if with_status %}with-status{% endif %}">
@@ -9,5 +10,23 @@
       Select all
     </label>
     {{ button | safe }}
+    <div class="filter">
+      {% if ignored_count > 0 || unmodified_count > 0 %}
+      <div class="qui-entries-filter"
+        data-default-unmodified="checked"
+        data-default-ignored="">
+        <span>Show</span>
+        <label>
+          <input type="checkbox" class="js-filter-unmodified" checked />
+          unmodified
+        </label>
+        <label>
+          <input type="checkbox" class="js-filter-ignored" />
+          ignored
+          <span class="js-filter-count">({{ ignored_count }})</span>
+        </label>
+      </div>
+      {% endif %}
+    </div>
   </div>
 </div>

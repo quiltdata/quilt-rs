@@ -112,6 +112,8 @@ impl TmplStatus<'_> {
 struct TmplEntriesToolbar<'a> {
     button: btn::TmplButton<'a>,
     with_status: bool,
+    ignored_count: usize,
+    unmodified_count: usize,
 }
 
 #[derive(Template)]
@@ -122,8 +124,6 @@ struct TmplPageInstalledPackage<'a> {
     toolbar: Option<TmplEntriesToolbar<'a>>,
     uri: quilt::uri::S3PackageUri,
     layout: Layout<'a>,
-    ignored_count: usize,
-    unmodified_count: usize,
 }
 
 impl<'a> TmplPageInstalledPackage<'a> {
@@ -419,14 +419,14 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
                             .set_type(btn::ButtonType::Submit)
                             .set_label(t!("buttons.install_selected_paths")),
                         with_status: !matches!(status, quilt::lineage::UpstreamState::UpToDate),
+                        ignored_count,
+                        unmodified_count,
                     })
                 } else {
                     None
                 }
             },
             uri: uri.clone(),
-            ignored_count,
-            unmodified_count,
         }
     }
 }

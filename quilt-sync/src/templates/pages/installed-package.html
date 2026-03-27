@@ -3,7 +3,6 @@
 {% block children %}
   <style>
     @import url("/assets/css/pages/installed-package.css");
-    @import url("/assets/css/components/entries-filter.css");
   </style>
 
   <div class="qui-page-installed-package">
@@ -17,23 +16,6 @@
 
         {% if let Some(toolbar) = toolbar %}
           {{ toolbar | safe }}
-        {% endif %}
-
-        {% if ignored_count > 0 || unmodified_count > 0 %}
-        <div class="qui-entries-filter"
-          data-default-unmodified="checked"
-          data-default-ignored="">
-          <span>Show</span>
-          <label>
-            <input type="checkbox" class="js-filter-unmodified" checked />
-            unmodified
-          </label>
-          <label>
-            <input type="checkbox" class="js-filter-ignored" />
-            ignored
-            <span class="js-filter-count">({{ ignored_count }})</span>
-          </label>
-        </div>
         {% endif %}
 
         <div class="list entries-hide-ignored">
