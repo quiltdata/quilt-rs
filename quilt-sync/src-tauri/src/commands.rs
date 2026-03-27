@@ -851,9 +851,7 @@ pub async fn add_to_quiltignore(
     namespace: String,
     pattern: String,
 ) -> Result<String, String> {
-    tracing
-        .track(MixpanelEvent::QuiltignorePatternAdded)
-        .await;
+    tracing.track(MixpanelEvent::QuiltignorePatternAdded).await;
     let m: &model::Model = &m;
 
     let msg_init = format!("Adding {pattern} to .quiltignore");
@@ -868,10 +866,7 @@ pub async fn add_to_quiltignore(
 }
 
 #[tauri::command]
-pub async fn test_quiltignore_pattern(
-    pattern: String,
-    path: String,
-) -> Result<bool, String> {
+pub async fn test_quiltignore_pattern(pattern: String, path: String) -> Result<bool, String> {
     Ok(quilt::junk::pattern_matches(&pattern, &path))
 }
 

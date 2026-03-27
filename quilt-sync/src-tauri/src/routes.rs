@@ -293,7 +293,10 @@ impl Paths {
     }
 }
 
-fn format_namespace_filter_fragment(namespace: &quilt::uri::Namespace, filter: &EntriesFilter) -> String {
+fn format_namespace_filter_fragment(
+    namespace: &quilt::uri::Namespace,
+    filter: &EntriesFilter,
+) -> String {
     let filter_str = filter.to_string();
     if filter_str.is_empty() {
         format!("namespace={namespace}")
@@ -657,7 +660,8 @@ mod tests {
     #[test]
     fn test_pathname_privacy() -> Result<()> {
         // Test that pathname() returns only the variant name without sensitive data (in snake_case)
-        let commit_path = Paths::Commit(("sensitive", "namespace").into(), EntriesFilter::default());
+        let commit_path =
+            Paths::Commit(("sensitive", "namespace").into(), EntriesFilter::default());
         assert_eq!(commit_path.pathname(), "commit");
 
         let login_path = Paths::Login("sensitive.host.com".parse()?, "secret-page.html".into());
@@ -733,9 +737,11 @@ mod tests {
     #[test]
     fn test_login_with_encoded_back() -> Result<()> {
         let host: Host = "test.quilt.dev".parse()?;
-        let back =
-            Paths::InstalledPackage(("foo", "bar").into(), EntriesFilter::for_installed_package())
-                .to_string();
+        let back = Paths::InstalledPackage(
+            ("foo", "bar").into(),
+            EntriesFilter::for_installed_package(),
+        )
+        .to_string();
         let page_url = from_url(
             Paths::Login(host.clone(), back.clone()),
             Url::parse("http://test:1234/")?,
