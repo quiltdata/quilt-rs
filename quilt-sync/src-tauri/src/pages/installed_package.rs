@@ -26,6 +26,8 @@ pub struct ViewInstalledPackage {
     origin_host: Option<quilt::uri::Host>,
     status: UpstreamState,
     uri: S3PackageUri,
+    ignored_count: usize,
+    unmodified_count: usize,
 }
 
 #[derive(Template)]
@@ -120,6 +122,8 @@ struct TmplPageInstalledPackage<'a> {
     toolbar: Option<TmplEntriesToolbar<'a>>,
     uri: quilt::uri::S3PackageUri,
     layout: Layout<'a>,
+    ignored_count: usize,
+    unmodified_count: usize,
 }
 
 impl<'a> TmplPageInstalledPackage<'a> {
@@ -218,6 +222,13 @@ impl ViewInstalledPackage {
             .get_installed_package_records(&installed_package)
             .await?;
 
+        // Build lookup maps for junky and ignored files
+        let junky_map: std::collections::HashMap<_, _> = status
+            .junky_changes
+            .iter()
+            .map(|(p, pat)| (p.clone(), pat.clone()))
+            .collect();
+
         let mut entries_list = Vec::new();
         for (filename, change) in modified_entries {
             let entry_uri = quilt::uri::S3PackageUri {
@@ -236,6 +247,8 @@ impl ViewInstalledPackage {
                 status: entry::EntryStatus::from(change),
                 uri: entry_uri,
                 origin,
+                junky_pattern: junky_map.get(filename).cloned(),
+                ignored_by: None,
             });
             if entries_list.len() > 1000 {
                 break;
@@ -261,6 +274,8 @@ impl ViewInstalledPackage {
                     size: row.size,
                     status: entry::EntryStatus::Pristine,
                     uri: entry_uri,
+                    junky_pattern: None,
+                    ignored_by: None,
                 });
             } else {
                 error!(
@@ -294,6 +309,28 @@ impl ViewInstalledPackage {
                 status: entry::EntryStatus::Remote,
                 uri: entry_uri,
                 origin,
+                junky_pattern: None,
+                ignored_by: None,
+            });
+            if entries_list.len() > 1000 {
+                break;
+            }
+        }
+
+        // Add ignored files as separate entries
+        for (filename, pattern) in &status.ignored_files {
+            let entry_uri = quilt::uri::S3PackageUri {
+                path: Some(filename.clone()),
+                ..uri.clone()
+            };
+            entries_list.push(entry::ViewEntry {
+                filename: filename.clone(),
+                size: 0,
+                status: entry::EntryStatus::Pristine,
+                uri: entry_uri,
+                origin: None,
+                junky_pattern: None,
+                ignored_by: Some(pattern.clone()),
             });
             if entries_list.len() > 1000 {
                 break;
@@ -308,12 +345,27 @@ impl ViewInstalledPackage {
             None => None,
         };
 
+        let ignored_count = entries_list
+            .iter()
+            .filter(|e| e.ignored_by.is_some())
+            .count();
+        let unmodified_count = entries_list
+            .iter()
+            .filter(|e| {
+                matches!(e.status, entry::EntryStatus::Pristine)
+                    || matches!(e.status, entry::EntryStatus::Remote)
+            })
+            .count()
+            - ignored_count;
+
         Ok(ViewInstalledPackage {
             entries_list,
             origin,
             origin_host,
             status: status.upstream_state,
             uri: uri.clone(),
+            ignored_count,
+            unmodified_count,
         })
     }
 
@@ -334,7 +386,8 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
             origin_host,
             status,
             uri,
-            ..
+            ignored_count,
+            unmodified_count,
         } = view;
         let has_remote_entries = entries_list
             .iter()
@@ -372,6 +425,8 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
                 }
             },
             uri: uri.clone(),
+            ignored_count,
+            unmodified_count,
         }
     }
 }
@@ -392,6 +447,8 @@ mod tests {
             origin_host: Some("test.quilt.dev".parse().unwrap()),
             status: quilt::lineage::UpstreamState::UpToDate,
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
+            ignored_count: 0,
+            unmodified_count: 0,
         })
         .render()?;
 
@@ -441,6 +498,8 @@ mod tests {
                 status: entry::EntryStatus::Pristine,
                 uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
                 origin: Some(url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?),
+                junky_pattern: None,
+                ignored_by: None,
             });
         }
 
@@ -451,6 +510,8 @@ mod tests {
             origin_host: Some("test.quilt.dev".parse().unwrap()),
             status: quilt::lineage::UpstreamState::UpToDate,
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
+            ignored_count: 0,
+            unmodified_count: 0,
         };
 
         // Render the view to HTML
@@ -474,6 +535,8 @@ mod tests {
             origin_host: None,
             status: quilt::lineage::UpstreamState::Error,
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
+            ignored_count: 0,
+            unmodified_count: 0,
         })
         .render()?;
 
@@ -501,6 +564,8 @@ mod tests {
             origin_host: Some("test.quilt.dev".parse().unwrap()),
             status: quilt::lineage::UpstreamState::Error,
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
+            ignored_count: 0,
+            unmodified_count: 0,
         })
         .render()?;
 

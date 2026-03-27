@@ -3,6 +3,7 @@
 {% block children %}
   <style>
     @import url("/assets/css/pages/commit.css");
+    @import url("/assets/css/components/entries-filter.css");
   </style>
 
   <div class="qui-page-commit container container-wide">
@@ -56,7 +57,25 @@
     </div>
 
     <div class="files">
-      <div class="list">
+      {% if ignored_count > 0 || unmodified_count > 0 %}
+      <div class="qui-entries-filter"
+        data-default-unmodified=""
+        data-default-ignored="">
+        <span>Show</span>
+        <label>
+          <input type="checkbox" class="js-filter-unmodified" />
+          unmodified
+          <span class="js-filter-count">({{ unmodified_count }})</span>
+        </label>
+        <label>
+          <input type="checkbox" class="js-filter-ignored" />
+          ignored
+          <span class="js-filter-count">({{ ignored_count }})</span>
+        </label>
+      </div>
+      {% endif %}
+
+      <div class="list entries-hide-unmodified entries-hide-ignored">
         <div>
           {% for entries_list in entries %}
             {% for entry in entries_list %}

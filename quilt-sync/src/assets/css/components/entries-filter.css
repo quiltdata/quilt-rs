@@ -1,0 +1,34 @@
+.qui-entries-filter {
+  align-items: center;
+  display: flex;
+  gap: var(--q-ui-size-3);
+  padding: var(--q-ui-size-2) var(--q-ui-size-4);
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+.qui-entries-filter label {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  gap: var(--q-ui-size-1);
+}
+
+.qui-entries-filter input[type="checkbox"] {
+  cursor: pointer;
+}
+
+.qui-entries-filter .js-filter-count {
+  opacity: 0.6;
+}
+
+/* Hide ignored entries when filter is off */
+.entries-hide-ignored .qui-entry.ignored {
+  display: none;
+}
+
+/* Hide unmodified entries when filter is off */
+.entries-hide-unmodified .qui-entry.pristine:not(.ignored),
+.entries-hide-unmodified .qui-entry.remote:not(.ignored) {
+  display: none;
+}

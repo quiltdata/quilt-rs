@@ -32,9 +32,12 @@ pub enum UpstreamState {
 pub struct InstalledPackageStatus {
     /// Current commit vs upstream state
     pub upstream_state: UpstreamState,
-    /// File changes vs current commit
+    /// File changes vs current commit (visible + junky files only)
     pub changes: ChangeSet,
-    // XXX: meta?
+    /// Files matched by .quiltignore — (path, matched_by pattern)
+    pub ignored_files: Vec<(PathBuf, String)>,
+    /// Files in changes that are also flagged as junk — (path, suggested pattern)
+    pub junky_changes: Vec<(PathBuf, String)>,
 }
 
 impl InstalledPackageStatus {
@@ -42,13 +45,15 @@ impl InstalledPackageStatus {
         Self {
             upstream_state,
             changes,
+            ignored_files: Vec::new(),
+            junky_changes: Vec::new(),
         }
     }
 
     pub fn error() -> Self {
         Self {
             upstream_state: UpstreamState::Error,
-            changes: Default::default(),
+            ..Default::default()
         }
     }
 }

@@ -52,18 +52,26 @@ enum WorkdirFile {
     UnSupported,
 }
 
+/// Located files and ignored files collected during the directory walk.
+struct LocateResult {
+    files: Vec<(PathBuf, WorkdirFile)>,
+    /// Files matched by .quiltignore: (logical_key, absolute_path)
+    ignored_files: Vec<(PathBuf, PathBuf)>,
+}
+
 async fn locate_files_in_package_home(
     storage: &(impl Storage + Sync),
     manifest: &Manifest,
     package_home: impl AsRef<Path>,
     mut tracked_paths: HashMap<PathBuf, ManifestRow>,
     quiltignore: Option<&Gitignore>,
-) -> Res<Vec<(PathBuf, WorkdirFile)>> {
+) -> Res<LocateResult> {
     let package_home = package_home.as_ref();
     let mut queue = VecDeque::new();
     queue.push_back(package_home.to_path_buf());
 
     let mut files = Vec::new();
+    let mut ignored_files = Vec::new();
 
     while let Some(dir) = queue.pop_front() {
         let mut dir_entries = match storage.read_dir(&dir).await {
@@ -97,6 +105,7 @@ async fn locate_files_in_package_home(
             let logical_key = file_path.strip_prefix(package_home)?.to_path_buf();
             if let Some(gi) = quiltignore {
                 if crate::quiltignore::is_ignored(gi, &logical_key, false) {
+                    ignored_files.push((logical_key, file_path));
                     continue;
                 }
             }
@@ -114,7 +123,10 @@ async fn locate_files_in_package_home(
         files.push((logical_key, WorkdirFile::Removed(row)));
     }
 
-    Ok(files)
+    Ok(LocateResult {
+        files,
+        ignored_files,
+    })
 }
 
 async fn detect_change(
@@ -193,7 +205,7 @@ pub async fn create_status(
     debug!("✔️ Found {} paths in lineage", orig_paths.len());
 
     let quiltignore = crate::quiltignore::load(package_home.as_ref())?;
-    let files = locate_files_in_package_home(
+    let locate_result = locate_files_in_package_home(
         storage,
         manifest,
         package_home,
@@ -201,13 +213,45 @@ pub async fn create_status(
         quiltignore.as_ref(),
     )
     .await?;
-    debug!("✔️ Located files in working directory {:?}", files);
-    let changes = fingerprint_files(storage, files, host_config).await?;
+    debug!(
+        "✔️ Located files in working directory {:?}",
+        locate_result.files
+    );
+    let changes = fingerprint_files(storage, locate_result.files, host_config).await?;
     debug!("✔️ Computed file fingerprints {:?}", changes);
 
+    // Collect ignored files with their matched pattern
+    let ignored_files: Vec<(PathBuf, String)> = locate_result
+        .ignored_files
+        .into_iter()
+        .map(|(logical_key, _abs_path)| {
+            let pattern = quiltignore
+                .as_ref()
+                .and_then(|gi| {
+                    let m = gi.matched_path_or_any_parents(&logical_key, false);
+                    m.inner().map(|glob| glob.original().to_string())
+                })
+                .unwrap_or_default();
+            (logical_key, pattern)
+        })
+        .collect();
+
+    // Detect junky files among the changes
+    let junky_changes: Vec<(PathBuf, String)> = changes
+        .keys()
+        .filter_map(|path| crate::junk::check(path).map(|m| (path.clone(), m.pattern)))
+        .collect();
+
     debug!("⏳ Creating package status");
-    let status = InstalledPackageStatus::new(lineage.clone().into(), changes);
-    info!("✔️ Status created with {} changes", status.changes.len());
+    let mut status = InstalledPackageStatus::new(lineage.clone().into(), changes);
+    status.ignored_files = ignored_files;
+    status.junky_changes = junky_changes;
+    info!(
+        "✔️ Status created with {} changes, {} ignored, {} junky",
+        status.changes.len(),
+        status.ignored_files.len(),
+        status.junky_changes.len(),
+    );
     Ok((lineage, status))
 }
 
