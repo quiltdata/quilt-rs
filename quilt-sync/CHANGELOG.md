@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.14.6-alpha1] - 2026-03-27
+
+### Added
+
+- Add `.quiltignore` affordance: junk file detection badges, ignore/un-ignore popups, and server-side entry filtering via URL fragment parameters
+
 ## [v0.14.5] - 2026-03-25
 
 ### Added

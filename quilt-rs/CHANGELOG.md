@@ -8,6 +8,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.27.5-alpha2] - 2026-03-27
+
+### Added
+
+- Detect junk files (OS metadata, editor temps, build artifacts) via the `junk` module and surface them in package status with suggested `.quiltignore` patterns
+
 ## [v0.27.5-alpha1] - 2026-03-26
 
 ### Added
