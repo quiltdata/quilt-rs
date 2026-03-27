@@ -57,45 +57,4 @@
     gap: var(--q-ui-size-2);
   }
 
-  .origin-form {
-    align-items: center;
-    display: flex;
-    gap: var(--q-ui-size-2);
-  }
-
-  .origin-form label {
-    flex-shrink: 0;
-  }
-
-  .origin-input-group {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .origin-input {
-    border: 1px solid var(--q-ui-palette-border);
-    border-radius: var(--q-ui-radius);
-    font: inherit;
-    padding: var(--q-ui-size-1) var(--q-ui-size-2);
-  }
-
-  .origin-input.error {
-    border-color: var(--q-ui-palette-error);
-  }
-
-  .origin-hint {
-    color: var(--q-ui-palette-error);
-    display: none;
-    font-size: 0.85em;
-  }
-
-  .origin-hint.visible {
-    display: block;
-  }
-
-  .origin-form-actions {
-    display: flex;
-    flex-shrink: 0;
-    gap: var(--q-ui-size-2);
-  }
 }

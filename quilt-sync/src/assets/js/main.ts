@@ -24,6 +24,7 @@ const SELECTOR_METADATA = ".js-metadata";
 const SELECTOR_METADATA_INPUT = "#metadata";
 const SELECTOR_NOTIFY = "#notify";
 const SELECTOR_NOTIFY_SUCCESS = ".js-success";
+const SELECTOR_POPUP = "#popup";
 const SELECTOR_ORIGIN_CANCEL = ".js-origin-cancel";
 const SELECTOR_ORIGIN_HINT = ".js-origin-hint";
 const SELECTOR_ORIGIN_INPUT = ".js-origin-input";
@@ -85,6 +86,7 @@ type Selector =
   | typeof SELECTOR_METADATA_INPUT
   | typeof SELECTOR_NOTIFY
   | typeof SELECTOR_NOTIFY_SUCCESS
+  | typeof SELECTOR_POPUP
   | typeof SELECTOR_OPEN_COMMIT_PAGE
   | typeof SELECTOR_OPEN_DIRECTORY_PICKER
   | typeof SELECTOR_OPEN_IN_DEFAULT_APPLICATION
@@ -260,6 +262,16 @@ function notify(html: Html) {
     return 1;
   }
   return 0;
+}
+
+function popup(html: Html) {
+  const el = findElement(SELECTOR_POPUP);
+  if (!el) return;
+  el.innerHTML = html;
+}
+
+function dismissPopup() {
+  popup("");
 }
 
 function onCheckbox() {
@@ -794,7 +806,7 @@ async function showIgnorePopup(
   path: string,
   suggestedPattern: string,
 ) {
-  notify(`<style>@import url("/assets/css/components/ignore-popup.css");</style>
+  popup(`<style>@import url("/assets/css/components/ignore-popup.css");</style>
     <div class="ignore-popup">
       <label>Pattern to ignore:</label>
       <input class="ignore-input js-ignore-input" type="text" value="${suggestedPattern}" />
@@ -805,7 +817,7 @@ async function showIgnorePopup(
       </div>
     </div>`);
 
-  const outputElement = findElement(SELECTOR_NOTIFY);
+  const outputElement = findElement(SELECTOR_POPUP);
   if (!outputElement) return;
 
   const input = outputElement.querySelector(
@@ -876,13 +888,14 @@ async function showIgnorePopup(
       pattern,
     });
     unlockUI();
+    dismissPopup();
     if (notify(notification)) {
       await loadCurrentPage();
     }
   };
 
   const cancel = () => {
-    notify("");
+    dismissPopup();
   };
 
   outputElement
@@ -902,7 +915,7 @@ async function showIgnorePopup(
 }
 
 function showUnignorePopup(namespace: string, pattern: string) {
-  notify(`<style>@import url("/assets/css/components/ignore-popup.css");</style>
+  popup(`<style>@import url("/assets/css/components/ignore-popup.css");</style>
     <div class="unignore-popup">
       <span>Ignored by: <span class="pattern-display">${pattern}</span></span>
       <div>
@@ -914,12 +927,13 @@ function showUnignorePopup(namespace: string, pattern: string) {
       </div>
     </div>`);
 
-  const outputElement = findElement(SELECTOR_NOTIFY);
+  const outputElement = findElement(SELECTOR_POPUP);
   if (!outputElement) return;
 
   outputElement
     .querySelector(".js-edit-quiltignore")
     ?.addEventListener("click", async () => {
+      dismissPopup();
       const notification: Html = await invoke(
         CMD_OPEN_IN_DEFAULT_APPLICATION,
         { namespace, path: ".quiltignore" },
@@ -967,7 +981,7 @@ function isValidHostname(value: string) {
 }
 
 function showSetOriginForm(namespace: Namespace, currentOrigin: string = "") {
-  notify(`<div class="origin-form">
+  popup(`<div class="origin-form">
     <label>Catalog origin</label>
     <div class="origin-input-group">
       <input class="origin-input js-origin-input" type="text" placeholder="open.quilt.bio" />
@@ -979,13 +993,8 @@ function showSetOriginForm(namespace: Namespace, currentOrigin: string = "") {
     </div>
   </div>`);
 
-  const outputElement = findElement(SELECTOR_NOTIFY);
+  const outputElement = findElement(SELECTOR_POPUP);
   if (!outputElement) return;
-
-  const form = outputElement.firstElementChild;
-  form?.addEventListener("click", (event) => {
-    event.stopPropagation();
-  });
 
   const input = findElement(
     SELECTOR_ORIGIN_INPUT,
@@ -1021,7 +1030,7 @@ function showSetOriginForm(namespace: Namespace, currentOrigin: string = "") {
   };
 
   const cancel = () => {
-    notify("");
+    dismissPopup();
   };
 
   const submitButton = findElement(SELECTOR_ORIGIN_SUBMIT, outputElement);
