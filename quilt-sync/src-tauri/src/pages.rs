@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::routes;
 use crate::routes::Paths;
 
 mod commit;
@@ -35,11 +36,11 @@ pub async fn load(
     path: &Paths,
 ) -> Result<String, Error> {
     match path {
-        Paths::Commit(namespace) => ViewCommit::create(model, tracing, namespace)
+        Paths::Commit(namespace, filter) => ViewCommit::create(model, tracing, namespace, filter)
             .await?
             .render(),
-        Paths::InstalledPackage(namespace) => {
-            ViewInstalledPackage::create(model, tracing, namespace)
+        Paths::InstalledPackage(namespace, filter) => {
+            ViewInstalledPackage::create(model, tracing, namespace, filter)
                 .await?
                 .render()
         }
@@ -70,9 +71,14 @@ pub async fn load(
                     .await?;
             }
 
-            ViewInstalledPackage::create(model, tracing, &uri.namespace)
-                .await?
-                .render()
+            ViewInstalledPackage::create(
+                model,
+                tracing,
+                &uri.namespace,
+                &routes::EntriesFilter::for_installed_package(),
+            )
+            .await?
+            .render()
         }
         Paths::Settings => {
             let data_dir_buf = data_dir.to_path_buf();

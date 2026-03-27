@@ -10,6 +10,7 @@ use crate::quilt::lineage::Change;
 use crate::quilt::lineage::UpstreamState;
 use crate::quilt::uri::Namespace;
 use crate::quilt::uri::S3PackageUri;
+use crate::routes::EntriesFilter;
 use crate::routes::Paths;
 use crate::telemetry::prelude::*;
 use crate::ui::btn;
@@ -22,6 +23,7 @@ use crate::Result;
 #[derive(Debug)]
 pub struct ViewInstalledPackage {
     entries_list: Vec<entry::ViewEntry>,
+    filter: EntriesFilter,
     origin: Option<url::Url>,
     origin_host: Option<quilt::uri::Host>,
     status: UpstreamState,
@@ -81,7 +83,11 @@ impl TmplStatus<'_> {
                         .set_color(btn::Color::Warning)
                         .set_href(Paths::Login(
                             host.clone(),
-                            Paths::InstalledPackage(namespace.clone()).to_string(),
+                            Paths::InstalledPackage(
+                                namespace.clone(),
+                                crate::routes::EntriesFilter::for_installed_package(),
+                            )
+                            .to_string(),
                         )),
                     secondary_button: Some(
                         btn::TmplButton::builder()
@@ -112,6 +118,10 @@ impl TmplStatus<'_> {
 struct TmplEntriesToolbar<'a> {
     button: btn::TmplButton<'a>,
     with_status: bool,
+    filter_unmodified_checked: bool,
+    filter_unmodified_href: String,
+    filter_ignored_checked: bool,
+    filter_ignored_href: String,
     ignored_count: usize,
     unmodified_count: usize,
 }
@@ -130,7 +140,10 @@ impl<'a> TmplPageInstalledPackage<'a> {
     pub fn primary_button(uri: &S3PackageUri, status: &UpstreamState) -> btn::TmplButton<'a> {
         let btn = btn::TmplButton::builder()
             .set_icon(Icon::ArrowForward)
-            .set_href(Paths::Commit(uri.namespace.clone()))
+            .set_href(Paths::Commit(
+                uri.namespace.clone(),
+                crate::routes::EntriesFilter::default(),
+            ))
             .set_label(t!("installed_package.commit"))
             .set_size(btn::Size::Large)
             .set_direction(btn::Direction::RightToLeft);
@@ -181,6 +194,7 @@ impl ViewInstalledPackage {
         model: &impl QuiltModel,
         tracing: &crate::telemetry::Telemetry,
         namespace: &quilt::uri::Namespace,
+        filter: &EntriesFilter,
     ) -> Result<ViewInstalledPackage> {
         let installed_package = model
             .get_installed_package(namespace)
@@ -352,14 +366,31 @@ impl ViewInstalledPackage {
         let unmodified_count = entries_list
             .iter()
             .filter(|e| {
-                matches!(e.status, entry::EntryStatus::Pristine)
-                    || matches!(e.status, entry::EntryStatus::Remote)
+                e.ignored_by.is_none()
+                    && (matches!(e.status, entry::EntryStatus::Pristine)
+                        || matches!(e.status, entry::EntryStatus::Remote))
             })
-            .count()
-            - ignored_count;
+            .count();
+
+        // Apply filter: skip entries that are hidden by the current filter
+        let entries_list: Vec<_> = entries_list
+            .into_iter()
+            .filter(|e| {
+                if e.ignored_by.is_some() {
+                    return filter.ignored;
+                }
+                if matches!(e.status, entry::EntryStatus::Pristine)
+                    || matches!(e.status, entry::EntryStatus::Remote)
+                {
+                    return filter.unmodified;
+                }
+                true
+            })
+            .collect();
 
         Ok(ViewInstalledPackage {
             entries_list,
+            filter: filter.clone(),
             origin,
             origin_host,
             status: status.upstream_state,
@@ -382,6 +413,7 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
     fn from(view: ViewInstalledPackage) -> Self {
         let ViewInstalledPackage {
             entries_list,
+            filter,
             origin,
             origin_host,
             status,
@@ -396,6 +428,14 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
         for entry in entries_list {
             entries.push(entry::TmplEntry::from(entry).set_checkbox(false));
         }
+
+        let toggled_unmodified = filter.toggle_unmodified();
+        let toggled_ignored = filter.toggle_ignored();
+        let filter_unmodified_href =
+            Paths::InstalledPackage(uri.namespace.clone(), toggled_unmodified).to_string();
+        let filter_ignored_href =
+            Paths::InstalledPackage(uri.namespace.clone(), toggled_ignored).to_string();
+
         let layout = Layout::builder()
             .set_breadcrumbs(Self::breadcrumbs(&uri))
             .set_actions(Self::actions(&uri, origin.as_ref()))
@@ -410,7 +450,7 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
             status: TmplStatus::new(&uri.namespace, &status, origin_host.as_ref()),
             entries,
             toolbar: {
-                if has_remote_entries {
+                if has_remote_entries || ignored_count > 0 || unmodified_count > 0 {
                     Some(TmplEntriesToolbar {
                         button: btn::TmplButton::builder()
                             .set_js(btn::JsSelector::EntriesInstall)
@@ -419,6 +459,10 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
                             .set_type(btn::ButtonType::Submit)
                             .set_label(t!("buttons.install_selected_paths")),
                         with_status: !matches!(status, quilt::lineage::UpstreamState::UpToDate),
+                        filter_unmodified_checked: filter.unmodified,
+                        filter_unmodified_href,
+                        filter_ignored_checked: filter.ignored,
+                        filter_ignored_href,
                         ignored_count,
                         unmodified_count,
                     })
@@ -443,6 +487,7 @@ mod tests {
     fn test_view() -> Result {
         let html = (ViewInstalledPackage {
             entries_list: vec![],
+            filter: EntriesFilter::for_installed_package(),
             origin: Some(url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?),
             origin_host: Some("test.quilt.dev".parse().unwrap()),
             status: quilt::lineage::UpstreamState::UpToDate,
@@ -465,6 +510,7 @@ mod tests {
             &model,
             &crate::telemetry::Telemetry::default(),
             &("foo", "bar").into(),
+            &EntriesFilter::for_installed_package(),
         )
         .await?;
         let html = installed_package.render()?;
@@ -506,6 +552,7 @@ mod tests {
         // Create the ViewInstalledPackage with our test entries
         let view = ViewInstalledPackage {
             entries_list,
+            filter: EntriesFilter::for_installed_package(),
             origin: Some(url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?),
             origin_host: Some("test.quilt.dev".parse().unwrap()),
             status: quilt::lineage::UpstreamState::UpToDate,
@@ -531,6 +578,7 @@ mod tests {
     fn test_view_no_origin() -> Result {
         let html = (ViewInstalledPackage {
             entries_list: vec![],
+            filter: EntriesFilter::for_installed_package(),
             origin: None,
             origin_host: None,
             status: quilt::lineage::UpstreamState::Error,
@@ -560,6 +608,7 @@ mod tests {
     fn test_view_status_failed() -> Result {
         let html = (ViewInstalledPackage {
             entries_list: vec![],
+            filter: EntriesFilter::for_installed_package(),
             origin: Some(url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?),
             origin_host: Some("test.quilt.dev".parse().unwrap()),
             status: quilt::lineage::UpstreamState::Error,
@@ -570,7 +619,7 @@ mod tests {
         .render()?;
 
         // Should show Login button
-        assert!(html.contains(r#"href="login.html#host=test.quilt.dev&#38;back=installed-package.html%23namespace%3DA%2FB""#));
+        assert!(html.contains(r#"href="login.html#host=test.quilt.dev&#38;back=installed-package.html%23namespace%3DA%2FB%26filter%3Dunmodified""#));
 
         // Should not show commit button
         assert!(!html.contains(r#"href="commit.html"#));

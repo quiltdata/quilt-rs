@@ -54,7 +54,10 @@ impl<'a> TmplPageMerge<'a> {
             list: vec![
                 crumbs::Link::home(),
                 crumbs::Link::create(
-                    routes::Paths::InstalledPackage(uri.namespace.to_owned()),
+                    routes::Paths::InstalledPackage(
+                        uri.namespace.to_owned(),
+                        routes::EntriesFilter::for_installed_package(),
+                    ),
                     uri.namespace.to_string(),
                 ),
                 crumbs::Current::create(t!("breadcrumbs.merge", s => uri.namespace)),
@@ -155,7 +158,7 @@ mod tests {
 
         // Check for breadcrumbs
         assert!(html.contains(
-            r#"<a class="qui-breadcrumb-link" title="test/package" href="installed-package.html#namespace=test/package">test/package</a>"#
+            r#"<a class="qui-breadcrumb-link" title="test/package" href="installed-package.html#namespace=test/package&#38;filter=unmodified">test/package</a>"#
         ));
         assert!(
             html.contains(r#"<strong class="qui-breadcrumb-current" title="Merge">Merge</strong>"#)

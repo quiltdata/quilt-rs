@@ -10,6 +10,7 @@ use crate::quilt;
 use crate::quilt::lineage::Change;
 use crate::quilt::lineage::ChangeSet;
 use crate::routes;
+use crate::routes::EntriesFilter;
 use crate::ui::btn;
 use crate::ui::crumbs;
 use crate::ui::entry;
@@ -40,6 +41,7 @@ pub struct ViewCommit {
     entries_modified: Vec<entry::ViewEntry>,
     entries_rest: Vec<entry::ViewEntry>,
     entries_ignored: Vec<entry::ViewEntry>,
+    filter: EntriesFilter,
     message: ViewCommitMessage,
     origin: url::Url,
     uri: quilt::uri::S3PackageUri,
@@ -96,6 +98,10 @@ struct TmplPageCommit<'a> {
     entries: Vec<Vec<entry::TmplEntry<'a>>>,
     workflow: TmplWorkflow<'a>,
     layout: Layout<'a>,
+    filter_unmodified_checked: bool,
+    filter_unmodified_href: String,
+    filter_ignored_checked: bool,
+    filter_ignored_href: String,
     ignored_count: usize,
     unmodified_count: usize,
 }
@@ -209,6 +215,7 @@ impl ViewCommit {
         model: &impl QuiltModel,
         tracing: &crate::telemetry::Telemetry,
         namespace: &quilt::uri::Namespace,
+        filter: &EntriesFilter,
     ) -> Result<ViewCommit, Error> {
         let installed_package = model
             .get_installed_package(namespace)
@@ -307,10 +314,23 @@ impl ViewCommit {
         let ignored_count = entries_ignored.len();
         let unmodified_count = entries_rest.len();
 
+        // Apply filter: skip entries that are hidden by the current filter
+        let entries_rest = if filter.unmodified {
+            entries_rest
+        } else {
+            Vec::new()
+        };
+        let entries_ignored = if filter.ignored {
+            entries_ignored
+        } else {
+            Vec::new()
+        };
+
         Ok(ViewCommit {
             entries_modified,
             entries_rest,
             entries_ignored,
+            filter: filter.clone(),
             message: generate_commit_message(&status.changes),
             user_meta: parse_commit_user_meta(&remote_manifest.header),
             uri: uri.clone(),
@@ -386,7 +406,10 @@ impl<'a> TmplPageCommit<'a> {
             list: vec![
                 crumbs::Link::home(),
                 crumbs::Link::create(
-                    routes::Paths::InstalledPackage(uri.namespace.to_owned()),
+                    routes::Paths::InstalledPackage(
+                        uri.namespace.to_owned(),
+                        routes::EntriesFilter::for_installed_package(),
+                    ),
                     uri.namespace.to_string(),
                 ),
                 crumbs::Current::create(t!("breadcrumbs.commit")),
@@ -450,6 +473,13 @@ impl<'a> TmplPageCommit<'a> {
 
 impl From<ViewCommit> for TmplPageCommit<'_> {
     fn from(view: ViewCommit) -> Self {
+        let toggled_unmodified = view.filter.toggle_unmodified();
+        let toggled_ignored = view.filter.toggle_ignored();
+        let filter_unmodified_href =
+            routes::Paths::Commit(view.uri.namespace.clone(), toggled_unmodified).to_string();
+        let filter_ignored_href =
+            routes::Paths::Commit(view.uri.namespace.clone(), toggled_ignored).to_string();
+
         TmplPageCommit {
             entries: Self::entries(
                 view.entries_modified,
@@ -465,6 +495,10 @@ impl From<ViewCommit> for TmplPageCommit<'_> {
                 .set_breadcrumbs(Self::breadcrumbs(&view.uri))
                 .set_uri(Some(view.uri.clone())),
             uri: view.uri.clone(),
+            filter_unmodified_checked: view.filter.unmodified,
+            filter_unmodified_href,
+            filter_ignored_checked: view.filter.ignored,
+            filter_ignored_href,
             ignored_count: view.ignored_count,
             unmodified_count: view.unmodified_count,
         }
@@ -486,6 +520,7 @@ mod tests {
             entries_modified: vec![],
             entries_rest: vec![],
             entries_ignored: vec![],
+            filter: EntriesFilter::default(),
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
             origin: url::Url::parse("https://test.quilt.dev/C/packages/A/B")?,
             message: ViewCommitMessage {
@@ -622,6 +657,7 @@ mod tests {
             entries_modified: vec![],
             entries_rest: vec![],
             entries_ignored: vec![],
+            filter: EntriesFilter::default(),
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
             origin: url::Url::parse("https://test.quilt.dev/C/packages/A/B")?,
             message: ViewCommitMessage {
@@ -656,6 +692,7 @@ mod tests {
             entries_modified: vec![],
             entries_rest: vec![],
             entries_ignored: vec![],
+            filter: EntriesFilter::default(),
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
             origin: url::Url::parse("https://test.quilt.dev/C/packages/A/B")?,
             message: ViewCommitMessage {
@@ -689,6 +726,7 @@ mod tests {
             entries_modified: vec![],
             entries_rest: vec![],
             entries_ignored: vec![],
+            filter: EntriesFilter::default(),
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
             origin: url::Url::parse("https://test.quilt.dev/C/packages/A/B")?,
             message: ViewCommitMessage::default(),

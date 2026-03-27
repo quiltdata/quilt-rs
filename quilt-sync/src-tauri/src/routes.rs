@@ -7,6 +7,68 @@ use crate::error::Error;
 use crate::quilt;
 use crate::telemetry::prelude::*;
 
+/// Which entry categories are visible (checked) in the filter toolbar.
+#[derive(Debug, Default, PartialEq, Clone, Serialize)]
+pub struct EntriesFilter {
+    pub unmodified: bool,
+    pub ignored: bool,
+}
+
+impl EntriesFilter {
+    /// Default for installed-package page: show unmodified, hide ignored.
+    pub fn for_installed_package() -> Self {
+        Self {
+            unmodified: true,
+            ignored: false,
+        }
+    }
+
+    /// Parse from a comma-separated string (e.g. "unmodified,ignored").
+    /// Unknown tokens are silently ignored.
+    pub fn from_filter_str(s: &str) -> Self {
+        let mut f = Self::default();
+        for token in s.split(',') {
+            match token.trim() {
+                "unmodified" => f.unmodified = true,
+                "ignored" => f.ignored = true,
+                _ => {}
+            }
+        }
+        f
+    }
+
+    pub fn toggle_unmodified(&self) -> Self {
+        Self {
+            unmodified: !self.unmodified,
+            ..*self
+        }
+    }
+
+    pub fn toggle_ignored(&self) -> Self {
+        Self {
+            ignored: !self.ignored,
+            ..*self
+        }
+    }
+}
+
+impl fmt::Display for EntriesFilter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut first = true;
+        if self.unmodified {
+            write!(f, "unmodified")?;
+            first = false;
+        }
+        if self.ignored {
+            if !first {
+                write!(f, ",")?;
+            }
+            write!(f, "ignored")?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum RouteError {
     #[error("URL has no path segments: {0}")]
@@ -50,6 +112,8 @@ fn parse_page(location: &str) -> Result<String, Error> {
 #[derive(Debug, serde::Deserialize)]
 struct FragmentNamespaceParsed {
     pub namespace: String,
+    #[serde(default)]
+    pub filter: Option<String>,
 }
 
 fn parse_namespace(location: &str) -> Result<String, Error> {
@@ -62,6 +126,20 @@ fn parse_namespace(location: &str) -> Result<String, Error> {
         None => "".to_string(),
     };
     Ok(namespace)
+}
+
+fn parse_filter(location: &str) -> Result<EntriesFilter, Error> {
+    let uri = parse_url(location)?;
+    match uri.fragment() {
+        Some(n) => {
+            let qs: FragmentNamespaceParsed = serde_qs::from_str(n)?;
+            Ok(qs
+                .filter
+                .map(|f| EntriesFilter::from_filter_str(&f))
+                .unwrap_or_default())
+        }
+        None => Ok(EntriesFilter::default()),
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -122,9 +200,9 @@ fn parse_s3_package_uri(location: &str) -> Result<quilt::uri::S3PackageUri, Erro
 #[serde(tag = "t", content = "c")]
 pub enum Paths {
     #[serde(rename = "commit")]
-    Commit(quilt::uri::Namespace),
+    Commit(quilt::uri::Namespace, EntriesFilter),
     #[serde(rename = "installed_package")]
-    InstalledPackage(quilt::uri::Namespace),
+    InstalledPackage(quilt::uri::Namespace, EntriesFilter),
     #[serde(rename = "installed_packages_list")]
     InstalledPackagesList,
     #[serde(rename = "login")]
@@ -144,11 +222,24 @@ pub enum Paths {
 impl fmt::Display for Paths {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Paths::Commit(namespace) => {
-                write!(f, "commit.html#namespace={namespace}")
+            Paths::Commit(namespace, filter) => {
+                let filter_str = filter.to_string();
+                if filter_str.is_empty() {
+                    write!(f, "commit.html#namespace={namespace}")
+                } else {
+                    write!(f, "commit.html#namespace={namespace}&filter={filter_str}")
+                }
             }
-            Paths::InstalledPackage(namespace) => {
-                write!(f, "installed-package.html#namespace={namespace}")
+            Paths::InstalledPackage(namespace, filter) => {
+                let filter_str = filter.to_string();
+                if filter_str.is_empty() {
+                    write!(f, "installed-package.html#namespace={namespace}")
+                } else {
+                    write!(
+                        f,
+                        "installed-package.html#namespace={namespace}&filter={filter_str}"
+                    )
+                }
             }
             Paths::InstalledPackagesList => {
                 write!(f, "installed-packages-list.html")
@@ -202,16 +293,25 @@ impl Paths {
     }
 }
 
+fn format_namespace_filter_fragment(namespace: &quilt::uri::Namespace, filter: &EntriesFilter) -> String {
+    let filter_str = filter.to_string();
+    if filter_str.is_empty() {
+        format!("namespace={namespace}")
+    } else {
+        format!("namespace={namespace}&filter={filter_str}")
+    }
+}
+
 pub fn from_url(path: Paths, mut url: Url) -> url::Url {
     match path {
-        Paths::Commit(namespace) => {
+        Paths::Commit(ref namespace, ref filter) => {
             url.set_path("pages/commit.html");
-            url.set_fragment(Some(&format!("namespace={namespace}")));
+            url.set_fragment(Some(&format_namespace_filter_fragment(namespace, filter)));
             url
         }
-        Paths::InstalledPackage(namespace) => {
+        Paths::InstalledPackage(ref namespace, ref filter) => {
             url.set_path("pages/installed-package.html");
-            url.set_fragment(Some(&format!("namespace={namespace}")));
+            url.set_fragment(Some(&format_namespace_filter_fragment(namespace, filter)));
             url
         }
         Paths::InstalledPackagesList => {
@@ -264,11 +364,13 @@ impl str::FromStr for Paths {
         match page.as_str() {
             "commit.html" => {
                 let namespace = parse_namespace(location)?;
-                Ok(Paths::Commit(namespace.try_into()?))
+                let filter = parse_filter(location)?;
+                Ok(Paths::Commit(namespace.try_into()?, filter))
             }
             "installed-package.html" => {
                 let namespace = parse_namespace(location)?;
-                Ok(Paths::InstalledPackage(namespace.try_into()?))
+                let filter = parse_filter(location)?;
+                Ok(Paths::InstalledPackage(namespace.try_into()?, filter))
             }
             "installed-packages-list.html" => Ok(Paths::InstalledPackagesList),
             "login.html" => {
@@ -306,7 +408,7 @@ mod tests {
     #[test]
     fn test_commit() -> Result<()> {
         let page_url = from_url(
-            Paths::Commit(("foo", "bar").into()),
+            Paths::Commit(("foo", "bar").into(), EntriesFilter::default()),
             Url::parse("http://test:1234/")?,
         );
         let page_url_str = page_url.as_str();
@@ -317,8 +419,33 @@ mod tests {
 
         let route: Paths = page_url_str.parse()?;
 
-        assert_eq!(route, Paths::Commit(("foo", "bar").into()));
+        assert_eq!(
+            route,
+            Paths::Commit(("foo", "bar").into(), EntriesFilter::default())
+        );
         assert_eq!(format!("{route}"), "commit.html#namespace=foo/bar");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_commit_with_filter() -> Result<()> {
+        let filter = EntriesFilter {
+            unmodified: true,
+            ignored: true,
+        };
+        let page_url = from_url(
+            Paths::Commit(("foo", "bar").into(), filter.clone()),
+            Url::parse("http://test:1234/")?,
+        );
+        let page_url_str = page_url.as_str();
+        assert_eq!(
+            page_url_str,
+            "http://test:1234/pages/commit.html#namespace=foo/bar&filter=unmodified,ignored"
+        );
+
+        let route: Paths = page_url_str.parse()?;
+        assert_eq!(route, Paths::Commit(("foo", "bar").into(), filter));
 
         Ok(())
     }
@@ -326,7 +453,7 @@ mod tests {
     #[test]
     fn test_installed_package() -> Result<()> {
         let page_url = from_url(
-            Paths::InstalledPackage(("foo", "bar").into()),
+            Paths::InstalledPackage(("foo", "bar").into(), EntriesFilter::default()),
             Url::parse("http://test:1234/")?,
         );
         let page_url_str = page_url.as_str();
@@ -337,10 +464,35 @@ mod tests {
 
         let route: Paths = page_url_str.parse()?;
 
-        assert_eq!(route, Paths::InstalledPackage(("foo", "bar").into()));
+        assert_eq!(
+            route,
+            Paths::InstalledPackage(("foo", "bar").into(), EntriesFilter::default())
+        );
         assert_eq!(
             format!("{route}"),
             "installed-package.html#namespace=foo/bar"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_installed_package_with_filter() -> Result<()> {
+        let filter = EntriesFilter::for_installed_package();
+        let page_url = from_url(
+            Paths::InstalledPackage(("foo", "bar").into(), filter.clone()),
+            Url::parse("http://test:1234/")?,
+        );
+        let page_url_str = page_url.as_str();
+        assert_eq!(
+            page_url_str,
+            "http://test:1234/pages/installed-package.html#namespace=foo/bar&filter=unmodified"
+        );
+
+        let route: Paths = page_url_str.parse()?;
+        assert_eq!(
+            route,
+            Paths::InstalledPackage(("foo", "bar").into(), filter)
         );
 
         Ok(())
@@ -505,13 +657,14 @@ mod tests {
     #[test]
     fn test_pathname_privacy() -> Result<()> {
         // Test that pathname() returns only the variant name without sensitive data (in snake_case)
-        let commit_path = Paths::Commit(("sensitive", "namespace").into());
+        let commit_path = Paths::Commit(("sensitive", "namespace").into(), EntriesFilter::default());
         assert_eq!(commit_path.pathname(), "commit");
 
         let login_path = Paths::Login("sensitive.host.com".parse()?, "secret-page.html".into());
         assert_eq!(login_path.pathname(), "login");
 
-        let installed_package_path = Paths::InstalledPackage(("private", "package").into());
+        let installed_package_path =
+            Paths::InstalledPackage(("private", "package").into(), EntriesFilter::default());
         assert_eq!(installed_package_path.pathname(), "installed_package");
 
         let list_path = Paths::InstalledPackagesList;
@@ -550,7 +703,7 @@ mod tests {
         }
         assert_eq!(setup_path.pathname(), "setup");
 
-        let commit_path = Paths::Commit(("test", "package").into());
+        let commit_path = Paths::Commit(("test", "package").into(), EntriesFilter::default());
         let serialized = serde_json::to_value(&commit_path)?;
         match serialized {
             Value::Object(map) => {
@@ -580,7 +733,9 @@ mod tests {
     #[test]
     fn test_login_with_encoded_back() -> Result<()> {
         let host: Host = "test.quilt.dev".parse()?;
-        let back = Paths::InstalledPackage(("foo", "bar").into()).to_string();
+        let back =
+            Paths::InstalledPackage(("foo", "bar").into(), EntriesFilter::for_installed_package())
+                .to_string();
         let page_url = from_url(
             Paths::Login(host.clone(), back.clone()),
             Url::parse("http://test:1234/")?,

@@ -57,22 +57,28 @@
     </div>
 
     <div class="files">
-      <div class="list entries-hide-unmodified entries-hide-ignored">
+      <div class="list">
         <div>
           {% if ignored_count > 0 || unmodified_count > 0 %}
-          <div class="qui-entries-filter"
-            data-default-unmodified=""
-            data-default-ignored="">
+          <div class="qui-entries-filter">
             <span>Show</span>
             <label>
-              <input type="checkbox" class="js-filter-unmodified" />
+              <input type="checkbox" class="js-filter"
+                data-href="{{ filter_unmodified_href }}"
+                {% if filter_unmodified_checked %}checked{% endif %} />
               unmodified
-              <span class="js-filter-count">({{ unmodified_count }})</span>
+              {% if !filter_unmodified_checked && unmodified_count > 0 %}
+                <span class="qui-filter-count">({{ unmodified_count }})</span>
+              {% endif %}
             </label>
             <label>
-              <input type="checkbox" class="js-filter-ignored" />
+              <input type="checkbox" class="js-filter"
+                data-href="{{ filter_ignored_href }}"
+                {% if filter_ignored_checked %}checked{% endif %} />
               ignored
-              <span class="js-filter-count">({{ ignored_count }})</span>
+              {% if !filter_ignored_checked && ignored_count > 0 %}
+                <span class="qui-filter-count">({{ ignored_count }})</span>
+              {% endif %}
             </label>
           </div>
           <div class="list-separator"></div>

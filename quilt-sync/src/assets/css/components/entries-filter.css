@@ -18,17 +18,6 @@
   cursor: pointer;
 }
 
-.qui-entries-filter .js-filter-count {
+.qui-entries-filter .qui-filter-count {
   opacity: 0.6;
-}
-
-/* Hide ignored entries when filter is off */
-.entries-hide-ignored .qui-entry.ignored {
-  display: none;
-}
-
-/* Hide unmodified entries when filter is off */
-.entries-hide-unmodified .qui-entry.pristine:not(.ignored),
-.entries-hide-unmodified .qui-entry.remote:not(.ignored) {
-  display: none;
 }

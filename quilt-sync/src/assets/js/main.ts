@@ -57,8 +57,6 @@ const SELECTOR_OPEN_HOME_DIR = ".js-open-home-dir";
 const SELECTOR_OPEN_DATA_DIR = ".js-open-data-dir";
 const SELECTOR_IGNORE_ENTRY = ".js-ignore-entry";
 const SELECTOR_UNIGNORE_ENTRY = ".js-unignore-entry";
-const SELECTOR_FILTER_IGNORED = ".js-filter-ignored";
-const SELECTOR_FILTER_UNMODIFIED = ".js-filter-unmodified";
 
 const I18N = {
   collectingLogs: "Collecting\u2026",
@@ -733,8 +731,17 @@ window.addEventListener(EVENT_PAGE_READY, () => {
     },
   );
 
-  // Filter checkboxes
-  setupFilterCheckboxes();
+  // Filter checkboxes: navigate on change (fragment-only changes need
+  // an explicit reload since browsers treat them as same-page navigation)
+  document.querySelectorAll(".js-filter").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const href = (checkbox as HTMLInputElement).dataset.href;
+      if (href) {
+        window.location.assign(href);
+        window.location.reload();
+      }
+    });
+  });
 
   for (const button of findElementsList(SELECTOR_REFRESH)) {
     button.addEventListener("click", () => {
@@ -781,49 +788,6 @@ window.addEventListener(EVENT_PAGE_READY, () => {
   }
 });
 
-function setupFilterCheckboxes() {
-  const filterIgnored = document.querySelector(
-    SELECTOR_FILTER_IGNORED,
-  ) as HTMLInputElement | null;
-  const filterUnmodified = document.querySelector(
-    SELECTOR_FILTER_UNMODIFIED,
-  ) as HTMLInputElement | null;
-
-  const list = document.querySelector(".list") as HTMLElement | null;
-  if (!list) return;
-
-  if (filterIgnored) {
-    filterIgnored.addEventListener("change", () => {
-      list.classList.toggle("entries-hide-ignored", !filterIgnored.checked);
-      // Update count visibility
-      const count = filterIgnored
-        .closest("label")
-        ?.querySelector(".js-filter-count");
-      if (count) {
-        (count as HTMLElement).style.display = filterIgnored.checked
-          ? "none"
-          : "";
-      }
-    });
-  }
-
-  if (filterUnmodified) {
-    filterUnmodified.addEventListener("change", () => {
-      list.classList.toggle(
-        "entries-hide-unmodified",
-        !filterUnmodified.checked,
-      );
-      const count = filterUnmodified
-        .closest("label")
-        ?.querySelector(".js-filter-count");
-      if (count) {
-        (count as HTMLElement).style.display = filterUnmodified.checked
-          ? "none"
-          : "";
-      }
-    });
-  }
-}
 
 async function showIgnorePopup(
   namespace: string,
