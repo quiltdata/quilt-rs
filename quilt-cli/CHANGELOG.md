@@ -16,6 +16,8 @@
   creating a new local package from a remote package handle without installing
   an existing revision first
   (<https://github.com/quiltdata/quilt-rs/pull/590>)
+- Add `version` to `quilt-rs` dependency to enable publishing `quilt-cli` to
+  crates.io (<https://github.com/quiltdata/quilt-rs/pull/590>)
 
 ### Changed
 
