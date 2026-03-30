@@ -55,8 +55,8 @@ enum WorkdirFile {
 /// Located files and ignored files collected during the directory walk.
 struct LocateResult {
     files: Vec<(PathBuf, WorkdirFile)>,
-    /// Files matched by .quiltignore: (logical_key, absolute_path)
-    ignored_files: Vec<(PathBuf, PathBuf)>,
+    /// Files matched by .quiltignore: (logical_key, absolute_path, matched_pattern)
+    ignored_files: Vec<(PathBuf, PathBuf, String)>,
 }
 
 async fn locate_files_in_package_home(
@@ -104,8 +104,9 @@ async fn locate_files_in_package_home(
 
             let logical_key = file_path.strip_prefix(package_home)?.to_path_buf();
             if let Some(gi) = quiltignore {
-                if crate::quiltignore::is_ignored(gi, &logical_key, false) {
-                    ignored_files.push((logical_key, file_path));
+                if let Some(pattern) = crate::quiltignore::matched_pattern(gi, &logical_key, false)
+                {
+                    ignored_files.push((logical_key, file_path, pattern));
                     continue;
                 }
             }
@@ -220,20 +221,11 @@ pub async fn create_status(
     let changes = fingerprint_files(storage, locate_result.files, host_config).await?;
     debug!("✔️ Computed file fingerprints {:?}", changes);
 
-    // Collect ignored files with their matched pattern
+    // Collect ignored files with their matched pattern (captured during the walk)
     let ignored_files: Vec<(PathBuf, String)> = locate_result
         .ignored_files
         .into_iter()
-        .map(|(logical_key, _abs_path)| {
-            let pattern = quiltignore
-                .as_ref()
-                .and_then(|gi| {
-                    let m = gi.matched_path_or_any_parents(&logical_key, false);
-                    m.inner().map(|glob| glob.original().to_string())
-                })
-                .unwrap_or_default();
-            (logical_key, pattern)
-        })
+        .map(|(logical_key, _abs_path, pattern)| (logical_key, pattern))
         .collect();
 
     // Detect junky files among the changes

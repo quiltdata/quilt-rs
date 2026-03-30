@@ -38,6 +38,20 @@ pub fn is_ignored(gitignore: &Gitignore, relative_path: &Path, is_dir: bool) -> 
         .is_ignore()
 }
 
+/// If the path is ignored, return the original pattern string that matched it.
+pub fn matched_pattern(gitignore: &Gitignore, relative_path: &Path, is_dir: bool) -> Option<String> {
+    let m = gitignore.matched_path_or_any_parents(relative_path, is_dir);
+    if m.is_ignore() {
+        Some(
+            m.inner()
+                .map(|glob| glob.original().to_string())
+                .unwrap_or_default(),
+        )
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
