@@ -12,7 +12,7 @@
 
 ### Added
 
-- Detect junk files (OS metadata, editor temps, build artifacts) via the `junk` module and surface them in package status with suggested `.quiltignore` patterns
+- Detect junk files (OS metadata, editor temps, build artifacts) via the `junk` module and surface them in package status with suggested `.quiltignore` patterns (<https://github.com/quiltdata/quilt-rs/pull/593>)
 
 ## [v0.27.5-alpha1] - 2026-03-26
 

@@ -13,7 +13,7 @@
 
 ### Added
 
-- Add `.quiltignore` affordance: junk file detection badges, ignore/un-ignore popups, and server-side entry filtering via URL fragment parameters
+- Add `.quiltignore` affordance: junk file detection badges, ignore/un-ignore popups, and server-side entry filtering via URL fragment parameters (<https://github.com/quiltdata/quilt-rs/pull/593>)
 
 ## [v0.14.5] - 2026-03-25
 
