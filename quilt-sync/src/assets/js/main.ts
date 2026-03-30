@@ -882,8 +882,13 @@ async function showIgnorePopup(
   };
 
   await updateHint();
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   input.addEventListener("input", () => {
-    updateHint().catch(handleError);
+    if (debounceTimer !== null) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      updateHint().catch(handleError);
+    }, 150);
   });
 
   const submit = async () => {

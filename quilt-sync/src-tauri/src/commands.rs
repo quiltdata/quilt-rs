@@ -826,6 +826,9 @@ async fn add_to_quiltignore_command(
     let package_home = m.package_home(&namespace).await?;
     let quiltignore_path = package_home.join(".quiltignore");
 
+    // Take only the first line to prevent injecting multiple rules
+    let pattern = pattern.lines().next().unwrap_or(pattern);
+
     // Read first to check trailing newline, before opening for append
     let needs_newline = std::fs::read_to_string(&quiltignore_path)
         .map(|s| !s.is_empty() && !s.ends_with('\n'))

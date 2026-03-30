@@ -46,11 +46,7 @@ pub fn matched_pattern(
 ) -> Option<String> {
     let m = gitignore.matched_path_or_any_parents(relative_path, is_dir);
     if m.is_ignore() {
-        Some(
-            m.inner()
-                .map(|glob| glob.original().to_string())
-                .unwrap_or_default(),
-        )
+        m.inner().map(|glob| glob.original().to_string())
     } else {
         None
     }
