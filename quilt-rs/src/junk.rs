@@ -112,16 +112,34 @@ pub fn check(path: &Path) -> Option<Match> {
     let is_dir = path.to_string_lossy().ends_with('/');
     let m = gitignore.matched_path_or_any_parents(path, is_dir);
 
-    if !m.is_ignore() {
-        return None;
+    if m.is_ignore() {
+        // Extract the original pattern string from the match
+        let pattern = m
+            .inner()
+            .map(|glob| glob.original().to_string())
+            .unwrap_or_else(|| suggest_pattern(path));
+        return Some(Match { pattern });
     }
 
-    // Extract the original pattern string from the match
-    let pattern = m
-        .inner()
-        .map(|glob| glob.original().to_string())
-        .unwrap_or_else(|| suggest_pattern(path));
+    // Detect top-level dotfiles (config/metadata, not data).
+    // Skip .quiltignore — it belongs in the package.
+    check_dotfile(path)
+}
 
+/// If the first path component starts with `.`, treat it as junk.
+/// Returns `None` for `.quiltignore`.
+fn check_dotfile(path: &Path) -> Option<Match> {
+    let first = path.iter().next()?;
+    let name = first.to_str()?;
+    if !name.starts_with('.') || name == ".quiltignore" {
+        return None;
+    }
+    // For dot-directories, suggest ".<dir>/"; for dot-files, suggest the exact name.
+    let pattern = if path.iter().count() > 1 {
+        format!("{name}/")
+    } else {
+        name.to_owned()
+    };
     Some(Match { pattern })
 }
 
@@ -237,6 +255,29 @@ mod tests {
         assert!(check(&PathBuf::from("server.log")).is_none());
         // *.zip is blocklisted
         assert!(check(&PathBuf::from("archive.zip")).is_none());
+    }
+
+    #[test]
+    fn detects_dotfile_env() {
+        let m = check(&PathBuf::from(".env")).unwrap();
+        assert_eq!(m.pattern, ".env");
+    }
+
+    #[test]
+    fn detects_dotfile_directory() {
+        // .myconfig/ is not in global templates, so it falls through to dotfile detection
+        let m = check(&PathBuf::from(".myconfig/foo.toml")).unwrap();
+        assert_eq!(m.pattern, ".myconfig/");
+    }
+
+    #[test]
+    fn does_not_flag_quiltignore() {
+        assert!(check(&PathBuf::from(".quiltignore")).is_none());
+    }
+
+    #[test]
+    fn does_not_flag_nested_dotfile() {
+        assert!(check(&PathBuf::from("data/.hidden")).is_none());
     }
 
     #[test]
