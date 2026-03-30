@@ -188,7 +188,7 @@ function handleError(e: Error | unknown) {
 
 const ROUTE_INSTALLED_PACKAGES_LIST = "installed-packages-list.html";
 const ROUTE_INSTALLED_PACKAGE = (namespace: Namespace) =>
-  `installed-package.html#namespace=${namespace}`;
+  `installed-package.html#namespace=${namespace}&filter=unmodified`;
 const ROUTE_REMOTE_PACKAGE = (uri: string) =>
   `remote-package.html?uri=${encodeURIComponent(uri)}`;
 
@@ -891,6 +891,13 @@ async function showIgnorePopup(
     }, 150);
   });
 
+  const clearDebounce = () => {
+    if (debounceTimer !== null) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+  };
+
   const submit = async () => {
     const pattern = input.value.trim();
     if (!pattern) return;
@@ -900,6 +907,7 @@ async function showIgnorePopup(
       pattern,
     });
     unlockUI();
+    clearDebounce();
     dismissPopup();
     if (notify(notification)) {
       await loadCurrentPage();
@@ -907,6 +915,7 @@ async function showIgnorePopup(
   };
 
   const cancel = () => {
+    clearDebounce();
     dismissPopup();
   };
 
