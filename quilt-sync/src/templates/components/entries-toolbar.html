@@ -13,29 +13,7 @@
     {{ button | safe }}
     {% endif %}
     <div class="filter">
-      {% if ignored_count > 0 || unmodified_count > 0 %}
-      <div class="qui-entries-filter">
-        <span>Show</span>
-        <label>
-          <input type="checkbox" class="js-filter"
-            data-href="{{ filter_unmodified_href }}"
-            {% if filter_unmodified_checked %}checked{% endif %} />
-          unmodified
-          {% if !filter_unmodified_checked && unmodified_count > 0 %}
-            <span class="qui-filter-count">({{ unmodified_count }})</span>
-          {% endif %}
-        </label>
-        <label>
-          <input type="checkbox" class="js-filter"
-            data-href="{{ filter_ignored_href }}"
-            {% if filter_ignored_checked %}checked{% endif %} />
-          ignored
-          {% if !filter_ignored_checked && ignored_count > 0 %}
-            <span class="qui-filter-count">({{ ignored_count }})</span>
-          {% endif %}
-        </label>
-      </div>
-      {% endif %}
+      {% include "./components/entries-filter.html" %}
     </div>
   </div>
 </div>
