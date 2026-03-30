@@ -22,7 +22,7 @@
 
   .root {
     animation: 0.15s ease-out popup-slide;
-    background: #fff;
+    background: var(--q-ui-palette-background-primary);
     box-shadow: var(--q-ui-shadows-popup);
     margin: auto;
     width: fit-content;
