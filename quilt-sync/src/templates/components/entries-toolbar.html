@@ -5,11 +5,13 @@
 
 <div class="qui-entries-toolbar {%+ if with_status %}with-status{% endif %}">
   <div class="container">
+    {% if show_button %}
     <label class="select-all">
       <input type="checkbox" class="js-entries-select-all" disabled />
       Select all
     </label>
     {{ button | safe }}
+    {% endif %}
     <div class="filter">
       {% if ignored_count > 0 || unmodified_count > 0 %}
       <div class="qui-entries-filter">

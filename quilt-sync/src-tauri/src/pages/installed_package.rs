@@ -117,6 +117,7 @@ impl TmplStatus<'_> {
 #[template(path = "./components/entries-toolbar.html")]
 struct TmplEntriesToolbar<'a> {
     button: btn::TmplButton<'a>,
+    show_button: bool,
     with_status: bool,
     filter_unmodified_checked: bool,
     filter_unmodified_href: String,
@@ -458,6 +459,7 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
                             .set_disabled()
                             .set_type(btn::ButtonType::Submit)
                             .set_label(t!("buttons.install_selected_paths")),
+                        show_button: has_remote_entries,
                         with_status: !matches!(status, quilt::lineage::UpstreamState::UpToDate),
                         filter_unmodified_checked: filter.unmodified,
                         filter_unmodified_href,
