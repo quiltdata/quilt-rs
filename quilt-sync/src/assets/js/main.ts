@@ -207,6 +207,15 @@ function findElementsList(selector: Selector, optParent?: Element) {
   return (optParent ?? document).querySelectorAll(selector);
 }
 
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function assertElementHasDataAttributes(element: Element, attrs: string[]) {
   for (const attr of attrs) {
     if (!element.hasAttribute(`data-${attr}`)) {
@@ -807,7 +816,7 @@ async function showIgnorePopup(
   popup(`<style>@import url("/assets/css/components/ignore-popup.css");</style>
     <div class="ignore-popup">
       <label>Pattern to ignore:</label>
-      <input class="ignore-input js-ignore-input" type="text" value="${suggestedPattern}" />
+      <input class="ignore-input js-ignore-input" type="text" value="${escapeHtml(suggestedPattern)}" />
       <div class="ignore-hint js-ignore-hint"></div>
       <div class="ignore-actions">
         <button class="qui-button primary js-ignore-submit"><span>Add to .quiltignore</span></button>
@@ -847,16 +856,16 @@ async function showIgnorePopup(
 
     if (isSuggested && matches) {
       // State 1: default glob
-      hint.innerHTML = `<code class="inactive">${path}</code> will be ignored`;
+      hint.innerHTML = `<code class="inactive">${escapeHtml(path)}</code> will be ignored`;
     } else if (matches && !isExactPath) {
       // State 2: custom, matches multiple
-      hint.innerHTML = `<code class="inactive">${path}</code> will be ignored. Ignore all similar files with <code class="js-hint-pattern">${suggestedPattern}</code>`;
+      hint.innerHTML = `<code class="inactive">${escapeHtml(path)}</code> will be ignored. Ignore all similar files with <code class="js-hint-pattern">${escapeHtml(suggestedPattern)}</code>`;
     } else if (matches && isExactPath) {
       // State 3: custom, matches only 1
-      hint.innerHTML = `Only ${path} will be ignored. Ignore all similar files with <code class="js-hint-pattern">${suggestedPattern}</code>`;
+      hint.innerHTML = `Only ${escapeHtml(path)} will be ignored. Ignore all similar files with <code class="js-hint-pattern">${escapeHtml(suggestedPattern)}</code>`;
     } else {
       // State 4: no match
-      hint.innerHTML = `Doesn't match <code class="js-hint-path">${path}</code>. Ignore all similar files with <code class="js-hint-pattern">${suggestedPattern}</code>`;
+      hint.innerHTML = `Doesn't match <code class="js-hint-path">${escapeHtml(path)}</code>. Ignore all similar files with <code class="js-hint-pattern">${escapeHtml(suggestedPattern)}</code>`;
     }
 
     // Wire up clickable links
@@ -915,10 +924,10 @@ async function showIgnorePopup(
 function showUnignorePopup(namespace: string, pattern: string) {
   popup(`<style>@import url("/assets/css/components/ignore-popup.css");</style>
     <div class="unignore-popup">
-      <span>Ignored by: <span class="pattern-display">${pattern}</span></span>
+      <span>Ignored by: <span class="pattern-display">${escapeHtml(pattern)}</span></span>
       <div>
         <button class="qui-button primary js-edit-quiltignore"
-          data-namespace="${namespace}"
+          data-namespace="${escapeHtml(namespace)}"
           data-path=".quiltignore">
           <span>Edit .quiltignore</span>
         </button>
