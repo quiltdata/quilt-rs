@@ -13,15 +13,15 @@ use crate::checksum::verify_hash;
 use crate::io::manifest::resolve_tag;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
-use crate::junk;
-use crate::quiltignore;
 use crate::io::storage::Storage;
+use crate::junk;
 use crate::lineage::Change;
 use crate::lineage::ChangeSet;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageLineage;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
+use crate::quiltignore;
 use crate::uri::Tag;
 use crate::Error;
 use crate::Res;
@@ -106,8 +106,7 @@ async fn locate_files_in_package_home(
 
             let logical_key = file_path.strip_prefix(package_home)?.to_path_buf();
             if let Some(gi) = quiltignore {
-                if let Some(pattern) = quiltignore::matched_pattern(gi, &logical_key, false)
-                {
+                if let Some(pattern) = quiltignore::matched_pattern(gi, &logical_key, false) {
                     ignored_files.push((logical_key, file_path, pattern));
                     continue;
                 }

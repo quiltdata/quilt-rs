@@ -39,7 +39,11 @@ pub fn is_ignored(gitignore: &Gitignore, relative_path: &Path, is_dir: bool) -> 
 }
 
 /// If the path is ignored, return the original pattern string that matched it.
-pub fn matched_pattern(gitignore: &Gitignore, relative_path: &Path, is_dir: bool) -> Option<String> {
+pub fn matched_pattern(
+    gitignore: &Gitignore,
+    relative_path: &Path,
+    is_dir: bool,
+) -> Option<String> {
     let m = gitignore.matched_path_or_any_parents(relative_path, is_dir);
     if m.is_ignore() {
         Some(

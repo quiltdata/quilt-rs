@@ -104,10 +104,7 @@ impl<'a> TmplInstalledPackage<'a> {
             .set_icon(Icon::Commit)
             .set_label(t!("buttons.commit_package"))
             .set_size(btn::Size::Small)
-            .set_href(Paths::Commit(
-                namespace.clone(),
-                EntriesFilter::default(),
-            ))
+            .set_href(Paths::Commit(namespace.clone(), EntriesFilter::default()))
     }
 
     fn button_uninstall(namespace: &Namespace) -> btn::TmplButton<'a> {
