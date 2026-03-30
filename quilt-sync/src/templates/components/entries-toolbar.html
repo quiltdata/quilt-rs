@@ -1,13 +1,19 @@
 <style>
   @import "/assets/css/views/entries-toolbar.css";
+  @import "/assets/css/components/entries-filter.css";
 </style>
 
 <div class="qui-entries-toolbar {%+ if with_status %}with-status{% endif %}">
   <div class="container">
+    {% if show_button %}
     <label class="select-all">
       <input type="checkbox" class="js-entries-select-all" disabled />
       Select all
     </label>
     {{ button | safe }}
+    {% endif %}
+    <div class="filter">
+      {% include "./components/entries-filter.html" %}
+    </div>
   </div>
 </div>

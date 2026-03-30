@@ -7,11 +7,12 @@ pub mod checksum;
 pub mod error;
 mod installed_package;
 pub mod io;
+pub mod junk;
 pub mod lineage;
 mod local_domain;
 pub mod manifest;
 pub mod paths;
-pub(crate) mod quiltignore;
+pub mod quiltignore;
 pub mod uri;
 
 #[cfg(test)]

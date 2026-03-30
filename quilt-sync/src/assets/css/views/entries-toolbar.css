@@ -14,7 +14,17 @@
   .container {
     align-items: center;
     display: flex;
-    justify-content: space-between;
+    gap: var(--q-ui-size-3);
+  }
+
+  .filter {
+    flex: 1;
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .filter .qui-entries-filter {
+    padding: 0;
   }
 
   .select-all {

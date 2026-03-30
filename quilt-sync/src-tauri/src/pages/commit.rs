@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::HashMap;
 
 use askama::Template;
 use rust_i18n::t;
@@ -10,6 +11,7 @@ use crate::quilt;
 use crate::quilt::lineage::Change;
 use crate::quilt::lineage::ChangeSet;
 use crate::routes;
+use crate::routes::EntriesFilter;
 use crate::ui::btn;
 use crate::ui::crumbs;
 use crate::ui::entry;
@@ -39,11 +41,15 @@ struct ViewCommitWorkflow {
 pub struct ViewCommit {
     entries_modified: Vec<entry::ViewEntry>,
     entries_rest: Vec<entry::ViewEntry>,
+    entries_ignored: Vec<entry::ViewEntry>,
+    filter: EntriesFilter,
     message: ViewCommitMessage,
     origin: url::Url,
     uri: quilt::uri::S3PackageUri,
     user_meta: ViewCommitUserMeta,
     workflow: Option<ViewCommitWorkflow>,
+    ignored_count: usize,
+    unmodified_count: usize,
 }
 
 #[derive(Template)]
@@ -93,6 +99,12 @@ struct TmplPageCommit<'a> {
     entries: Vec<Vec<entry::TmplEntry<'a>>>,
     workflow: TmplWorkflow<'a>,
     layout: Layout<'a>,
+    filter_unmodified_checked: bool,
+    filter_unmodified_href: String,
+    filter_ignored_checked: bool,
+    filter_ignored_href: String,
+    ignored_count: usize,
+    unmodified_count: usize,
 }
 
 fn parse_commit_workflow(
@@ -204,6 +216,7 @@ impl ViewCommit {
         model: &impl QuiltModel,
         tracing: &crate::telemetry::Telemetry,
         namespace: &quilt::uri::Namespace,
+        filter: &EntriesFilter,
     ) -> Result<ViewCommit, Error> {
         let installed_package = model
             .get_installed_package(namespace)
@@ -222,6 +235,13 @@ impl ViewCommit {
         tracing.add_host(&origin_host);
 
         let remote_manifest = model.browse_remote_manifest(&lineage.remote).await?;
+        // Build lookup maps for junky files
+        let junky_map: HashMap<_, _> = status
+            .junky_changes
+            .iter()
+            .map(|(p, pat)| (p.clone(), pat.clone()))
+            .collect();
+
         let mut entries_modified = Vec::new();
         for (filename, change) in &status.changes {
             let mut uri = quilt::uri::S3PackageUri::from(&lineage.remote);
@@ -236,6 +256,8 @@ impl ViewCommit {
                 status: entry::EntryStatus::from(change),
                 uri,
                 origin,
+                junky_pattern: junky_map.get(filename).cloned(),
+                ignored_by: None,
             });
             if entries_modified.len() > 1000 {
                 break;
@@ -266,20 +288,57 @@ impl ViewCommit {
                 },
                 uri,
                 origin,
+                junky_pattern: None,
+                ignored_by: None,
             })
+        }
+
+        // Add ignored files
+        let mut entries_ignored = Vec::new();
+        for (filename, pattern) in &status.ignored_files {
+            let mut uri = quilt::uri::S3PackageUri::from(&lineage.remote);
+            uri.path = Some(filename.clone());
+            entries_ignored.push(entry::ViewEntry {
+                filename: filename.clone(),
+                size: 0,
+                status: entry::EntryStatus::Pristine,
+                uri,
+                origin: None,
+                junky_pattern: None,
+                ignored_by: Some(pattern.clone()),
+            });
         }
 
         // TODO: just use remote_manifest?
         let uri = quilt::uri::S3PackageUri::from(&lineage.remote);
 
+        let ignored_count = entries_ignored.len();
+        let unmodified_count = entries_rest.len();
+
+        // Apply filter: skip entries that are hidden by the current filter
+        let entries_rest = if filter.unmodified {
+            entries_rest
+        } else {
+            Vec::new()
+        };
+        let entries_ignored = if filter.ignored {
+            entries_ignored
+        } else {
+            Vec::new()
+        };
+
         Ok(ViewCommit {
             entries_modified,
             entries_rest,
+            entries_ignored,
+            filter: filter.clone(),
             message: generate_commit_message(&status.changes),
             user_meta: parse_commit_user_meta(&remote_manifest.header),
             uri: uri.clone(),
             origin: uri.display_for_host(&origin_host)?,
             workflow: parse_commit_workflow(&remote_manifest.header, &origin_host)?,
+            ignored_count,
+            unmodified_count,
         })
     }
 
@@ -348,7 +407,10 @@ impl<'a> TmplPageCommit<'a> {
             list: vec![
                 crumbs::Link::home(),
                 crumbs::Link::create(
-                    routes::Paths::InstalledPackage(uri.namespace.to_owned()),
+                    routes::Paths::InstalledPackage(
+                        uri.namespace.to_owned(),
+                        routes::EntriesFilter::for_installed_package(),
+                    ),
                     uri.namespace.to_string(),
                 ),
                 crumbs::Current::create(t!("breadcrumbs.commit")),
@@ -359,14 +421,19 @@ impl<'a> TmplPageCommit<'a> {
     fn entries(
         modified: Vec<entry::ViewEntry>,
         rest: Vec<entry::ViewEntry>,
+        ignored: Vec<entry::ViewEntry>,
     ) -> Vec<Vec<entry::TmplEntry<'a>>> {
         let mut entries_modified = Vec::new();
         let mut entries_rest = Vec::new();
+        let mut entries_ignored = Vec::new();
         for entry in modified {
             entries_modified.push(entry::TmplEntry::from(entry));
         }
         for entry in rest {
             entries_rest.push(entry::TmplEntry::from(entry));
+        }
+        for entry in ignored {
+            entries_ignored.push(entry::TmplEntry::from(entry));
         }
         let mut entries = Vec::new();
         if !entries_modified.is_empty() {
@@ -374,6 +441,9 @@ impl<'a> TmplPageCommit<'a> {
         }
         if !entries_rest.is_empty() {
             entries.push(entries_rest);
+        }
+        if !entries_ignored.is_empty() {
+            entries.push(entries_ignored);
         }
         entries
     }
@@ -404,8 +474,19 @@ impl<'a> TmplPageCommit<'a> {
 
 impl From<ViewCommit> for TmplPageCommit<'_> {
     fn from(view: ViewCommit) -> Self {
+        let toggled_unmodified = view.filter.toggle_unmodified();
+        let toggled_ignored = view.filter.toggle_ignored();
+        let filter_unmodified_href =
+            routes::Paths::Commit(view.uri.namespace.clone(), toggled_unmodified).to_string();
+        let filter_ignored_href =
+            routes::Paths::Commit(view.uri.namespace.clone(), toggled_ignored).to_string();
+
         TmplPageCommit {
-            entries: Self::entries(view.entries_modified, view.entries_rest),
+            entries: Self::entries(
+                view.entries_modified,
+                view.entries_rest,
+                view.entries_ignored,
+            ),
             message: view.message,
             user_meta: view.user_meta,
             workflow: Self::workflow(view.workflow, &view.origin, &view.uri),
@@ -414,7 +495,13 @@ impl From<ViewCommit> for TmplPageCommit<'_> {
                 .set_primary_action(Self::primary_button())
                 .set_breadcrumbs(Self::breadcrumbs(&view.uri))
                 .set_uri(Some(view.uri.clone())),
-            uri: view.uri,
+            uri: view.uri.clone(),
+            filter_unmodified_checked: view.filter.unmodified,
+            filter_unmodified_href,
+            filter_ignored_checked: view.filter.ignored,
+            filter_ignored_href,
+            ignored_count: view.ignored_count,
+            unmodified_count: view.unmodified_count,
         }
     }
 }
@@ -433,6 +520,8 @@ mod tests {
         let html = ViewCommit {
             entries_modified: vec![],
             entries_rest: vec![],
+            entries_ignored: vec![],
+            filter: EntriesFilter::default(),
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
             origin: url::Url::parse("https://test.quilt.dev/C/packages/A/B")?,
             message: ViewCommitMessage {
@@ -443,6 +532,8 @@ mod tests {
                 value: "".to_string(),
                 error: None,
             },
+            ignored_count: 0,
+            unmodified_count: 0,
             workflow: Some(ViewCommitWorkflow {
                 error: None,
                 id: None,
@@ -566,6 +657,8 @@ mod tests {
         let html = ViewCommit {
             entries_modified: vec![],
             entries_rest: vec![],
+            entries_ignored: vec![],
+            filter: EntriesFilter::default(),
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
             origin: url::Url::parse("https://test.quilt.dev/C/packages/A/B")?,
             message: ViewCommitMessage {
@@ -576,6 +669,8 @@ mod tests {
                 value: "".to_string(),
                 error: None,
             },
+            ignored_count: 0,
+            unmodified_count: 0,
             workflow: Some(ViewCommitWorkflow {
                 error: None,
                 id: Some(workflow_id.to_string()),
@@ -597,6 +692,8 @@ mod tests {
         let html = ViewCommit {
             entries_modified: vec![],
             entries_rest: vec![],
+            entries_ignored: vec![],
+            filter: EntriesFilter::default(),
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
             origin: url::Url::parse("https://test.quilt.dev/C/packages/A/B")?,
             message: ViewCommitMessage {
@@ -607,6 +704,8 @@ mod tests {
                 value: "".to_string(),
                 error: None,
             },
+            ignored_count: 0,
+            unmodified_count: 0,
             workflow: Some(ViewCommitWorkflow {
                 error: None,
                 id: None,
@@ -627,10 +726,14 @@ mod tests {
         let html = ViewCommit {
             entries_modified: vec![],
             entries_rest: vec![],
+            entries_ignored: vec![],
+            filter: EntriesFilter::default(),
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
             origin: url::Url::parse("https://test.quilt.dev/C/packages/A/B")?,
             message: ViewCommitMessage::default(),
             user_meta: ViewCommitUserMeta::default(),
+            ignored_count: 0,
+            unmodified_count: 0,
             workflow: None,
         }
         .render()?;

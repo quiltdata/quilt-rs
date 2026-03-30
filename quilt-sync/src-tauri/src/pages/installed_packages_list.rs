@@ -7,6 +7,7 @@ use crate::model::QuiltModel;
 use crate::quilt;
 use crate::quilt::lineage::UpstreamState;
 use crate::quilt::uri::Namespace;
+use crate::routes::EntriesFilter;
 use crate::routes::Paths;
 use crate::telemetry::prelude::*;
 use crate::ui::btn;
@@ -103,7 +104,7 @@ impl<'a> TmplInstalledPackage<'a> {
             .set_icon(Icon::Commit)
             .set_label(t!("buttons.commit_package"))
             .set_size(btn::Size::Small)
-            .set_href(Paths::Commit(namespace.clone()))
+            .set_href(Paths::Commit(namespace.clone(), EntriesFilter::default()))
     }
 
     fn button_uninstall(namespace: &Namespace) -> btn::TmplButton<'a> {
