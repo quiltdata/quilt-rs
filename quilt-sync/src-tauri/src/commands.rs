@@ -825,6 +825,11 @@ async fn add_to_quiltignore_command(
     let package_home = m.package_home(&namespace).await?;
     let quiltignore_path = package_home.join(".quiltignore");
 
+    // Read first to check trailing newline, before opening for append
+    let needs_newline = std::fs::read_to_string(&quiltignore_path)
+        .map(|s| !s.is_empty() && !s.ends_with('\n'))
+        .unwrap_or(false);
+
     use std::io::Write;
     let mut file = std::fs::OpenOptions::new()
         .create(true)
@@ -832,10 +837,6 @@ async fn add_to_quiltignore_command(
         .open(&quiltignore_path)
         .map_err(|e| Error::General(format!("Failed to open .quiltignore: {e}")))?;
 
-    // Ensure we start on a new line
-    let needs_newline = std::fs::read_to_string(&quiltignore_path)
-        .map(|s| !s.is_empty() && !s.ends_with('\n'))
-        .unwrap_or(false);
     if needs_newline {
         writeln!(file).map_err(|e| Error::General(e.to_string()))?;
     }
