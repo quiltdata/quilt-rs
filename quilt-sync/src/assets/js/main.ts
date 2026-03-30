@@ -1114,6 +1114,13 @@ async function checkForUpdates() {
 }
 
 window.addEventListener("DOMContentLoaded", async () => {
+  const popupOverlay = document.querySelector(".qui-popup");
+  popupOverlay?.addEventListener("click", (e) => {
+    if (e.target === popupOverlay) {
+      dismissPopup();
+    }
+  });
+
   await loadCurrentPage();
   await checkForUpdates();
 });
