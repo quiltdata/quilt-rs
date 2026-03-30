@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::HashMap;
 
 use askama::Template;
 use rust_i18n::t;
@@ -235,7 +236,7 @@ impl ViewCommit {
 
         let remote_manifest = model.browse_remote_manifest(&lineage.remote).await?;
         // Build lookup maps for junky files
-        let junky_map: std::collections::HashMap<_, _> = status
+        let junky_map: HashMap<_, _> = status
             .junky_changes
             .iter()
             .map(|(p, pat)| (p.clone(), pat.clone()))

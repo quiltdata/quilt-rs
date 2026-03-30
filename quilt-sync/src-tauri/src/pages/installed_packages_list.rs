@@ -106,7 +106,7 @@ impl<'a> TmplInstalledPackage<'a> {
             .set_size(btn::Size::Small)
             .set_href(Paths::Commit(
                 namespace.clone(),
-                crate::routes::EntriesFilter::default(),
+                EntriesFilter::default(),
             ))
     }
 

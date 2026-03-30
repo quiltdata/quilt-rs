@@ -13,6 +13,8 @@ use crate::checksum::verify_hash;
 use crate::io::manifest::resolve_tag;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
+use crate::junk;
+use crate::quiltignore;
 use crate::io::storage::Storage;
 use crate::lineage::Change;
 use crate::lineage::ChangeSet;
@@ -90,7 +92,7 @@ async fn locate_files_in_package_home(
                 if file_type.is_dir() {
                     if let Some(gi) = quiltignore {
                         let rel = file_path.strip_prefix(package_home)?;
-                        if crate::quiltignore::is_ignored(gi, rel, true) {
+                        if quiltignore::is_ignored(gi, rel, true) {
                             continue;
                         }
                     }
@@ -104,7 +106,7 @@ async fn locate_files_in_package_home(
 
             let logical_key = file_path.strip_prefix(package_home)?.to_path_buf();
             if let Some(gi) = quiltignore {
-                if let Some(pattern) = crate::quiltignore::matched_pattern(gi, &logical_key, false)
+                if let Some(pattern) = quiltignore::matched_pattern(gi, &logical_key, false)
                 {
                     ignored_files.push((logical_key, file_path, pattern));
                     continue;
@@ -205,7 +207,7 @@ pub async fn create_status(
     }
     debug!("✔️ Found {} paths in lineage", orig_paths.len());
 
-    let quiltignore = crate::quiltignore::load(package_home.as_ref())?;
+    let quiltignore = quiltignore::load(package_home.as_ref())?;
     let locate_result = locate_files_in_package_home(
         storage,
         manifest,
@@ -231,7 +233,7 @@ pub async fn create_status(
     // Detect junky files among the changes
     let junky_changes: Vec<(PathBuf, String)> = changes
         .keys()
-        .filter_map(|path| crate::junk::check(path).map(|m| (path.clone(), m.pattern)))
+        .filter_map(|path| junk::check(path).map(|m| (path.clone(), m.pattern)))
         .collect();
 
     debug!("⏳ Creating package status");

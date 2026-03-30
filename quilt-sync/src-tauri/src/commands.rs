@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -830,7 +831,6 @@ async fn add_to_quiltignore_command(
         .map(|s| !s.is_empty() && !s.ends_with('\n'))
         .unwrap_or(false);
 
-    use std::io::Write;
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)

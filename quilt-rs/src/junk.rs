@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::OnceLock;
 
@@ -66,7 +67,7 @@ const HARDCODED: &[&str] = &[
 fn build_matcher() -> Gitignore {
     let mut builder = GitignoreBuilder::new("/");
 
-    let blocklist_set: std::collections::HashSet<&str> = BLOCKLIST.iter().copied().collect();
+    let blocklist_set: HashSet<&str> = BLOCKLIST.iter().copied().collect();
 
     // Load all Global templates from the gitignores crate
     for name in gitignores::Global::list() {

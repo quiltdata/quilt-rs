@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::HashMap;
 
 use askama::Template;
 use rust_i18n::t;
@@ -85,7 +86,7 @@ impl TmplStatus<'_> {
                             host.clone(),
                             Paths::InstalledPackage(
                                 namespace.clone(),
-                                crate::routes::EntriesFilter::for_installed_package(),
+                                EntriesFilter::for_installed_package(),
                             )
                             .to_string(),
                         )),
@@ -143,7 +144,7 @@ impl<'a> TmplPageInstalledPackage<'a> {
             .set_icon(Icon::ArrowForward)
             .set_href(Paths::Commit(
                 uri.namespace.clone(),
-                crate::routes::EntriesFilter::default(),
+                EntriesFilter::default(),
             ))
             .set_label(t!("installed_package.commit"))
             .set_size(btn::Size::Large)
@@ -238,7 +239,7 @@ impl ViewInstalledPackage {
             .await?;
 
         // Build lookup maps for junky and ignored files
-        let junky_map: std::collections::HashMap<_, _> = status
+        let junky_map: HashMap<_, _> = status
             .junky_changes
             .iter()
             .map(|(p, pat)| (p.clone(), pat.clone()))
