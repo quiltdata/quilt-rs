@@ -331,6 +331,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             None => {
                 lineage.remote_uri = Some(ManifestUri {
                     origin: Some(origin),
+                    namespace: self.namespace.clone(),
                     ..ManifestUri::default()
                 });
             }

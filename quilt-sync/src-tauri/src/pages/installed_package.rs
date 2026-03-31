@@ -458,7 +458,7 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
             .set_breadcrumbs(Self::breadcrumbs(&uri))
             .set_actions(Self::actions(&uri, origin.as_ref()))
             .set_uri(Some(uri.clone()));
-        let layout = if matches!(status, UpstreamState::Error | UpstreamState::Local) {
+        let layout = if matches!(status, UpstreamState::Error) {
             layout
         } else {
             layout.set_primary_action(Self::primary_button(&uri, &status))
@@ -671,8 +671,8 @@ mod tests {
         assert!(!html.contains(r#"js-set-origin"#));
         assert!(!html.contains(r#"warning"#));
 
-        // Should not show commit button (no remote to push to)
-        assert!(!html.contains(r#"href="commit.html"#));
+        // Should show commit button (local packages can be committed)
+        assert!(html.contains(r#"href="commit.html"#));
 
         // Should still show basic page structure
         assert!(html.contains(r#"data-testid="installed-package-entries""#));
