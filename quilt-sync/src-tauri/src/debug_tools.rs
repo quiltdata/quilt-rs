@@ -5,6 +5,38 @@ pub fn try_remote_origin_host(uri: &quilt::uri::ManifestUri) -> Result<quilt::ur
     uri.origin.clone().ok_or(Error::MissingOrigin)
 }
 
+/// Resolve the package URI and origin host from lineage.
+///
+/// For remote packages, derives both from the `ManifestUri`.
+/// For local-only packages, builds a placeholder URI from the namespace.
+pub fn resolve_uri_and_host(
+    remote_uri: Option<&quilt::uri::ManifestUri>,
+    namespace: &quilt::uri::Namespace,
+) -> (quilt::uri::S3PackageUri, Option<quilt::uri::Host>) {
+    match remote_uri {
+        Some(remote_uri) => {
+            let uri = quilt::uri::S3PackageUri::from(remote_uri);
+            let host = try_remote_origin_host(remote_uri).ok();
+            (uri, host)
+        }
+        // TODO: local-only packages only need `namespace` here, but pages
+        // and ViewEntry thread a full S3PackageUri everywhere.
+        // Refactor view models to use Namespace directly instead of a fake URI.
+        None => {
+            let uri = quilt::uri::S3PackageUri {
+                catalog: None,
+                bucket: String::new(),
+                namespace: namespace.clone(),
+                revision: quilt::uri::RevisionPointer::Tag(
+                    quilt::uri::LATEST_TAG.to_string(),
+                ),
+                path: None,
+            };
+            (uri, None)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

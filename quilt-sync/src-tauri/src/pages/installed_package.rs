@@ -209,29 +209,11 @@ impl ViewInstalledPackage {
             .await?;
 
         // TODO: just use remote_manifest?
-        let (uri, origin_host) = match lineage.remote_uri.as_ref() {
-            Some(remote_uri) => {
-                let uri = quilt::uri::S3PackageUri::from(remote_uri);
-                let host = match debug_tools::try_remote_origin_host(remote_uri) {
-                    Ok(host) => {
-                        tracing.add_host(&host);
-                        Some(host)
-                    }
-                    Err(_) => None,
-                };
-                (uri, host)
-            }
-            None => {
-                let uri = quilt::uri::S3PackageUri {
-                    catalog: None,
-                    bucket: String::new(),
-                    namespace: namespace.clone(),
-                    revision: quilt::uri::RevisionPointer::Tag(quilt::uri::LATEST_TAG.to_string()),
-                    path: None,
-                };
-                (uri, None)
-            }
-        };
+        let (uri, origin_host) =
+            debug_tools::resolve_uri_and_host(lineage.remote_uri.as_ref(), namespace);
+        if let Some(host) = &origin_host {
+            tracing.add_host(host);
+        }
 
         let status = if lineage.remote_uri.is_none() || origin_host.is_some() {
             match model
