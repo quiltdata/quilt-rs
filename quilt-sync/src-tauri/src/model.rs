@@ -125,7 +125,10 @@ pub trait QuiltModel {
                 let package_lineage = self
                     .get_installed_package_lineage(&installed_package)
                     .await?;
-                let installed_manifest_uri = package_lineage.remote()?;
+                let installed_manifest_uri = match package_lineage.remote_uri.as_ref() {
+                    Some(uri) => uri,
+                    None => return Ok(None),
+                };
                 if manifest_uri.hash == installed_manifest_uri.hash {
                     Ok(Some(installed_package))
                 } else {

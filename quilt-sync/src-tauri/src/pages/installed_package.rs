@@ -478,7 +478,11 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
                             .set_type(btn::ButtonType::Submit)
                             .set_label(t!("buttons.install_selected_paths")),
                         show_button: has_remote_entries,
-                        with_status: !matches!(status, quilt::lineage::UpstreamState::UpToDate),
+                        with_status: !matches!(
+                            status,
+                            quilt::lineage::UpstreamState::UpToDate
+                                | quilt::lineage::UpstreamState::Local
+                        ),
                         filter_unmodified_checked: filter.unmodified,
                         filter_unmodified_href,
                         filter_ignored_checked: filter.ignored,
