@@ -9,6 +9,8 @@ use serde::Serialize;
 
 use crate::lineage::status::UpstreamState;
 use crate::uri::ManifestUri;
+use crate::Error;
+use crate::Res;
 
 fn multihash_to_str<S: ser::Serializer>(
     hash: &Multihash<256>,
@@ -64,8 +66,9 @@ pub struct CommitState {
 pub struct PackageLineage {
     /// Local commits
     pub commit: Option<CommitState>,
-    /// Where we installed this package from
-    pub remote: ManifestUri,
+    /// Where we installed this package from. `None` for local-only packages.
+    #[serde(default, rename = "remote", skip_serializing_if = "Option::is_none")]
+    pub remote_uri: Option<ManifestUri>,
     // TODO: I don't understand yet how and why we use it
     pub base_hash: String,
     /// Latest tracked hash. In other words, what was the remote hash when we last checked.
@@ -78,8 +81,11 @@ pub struct PackageLineage {
 
 impl From<PackageLineage> for UpstreamState {
     fn from(lineage: PackageLineage) -> Self {
+        if lineage.remote_uri.is_none() {
+            return Self::Local;
+        }
         let behind = lineage.base_hash != lineage.latest_hash;
-        let ahead = lineage.base_hash != lineage.current_hash();
+        let ahead = lineage.base_hash != lineage.current_hash().unwrap_or_default();
         match (ahead, behind) {
             (false, false) => Self::UpToDate,
             (false, true) => Self::Behind,
@@ -90,18 +96,37 @@ impl From<PackageLineage> for UpstreamState {
 }
 
 impl PackageLineage {
+    /// Returns the remote ManifestUri, or an error if this is a local-only package.
+    pub fn remote(&self) -> Res<&ManifestUri> {
+        self.remote_uri.as_ref().ok_or(Error::NoRemote)
+    }
+
+    /// Returns a mutable reference to the remote ManifestUri,
+    /// or an error if this is a local-only package.
+    pub fn remote_mut(&mut self) -> Res<&mut ManifestUri> {
+        self.remote_uri.as_mut().ok_or(Error::NoRemote)
+    }
+
     pub fn from_remote(remote: ManifestUri, latest_hash: String) -> Self {
         Self {
             base_hash: remote.hash.clone(),
-            remote,
+            remote_uri: Some(remote),
             latest_hash,
             commit: None,
             paths: BTreeMap::new(),
         }
     }
 
-    pub fn current_hash(&self) -> &str {
-        self.commit.as_ref().map_or(&self.remote.hash, |c| &c.hash)
+    pub fn current_hash(&self) -> Option<&str> {
+        self.commit
+            .as_ref()
+            .map(|c| c.hash.as_str())
+            .or(self.remote_uri.as_ref().map(|r| r.hash.as_str()))
+            .or(if self.base_hash.is_empty() {
+                None
+            } else {
+                Some(self.base_hash.as_str())
+            })
     }
 
     pub fn update_latest(&mut self, manifest_uri: ManifestUri) {
@@ -115,10 +140,35 @@ impl From<ManifestUri> for PackageLineage {
     fn from(uri: ManifestUri) -> Self {
         Self {
             base_hash: uri.hash.clone(),
-            remote: uri.clone(),
+            remote_uri: Some(uri.clone()),
             latest_hash: uri.hash.clone(),
             commit: None,
             paths: BTreeMap::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_is_local() {
+        assert_eq!(
+            UpstreamState::from(PackageLineage::default()),
+            UpstreamState::Local
+        );
+    }
+
+    #[test]
+    fn test_remote_returns_no_remote_error() {
+        let lineage = PackageLineage::default();
+        assert!(matches!(lineage.remote(), Err(Error::NoRemote)));
+    }
+
+    #[test]
+    fn test_current_hash_without_remote() {
+        let lineage = PackageLineage::default();
+        assert_eq!(lineage.current_hash(), None);
     }
 }

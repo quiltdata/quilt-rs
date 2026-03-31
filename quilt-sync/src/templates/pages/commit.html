@@ -3,6 +3,7 @@
 {% block children %}
   <style>
     @import url("/assets/css/pages/commit.css");
+    @import url("/assets/css/components/entries-filter.css");
   </style>
 
   <div class="qui-page-commit container container-wide">
@@ -58,6 +59,11 @@
     <div class="files">
       <div class="list">
         <div>
+          {% include "./components/entries-filter.html" %}
+          {% if ignored_count > 0 || unmodified_count > 0 %}
+          <div class="list-separator"></div>
+          {% endif %}
+
           {% for entries_list in entries %}
             {% for entry in entries_list %}
               {{ entry | safe }}

@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -814,6 +815,63 @@ pub async fn package_install_paths(
         msg_ok,
         msg_err,
     )
+}
+
+async fn add_to_quiltignore_command(
+    m: &model::Model,
+    namespace: &str,
+    pattern: &str,
+) -> Result<(), Error> {
+    let namespace = quilt::uri::Namespace::try_from(namespace)?;
+    let package_home = m.package_home(&namespace).await?;
+    let quiltignore_path = package_home.join(".quiltignore");
+
+    // Take only the first line to prevent injecting multiple rules
+    let pattern = pattern.lines().next().unwrap_or(pattern);
+
+    // Read first to check trailing newline, before opening for append
+    let needs_newline = std::fs::read_to_string(&quiltignore_path)
+        .map(|s| !s.is_empty() && !s.ends_with('\n'))
+        .unwrap_or(false);
+
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&quiltignore_path)
+        .map_err(|e| Error::General(format!("Failed to open .quiltignore: {e}")))?;
+
+    if needs_newline {
+        writeln!(file).map_err(|e| Error::General(e.to_string()))?;
+    }
+    writeln!(file, "{pattern}").map_err(|e| Error::General(e.to_string()))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn add_to_quiltignore(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    namespace: String,
+    pattern: String,
+) -> Result<String, String> {
+    tracing.track(MixpanelEvent::QuiltignorePatternAdded).await;
+    let m: &model::Model = &m;
+
+    let msg_init = format!("Adding {pattern} to .quiltignore");
+    let msg_ok = format!("Added {pattern} to .quiltignore");
+    let msg_err = |err: &Error| format!("Failed to update .quiltignore: {err}");
+
+    TmplNotify::new(msg_init).map(
+        add_to_quiltignore_command(m, &namespace, &pattern).await,
+        msg_ok,
+        msg_err,
+    )
+}
+
+#[tauri::command]
+pub async fn test_quiltignore_pattern(pattern: String, path: String) -> Result<bool, String> {
+    Ok(quilt::junk::pattern_matches(&pattern, &path))
 }
 
 #[cfg(test)]

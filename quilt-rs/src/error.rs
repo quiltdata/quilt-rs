@@ -164,6 +164,9 @@ pub enum Error {
     #[error("Invalid namespace: {0}")]
     Namespace(String),
 
+    #[error("Operation requires a remote origin, but this is a local-only package")]
+    NoRemote,
+
     #[error("Failed to get checksum from S3: {0}")]
     NoS3Checksum(String),
 

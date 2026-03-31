@@ -35,6 +35,10 @@ pub struct ViewEntry {
     pub status: EntryStatus,
     pub uri: quilt::uri::S3PackageUri,
     pub origin: Option<url::Url>,
+    /// If Some, file is detected as junk — show eye-off button with this pattern
+    pub junky_pattern: Option<String>,
+    /// If Some, file is already ignored by .quiltignore — show eye-on button
+    pub ignored_by: Option<String>,
 }
 
 #[derive(Template)]
@@ -53,13 +57,19 @@ pub struct TmplEntry<'a> {
     size: u64,
     checkbox: Option<TmplCheckbox>,
     actions: Vec<btn::TmplButton<'a>>,
+    junky: bool,
+    ignored: bool,
 }
 
 impl From<ViewEntry> for TmplEntry<'_> {
     fn from(view: ViewEntry) -> Self {
+        let junky = view.junky_pattern.is_some();
+        let ignored = view.ignored_by.is_some();
+
         let mut actions = Vec::new();
         if !matches!(view.status, EntryStatus::Remote)
             && !matches!(view.status, EntryStatus::Deleted)
+            && !ignored
         {
             actions.push(
                 btn::TmplButton::builder()
@@ -94,25 +104,62 @@ impl From<ViewEntry> for TmplEntry<'_> {
                 );
             }
         }
+
+        // Eye-off button for junky files (suggest ignoring)
+        if let Some(pattern) = &view.junky_pattern {
+            actions.push(
+                btn::TmplButton::builder()
+                    .set_js(btn::JsSelector::IgnoreEntry)
+                    .set_label("Ignore")
+                    .set_size(btn::Size::Small)
+                    .set_data("namespace", view.uri.namespace.to_string())
+                    .set_data("path", view.filename.display().to_string())
+                    .set_data("pattern", pattern.clone())
+                    .set_icon(Icon::VisibilityOff),
+            );
+        }
+
+        // Eye-on button for ignored files (show why / edit)
+        if let Some(pattern) = &view.ignored_by {
+            actions.push(
+                btn::TmplButton::builder()
+                    .set_js(btn::JsSelector::UnignoreEntry)
+                    .set_label("Ignored")
+                    .set_size(btn::Size::Small)
+                    .set_data("namespace", view.uri.namespace.to_string())
+                    .set_data("pattern", pattern.clone())
+                    .set_icon(Icon::Visibility),
+            );
+        }
+
         TmplEntry {
             filename: view.filename,
             status: view.status,
             size: view.size,
             checkbox: None,
             actions,
+            junky,
+            ignored,
         }
     }
 }
 
 impl TmplEntry<'_> {
-    fn get_class_name_modificators(&self) -> &str {
-        match self.status {
+    fn get_class_name_modificators(&self) -> String {
+        let mut classes = vec![match self.status {
             EntryStatus::Added => "added",
             EntryStatus::Deleted => "deleted",
             EntryStatus::Modified => "modified",
             EntryStatus::Pristine => "pristine",
             EntryStatus::Remote => "remote",
+        }];
+        if self.junky {
+            classes.push("junky");
         }
+        if self.ignored {
+            classes.push("ignored");
+        }
+        classes.join(" ")
     }
 
     fn display_status(&self) -> &str {
@@ -157,6 +204,8 @@ mod tests {
             size: 0,
             status: EntryStatus::Modified,
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://b#package=a/b").unwrap(),
+            junky_pattern: None,
+            ignored_by: None,
         }
     }
 
@@ -197,6 +246,8 @@ mod tests {
             size: 0,
             checkbox: None,
             actions: vec![],
+            junky: false,
+            ignored: false,
         };
 
         let entry_deleted = TmplEntry {
@@ -205,6 +256,8 @@ mod tests {
             size: 0,
             checkbox: None,
             actions: vec![],
+            junky: false,
+            ignored: false,
         };
 
         let entry_modified = TmplEntry {
@@ -213,6 +266,8 @@ mod tests {
             size: 0,
             checkbox: None,
             actions: vec![],
+            junky: false,
+            ignored: false,
         };
 
         let entry_pristine = TmplEntry {
@@ -221,6 +276,8 @@ mod tests {
             size: 0,
             checkbox: None,
             actions: vec![],
+            junky: false,
+            ignored: false,
         };
 
         let entry_remote = TmplEntry {
@@ -229,6 +286,8 @@ mod tests {
             size: 0,
             checkbox: None,
             actions: vec![],
+            junky: false,
+            ignored: false,
         };
 
         assert_eq!(entry_added.display_status(), "New");
@@ -246,6 +305,8 @@ mod tests {
             size: 0,
             checkbox: None,
             actions: vec![],
+            junky: false,
+            ignored: false,
         };
 
         let entry_deleted = TmplEntry {
@@ -254,6 +315,8 @@ mod tests {
             size: 0,
             checkbox: None,
             actions: vec![],
+            junky: false,
+            ignored: false,
         };
 
         let entry_modified = TmplEntry {
@@ -262,6 +325,8 @@ mod tests {
             size: 0,
             checkbox: None,
             actions: vec![],
+            junky: false,
+            ignored: false,
         };
 
         let entry_pristine = TmplEntry {
@@ -270,6 +335,8 @@ mod tests {
             size: 0,
             checkbox: None,
             actions: vec![],
+            junky: false,
+            ignored: false,
         };
 
         let entry_remote = TmplEntry {
@@ -278,6 +345,8 @@ mod tests {
             size: 0,
             checkbox: None,
             actions: vec![],
+            junky: false,
+            ignored: false,
         };
 
         assert_eq!(entry_added.get_class_name_modificators(), "added");
@@ -296,6 +365,8 @@ mod tests {
             size: 0,
             checkbox: None,
             actions: vec![],
+            junky: false,
+            ignored: false,
         };
 
         let entry_with_checkbox = entry_remote.set_checkbox(true);
@@ -312,6 +383,8 @@ mod tests {
             size: 0,
             checkbox: None,
             actions: vec![],
+            junky: false,
+            ignored: false,
         };
 
         let entry_with_checkbox = entry_modified.set_checkbox(false);
@@ -340,6 +413,8 @@ mod tests {
                 size: *size_bytes,
                 checkbox: None,
                 actions: vec![],
+                junky: false,
+                ignored: false,
             };
 
             assert_eq!(entry.display_size(), *expected_str);

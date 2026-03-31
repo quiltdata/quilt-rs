@@ -2633,6 +2633,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "gitignores"
+version = "4.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9743c62b84fcd3dd3d460951601a53b1db3cec48705e4175824d0b04751d2319"
+
+[[package]]
 name = "glib"
 version = "0.18.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4908,6 +4914,7 @@ dependencies = [
  "futures",
  "futures-util",
  "getrandom 0.4.2",
+ "gitignores",
  "hex",
  "ignore",
  "multibase",

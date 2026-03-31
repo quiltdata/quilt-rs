@@ -108,6 +108,8 @@ fn main() {
             commands::reveal_in_file_browser,
             commands::set_origin,
             commands::setup,
+            commands::add_to_quiltignore,
+            commands::test_quiltignore_pattern,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

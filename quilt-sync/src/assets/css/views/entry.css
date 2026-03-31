@@ -107,6 +107,14 @@
     margin-left: 8px;
   }
 
+  &.ignored {
+    opacity: 0.5;
+  }
+
+  &.ignored .text-primary {
+    color: var(--q-ui-palette-text-secondary);
+  }
+
   .qui-button {
     line-height: 1.5;
   }

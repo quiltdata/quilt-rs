@@ -24,6 +24,7 @@ aws-types.workspace = true
 chrono.workspace = true
 dirs.workspace = true
 getrandom.workspace = true
+gitignores.workspace = true
 futures.workspace = true
 futures-util.workspace = true
 hex.workspace = true

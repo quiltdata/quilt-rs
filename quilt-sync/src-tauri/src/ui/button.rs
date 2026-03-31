@@ -72,6 +72,10 @@ pub enum JsSelector {
     OpenHomeDir,
     #[template(source = "js-open-data-dir", ext = "txt")]
     OpenDataDir,
+    #[template(source = "js-ignore-entry", ext = "txt")]
+    IgnoreEntry,
+    #[template(source = "js-unignore-entry", ext = "txt")]
+    UnignoreEntry,
 }
 
 #[derive(Template)]
