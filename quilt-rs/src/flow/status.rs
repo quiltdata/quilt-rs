@@ -23,7 +23,6 @@ use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
 use crate::quiltignore;
 use crate::uri::Tag;
-use crate::Error;
 use crate::Res;
 
 /// Refreshes the tracked `latest_hash` property in lineage.json
@@ -192,13 +191,17 @@ pub async fn create_status(
     let mut orig_paths = HashMap::new();
     for path in lineage.paths.keys() {
         debug!("🔍 Checking manifest for path: {}", path.display());
-        let row = manifest
-            .get_record(path)
-            .ok_or(Error::ManifestPath(format!(
-                "path {} not found in installed manifest",
-                path.display()
-            )))?;
-        orig_paths.insert(path.clone(), row.clone());
+        match manifest.get_record(path) {
+            Some(row) => {
+                orig_paths.insert(path.clone(), row.clone());
+            }
+            None => {
+                warn!(
+                    "Lineage path {} not found in manifest, skipping",
+                    path.display()
+                );
+            }
+        }
     }
     debug!("✔️ Found {} paths in lineage", orig_paths.len());
 

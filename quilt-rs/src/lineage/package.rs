@@ -122,6 +122,11 @@ impl PackageLineage {
             .as_ref()
             .map(|c| c.hash.as_str())
             .or(self.remote_uri.as_ref().map(|r| r.hash.as_str()))
+            .or(if self.base_hash.is_empty() {
+                None
+            } else {
+                Some(self.base_hash.as_str())
+            })
     }
 
     pub fn update_latest(&mut self, manifest_uri: ManifestUri) {

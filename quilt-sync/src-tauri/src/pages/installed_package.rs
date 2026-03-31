@@ -232,21 +232,19 @@ impl ViewInstalledPackage {
             }
         };
 
-        let status = match lineage.remote_uri.as_ref() {
-            None => quilt::lineage::InstalledPackageStatus::local(),
-            Some(_) if origin_host.is_some() => {
-                match model
-                    .get_installed_package_status(&installed_package, None)
-                    .await
-                {
-                    Ok(status) => status,
-                    Err(err) => {
-                        warn!("Failed to get status for {namespace}: {err}");
-                        quilt::lineage::InstalledPackageStatus::error()
-                    }
+        let status = if lineage.remote_uri.is_none() || origin_host.is_some() {
+            match model
+                .get_installed_package_status(&installed_package, None)
+                .await
+            {
+                Ok(status) => status,
+                Err(err) => {
+                    warn!("Failed to get status for {namespace}: {err}");
+                    quilt::lineage::InstalledPackageStatus::error()
                 }
             }
-            Some(_) => quilt::lineage::InstalledPackageStatus::error(),
+        } else {
+            quilt::lineage::InstalledPackageStatus::error()
         };
 
         let modified_entries = &status.changes;
