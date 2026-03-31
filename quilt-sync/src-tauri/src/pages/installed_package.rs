@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use askama::Template;
 use rust_i18n::t;
 
-use crate::error::Error;
 use crate::debug_tools;
+use crate::error::Error;
 use crate::model::QuiltModel;
 use crate::quilt;
 use crate::quilt::lineage::Change;

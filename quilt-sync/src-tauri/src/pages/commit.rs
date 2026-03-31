@@ -340,19 +340,19 @@ impl ViewCommit {
         };
 
         // Load remote manifest for user_meta and workflow (only if remote has a manifest hash)
-        let (user_meta, workflow) =
-            match lineage.remote_uri.as_ref().filter(|r| !r.hash.is_empty()) {
-                Some(remote_uri) => {
-                    let remote_manifest = model.browse_remote_manifest(remote_uri).await?;
-                    let user_meta = parse_commit_user_meta(&remote_manifest.header);
-                    let workflow = origin_host
-                        .as_ref()
-                        .and_then(|host| parse_commit_workflow(&remote_manifest.header, host).ok())
-                        .flatten();
-                    (user_meta, workflow)
-                }
-                None => (ViewCommitUserMeta::default(), None),
-            };
+        let (user_meta, workflow) = match lineage.remote_uri.as_ref().filter(|r| !r.hash.is_empty())
+        {
+            Some(remote_uri) => {
+                let remote_manifest = model.browse_remote_manifest(remote_uri).await?;
+                let user_meta = parse_commit_user_meta(&remote_manifest.header);
+                let workflow = origin_host
+                    .as_ref()
+                    .and_then(|host| parse_commit_workflow(&remote_manifest.header, host).ok())
+                    .flatten();
+                (user_meta, workflow)
+            }
+            None => (ViewCommitUserMeta::default(), None),
+        };
 
         Ok(ViewCommit {
             entries_modified,
