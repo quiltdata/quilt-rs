@@ -221,7 +221,7 @@ impl ViewCommit {
         let installed_package = model
             .get_installed_package(namespace)
             .await?
-            .unwrap_or_else(|| panic!("Package not found, {}", &namespace));
+            .ok_or_else(|| Error::Quilt(quilt::Error::PackageNotInstalled(namespace.clone())))?;
         let status = model
             .get_installed_package_status(&installed_package, None)
             .await?;

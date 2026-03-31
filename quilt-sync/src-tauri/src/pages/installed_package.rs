@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use askama::Template;
 use rust_i18n::t;
 
+use crate::error::Error;
 use crate::debug_tools;
 use crate::model::QuiltModel;
 use crate::quilt;
@@ -201,7 +202,7 @@ impl ViewInstalledPackage {
         let installed_package = model
             .get_installed_package(namespace)
             .await?
-            .unwrap_or_else(|| panic!("Package not found, {}", &namespace));
+            .ok_or_else(|| Error::Quilt(quilt::Error::PackageNotInstalled(namespace.clone())))?;
 
         let lineage = model
             .get_installed_package_lineage(&installed_package)
