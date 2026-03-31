@@ -23,6 +23,7 @@ use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
 use crate::quiltignore;
 use crate::uri::Tag;
+use crate::Error;
 use crate::Res;
 
 /// Refreshes the tracked `latest_hash` property in lineage.json
@@ -195,11 +196,17 @@ pub async fn create_status(
             Some(row) => {
                 orig_paths.insert(path.clone(), row.clone());
             }
-            None => {
+            None if lineage.remote_uri.is_none() => {
                 warn!(
-                    "Lineage path {} not found in manifest, skipping",
+                    "Lineage path {} not found in manifest, skipping (local-only package)",
                     path.display()
                 );
+            }
+            None => {
+                return Err(Error::ManifestPath(format!(
+                    "path {} not found in installed manifest",
+                    path.display()
+                )));
             }
         }
     }
