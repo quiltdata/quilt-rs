@@ -33,13 +33,7 @@ pub async fn reset_to_latest(
         remote_uri.display()
     );
     let origin = remote_uri.origin.clone();
-    let latest = resolve_tag(
-        remote,
-        &origin,
-        &remote_uri.into(),
-        Tag::Latest,
-    )
-    .await?;
+    let latest = resolve_tag(remote, &origin, &remote_uri.into(), Tag::Latest).await?;
     debug!("✔️ Latest hash resolved: {}", latest.hash);
 
     if latest.hash == lineage.remote()?.hash {

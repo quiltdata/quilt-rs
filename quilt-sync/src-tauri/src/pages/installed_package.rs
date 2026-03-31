@@ -225,9 +225,7 @@ impl ViewInstalledPackage {
                     catalog: None,
                     bucket: String::new(),
                     namespace: namespace.clone(),
-                    revision: quilt::uri::RevisionPointer::Tag(
-                        quilt::uri::LATEST_TAG.to_string(),
-                    ),
+                    revision: quilt::uri::RevisionPointer::Tag(quilt::uri::LATEST_TAG.to_string()),
                     path: None,
                 };
                 (uri, None)

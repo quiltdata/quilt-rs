@@ -514,9 +514,7 @@ mod tests {
 
             // Simulate remote objects
             let remote_uri = S3Uri::from_str(&place)?;
-            remote
-                .put_object(&None, &remote_uri, Vec::new())
-                .await?;
+            remote.put_object(&None, &remote_uri, Vec::new()).await?;
         }
 
         // Create references for the function call
