@@ -88,7 +88,7 @@ pub async fn push_package(
     namespace: Option<Namespace>,
     host_config: HostConfig,
 ) -> Res<PackageLineage> {
-    let commit = match lineage.commit {
+    let commit = match lineage.commit.take() {
         None => {
             info!("No changes to push");
             return Ok(lineage); // nothing to commit
@@ -96,8 +96,10 @@ pub async fn push_package(
         Some(commit) => commit,
     };
 
+    let remote_uri = lineage.remote()?.clone();
+
     debug!("⏳ Fetching remote manifest");
-    let remote_manifest = flow::browse(paths, storage, remote, &lineage.remote).await?;
+    let remote_manifest = flow::browse(paths, storage, remote, &remote_uri).await?;
     debug!("✔️ Remote manifest fetched");
 
     // ## copy data
@@ -106,12 +108,12 @@ pub async fn push_package(
     //
     // TODO: FAIL if the remote bucket does NOT support versioning (as it would be destructive)
 
-    let namespace = namespace.unwrap_or(lineage.remote.namespace.clone());
+    let namespace = namespace.unwrap_or(remote_uri.namespace.clone());
 
     debug!("⏳ Creating manifest URI");
     let manifest_uri = ManifestUri {
         namespace,
-        ..lineage.remote.clone()
+        ..remote_uri.clone()
     };
     debug!("✔️ Created manifest URI: {}", manifest_uri.display());
 
@@ -139,7 +141,7 @@ pub async fn push_package(
 
     let new_manifest_uri = ManifestUri {
         hash: top_hash,
-        ..lineage.remote.clone()
+        ..remote_uri.clone()
     };
 
     debug!(
@@ -164,7 +166,7 @@ pub async fn push_package(
     .hash;
     debug!("✔️ Latest hash is: {}", lineage.latest_hash);
 
-    lineage.remote = new_manifest_uri.clone();
+    lineage.remote_uri = Some(new_manifest_uri.clone());
     lineage.commit = None;
 
     if new_manifest_uri.hash != commit.hash {
@@ -237,7 +239,7 @@ mod tests {
                 hash: fixtures::top_hash::EMPTY_NULL_TOP_HASH.to_string(),
                 prev_hashes: Vec::new(),
             }),
-            remote: manifest_uri,
+            remote_uri: Some(manifest_uri),
             ..PackageLineage::default()
         };
         let manifest_key = format!(
@@ -286,7 +288,7 @@ mod tests {
         assert_eq!(
             lineage,
             PackageLineage {
-                remote: manifest_uri,
+                remote_uri: Some(manifest_uri),
                 base_hash: "".to_string(), // Huh?
                 latest_hash: "abcdef".to_string(),
                 ..PackageLineage::default()
@@ -309,7 +311,7 @@ mod tests {
                 hash: fixtures::manifest::TOP_HASH.to_string(),
                 prev_hashes: Vec::new(),
             }),
-            remote: manifest_uri,
+            remote_uri: Some(manifest_uri),
             ..PackageLineage::default()
         };
         let storage = MockStorage::default();
@@ -376,7 +378,7 @@ mod tests {
         assert_eq!(
             lineage,
             PackageLineage {
-                remote: manifest_uri,
+                remote_uri: Some(manifest_uri),
                 base_hash: "".to_string(), // Huh?
                 latest_hash: "latest-hash-abcdef".to_string(),
                 ..PackageLineage::default()

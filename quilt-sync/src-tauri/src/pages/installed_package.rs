@@ -109,7 +109,7 @@ impl TmplStatus<'_> {
                     secondary_button: None,
                 }),
             },
-            UpstreamState::UpToDate => None,
+            UpstreamState::Local | UpstreamState::UpToDate => None,
         }
     }
 }
@@ -208,8 +208,9 @@ impl ViewInstalledPackage {
             .await?;
 
         // TODO: just use remote_manifest?
-        let uri = quilt::uri::S3PackageUri::from(&lineage.remote);
-        let origin_host = match debug_tools::try_remote_origin_host(&lineage.remote) {
+        let remote_uri = lineage.remote()?;
+        let uri = quilt::uri::S3PackageUri::from(remote_uri);
+        let origin_host = match debug_tools::try_remote_origin_host(remote_uri) {
             Ok(host) => {
                 tracing.add_host(&host);
                 Some(host)

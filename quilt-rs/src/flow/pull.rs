@@ -46,7 +46,9 @@ pub async fn pull_package(
         return Err(Error::Package("package has pending commits".to_string()));
     }
 
-    if lineage.remote.hash != lineage.base_hash {
+    let remote_uri = lineage.remote()?.clone();
+
+    if remote_uri.hash != lineage.base_hash {
         error!("❌ Package has diverged from remote");
         return Err(Error::Package("package has diverged".to_string()));
     }
@@ -68,14 +70,22 @@ pub async fn pull_package(
     debug!("⏳ Updating lineage hashes");
     // TODO: uninstall_paths() just modified the lineage, so re-reading it here.
     // There needs to be a better way.
-    lineage.remote.hash.clone_from(&lineage.latest_hash);
+    lineage
+        .remote_uri
+        .as_mut()
+        .ok_or(Error::NoRemote)?
+        .hash
+        .clone_from(&lineage.latest_hash);
     lineage.base_hash.clone_from(&lineage.latest_hash);
 
+    let remote_uri = lineage.remote()?.clone();
+
     debug!("⏳ Resolving latest manifest");
+    let origin = remote_uri.origin.clone();
     let manifest_uri = resolve_tag(
         remote,
-        &lineage.remote.origin,
-        &lineage.remote.clone().into(),
+        &origin,
+        &remote_uri.into(),
         Tag::Latest,
     )
     .await?;
@@ -200,10 +210,10 @@ mod tests {
         let storage = MockStorage::default();
         let remote = MockRemote::default();
         let lineage = PackageLineage {
-            remote: ManifestUri {
+            remote_uri: Some(ManifestUri {
                 hash: "a".to_string(),
                 ..ManifestUri::default()
-            },
+            }),
             base_hash: "b".to_string(),
             ..PackageLineage::default()
         };
@@ -229,10 +239,10 @@ mod tests {
         let storage = MockStorage::default();
         let remote = MockRemote::default();
         let lineage = PackageLineage {
-            remote: ManifestUri {
+            remote_uri: Some(ManifestUri {
                 hash: "a".to_string(),
                 ..ManifestUri::default()
-            },
+            }),
             base_hash: "a".to_string(),
             latest_hash: "a".to_string(),
             ..PackageLineage::default()

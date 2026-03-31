@@ -230,11 +230,12 @@ impl ViewCommit {
             .get_installed_package_lineage(&installed_package)
             .await?;
 
-        let origin_host = debug_tools::try_remote_origin_host(&lineage.remote)?;
+        let remote_uri = lineage.remote()?;
+        let origin_host = debug_tools::try_remote_origin_host(remote_uri)?;
 
         tracing.add_host(&origin_host);
 
-        let remote_manifest = model.browse_remote_manifest(&lineage.remote).await?;
+        let remote_manifest = model.browse_remote_manifest(remote_uri).await?;
         // Build lookup maps for junky files
         let junky_map: HashMap<_, _> = status
             .junky_changes
@@ -244,7 +245,7 @@ impl ViewCommit {
 
         let mut entries_modified = Vec::new();
         for (filename, change) in &status.changes {
-            let mut uri = quilt::uri::S3PackageUri::from(&lineage.remote);
+            let mut uri = quilt::uri::S3PackageUri::from(remote_uri);
             uri.path = Some(filename.clone());
             let origin = Some(uri.display_for_host(&origin_host)?);
 
@@ -269,7 +270,7 @@ impl ViewCommit {
             .await?;
         let mut entries_rest = Vec::new();
         for (filename, row) in manifest_entries {
-            let uri = quilt::uri::S3PackageUri::from(&lineage.remote);
+            let uri = quilt::uri::S3PackageUri::from(remote_uri);
             if status.changes.contains_key(&filename) {
                 continue;
             }
@@ -296,7 +297,7 @@ impl ViewCommit {
         // Add ignored files
         let mut entries_ignored = Vec::new();
         for (filename, pattern) in &status.ignored_files {
-            let mut uri = quilt::uri::S3PackageUri::from(&lineage.remote);
+            let mut uri = quilt::uri::S3PackageUri::from(remote_uri);
             uri.path = Some(filename.clone());
             entries_ignored.push(entry::ViewEntry {
                 filename: filename.clone(),
@@ -310,7 +311,7 @@ impl ViewCommit {
         }
 
         // TODO: just use remote_manifest?
-        let uri = quilt::uri::S3PackageUri::from(&lineage.remote);
+        let uri = quilt::uri::S3PackageUri::from(remote_uri);
 
         let ignored_count = entries_ignored.len();
         let unmodified_count = entries_rest.len();

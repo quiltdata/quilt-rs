@@ -59,9 +59,11 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
     pub async fn manifest(&self) -> Res<Manifest> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
-        let installed_path = self
-            .paths
-            .installed_manifest(&self.namespace, lineage.current_hash());
+        let hash = match lineage.current_hash() {
+            Some(h) => h,
+            None => return Ok(Manifest::default()),
+        };
+        let installed_path = self.paths.installed_manifest(&self.namespace, hash);
         match Manifest::from_path(&self.storage, &installed_path).await {
             Ok(manifest) => return Ok(manifest),
 
@@ -74,14 +76,20 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             }
         }
 
-        // If installed failed, try to recover from cache
-        log::info!("Attempting to recover from cache at {}", &lineage.remote);
-
-        let cached_manifest =
-            cache_remote_manifest(&self.paths, &self.storage, &self.remote, &lineage.remote)
-                .await?;
-        copy_cached_to_installed(&self.paths, &self.storage, &lineage.remote).await?;
-        Ok(cached_manifest)
+        // If installed failed, try to recover from cache (only if we have a remote)
+        match lineage.remote_uri.as_ref() {
+            Some(remote_uri) => {
+                log::info!("Attempting to recover from cache at {}", remote_uri);
+                let cached_manifest =
+                    cache_remote_manifest(&self.paths, &self.storage, &self.remote, remote_uri)
+                        .await?;
+                copy_cached_to_installed(&self.paths, &self.storage, remote_uri).await?;
+                Ok(cached_manifest)
+            }
+            None => Err(Error::ManifestPath(
+                "No installed manifest and no remote to recover from".to_string(),
+            )),
+        }
     }
 
     pub async fn lineage(&self) -> Res<lineage::PackageLineage> {
@@ -96,11 +104,20 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     pub async fn status(&self, host_config_opt: Option<HostConfig>) -> Res<InstalledPackageStatus> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
 
-        let lineage = flow::refresh_latest_hash(lineage, &self.remote).await?;
+        // Only refresh latest hash if we have a remote
+        let lineage = match lineage.remote_uri.as_ref() {
+            Some(_) => flow::refresh_latest_hash(lineage, &self.remote).await?,
+            None => lineage,
+        };
         let manifest = self.manifest().await?;
 
-        let host_config =
-            host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.origin).await?);
+        let host_config = match host_config_opt {
+            Some(hc) => hc,
+            None => match lineage.remote_uri.as_ref() {
+                Some(remote_uri) => self.remote.host_config(&remote_uri.origin).await?,
+                None => HostConfig::default(),
+            },
+        };
 
         let (lineage, status) = flow::status(
             lineage,
@@ -122,9 +139,9 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        let remote_uri = lineage.remote()?;
 
-        self.scaffold_paths_for_caching(&lineage.remote.bucket)
-            .await?;
+        self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
 
         let mut manifest = self.manifest().await?;
         let lineage = flow::install_paths(
@@ -166,8 +183,13 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
         let mut manifest = self.manifest().await?;
 
-        let host_config =
-            host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.origin).await?);
+        let host_config = match host_config_opt {
+            Some(hc) => hc,
+            None => match lineage.remote_uri.as_ref() {
+                Some(remote_uri) => self.remote.host_config(&remote_uri.origin).await?,
+                None => HostConfig::default(),
+            },
+        };
 
         let (lineage, status) = flow::status(
             lineage,
@@ -202,18 +224,18 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         self.scaffold_paths().await?;
 
         let (_, lineage) = self.lineage.read(&self.storage).await?;
+        let remote_uri = lineage.remote()?.clone();
 
         if lineage.commit.is_none() {
             return Err(Error::Push("No commits to push".to_string()));
         }
 
-        self.scaffold_paths_for_caching(&lineage.remote.bucket)
-            .await?;
+        self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
 
         let manifest = self.manifest().await?;
 
         let host_config =
-            host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.origin).await?);
+            host_config_opt.unwrap_or(self.remote.host_config(&remote_uri.origin).await?);
 
         let lineage = flow::push(
             lineage,
@@ -226,21 +248,21 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         )
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
-        Ok(lineage.remote)
+        Ok(lineage.remote()?.clone())
     }
 
     pub async fn pull(&self, host_config_opt: Option<HostConfig>) -> Res<ManifestUri> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        let remote_uri = lineage.remote()?.clone();
 
-        self.scaffold_paths_for_caching(&lineage.remote.bucket)
-            .await?;
+        self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
 
         let mut manifest = self.manifest().await?;
 
         let host_config =
-            host_config_opt.unwrap_or(self.remote.host_config(&lineage.remote.origin).await?);
+            host_config_opt.unwrap_or(self.remote.host_config(&remote_uri.origin).await?);
 
         let (lineage, status) = flow::status(
             lineage,
@@ -262,24 +284,24 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         )
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
-        Ok(lineage.remote)
+        Ok(lineage.remote()?.clone())
     }
 
     pub async fn certify_latest(&self) -> Res<ManifestUri> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
-        let latest_manifest_uri = lineage.remote.clone();
+        let latest_manifest_uri = lineage.remote()?.clone();
         let lineage = flow::certify_latest(lineage, &self.remote, latest_manifest_uri).await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
-        Ok(lineage.remote)
+        Ok(lineage.remote()?.clone())
     }
 
     pub async fn reset_to_latest(&self) -> Res<ManifestUri> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        let remote_uri = lineage.remote()?.clone();
 
-        self.scaffold_paths_for_caching(&lineage.remote.bucket)
-            .await?;
+        self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
 
         let mut manifest = self.manifest().await?;
         let lineage = flow::reset_to_latest(
@@ -293,19 +315,23 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         )
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
-        Ok(lineage.remote)
+        Ok(lineage.remote()?.clone())
     }
 
     pub async fn set_origin(&self, origin: Host) -> Res {
         let (_, mut lineage) = self.lineage.read(&self.storage).await?;
-        lineage.remote.origin = Some(origin);
+        lineage
+            .remote_uri
+            .as_mut()
+            .ok_or(Error::NoRemote)?
+            .origin = Some(origin);
         self.lineage.write(&self.storage, lineage).await?;
         Ok(())
     }
 
     pub async fn resolve_workflow(&self, workflow_id: Option<String>) -> Res<Option<Workflow>> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
-        let remote_uri = lineage.remote;
+        let remote_uri = lineage.remote()?.clone();
         let workflows_config_uri = S3Uri {
             key: ".quilt/workflows/config.yml".to_string(),
             ..S3Uri::from(remote_uri.clone())

@@ -31,10 +31,12 @@ pub async fn refresh_latest_hash(
     mut lineage: PackageLineage,
     remote: &impl Remote,
 ) -> Res<PackageLineage> {
+    let remote_uri = lineage.remote()?.clone();
+    let origin = remote_uri.origin.clone();
     let latest = resolve_tag(
         remote,
-        &lineage.remote.origin,
-        &lineage.remote.clone().into(),
+        &origin,
+        &remote_uri.into(),
         Tag::Latest,
     )
     .await?;
@@ -265,12 +267,21 @@ mod tests {
     use crate::lineage::CommitState;
     use crate::lineage::PathState;
     use crate::lineage::UpstreamState;
+    use crate::uri::ManifestUri;
+
+    /// Helper to create a PackageLineage with a dummy remote (avoids Local state).
+    fn lineage_with_remote(lineage: PackageLineage) -> PackageLineage {
+        PackageLineage {
+            remote_uri: lineage.remote_uri.or(Some(ManifestUri::default())),
+            ..lineage
+        }
+    }
 
     #[test(tokio::test)]
     async fn test_default_status() -> Res {
         let storage = MockStorage::default();
         let (_lineage, status) = create_status(
-            PackageLineage::default(),
+            lineage_with_remote(PackageLineage::default()),
             &storage,
             &Manifest::default(),
             PathBuf::default(),
@@ -284,7 +295,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_behind() -> Res {
-        let lineage = PackageLineage {
+        let lineage = lineage_with_remote(PackageLineage {
             commit: Some(CommitState {
                 hash: "AAA".to_string(),
                 ..CommitState::default()
@@ -292,7 +303,7 @@ mod tests {
             base_hash: "AAA".to_string(),
             latest_hash: "BBB".to_string(),
             ..PackageLineage::default()
-        };
+        });
 
         let (_lineage, status) = create_status(
             lineage,
@@ -308,7 +319,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_ahead() -> Res {
-        let lineage = PackageLineage {
+        let lineage = lineage_with_remote(PackageLineage {
             commit: Some(CommitState {
                 hash: "BBB".to_string(),
                 ..CommitState::default()
@@ -316,7 +327,7 @@ mod tests {
             base_hash: "AAA".to_string(),
             latest_hash: "AAA".to_string(),
             ..PackageLineage::default()
-        };
+        });
 
         let (_, status) = create_status(
             lineage,
@@ -332,7 +343,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_diverged() -> Res {
-        let lineage = PackageLineage {
+        let lineage = lineage_with_remote(PackageLineage {
             commit: Some(CommitState {
                 hash: "aaa".to_string(),
                 ..CommitState::default()
@@ -340,7 +351,7 @@ mod tests {
             base_hash: "bbb".to_string(),
             latest_hash: "ccc".to_string(),
             ..PackageLineage::default()
-        };
+        });
 
         let (_, status) = create_status(
             lineage,
