@@ -314,6 +314,26 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_deserialize_package_lineage_without_remote() {
+        let json = r#"{
+            "commit": null,
+            "base_hash": "",
+            "latest_hash": "",
+            "paths": {}
+        }"#;
+        let lineage: PackageLineage = serde_json::from_str(json).unwrap();
+        assert_eq!(lineage.remote_uri, None);
+    }
+
+    #[test]
+    fn test_serialize_package_lineage_without_remote() {
+        let lineage = PackageLineage::default();
+        let json = serde_json::to_string(&lineage).unwrap();
+        // "remote" key should be omitted when remote_uri is None
+        assert!(!json.contains("remote"));
+    }
+
     #[test(tokio::test)]
     async fn test_domain_lineage_from_file() -> Res {
         let storage = MockStorage::default();

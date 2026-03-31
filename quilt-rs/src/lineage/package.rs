@@ -125,6 +125,31 @@ impl PackageLineage {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_is_local() {
+        assert_eq!(
+            UpstreamState::from(PackageLineage::default()),
+            UpstreamState::Local
+        );
+    }
+
+    #[test]
+    fn test_remote_returns_no_remote_error() {
+        let lineage = PackageLineage::default();
+        assert!(matches!(lineage.remote(), Err(Error::NoRemote)));
+    }
+
+    #[test]
+    fn test_current_hash_without_remote() {
+        let lineage = PackageLineage::default();
+        assert_eq!(lineage.current_hash(), None);
+    }
+}
+
 impl From<ManifestUri> for PackageLineage {
     fn from(uri: ManifestUri) -> Self {
         Self {

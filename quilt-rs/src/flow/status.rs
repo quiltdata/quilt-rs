@@ -719,4 +719,21 @@ mod tests {
         assert!(matches!(change, Change::Removed(_)));
         Ok(())
     }
+
+    #[test(tokio::test)]
+    async fn test_local_status() -> Res {
+        let storage = MockStorage::default();
+        let (lineage, status) = create_status(
+            PackageLineage::default(),
+            &storage,
+            &Manifest::default(),
+            PathBuf::default(),
+            HostConfig::default(),
+        )
+        .await?;
+        assert_eq!(status.upstream_state, UpstreamState::Local);
+        assert!(status.changes.is_empty());
+        assert!(lineage.remote_uri.is_none());
+        Ok(())
+    }
 }

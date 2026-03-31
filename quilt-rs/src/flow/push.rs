@@ -167,7 +167,6 @@ pub async fn push_package(
     debug!("✔️ Latest hash is: {}", lineage.latest_hash);
 
     lineage.remote_uri = Some(new_manifest_uri.clone());
-    lineage.commit = None;
 
     if new_manifest_uri.hash != commit.hash {
         debug!("❌ Hash mismatch, copying cached to installed");

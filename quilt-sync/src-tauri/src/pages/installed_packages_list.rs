@@ -20,7 +20,7 @@ struct InstalledPackage {
     namespace: Namespace,
     origin: Option<url::Url>,
     origin_host: Option<quilt::uri::Host>,
-    remote: quilt::uri::ManifestUri,
+    remote: Option<quilt::uri::ManifestUri>,
     status: UpstreamState,
 }
 
@@ -41,7 +41,7 @@ struct TmplInstalledPackage<'a> {
     button_uninstall: btn::TmplButton<'a>,
     is_error: bool,
     namespace: quilt::uri::Namespace,
-    remote: quilt::uri::ManifestUri,
+    remote: Option<quilt::uri::ManifestUri>,
 }
 
 impl From<InstalledPackage> for TmplInstalledPackage<'_> {
@@ -244,7 +244,7 @@ impl ViewInstalledPackagesList {
                     namespace: installed_package.namespace.clone(),
                     origin: None,
                     origin_host: None,
-                    remote: quilt::uri::ManifestUri::default(),
+                    remote: None,
                     status: UpstreamState::Local,
                 });
             }
@@ -255,7 +255,7 @@ impl ViewInstalledPackagesList {
                 namespace: installed_package.namespace.clone(),
                 origin: None,
                 origin_host: None,
-                remote: remote_uri.clone(),
+                remote: Some(remote_uri.clone()),
                 status: UpstreamState::Error,
             });
         }
@@ -282,7 +282,7 @@ impl ViewInstalledPackagesList {
             namespace: installed_package.namespace.clone(),
             origin: Some(origin_url),
             origin_host: Some(origin_host),
-            remote: remote_uri.clone(),
+            remote: Some(remote_uri.clone()),
             status,
         })
     }
@@ -323,9 +323,9 @@ mod tests {
             namespace: namespace.try_into().unwrap(),
             origin: Some(url::Url::parse("https://test.quilt.dev").unwrap()),
             origin_host: Some("test.quilt.dev".parse().unwrap()),
-            remote: ManifestUri::try_from(S3PackageUri::try_from(
+            remote: Some(ManifestUri::try_from(S3PackageUri::try_from(
                 format!("quilt+s3://test#package={namespace}@abcdef").as_str(),
-            )?)?,
+            )?)?),
             status,
         })
     }
@@ -438,9 +438,9 @@ mod tests {
             namespace: namespace.try_into().unwrap(),
             origin: None,
             origin_host: None,
-            remote: ManifestUri::try_from(S3PackageUri::try_from(
+            remote: Some(ManifestUri::try_from(S3PackageUri::try_from(
                 format!("quilt+s3://test#package={namespace}@abcdef").as_str(),
-            )?)?,
+            )?)?),
             status: UpstreamState::Error,
         })
     }
