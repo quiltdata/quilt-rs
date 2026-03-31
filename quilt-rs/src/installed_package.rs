@@ -106,7 +106,13 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
         // Only refresh latest hash if we have a remote
         let lineage = match lineage.remote_uri.as_ref() {
-            Some(_) => flow::refresh_latest_hash(lineage, &self.remote).await?,
+            Some(_) => match flow::refresh_latest_hash(lineage.clone(), &self.remote).await {
+                Ok(lineage) => lineage,
+                Err(err) => {
+                    log::warn!("Failed to refresh latest hash: {err}");
+                    lineage
+                }
+            },
             None => lineage,
         };
         let manifest = self.manifest().await?;
