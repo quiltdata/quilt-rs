@@ -131,6 +131,18 @@ impl PackageLineage {
     }
 }
 
+impl From<ManifestUri> for PackageLineage {
+    fn from(uri: ManifestUri) -> Self {
+        Self {
+            base_hash: uri.hash.clone(),
+            remote_uri: Some(uri.clone()),
+            latest_hash: uri.hash.clone(),
+            commit: None,
+            paths: BTreeMap::new(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,17 +165,5 @@ mod tests {
     fn test_current_hash_without_remote() {
         let lineage = PackageLineage::default();
         assert_eq!(lineage.current_hash(), None);
-    }
-}
-
-impl From<ManifestUri> for PackageLineage {
-    fn from(uri: ManifestUri) -> Self {
-        Self {
-            base_hash: uri.hash.clone(),
-            remote_uri: Some(uri.clone()),
-            latest_hash: uri.hash.clone(),
-            commit: None,
-            paths: BTreeMap::new(),
-        }
     }
 }
