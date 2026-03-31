@@ -120,8 +120,10 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let host_config = match host_config_opt {
             Some(hc) => hc,
             None => match lineage.remote_uri.as_ref() {
-                Some(remote_uri) => self.remote.host_config(&remote_uri.origin).await?,
-                None => HostConfig::default(),
+                Some(remote_uri) if !remote_uri.bucket.is_empty() => {
+                    self.remote.host_config(&remote_uri.origin).await?
+                }
+                _ => HostConfig::default(),
             },
         };
 
@@ -192,8 +194,10 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let host_config = match host_config_opt {
             Some(hc) => hc,
             None => match lineage.remote_uri.as_ref() {
-                Some(remote_uri) => self.remote.host_config(&remote_uri.origin).await?,
-                None => HostConfig::default(),
+                Some(remote_uri) if !remote_uri.bucket.is_empty() => {
+                    self.remote.host_config(&remote_uri.origin).await?
+                }
+                _ => HostConfig::default(),
             },
         };
 
@@ -343,8 +347,8 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     pub async fn resolve_workflow(&self, workflow_id: Option<String>) -> Res<Option<Workflow>> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
         let remote_uri = match lineage.remote_uri.as_ref() {
-            Some(uri) => uri.clone(),
-            None => return Ok(None),
+            Some(uri) if !uri.bucket.is_empty() => uri.clone(),
+            _ => return Ok(None),
         };
         let workflows_config_uri = S3Uri {
             key: ".quilt/workflows/config.yml".to_string(),
