@@ -77,11 +77,11 @@ pub struct ManifestRow {
 
 ```rust
 pub struct PackageLineage {
-    pub commit: Option<CommitState>,     // Current local commit
-    pub remote: ManifestUri,            // Remote package reference
-    pub base_hash: String,              // Hash when package was installed
-    pub latest_hash: String,            // Latest known remote hash
-    pub paths: LineagePaths,            // Tracking of installed files
+    pub commit: Option<CommitState>,          // Current local commit
+    pub remote_uri: Option<ManifestUri>,      // Remote package reference; None for local-only
+    pub base_hash: String,                    // Hash when package was installed
+    pub latest_hash: String,                  // Latest known remote hash
+    pub paths: LineagePaths,                  // Tracking of installed files
 }
 ```
 
@@ -347,6 +347,7 @@ enum UpstreamState {
     Ahead,      // local has unpushed commits
     Behind,     // remote has newer version
     Diverged,   // both local and remote have changes
+    Local,      // local-only package, no remote origin
 }
 ```
 
