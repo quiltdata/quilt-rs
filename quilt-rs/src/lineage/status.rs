@@ -24,6 +24,8 @@ pub enum UpstreamState {
     Behind,
     Ahead,
     Diverged,
+    /// Local-only package with no remote origin
+    Local,
     Error,
 }
 
@@ -53,6 +55,13 @@ impl InstalledPackageStatus {
     pub fn error() -> Self {
         Self {
             upstream_state: UpstreamState::Error,
+            ..Default::default()
+        }
+    }
+
+    pub fn local() -> Self {
+        Self {
+            upstream_state: UpstreamState::Local,
             ..Default::default()
         }
     }

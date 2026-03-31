@@ -125,7 +125,10 @@ pub trait QuiltModel {
                 let package_lineage = self
                     .get_installed_package_lineage(&installed_package)
                     .await?;
-                let installed_manifest_uri = package_lineage.remote;
+                let installed_manifest_uri = match package_lineage.remote_uri.as_ref() {
+                    Some(uri) => uri,
+                    None => return Ok(None),
+                };
                 if manifest_uri.hash == installed_manifest_uri.hash {
                     Ok(Some(installed_package))
                 } else {
@@ -684,7 +687,7 @@ pub mod mocks {
             .get_installed_package_lineage(&installed_package)
             .await?;
         assert_eq!(
-            lineage.remote.hash,
+            lineage.remote()?.hash,
             "a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7"
         );
 
@@ -707,8 +710,9 @@ pub mod mocks {
         let first_hash = model
             .get_installed_package_lineage(&first_install)
             .await?
-            .remote
-            .hash;
+            .remote()?
+            .hash
+            .clone();
 
         // TODO: make sure there was no double installation
         let second_install = install_package_only(&model, &uri).await?;
@@ -717,8 +721,9 @@ pub mod mocks {
         let second_hash = model
             .get_installed_package_lineage(&second_install)
             .await?
-            .remote
-            .hash;
+            .remote()?
+            .hash
+            .clone();
 
         assert_eq!(first_hash, second_hash);
         assert_eq!(

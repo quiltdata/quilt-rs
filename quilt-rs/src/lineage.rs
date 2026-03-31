@@ -314,6 +314,26 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_deserialize_package_lineage_without_remote() {
+        let json = r#"{
+            "commit": null,
+            "base_hash": "",
+            "latest_hash": "",
+            "paths": {}
+        }"#;
+        let lineage: PackageLineage = serde_json::from_str(json).unwrap();
+        assert_eq!(lineage.remote_uri, None);
+    }
+
+    #[test]
+    fn test_serialize_package_lineage_without_remote() {
+        let lineage = PackageLineage::default();
+        let json = serde_json::to_string(&lineage).unwrap();
+        // "remote" key should be omitted when remote_uri is None
+        assert!(!json.contains("remote"));
+    }
+
     #[test(tokio::test)]
     async fn test_domain_lineage_from_file() -> Res {
         let storage = MockStorage::default();
@@ -356,12 +376,12 @@ mod tests {
                         ("foo", "bar").into(),
                         PackageLineage {
                             commit: None,
-                            remote: ManifestUri {
+                            remote_uri: Some(ManifestUri {
                                 bucket: "bucket".to_string(),
                                 namespace: ("foo", "bar").into(),
                                 hash: "abcdef".to_string(),
                                 origin: None,
-                            },
+                            }),
                             base_hash: "abcdef".to_string(),
                             latest_hash: "abcdef".to_string(),
                             paths: BTreeMap::from([(
@@ -413,12 +433,12 @@ mod tests {
         let namespace = Namespace::from(("foo", "bar"));
         let package_lineage = PackageLineage {
             commit: None,
-            remote: ManifestUri {
+            remote_uri: Some(ManifestUri {
                 bucket: "bucket".to_string(),
                 namespace: namespace.clone(),
                 hash: "abcdef".to_string(),
                 origin: None,
-            },
+            }),
             base_hash: "abcdef".to_string(),
             latest_hash: "abcdef".to_string(),
             paths: BTreeMap::new(),
@@ -476,12 +496,12 @@ mod tests {
         let namespace = Namespace::from(("foo", "bar"));
         let package_lineage = PackageLineage {
             commit: None,
-            remote: ManifestUri {
+            remote_uri: Some(ManifestUri {
                 bucket: "bucket".to_string(),
                 namespace: namespace.clone(),
                 hash: "abcdef".to_string(),
                 origin: None,
-            },
+            }),
             base_hash: "abcdef".to_string(),
             latest_hash: "abcdef".to_string(),
             paths: BTreeMap::new(),

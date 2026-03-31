@@ -26,20 +26,17 @@ pub async fn reset_to_latest(
 ) -> Res<PackageLineage> {
     info!("⏳ Starting reset to latest for package {}", namespace);
 
+    let remote_uri = lineage.remote()?.clone();
+
     debug!(
         "⏳ Resolving latest manifest hash for {}",
-        lineage.remote.display()
+        remote_uri.display()
     );
-    let latest = resolve_tag(
-        remote,
-        &lineage.remote.origin,
-        &lineage.remote.clone().into(),
-        Tag::Latest,
-    )
-    .await?;
+    let origin = remote_uri.origin.clone();
+    let latest = resolve_tag(remote, &origin, &remote_uri.into(), Tag::Latest).await?;
     debug!("✔️ Latest hash resolved: {}", latest.hash);
 
-    if latest.hash == lineage.remote.hash {
+    if latest.hash == lineage.remote()?.hash {
         info!("✔️ Package is already at latest version");
         return Ok(lineage);
     }
@@ -70,7 +67,7 @@ pub async fn reset_to_latest(
         },
     )
     .await?;
-    lineage.remote = latest;
+    lineage.remote_uri = Some(latest);
     debug!("✔️ Manifest installed successfully");
 
     debug!("⏳ Checking which paths to reinstall");
@@ -123,7 +120,7 @@ mod tests {
             origin: None,
         };
         let source_lineage = PackageLineage {
-            remote: source_manifest_uri,
+            remote_uri: Some(source_manifest_uri),
             ..PackageLineage::default()
         };
 
@@ -166,7 +163,7 @@ mod tests {
             .await?;
 
         let source_lineage = PackageLineage {
-            remote: manifest_uri,
+            remote_uri: Some(manifest_uri),
             ..PackageLineage::default()
         };
 
@@ -203,10 +200,10 @@ mod tests {
             PackageLineage {
                 base_hash: test_hash.to_string(),
                 latest_hash: test_hash.to_string(),
-                remote: ManifestUri {
+                remote_uri: Some(ManifestUri {
                     hash: test_hash.to_string(),
-                    ..source_lineage.remote.clone()
-                },
+                    ..source_lineage.remote().unwrap().clone()
+                }),
                 ..source_lineage
             }
         );

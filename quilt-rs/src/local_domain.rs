@@ -221,12 +221,12 @@ mod tests {
                 namespace.clone(),
                 crate::lineage::PackageLineage {
                     commit: None,
-                    remote: ManifestUri {
+                    remote_uri: Some(ManifestUri {
                         bucket: "test-bucket".to_string(),
                         namespace: namespace.clone(),
                         hash: "abcdef".to_string(),
                         origin: None,
-                    },
+                    }),
                     base_hash: "abcdef".to_string(),
                     latest_hash: "abcdef".to_string(),
                     paths: std::collections::BTreeMap::new(),

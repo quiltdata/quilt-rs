@@ -20,7 +20,7 @@ struct InstalledPackage {
     namespace: Namespace,
     origin: Option<url::Url>,
     origin_host: Option<quilt::uri::Host>,
-    remote: quilt::uri::ManifestUri,
+    remote: Option<quilt::uri::ManifestUri>,
     status: UpstreamState,
 }
 
@@ -41,7 +41,7 @@ struct TmplInstalledPackage<'a> {
     button_uninstall: btn::TmplButton<'a>,
     is_error: bool,
     namespace: quilt::uri::Namespace,
-    remote: quilt::uri::ManifestUri,
+    remote: Option<quilt::uri::ManifestUri>,
 }
 
 impl From<InstalledPackage> for TmplInstalledPackage<'_> {
@@ -237,19 +237,32 @@ impl ViewInstalledPackagesList {
             .get_installed_package_lineage(installed_package)
             .await?;
 
-        if lineage.remote.origin.is_none() {
+        let remote_uri = match lineage.remote_uri.as_ref() {
+            Some(uri) => uri,
+            None => {
+                return Ok(InstalledPackage {
+                    namespace: installed_package.namespace.clone(),
+                    origin: None,
+                    origin_host: None,
+                    remote: None,
+                    status: UpstreamState::Local,
+                });
+            }
+        };
+
+        if remote_uri.origin.is_none() {
             return Ok(InstalledPackage {
                 namespace: installed_package.namespace.clone(),
                 origin: None,
                 origin_host: None,
-                remote: lineage.remote,
+                remote: Some(remote_uri.clone()),
                 status: UpstreamState::Error,
             });
         }
 
-        let origin_host = debug_tools::try_remote_origin_host(&lineage.remote)?;
+        let origin_host = debug_tools::try_remote_origin_host(remote_uri)?;
         tracing.add_host(&origin_host);
-        let uri = quilt::uri::S3PackageUri::from(&lineage.remote);
+        let uri = quilt::uri::S3PackageUri::from(remote_uri);
         let origin_url = uri.display_for_host(&origin_host)?;
         let status = match model
             .get_installed_package_status(installed_package, None)
@@ -269,7 +282,7 @@ impl ViewInstalledPackagesList {
             namespace: installed_package.namespace.clone(),
             origin: Some(origin_url),
             origin_host: Some(origin_host),
-            remote: lineage.remote,
+            remote: Some(remote_uri.clone()),
             status,
         })
     }
@@ -310,9 +323,9 @@ mod tests {
             namespace: namespace.try_into().unwrap(),
             origin: Some(url::Url::parse("https://test.quilt.dev").unwrap()),
             origin_host: Some("test.quilt.dev".parse().unwrap()),
-            remote: ManifestUri::try_from(S3PackageUri::try_from(
+            remote: Some(ManifestUri::try_from(S3PackageUri::try_from(
                 format!("quilt+s3://test#package={namespace}@abcdef").as_str(),
-            )?)?,
+            )?)?),
             status,
         })
     }
@@ -425,9 +438,9 @@ mod tests {
             namespace: namespace.try_into().unwrap(),
             origin: None,
             origin_host: None,
-            remote: ManifestUri::try_from(S3PackageUri::try_from(
+            remote: Some(ManifestUri::try_from(S3PackageUri::try_from(
                 format!("quilt+s3://test#package={namespace}@abcdef").as_str(),
-            )?)?,
+            )?)?),
             status: UpstreamState::Error,
         })
     }

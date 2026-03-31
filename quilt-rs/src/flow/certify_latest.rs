@@ -51,13 +51,13 @@ mod tests {
             origin: None,
         };
         let source_lineage = PackageLineage {
-            remote: source_manifest_uri,
+            remote_uri: Some(source_manifest_uri),
             ..PackageLineage::default()
         };
         let resolved_lineage = certify_latest(
             source_lineage.clone(),
             &remote,
-            source_lineage.remote.clone(),
+            source_lineage.remote().unwrap().clone(),
         )
         .await?;
         assert_eq!(

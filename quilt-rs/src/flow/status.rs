@@ -31,13 +31,9 @@ pub async fn refresh_latest_hash(
     mut lineage: PackageLineage,
     remote: &impl Remote,
 ) -> Res<PackageLineage> {
-    let latest = resolve_tag(
-        remote,
-        &lineage.remote.origin,
-        &lineage.remote.clone().into(),
-        Tag::Latest,
-    )
-    .await?;
+    let remote_uri = lineage.remote()?.clone();
+    let origin = remote_uri.origin.clone();
+    let latest = resolve_tag(remote, &origin, &remote_uri.into(), Tag::Latest).await?;
     if lineage.latest_hash == latest.hash {
         return Ok(lineage);
     }
@@ -196,13 +192,23 @@ pub async fn create_status(
     let mut orig_paths = HashMap::new();
     for path in lineage.paths.keys() {
         debug!("🔍 Checking manifest for path: {}", path.display());
-        let row = manifest
-            .get_record(path)
-            .ok_or(Error::ManifestPath(format!(
-                "path {} not found in installed manifest",
-                path.display()
-            )))?;
-        orig_paths.insert(path.clone(), row.clone());
+        match manifest.get_record(path) {
+            Some(row) => {
+                orig_paths.insert(path.clone(), row.clone());
+            }
+            None if lineage.remote_uri.is_none() => {
+                warn!(
+                    "Lineage path {} not found in manifest, skipping (local-only package)",
+                    path.display()
+                );
+            }
+            None => {
+                return Err(Error::ManifestPath(format!(
+                    "path {} not found in installed manifest",
+                    path.display()
+                )));
+            }
+        }
     }
     debug!("✔️ Found {} paths in lineage", orig_paths.len());
 
@@ -265,12 +271,21 @@ mod tests {
     use crate::lineage::CommitState;
     use crate::lineage::PathState;
     use crate::lineage::UpstreamState;
+    use crate::uri::ManifestUri;
+
+    /// Helper to create a PackageLineage with a dummy remote (avoids Local state).
+    fn lineage_with_remote(lineage: PackageLineage) -> PackageLineage {
+        PackageLineage {
+            remote_uri: lineage.remote_uri.or(Some(ManifestUri::default())),
+            ..lineage
+        }
+    }
 
     #[test(tokio::test)]
     async fn test_default_status() -> Res {
         let storage = MockStorage::default();
         let (_lineage, status) = create_status(
-            PackageLineage::default(),
+            lineage_with_remote(PackageLineage::default()),
             &storage,
             &Manifest::default(),
             PathBuf::default(),
@@ -284,7 +299,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_behind() -> Res {
-        let lineage = PackageLineage {
+        let lineage = lineage_with_remote(PackageLineage {
             commit: Some(CommitState {
                 hash: "AAA".to_string(),
                 ..CommitState::default()
@@ -292,7 +307,7 @@ mod tests {
             base_hash: "AAA".to_string(),
             latest_hash: "BBB".to_string(),
             ..PackageLineage::default()
-        };
+        });
 
         let (_lineage, status) = create_status(
             lineage,
@@ -308,7 +323,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_ahead() -> Res {
-        let lineage = PackageLineage {
+        let lineage = lineage_with_remote(PackageLineage {
             commit: Some(CommitState {
                 hash: "BBB".to_string(),
                 ..CommitState::default()
@@ -316,7 +331,7 @@ mod tests {
             base_hash: "AAA".to_string(),
             latest_hash: "AAA".to_string(),
             ..PackageLineage::default()
-        };
+        });
 
         let (_, status) = create_status(
             lineage,
@@ -332,7 +347,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_diverged() -> Res {
-        let lineage = PackageLineage {
+        let lineage = lineage_with_remote(PackageLineage {
             commit: Some(CommitState {
                 hash: "aaa".to_string(),
                 ..CommitState::default()
@@ -340,7 +355,7 @@ mod tests {
             base_hash: "bbb".to_string(),
             latest_hash: "ccc".to_string(),
             ..PackageLineage::default()
-        };
+        });
 
         let (_, status) = create_status(
             lineage,
@@ -706,6 +721,23 @@ mod tests {
         // Since it's in lineage.paths but not found, it appears as Removed.
         let change = status.changes.get(&logical_key).unwrap();
         assert!(matches!(change, Change::Removed(_)));
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_local_status() -> Res {
+        let storage = MockStorage::default();
+        let (lineage, status) = create_status(
+            PackageLineage::default(),
+            &storage,
+            &Manifest::default(),
+            PathBuf::default(),
+            HostConfig::default(),
+        )
+        .await?;
+        assert_eq!(status.upstream_state, UpstreamState::Local);
+        assert!(status.changes.is_empty());
+        assert!(lineage.remote_uri.is_none());
         Ok(())
     }
 }

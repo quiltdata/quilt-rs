@@ -105,8 +105,9 @@ impl ViewMerge {
         let lineage = model
             .get_installed_package_lineage(&installed_package)
             .await?;
-        let uri = quilt::uri::S3PackageUri::from(&lineage.remote);
-        let origin_host = debug_tools::try_remote_origin_host(&lineage.remote)?;
+        let remote_uri = lineage.remote()?;
+        let uri = quilt::uri::S3PackageUri::from(remote_uri);
+        let origin_host = debug_tools::try_remote_origin_host(remote_uri)?;
 
         tracing.add_host(&origin_host);
 

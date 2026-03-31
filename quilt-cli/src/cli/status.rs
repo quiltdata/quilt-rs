@@ -35,6 +35,7 @@ impl std::fmt::Display for Output {
             UpstreamState::Diverged => "Your commits are detached from the remote",
             // Currently only produced by quilt-sync for packages without origin;
             // the CLI's status() call errors out before reaching this state.
+            UpstreamState::Local => "Local-only package (no remote origin)",
             UpstreamState::Error => "Unable to check remote status",
         };
 

@@ -5,6 +5,7 @@ use askama::Template;
 use rust_i18n::t;
 
 use crate::debug_tools;
+use crate::error::Error;
 use crate::model::QuiltModel;
 use crate::quilt;
 use crate::quilt::lineage::Change;
@@ -109,7 +110,7 @@ impl TmplStatus<'_> {
                     secondary_button: None,
                 }),
             },
-            UpstreamState::UpToDate => None,
+            UpstreamState::Local | UpstreamState::UpToDate => None,
         }
     }
 }
@@ -201,23 +202,20 @@ impl ViewInstalledPackage {
         let installed_package = model
             .get_installed_package(namespace)
             .await?
-            .unwrap_or_else(|| panic!("Package not found, {}", &namespace));
+            .ok_or_else(|| Error::Quilt(quilt::Error::PackageNotInstalled(namespace.clone())))?;
 
         let lineage = model
             .get_installed_package_lineage(&installed_package)
             .await?;
 
         // TODO: just use remote_manifest?
-        let uri = quilt::uri::S3PackageUri::from(&lineage.remote);
-        let origin_host = match debug_tools::try_remote_origin_host(&lineage.remote) {
-            Ok(host) => {
-                tracing.add_host(&host);
-                Some(host)
-            }
-            Err(_) => None,
-        };
+        let (uri, origin_host) =
+            debug_tools::resolve_uri_and_host(lineage.remote_uri.as_ref(), namespace);
+        if let Some(host) = &origin_host {
+            tracing.add_host(host);
+        }
 
-        let status = if origin_host.is_some() {
+        let status = if lineage.remote_uri.is_none() || origin_host.is_some() {
             match model
                 .get_installed_package_status(&installed_package, None)
                 .await
@@ -461,7 +459,11 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
                             .set_type(btn::ButtonType::Submit)
                             .set_label(t!("buttons.install_selected_paths")),
                         show_button: has_remote_entries,
-                        with_status: !matches!(status, quilt::lineage::UpstreamState::UpToDate),
+                        with_status: !matches!(
+                            status,
+                            quilt::lineage::UpstreamState::UpToDate
+                                | quilt::lineage::UpstreamState::Local
+                        ),
                         filter_unmodified_checked: filter.unmodified,
                         filter_unmodified_href,
                         filter_ignored_checked: filter.ignored,
@@ -629,6 +631,33 @@ mod tests {
 
         // Should still show "Open in Catalog" since origin is valid
         assert!(html.contains("Open in Catalog"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_view_local_only() -> Result {
+        let html = (ViewInstalledPackage {
+            entries_list: vec![],
+            filter: EntriesFilter::for_installed_package(),
+            origin: None,
+            origin_host: None,
+            status: quilt::lineage::UpstreamState::Local,
+            uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
+            ignored_count: 0,
+            unmodified_count: 0,
+        })
+        .render()?;
+
+        // Should not show any status banner (no "Set origin", no error)
+        assert!(!html.contains(r#"js-set-origin"#));
+        assert!(!html.contains(r#"warning"#));
+
+        // Should show commit button (local packages can be committed)
+        assert!(html.contains(r#"href="commit.html"#));
+
+        // Should still show basic page structure
+        assert!(html.contains(r#"data-testid="installed-package-entries""#));
 
         Ok(())
     }
