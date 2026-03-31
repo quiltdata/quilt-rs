@@ -335,7 +335,10 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
     pub async fn resolve_workflow(&self, workflow_id: Option<String>) -> Res<Option<Workflow>> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
-        let remote_uri = lineage.remote()?.clone();
+        let remote_uri = match lineage.remote_uri.as_ref() {
+            Some(uri) => uri.clone(),
+            None => return Ok(None),
+        };
         let workflows_config_uri = S3Uri {
             key: ".quilt/workflows/config.yml".to_string(),
             ..S3Uri::from(remote_uri.clone())
