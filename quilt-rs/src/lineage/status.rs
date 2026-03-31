@@ -58,4 +58,11 @@ impl InstalledPackageStatus {
             ..Default::default()
         }
     }
+
+    pub fn local() -> Self {
+        Self {
+            upstream_state: UpstreamState::Local,
+            ..Default::default()
+        }
+    }
 }

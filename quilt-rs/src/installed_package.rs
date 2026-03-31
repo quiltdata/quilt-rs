@@ -320,11 +320,15 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
     pub async fn set_origin(&self, origin: Host) -> Res {
         let (_, mut lineage) = self.lineage.read(&self.storage).await?;
-        lineage
-            .remote_uri
-            .as_mut()
-            .ok_or(Error::NoRemote)?
-            .origin = Some(origin);
+        match lineage.remote_uri.as_mut() {
+            Some(remote_uri) => remote_uri.origin = Some(origin),
+            None => {
+                lineage.remote_uri = Some(ManifestUri {
+                    origin: Some(origin),
+                    ..ManifestUri::default()
+                });
+            }
+        }
         self.lineage.write(&self.storage, lineage).await?;
         Ok(())
     }

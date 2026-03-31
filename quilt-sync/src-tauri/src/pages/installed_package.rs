@@ -208,29 +208,47 @@ impl ViewInstalledPackage {
             .await?;
 
         // TODO: just use remote_manifest?
-        let remote_uri = lineage.remote()?;
-        let uri = quilt::uri::S3PackageUri::from(remote_uri);
-        let origin_host = match debug_tools::try_remote_origin_host(remote_uri) {
-            Ok(host) => {
-                tracing.add_host(&host);
-                Some(host)
+        let (uri, origin_host) = match lineage.remote_uri.as_ref() {
+            Some(remote_uri) => {
+                let uri = quilt::uri::S3PackageUri::from(remote_uri);
+                let host = match debug_tools::try_remote_origin_host(remote_uri) {
+                    Ok(host) => {
+                        tracing.add_host(&host);
+                        Some(host)
+                    }
+                    Err(_) => None,
+                };
+                (uri, host)
             }
-            Err(_) => None,
+            None => {
+                let uri = quilt::uri::S3PackageUri {
+                    catalog: None,
+                    bucket: String::new(),
+                    namespace: namespace.clone(),
+                    revision: quilt::uri::RevisionPointer::Tag(
+                        quilt::uri::LATEST_TAG.to_string(),
+                    ),
+                    path: None,
+                };
+                (uri, None)
+            }
         };
 
-        let status = if origin_host.is_some() {
-            match model
-                .get_installed_package_status(&installed_package, None)
-                .await
-            {
-                Ok(status) => status,
-                Err(err) => {
-                    warn!("Failed to get status for {namespace}: {err}");
-                    quilt::lineage::InstalledPackageStatus::error()
+        let status = match lineage.remote_uri.as_ref() {
+            None => quilt::lineage::InstalledPackageStatus::local(),
+            Some(_) if origin_host.is_some() => {
+                match model
+                    .get_installed_package_status(&installed_package, None)
+                    .await
+                {
+                    Ok(status) => status,
+                    Err(err) => {
+                        warn!("Failed to get status for {namespace}: {err}");
+                        quilt::lineage::InstalledPackageStatus::error()
+                    }
                 }
             }
-        } else {
-            quilt::lineage::InstalledPackageStatus::error()
+            Some(_) => quilt::lineage::InstalledPackageStatus::error(),
         };
 
         let modified_entries = &status.changes;
@@ -443,7 +461,7 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
             .set_breadcrumbs(Self::breadcrumbs(&uri))
             .set_actions(Self::actions(&uri, origin.as_ref()))
             .set_uri(Some(uri.clone()));
-        let layout = if matches!(status, UpstreamState::Error) {
+        let layout = if matches!(status, UpstreamState::Error | UpstreamState::Local) {
             layout
         } else {
             layout.set_primary_action(Self::primary_button(&uri, &status))
@@ -630,6 +648,33 @@ mod tests {
 
         // Should still show "Open in Catalog" since origin is valid
         assert!(html.contains("Open in Catalog"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_view_local_only() -> Result {
+        let html = (ViewInstalledPackage {
+            entries_list: vec![],
+            filter: EntriesFilter::for_installed_package(),
+            origin: None,
+            origin_host: None,
+            status: quilt::lineage::UpstreamState::Local,
+            uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
+            ignored_count: 0,
+            unmodified_count: 0,
+        })
+        .render()?;
+
+        // Should not show any status banner (no "Set origin", no error)
+        assert!(!html.contains(r#"js-set-origin"#));
+        assert!(!html.contains(r#"warning"#));
+
+        // Should not show commit button (no remote to push to)
+        assert!(!html.contains(r#"href="commit.html"#));
+
+        // Should still show basic page structure
+        assert!(html.contains(r#"data-testid="installed-package-entries""#));
 
         Ok(())
     }

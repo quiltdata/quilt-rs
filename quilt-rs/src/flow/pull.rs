@@ -70,13 +70,9 @@ pub async fn pull_package(
     debug!("⏳ Updating lineage hashes");
     // TODO: uninstall_paths() just modified the lineage, so re-reading it here.
     // There needs to be a better way.
-    lineage
-        .remote_uri
-        .as_mut()
-        .ok_or(Error::NoRemote)?
-        .hash
-        .clone_from(&lineage.latest_hash);
-    lineage.base_hash.clone_from(&lineage.latest_hash);
+    let latest = lineage.latest_hash.clone();
+    lineage.remote_mut()?.hash.clone_from(&latest);
+    lineage.base_hash.clone_from(&latest);
 
     let remote_uri = lineage.remote()?.clone();
 

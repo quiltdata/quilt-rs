@@ -101,6 +101,12 @@ impl PackageLineage {
         self.remote_uri.as_ref().ok_or(Error::NoRemote)
     }
 
+    /// Returns a mutable reference to the remote ManifestUri,
+    /// or an error if this is a local-only package.
+    pub fn remote_mut(&mut self) -> Res<&mut ManifestUri> {
+        self.remote_uri.as_mut().ok_or(Error::NoRemote)
+    }
+
     pub fn from_remote(remote: ManifestUri, latest_hash: String) -> Self {
         Self {
             base_hash: remote.hash.clone(),
