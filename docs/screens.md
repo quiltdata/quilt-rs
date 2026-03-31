@@ -71,9 +71,14 @@ Main screen. Lists all locally installed packages.
 |  +---------------------------------------------------+  |
 |  | org/dataset-c                         [Pull] [>]  |  |
 |  +---------------------------------------------------+  |
+|  | local/my-data                        [Commit] [>] |  |
+|  +---------------------------------------------------+  |
 |                                                         |
 +---------------------------------------------------------+
 ```
+
+Local-only packages (no remote `manifest_uri`) show Commit but
+no Pull/Push buttons and no "Open Remote" action.
 
 Empty state:
 
@@ -109,13 +114,16 @@ with checkboxes, status indicator, and a toolbar.
 +---------------------------------------------------------+
 | [status: 3 files modified]                              |
 |                                                         |
+| Show [x] unmodified [x] ignored (2)                    |
 | [toolbar: Select All / Deselect All]                    |
 | +-----------------------------------------------------+ |
-| | [x] data/file-a.csv                      1.2 MB  M  | |
-| | [x] data/file-b.parquet                  3.4 MB  A  | |
-| | [ ] data/file-c.json                     0.5 MB     | |
-| | [ ] data/subdir/                                     | |
-| |     [ ] file-d.txt                       0.1 MB     | |
+| | [x] data/file-a.csv            1.2 MB  M            | |
+| | [x] data/file-b.parquet        3.4 MB  A            | |
+| | [ ] data/file-c.json           0.5 MB      [Ignore] | |
+| | [ ] data/subdir/file-d.txt     0.1 MB               | |
+| |                                                      | |
+| |  (dimmed)                                            | |
+| | [ ] .DS_Store                  4 KB     [Ignored]    | |
 | +-----------------------------------------------------+ |
 |                                                         |
 +--[actionbar]-------------------------------------------+
@@ -128,6 +136,10 @@ with checkboxes, status indicator, and a toolbar.
 - [Push] -> runs push flow, reloads
 - [Uninstall] -> runs uninstall flow -> **Installed Packages List**
 - [Install Selected Paths] -> runs install_paths flow, reloads
+- [Ignore] -> opens **Ignore Popup** (for junk-detected files)
+- [Ignored] -> opens **Un-ignore Popup** (for `.quiltignore`-matched files)
+
+For local-only packages the toolbar shows [Commit] but no [Push].
 
 ---
 
@@ -143,14 +155,14 @@ Two-column layout: form on the left, file list on the right.
 | [< Packages]                                            |
 +---------------------------------------------------------+
 |                        |                                |
-|  [workflow indicator]  |  data/file-a.csv          M   |
-|                        |  data/file-b.parquet      A   |
-|  Namespace             |  data/file-c.json         D   |
-|  [ user/package-a   ]  |  -------------------------    |
-|  (readonly)            |                                |
-|                        |                                |
-|  Message *             |                                |
-|  [ Updated dataset__ ] |                                |
+|  [workflow indicator]  | Show [x] unmodified            |
+|                        |       [x] ignored (1)          |
+|  Namespace             | -------------------------      |
+|  [ user/package-a   ]  |  data/file-a.csv          M   |
+|  (readonly)            |  data/file-b.parquet      A   |
+|                        |  data/file-c.json         D   |
+|  Message *             | -------------------------      |
+|  [ Updated dataset__ ] |  .DS_Store        [Ignored]   |
 |                        |                                |
 |  Metadata              |                                |
 |  [ { "key": "value" }] |                                |
@@ -189,6 +201,49 @@ Offers two resolution options.
 
 - [Certify as Latest] -> runs certify_latest flow
 - [Reset to Remote] -> runs reset_to_latest flow
+
+---
+
+### Ignore Popup
+
+Shown when clicking [Ignore] on a junk-detected file entry.
+Lets the user add a pattern to `.quiltignore`.
+
+```
++---------------------------------------------------------+
+|                                                         |
+|   Pattern                                               |
+|   [ *.pyc______________________________ ]               |
+|   hint: will be ignored                                 |
+|     or: Ignore all similar files with `*.pyc`           |
+|                                                         |
+|   [Add to .quiltignore]  [Cancel]                       |
+|                                                         |
++---------------------------------------------------------+
+```
+
+- Pattern field is pre-filled with the suggested pattern
+- Live validation with debounce shows what the pattern matches
+- [Add to .quiltignore] -> appends pattern, reloads page
+
+---
+
+### Un-ignore Popup
+
+Shown when clicking [Ignored] on a `.quiltignore`-matched file.
+Shows which pattern is ignoring the file.
+
+```
++---------------------------------------------------------+
+|                                                         |
+|   Ignored by pattern: *.pyc                             |
+|                                                         |
+|   [Edit .quiltignore]  [Cancel]                         |
+|                                                         |
++---------------------------------------------------------+
+```
+
+- [Edit .quiltignore] -> opens file in default application
 
 ---
 
