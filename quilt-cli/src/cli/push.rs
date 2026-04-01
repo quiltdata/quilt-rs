@@ -39,7 +39,9 @@ async fn push_package(
 ) -> Result<ManifestUri, Error> {
     match local_domain.get_installed_package(&namespace).await? {
         Some(installed_package) => {
-            // If bucket/origin provided, set remote before pushing
+            // If bucket/origin provided, set remote before pushing.
+            // Safe: push() reads lineage fresh from disk, so it sees the
+            // remote_uri written by set_remote() — no caching in between.
             if let Some(bucket) = bucket {
                 let origin = origin.ok_or_else(|| {
                     Error::Quilt(quilt_rs::Error::Push(
