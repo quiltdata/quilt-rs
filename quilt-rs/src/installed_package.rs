@@ -1148,4 +1148,112 @@ mod tests {
 
         Ok(())
     }
+
+    #[test(tokio::test)]
+    async fn test_set_remote_recommits_existing_commit() -> Res {
+        let (home, _temp_dir1) = Home::from_temp_dir()?;
+        let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+
+        let storage = LocalStorage::new();
+        let remote = MockRemote::default();
+        let namespace: Namespace = ("test", "recommit").into();
+
+        paths
+            .scaffold_for_installing(&storage, &home, &namespace)
+            .await?;
+
+        // Start with no remote and no commit
+        let lineage_json = r#"{
+            "packages": {
+                "test/recommit": {
+                    "commit": null,
+                    "remote": null,
+                    "base_hash": "",
+                    "latest_hash": "",
+                    "paths": {}
+                }
+            },
+            "home": "/tmp/working_dir"
+        }"#;
+        storage
+            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+            .await?;
+
+        // Write a file to package home so commit has something to pick up
+        let package_home = home.join(namespace.to_string());
+        storage.create_dir_all(&package_home).await?;
+        storage
+            .write_byte_stream(
+                package_home.join("data.txt"),
+                ByteStream::from_static(b"hello world"),
+            )
+            .await?;
+
+        let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+        let package = InstalledPackage {
+            lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+            paths,
+            remote,
+            storage,
+            namespace: namespace.clone(),
+        };
+
+        // Commit the package (no remote yet, uses default HostConfig)
+        let commit = package
+            .commit(
+                "Initial commit".to_string(),
+                Some(serde_json::json!({"key": "value"})),
+                None,
+                None,
+            )
+            .await?;
+        let hash_before = commit.hash.clone();
+
+        // Now set_remote — this should trigger recommit.
+        // MockRemote returns HostConfig::default() (SHA256 chunked), same as the
+        // initial commit, so the row hashes stay the same. But the manifest is
+        // rebuilt (e.g. workflow may change), and the lineage prev_hashes are updated.
+        package
+            .set_remote("example.com".parse()?, "my-bucket".to_string())
+            .await?;
+
+        let lineage = package.lineage().await?;
+
+        // Remote should be set
+        let remote_uri = lineage
+            .remote_uri
+            .as_ref()
+            .expect("remote_uri should be set");
+        assert_eq!(
+            remote_uri.origin.as_ref().unwrap().to_string(),
+            "example.com"
+        );
+        assert_eq!(remote_uri.bucket, "my-bucket");
+
+        // Recommit should have produced a new commit
+        let new_commit = lineage.commit.as_ref().expect("commit should exist");
+        assert_eq!(
+            new_commit.prev_hashes.first(),
+            Some(&hash_before),
+            "Old hash should be in prev_hashes after recommit"
+        );
+
+        // The new manifest should be readable with preserved message and meta
+        let manifest_path = package
+            .paths
+            .installed_manifest(&namespace, &new_commit.hash);
+        let manifest = Manifest::from_path(&package.storage, &manifest_path).await?;
+        assert_eq!(
+            manifest.header.message,
+            Some("Initial commit".to_string()),
+            "Message should be preserved after recommit"
+        );
+        assert_eq!(
+            manifest.header.user_meta,
+            Some(serde_json::json!({"key": "value"})),
+            "User meta should be preserved after recommit"
+        );
+
+        Ok(())
+    }
 }
