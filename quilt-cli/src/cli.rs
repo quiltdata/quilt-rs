@@ -139,11 +139,11 @@ enum Commands {
         #[arg(short, long)]
         namespace: String,
         /// S3 bucket (required for first push of local-only packages)
-        #[arg(short, long)]
+        #[arg(short, long, requires = "origin")]
         bucket: Option<String>,
         /// Remote host (required for first push of local-only packages)
         /// Ex. open.quiltdata.com
-        #[arg(short, long)]
+        #[arg(short, long, requires = "bucket")]
         origin: Option<Host>,
         // FIXME: add workflow?
     },
