@@ -176,7 +176,47 @@ For each path in paths_to_install:
 Save updated data.json
 ```
 
-### 4. Modification Detection
+### 4. Create Phase
+
+**Entry Point**: `flow::create`
+**Purpose**: Create a new local-only package (alternative to Browse + Install
+for remote packages)
+
+```text
+flow::create(lineage, paths, storage, namespace, source?, message?)
+    ↓
+Check: namespace not already in lineage
+    ↓
+scaffold_for_installing() → create directories
+    ↓
+If source directory provided:
+  walk_source_dir():
+    - Scan source recursively (respects .quiltignore)
+    - For each file:
+      ↓ calculate_hash() → ManifestRow
+      ↓ Copy file → objects/content_hash
+      ↓ Copy file → package_home/logical_key (working copy)
+      ↓ Track in lineage.paths
+    ↓
+build_manifest_from_rows_stream()
+  → .quilt/installed/namespace/hash
+    ↓
+Create initial CommitState (like `git init` + initial commit)
+    ↓
+Insert PackageLineage into DomainLineage:
+  - commit = initial commit
+  - remote_uri = None (local-only)
+  - base_hash = "" (no remote)
+  - latest_hash = "" (no remote)
+    ↓
+Return: Updated DomainLineage
+```
+
+The resulting package has a clean status (no changes) because the initial
+commit captures all files from the source directory. If no source is provided,
+an empty package with an empty manifest is created.
+
+### 5. Modification Detection
 
 **Entry Point**: `flow::status`
 **Purpose**: Detect changes in working directory compared to installed state
@@ -206,7 +246,7 @@ This is intentional — `.quiltignore` controls which files belong in the
 package, so an ignored file should not remain in the manifest. This differs
 from `.gitignore`, which does not untrack already-tracked files.
 
-### 5. Commit Phase
+### 6. Commit Phase
 
 **Entry Point**: `flow::commit_package`
 **Purpose**: Create new local package version with changes
@@ -237,7 +277,47 @@ Update lineage:
 Return: Updated PackageLineage
 ```
 
-### 6. Push Phase
+### 7. Set Remote Phase
+
+**Entry Point**: `InstalledPackage::set_remote`
+**Purpose**: Connect a local-only package to a remote origin so it can be
+pushed
+
+```text
+set_remote(origin, bucket)
+    ↓
+Check: package not already pushed (remote hash must be empty)
+    ↓
+Set lineage.remote_uri = ManifestUri { origin, bucket, namespace, hash: "" }
+    ↓
+Persist lineage (remote_uri saved even if recommit fails)
+    ↓
+If lineage.commit exists:
+  flow::recommit(lineage, manifest, host_config, workflow)
+    ↓
+  Fetch remote's HostConfig (checksum algorithm) and workflow config
+    ↓
+  rehash_rows():
+    For each row in current manifest:
+      - If hash algorithm matches remote: pass through unchanged
+      - If different: re-hash file from objects/ with remote algorithm
+    ↓
+  build_manifest_from_rows_stream() → new manifest with updated hashes
+    ↓
+  Update CommitState:
+    - hash = new top hash
+    - prev_hashes = [old_hash, ...old_prev_hashes]
+    ↓
+  Persist updated lineage
+    ↓
+Return: Package ready to push (status = Ahead)
+```
+
+The recommit step ensures the manifest's checksums match what the remote
+expects. Without it, push would produce a different top hash than the local
+commit, causing a hash mismatch error.
+
+### 8. Push Phase
 
 **Entry Point**: `flow::push_package`
 **Purpose**: Upload local changes to remote storage
@@ -247,7 +327,10 @@ flow::push_package(lineage, local_manifest, remote)
     ↓
 Check: lineage.commit exists (has changes to push)
     ↓
-fetch remote_manifest for comparison
+If remote_uri.hash is empty (first push):
+  Use empty Manifest as remote_manifest
+Else:
+  fetch remote_manifest for comparison
     ↓
 stream_uploaded_local_rows():
   For each local row:
@@ -261,7 +344,10 @@ upload_manifest() → remote .quilt/packages/bucket/new_hash
     ↓
 tag_timestamp() → remote .quilt/named_packages/namespace/timestamp
     ↓
-Optional: certify_latest() if tracking latest
+If first push (base_hash empty):
+  Set base_hash = new_hash (prevents Diverged status)
+    ↓
+certify_latest() if base_hash == latest_hash OR no existing latest tag
     ↓
 Update lineage:
   - remote.hash = new_hash
@@ -271,7 +357,7 @@ Update lineage:
 Return: Updated PackageLineage
 ```
 
-### 7. Uninstall Phase
+### 9. Uninstall Phase
 
 **Entry Point**: `flow::uninstall_package`
 **Purpose**: Remove package from local tracking and delete working directory files
@@ -371,6 +457,10 @@ locations:
   UI routing, OAuth, and a `Quilt` variant that wraps the core library errors.
 
 Both use `thiserror` for ergonomic `#[derive(Error)]` definitions.
+
+The core `Error` type also provides `is_not_found()` for classifying S3
+`NoSuchKey` responses — used by the push flow to detect a missing `latest`
+tag on first push.
 
 ## Performance Considerations
 
