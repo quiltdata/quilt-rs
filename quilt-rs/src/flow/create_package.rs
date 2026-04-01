@@ -195,6 +195,7 @@ mod tests {
 
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::DomainLineage;
+    use crate::manifest::Manifest;
 
     #[test(tokio::test)]
     async fn test_create_empty_package() -> Res {
@@ -353,7 +354,13 @@ mod tests {
         .await?;
 
         let pkg = lineage.packages.get(&namespace).unwrap();
-        assert!(pkg.commit.is_some());
+        let commit = pkg.commit.as_ref().unwrap();
+        let manifest_path = paths.installed_manifest(&namespace, &commit.hash);
+        let manifest = Manifest::from_path(&storage, &manifest_path).await?;
+        assert_eq!(
+            manifest.header.message,
+            Some("My custom message".to_string())
+        );
         Ok(())
     }
 }
