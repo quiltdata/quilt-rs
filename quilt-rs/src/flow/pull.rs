@@ -53,6 +53,8 @@ pub async fn pull_package(
         ));
     }
 
+    let remote_pkg = lineage.remote_package()?.clone();
+
     if lineage.remote_hash != lineage.base_hash {
         error!("❌ Package has diverged from remote");
         return Err(Error::Package("package has diverged".to_string()));
@@ -81,8 +83,8 @@ pub async fn pull_package(
     debug!("⏳ Resolving latest manifest");
     let manifest_uri = resolve_tag(
         remote,
-        &lineage.remote.origin,
-        &lineage.remote.package_handle(),
+        &remote_pkg.origin,
+        &remote_pkg.package_handle(),
         Tag::Latest,
     )
     .await?;
@@ -207,11 +209,11 @@ mod tests {
         let storage = MockStorage::default();
         let remote = MockRemote::default();
         let lineage = PackageLineage {
-            remote: (&ManifestUri {
+            remote: Some((&ManifestUri {
                 hash: "a".to_string(),
                 ..ManifestUri::default()
             })
-                .into(),
+                .into()),
             remote_hash: Some("a".to_string()),
             base_hash: Some("b".to_string()),
             ..PackageLineage::default()
@@ -238,11 +240,11 @@ mod tests {
         let storage = MockStorage::default();
         let remote = MockRemote::default();
         let lineage = PackageLineage {
-            remote: (&ManifestUri {
+            remote: Some((&ManifestUri {
                 hash: "a".to_string(),
                 ..ManifestUri::default()
             })
-                .into(),
+                .into()),
             remote_hash: Some("a".to_string()),
             base_hash: Some("a".to_string()),
             latest_hash: Some("a".to_string()),

@@ -88,6 +88,8 @@ pub async fn install_paths(
         return Ok(lineage);
     }
 
+    let remote_pkg = lineage.remote_package()?.clone();
+
     info!(
         "⏳ Installing {} paths for package {}",
         entries_paths.len(),
@@ -131,7 +133,7 @@ pub async fn install_paths(
             cache_immutable_object(
                 storage,
                 remote,
-                &lineage.remote.origin,
+                &remote_pkg.origin,
                 &object_dest,
                 &row.physical_key.parse()?,
             )
@@ -194,6 +196,7 @@ mod tests {
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::Home;
     use crate::paths;
+    use crate::uri::ManifestUri;
 
     // Verify installing the path that is already fetched to the `.quilt/objects`
     // Practically it is useful when we try to install identical files. Then we can re-use cache (because files are located by hash).
@@ -211,7 +214,11 @@ mod tests {
         let storage = MockStorage::default();
 
         // Simulate the manifest with rows containing objects
-        let lineage = PackageLineage::default();
+        let lineage = PackageLineage {
+            remote: Some((&ManifestUri::default()).into()),
+            remote_hash: Some(String::new()),
+            ..PackageLineage::default()
+        };
         let single_object_path = PathBuf::from("less-then-8mb.txt");
         let entries_paths = vec![&single_object_path];
         let mut manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
@@ -279,12 +286,16 @@ mod tests {
         let remote_file_url = "s3://any/valid-url.md".to_string();
 
         // Before installation, lineage does not track any paths
-        let lineage = PackageLineage::default();
+        let lineage = PackageLineage {
+            remote: Some((&ManifestUri::default()).into()),
+            remote_hash: Some(String::new()),
+            ..PackageLineage::default()
+        };
 
         // Simulate the remote object
         let remote_object_uri = S3Uri::from_str(&remote_file_url)?;
         remote
-            .put_object(&lineage.remote.origin, &remote_object_uri, Vec::new())
+            .put_object(&None, &remote_object_uri, Vec::new())
             .await?;
 
         // Create the manifest with a single remote row with a random hash
@@ -337,7 +348,11 @@ mod tests {
         let package_home = paths::package_home(&home, &namespace);
 
         // Simulate the manifest with rows containing objects
-        let lineage = PackageLineage::default();
+        let lineage = PackageLineage {
+            remote: Some((&ManifestUri::default()).into()),
+            remote_hash: Some(String::new()),
+            ..PackageLineage::default()
+        };
         let row_1 = ManifestRow {
             logical_key: PathBuf::from("a"),
             physical_key: "file:///ignored".to_string(),
@@ -384,11 +399,11 @@ mod tests {
         let remote = MockRemote::default();
         let remote_object_uri_2 = S3Uri::from_str(&row_2.physical_key)?;
         remote
-            .put_object(&lineage.remote.origin, &remote_object_uri_2, Vec::new())
+            .put_object(&None, &remote_object_uri_2, Vec::new())
             .await?;
         let remote_object_uri_4 = S3Uri::from_str(&row_4.physical_key)?;
         remote
-            .put_object(&lineage.remote.origin, &remote_object_uri_4, Vec::new())
+            .put_object(&None, &remote_object_uri_4, Vec::new())
             .await?;
 
         let entries_paths = vec![
@@ -431,7 +446,11 @@ mod tests {
     // manifest.
     #[test(tokio::test)]
     async fn test_installing_path_that_doesnt_exists_in_manifest() -> Res {
-        let lineage = PackageLineage::default();
+        let lineage = PackageLineage {
+            remote: Some((&ManifestUri::default()).into()),
+            remote_hash: Some(String::new()),
+            ..PackageLineage::default()
+        };
         let remote = MockRemote::default();
         let storage = MockStorage::default();
 
@@ -470,7 +489,11 @@ mod tests {
         let namespace = Namespace::from(("foo", "bar"));
         let package_home = paths::package_home(&home, &namespace);
 
-        let lineage = PackageLineage::default();
+        let lineage = PackageLineage {
+            remote: Some((&ManifestUri::default()).into()),
+            remote_hash: Some(String::new()),
+            ..PackageLineage::default()
+        };
         let storage = MockStorage::default();
         let remote = MockRemote::default();
 
@@ -496,9 +519,7 @@ mod tests {
 
             // Simulate remote objects
             let remote_uri = S3Uri::from_str(&place)?;
-            remote
-                .put_object(&lineage.remote.origin, &remote_uri, Vec::new())
-                .await?;
+            remote.put_object(&None, &remote_uri, Vec::new()).await?;
         }
 
         // Create references for the function call

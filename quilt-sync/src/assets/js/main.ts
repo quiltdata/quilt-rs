@@ -24,6 +24,7 @@ const SELECTOR_METADATA = ".js-metadata";
 const SELECTOR_METADATA_INPUT = "#metadata";
 const SELECTOR_NOTIFY = "#notify";
 const SELECTOR_NOTIFY_SUCCESS = ".js-success";
+const SELECTOR_POPUP = "#popup";
 const SELECTOR_ORIGIN_CANCEL = ".js-origin-cancel";
 const SELECTOR_ORIGIN_HINT = ".js-origin-hint";
 const SELECTOR_ORIGIN_INPUT = ".js-origin-input";
@@ -55,6 +56,8 @@ const SELECTOR_CRASH_REPORT = ".js-crash-report";
 const SELECTOR_DIAGNOSTIC_LOGS = ".js-diagnostic-logs";
 const SELECTOR_OPEN_HOME_DIR = ".js-open-home-dir";
 const SELECTOR_OPEN_DATA_DIR = ".js-open-data-dir";
+const SELECTOR_IGNORE_ENTRY = ".js-ignore-entry";
+const SELECTOR_UNIGNORE_ENTRY = ".js-unignore-entry";
 
 const I18N = {
   collectingLogs: "Collecting\u2026",
@@ -83,6 +86,7 @@ type Selector =
   | typeof SELECTOR_METADATA_INPUT
   | typeof SELECTOR_NOTIFY
   | typeof SELECTOR_NOTIFY_SUCCESS
+  | typeof SELECTOR_POPUP
   | typeof SELECTOR_OPEN_COMMIT_PAGE
   | typeof SELECTOR_OPEN_DIRECTORY_PICKER
   | typeof SELECTOR_OPEN_IN_DEFAULT_APPLICATION
@@ -113,7 +117,9 @@ type Selector =
   | typeof SELECTOR_CRASH_REPORT
   | typeof SELECTOR_DIAGNOSTIC_LOGS
   | typeof SELECTOR_OPEN_HOME_DIR
-  | typeof SELECTOR_OPEN_DATA_DIR;
+  | typeof SELECTOR_OPEN_DATA_DIR
+  | typeof SELECTOR_IGNORE_ENTRY
+  | typeof SELECTOR_UNIGNORE_ENTRY;
 
 const CMD_ERASE_AUTH = "erase_auth";
 const CMD_DEBUG_DOT_QUILT = "debug_dot_quilt";
@@ -138,6 +144,8 @@ const CMD_COLLECT_LOGS = "collect_diagnostic_logs";
 const CMD_CRASH_REPORT = "send_crash_report";
 const CMD_OPEN_HOME_DIR = "open_home_dir";
 const CMD_OPEN_DATA_DIR = "open_data_dir";
+const CMD_ADD_TO_QUILTIGNORE = "add_to_quiltignore";
+const CMD_TEST_QUILTIGNORE_PATTERN = "test_quiltignore_pattern";
 
 type Command =
   | typeof CMD_ERASE_AUTH
@@ -162,7 +170,9 @@ type Command =
   | typeof CMD_COLLECT_LOGS
   | typeof CMD_CRASH_REPORT
   | typeof CMD_OPEN_HOME_DIR
-  | typeof CMD_OPEN_DATA_DIR;
+  | typeof CMD_OPEN_DATA_DIR
+  | typeof CMD_ADD_TO_QUILTIGNORE
+  | typeof CMD_TEST_QUILTIGNORE_PATTERN;
 
 function handleError(e: Error | unknown) {
   if (e instanceof Error) {
@@ -178,7 +188,7 @@ function handleError(e: Error | unknown) {
 
 const ROUTE_INSTALLED_PACKAGES_LIST = "installed-packages-list.html";
 const ROUTE_INSTALLED_PACKAGE = (namespace: Namespace) =>
-  `installed-package.html#namespace=${namespace}`;
+  `installed-package.html#namespace=${namespace}&filter=unmodified`;
 const ROUTE_REMOTE_PACKAGE = (uri: string) =>
   `remote-package.html?uri=${encodeURIComponent(uri)}`;
 
@@ -195,6 +205,15 @@ function findElement(selector: Selector, optParent?: Element) {
 
 function findElementsList(selector: Selector, optParent?: Element) {
   return (optParent ?? document).querySelectorAll(selector);
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function assertElementHasDataAttributes(element: Element, attrs: string[]) {
@@ -250,6 +269,16 @@ function notify(html: Html) {
     return 1;
   }
   return 0;
+}
+
+function popup(html: Html) {
+  const el = findElement(SELECTOR_POPUP);
+  if (!el) return;
+  el.innerHTML = html;
+}
+
+function dismissPopup() {
+  popup("");
 }
 
 function onCheckbox() {
@@ -703,6 +732,36 @@ window.addEventListener(EVENT_PAGE_READY, () => {
     selectAllPaths(selectAllElement);
   }
 
+  // Ignore entry — show ignore popup
+  listen(
+    SELECTOR_IGNORE_ENTRY,
+    ["namespace", "path", "pattern"],
+    async (data) => {
+      showIgnorePopup(data.namespace, data.path, data.pattern);
+    },
+  );
+
+  // Un-ignore entry — show un-ignore popup
+  listen(
+    SELECTOR_UNIGNORE_ENTRY,
+    ["namespace", "pattern"],
+    async (data) => {
+      showUnignorePopup(data.namespace, data.pattern);
+    },
+  );
+
+  // Filter checkboxes: navigate on change (fragment-only changes need
+  // an explicit reload since browsers treat them as same-page navigation)
+  document.querySelectorAll(".js-filter").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const href = (checkbox as HTMLInputElement).dataset.href;
+      if (href) {
+        window.location.assign(href);
+        window.location.reload();
+      }
+    });
+  });
+
   for (const button of findElementsList(SELECTOR_REFRESH)) {
     button.addEventListener("click", () => {
       window.location.reload();
@@ -748,6 +807,162 @@ window.addEventListener(EVENT_PAGE_READY, () => {
   }
 });
 
+
+async function showIgnorePopup(
+  namespace: string,
+  path: string,
+  suggestedPattern: string,
+) {
+  popup(`<style>@import url("/assets/css/components/ignore-popup.css");</style>
+    <div class="ignore-popup">
+      <label>Pattern to ignore:</label>
+      <input class="ignore-input js-ignore-input" type="text" value="${escapeHtml(suggestedPattern)}" />
+      <div class="ignore-hint js-ignore-hint"></div>
+      <div class="ignore-actions">
+        <button class="qui-button primary js-ignore-submit"><span>Add to .quiltignore</span></button>
+        <button class="qui-button js-ignore-cancel"><span>Cancel</span></button>
+      </div>
+    </div>`);
+
+  const outputElement = findElement(SELECTOR_POPUP);
+  if (!outputElement) return;
+
+  const input = outputElement.querySelector(
+    ".js-ignore-input",
+  ) as HTMLInputElement | null;
+  if (!input) return;
+  input.focus();
+  input.select();
+
+  const hint = outputElement.querySelector(
+    ".js-ignore-hint",
+  ) as HTMLElement | null;
+
+  const updateHint = async () => {
+    if (!hint) return;
+    const currentPattern = input.value.trim();
+    if (!currentPattern) {
+      hint.innerHTML = "";
+      return;
+    }
+
+    const matches: boolean = await invoke(CMD_TEST_QUILTIGNORE_PATTERN, {
+      pattern: currentPattern,
+      path,
+    });
+
+    const isSuggested = currentPattern === suggestedPattern;
+    const isExactPath = currentPattern === path;
+
+    if (isSuggested && matches) {
+      // State 1: default glob
+      hint.innerHTML = `<code class="inactive">${escapeHtml(path)}</code> will be ignored`;
+    } else if (matches && !isExactPath) {
+      // State 2: custom, matches multiple
+      hint.innerHTML = `<code class="inactive">${escapeHtml(path)}</code> will be ignored. Ignore all similar files with <code class="js-hint-pattern">${escapeHtml(suggestedPattern)}</code>`;
+    } else if (matches && isExactPath) {
+      // State 3: custom, matches only 1
+      hint.innerHTML = `Only ${escapeHtml(path)} will be ignored. Ignore all similar files with <code class="js-hint-pattern">${escapeHtml(suggestedPattern)}</code>`;
+    } else {
+      // State 4: no match
+      hint.innerHTML = `Doesn't match <code class="js-hint-path">${escapeHtml(path)}</code>. Ignore all similar files with <code class="js-hint-pattern">${escapeHtml(suggestedPattern)}</code>`;
+    }
+
+    // Wire up clickable links
+    const patternLink = hint.querySelector(".js-hint-pattern");
+    patternLink?.addEventListener("click", () => {
+      input.value = suggestedPattern;
+      updateHint();
+    });
+    const pathLink = hint.querySelector(".js-hint-path");
+    pathLink?.addEventListener("click", () => {
+      input.value = path;
+      updateHint();
+    });
+  };
+
+  await updateHint();
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  input.addEventListener("input", () => {
+    if (debounceTimer !== null) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      updateHint().catch(handleError);
+    }, 150);
+  });
+
+  const clearDebounce = () => {
+    if (debounceTimer !== null) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+  };
+
+  const submit = async () => {
+    const pattern = input.value.trim();
+    if (!pattern) return;
+    lockUI();
+    const notification: Html = await invoke(CMD_ADD_TO_QUILTIGNORE, {
+      namespace,
+      pattern,
+    });
+    unlockUI();
+    clearDebounce();
+    dismissPopup();
+    if (notify(notification)) {
+      await loadCurrentPage();
+    }
+  };
+
+  const cancel = () => {
+    clearDebounce();
+    dismissPopup();
+  };
+
+  outputElement
+    .querySelector(".js-ignore-submit")
+    ?.addEventListener("click", () => submit().catch(handleError));
+  outputElement
+    .querySelector(".js-ignore-cancel")
+    ?.addEventListener("click", cancel);
+
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      submit().catch(handleError);
+    } else if (event.key === "Escape") {
+      cancel();
+    }
+  });
+}
+
+function showUnignorePopup(namespace: string, pattern: string) {
+  popup(`<style>@import url("/assets/css/components/ignore-popup.css");</style>
+    <div class="unignore-popup">
+      <span>Ignored by: <span class="pattern-display">${escapeHtml(pattern)}</span></span>
+      <div>
+        <button class="qui-button primary js-edit-quiltignore"
+          data-namespace="${escapeHtml(namespace)}"
+          data-path=".quiltignore">
+          <span>Edit .quiltignore</span>
+        </button>
+      </div>
+    </div>`);
+
+  const outputElement = findElement(SELECTOR_POPUP);
+  if (!outputElement) return;
+
+  outputElement
+    .querySelector(".js-edit-quiltignore")
+    ?.addEventListener("click", async () => {
+      dismissPopup();
+      const notification: Html = await invoke(
+        CMD_OPEN_IN_DEFAULT_APPLICATION,
+        { namespace, path: ".quiltignore" },
+      );
+      notify(notification);
+    });
+}
+
 function isUpdateDismissed() {
   const dismissedAt = localStorage.getItem(STORAGE_KEY_UPDATE_DISMISSED_AT);
   if (!dismissedAt) return false;
@@ -787,7 +1002,7 @@ function isValidHostname(value: string) {
 }
 
 function showSetOriginForm(namespace: Namespace, currentOrigin: string = "") {
-  notify(`<div class="origin-form">
+  popup(`<div class="origin-form">
     <label>Catalog origin</label>
     <div class="origin-input-group">
       <input class="origin-input js-origin-input" type="text" placeholder="open.quilt.bio" />
@@ -799,13 +1014,8 @@ function showSetOriginForm(namespace: Namespace, currentOrigin: string = "") {
     </div>
   </div>`);
 
-  const outputElement = findElement(SELECTOR_NOTIFY);
+  const outputElement = findElement(SELECTOR_POPUP);
   if (!outputElement) return;
-
-  const form = outputElement.firstElementChild;
-  form?.addEventListener("click", (event) => {
-    event.stopPropagation();
-  });
 
   const input = findElement(
     SELECTOR_ORIGIN_INPUT,
@@ -841,7 +1051,7 @@ function showSetOriginForm(namespace: Namespace, currentOrigin: string = "") {
   };
 
   const cancel = () => {
-    notify("");
+    dismissPopup();
   };
 
   const submitButton = findElement(SELECTOR_ORIGIN_SUBMIT, outputElement);
@@ -918,6 +1128,13 @@ async function checkForUpdates() {
 }
 
 window.addEventListener("DOMContentLoaded", async () => {
+  const popupOverlay = document.querySelector(".qui-popup");
+  popupOverlay?.addEventListener("click", (e) => {
+    if (e.target === popupOverlay) {
+      dismissPopup();
+    }
+  });
+
   await loadCurrentPage();
   await checkForUpdates();
 });

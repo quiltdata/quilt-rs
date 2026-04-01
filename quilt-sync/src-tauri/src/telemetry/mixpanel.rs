@@ -49,6 +49,7 @@ pub enum MixpanelEvent {
     SetupCompleted,
     CrashReportSent,
     DiagnosticLogsSaved,
+    QuiltignorePatternAdded,
     ErrorOccurred {
         error_type: String,
     },

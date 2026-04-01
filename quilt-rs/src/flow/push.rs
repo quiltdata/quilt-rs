@@ -96,6 +96,8 @@ pub async fn push_package(
         Some(commit) => commit,
     };
 
+    let remote_pkg = lineage.remote_package()?.clone();
+
     let remote_manifest = match lineage.remote_manifest_uri() {
         Some(remote_manifest_uri) => {
             debug!("⏳ Fetching remote manifest");
@@ -115,13 +117,13 @@ pub async fn push_package(
     //
     // TODO: FAIL if the remote bucket does NOT support versioning (as it would be destructive)
 
-    let namespace = namespace.unwrap_or(lineage.remote.namespace.clone());
+    let namespace = namespace.unwrap_or(remote_pkg.namespace.clone());
     let remote_manifest = remote_manifest.unwrap_or_default();
 
     debug!("⏳ Creating manifest URI");
     let manifest_uri = ManifestUri {
-        origin: lineage.remote.origin.clone(),
-        bucket: lineage.remote.bucket.clone(),
+        origin: remote_pkg.origin.clone(),
+        bucket: remote_pkg.bucket.clone(),
         namespace,
         hash: String::new(),
     };
@@ -151,9 +153,9 @@ pub async fn push_package(
 
     let new_manifest_uri = ManifestUri {
         hash: top_hash,
-        origin: lineage.remote.origin.clone(),
-        bucket: lineage.remote.bucket.clone(),
-        namespace: lineage.remote.namespace.clone(),
+        origin: remote_pkg.origin.clone(),
+        bucket: remote_pkg.bucket.clone(),
+        namespace: remote_pkg.namespace.clone(),
     };
 
     debug!(
@@ -180,7 +182,7 @@ pub async fn push_package(
     );
     debug!("✔️ Latest hash is: {:?}", lineage.latest_hash);
 
-    lineage.remote = (&new_manifest_uri).into();
+    lineage.remote = Some((&new_manifest_uri).into());
     lineage.remote_hash = Some(new_manifest_uri.hash.clone());
     lineage.commit = None;
 
@@ -255,7 +257,7 @@ mod tests {
                 hash: fixtures::top_hash::EMPTY_NULL_TOP_HASH.to_string(),
                 prev_hashes: Vec::new(),
             }),
-            remote: (&manifest_uri).into(),
+            remote: Some((&manifest_uri).into()),
             remote_hash: Some(manifest_uri.hash.clone()),
             ..PackageLineage::default()
         };
@@ -305,7 +307,7 @@ mod tests {
         assert_eq!(
             lineage,
             PackageLineage {
-                remote: (&manifest_uri).into(),
+                remote: Some((&manifest_uri).into()),
                 remote_hash: Some(fixtures::top_hash::EMPTY_NULL_TOP_HASH.to_string()),
                 base_hash: None,
                 latest_hash: Some("abcdef".to_string()),
@@ -329,7 +331,7 @@ mod tests {
                 hash: fixtures::manifest::TOP_HASH.to_string(),
                 prev_hashes: Vec::new(),
             }),
-            remote: (&manifest_uri).into(),
+            remote: Some((&manifest_uri).into()),
             remote_hash: Some(manifest_uri.hash.clone()),
             ..PackageLineage::default()
         };
@@ -397,7 +399,7 @@ mod tests {
         assert_eq!(
             lineage,
             PackageLineage {
-                remote: (&manifest_uri).into(),
+                remote: Some((&manifest_uri).into()),
                 remote_hash: Some(fixtures::manifest::TOP_HASH.to_string()),
                 base_hash: None,
                 latest_hash: Some("latest-hash-abcdef".to_string()),
@@ -417,11 +419,11 @@ mod tests {
                 hash: fixtures::top_hash::EMPTY_NULL_TOP_HASH.to_string(),
                 prev_hashes: Vec::new(),
             }),
-            remote: RemotePackage {
+            remote: Some(RemotePackage {
                 origin: None,
                 bucket: "b".to_string(),
                 namespace: ("a", "c").into(),
-            },
+            }),
             remote_hash: None,
             base_hash: None,
             latest_hash: None,

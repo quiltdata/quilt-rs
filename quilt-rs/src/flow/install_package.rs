@@ -175,7 +175,7 @@ mod tests {
         .await?;
 
         let installed_package = result.packages.get(&("f", "b").into()).unwrap();
-        let tracked = installed_package.remote.clone();
+        let tracked = installed_package.remote.as_ref().unwrap().clone();
 
         assert_eq!(installed_package.latest_hash, Some(test_hash));
 

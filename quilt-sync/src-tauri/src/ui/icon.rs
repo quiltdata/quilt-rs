@@ -18,6 +18,8 @@ pub enum Icon {
     OpenInBrowser,
     OpenInNew,
     Refresh,
+    Visibility,
+    VisibilityOff,
     Warning,
 }
 
@@ -35,6 +37,8 @@ fn get_src(icon: &Icon) -> &str {
         Icon::OpenInBrowser => "/assets/img/icons/open_in_browser.svg",
         Icon::OpenInNew => "/assets/img/icons/open_in_new.svg",
         Icon::Refresh => "/assets/img/icons/refresh.svg",
+        Icon::Visibility => "/assets/img/icons/visibility.svg",
+        Icon::VisibilityOff => "/assets/img/icons/visibility_off.svg",
         Icon::Warning => "/assets/img/icons/warning.svg",
     }
 }

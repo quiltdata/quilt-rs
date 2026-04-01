@@ -1,0 +1,59 @@
+.ignore-popup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-ui-size-2);
+  padding: var(--q-ui-size-3);
+}
+
+.ignore-popup label {
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+.ignore-popup .ignore-input {
+  border: 1px solid var(--q-ui-palette-border);
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.9rem;
+  padding: var(--q-ui-size-1-5) var(--q-ui-size-2);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.ignore-popup .ignore-input:focus {
+  border-color: var(--q-ui-palette-primary);
+  outline: none;
+}
+
+.ignore-popup .ignore-hint {
+  font-size: var(--q-ui-font-size-normal);
+  min-height: 1.4em;
+}
+
+.ignore-popup .ignore-hint code {
+  cursor: pointer;
+  text-decoration: underline;
+  font-weight: 500;
+}
+
+.ignore-popup .ignore-hint code.inactive {
+  cursor: default;
+  text-decoration: none;
+}
+
+.ignore-popup .ignore-actions {
+  display: flex;
+  gap: var(--q-ui-size-2);
+}
+
+.unignore-popup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-ui-size-2);
+  padding: var(--q-ui-size-3);
+}
+
+.unignore-popup .pattern-display {
+  font-family: monospace;
+  font-weight: 500;
+}

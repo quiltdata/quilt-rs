@@ -315,6 +315,27 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_deserialize_package_lineage_without_remote() {
+        let json = r#"{
+            "commit": null,
+            "base_hash": "",
+            "latest_hash": "",
+            "paths": {}
+        }"#;
+        let lineage: PackageLineage = serde_json::from_str(json).unwrap();
+        assert_eq!(lineage.remote, None);
+    }
+
+    #[test]
+    fn test_serialize_package_lineage_without_remote() {
+        let lineage = PackageLineage::default();
+        let json = serde_json::to_string(&lineage).unwrap();
+        // "remote" key (the RemotePackage object) should be omitted when remote is None
+        // Note: "remote_hash" may still be present, so check specifically for "remote":
+        assert!(!json.contains("\"remote\":"));
+    }
+
     #[test(tokio::test)]
     async fn test_domain_lineage_from_file() -> Res {
         let storage = MockStorage::default();
@@ -357,13 +378,13 @@ mod tests {
                         ("foo", "bar").into(),
                         PackageLineage {
                             commit: None,
-                            remote: (&ManifestUri {
+                            remote: Some((&ManifestUri {
                                 bucket: "bucket".to_string(),
                                 namespace: ("foo", "bar").into(),
                                 hash: "abcdef".to_string(),
                                 origin: None,
                             })
-                                .into(),
+                                .into()),
                             remote_hash: Some("abcdef".to_string()),
                             base_hash: Some("abcdef".to_string()),
                             latest_hash: Some("abcdef".to_string()),
@@ -416,13 +437,13 @@ mod tests {
         let namespace = Namespace::from(("foo", "bar"));
         let package_lineage = PackageLineage {
             commit: None,
-            remote: (&ManifestUri {
+            remote: Some((&ManifestUri {
                 bucket: "bucket".to_string(),
                 namespace: namespace.clone(),
                 hash: "abcdef".to_string(),
                 origin: None,
             })
-                .into(),
+                .into()),
             remote_hash: Some("abcdef".to_string()),
             base_hash: Some("abcdef".to_string()),
             latest_hash: Some("abcdef".to_string()),
@@ -481,13 +502,13 @@ mod tests {
         let namespace = Namespace::from(("foo", "bar"));
         let package_lineage = PackageLineage {
             commit: None,
-            remote: (&ManifestUri {
+            remote: Some((&ManifestUri {
                 bucket: "bucket".to_string(),
                 namespace: namespace.clone(),
                 hash: "abcdef".to_string(),
                 origin: None,
             })
-                .into(),
+                .into()),
             remote_hash: Some("abcdef".to_string()),
             base_hash: Some("abcdef".to_string()),
             latest_hash: Some("abcdef".to_string()),

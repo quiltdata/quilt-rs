@@ -3,12 +3,14 @@
 </style>
 
 <li class="qui-installed-package-item {%+ if is_error %}error{% endif %}">
-  <a class="link" href="{{ Paths::InstalledPackage(namespace.clone()) }}">
+  <a class="link" href="{{ Paths::InstalledPackage(namespace.clone(), EntriesFilter::for_installed_package()) }}">
     <span class="item-primary">{{ namespace }}</span>
+    {% if let Some(remote) = remote %}
     <span class="item-secondary">
       <strong>{{ t!("installed_packages_list.uri") }}</strong>
       {{ remote.display() }}
     </span>
+    {% endif %}
   </a>
   <div class="menu">
     <ul class="menu-list">

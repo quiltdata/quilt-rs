@@ -54,7 +54,10 @@ impl<'a> TmplPageMerge<'a> {
             list: vec![
                 crumbs::Link::home(),
                 crumbs::Link::create(
-                    routes::Paths::InstalledPackage(uri.namespace.to_owned()),
+                    routes::Paths::InstalledPackage(
+                        uri.namespace.to_owned(),
+                        routes::EntriesFilter::for_installed_package(),
+                    ),
                     uri.namespace.to_string(),
                 ),
                 crumbs::Current::create(t!("breadcrumbs.merge", s => uri.namespace)),
@@ -102,8 +105,9 @@ impl ViewMerge {
         let lineage = model
             .get_installed_package_lineage(&installed_package)
             .await?;
-        let uri = lineage.remote.to_s3_uri();
-        let origin_host = debug_tools::try_remote_package_origin_host(&lineage.remote)?;
+        let remote = lineage.remote_package()?;
+        let uri = remote.to_s3_uri();
+        let origin_host = debug_tools::try_remote_package_origin_host(remote)?;
 
         tracing.add_host(&origin_host);
 
@@ -155,7 +159,7 @@ mod tests {
 
         // Check for breadcrumbs
         assert!(html.contains(
-            r#"<a class="qui-breadcrumb-link" title="test/package" href="installed-package.html#namespace=test/package">test/package</a>"#
+            r#"<a class="qui-breadcrumb-link" title="test/package" href="installed-package.html#namespace=test/package&#38;filter=unmodified">test/package</a>"#
         ));
         assert!(
             html.contains(r#"<strong class="qui-breadcrumb-current" title="Merge">Merge</strong>"#)

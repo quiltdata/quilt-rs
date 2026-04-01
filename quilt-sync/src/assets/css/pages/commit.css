@@ -151,6 +151,17 @@
     content: none;
   }
 
+  .list .qui-entries-filter {
+    border-bottom: 1px solid var(--q-ui-palette-border);
+    font-size: var(--q-ui-font-size-small);
+    justify-content: flex-end;
+    padding: var(--q-ui-size-1) var(--q-ui-size-2);
+  }
+
+  .list .qui-entries-filter::after {
+    content: none;
+  }
+
   .list-separator {
     background: var(--q-ui-palette-action-hover);
     height: var(--q-ui-size-2);

@@ -14,6 +14,8 @@ use crate::uri::ManifestUri;
 use crate::uri::RevisionPointer;
 use crate::uri::S3PackageHandle;
 use crate::uri::S3PackageUri;
+use crate::Error;
+use crate::Res;
 
 fn multihash_to_str<S: ser::Serializer>(
     hash: &Multihash<256>,
@@ -130,8 +132,9 @@ impl From<&ManifestUri> for RemotePackage {
 pub struct PackageLineage {
     /// Local commits
     pub commit: Option<CommitState>,
-    /// Where this package lives remotely
-    pub remote: RemotePackage,
+    /// Where this package lives remotely. `None` for local-only packages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote: Option<RemotePackage>,
     /// The currently installed or pushed remote revision, if any
     pub remote_hash: Option<String>,
     // TODO: I don't understand yet how and why we use it
@@ -146,6 +149,9 @@ pub struct PackageLineage {
 
 impl From<PackageLineage> for UpstreamState {
     fn from(lineage: PackageLineage) -> Self {
+        if lineage.remote.is_none() {
+            return Self::Local;
+        }
         let behind = lineage.base_hash != lineage.latest_hash;
         let ahead = lineage.base_hash.as_deref() != lineage.current_hash();
         match (ahead, behind) {
@@ -158,11 +164,22 @@ impl From<PackageLineage> for UpstreamState {
 }
 
 impl PackageLineage {
+    /// Returns a reference to the RemotePackage, or an error if this is a local-only package.
+    pub fn remote_package(&self) -> Res<&RemotePackage> {
+        self.remote.as_ref().ok_or(Error::NoRemote)
+    }
+
+    /// Returns a mutable reference to the RemotePackage,
+    /// or an error if this is a local-only package.
+    pub fn remote_package_mut(&mut self) -> Res<&mut RemotePackage> {
+        self.remote.as_mut().ok_or(Error::NoRemote)
+    }
+
     pub fn from_remote(remote: ManifestUri, latest_hash: String) -> Self {
         Self {
             base_hash: Some(remote.hash.clone()),
             remote_hash: Some(remote.hash.clone()),
-            remote: (&remote).into(),
+            remote: Some((&remote).into()),
             latest_hash: Some(latest_hash),
             commit: None,
             paths: BTreeMap::new(),
@@ -172,7 +189,7 @@ impl PackageLineage {
     pub fn from_package(remote: RemotePackage) -> Self {
         Self {
             commit: None,
-            remote,
+            remote: Some(remote),
             remote_hash: None,
             base_hash: None,
             latest_hash: None,
@@ -188,20 +205,22 @@ impl PackageLineage {
     }
 
     pub fn remote_manifest_uri(&self) -> Option<ManifestUri> {
+        let remote = self.remote.as_ref()?;
         self.remote_hash
             .as_ref()
-            .map(|hash| self.remote.manifest_uri(hash.clone()))
+            .map(|hash| remote.manifest_uri(hash.clone()))
     }
 
     pub fn latest_manifest_uri(&self) -> Option<ManifestUri> {
+        let remote = self.remote.as_ref()?;
         self.latest_hash
             .as_ref()
-            .map(|hash| self.remote.manifest_uri(hash.clone()))
+            .map(|hash| remote.manifest_uri(hash.clone()))
     }
 
     pub fn update_latest(&mut self, manifest_uri: ManifestUri) {
         let new_latest_hash = manifest_uri.hash.clone();
-        self.remote = (&manifest_uri).into();
+        self.remote = Some((&manifest_uri).into());
         self.remote_hash = Some(new_latest_hash.clone());
         self.latest_hash = Some(new_latest_hash.clone());
         self.base_hash = Some(new_latest_hash);
@@ -212,11 +231,36 @@ impl From<ManifestUri> for PackageLineage {
     fn from(uri: ManifestUri) -> Self {
         Self {
             base_hash: Some(uri.hash.clone()),
-            remote: (&uri).into(),
+            remote: Some((&uri).into()),
             remote_hash: Some(uri.hash.clone()),
             latest_hash: Some(uri.hash.clone()),
             commit: None,
             paths: BTreeMap::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_is_local() {
+        assert_eq!(
+            UpstreamState::from(PackageLineage::default()),
+            UpstreamState::Local
+        );
+    }
+
+    #[test]
+    fn test_remote_returns_no_remote_error() {
+        let lineage = PackageLineage::default();
+        assert!(matches!(lineage.remote_package(), Err(Error::NoRemote)));
+    }
+
+    #[test]
+    fn test_current_hash_without_remote() {
+        let lineage = PackageLineage::default();
+        assert_eq!(lineage.current_hash(), None);
     }
 }

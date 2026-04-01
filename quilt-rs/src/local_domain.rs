@@ -234,13 +234,13 @@ mod tests {
                 namespace.clone(),
                 crate::lineage::PackageLineage {
                     commit: None,
-                    remote: (&ManifestUri {
+                    remote: Some((&ManifestUri {
                         bucket: "test-bucket".to_string(),
                         namespace: namespace.clone(),
                         hash: "abcdef".to_string(),
                         origin: None,
                     })
-                        .into(),
+                        .into()),
                     remote_hash: Some("abcdef".to_string()),
                     base_hash: Some("abcdef".to_string()),
                     latest_hash: Some("abcdef".to_string()),

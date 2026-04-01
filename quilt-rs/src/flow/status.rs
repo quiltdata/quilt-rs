@@ -14,12 +14,14 @@ use crate::io::manifest::resolve_tag;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
+use crate::junk;
 use crate::lineage::Change;
 use crate::lineage::ChangeSet;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageLineage;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
+use crate::quiltignore;
 use crate::uri::Tag;
 use crate::Error;
 use crate::Res;
@@ -29,13 +31,15 @@ pub async fn refresh_latest_hash(
     mut lineage: PackageLineage,
     remote: &impl Remote,
 ) -> Res<PackageLineage> {
-    let Some(current_remote_hash) = lineage.remote_hash.clone() else {
-        return Ok(lineage);
+    let remote_pkg = lineage.remote_package()?.clone();
+    let current_remote_hash = match lineage.remote_hash.clone() {
+        Some(h) => h,
+        None => return Ok(lineage),
     };
     let latest = resolve_tag(
         remote,
-        &lineage.remote.origin,
-        &lineage.remote.package_handle(),
+        &remote_pkg.origin,
+        &remote_pkg.package_handle(),
         Tag::Latest,
     )
     .await?;
@@ -58,18 +62,26 @@ enum WorkdirFile {
     UnSupported,
 }
 
+/// Located files and ignored files collected during the directory walk.
+struct LocateResult {
+    files: Vec<(PathBuf, WorkdirFile)>,
+    /// Files matched by .quiltignore: (logical_key, absolute_path, matched_pattern)
+    ignored_files: Vec<(PathBuf, PathBuf, String)>,
+}
+
 async fn locate_files_in_package_home(
     storage: &(impl Storage + Sync),
     manifest: &Manifest,
     package_home: impl AsRef<Path>,
     mut tracked_paths: HashMap<PathBuf, ManifestRow>,
     quiltignore: Option<&Gitignore>,
-) -> Res<Vec<(PathBuf, WorkdirFile)>> {
+) -> Res<LocateResult> {
     let package_home = package_home.as_ref();
     let mut queue = VecDeque::new();
     queue.push_back(package_home.to_path_buf());
 
     let mut files = Vec::new();
+    let mut ignored_files = Vec::new();
 
     while let Some(dir) = queue.pop_front() {
         let mut dir_entries = match storage.read_dir(&dir).await {
@@ -88,7 +100,7 @@ async fn locate_files_in_package_home(
                 if file_type.is_dir() {
                     if let Some(gi) = quiltignore {
                         let rel = file_path.strip_prefix(package_home)?;
-                        if crate::quiltignore::is_ignored(gi, rel, true) {
+                        if quiltignore::is_ignored(gi, rel, true) {
                             continue;
                         }
                     }
@@ -102,7 +114,8 @@ async fn locate_files_in_package_home(
 
             let logical_key = file_path.strip_prefix(package_home)?.to_path_buf();
             if let Some(gi) = quiltignore {
-                if crate::quiltignore::is_ignored(gi, &logical_key, false) {
+                if let Some(pattern) = quiltignore::matched_pattern(gi, &logical_key, false) {
+                    ignored_files.push((logical_key, file_path, pattern));
                     continue;
                 }
             }
@@ -120,7 +133,10 @@ async fn locate_files_in_package_home(
         files.push((logical_key, WorkdirFile::Removed(row)));
     }
 
-    Ok(files)
+    Ok(LocateResult {
+        files,
+        ignored_files,
+    })
 }
 
 async fn detect_change(
@@ -188,18 +204,28 @@ pub async fn create_status(
     let mut orig_paths = HashMap::new();
     for path in lineage.paths.keys() {
         debug!("🔍 Checking manifest for path: {}", path.display());
-        let row = manifest
-            .get_record(path)
-            .ok_or(Error::ManifestPath(format!(
-                "path {} not found in installed manifest",
-                path.display()
-            )))?;
-        orig_paths.insert(path.clone(), row.clone());
+        match manifest.get_record(path) {
+            Some(row) => {
+                orig_paths.insert(path.clone(), row.clone());
+            }
+            None if lineage.remote.is_none() => {
+                warn!(
+                    "Lineage path {} not found in manifest, skipping (local-only package)",
+                    path.display()
+                );
+            }
+            None => {
+                return Err(Error::ManifestPath(format!(
+                    "path {} not found in installed manifest",
+                    path.display()
+                )));
+            }
+        }
     }
     debug!("✔️ Found {} paths in lineage", orig_paths.len());
 
-    let quiltignore = crate::quiltignore::load(package_home.as_ref())?;
-    let files = locate_files_in_package_home(
+    let quiltignore = quiltignore::load(package_home.as_ref())?;
+    let locate_result = locate_files_in_package_home(
         storage,
         manifest,
         package_home,
@@ -207,13 +233,36 @@ pub async fn create_status(
         quiltignore.as_ref(),
     )
     .await?;
-    debug!("✔️ Located files in working directory {:?}", files);
-    let changes = fingerprint_files(storage, files, host_config).await?;
+    debug!(
+        "✔️ Located files in working directory {:?}",
+        locate_result.files
+    );
+    let changes = fingerprint_files(storage, locate_result.files, host_config).await?;
     debug!("✔️ Computed file fingerprints {:?}", changes);
 
+    // Collect ignored files with their matched pattern (captured during the walk)
+    let ignored_files: Vec<(PathBuf, String)> = locate_result
+        .ignored_files
+        .into_iter()
+        .map(|(logical_key, _abs_path, pattern)| (logical_key, pattern))
+        .collect();
+
+    // Detect junky files among the changes
+    let junky_changes: Vec<(PathBuf, String)> = changes
+        .keys()
+        .filter_map(|path| junk::check(path).map(|m| (path.clone(), m.pattern)))
+        .collect();
+
     debug!("⏳ Creating package status");
-    let status = InstalledPackageStatus::new(lineage.clone().into(), changes);
-    info!("✔️ Status created with {} changes", status.changes.len());
+    let mut status = InstalledPackageStatus::new(lineage.clone().into(), changes);
+    status.ignored_files = ignored_files;
+    status.junky_changes = junky_changes;
+    info!(
+        "✔️ Status created with {} changes, {} ignored, {} junky",
+        status.changes.len(),
+        status.ignored_files.len(),
+        status.junky_changes.len(),
+    );
     Ok((lineage, status))
 }
 
@@ -234,12 +283,21 @@ mod tests {
     use crate::lineage::CommitState;
     use crate::lineage::PathState;
     use crate::lineage::UpstreamState;
+    use crate::uri::ManifestUri;
+
+    /// Helper to create a PackageLineage with a dummy remote (avoids Local state).
+    fn lineage_with_remote(lineage: PackageLineage) -> PackageLineage {
+        PackageLineage {
+            remote: lineage.remote.or(Some((&ManifestUri::default()).into())),
+            ..lineage
+        }
+    }
 
     #[test(tokio::test)]
     async fn test_default_status() -> Res {
         let storage = MockStorage::default();
         let (_lineage, status) = create_status(
-            PackageLineage::default(),
+            lineage_with_remote(PackageLineage::default()),
             &storage,
             &Manifest::default(),
             PathBuf::default(),
@@ -253,7 +311,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_behind() -> Res {
-        let lineage = PackageLineage {
+        let lineage = lineage_with_remote(PackageLineage {
             commit: Some(CommitState {
                 hash: "AAA".to_string(),
                 ..CommitState::default()
@@ -261,7 +319,7 @@ mod tests {
             base_hash: Some("AAA".to_string()),
             latest_hash: Some("BBB".to_string()),
             ..PackageLineage::default()
-        };
+        });
 
         let (_lineage, status) = create_status(
             lineage,
@@ -277,7 +335,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_ahead() -> Res {
-        let lineage = PackageLineage {
+        let lineage = lineage_with_remote(PackageLineage {
             commit: Some(CommitState {
                 hash: "BBB".to_string(),
                 ..CommitState::default()
@@ -285,7 +343,7 @@ mod tests {
             base_hash: Some("AAA".to_string()),
             latest_hash: Some("AAA".to_string()),
             ..PackageLineage::default()
-        };
+        });
 
         let (_, status) = create_status(
             lineage,
@@ -301,7 +359,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn test_diverged() -> Res {
-        let lineage = PackageLineage {
+        let lineage = lineage_with_remote(PackageLineage {
             commit: Some(CommitState {
                 hash: "aaa".to_string(),
                 ..CommitState::default()
@@ -309,7 +367,7 @@ mod tests {
             base_hash: Some("bbb".to_string()),
             latest_hash: Some("ccc".to_string()),
             ..PackageLineage::default()
-        };
+        });
 
         let (_, status) = create_status(
             lineage,
@@ -675,6 +733,23 @@ mod tests {
         // Since it's in lineage.paths but not found, it appears as Removed.
         let change = status.changes.get(&logical_key).unwrap();
         assert!(matches!(change, Change::Removed(_)));
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_local_status() -> Res {
+        let storage = MockStorage::default();
+        let (lineage, status) = create_status(
+            PackageLineage::default(),
+            &storage,
+            &Manifest::default(),
+            PathBuf::default(),
+            HostConfig::default(),
+        )
+        .await?;
+        assert_eq!(status.upstream_state, UpstreamState::Local);
+        assert!(status.changes.is_empty());
+        assert!(lineage.remote.is_none());
         Ok(())
     }
 }

@@ -1,15 +1,18 @@
 use std::borrow::Cow;
+use std::collections::HashMap;
 
 use askama::Template;
 use rust_i18n::t;
 
 use crate::debug_tools;
+use crate::error::Error;
 use crate::model::QuiltModel;
 use crate::quilt;
 use crate::quilt::lineage::Change;
 use crate::quilt::lineage::UpstreamState;
 use crate::quilt::uri::Namespace;
 use crate::quilt::uri::S3PackageUri;
+use crate::routes::EntriesFilter;
 use crate::routes::Paths;
 use crate::telemetry::prelude::*;
 use crate::ui::btn;
@@ -22,10 +25,13 @@ use crate::Result;
 #[derive(Debug)]
 pub struct ViewInstalledPackage {
     entries_list: Vec<entry::ViewEntry>,
+    filter: EntriesFilter,
     origin: Option<url::Url>,
     origin_host: Option<quilt::uri::Host>,
     status: UpstreamState,
     uri: S3PackageUri,
+    ignored_count: usize,
+    unmodified_count: usize,
 }
 
 #[derive(Template)]
@@ -79,7 +85,11 @@ impl TmplStatus<'_> {
                         .set_color(btn::Color::Warning)
                         .set_href(Paths::Login(
                             host.clone(),
-                            Paths::InstalledPackage(namespace.clone()).to_string(),
+                            Paths::InstalledPackage(
+                                namespace.clone(),
+                                EntriesFilter::for_installed_package(),
+                            )
+                            .to_string(),
                         )),
                     secondary_button: Some(
                         btn::TmplButton::builder()
@@ -100,7 +110,7 @@ impl TmplStatus<'_> {
                     secondary_button: None,
                 }),
             },
-            UpstreamState::UpToDate => None,
+            UpstreamState::Local | UpstreamState::UpToDate => None,
         }
     }
 }
@@ -109,7 +119,14 @@ impl TmplStatus<'_> {
 #[template(path = "./components/entries-toolbar.html")]
 struct TmplEntriesToolbar<'a> {
     button: btn::TmplButton<'a>,
+    show_button: bool,
     with_status: bool,
+    filter_unmodified_checked: bool,
+    filter_unmodified_href: String,
+    filter_ignored_checked: bool,
+    filter_ignored_href: String,
+    ignored_count: usize,
+    unmodified_count: usize,
 }
 
 #[derive(Template)]
@@ -126,7 +143,10 @@ impl<'a> TmplPageInstalledPackage<'a> {
     pub fn primary_button(uri: &S3PackageUri, status: &UpstreamState) -> btn::TmplButton<'a> {
         let btn = btn::TmplButton::builder()
             .set_icon(Icon::ArrowForward)
-            .set_href(Paths::Commit(uri.namespace.clone()))
+            .set_href(Paths::Commit(
+                uri.namespace.clone(),
+                EntriesFilter::default(),
+            ))
             .set_label(t!("installed_package.commit"))
             .set_size(btn::Size::Large)
             .set_direction(btn::Direction::RightToLeft);
@@ -177,27 +197,25 @@ impl ViewInstalledPackage {
         model: &impl QuiltModel,
         tracing: &crate::telemetry::Telemetry,
         namespace: &quilt::uri::Namespace,
+        filter: &EntriesFilter,
     ) -> Result<ViewInstalledPackage> {
         let installed_package = model
             .get_installed_package(namespace)
             .await?
-            .unwrap_or_else(|| panic!("Package not found, {}", &namespace));
+            .ok_or_else(|| Error::Quilt(quilt::Error::PackageNotInstalled(namespace.clone())))?;
 
         let lineage = model
             .get_installed_package_lineage(&installed_package)
             .await?;
 
         // TODO: just use remote_manifest?
-        let uri = lineage.remote.to_s3_uri();
-        let origin_host = match debug_tools::try_remote_package_origin_host(&lineage.remote) {
-            Ok(host) => {
-                tracing.add_host(&host);
-                Some(host)
-            }
-            Err(_) => None,
-        };
+        let (uri, origin_host) =
+            debug_tools::resolve_uri_and_host(lineage.remote.as_ref(), namespace);
+        if let Some(host) = &origin_host {
+            tracing.add_host(host);
+        }
 
-        let status = if origin_host.is_some() {
+        let status = if lineage.remote.is_none() || origin_host.is_some() {
             match model
                 .get_installed_package_status(&installed_package, None)
                 .await
@@ -218,6 +236,13 @@ impl ViewInstalledPackage {
             .get_installed_package_records(&installed_package)
             .await?;
 
+        // Build lookup maps for junky and ignored files
+        let junky_map: HashMap<_, _> = status
+            .junky_changes
+            .iter()
+            .map(|(p, pat)| (p.clone(), pat.clone()))
+            .collect();
+
         let mut entries_list = Vec::new();
         for (filename, change) in modified_entries {
             let entry_uri = quilt::uri::S3PackageUri {
@@ -236,6 +261,8 @@ impl ViewInstalledPackage {
                 status: entry::EntryStatus::from(change),
                 uri: entry_uri,
                 origin,
+                junky_pattern: junky_map.get(filename).cloned(),
+                ignored_by: None,
             });
             if entries_list.len() > 1000 {
                 break;
@@ -261,6 +288,8 @@ impl ViewInstalledPackage {
                     size: row.size,
                     status: entry::EntryStatus::Pristine,
                     uri: entry_uri,
+                    junky_pattern: None,
+                    ignored_by: None,
                 });
             } else {
                 error!(
@@ -294,6 +323,28 @@ impl ViewInstalledPackage {
                 status: entry::EntryStatus::Remote,
                 uri: entry_uri,
                 origin,
+                junky_pattern: None,
+                ignored_by: None,
+            });
+            if entries_list.len() > 1000 {
+                break;
+            }
+        }
+
+        // Add ignored files as separate entries
+        for (filename, pattern) in &status.ignored_files {
+            let entry_uri = quilt::uri::S3PackageUri {
+                path: Some(filename.clone()),
+                ..uri.clone()
+            };
+            entries_list.push(entry::ViewEntry {
+                filename: filename.clone(),
+                size: 0,
+                status: entry::EntryStatus::Pristine,
+                uri: entry_uri,
+                origin: None,
+                junky_pattern: None,
+                ignored_by: Some(pattern.clone()),
             });
             if entries_list.len() > 1000 {
                 break;
@@ -308,12 +359,44 @@ impl ViewInstalledPackage {
             None => None,
         };
 
+        let ignored_count = entries_list
+            .iter()
+            .filter(|e| e.ignored_by.is_some())
+            .count();
+        let unmodified_count = entries_list
+            .iter()
+            .filter(|e| {
+                e.ignored_by.is_none()
+                    && (matches!(e.status, entry::EntryStatus::Pristine)
+                        || matches!(e.status, entry::EntryStatus::Remote))
+            })
+            .count();
+
+        // Apply filter: skip entries that are hidden by the current filter
+        let entries_list: Vec<_> = entries_list
+            .into_iter()
+            .filter(|e| {
+                if e.ignored_by.is_some() {
+                    return filter.ignored;
+                }
+                if matches!(e.status, entry::EntryStatus::Pristine)
+                    || matches!(e.status, entry::EntryStatus::Remote)
+                {
+                    return filter.unmodified;
+                }
+                true
+            })
+            .collect();
+
         Ok(ViewInstalledPackage {
             entries_list,
+            filter: filter.clone(),
             origin,
             origin_host,
             status: status.upstream_state,
             uri: uri.clone(),
+            ignored_count,
+            unmodified_count,
         })
     }
 
@@ -330,11 +413,13 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
     fn from(view: ViewInstalledPackage) -> Self {
         let ViewInstalledPackage {
             entries_list,
+            filter,
             origin,
             origin_host,
             status,
             uri,
-            ..
+            ignored_count,
+            unmodified_count,
         } = view;
         let has_remote_entries = entries_list
             .iter()
@@ -343,6 +428,14 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
         for entry in entries_list {
             entries.push(entry::TmplEntry::from(entry).set_checkbox(false));
         }
+
+        let toggled_unmodified = filter.toggle_unmodified();
+        let toggled_ignored = filter.toggle_ignored();
+        let filter_unmodified_href =
+            Paths::InstalledPackage(uri.namespace.clone(), toggled_unmodified).to_string();
+        let filter_ignored_href =
+            Paths::InstalledPackage(uri.namespace.clone(), toggled_ignored).to_string();
+
         let layout = Layout::builder()
             .set_breadcrumbs(Self::breadcrumbs(&uri))
             .set_actions(Self::actions(&uri, origin.as_ref()))
@@ -357,7 +450,7 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
             status: TmplStatus::new(&uri.namespace, &status, origin_host.as_ref()),
             entries,
             toolbar: {
-                if has_remote_entries {
+                if has_remote_entries || ignored_count > 0 || unmodified_count > 0 {
                     Some(TmplEntriesToolbar {
                         button: btn::TmplButton::builder()
                             .set_js(btn::JsSelector::EntriesInstall)
@@ -365,7 +458,18 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
                             .set_disabled()
                             .set_type(btn::ButtonType::Submit)
                             .set_label(t!("buttons.install_selected_paths")),
-                        with_status: !matches!(status, quilt::lineage::UpstreamState::UpToDate),
+                        show_button: has_remote_entries,
+                        with_status: !matches!(
+                            status,
+                            quilt::lineage::UpstreamState::UpToDate
+                                | quilt::lineage::UpstreamState::Local
+                        ),
+                        filter_unmodified_checked: filter.unmodified,
+                        filter_unmodified_href,
+                        filter_ignored_checked: filter.ignored,
+                        filter_ignored_href,
+                        ignored_count,
+                        unmodified_count,
                     })
                 } else {
                     None
@@ -388,10 +492,13 @@ mod tests {
     fn test_view() -> Result {
         let html = (ViewInstalledPackage {
             entries_list: vec![],
+            filter: EntriesFilter::for_installed_package(),
             origin: Some(url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?),
             origin_host: Some("test.quilt.dev".parse().unwrap()),
             status: quilt::lineage::UpstreamState::UpToDate,
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
+            ignored_count: 0,
+            unmodified_count: 0,
         })
         .render()?;
 
@@ -408,6 +515,7 @@ mod tests {
             &model,
             &crate::telemetry::Telemetry::default(),
             &("foo", "bar").into(),
+            &EntriesFilter::for_installed_package(),
         )
         .await?;
         let html = installed_package.render()?;
@@ -441,16 +549,21 @@ mod tests {
                 status: entry::EntryStatus::Pristine,
                 uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
                 origin: Some(url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?),
+                junky_pattern: None,
+                ignored_by: None,
             });
         }
 
         // Create the ViewInstalledPackage with our test entries
         let view = ViewInstalledPackage {
             entries_list,
+            filter: EntriesFilter::for_installed_package(),
             origin: Some(url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?),
             origin_host: Some("test.quilt.dev".parse().unwrap()),
             status: quilt::lineage::UpstreamState::UpToDate,
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
+            ignored_count: 0,
+            unmodified_count: 0,
         };
 
         // Render the view to HTML
@@ -470,10 +583,13 @@ mod tests {
     fn test_view_no_origin() -> Result {
         let html = (ViewInstalledPackage {
             entries_list: vec![],
+            filter: EntriesFilter::for_installed_package(),
             origin: None,
             origin_host: None,
             status: quilt::lineage::UpstreamState::Error,
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
+            ignored_count: 0,
+            unmodified_count: 0,
         })
         .render()?;
 
@@ -497,21 +613,51 @@ mod tests {
     fn test_view_status_failed() -> Result {
         let html = (ViewInstalledPackage {
             entries_list: vec![],
+            filter: EntriesFilter::for_installed_package(),
             origin: Some(url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?),
             origin_host: Some("test.quilt.dev".parse().unwrap()),
             status: quilt::lineage::UpstreamState::Error,
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
+            ignored_count: 0,
+            unmodified_count: 0,
         })
         .render()?;
 
         // Should show Login button
-        assert!(html.contains(r#"href="login.html#host=test.quilt.dev&#38;back=installed-package.html%23namespace%3DA%2FB""#));
+        assert!(html.contains(r#"href="login.html#host=test.quilt.dev&#38;back=installed-package.html%23namespace%3DA%2FB%26filter%3Dunmodified""#));
 
         // Should not show commit button
         assert!(!html.contains(r#"href="commit.html"#));
 
         // Should still show "Open in Catalog" since origin is valid
         assert!(html.contains("Open in Catalog"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_view_local_only() -> Result {
+        let html = (ViewInstalledPackage {
+            entries_list: vec![],
+            filter: EntriesFilter::for_installed_package(),
+            origin: None,
+            origin_host: None,
+            status: quilt::lineage::UpstreamState::Local,
+            uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
+            ignored_count: 0,
+            unmodified_count: 0,
+        })
+        .render()?;
+
+        // Should not show any status banner (no "Set origin", no error)
+        assert!(!html.contains(r#"js-set-origin"#));
+        assert!(!html.contains(r#"warning"#));
+
+        // Should show commit button (local packages can be committed)
+        assert!(html.contains(r#"href="commit.html"#));
+
+        // Should still show basic page structure
+        assert!(html.contains(r#"data-testid="installed-package-entries""#));
 
         Ok(())
     }

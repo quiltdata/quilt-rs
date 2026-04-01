@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::HashMap;
 
 use askama::Template;
 use rust_i18n::t;
@@ -10,6 +11,7 @@ use crate::quilt;
 use crate::quilt::lineage::Change;
 use crate::quilt::lineage::ChangeSet;
 use crate::routes;
+use crate::routes::EntriesFilter;
 use crate::ui::btn;
 use crate::ui::crumbs;
 use crate::ui::entry;
@@ -39,11 +41,15 @@ struct ViewCommitWorkflow {
 pub struct ViewCommit {
     entries_modified: Vec<entry::ViewEntry>,
     entries_rest: Vec<entry::ViewEntry>,
+    entries_ignored: Vec<entry::ViewEntry>,
+    filter: EntriesFilter,
     message: ViewCommitMessage,
-    origin: url::Url,
+    origin: Option<url::Url>,
     uri: quilt::uri::S3PackageUri,
     user_meta: ViewCommitUserMeta,
     workflow: Option<ViewCommitWorkflow>,
+    ignored_count: usize,
+    unmodified_count: usize,
 }
 
 #[derive(Template)]
@@ -93,6 +99,12 @@ struct TmplPageCommit<'a> {
     entries: Vec<Vec<entry::TmplEntry<'a>>>,
     workflow: TmplWorkflow<'a>,
     layout: Layout<'a>,
+    filter_unmodified_checked: bool,
+    filter_unmodified_href: String,
+    filter_ignored_checked: bool,
+    filter_ignored_href: String,
+    ignored_count: usize,
+    unmodified_count: usize,
 }
 
 fn parse_commit_workflow(
@@ -204,11 +216,12 @@ impl ViewCommit {
         model: &impl QuiltModel,
         tracing: &crate::telemetry::Telemetry,
         namespace: &quilt::uri::Namespace,
+        filter: &EntriesFilter,
     ) -> Result<ViewCommit, Error> {
         let installed_package = model
             .get_installed_package(namespace)
             .await?
-            .unwrap_or_else(|| panic!("Package not found, {}", &namespace));
+            .ok_or_else(|| Error::Quilt(quilt::Error::PackageNotInstalled(namespace.clone())))?;
         let status = model
             .get_installed_package_status(&installed_package, None)
             .await?;
@@ -217,20 +230,29 @@ impl ViewCommit {
             .get_installed_package_lineage(&installed_package)
             .await?;
 
-        let origin_host = debug_tools::try_remote_package_origin_host(&lineage.remote)?;
+        let (uri, origin_host) =
+            debug_tools::resolve_uri_and_host(lineage.remote.as_ref(), namespace);
+        if let Some(host) = &origin_host {
+            tracing.add_host(host);
+        }
 
-        tracing.add_host(&origin_host);
+        // Build lookup maps for junky files
+        let junky_map: HashMap<_, _> = status
+            .junky_changes
+            .iter()
+            .map(|(p, pat)| (p.clone(), pat.clone()))
+            .collect();
 
-        let remote_manifest = match lineage.remote_manifest_uri() {
-            Some(remote_manifest_uri) => model.browse_remote_manifest(&remote_manifest_uri).await?,
-            None => quilt::manifest::Manifest::default(),
-        };
-        let base_uri = lineage.remote.to_s3_uri();
         let mut entries_modified = Vec::new();
         for (filename, change) in &status.changes {
-            let mut uri = base_uri.clone();
-            uri.path = Some(filename.clone());
-            let origin = Some(uri.display_for_host(&origin_host)?);
+            let entry_uri = quilt::uri::S3PackageUri {
+                path: Some(filename.clone()),
+                ..uri.clone()
+            };
+            let origin = match &origin_host {
+                Some(host) => Some(entry_uri.display_for_host(host)?),
+                None => None,
+            };
 
             entries_modified.push(entry::ViewEntry {
                 filename: filename.clone(),
@@ -238,8 +260,10 @@ impl ViewCommit {
                     Change::Added(r) | Change::Modified(r) | Change::Removed(r) => r.size,
                 },
                 status: entry::EntryStatus::from(change),
-                uri,
+                uri: entry_uri,
                 origin,
+                junky_pattern: junky_map.get(filename).cloned(),
+                ignored_by: None,
             });
             if entries_modified.len() > 1000 {
                 break;
@@ -251,7 +275,6 @@ impl ViewCommit {
             .await?;
         let mut entries_rest = Vec::new();
         for (filename, row) in manifest_entries {
-            let uri = base_uri.clone();
             if status.changes.contains_key(&filename) {
                 continue;
             }
@@ -259,7 +282,10 @@ impl ViewCommit {
                 path: Some(filename.clone()),
                 ..uri.clone()
             };
-            let origin = Some(entry_uri.display_for_host(&origin_host)?);
+            let origin = match &origin_host {
+                Some(host) => Some(entry_uri.display_for_host(host)?),
+                None => None,
+            };
             entries_rest.push(entry::ViewEntry {
                 filename: filename.clone(),
                 size: row.size,
@@ -268,22 +294,77 @@ impl ViewCommit {
                 } else {
                     entry::EntryStatus::Remote
                 },
-                uri,
+                uri: entry_uri,
                 origin,
+                junky_pattern: None,
+                ignored_by: None,
             })
         }
 
-        // TODO: just use remote_manifest?
-        let uri = base_uri;
+        // Add ignored files
+        let mut entries_ignored = Vec::new();
+        for (filename, pattern) in &status.ignored_files {
+            let entry_uri = quilt::uri::S3PackageUri {
+                path: Some(filename.clone()),
+                ..uri.clone()
+            };
+            entries_ignored.push(entry::ViewEntry {
+                filename: filename.clone(),
+                size: 0,
+                status: entry::EntryStatus::Pristine,
+                uri: entry_uri,
+                origin: None,
+                junky_pattern: None,
+                ignored_by: Some(pattern.clone()),
+            });
+        }
+
+        let ignored_count = entries_ignored.len();
+        let unmodified_count = entries_rest.len();
+
+        // Apply filter: skip entries that are hidden by the current filter
+        let entries_rest = if filter.unmodified {
+            entries_rest
+        } else {
+            Vec::new()
+        };
+        let entries_ignored = if filter.ignored {
+            entries_ignored
+        } else {
+            Vec::new()
+        };
+
+        let origin = match &origin_host {
+            Some(host) => Some(uri.display_for_host(host)?),
+            None => None,
+        };
+
+        // Load remote manifest for user_meta and workflow (only if remote has a manifest hash)
+        let (user_meta, workflow) = match lineage.remote_manifest_uri() {
+            Some(remote_manifest_uri) => {
+                let remote_manifest = model.browse_remote_manifest(&remote_manifest_uri).await?;
+                let user_meta = parse_commit_user_meta(&remote_manifest.header);
+                let workflow = origin_host
+                    .as_ref()
+                    .and_then(|host| parse_commit_workflow(&remote_manifest.header, host).ok())
+                    .flatten();
+                (user_meta, workflow)
+            }
+            None => (ViewCommitUserMeta::default(), None),
+        };
 
         Ok(ViewCommit {
             entries_modified,
             entries_rest,
+            entries_ignored,
+            filter: filter.clone(),
             message: generate_commit_message(&status.changes),
-            user_meta: parse_commit_user_meta(&remote_manifest.header),
-            uri: uri.clone(),
-            origin: uri.display_for_host(&origin_host)?,
-            workflow: parse_commit_workflow(&remote_manifest.header, &origin_host)?,
+            user_meta,
+            uri,
+            origin,
+            workflow,
+            ignored_count,
+            unmodified_count,
         })
     }
 
@@ -306,7 +387,7 @@ impl<'a> TmplPageCommit<'a> {
 
     fn workflow(
         value: Option<ViewCommitWorkflow>,
-        origin: &url::Url,
+        origin: Option<&url::Url>,
         uri: &quilt::uri::S3PackageUri,
     ) -> TmplWorkflow<'a> {
         match value {
@@ -335,7 +416,7 @@ impl<'a> TmplPageCommit<'a> {
                 null_disabled: true,
                 null_js: None,
                 value: Some("Workflow not available".to_string()),
-                link: origin.host().map(|host| TmplWorkflowLink {
+                link: origin.and_then(|o| o.host()).map(|host| TmplWorkflowLink {
                     pre: None,
                     link: "Create workflows in .quilt/workflows.yaml",
                     href: format!(
@@ -352,7 +433,10 @@ impl<'a> TmplPageCommit<'a> {
             list: vec![
                 crumbs::Link::home(),
                 crumbs::Link::create(
-                    routes::Paths::InstalledPackage(uri.namespace.to_owned()),
+                    routes::Paths::InstalledPackage(
+                        uri.namespace.to_owned(),
+                        routes::EntriesFilter::for_installed_package(),
+                    ),
                     uri.namespace.to_string(),
                 ),
                 crumbs::Current::create(t!("breadcrumbs.commit")),
@@ -363,14 +447,19 @@ impl<'a> TmplPageCommit<'a> {
     fn entries(
         modified: Vec<entry::ViewEntry>,
         rest: Vec<entry::ViewEntry>,
+        ignored: Vec<entry::ViewEntry>,
     ) -> Vec<Vec<entry::TmplEntry<'a>>> {
         let mut entries_modified = Vec::new();
         let mut entries_rest = Vec::new();
+        let mut entries_ignored = Vec::new();
         for entry in modified {
             entries_modified.push(entry::TmplEntry::from(entry));
         }
         for entry in rest {
             entries_rest.push(entry::TmplEntry::from(entry));
+        }
+        for entry in ignored {
+            entries_ignored.push(entry::TmplEntry::from(entry));
         }
         let mut entries = Vec::new();
         if !entries_modified.is_empty() {
@@ -379,46 +468,74 @@ impl<'a> TmplPageCommit<'a> {
         if !entries_rest.is_empty() {
             entries.push(entries_rest);
         }
+        if !entries_ignored.is_empty() {
+            entries.push(entries_ignored);
+        }
         entries
     }
 
-    fn actions(origin: &url::Url, uri: &quilt::uri::S3PackageUri) -> Vec<btn::TmplButton<'a>> {
-        vec![
-            btn::TmplButton::builder()
-                .set_data("namespace", uri.namespace.to_string())
-                .set_icon(Icon::FolderOpen)
-                .set_js(btn::JsSelector::OpenInFileBrowser)
-                .set_label(t!("buttons.open_package_in_file_browser"))
-                .set_size(btn::Size::Small),
-            btn::TmplButton::builder()
-                .set_data("url", origin.to_string())
-                .set_icon(Icon::OpenInBrowser)
-                .set_js(btn::JsSelector::OpenInWebBrowser)
-                .set_label(t!("buttons.open_package_in_catalog"))
-                .set_size(btn::Size::Small),
+    fn actions(
+        origin: Option<&url::Url>,
+        uri: &quilt::uri::S3PackageUri,
+    ) -> Vec<btn::TmplButton<'a>> {
+        let mut actions = vec![btn::TmplButton::builder()
+            .set_data("namespace", uri.namespace.to_string())
+            .set_icon(Icon::FolderOpen)
+            .set_js(btn::JsSelector::OpenInFileBrowser)
+            .set_label(t!("buttons.open_package_in_file_browser"))
+            .set_size(btn::Size::Small)];
+        if let Some(origin) = origin {
+            actions.push(
+                btn::TmplButton::builder()
+                    .set_data("url", origin.to_string())
+                    .set_icon(Icon::OpenInBrowser)
+                    .set_js(btn::JsSelector::OpenInWebBrowser)
+                    .set_label(t!("buttons.open_package_in_catalog"))
+                    .set_size(btn::Size::Small),
+            );
+        }
+        actions.push(
             btn::TmplButton::builder()
                 .set_data("namespace", uri.namespace.to_string())
                 .set_icon(Icon::Block)
                 .set_js(btn::JsSelector::PackagesUninstall)
                 .set_label(t!("buttons.uninstall_package"))
                 .set_size(btn::Size::Small),
-        ]
+        );
+        actions
     }
 }
 
 impl From<ViewCommit> for TmplPageCommit<'_> {
     fn from(view: ViewCommit) -> Self {
+        let toggled_unmodified = view.filter.toggle_unmodified();
+        let toggled_ignored = view.filter.toggle_ignored();
+        let filter_unmodified_href =
+            routes::Paths::Commit(view.uri.namespace.clone(), toggled_unmodified).to_string();
+        let filter_ignored_href =
+            routes::Paths::Commit(view.uri.namespace.clone(), toggled_ignored).to_string();
+
         TmplPageCommit {
-            entries: Self::entries(view.entries_modified, view.entries_rest),
+            entries: Self::entries(
+                view.entries_modified,
+                view.entries_rest,
+                view.entries_ignored,
+            ),
             message: view.message,
             user_meta: view.user_meta,
-            workflow: Self::workflow(view.workflow, &view.origin, &view.uri),
+            workflow: Self::workflow(view.workflow, view.origin.as_ref(), &view.uri),
             layout: Layout::builder()
-                .set_actions(Self::actions(&view.origin, &view.uri))
+                .set_actions(Self::actions(view.origin.as_ref(), &view.uri))
                 .set_primary_action(Self::primary_button())
                 .set_breadcrumbs(Self::breadcrumbs(&view.uri))
                 .set_uri(Some(view.uri.clone())),
-            uri: view.uri,
+            uri: view.uri.clone(),
+            filter_unmodified_checked: view.filter.unmodified,
+            filter_unmodified_href,
+            filter_ignored_checked: view.filter.ignored,
+            filter_ignored_href,
+            ignored_count: view.ignored_count,
+            unmodified_count: view.unmodified_count,
         }
     }
 }
@@ -437,8 +554,10 @@ mod tests {
         let html = ViewCommit {
             entries_modified: vec![],
             entries_rest: vec![],
+            entries_ignored: vec![],
+            filter: EntriesFilter::default(),
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
-            origin: url::Url::parse("https://test.quilt.dev/C/packages/A/B")?,
+            origin: Some(url::Url::parse("https://test.quilt.dev/C/packages/A/B")?),
             message: ViewCommitMessage {
                 value: "".to_string(),
                 error: None,
@@ -447,6 +566,8 @@ mod tests {
                 value: "".to_string(),
                 error: None,
             },
+            ignored_count: 0,
+            unmodified_count: 0,
             workflow: Some(ViewCommitWorkflow {
                 error: None,
                 id: None,
@@ -570,8 +691,10 @@ mod tests {
         let html = ViewCommit {
             entries_modified: vec![],
             entries_rest: vec![],
+            entries_ignored: vec![],
+            filter: EntriesFilter::default(),
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
-            origin: url::Url::parse("https://test.quilt.dev/C/packages/A/B")?,
+            origin: Some(url::Url::parse("https://test.quilt.dev/C/packages/A/B")?),
             message: ViewCommitMessage {
                 value: "".to_string(),
                 error: None,
@@ -580,6 +703,8 @@ mod tests {
                 value: "".to_string(),
                 error: None,
             },
+            ignored_count: 0,
+            unmodified_count: 0,
             workflow: Some(ViewCommitWorkflow {
                 error: None,
                 id: Some(workflow_id.to_string()),
@@ -601,8 +726,10 @@ mod tests {
         let html = ViewCommit {
             entries_modified: vec![],
             entries_rest: vec![],
+            entries_ignored: vec![],
+            filter: EntriesFilter::default(),
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
-            origin: url::Url::parse("https://test.quilt.dev/C/packages/A/B")?,
+            origin: Some(url::Url::parse("https://test.quilt.dev/C/packages/A/B")?),
             message: ViewCommitMessage {
                 value: "".to_string(),
                 error: None,
@@ -611,6 +738,8 @@ mod tests {
                 value: "".to_string(),
                 error: None,
             },
+            ignored_count: 0,
+            unmodified_count: 0,
             workflow: Some(ViewCommitWorkflow {
                 error: None,
                 id: None,
@@ -631,10 +760,14 @@ mod tests {
         let html = ViewCommit {
             entries_modified: vec![],
             entries_rest: vec![],
+            entries_ignored: vec![],
+            filter: EntriesFilter::default(),
             uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
-            origin: url::Url::parse("https://test.quilt.dev/C/packages/A/B")?,
+            origin: Some(url::Url::parse("https://test.quilt.dev/C/packages/A/B")?),
             message: ViewCommitMessage::default(),
             user_meta: ViewCommitUserMeta::default(),
+            ignored_count: 0,
+            unmodified_count: 0,
             workflow: None,
         }
         .render()?;

@@ -8,6 +8,18 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.27.5-alpha3] - 2026-03-31
+
+### Changed
+
+- Make `PackageLineage.remote` optional to support local-only packages without a remote origin (<https://github.com/quiltdata/quilt-rs/pull/594>)
+
+## [v0.27.5-alpha2] - 2026-03-30
+
+### Added
+
+- Detect junk files (OS metadata, editor temps, build artifacts) via the `junk` module and surface them in package status with suggested `.quiltignore` patterns (<https://github.com/quiltdata/quilt-rs/pull/593>)
+
 ## [v0.27.5-alpha1] - 2026-03-26
 
 ### Added

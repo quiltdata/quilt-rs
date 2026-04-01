@@ -26,14 +26,16 @@ pub async fn reset_to_latest(
 ) -> Res<PackageLineage> {
     info!("⏳ Starting reset to latest for package {}", namespace);
 
+    let remote_pkg = lineage.remote_package()?.clone();
+
     debug!(
         "⏳ Resolving latest manifest hash for {}",
-        lineage.remote.display()
+        remote_pkg.display()
     );
     let latest = resolve_tag(
         remote,
-        &lineage.remote.origin,
-        &lineage.remote.package_handle(),
+        &remote_pkg.origin,
+        &remote_pkg.package_handle(),
         Tag::Latest,
     )
     .await?;
@@ -70,7 +72,7 @@ pub async fn reset_to_latest(
         },
     )
     .await?;
-    lineage.remote = (&latest).into();
+    lineage.remote = Some((&latest).into());
     lineage.remote_hash = Some(latest.hash.clone());
     debug!("✔️ Manifest installed successfully");
 
@@ -124,7 +126,7 @@ mod tests {
             origin: None,
         };
         let source_lineage = PackageLineage {
-            remote: (&source_manifest_uri).into(),
+            remote: Some((&source_manifest_uri).into()),
             remote_hash: Some(source_manifest_uri.hash.clone()),
             ..PackageLineage::default()
         };
@@ -168,7 +170,7 @@ mod tests {
             .await?;
 
         let source_lineage = PackageLineage {
-            remote: (&manifest_uri).into(),
+            remote: Some((&manifest_uri).into()),
             remote_hash: Some(manifest_uri.hash.clone()),
             ..PackageLineage::default()
         };

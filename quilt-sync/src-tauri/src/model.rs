@@ -125,6 +125,9 @@ pub trait QuiltModel {
                 let package_lineage = self
                     .get_installed_package_lineage(&installed_package)
                     .await?;
+                if package_lineage.remote.is_none() {
+                    return Ok(None);
+                }
                 if package_lineage.remote_hash.as_deref() == Some(manifest_uri.hash.as_str()) {
                     Ok(Some(installed_package))
                 } else {

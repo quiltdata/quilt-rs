@@ -51,7 +51,7 @@ mod tests {
             origin: None,
         };
         let source_lineage = PackageLineage {
-            remote: (&source_manifest_uri).into(),
+            remote: Some((&source_manifest_uri).into()),
             remote_hash: Some(source_manifest_uri.hash.clone()),
             ..PackageLineage::default()
         };

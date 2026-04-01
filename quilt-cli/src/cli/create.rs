@@ -83,7 +83,7 @@ mod tests {
         let installed_package = output.get_installed_package();
         let lineage = installed_package.lineage().await?;
         assert_eq!(installed_package.namespace.to_string(), "foo/bar");
-        assert_eq!(lineage.remote.bucket, "bucket");
+        assert_eq!(lineage.remote.as_ref().unwrap().bucket, "bucket");
         assert!(lineage.remote_hash.is_none());
         assert!(lineage.base_hash.is_none());
         assert!(lineage.latest_hash.is_none());
