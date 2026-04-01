@@ -440,7 +440,7 @@ mod tests {
             test_hash, "foo", "bar"
         );
         storage
-            .write_byte_stream(&paths.lineage(), lineage_json.into_bytes().into())
+            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
             .await?;
 
         // Copy manifest to the expected path
@@ -493,6 +493,164 @@ mod tests {
     }
 
     #[test(tokio::test)]
+    async fn test_set_remote_on_local_package() -> Res {
+        let (home, _temp_dir1) = Home::from_temp_dir()?;
+        let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+
+        let storage = LocalStorage::new();
+        let remote = MockRemote::default();
+        let namespace: Namespace = ("test", "local").into();
+
+        paths
+            .scaffold_for_installing(&storage, &home, &namespace)
+            .await?;
+
+        let lineage_json = r#"{
+            "packages": {
+                "test/local": {
+                    "commit": null,
+                    "remote": null,
+                    "base_hash": "",
+                    "latest_hash": "",
+                    "paths": {}
+                }
+            },
+            "home": "/tmp/working_dir"
+        }"#;
+        storage
+            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+            .await?;
+
+        let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+        let package = InstalledPackage {
+            lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+            paths,
+            remote,
+            storage,
+            namespace,
+        };
+
+        package
+            .set_remote("example.com".parse()?, "my-bucket".to_string())
+            .await?;
+
+        let lineage = package.lineage().await?;
+        let remote_uri = lineage.remote_uri.as_ref().expect("remote_uri should be set");
+        assert_eq!(remote_uri.origin.as_ref().unwrap().to_string(), "example.com");
+        assert_eq!(remote_uri.bucket, "my-bucket");
+        assert_eq!(remote_uri.hash, "");
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_set_remote_empty_bucket_error() -> Res {
+        let (home, _temp_dir1) = Home::from_temp_dir()?;
+        let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+
+        let storage = LocalStorage::new();
+        let remote = MockRemote::default();
+        let namespace: Namespace = ("test", "local").into();
+
+        paths
+            .scaffold_for_installing(&storage, &home, &namespace)
+            .await?;
+
+        let lineage_json = r#"{
+            "packages": {
+                "test/local": {
+                    "commit": null,
+                    "remote": null,
+                    "base_hash": "",
+                    "latest_hash": "",
+                    "paths": {}
+                }
+            },
+            "home": "/tmp/working_dir"
+        }"#;
+        storage
+            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+            .await?;
+
+        let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+        let package = InstalledPackage {
+            lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+            paths,
+            remote,
+            storage,
+            namespace,
+        };
+
+        let result = package
+            .set_remote("example.com".parse()?, "".to_string())
+            .await;
+
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("Bucket cannot be empty"),
+            "Error should mention empty bucket"
+        );
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_set_remote_overwrites_existing() -> Res {
+        let (home, _temp_dir1) = Home::from_temp_dir()?;
+        let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+
+        let storage = LocalStorage::new();
+        let remote = MockRemote::default();
+        let namespace: Namespace = ("test", "overwrite").into();
+
+        paths
+            .scaffold_for_installing(&storage, &home, &namespace)
+            .await?;
+
+        let lineage_json = r#"{
+            "packages": {
+                "test/overwrite": {
+                    "commit": null,
+                    "remote": {
+                        "bucket": "old-bucket",
+                        "namespace": "test/overwrite",
+                        "hash": "abc123",
+                        "catalog": "old.host"
+                    },
+                    "base_hash": "abc123",
+                    "latest_hash": "abc123",
+                    "paths": {}
+                }
+            },
+            "home": "/tmp/working_dir"
+        }"#;
+        storage
+            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+            .await?;
+
+        let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+        let package = InstalledPackage {
+            lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+            paths,
+            remote,
+            storage,
+            namespace,
+        };
+
+        package
+            .set_remote("new.host".parse()?, "new-bucket".to_string())
+            .await?;
+
+        let lineage = package.lineage().await?;
+        let remote_uri = lineage.remote_uri.as_ref().expect("remote_uri should be set");
+        assert_eq!(remote_uri.origin.as_ref().unwrap().to_string(), "new.host");
+        assert_eq!(remote_uri.bucket, "new-bucket");
+        assert_eq!(remote_uri.hash, "", "hash should be reset to empty");
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
     async fn test_manifest_recovery_from_corruption() -> Res {
         let (home, _temp_dir1) = Home::from_temp_dir()?;
         let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
@@ -528,7 +686,7 @@ mod tests {
             test_hash, "foo", "bar"
         );
         storage
-            .write_byte_stream(&paths.lineage(), lineage_json.into_bytes().into())
+            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
             .await?;
 
         // Set up a valid cached manifest

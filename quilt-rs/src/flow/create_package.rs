@@ -279,6 +279,63 @@ mod tests {
     }
 
     #[test(tokio::test)]
+    async fn test_create_with_quiltignore() -> Res {
+        let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
+        let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+        let storage = MockStorage::default();
+        let namespace: Namespace = ("test", "ignore").into();
+
+        // Create source directory with files and .quiltignore
+        let source_dir = storage.temp_dir.as_ref().join("source");
+        storage.create_dir_all(&source_dir).await?;
+
+        storage
+            .write_byte_stream(
+                source_dir.join("data.csv"),
+                ByteStream::from_static(b"a,b,c"),
+            )
+            .await?;
+        storage
+            .write_byte_stream(
+                source_dir.join("notes.log"),
+                ByteStream::from_static(b"some log"),
+            )
+            .await?;
+        storage
+            .write_byte_stream(
+                source_dir.join(".quiltignore"),
+                ByteStream::from_static(b"*.log"),
+            )
+            .await?;
+
+        let lineage = create_package(
+            lineage,
+            &paths,
+            &storage,
+            namespace.clone(),
+            Some(source_dir),
+            None,
+        )
+        .await?;
+
+        let pkg = lineage.packages.get(&namespace).unwrap();
+        assert!(
+            pkg.paths.contains_key(&PathBuf::from("data.csv")),
+            "data.csv should be included"
+        );
+        assert!(
+            !pkg.paths.contains_key(&PathBuf::from("notes.log")),
+            "notes.log should be ignored"
+        );
+        // .quiltignore is not matched by *.log, so it's included
+        assert!(
+            pkg.paths.contains_key(&PathBuf::from(".quiltignore")),
+            ".quiltignore should be included (not matched by *.log)"
+        );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
     async fn test_create_with_custom_message() -> Res {
         let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
         let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
