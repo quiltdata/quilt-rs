@@ -397,11 +397,10 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         match lineage.remote_uri.as_mut() {
             Some(remote_uri) => remote_uri.origin = Some(origin),
             None => {
-                lineage.remote_uri = Some(ManifestUri {
-                    origin: Some(origin),
-                    namespace: self.namespace.clone(),
-                    ..ManifestUri::default()
-                });
+                return Err(Error::Push(
+                    "No remote configured. Use set_remote to configure both origin and bucket."
+                        .to_string(),
+                ));
             }
         }
         self.lineage.write(&self.storage, lineage).await?;
