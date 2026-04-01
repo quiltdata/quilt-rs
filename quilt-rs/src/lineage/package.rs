@@ -73,7 +73,7 @@ pub struct RemotePackage {
 }
 
 impl RemotePackage {
-    pub fn display(&self) -> String {
+    pub fn to_s3_uri(&self) -> S3PackageUri {
         S3PackageUri {
             catalog: self.origin.clone(),
             bucket: self.bucket.clone(),
@@ -81,7 +81,10 @@ impl RemotePackage {
             revision: RevisionPointer::default(),
             path: None,
         }
-        .display()
+    }
+
+    pub fn display(&self) -> String {
+        self.to_s3_uri().display()
     }
 
     pub fn manifest_uri(&self, hash: impl Into<String>) -> ManifestUri {

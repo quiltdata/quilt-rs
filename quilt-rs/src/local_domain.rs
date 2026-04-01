@@ -133,10 +133,6 @@ impl LocalDomain {
         package_uri: &S3PackageUri,
         source: Option<&PathBuf>,
     ) -> Res<InstalledPackage> {
-        debug!("Preparing paths for package creation");
-        self.scaffold_paths_for_caching(&package_uri.bucket).await?;
-        self.scaffold_paths_for_installing(&package_uri.namespace).await?;
-
         let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
         let lineage =
             flow::create_package(lineage, &self.paths, &self.storage, package_uri, source).await?;

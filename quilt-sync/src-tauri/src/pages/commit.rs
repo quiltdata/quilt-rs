@@ -9,7 +9,6 @@ use crate::model::QuiltModel;
 use crate::quilt;
 use crate::quilt::lineage::Change;
 use crate::quilt::lineage::ChangeSet;
-use crate::quilt::uri::RevisionPointer;
 use crate::routes;
 use crate::ui::btn;
 use crate::ui::crumbs;
@@ -226,13 +225,7 @@ impl ViewCommit {
             Some(remote_manifest_uri) => model.browse_remote_manifest(&remote_manifest_uri).await?,
             None => quilt::manifest::Manifest::default(),
         };
-        let base_uri = quilt::uri::S3PackageUri {
-            catalog: lineage.remote.origin.clone(),
-            bucket: lineage.remote.bucket.clone(),
-            namespace: lineage.remote.namespace.clone(),
-            revision: RevisionPointer::default(),
-            path: None,
-        };
+        let base_uri = lineage.remote.to_s3_uri();
         let mut entries_modified = Vec::new();
         for (filename, change) in &status.changes {
             let mut uri = base_uri.clone();

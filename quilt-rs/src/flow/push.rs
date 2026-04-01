@@ -220,6 +220,7 @@ mod tests {
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::CommitState;
     use crate::lineage::PackageLineage;
+    use crate::lineage::RemotePackage;
     use crate::uri::S3Uri;
 
     #[test(tokio::test)]
@@ -403,6 +404,70 @@ mod tests {
                 ..PackageLineage::default()
             }
         );
+        Ok(())
+    }
+
+    /// Tests push for a first revision (created via `quilt create`, no prior remote manifest).
+    /// All rows should be treated as new uploads since remote_hash is None.
+    #[test(tokio::test)]
+    async fn test_push_first_revision() -> Res {
+        let lineage = PackageLineage {
+            commit: Some(CommitState {
+                timestamp: chrono::Utc::now(),
+                hash: fixtures::top_hash::EMPTY_NULL_TOP_HASH.to_string(),
+                prev_hashes: Vec::new(),
+            }),
+            remote: RemotePackage {
+                origin: None,
+                bucket: "b".to_string(),
+                namespace: ("a", "c").into(),
+            },
+            remote_hash: None,
+            base_hash: None,
+            latest_hash: None,
+            ..PackageLineage::default()
+        };
+
+        let manifest_key = format!(
+            ".quilt/packages/b/{}",
+            fixtures::top_hash::EMPTY_NULL_TOP_HASH
+        );
+        let storage = MockStorage::default();
+        storage
+            .write_byte_stream(PathBuf::from(manifest_key), ByteStream::from_static(b"foo"))
+            .await?;
+
+        let remote = MockRemote::default();
+        remote
+            .put_object(
+                &None,
+                &S3Uri::try_from("s3://b/.quilt/named_packages/a/c/latest")?,
+                b"abcdef".to_vec(),
+            )
+            .await?;
+
+        let mut manifest = Manifest::default();
+        manifest.header.user_meta = Some(serde_json::Value::Null);
+
+        let lineage = push_package(
+            lineage,
+            manifest,
+            &paths::DomainPaths::default(),
+            &storage,
+            &remote,
+            None,
+            HostConfig::default(),
+        )
+        .await?;
+
+        // After push, remote_hash should be set (was None before)
+        assert!(lineage.remote_hash.is_some());
+        assert_eq!(
+            lineage.remote_hash.as_deref(),
+            Some(fixtures::top_hash::EMPTY_NULL_TOP_HASH)
+        );
+        assert_eq!(lineage.latest_hash.as_deref(), Some("abcdef"));
+        assert!(lineage.commit.is_none());
         Ok(())
     }
 }

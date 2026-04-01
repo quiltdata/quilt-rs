@@ -118,4 +118,32 @@ mod tests {
         assert!(!storage.exists(temp_dir.path().join("foo/bar/skip.log")).await);
         Ok(())
     }
+
+    #[test(tokio::test)]
+    async fn test_create_duplicate_namespace() -> Result<(), Error> {
+        let (m, _temp_dir) = create_model_in_temp_dir().await?;
+        model(
+            m.get_local_domain(),
+            Input {
+                uri: "quilt+s3://bucket#package=foo/bar".to_string(),
+                source: None,
+            },
+        )
+        .await?;
+
+        let err = model(
+            m.get_local_domain(),
+            Input {
+                uri: "quilt+s3://bucket#package=foo/bar".to_string(),
+                source: None,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "quilt_rs error: The package foo/bar is already installed"
+        );
+        Ok(())
+    }
 }

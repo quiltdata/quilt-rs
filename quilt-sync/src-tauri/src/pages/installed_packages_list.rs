@@ -8,7 +8,6 @@ use crate::quilt;
 use crate::quilt::lineage::RemotePackage;
 use crate::quilt::lineage::UpstreamState;
 use crate::quilt::uri::Namespace;
-use crate::quilt::uri::RevisionPointer;
 use crate::routes::Paths;
 use crate::telemetry::prelude::*;
 use crate::ui::btn;
@@ -250,13 +249,7 @@ impl ViewInstalledPackagesList {
 
         let origin_host = debug_tools::try_remote_package_origin_host(&lineage.remote)?;
         tracing.add_host(&origin_host);
-        let uri = quilt::uri::S3PackageUri {
-            catalog: lineage.remote.origin.clone(),
-            bucket: lineage.remote.bucket.clone(),
-            namespace: lineage.remote.namespace.clone(),
-            revision: RevisionPointer::default(),
-            path: None,
-        };
+        let uri = lineage.remote.to_s3_uri();
         let origin_url = uri.display_for_host(&origin_host)?;
         let status = match model
             .get_installed_package_status(installed_package, None)
