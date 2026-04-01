@@ -386,12 +386,45 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             }
         }
         lineage.remote_uri = Some(ManifestUri {
-            origin: Some(origin),
-            bucket,
+            origin: Some(origin.clone()),
+            bucket: bucket.clone(),
             namespace: self.namespace.clone(),
             hash: String::new(),
         });
-        self.lineage.write(&self.storage, lineage).await?;
+        // Persist remote_uri first — if recommit fails (e.g. network error),
+        // the remote is still saved and the user can retry.
+        self.lineage.write(&self.storage, lineage.clone()).await?;
+
+        // Re-commit with the remote's host_config and workflow so push
+        // works immediately without a manual re-commit.
+        if lineage.commit.is_some() {
+            let host_config = self.remote.host_config(&Some(origin.clone())).await?;
+            let workflows_config_uri = S3Uri {
+                key: ".quilt/workflows/config.yml".to_string(),
+                bucket: bucket.clone(),
+                ..S3Uri::default()
+            };
+            let workflow = resolve_workflow(
+                &self.remote,
+                &Some(origin),
+                None,
+                &workflows_config_uri,
+            )
+            .await?;
+            let manifest = self.manifest().await?;
+            let lineage = flow::recommit(
+                lineage,
+                &manifest,
+                &self.paths,
+                &self.storage,
+                self.namespace.clone(),
+                host_config,
+                workflow,
+            )
+            .await?;
+            self.lineage.write(&self.storage, lineage).await?;
+        }
+
         Ok(())
     }
 
