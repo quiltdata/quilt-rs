@@ -237,6 +237,109 @@ mod tests {
         Ok(())
     }
 
+    /// Integration test: create local package → patch remote → push to S3 → verify lineage.
+    /// Uses fiskus-us-east-1 with a dedicated namespace (no catalog auth needed).
+    #[test(tokio::test)]
+    async fn test_push_local_package_with_bucket_origin() -> Result<(), Error> {
+        use crate::cli::create;
+        use crate::cli::status;
+        use quilt_rs::lineage::UpstreamState;
+
+        let namespace: Namespace = ("cli_test", "local_push").into();
+        let host_config = Some(HostConfig::default_sha256_chunked());
+
+        // Step 1: Create model and local package
+        let (m, temp_dir) = create_model_in_temp_dir().await?;
+
+        let create_output = m
+            .create(create::Input {
+                namespace: namespace.clone(),
+                source: None,
+                message: None,
+            })
+            .await?;
+
+        // Step 2: Write a file into the package home directory
+        let working_dir = create_output.installed_package.package_home().await?;
+        let storage = LocalStorage::new();
+
+        let data_file = working_dir.join("data.txt");
+        storage
+            .write_byte_stream(
+                &data_file,
+                ByteStream::from_static(b"hello from local package\n"),
+            )
+            .await?;
+
+        // Step 3: Commit
+        m.commit(commit::Input {
+            message: "Add data".to_string(),
+            namespace: namespace.clone(),
+            user_meta: None,
+            workflow: None,
+            host_config: None,
+        })
+        .await?;
+
+        // Step 4: Patch lineage to set remote (bucket only, no catalog)
+        let lineage_path = temp_dir.path().join(".quilt/data.json");
+        let lineage_bytes = std::fs::read(&lineage_path)?;
+        let mut lineage_json: serde_json::Value = serde_json::from_slice(&lineage_bytes)?;
+        lineage_json["packages"]["cli_test/local_push"]["remote"] = serde_json::json!({
+            "bucket": "fiskus-us-east-1",
+            "namespace": "cli_test/local_push",
+            "hash": "",
+            "catalog": null
+        });
+        std::fs::write(&lineage_path, serde_json::to_vec_pretty(&lineage_json)?)?;
+
+        // Step 5: Push to S3 (first push — no existing latest tag)
+        let push_output = m
+            .push(Input {
+                namespace: namespace.clone(),
+                host_config: host_config.clone(),
+                bucket: None,
+                origin: None,
+            })
+            .await?;
+
+        assert!(
+            !push_output.hash.is_empty(),
+            "Push should return a non-empty hash"
+        );
+
+        // Step 6: Verify lineage after push
+        let lineage = create_output.installed_package.lineage().await?;
+        let remote_uri = lineage.remote_uri.as_ref().expect("remote_uri should be set");
+        assert_eq!(
+            lineage.base_hash, remote_uri.hash,
+            "base_hash should equal remote hash after push"
+        );
+        assert!(
+            !remote_uri.hash.is_empty(),
+            "remote hash should not be empty after push"
+        );
+        assert_eq!(
+            remote_uri.bucket, "fiskus-us-east-1",
+            "bucket should match"
+        );
+
+        // Step 7: Status should be UpToDate (first push certifies latest)
+        let status_output = m
+            .status(status::Input {
+                namespace: namespace.clone(),
+                host_config,
+            })
+            .await?;
+        assert_eq!(
+            status_output.status.upstream_state,
+            UpstreamState::UpToDate,
+            "Package should be up-to-date after first push"
+        );
+
+        Ok(())
+    }
+
     /// Comprehensive integration test for push workflow with CRC64 checksums:
     /// 1. Pull package from fiskus-us-east-1 bucket with CRC64 hashing
     /// 2. Verify initial top hash: b427c3867bce2445a988f69f43ad3998237d2fedf6f5e678822acd1a1e8f580a

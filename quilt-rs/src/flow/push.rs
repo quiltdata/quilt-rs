@@ -161,14 +161,20 @@ pub async fn push_package(
     debug!("✔️ Timestamp tag added");
 
     debug!("⏳ Checking remote's latest manifest hash");
-    lineage.latest_hash = resolve_tag(
+    lineage.latest_hash = match resolve_tag(
         remote,
         &new_manifest_uri.origin,
         &manifest_uri.into(),
         Tag::Latest,
     )
-    .await?
-    .hash;
+    .await
+    {
+        Ok(uri) => uri.hash,
+        Err(_) => {
+            debug!("✔️ No existing latest tag — first push for this package");
+            String::new()
+        }
+    };
     debug!("✔️ Latest hash is: {}", lineage.latest_hash);
 
     lineage.remote_uri = Some(new_manifest_uri.clone());
@@ -191,8 +197,8 @@ pub async fn push_package(
         ))?
     }
 
-    // Try certifying latest if tracking
-    if lineage.base_hash == lineage.latest_hash {
+    // Try certifying latest if tracking, or if this is the first push (no existing latest)
+    if lineage.base_hash == lineage.latest_hash || lineage.latest_hash.is_empty() {
         debug!("⏳ Remote latest not updated, certifying new latest");
         return flow::certify_latest(lineage, remote, new_manifest_uri).await;
     } else {
