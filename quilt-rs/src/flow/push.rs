@@ -173,9 +173,11 @@ pub async fn push_package(
 
     lineage.remote_uri = Some(new_manifest_uri.clone());
 
-    // Update base_hash after a successful push. This is essential for first push
+    // Update base_hash after a successful push. Only needed for first push
     // where base_hash is "" — without this, the package would appear as Diverged
     // instead of UpToDate after push.
+    // On subsequent pushes, certify_latest() below handles the update via
+    // update_latest(), which sets both base_hash and latest_hash.
     if lineage.base_hash.is_empty() {
         lineage.base_hash = new_manifest_uri.hash.clone();
     }
