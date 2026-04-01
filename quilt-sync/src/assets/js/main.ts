@@ -1091,7 +1091,7 @@ function showSetOriginForm(namespace: Namespace, currentOrigin: string = "") {
   input.addEventListener("input", hideError);
 }
 
-const NAMESPACE_PATTERN = /^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+$/;
+const NAMESPACE_PATTERN = /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/;
 
 function isValidNamespace(value: string) {
   return NAMESPACE_PATTERN.test(value);

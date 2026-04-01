@@ -170,10 +170,11 @@ pub async fn push_package(
     .await
     {
         Ok(uri) => uri.hash,
-        Err(_) => {
+        Err(e) if e.is_not_found() => {
             debug!("✔️ No existing latest tag — first push for this package");
             String::new()
         }
+        Err(e) => return Err(e),
     };
     debug!("✔️ Latest hash is: {}", lineage.latest_hash);
 

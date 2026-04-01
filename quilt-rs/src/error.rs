@@ -243,3 +243,14 @@ pub enum Error {
     #[error("YAML error: {0}")]
     Yaml(#[from] serde_yaml::Error),
 }
+
+impl Error {
+    /// Returns `true` if this error represents an S3 "not found" (NoSuchKey) response.
+    pub fn is_not_found(&self) -> bool {
+        match self {
+            Error::S3Raw(msg) => msg.contains("NoSuchKey"),
+            Error::S3(_, S3Error::GetObjectStream(msg)) => msg.contains("NoSuchKey"),
+            _ => false,
+        }
+    }
+}
