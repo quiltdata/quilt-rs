@@ -42,12 +42,9 @@ async fn push_package(
             // If bucket/origin provided, set remote before pushing.
             // Safe: push() reads lineage fresh from disk, so it sees the
             // remote_uri written by set_remote() — no caching in between.
-            if let Some(bucket) = bucket {
-                let origin = origin.ok_or_else(|| {
-                    Error::Quilt(quilt_rs::Error::Push(
-                        "--origin is required when --bucket is provided".to_string(),
-                    ))
-                })?;
+            // Note: clap enforces that bucket and origin are always provided
+            // together via `requires` constraints.
+            if let (Some(bucket), Some(origin)) = (bucket, origin) {
                 installed_package.set_remote(origin, bucket).await?;
             }
             Ok(installed_package.push(host_config).await?)

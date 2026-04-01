@@ -688,7 +688,7 @@ pub async fn set_remote(
     origin: String,
     bucket: String,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::OriginSet).await;
+    tracing.track(MixpanelEvent::RemoteSet).await;
     let m: &model::Model = &m;
 
     let msg_init = format!("Setting remote for {namespace}");
