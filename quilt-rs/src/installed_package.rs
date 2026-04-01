@@ -340,6 +340,9 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         Ok(lineage.remote()?.clone())
     }
 
+    /// Set only the bucket (no origin). Used in integration tests for
+    /// catalog-free push. Production code should use [`set_remote`](Self::set_remote) instead.
+    #[doc(hidden)]
     pub async fn set_bucket(&self, bucket: String) -> Res {
         if bucket.is_empty() {
             return Err(Error::Push("Bucket cannot be empty".to_string()));

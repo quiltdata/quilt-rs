@@ -81,7 +81,8 @@ Main screen. Lists all locally installed packages.
 
 Local-only packages (no remote `manifest_uri`) show Commit and
 [Set Remote] but no Pull/Push buttons and no "Open Remote" action.
-After setting a remote, the user must re-commit and can then push.
+After setting a remote, the status changes to Ahead and push becomes
+available immediately (no re-commit needed).
 
 Empty state:
 
@@ -295,9 +296,8 @@ Configures the remote origin and bucket so the package can be pushed.
 +---------------------------------------------------------+
 ```
 
-- After save -> page reloads
-- User must re-commit (commit against remote's config)
-- Then push becomes available (status shows Ahead)
+- After save -> page reloads, status changes to Ahead
+- Push becomes available immediately (no re-commit needed)
 
 ---
 
@@ -383,7 +383,7 @@ auth-related).
 |              |                                                  |
 +--+-+--+------+    [Set Remote]                                  |
    | |  |           -> popup (host + bucket)                      |
-   | |  |           -> re-commit -> push                          |
+   | |  |           -> status: Ahead -> push                      |
    | |  | [Uninstall]                                             |
    | |  +---->----------------------------------------------------+
    | |
