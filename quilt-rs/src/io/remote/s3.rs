@@ -56,10 +56,12 @@ async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<R
         None => result,
     };
 
-    let result = result
-        .send()
-        .await
-        .map_err(|err| Error::S3Raw(DisplayErrorContext(err).to_string()))?;
+    let result = result.send().await.map_err(|err| match &err {
+        SdkError::ServiceError(svc) if svc.err().is_no_such_key() => {
+            Error::S3NotFound(s3_uri.to_string())
+        }
+        _ => Error::S3Raw(DisplayErrorContext(err).to_string()),
+    })?;
     let uri_versioned = S3Uri {
         version: result.version_id,
         ..s3_uri.clone()
@@ -330,11 +332,15 @@ impl Remote for RemoteS3 {
                 info!("✔️ Created stream for object {}", s3_uri);
                 Ok(stream)
             }
+            Err(e @ Error::S3NotFound(_)) => {
+                info!("ℹ️ Object not found: {}", s3_uri);
+                Err(e)
+            }
             Err(e) => {
                 warn!("❌ Failed to create stream for {}: {}", s3_uri, e);
                 Err(Error::S3(
                     host.to_owned(),
-                    S3Error::GetObjectStream(DisplayErrorContext(e).to_string()),
+                    S3Error::GetObjectStream(e.to_string()),
                 ))
             }
         }

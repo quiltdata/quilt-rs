@@ -207,6 +207,9 @@ pub enum Error {
     #[error("S3 error: {0}")]
     S3Raw(String),
 
+    #[error("S3 not found: {0}")]
+    S3NotFound(String),
+
     #[error("S3 error for {0:?}: {1}")]
     S3(Option<Host>, S3Error),
 
@@ -247,10 +250,6 @@ pub enum Error {
 impl Error {
     /// Returns `true` if this error represents an S3 "not found" (NoSuchKey) response.
     pub fn is_not_found(&self) -> bool {
-        match self {
-            Error::S3Raw(msg) => msg.contains("NoSuchKey"),
-            Error::S3(_, S3Error::GetObjectStream(msg)) => msg.contains("NoSuchKey"),
-            _ => false,
-        }
+        matches!(self, Error::S3NotFound(_))
     }
 }
