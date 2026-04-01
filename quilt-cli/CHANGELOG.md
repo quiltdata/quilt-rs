@@ -12,6 +12,9 @@
 
 ### Added
 
+- Add job stories for `quilt sync` — a single command to register, commit, and
+  push a folder as a package ([docs/sync-folder.md](docs/sync-folder.md),
+  <https://github.com/quiltdata/quilt-rs/pull/590>)
 - Add `quilt create quilt+s3://bucket#package=owner/name [--source ...]` for
   creating a new local package from a remote package handle without installing
   an existing revision first

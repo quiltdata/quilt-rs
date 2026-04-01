@@ -12,6 +12,10 @@
 
 ### Added
 
+- Add job stories for folder-to-package sync flow covering CLI (`quilt sync`),
+  QuiltSync UI, catalog resolution, change detection, and error handling
+  ([docs/sync-folder.md](docs/sync-folder.md),
+  <https://github.com/quiltdata/quilt-rs/pull/590>)
 - Support `.quiltignore` files for excluding files from package status and commits
 - Add first-revision package support so packages can be created locally and
   pushed without installing an existing remote revision first
