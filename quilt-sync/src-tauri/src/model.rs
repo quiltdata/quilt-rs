@@ -184,7 +184,7 @@ pub trait QuiltModel {
         origin: quilt::uri::Host,
         bucket: String,
     ) -> Result<(), Error> {
-        Ok(package.set_remote(origin, bucket).await?)
+        Ok(package.set_remote(bucket, Some(origin)).await?)
     }
 
     async fn package_create(

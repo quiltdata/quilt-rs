@@ -45,7 +45,7 @@ async fn push_package(
             // Note: clap enforces that bucket and origin are always provided
             // together via `requires` constraints.
             if let (Some(bucket), Some(origin)) = (bucket, origin) {
-                installed_package.set_remote(origin, bucket).await?;
+                installed_package.set_remote(bucket, Some(origin)).await?;
             }
             Ok(installed_package.push(host_config).await?)
         }
@@ -283,7 +283,7 @@ mod tests {
         // Step 4: Set remote bucket (no catalog — uses local AWS creds)
         create_output
             .installed_package
-            .set_bucket("fiskus-us-east-1".to_string())
+            .set_remote("fiskus-us-east-1".to_string(), None)
             .await?;
 
         // Step 5: Push to S3 (first push — no existing latest tag)

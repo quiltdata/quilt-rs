@@ -163,9 +163,7 @@ mod tests {
         let object_dest = objects_dir.join(hex::encode(row.hash.digest()));
         storage.copy(&temp_file, &object_dest).await?;
 
-        let physical_key = url::Url::from_file_path(&object_dest)
-            .unwrap()
-            .to_string();
+        let physical_key = url::Url::from_file_path(&object_dest).unwrap().to_string();
         let manifest_row = ManifestRow {
             physical_key,
             ..row.clone()
@@ -201,7 +199,8 @@ mod tests {
             )]),
         };
 
-        let manifest_path = paths.installed_manifest(&namespace, &lineage.commit.as_ref().unwrap().hash);
+        let manifest_path =
+            paths.installed_manifest(&namespace, &lineage.commit.as_ref().unwrap().hash);
         let manifest = Manifest::from_path(&storage, &manifest_path).await?;
 
         Ok((lineage, manifest, storage, paths, namespace))
