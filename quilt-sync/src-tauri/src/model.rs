@@ -508,9 +508,7 @@ pub async fn set_remote(
         .get_installed_package(namespace)
         .await?
         .ok_or_else(|| Error::Quilt(quilt::Error::PackageNotInstalled(namespace.clone())))?;
-    model
-        .set_remote(&installed_package, origin, bucket)
-        .await?;
+    model.set_remote(&installed_package, origin, bucket).await?;
     Ok(())
 }
 

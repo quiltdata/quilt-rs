@@ -107,8 +107,7 @@ pub async fn create_package(
 
         for (relative_path, absolute_path) in source_files {
             // Hash the file
-            let row =
-                calculate_hash(storage, &absolute_path, &relative_path, &host_config).await?;
+            let row = calculate_hash(storage, &absolute_path, &relative_path, &host_config).await?;
 
             // Copy to objects dir
             let object_dest = objects_dir.join(hex::encode(row.hash.digest()));
@@ -126,10 +125,7 @@ pub async fn create_package(
             // Build manifest row with physical_key pointing to objects
             let physical_key = Url::from_file_path(&object_dest)
                 .map_err(|_| {
-                    Error::Commit(format!(
-                        "Failed to create URL from {:?}",
-                        &object_dest
-                    ))
+                    Error::Commit(format!("Failed to create URL from {:?}", &object_dest))
                 })?
                 .to_string();
 
@@ -227,8 +223,7 @@ mod tests {
         let lineage =
             create_package(lineage, &paths, &storage, namespace.clone(), None, None).await?;
 
-        let result =
-            create_package(lineage, &paths, &storage, namespace.clone(), None, None).await;
+        let result = create_package(lineage, &paths, &storage, namespace.clone(), None, None).await;
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),

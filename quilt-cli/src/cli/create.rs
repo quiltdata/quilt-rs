@@ -20,7 +20,11 @@ pub struct Output {
 
 impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Created package \"{}\"", self.installed_package.namespace)
+        write!(
+            f,
+            "Created package \"{}\"",
+            self.installed_package.namespace
+        )
     }
 }
 

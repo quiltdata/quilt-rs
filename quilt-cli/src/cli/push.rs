@@ -62,8 +62,7 @@ pub async fn model(
         origin,
     }: Input,
 ) -> Result<Output, Error> {
-    let manifest_uri =
-        push_package(local_domain, namespace, host_config, bucket, origin).await?;
+    let manifest_uri = push_package(local_domain, namespace, host_config, bucket, origin).await?;
     Ok(Output {
         hash: manifest_uri.hash,
     })
@@ -304,7 +303,10 @@ mod tests {
 
         // Step 6: Verify lineage after push
         let lineage = create_output.installed_package.lineage().await?;
-        let remote_uri = lineage.remote_uri.as_ref().expect("remote_uri should be set");
+        let remote_uri = lineage
+            .remote_uri
+            .as_ref()
+            .expect("remote_uri should be set");
         assert_eq!(
             lineage.base_hash, remote_uri.hash,
             "base_hash should equal remote hash after push"
@@ -313,10 +315,7 @@ mod tests {
             !remote_uri.hash.is_empty(),
             "remote hash should not be empty after push"
         );
-        assert_eq!(
-            remote_uri.bucket, "fiskus-us-east-1",
-            "bucket should match"
-        );
+        assert_eq!(remote_uri.bucket, "fiskus-us-east-1", "bucket should match");
 
         // Step 7: Status should be UpToDate (first push certifies latest)
         let status_output = m

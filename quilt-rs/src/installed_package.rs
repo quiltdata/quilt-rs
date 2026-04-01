@@ -574,8 +574,14 @@ mod tests {
             .await?;
 
         let lineage = package.lineage().await?;
-        let remote_uri = lineage.remote_uri.as_ref().expect("remote_uri should be set");
-        assert_eq!(remote_uri.origin.as_ref().unwrap().to_string(), "example.com");
+        let remote_uri = lineage
+            .remote_uri
+            .as_ref()
+            .expect("remote_uri should be set");
+        assert_eq!(
+            remote_uri.origin.as_ref().unwrap().to_string(),
+            "example.com"
+        );
         assert_eq!(remote_uri.bucket, "my-bucket");
         assert_eq!(remote_uri.hash, "");
 
@@ -626,7 +632,10 @@ mod tests {
 
         assert!(result.is_err());
         assert!(
-            result.unwrap_err().to_string().contains("Bucket cannot be empty"),
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Bucket cannot be empty"),
             "Error should mention empty bucket"
         );
 
@@ -741,7 +750,10 @@ mod tests {
             .await?;
 
         let lineage = package.lineage().await?;
-        let remote_uri = lineage.remote_uri.as_ref().expect("remote_uri should be set");
+        let remote_uri = lineage
+            .remote_uri
+            .as_ref()
+            .expect("remote_uri should be set");
         assert_eq!(remote_uri.hash, "abc123", "hash should be preserved");
 
         Ok(())
@@ -795,7 +807,10 @@ mod tests {
             .await?;
 
         let lineage = package.lineage().await?;
-        let remote_uri = lineage.remote_uri.as_ref().expect("remote_uri should be set");
+        let remote_uri = lineage
+            .remote_uri
+            .as_ref()
+            .expect("remote_uri should be set");
         assert_eq!(remote_uri.origin.as_ref().unwrap().to_string(), "new.host");
         assert_eq!(remote_uri.bucket, "new-bucket");
         assert_eq!(remote_uri.hash, "", "hash should remain empty");
@@ -841,12 +856,13 @@ mod tests {
             namespace,
         };
 
-        package
-            .set_bucket("my-bucket".to_string())
-            .await?;
+        package.set_bucket("my-bucket".to_string()).await?;
 
         let lineage = package.lineage().await?;
-        let remote_uri = lineage.remote_uri.as_ref().expect("remote_uri should be set");
+        let remote_uri = lineage
+            .remote_uri
+            .as_ref()
+            .expect("remote_uri should be set");
         assert_eq!(remote_uri.origin, None, "origin should be None");
         assert_eq!(remote_uri.bucket, "my-bucket");
         assert_eq!(remote_uri.hash, "");
@@ -896,7 +912,10 @@ mod tests {
 
         assert!(result.is_err());
         assert!(
-            result.unwrap_err().to_string().contains("Bucket cannot be empty"),
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Bucket cannot be empty"),
             "Error should mention empty bucket"
         );
 
@@ -1005,7 +1024,10 @@ mod tests {
         package.set_bucket("my-bucket".to_string()).await?;
 
         let lineage = package.lineage().await?;
-        let remote_uri = lineage.remote_uri.as_ref().expect("remote_uri should be set");
+        let remote_uri = lineage
+            .remote_uri
+            .as_ref()
+            .expect("remote_uri should be set");
         assert_eq!(remote_uri.hash, "abc123", "hash should be preserved");
 
         Ok(())
