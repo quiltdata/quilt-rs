@@ -283,6 +283,10 @@ function popup(html: Html) {
   const el = findElement(SELECTOR_POPUP);
   if (!el) return;
   el.innerHTML = html;
+  const overlay = el.closest(".qui-popup") as HTMLElement | null;
+  if (overlay) {
+    overlay.style.pointerEvents = html ? "auto" : "none";
+  }
 }
 
 function dismissPopup() {

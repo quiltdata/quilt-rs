@@ -24,10 +24,6 @@
   pointer-events: none;
   z-index: var(--q-ui-z-index-popover);
 
-  &:has(.root:not(:empty)) {
-    pointer-events: auto;
-  }
-
   .root {
     animation: 0.15s ease-out popup-slide;
     background: var(--q-ui-palette-background-primary);
