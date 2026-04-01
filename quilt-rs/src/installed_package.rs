@@ -234,7 +234,19 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         self.scaffold_paths().await?;
 
         let (_, lineage) = self.lineage.read(&self.storage).await?;
-        let remote_uri = lineage.remote()?.clone();
+        let remote_uri = match lineage.remote_uri.as_ref() {
+            Some(uri) if !uri.bucket.is_empty() => uri.clone(),
+            Some(_) => {
+                return Err(Error::Push(
+                    "Remote bucket not set. Use set_remote first.".to_string(),
+                ))
+            }
+            None => {
+                return Err(Error::Push(
+                    "No remote configured. Use set_remote first.".to_string(),
+                ))
+            }
+        };
 
         if lineage.commit.is_none() {
             return Err(Error::Push("No commits to push".to_string()));
@@ -326,6 +338,18 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(lineage.remote()?.clone())
+    }
+
+    pub async fn set_remote(&self, origin: Host, bucket: String) -> Res {
+        let (_, mut lineage) = self.lineage.read(&self.storage).await?;
+        lineage.remote_uri = Some(ManifestUri {
+            origin: Some(origin),
+            bucket,
+            namespace: self.namespace.clone(),
+            hash: String::new(),
+        });
+        self.lineage.write(&self.storage, lineage).await?;
+        Ok(())
     }
 
     pub async fn set_origin(&self, origin: Host) -> Res {

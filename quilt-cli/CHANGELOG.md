@@ -8,6 +8,13 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.24.1-alpha1] - 2026-03-31
+
+### Added
+
+- Add `quilt create` command for creating new local-only packages with optional `--source` and `--message` flags
+- Add `--bucket` and `--origin` flags to `quilt push` for first push of local-only packages
+
 ## [v0.24.0] - 2025-02-04
 
 ### Changed

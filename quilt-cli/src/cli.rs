@@ -12,6 +12,7 @@ use quilt_rs::uri::Namespace;
 
 mod browse;
 mod commit;
+mod create;
 mod install;
 mod list;
 mod login;
@@ -71,6 +72,18 @@ enum Commands {
         #[arg(value_name = "PKG_URI")]
         uri: String,
     },
+    /// Create a new local package
+    Create {
+        /// Namespace for the package, e.g. foo/bar
+        #[arg(short, long)]
+        namespace: String,
+        /// Optional source directory to populate the package from
+        #[arg(short, long)]
+        source: Option<PathBuf>,
+        /// Commit message for the initial revision
+        #[arg(short, long)]
+        message: Option<String>,
+    },
     /// Commit new package revision
     Commit {
         /// Commit message
@@ -125,6 +138,13 @@ enum Commands {
         /// Ex. foo/bar
         #[arg(short, long)]
         namespace: String,
+        /// S3 bucket (required for first push of local-only packages)
+        #[arg(short, long)]
+        bucket: Option<String>,
+        /// Remote host (required for first push of local-only packages)
+        /// Ex. open.quiltdata.com
+        #[arg(short, long)]
+        origin: Option<Host>,
         // FIXME: add workflow?
     },
     /// Status of the package: modified, up-to-date, outdated
@@ -175,6 +195,20 @@ pub async fn init(args: Args) -> Result<Std, Error> {
 
             log::info!("Browsing {args:?}");
             Ok(browse::command(m, args).await)
+        }
+        Commands::Create {
+            namespace,
+            source,
+            message,
+        } => {
+            let args = create::Input {
+                namespace: namespace.try_into()?,
+                source,
+                message,
+            };
+
+            log::info!("Creating {args:?}");
+            Ok(create::command(m, args).await)
         }
         Commands::Commit {
             namespace,
@@ -240,10 +274,16 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::info!("Pull {args:?}");
             Ok(pull::command(m, args).await)
         }
-        Commands::Push { namespace } => {
+        Commands::Push {
+            namespace,
+            bucket,
+            origin,
+        } => {
             let args = push::Input {
                 namespace: namespace.try_into()?,
                 host_config: None,
+                bucket,
+                origin,
             };
 
             log::info!("Pushing {args:?}");

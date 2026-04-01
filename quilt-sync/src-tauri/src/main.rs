@@ -107,6 +107,8 @@ fn main() {
             commands::reset_local,
             commands::reveal_in_file_browser,
             commands::set_origin,
+            commands::set_remote,
+            commands::package_create,
             commands::setup,
             commands::add_to_quiltignore,
             commands::test_quiltignore_pattern,

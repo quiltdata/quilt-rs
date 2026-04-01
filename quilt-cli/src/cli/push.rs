@@ -1,4 +1,5 @@
 use quilt_rs::io::remote::HostConfig;
+use quilt_rs::uri::Host;
 use quilt_rs::uri::ManifestUri;
 use quilt_rs::uri::Namespace;
 
@@ -10,6 +11,8 @@ use crate::cli::Error;
 pub struct Input {
     pub namespace: Namespace,
     pub host_config: Option<HostConfig>,
+    pub bucket: Option<String>,
+    pub origin: Option<Host>,
 }
 
 #[derive(Debug)]
@@ -31,9 +34,22 @@ async fn push_package(
     local_domain: &quilt_rs::LocalDomain,
     namespace: Namespace,
     host_config: Option<HostConfig>,
+    bucket: Option<String>,
+    origin: Option<Host>,
 ) -> Result<ManifestUri, Error> {
     match local_domain.get_installed_package(&namespace).await? {
-        Some(installed_package) => Ok(installed_package.push(host_config).await?),
+        Some(installed_package) => {
+            // If bucket/origin provided, set remote before pushing
+            if let Some(bucket) = bucket {
+                let origin = origin.ok_or_else(|| {
+                    Error::Quilt(quilt_rs::Error::Push(
+                        "--origin is required when --bucket is provided".to_string(),
+                    ))
+                })?;
+                installed_package.set_remote(origin, bucket).await?;
+            }
+            Ok(installed_package.push(host_config).await?)
+        }
         None => Err(Error::NamespaceNotFound(namespace)),
     }
 }
@@ -43,9 +59,12 @@ pub async fn model(
     Input {
         namespace,
         host_config,
+        bucket,
+        origin,
     }: Input,
 ) -> Result<Output, Error> {
-    let manifest_uri = push_package(local_domain, namespace, host_config).await?;
+    let manifest_uri =
+        push_package(local_domain, namespace, host_config, bucket, origin).await?;
     Ok(Output {
         hash: manifest_uri.hash,
     })
@@ -78,6 +97,8 @@ mod tests {
             Input {
                 namespace: ("in", "valid").into(),
                 host_config: None,
+                bucket: None,
+                origin: None,
             },
         )
         .await
@@ -103,6 +124,8 @@ mod tests {
             Input {
                 namespace: pkg::NAMESPACE.into(),
                 host_config: None,
+                bucket: None,
+                origin: None,
             },
         )
         .await
@@ -168,6 +191,8 @@ mod tests {
             .push(Input {
                 namespace: namespace.clone(),
                 host_config: host_config.clone(),
+                bucket: None,
+                origin: None,
             })
             .await?;
 
@@ -199,6 +224,8 @@ mod tests {
             .push(Input {
                 namespace,
                 host_config,
+                bucket: None,
+                origin: None,
             })
             .await?;
 
@@ -261,6 +288,8 @@ mod tests {
             .push(Input {
                 namespace: namespace.clone(),
                 host_config: host_config.clone(),
+                bucket: None,
+                origin: None,
             })
             .await?;
 
@@ -292,6 +321,8 @@ mod tests {
             .push(Input {
                 namespace,
                 host_config,
+                bucket: None,
+                origin: None,
             })
             .await?;
 

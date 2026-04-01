@@ -62,6 +62,10 @@ pub enum JsSelector {
     RevealInFileBrowser,
     #[template(source = "js-set-origin", ext = "txt")]
     SetOrigin,
+    #[template(source = "js-set-remote", ext = "txt")]
+    SetRemote,
+    #[template(source = "js-create-package", ext = "txt")]
+    CreatePackage,
     #[template(source = "js-crash-report", ext = "txt")]
     CrashReport,
     #[template(source = "js-collect-logs", ext = "txt")]

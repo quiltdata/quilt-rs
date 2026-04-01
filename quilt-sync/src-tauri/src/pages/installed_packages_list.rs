@@ -145,29 +145,39 @@ impl<'a> TmplInstalledPackage<'a> {
         status: &UpstreamState,
         origin_host: Option<&quilt::uri::Host>,
     ) -> Option<btn::TmplButton<'a>> {
-        match origin_host {
-            None => Some(
+        match status {
+            UpstreamState::Local => Some(
                 btn::TmplButton::builder()
                     .set_data("namespace", namespace.to_string())
-                    .set_icon(Icon::Warning)
-                    .set_js(btn::JsSelector::SetOrigin)
-                    .set_label(t!("buttons.set_origin"))
-                    .set_color(btn::Color::Warning)
+                    .set_icon(Icon::CloudUpload)
+                    .set_js(btn::JsSelector::SetRemote)
+                    .set_label(t!("buttons.set_remote"))
                     .set_size(btn::Size::Small),
             ),
-            Some(host) => match status {
-                UpstreamState::Error => Some(
+            _ => match origin_host {
+                None => Some(
                     btn::TmplButton::builder()
+                        .set_data("namespace", namespace.to_string())
                         .set_icon(Icon::Warning)
-                        .set_label(t!("error.login"))
+                        .set_js(btn::JsSelector::SetOrigin)
+                        .set_label(t!("buttons.set_origin"))
                         .set_color(btn::Color::Warning)
-                        .set_size(btn::Size::Small)
-                        .set_href(Paths::Login(
-                            host.clone(),
-                            Paths::InstalledPackagesList.to_string(),
-                        )),
+                        .set_size(btn::Size::Small),
                 ),
-                _ => None,
+                Some(host) => match status {
+                    UpstreamState::Error => Some(
+                        btn::TmplButton::builder()
+                            .set_icon(Icon::Warning)
+                            .set_label(t!("error.login"))
+                            .set_color(btn::Color::Warning)
+                            .set_size(btn::Size::Small)
+                            .set_href(Paths::Login(
+                                host.clone(),
+                                Paths::InstalledPackagesList.to_string(),
+                            )),
+                    ),
+                    _ => None,
+                },
             },
         }
     }
@@ -201,6 +211,14 @@ impl<'a> TmplPageInstalledPackagesList<'a> {
                 "breadcrumbs.installed_packages_list"
             ))],
         }
+    }
+
+    fn button_create() -> btn::TmplButton<'a> {
+        btn::TmplButton::builder()
+            .set_icon(Icon::Add)
+            .set_js(btn::JsSelector::CreatePackage)
+            .set_label(t!("buttons.create_package"))
+            .set_size(btn::Size::Small)
     }
 }
 
@@ -303,7 +321,9 @@ impl From<ViewInstalledPackagesList> for TmplPageInstalledPackagesList<'_> {
         }
 
         TmplPageInstalledPackagesList {
-            layout: Layout::builder().set_breadcrumbs(Self::breadcrumbs()),
+            layout: Layout::builder()
+                .set_breadcrumbs(Self::breadcrumbs())
+                .set_actions(vec![Self::button_create()]),
             list,
         }
     }

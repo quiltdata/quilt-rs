@@ -127,6 +127,32 @@ impl LocalDomain {
         self.create_installed_package(manifest_uri.namespace.clone())
     }
 
+    pub async fn create_package(
+        &self,
+        namespace: Namespace,
+        source: Option<PathBuf>,
+        message: Option<String>,
+    ) -> Res<InstalledPackage> {
+        info!("Creating package: {}", namespace);
+
+        let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
+
+        let lineage = flow::create(
+            lineage,
+            &self.paths,
+            &self.storage,
+            namespace.clone(),
+            source,
+            message,
+        )
+        .await?;
+
+        self.lineage.write(&self.storage, lineage).await?;
+
+        info!("Successfully created package: {}", namespace);
+        self.create_installed_package(namespace)
+    }
+
     pub async fn uninstall_package(&self, namespace: Namespace) -> Res<()> {
         info!("Uninstalling package: {}", namespace);
 

@@ -47,6 +47,8 @@ const SELECTOR_PACKAGE_UNINSTALL = ".js-packages-uninstall";
 const SELECTOR_PATHS_INSTALL = ".js-paths-install";
 const SELECTOR_REVEAL_IN_FILE_BROWSER = ".js-reveal-in-file-browser";
 const SELECTOR_SET_ORIGIN = ".js-set-origin";
+const SELECTOR_SET_REMOTE = ".js-set-remote";
+const SELECTOR_CREATE_PACKAGE = ".js-create-package";
 const SELECTOR_SETUP = ".js-setup";
 const SELECTOR_WORKFLOW_NULL = ".js-workflow-null";
 const SELECTOR_WORKFLOW_VALUE = ".js-workflow-value";
@@ -107,6 +109,8 @@ type Selector =
   | typeof SELECTOR_REFRESH
   | typeof SELECTOR_REVEAL_IN_FILE_BROWSER
   | typeof SELECTOR_SET_ORIGIN
+  | typeof SELECTOR_SET_REMOTE
+  | typeof SELECTOR_CREATE_PACKAGE
   | typeof SELECTOR_SETUP
   | typeof SELECTOR_UPDATE_DISMISS
   | typeof SELECTOR_UPDATE_DOWNLOAD
@@ -139,6 +143,8 @@ const CMD_PACKAGE_RESET_LOCAL = "reset_local";
 const CMD_PACKAGE_UNINSTALL = "package_uninstall";
 const CMD_REVEAL_IN_FILE_BROWSER = "reveal_in_file_browser";
 const CMD_SET_ORIGIN = "set_origin";
+const CMD_SET_REMOTE = "set_remote";
+const CMD_CREATE_PACKAGE = "package_create";
 const CMD_SETUP = "setup";
 const CMD_COLLECT_LOGS = "collect_diagnostic_logs";
 const CMD_CRASH_REPORT = "send_crash_report";
@@ -166,6 +172,8 @@ type Command =
   | typeof CMD_PACKAGE_UNINSTALL
   | typeof CMD_REVEAL_IN_FILE_BROWSER
   | typeof CMD_SET_ORIGIN
+  | typeof CMD_SET_REMOTE
+  | typeof CMD_CREATE_PACKAGE
   | typeof CMD_SETUP
   | typeof CMD_COLLECT_LOGS
   | typeof CMD_CRASH_REPORT
@@ -614,6 +622,14 @@ window.addEventListener(EVENT_PAGE_READY, () => {
   listen(SELECTOR_SET_ORIGIN, ["namespace"], async (data, button) => {
     const currentOrigin = button.getAttribute("data-origin") ?? "";
     showSetOriginForm(data.namespace, currentOrigin);
+  });
+
+  listen(SELECTOR_SET_REMOTE, ["namespace"], async (data) => {
+    showSetRemoteForm(data.namespace);
+  });
+
+  listen(SELECTOR_CREATE_PACKAGE, [], async () => {
+    showCreatePackageForm();
   });
 
   listen(SELECTOR_PACKAGE_CERTIFY_LATEST, ["namespace"], (data) =>
@@ -1069,6 +1085,159 @@ function showSetOriginForm(namespace: Namespace, currentOrigin: string = "") {
   });
 
   input.addEventListener("input", hideError);
+}
+
+const NAMESPACE_PATTERN = /^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+$/;
+
+function isValidNamespace(value: string) {
+  return NAMESPACE_PATTERN.test(value);
+}
+
+function showCreatePackageForm() {
+  popup(`<div class="origin-form">
+    <label>Namespace</label>
+    <div class="origin-input-group">
+      <input class="origin-input js-create-ns-input" type="text" placeholder="owner/package-name" />
+      <span class="origin-hint js-create-ns-hint">Enter a valid namespace, e.g. owner/package-name</span>
+    </div>
+    <div class="origin-form-actions">
+      <button class="qui-button primary js-create-submit"><span>Create</span></button>
+      <button class="qui-button js-create-cancel"><span>Cancel</span></button>
+    </div>
+  </div>`);
+
+  const outputElement = findElement(SELECTOR_POPUP);
+  if (!outputElement) return;
+
+  const input = findElement(
+    ".js-create-ns-input" as Selector,
+    outputElement,
+  ) as HTMLInputElement | null;
+  if (!input) return;
+  input.focus();
+
+  const hint = findElement(".js-create-ns-hint" as Selector, outputElement);
+
+  const showError = () => {
+    input.classList.add("error");
+    hint?.classList.add("visible");
+  };
+
+  const hideError = () => {
+    input.classList.remove("error");
+    hint?.classList.remove("visible");
+  };
+
+  const submit = () => {
+    const namespace = input.value.trim();
+    if (!namespace) return;
+    if (!isValidNamespace(namespace)) {
+      showError();
+      return;
+    }
+    execPageCommand(CMD_CREATE_PACKAGE, { namespace }).catch(handleError);
+  };
+
+  const cancel = () => {
+    dismissPopup();
+  };
+
+  const submitButton = findElement(".js-create-submit" as Selector, outputElement);
+  submitButton?.addEventListener("click", submit);
+
+  const cancelButton = findElement(".js-create-cancel" as Selector, outputElement);
+  cancelButton?.addEventListener("click", cancel);
+
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      submit();
+    } else if (event.key === "Escape") {
+      cancel();
+    }
+  });
+
+  input.addEventListener("input", hideError);
+}
+
+function showSetRemoteForm(namespace: Namespace) {
+  popup(`<div class="origin-form">
+    <label>Host</label>
+    <div class="origin-input-group">
+      <input class="origin-input js-remote-host-input" type="text" placeholder="open.quiltdata.com" />
+      <span class="origin-hint js-remote-host-hint">Enter a valid hostname</span>
+    </div>
+    <label>Bucket</label>
+    <div class="origin-input-group">
+      <input class="origin-input js-remote-bucket-input" type="text" placeholder="my-s3-bucket" />
+      <span class="origin-hint js-remote-bucket-hint">Enter an S3 bucket name</span>
+    </div>
+    <div class="origin-form-actions">
+      <button class="qui-button primary js-remote-submit"><span>Save</span></button>
+      <button class="qui-button js-remote-cancel"><span>Cancel</span></button>
+    </div>
+  </div>`);
+
+  const outputElement = findElement(SELECTOR_POPUP);
+  if (!outputElement) return;
+
+  const hostInput = findElement(
+    ".js-remote-host-input" as Selector,
+    outputElement,
+  ) as HTMLInputElement | null;
+  const bucketInput = findElement(
+    ".js-remote-bucket-input" as Selector,
+    outputElement,
+  ) as HTMLInputElement | null;
+  if (!hostInput || !bucketInput) return;
+  hostInput.focus();
+
+  const hostHint = findElement(".js-remote-host-hint" as Selector, outputElement);
+  const bucketHint = findElement(".js-remote-bucket-hint" as Selector, outputElement);
+
+  const submit = () => {
+    const origin = hostInput.value.trim();
+    const bucket = bucketInput.value.trim();
+    let valid = true;
+    if (!origin || !isValidHostname(origin)) {
+      hostInput.classList.add("error");
+      hostHint?.classList.add("visible");
+      valid = false;
+    }
+    if (!bucket) {
+      bucketInput.classList.add("error");
+      bucketHint?.classList.add("visible");
+      valid = false;
+    }
+    if (!valid) return;
+    execPageCommand(CMD_SET_REMOTE, { namespace, origin, bucket }).catch(handleError);
+  };
+
+  const cancel = () => {
+    dismissPopup();
+  };
+
+  const submitButton = findElement(".js-remote-submit" as Selector, outputElement);
+  submitButton?.addEventListener("click", submit);
+
+  const cancelButton = findElement(".js-remote-cancel" as Selector, outputElement);
+  cancelButton?.addEventListener("click", cancel);
+
+  const clearErrors = (input: HTMLInputElement, hint: Element | null) => {
+    input.classList.remove("error");
+    hint?.classList.remove("visible");
+  };
+
+  hostInput.addEventListener("input", () => clearErrors(hostInput, hostHint));
+  bucketInput.addEventListener("input", () => clearErrors(bucketInput, bucketHint));
+
+  hostInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") bucketInput.focus();
+    if (event.key === "Escape") cancel();
+  });
+  bucketInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") submit();
+    if (event.key === "Escape") cancel();
+  });
 }
 
 function showInstallNotification(update: Awaited<ReturnType<typeof check>>) {

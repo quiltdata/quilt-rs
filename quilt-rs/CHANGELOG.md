@@ -8,6 +8,15 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.27.5-alpha4] - 2026-03-31
+
+### Added
+
+- Add `flow::create` for creating new local-only packages from scratch, with optional source directory import
+- Add `InstalledPackage::set_remote` for configuring remote origin and bucket on local-only packages
+- Support first push of local-only packages by skipping remote manifest fetch when hash is empty
+- Update `base_hash` after successful push so status correctly shows `UpToDate`
+
 ## [v0.27.5-alpha3] - 2026-03-31
 
 ### Changed

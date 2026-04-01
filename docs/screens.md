@@ -62,6 +62,8 @@ Main screen. Lists all locally installed packages.
 ```
 +--[appbar]----------------------------------------------+
 | [logo]                                 [refresh] [gear] |
++--[toolbar]---------------------------------------------+
+| [< Packages]                  [+ Create local package]  |
 +---------------------------------------------------------+
 |                                                         |
 |  +---------------------------------------------------+  |
@@ -71,18 +73,21 @@ Main screen. Lists all locally installed packages.
 |  +---------------------------------------------------+  |
 |  | org/dataset-c                         [Pull] [>]  |  |
 |  +---------------------------------------------------+  |
-|  | local/my-data                        [Commit] [>] |  |
+|  | local/my-data        [Set Remote] [Commit] [>]    |  |
 |  +---------------------------------------------------+  |
 |                                                         |
 +---------------------------------------------------------+
 ```
 
-Local-only packages (no remote `manifest_uri`) show Commit but
-no Pull/Push buttons and no "Open Remote" action.
+Local-only packages (no remote `manifest_uri`) show Commit and
+[Set Remote] but no Pull/Push buttons and no "Open Remote" action.
+After setting a remote, the user must re-commit and can then push.
 
 Empty state:
 
 ```
++--[toolbar]---------------------------------------------+
+| [< Packages]                  [+ Create local package]  |
 +---------------------------------------------------------+
 |                                                         |
 |   No packages installed                                 |
@@ -93,10 +98,12 @@ Empty state:
 +---------------------------------------------------------+
 ```
 
+- Click [+ Create] -> opens **Create Package** popup
 - Click package row -> **Installed Package**
 - Click [Pull] -> runs pull flow, reloads
 - Click [Push] -> runs push flow -> **Installed Package**
 - Click [Commit] -> **Commit**
+- Click [Set Remote] -> opens **Set Remote** popup
 - Click [gear] -> **Settings**
 
 ---
@@ -247,6 +254,53 @@ Shows which pattern is ignoring the file.
 
 ---
 
+### Create Package Popup
+
+Shown when clicking [+ Create] on the Installed Packages List page.
+Creates a new local-only package.
+
+```
++---------------------------------------------------------+
+|                                                         |
+|   Namespace *                                           |
+|   [ owner/package-name________________ ]                |
+|                                                         |
+|   [Create]  [Cancel]                                    |
+|                                                         |
++---------------------------------------------------------+
+```
+
+- Namespace must be `owner/name` format
+- After create -> page reloads, new package appears in list
+- Package starts as local-only with an initial empty commit
+
+---
+
+### Set Remote Popup
+
+Shown when clicking [Set Remote] on a local-only package.
+Configures the remote origin and bucket so the package can be pushed.
+
+```
++---------------------------------------------------------+
+|                                                         |
+|   Host *                                                |
+|   [ open.quiltdata.com________________ ]                |
+|                                                         |
+|   Bucket *                                              |
+|   [ my-s3-bucket______________________ ]                |
+|                                                         |
+|   [Save]  [Cancel]                                      |
+|                                                         |
++---------------------------------------------------------+
+```
+
+- After save -> page reloads
+- User must re-commit (commit against remote's config)
+- Then push becomes available (status shows Ahead)
+
+---
+
 ### Settings
 
 Application settings and diagnostics.
@@ -313,18 +367,25 @@ auth-related).
                             v
   +---------------------------------------------------+
   |          Installed Packages List (Home)            |<---------+
-  +---+------------------+-------------------+--------+           |
-      |                  |                   |                    |
-      | click pkg        | [Commit]          | [gear]            |
-      v                  v                   v                    |
-+-----+-------+    +----+----+        +-----+----+               |
-|  Installed   |    |         |        |          |               |
-|  Package     +--->| Commit  |        | Settings |               |
-|              |    |         |        |          |               |
-+--+-+--+------+    +----+----+        +----------+               |
-   | |  |                |                                        |
-   | |  | [Uninstall]    | submit                                 |
-   | |  +----------------+--------->------------------------------+
+  +---+-------+----------+-------------------+--------+           |
+      |       |          |                   |                    |
+      |       | [Create] | [Commit]          | [gear]            |
+      |       v          v                   v                    |
+      |  [popup]    +----+----+        +-----+----+               |
+      |  namespace  |         |        |          |               |
+      |  -> reload  | Commit  |        | Settings |               |
+      |             |         |        |          |               |
+      | click pkg   +----+----+        +----------+               |
+      v                  |                                        |
++-----+-------+         |                                        |
+|  Installed   |         | submit                                 |
+|  Package     +--->-----+--------->------------------------------+
+|              |                                                  |
++--+-+--+------+    [Set Remote]                                  |
+   | |  |           -> popup (host + bucket)                      |
+   | |  |           -> re-commit -> push                          |
+   | |  | [Uninstall]                                             |
+   | |  +---->----------------------------------------------------+
    | |
    | | [Push] when diverged
    | v
