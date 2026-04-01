@@ -341,6 +341,9 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     }
 
     pub async fn set_remote(&self, origin: Host, bucket: String) -> Res {
+        if bucket.is_empty() {
+            return Err(Error::Push("Bucket cannot be empty".to_string()));
+        }
         let (_, mut lineage) = self.lineage.read(&self.storage).await?;
         lineage.remote_uri = Some(ManifestUri {
             origin: Some(origin),
