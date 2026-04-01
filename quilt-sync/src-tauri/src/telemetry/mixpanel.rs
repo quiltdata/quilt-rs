@@ -28,6 +28,7 @@ pub enum MixpanelEvent {
     PackageCommitted,
     PackageUninstalled,
     PackageInstalled,
+    PackageCreated,
     DirectoryPickerOpened,
     AuthErased,
     DebugDotQuiltOpened,
@@ -166,6 +167,10 @@ mod tests {
 
         let (name, p) = MixpanelEvent::PackageInstalled.try_into()?;
         assert_eq!(name, "package_installed");
+        assert!(p.is_none());
+
+        let (name, p) = MixpanelEvent::PackageCreated.try_into()?;
+        assert_eq!(name, "package_created");
         assert!(p.is_none());
 
         let (name, p) = MixpanelEvent::DirectoryPickerOpened.try_into()?;

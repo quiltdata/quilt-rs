@@ -722,7 +722,7 @@ pub async fn package_create(
     source: Option<String>,
     message: Option<String>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::PackageInstalled).await;
+    tracing.track(MixpanelEvent::PackageCreated).await;
     let m: &model::Model = &m;
 
     let msg_init = format!("Creating package {namespace}");
