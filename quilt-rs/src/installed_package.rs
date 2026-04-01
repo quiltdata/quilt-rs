@@ -340,6 +340,31 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         Ok(lineage.remote()?.clone())
     }
 
+    pub async fn set_bucket(&self, bucket: String) -> Res {
+        if bucket.is_empty() {
+            return Err(Error::Push("Bucket cannot be empty".to_string()));
+        }
+        let (_, mut lineage) = self.lineage.read(&self.storage).await?;
+        if let Some(existing) = &lineage.remote_uri {
+            if !existing.hash.is_empty() {
+                if existing.bucket == bucket {
+                    return Ok(());
+                }
+                return Err(Error::Push(
+                    "Cannot change remote on a package that has already been pushed".to_string(),
+                ));
+            }
+        }
+        lineage.remote_uri = Some(ManifestUri {
+            origin: None,
+            bucket,
+            namespace: self.namespace.clone(),
+            hash: String::new(),
+        });
+        self.lineage.write(&self.storage, lineage).await?;
+        Ok(())
+    }
+
     pub async fn set_remote(&self, origin: Host, bucket: String) -> Res {
         if bucket.is_empty() {
             return Err(Error::Push("Bucket cannot be empty".to_string()));
@@ -772,6 +797,214 @@ mod tests {
         assert_eq!(remote_uri.origin.as_ref().unwrap().to_string(), "new.host");
         assert_eq!(remote_uri.bucket, "new-bucket");
         assert_eq!(remote_uri.hash, "", "hash should remain empty");
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_set_bucket_on_local_package() -> Res {
+        let (home, _temp_dir1) = Home::from_temp_dir()?;
+        let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+
+        let storage = LocalStorage::new();
+        let remote = MockRemote::default();
+        let namespace: Namespace = ("test", "bucket_only").into();
+
+        paths
+            .scaffold_for_installing(&storage, &home, &namespace)
+            .await?;
+
+        let lineage_json = r#"{
+            "packages": {
+                "test/bucket_only": {
+                    "commit": null,
+                    "remote": null,
+                    "base_hash": "",
+                    "latest_hash": "",
+                    "paths": {}
+                }
+            },
+            "home": "/tmp/working_dir"
+        }"#;
+        storage
+            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+            .await?;
+
+        let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+        let package = InstalledPackage {
+            lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+            paths,
+            remote,
+            storage,
+            namespace,
+        };
+
+        package
+            .set_bucket("my-bucket".to_string())
+            .await?;
+
+        let lineage = package.lineage().await?;
+        let remote_uri = lineage.remote_uri.as_ref().expect("remote_uri should be set");
+        assert_eq!(remote_uri.origin, None, "origin should be None");
+        assert_eq!(remote_uri.bucket, "my-bucket");
+        assert_eq!(remote_uri.hash, "");
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_set_bucket_empty_bucket_error() -> Res {
+        let (home, _temp_dir1) = Home::from_temp_dir()?;
+        let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+
+        let storage = LocalStorage::new();
+        let remote = MockRemote::default();
+        let namespace: Namespace = ("test", "bucket_empty").into();
+
+        paths
+            .scaffold_for_installing(&storage, &home, &namespace)
+            .await?;
+
+        let lineage_json = r#"{
+            "packages": {
+                "test/bucket_empty": {
+                    "commit": null,
+                    "remote": null,
+                    "base_hash": "",
+                    "latest_hash": "",
+                    "paths": {}
+                }
+            },
+            "home": "/tmp/working_dir"
+        }"#;
+        storage
+            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+            .await?;
+
+        let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+        let package = InstalledPackage {
+            lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+            paths,
+            remote,
+            storage,
+            namespace,
+        };
+
+        let result = package.set_bucket("".to_string()).await;
+
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("Bucket cannot be empty"),
+            "Error should mention empty bucket"
+        );
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_set_bucket_rejects_change_on_pushed_package() -> Res {
+        let (home, _temp_dir1) = Home::from_temp_dir()?;
+        let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+
+        let storage = LocalStorage::new();
+        let remote = MockRemote::default();
+        let namespace: Namespace = ("test", "bucket_pushed").into();
+
+        paths
+            .scaffold_for_installing(&storage, &home, &namespace)
+            .await?;
+
+        let lineage_json = r#"{
+            "packages": {
+                "test/bucket_pushed": {
+                    "commit": null,
+                    "remote": {
+                        "bucket": "old-bucket",
+                        "namespace": "test/bucket_pushed",
+                        "hash": "abc123"
+                    },
+                    "base_hash": "abc123",
+                    "latest_hash": "abc123",
+                    "paths": {}
+                }
+            },
+            "home": "/tmp/working_dir"
+        }"#;
+        storage
+            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+            .await?;
+
+        let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+        let package = InstalledPackage {
+            lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+            paths,
+            remote,
+            storage,
+            namespace,
+        };
+
+        let result = package.set_bucket("new-bucket".to_string()).await;
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Cannot change remote"),
+            "Should reject changing bucket on a pushed package"
+        );
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_set_bucket_is_idempotent_on_pushed_package() -> Res {
+        let (home, _temp_dir1) = Home::from_temp_dir()?;
+        let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+
+        let storage = LocalStorage::new();
+        let remote = MockRemote::default();
+        let namespace: Namespace = ("test", "bucket_idempotent").into();
+
+        paths
+            .scaffold_for_installing(&storage, &home, &namespace)
+            .await?;
+
+        let lineage_json = r#"{
+            "packages": {
+                "test/bucket_idempotent": {
+                    "commit": null,
+                    "remote": {
+                        "bucket": "my-bucket",
+                        "namespace": "test/bucket_idempotent",
+                        "hash": "abc123"
+                    },
+                    "base_hash": "abc123",
+                    "latest_hash": "abc123",
+                    "paths": {}
+                }
+            },
+            "home": "/tmp/working_dir"
+        }"#;
+        storage
+            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+            .await?;
+
+        let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+        let package = InstalledPackage {
+            lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+            paths,
+            remote,
+            storage,
+            namespace,
+        };
+
+        // Same bucket as existing — should be a no-op
+        package.set_bucket("my-bucket".to_string()).await?;
+
+        let lineage = package.lineage().await?;
+        let remote_uri = lineage.remote_uri.as_ref().expect("remote_uri should be set");
+        assert_eq!(remote_uri.hash, "abc123", "hash should be preserved");
 
         Ok(())
     }

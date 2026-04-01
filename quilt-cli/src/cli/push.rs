@@ -237,10 +237,10 @@ mod tests {
         Ok(())
     }
 
-    /// Integration test: create local package → patch remote → push to S3 → verify lineage.
-    /// Uses fiskus-us-east-1 with a dedicated namespace (no catalog auth needed).
+    /// Integration test: create local package → set bucket → push to S3 → verify lineage.
+    /// Uses fiskus-us-east-1 with a dedicated namespace (no catalog — local AWS creds).
     #[test(tokio::test)]
-    async fn test_push_local_package_with_bucket_origin() -> Result<(), Error> {
+    async fn test_push_local_package_bucket_only() -> Result<(), Error> {
         use crate::cli::create;
         use crate::cli::status;
         use quilt_rs::lineage::UpstreamState;
@@ -249,7 +249,7 @@ mod tests {
         let host_config = Some(HostConfig::default_sha256_chunked());
 
         // Step 1: Create model and local package
-        let (m, temp_dir) = create_model_in_temp_dir().await?;
+        let (m, _temp_dir) = create_model_in_temp_dir().await?;
 
         let create_output = m
             .create(create::Input {
@@ -281,17 +281,11 @@ mod tests {
         })
         .await?;
 
-        // Step 4: Patch lineage to set remote (bucket only, no catalog)
-        let lineage_path = temp_dir.path().join(".quilt/data.json");
-        let lineage_bytes = std::fs::read(&lineage_path)?;
-        let mut lineage_json: serde_json::Value = serde_json::from_slice(&lineage_bytes)?;
-        lineage_json["packages"]["cli_test/local_push"]["remote"] = serde_json::json!({
-            "bucket": "fiskus-us-east-1",
-            "namespace": "cli_test/local_push",
-            "hash": "",
-            "catalog": null
-        });
-        std::fs::write(&lineage_path, serde_json::to_vec_pretty(&lineage_json)?)?;
+        // Step 4: Set remote bucket (no catalog — uses local AWS creds)
+        create_output
+            .installed_package
+            .set_bucket("fiskus-us-east-1".to_string())
+            .await?;
 
         // Step 5: Push to S3 (first push — no existing latest tag)
         let push_output = m
