@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.14.6-alpha3] - 2026-04-02
+
+### Changed
+
+- Show release notes in an in-app popup instead of linking to private GitHub releases page (<https://github.com/quiltdata/quilt-rs/pull/603>)
+
 ## [v0.14.6-alpha2] - 2026-04-02
 
 ### Added
