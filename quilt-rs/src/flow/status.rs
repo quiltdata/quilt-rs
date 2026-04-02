@@ -199,7 +199,7 @@ pub async fn create_status(
             None if lineage
                 .remote_uri
                 .as_ref()
-                .map_or(true, |r| r.hash.is_empty()) =>
+                .is_none_or(|r| r.hash.is_empty()) =>
             {
                 warn!(
                     "Lineage path {} not found in manifest, skipping (local-only package)",
