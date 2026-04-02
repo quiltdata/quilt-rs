@@ -67,8 +67,8 @@ impl From<InstalledPackage> for TmplInstalledPackage<'_> {
             ),
             button_merge: Self::button_merge(&namespace, &status),
             button_open_local: Self::button_open_local(&namespace),
-            button_open_remote: Self::button_open_remote(origin.as_ref()),
-            button_sync: Self::button_sync(&namespace, &status),
+            button_open_remote: Self::button_open_remote(origin.as_ref(), &status),
+            button_sync: Self::button_sync(&namespace, &status, origin.is_some()),
             button_uninstall: Self::button_uninstall(&namespace),
             is_error,
             namespace,
@@ -87,16 +87,22 @@ impl<'a> TmplInstalledPackage<'a> {
             .set_size(btn::Size::Small)
     }
 
-    fn button_open_remote(origin: Option<&url::Url>) -> Option<btn::TmplButton<'a>> {
+    fn button_open_remote(
+        origin: Option<&url::Url>,
+        status: &UpstreamState,
+    ) -> Option<btn::TmplButton<'a>> {
         let origin = origin?;
-        Some(
-            btn::TmplButton::builder()
-                .set_data("url", origin.to_string())
-                .set_icon(Icon::OpenInBrowser)
-                .set_js(btn::JsSelector::OpenInWebBrowser)
-                .set_label(t!("buttons.open_package_in_catalog"))
-                .set_size(btn::Size::Small),
-        )
+        let btn = btn::TmplButton::builder()
+            .set_data("url", origin.to_string())
+            .set_icon(Icon::OpenInBrowser)
+            .set_js(btn::JsSelector::OpenInWebBrowser)
+            .set_label(t!("buttons.open_package_in_catalog"))
+            .set_size(btn::Size::Small);
+        Some(if *status == UpstreamState::Local {
+            btn.set_disabled()
+        } else {
+            btn
+        })
     }
 
     fn button_commit(namespace: &Namespace) -> btn::TmplButton<'a> {
@@ -116,7 +122,11 @@ impl<'a> TmplInstalledPackage<'a> {
             .set_size(btn::Size::Small)
     }
 
-    fn button_sync(namespace: &Namespace, status: &UpstreamState) -> Option<btn::TmplButton<'a>> {
+    fn button_sync(
+        namespace: &Namespace,
+        status: &UpstreamState,
+        has_origin: bool,
+    ) -> Option<btn::TmplButton<'a>> {
         match status {
             UpstreamState::Ahead => Some(
                 btn::TmplButton::builder()
@@ -136,6 +146,16 @@ impl<'a> TmplInstalledPackage<'a> {
                     .set_color(btn::Color::Primary)
                     .set_size(btn::Size::Small),
             ),
+            // Remote configured but never pushed — show Push as the natural next step
+            UpstreamState::Local if has_origin => Some(
+                btn::TmplButton::builder()
+                    .set_data("namespace", namespace.to_string())
+                    .set_icon(Icon::CloudUpload)
+                    .set_js(btn::JsSelector::PackagesPush)
+                    .set_label(t!("buttons.push_package"))
+                    .set_color(btn::Color::Primary)
+                    .set_size(btn::Size::Small),
+            ),
             _ => None,
         }
     }
@@ -146,7 +166,8 @@ impl<'a> TmplInstalledPackage<'a> {
         origin_host: Option<&quilt::uri::Host>,
     ) -> Option<btn::TmplButton<'a>> {
         match status {
-            UpstreamState::Local => Some(
+            // Local without origin — offer to set remote
+            UpstreamState::Local if origin_host.is_none() => Some(
                 btn::TmplButton::builder()
                     .set_data("namespace", namespace.to_string())
                     .set_icon(Icon::CloudUpload)
@@ -154,6 +175,8 @@ impl<'a> TmplInstalledPackage<'a> {
                     .set_label(t!("buttons.set_remote"))
                     .set_size(btn::Size::Small),
             ),
+            // Local with origin — no error action needed (Push is in button_sync)
+            UpstreamState::Local => None,
             _ => match origin_host {
                 None => Some(
                     btn::TmplButton::builder()
@@ -453,6 +476,21 @@ mod tests {
         Ok(())
     }
 
+    fn create_local_package_with_origin(namespace: &str) -> Result<InstalledPackage> {
+        Ok(InstalledPackage {
+            namespace: namespace.try_into().unwrap(),
+            origin: Some(url::Url::parse("https://test.quilt.dev").unwrap()),
+            origin_host: Some("test.quilt.dev".parse().unwrap()),
+            remote: Some(ManifestUri {
+                origin: Some("test.quilt.dev".parse().unwrap()),
+                bucket: "test".to_string(),
+                namespace: namespace.try_into().unwrap(),
+                hash: String::new(),
+            }),
+            status: UpstreamState::Local,
+        })
+    }
+
     fn create_test_package_no_origin(namespace: &str) -> Result<InstalledPackage> {
         Ok(InstalledPackage {
             namespace: namespace.try_into().unwrap(),
@@ -512,6 +550,31 @@ mod tests {
 
         // Should NOT show Login button
         assert!(!no_origin_html.contains(r#"href="login.html"#));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_local_with_origin_shows_push_and_disabled_catalog() -> Result<()> {
+        let package = create_local_package_with_origin("test/localpush")?;
+        let tmpl = TmplInstalledPackage::from(package);
+        let html = tmpl.to_string();
+
+        // Should NOT show error styling
+        assert!(!html.contains("qui-installed-package-item error"));
+
+        // Should show Push button (natural next step after set_remote)
+        assert!(html.contains(r#"js-packages-push"#));
+
+        // Should show "Open in Catalog" but disabled
+        assert!(html.contains(r#"js-open-in-web-browser"#));
+        assert!(html.contains("disabled"));
+
+        // Should NOT show "Set Remote" button (remote is already set)
+        assert!(!html.contains(r#"js-set-remote"#));
+
+        // Should show commit button
+        assert!(html.contains(r#"href="commit.html"#));
 
         Ok(())
     }

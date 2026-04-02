@@ -81,7 +81,13 @@ pub struct PackageLineage {
 
 impl From<PackageLineage> for UpstreamState {
     fn from(lineage: PackageLineage) -> Self {
-        if lineage.remote_uri.is_none() {
+        // Both "no remote" and "remote configured but never pushed" are Local
+        if lineage.remote_uri.is_none()
+            || lineage
+                .remote_uri
+                .as_ref()
+                .is_some_and(|r| r.hash.is_empty())
+        {
             return Self::Local;
         }
         let behind = lineage.base_hash != lineage.latest_hash;
@@ -158,6 +164,20 @@ mod tests {
             UpstreamState::from(PackageLineage::default()),
             UpstreamState::Local
         );
+    }
+
+    #[test]
+    fn test_remote_configured_but_never_pushed_is_local() {
+        let lineage = PackageLineage {
+            remote_uri: Some(ManifestUri {
+                hash: String::new(),
+                bucket: "test-bucket".to_string(),
+                namespace: ("foo", "bar").into(),
+                ..ManifestUri::default()
+            }),
+            ..PackageLineage::default()
+        };
+        assert_eq!(UpstreamState::from(lineage), UpstreamState::Local);
     }
 
     #[test]

@@ -274,11 +274,22 @@ mod tests {
     use crate::uri::ManifestUri;
 
     /// Helper to create a PackageLineage with a dummy remote (avoids Local state).
-    fn lineage_with_remote(lineage: PackageLineage) -> PackageLineage {
-        PackageLineage {
-            remote_uri: lineage.remote_uri.or(Some(ManifestUri::default())),
-            ..lineage
+    /// Uses a non-empty hash so the lineage isn't treated as "never pushed".
+    fn lineage_with_remote(mut lineage: PackageLineage) -> PackageLineage {
+        let dummy_hash = "deadbeef".to_string();
+        if lineage.remote_uri.is_none() {
+            lineage.remote_uri = Some(ManifestUri {
+                hash: dummy_hash.clone(),
+                ..ManifestUri::default()
+            });
         }
+        if lineage.base_hash.is_empty() {
+            lineage.base_hash = dummy_hash.clone();
+        }
+        if lineage.latest_hash.is_empty() {
+            lineage.latest_hash = dummy_hash;
+        }
+        lineage
     }
 
     #[test(tokio::test)]

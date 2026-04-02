@@ -166,20 +166,27 @@ impl<'a> TmplPageInstalledPackage<'a> {
         }
     }
 
-    fn actions(uri: &S3PackageUri, origin: Option<&url::Url>) -> Vec<btn::TmplButton<'a>> {
+    fn actions(
+        uri: &S3PackageUri,
+        origin: Option<&url::Url>,
+        status: &UpstreamState,
+    ) -> Vec<btn::TmplButton<'a>> {
         let mut actions = vec![btn::TmplButton::builder()
             .set_data("namespace", uri.namespace.to_string())
             .set_icon(Icon::FolderOpen)
             .set_js(btn::JsSelector::OpenInFileBrowser)
             .set_label(t!("buttons.open_package_in_file_browser"))];
         if let Some(origin) = origin {
-            actions.push(
-                btn::TmplButton::builder()
-                    .set_data("url", origin.to_string())
-                    .set_icon(Icon::OpenInBrowser)
-                    .set_js(btn::JsSelector::OpenInWebBrowser)
-                    .set_label(t!("buttons.open_package_in_catalog")),
-            );
+            let btn = btn::TmplButton::builder()
+                .set_data("url", origin.to_string())
+                .set_icon(Icon::OpenInBrowser)
+                .set_js(btn::JsSelector::OpenInWebBrowser)
+                .set_label(t!("buttons.open_package_in_catalog"));
+            actions.push(if *status == UpstreamState::Local {
+                btn.set_disabled()
+            } else {
+                btn
+            });
         }
         actions.push(
             btn::TmplButton::builder()
@@ -438,7 +445,7 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
 
         let layout = Layout::builder()
             .set_breadcrumbs(Self::breadcrumbs(&uri))
-            .set_actions(Self::actions(&uri, origin.as_ref()))
+            .set_actions(Self::actions(&uri, origin.as_ref(), &status))
             .set_uri(Some(uri.clone()));
         let layout = if matches!(status, UpstreamState::Error) {
             layout
@@ -656,8 +663,39 @@ mod tests {
         // Should show commit button (local packages can be committed)
         assert!(html.contains(r#"href="commit.html"#));
 
+        // Should not show "Open in Catalog" action (no origin)
+        assert!(!html.contains("Open in Catalog"));
+
         // Should still show basic page structure
         assert!(html.contains(r#"data-testid="installed-package-entries""#));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_view_local_with_origin_disables_catalog_button() -> Result {
+        let html = (ViewInstalledPackage {
+            entries_list: vec![],
+            filter: EntriesFilter::for_installed_package(),
+            origin: Some(url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?),
+            origin_host: Some("test.quilt.dev".parse().unwrap()),
+            status: quilt::lineage::UpstreamState::Local,
+            uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
+            ignored_count: 0,
+            unmodified_count: 0,
+        })
+        .render()?;
+
+        // Should show "Open in Catalog" but disabled
+        assert!(html.contains("Open in Catalog"));
+        assert!(html.contains("disabled"));
+
+        // Should show commit button
+        assert!(html.contains(r#"href="commit.html"#));
+
+        // Should not show any status banner
+        assert!(!html.contains(r#"js-set-origin"#));
+        assert!(!html.contains(r#"warning"#));
 
         Ok(())
     }
