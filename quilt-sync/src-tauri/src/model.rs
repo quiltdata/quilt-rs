@@ -178,6 +178,29 @@ pub trait QuiltModel {
         Ok(package.set_origin(origin).await?)
     }
 
+    async fn set_remote(
+        &self,
+        package: &quilt::InstalledPackage,
+        origin: quilt::uri::Host,
+        bucket: String,
+    ) -> Result<(), Error> {
+        Ok(package.set_remote(bucket, Some(origin)).await?)
+    }
+
+    async fn package_create(
+        &self,
+        namespace: quilt::uri::Namespace,
+        source: Option<PathBuf>,
+        message: Option<String>,
+    ) -> Result<quilt::InstalledPackage, Error> {
+        Ok(self
+            .get_quilt()
+            .lock()
+            .await
+            .create_package(namespace, source, message)
+            .await?)
+    }
+
     async fn package_install(
         &self,
         remote_manifest: &quilt::uri::ManifestUri,
@@ -473,6 +496,29 @@ pub async fn set_origin(
         .ok_or_else(|| Error::Quilt(quilt::Error::PackageNotInstalled(namespace.clone())))?;
     model.set_origin(&installed_package, origin).await?;
     Ok(())
+}
+
+pub async fn set_remote(
+    model: &impl QuiltModel,
+    namespace: &quilt::uri::Namespace,
+    origin: quilt::uri::Host,
+    bucket: String,
+) -> Result<(), Error> {
+    let installed_package = model
+        .get_installed_package(namespace)
+        .await?
+        .ok_or_else(|| Error::Quilt(quilt::Error::PackageNotInstalled(namespace.clone())))?;
+    model.set_remote(&installed_package, origin, bucket).await?;
+    Ok(())
+}
+
+pub async fn package_create(
+    model: &impl QuiltModel,
+    namespace: quilt::uri::Namespace,
+    source: Option<PathBuf>,
+    message: Option<String>,
+) -> Result<quilt::InstalledPackage, Error> {
+    model.package_create(namespace, source, message).await
 }
 
 pub async fn login(

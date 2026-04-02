@@ -1,4 +1,5 @@
 use quilt_rs::io::remote::HostConfig;
+use quilt_rs::uri::Host;
 use quilt_rs::uri::ManifestUri;
 use quilt_rs::uri::Namespace;
 
@@ -10,6 +11,8 @@ use crate::cli::Error;
 pub struct Input {
     pub namespace: Namespace,
     pub host_config: Option<HostConfig>,
+    pub bucket: Option<String>,
+    pub origin: Option<Host>,
 }
 
 #[derive(Debug)]
@@ -31,9 +34,21 @@ async fn push_package(
     local_domain: &quilt_rs::LocalDomain,
     namespace: Namespace,
     host_config: Option<HostConfig>,
+    bucket: Option<String>,
+    origin: Option<Host>,
 ) -> Result<ManifestUri, Error> {
     match local_domain.get_installed_package(&namespace).await? {
-        Some(installed_package) => Ok(installed_package.push(host_config).await?),
+        Some(installed_package) => {
+            // If bucket/origin provided, set remote before pushing.
+            // Safe: push() reads lineage fresh from disk, so it sees the
+            // remote_uri written by set_remote() — no caching in between.
+            // Note: clap enforces that bucket and origin are always provided
+            // together via `requires` constraints.
+            if let (Some(bucket), Some(origin)) = (bucket, origin) {
+                installed_package.set_remote(bucket, Some(origin)).await?;
+            }
+            Ok(installed_package.push(host_config).await?)
+        }
         None => Err(Error::NamespaceNotFound(namespace)),
     }
 }
@@ -43,9 +58,11 @@ pub async fn model(
     Input {
         namespace,
         host_config,
+        bucket,
+        origin,
     }: Input,
 ) -> Result<Output, Error> {
-    let manifest_uri = push_package(local_domain, namespace, host_config).await?;
+    let manifest_uri = push_package(local_domain, namespace, host_config, bucket, origin).await?;
     Ok(Output {
         hash: manifest_uri.hash,
     })
@@ -78,6 +95,8 @@ mod tests {
             Input {
                 namespace: ("in", "valid").into(),
                 host_config: None,
+                bucket: None,
+                origin: None,
             },
         )
         .await
@@ -103,6 +122,8 @@ mod tests {
             Input {
                 namespace: pkg::NAMESPACE.into(),
                 host_config: None,
+                bucket: None,
+                origin: None,
             },
         )
         .await
@@ -168,6 +189,8 @@ mod tests {
             .push(Input {
                 namespace: namespace.clone(),
                 host_config: host_config.clone(),
+                bucket: None,
+                origin: None,
             })
             .await?;
 
@@ -199,6 +222,8 @@ mod tests {
             .push(Input {
                 namespace,
                 host_config,
+                bucket: None,
+                origin: None,
             })
             .await?;
 
@@ -206,6 +231,103 @@ mod tests {
             final_push_output.hash,
             "4076eb7774f5159aab212302288a2a2a9e59fab69cf4e41e827072fee80fabb4",
             "Final push top hash should match original expected value"
+        );
+
+        Ok(())
+    }
+
+    /// Integration test: create local package → set bucket → push to S3 → verify lineage.
+    /// Uses fiskus-us-east-1 with a dedicated namespace (no catalog — local AWS creds).
+    #[test(tokio::test)]
+    async fn test_push_local_package_bucket_only() -> Result<(), Error> {
+        use crate::cli::create;
+        use crate::cli::status;
+        use quilt_rs::lineage::UpstreamState;
+
+        let namespace: Namespace = ("cli_test", "local_push").into();
+        let host_config = Some(HostConfig::default_sha256_chunked());
+
+        // Step 1: Create model and local package
+        let (m, _temp_dir) = create_model_in_temp_dir().await?;
+
+        let create_output = m
+            .create(create::Input {
+                namespace: namespace.clone(),
+                source: None,
+                message: None,
+            })
+            .await?;
+
+        // Step 2: Write a file into the package home directory
+        let working_dir = create_output.installed_package.package_home().await?;
+        let storage = LocalStorage::new();
+
+        let data_file = working_dir.join("data.txt");
+        storage
+            .write_byte_stream(
+                &data_file,
+                ByteStream::from_static(b"hello from local package\n"),
+            )
+            .await?;
+
+        // Step 3: Commit
+        m.commit(commit::Input {
+            message: "Add data".to_string(),
+            namespace: namespace.clone(),
+            user_meta: None,
+            workflow: None,
+            host_config: None,
+        })
+        .await?;
+
+        // Step 4: Set remote bucket (no catalog — uses local AWS creds)
+        create_output
+            .installed_package
+            .set_remote("fiskus-us-east-1".to_string(), None)
+            .await?;
+
+        // Step 5: Push to S3 (first push — no existing latest tag)
+        let push_output = m
+            .push(Input {
+                namespace: namespace.clone(),
+                host_config: host_config.clone(),
+                bucket: None,
+                origin: None,
+            })
+            .await?;
+
+        assert!(
+            !push_output.hash.is_empty(),
+            "Push should return a non-empty hash"
+        );
+
+        // Step 6: Verify lineage after push
+        let lineage = create_output.installed_package.lineage().await?;
+        let remote_uri = lineage
+            .remote_uri
+            .as_ref()
+            .expect("remote_uri should be set");
+        assert_eq!(
+            lineage.base_hash, remote_uri.hash,
+            "base_hash should equal remote hash after push"
+        );
+        assert!(
+            !remote_uri.hash.is_empty(),
+            "remote hash should not be empty after push"
+        );
+        assert_eq!(remote_uri.bucket, "fiskus-us-east-1", "bucket should match");
+
+        // Step 7: Status should be UpToDate (first push certifies latest)
+        let status_output = m
+            .status(status::Input {
+                namespace: namespace.clone(),
+                host_config,
+            })
+            .await?;
+        assert_eq!(
+            status_output.status.upstream_state,
+            UpstreamState::UpToDate,
+            "Package should be up-to-date after first push"
         );
 
         Ok(())
@@ -261,6 +383,8 @@ mod tests {
             .push(Input {
                 namespace: namespace.clone(),
                 host_config: host_config.clone(),
+                bucket: None,
+                origin: None,
             })
             .await?;
 
@@ -292,6 +416,8 @@ mod tests {
             .push(Input {
                 namespace,
                 host_config,
+                bucket: None,
+                origin: None,
             })
             .await?;
 

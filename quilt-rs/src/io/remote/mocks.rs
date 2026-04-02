@@ -5,7 +5,6 @@ use tracing::log;
 
 use crate::checksum::ObjectHash;
 use crate::checksum::Sha256ChunkedHash;
-use crate::error::S3Error;
 use crate::io::remote::HostConfig;
 use crate::io::remote::RemoteObjectStream;
 use crate::io::storage::mocks::MockStorage;
@@ -33,7 +32,7 @@ impl Remote for MockRemote {
 
     async fn get_object_stream(
         &self,
-        host: &Option<Host>,
+        _host: &Option<Host>,
         s3_uri: &S3Uri,
     ) -> Res<RemoteObjectStream> {
         let key = s3_uri.to_string();
@@ -44,21 +43,10 @@ impl Remote for MockRemote {
             .read_byte_stream(&key)
             .await
             .map_err(|err| match err {
-                // TODO: made a similar finer error for the ByteStreamError
-                Error::ByteStreamError(_) => Error::S3(
-                    host.to_owned(),
-                    S3Error::GetObjectStream(
-                        "NoSuchKey: The specified key does not exist".to_string(),
-                    ),
-                ),
+                Error::ByteStreamError(_) => Error::S3NotFound(key.clone()),
                 Error::Io(inner_err) => {
                     if inner_err.kind() == std::io::ErrorKind::NotFound {
-                        Error::S3(
-                            host.to_owned(),
-                            S3Error::GetObjectStream(
-                                "NoSuchKey: The specified key does not exist".to_string(),
-                            ),
-                        )
+                        Error::S3NotFound(key.clone())
                     } else {
                         Error::Io(inner_err)
                     }
@@ -82,16 +70,13 @@ impl Remote for MockRemote {
         self.storage.write_byte_stream(key, contents.into()).await
     }
 
-    async fn resolve_url(&self, host: &Option<Host>, s3_uri: &S3Uri) -> Res<S3Uri> {
+    async fn resolve_url(&self, _host: &Option<Host>, s3_uri: &S3Uri) -> Res<S3Uri> {
         let key = s3_uri.to_string();
         log::debug!("Mocking {key} HEAD request");
         if self.storage.exists(&key).await {
             Ok(s3_uri.clone())
         } else {
-            Err(Error::S3(
-                host.to_owned(),
-                S3Error::ResolveUrl("NoSuchKey: The specified key does not exist".to_string()),
-            ))
+            Err(Error::S3NotFound(key))
         }
     }
 
@@ -134,15 +119,10 @@ mod tests {
             )
             .await?;
         let s3_uri_not_found = S3Uri::try_from("s3://b/n?versionId=v")?;
-        let not_found = remote.get_object_stream(&None, &s3_uri_not_found).await;
-        if let Err(Error::S3(None, err)) = not_found {
-            assert_eq!(
-                err,
-                S3Error::GetObjectStream("NoSuchKey: The specified key does not exist".to_string(),)
-            );
-        } else {
-            panic!("shouldn't happen");
-        }
+        let Err(err) = remote.get_object_stream(&None, &s3_uri_not_found).await else {
+            panic!("expected S3NotFound error");
+        };
+        assert!(err.is_not_found(), "expected S3NotFound, got: {err}");
         let s3_uri_found = S3Uri::try_from("s3://found/n?versionId=v")?;
         let found = remote.get_object_stream(&None, &s3_uri_found).await?;
         assert_eq!(found.body.collect().await?.to_vec(), b"Hello");

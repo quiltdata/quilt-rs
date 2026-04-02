@@ -42,6 +42,7 @@
   --q-ui-z-index-overlay: 40;
   --q-ui-z-index-progress: 50;
   --q-ui-z-index-version: 60;
+  --q-ui-z-index-popover: 100;
 
   /* Sizes */
   --q-ui-container-size: 1280px;

@@ -668,6 +668,74 @@ pub async fn set_origin(
     )
 }
 
+async fn set_remote_command(
+    m: &model::Model,
+    namespace: &str,
+    origin: &str,
+    bucket: &str,
+) -> Result<(), Error> {
+    let namespace = quilt::uri::Namespace::try_from(namespace)?;
+    let origin = quilt::uri::Host::from_str(origin)?;
+    model::set_remote(m, &namespace, origin, bucket.to_string()).await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_remote(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    namespace: String,
+    origin: String,
+    bucket: String,
+) -> Result<String, String> {
+    tracing.track(MixpanelEvent::RemoteSet).await;
+    let m: &model::Model = &m;
+
+    let msg_init = format!("Setting remote for {namespace}");
+    let msg_ok = format!("Successfully set remote for {namespace}");
+    let msg_err = |err: &Error| format!("Failed to set remote: {err}");
+
+    TmplNotify::new(msg_init).map(
+        set_remote_command(m, &namespace, &origin, &bucket).await,
+        msg_ok,
+        msg_err,
+    )
+}
+
+async fn package_create_command(
+    m: &model::Model,
+    namespace: &str,
+    source: Option<String>,
+    message: Option<String>,
+) -> Result<(), Error> {
+    let namespace = quilt::uri::Namespace::try_from(namespace)?;
+    let source = source.map(PathBuf::from);
+    model::package_create(m, namespace, source, message).await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn package_create(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    namespace: String,
+    source: Option<String>,
+    message: Option<String>,
+) -> Result<String, String> {
+    tracing.track(MixpanelEvent::PackageCreated).await;
+    let m: &model::Model = &m;
+
+    let msg_init = format!("Creating package {namespace}");
+    let msg_ok = format!("Successfully created package {namespace}");
+    let msg_err = |err: &Error| format!("Failed to create package: {err}");
+
+    TmplNotify::new(msg_init).map(
+        package_create_command(m, &namespace, source, message).await,
+        msg_ok,
+        msg_err,
+    )
+}
+
 /// Navigate to a page after successful login.
 pub(crate) fn navigate_after_login(
     app_handle: &tauri::AppHandle,

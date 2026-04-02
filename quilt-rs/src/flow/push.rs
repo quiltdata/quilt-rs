@@ -99,8 +99,13 @@ pub async fn push_package(
     let remote_uri = lineage.remote()?.clone();
 
     debug!("⏳ Fetching remote manifest");
-    let remote_manifest = flow::browse(paths, storage, remote, &remote_uri).await?;
-    debug!("✔️ Remote manifest fetched");
+    let remote_manifest = if remote_uri.hash.is_empty() {
+        debug!("✔️ First push — no remote manifest, using empty default");
+        Manifest::default()
+    } else {
+        flow::browse(paths, storage, remote, &remote_uri).await?
+    };
+    debug!("✔️ Remote manifest ready");
 
     // ## copy data
     // Copy each of the _modified_ paths from their local_key to remote_key,
@@ -156,17 +161,33 @@ pub async fn push_package(
     debug!("✔️ Timestamp tag added");
 
     debug!("⏳ Checking remote's latest manifest hash");
-    lineage.latest_hash = resolve_tag(
+    lineage.latest_hash = match resolve_tag(
         remote,
         &new_manifest_uri.origin,
         &manifest_uri.into(),
         Tag::Latest,
     )
-    .await?
-    .hash;
+    .await
+    {
+        Ok(uri) => uri.hash,
+        Err(e) if e.is_not_found() => {
+            debug!("✔️ No existing latest tag — first push for this package");
+            String::new()
+        }
+        Err(e) => return Err(e),
+    };
     debug!("✔️ Latest hash is: {}", lineage.latest_hash);
 
     lineage.remote_uri = Some(new_manifest_uri.clone());
+
+    // Update base_hash after a successful push. Only needed for first push
+    // where base_hash is "" — without this, the package would appear as Diverged
+    // instead of UpToDate after push.
+    // On subsequent pushes, certify_latest() below handles the update via
+    // update_latest(), which sets both base_hash and latest_hash.
+    if lineage.base_hash.is_empty() {
+        lineage.base_hash = new_manifest_uri.hash.clone();
+    }
 
     if new_manifest_uri.hash != commit.hash {
         debug!("❌ Hash mismatch, copying cached to installed");
@@ -177,8 +198,8 @@ pub async fn push_package(
         ))?
     }
 
-    // Try certifying latest if tracking
-    if lineage.base_hash == lineage.latest_hash {
+    // Try certifying latest if tracking, or if this is the first push (no existing latest)
+    if lineage.base_hash == lineage.latest_hash || lineage.latest_hash.is_empty() {
         debug!("⏳ Remote latest not updated, certifying new latest");
         return flow::certify_latest(lineage, remote, new_manifest_uri).await;
     } else {
@@ -287,8 +308,8 @@ mod tests {
         assert_eq!(
             lineage,
             PackageLineage {
-                remote_uri: Some(manifest_uri),
-                base_hash: "".to_string(), // Huh?
+                remote_uri: Some(manifest_uri.clone()),
+                base_hash: manifest_uri.hash,
                 latest_hash: "abcdef".to_string(),
                 ..PackageLineage::default()
             }
@@ -377,8 +398,8 @@ mod tests {
         assert_eq!(
             lineage,
             PackageLineage {
-                remote_uri: Some(manifest_uri),
-                base_hash: "".to_string(), // Huh?
+                remote_uri: Some(manifest_uri.clone()),
+                base_hash: manifest_uri.hash,
                 latest_hash: "latest-hash-abcdef".to_string(),
                 ..PackageLineage::default()
             }

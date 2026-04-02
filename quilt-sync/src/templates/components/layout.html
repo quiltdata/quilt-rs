@@ -45,10 +45,6 @@
     <div class="qui-notify">
       <div id="notify" class="root" onclick="var el = this; el.innerHTML = '';"></div>
     </div>
-
-    <div class="qui-popup">
-      <div id="popup" class="root"></div>
-    </div>
   </div>
 
   {% block progress %}
@@ -61,5 +57,8 @@
     <div class="qui-actionbar">{{ primary_action | safe }}</div>
   {% endif %}
 
+  <div class="qui-popup">
+    <div id="popup" class="root"></div>
+  </div>
 
 </div>

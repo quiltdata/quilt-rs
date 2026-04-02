@@ -6,6 +6,7 @@ use askama::Template;
     ext = "txt"
 )]
 pub enum Icon {
+    Add,
     ArrowForward,
     Block,
     CloudDownload,
@@ -25,6 +26,7 @@ pub enum Icon {
 
 fn get_src(icon: &Icon) -> &str {
     match icon {
+        Icon::Add => "/assets/img/icons/add.svg",
         Icon::ArrowForward => "/assets/img/icons/arrow_forward.svg",
         Icon::Block => "/assets/img/icons/block.svg",
         Icon::CloudDownload => "/assets/img/icons/cloud_download.svg",

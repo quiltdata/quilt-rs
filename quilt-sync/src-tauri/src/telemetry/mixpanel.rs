@@ -28,6 +28,7 @@ pub enum MixpanelEvent {
     PackageCommitted,
     PackageUninstalled,
     PackageInstalled,
+    PackageCreated,
     DirectoryPickerOpened,
     AuthErased,
     DebugDotQuiltOpened,
@@ -39,6 +40,7 @@ pub enum MixpanelEvent {
     LatestCertified,
     LocalReset,
     OriginSet,
+    RemoteSet,
     OAuthLoginInitiated {
         host: String,
     },
@@ -168,6 +170,10 @@ mod tests {
         assert_eq!(name, "package_installed");
         assert!(p.is_none());
 
+        let (name, p) = MixpanelEvent::PackageCreated.try_into()?;
+        assert_eq!(name, "package_created");
+        assert!(p.is_none());
+
         let (name, p) = MixpanelEvent::DirectoryPickerOpened.try_into()?;
         assert_eq!(name, "directory_picker_opened");
         assert!(p.is_none());
@@ -210,6 +216,10 @@ mod tests {
 
         let (name, p) = MixpanelEvent::OriginSet.try_into()?;
         assert_eq!(name, "origin_set");
+        assert!(p.is_none());
+
+        let (name, p) = MixpanelEvent::RemoteSet.try_into()?;
+        assert_eq!(name, "remote_set");
         assert!(p.is_none());
 
         let (name, p) = MixpanelEvent::SetupCompleted.try_into()?;

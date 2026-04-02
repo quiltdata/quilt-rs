@@ -207,6 +207,9 @@ pub enum Error {
     #[error("S3 error: {0}")]
     S3Raw(String),
 
+    #[error("S3 not found: {0}")]
+    S3NotFound(String),
+
     #[error("S3 error for {0:?}: {1}")]
     S3(Option<Host>, S3Error),
 
@@ -242,4 +245,11 @@ pub enum Error {
 
     #[error("YAML error: {0}")]
     Yaml(#[from] serde_yaml::Error),
+}
+
+impl Error {
+    /// Returns `true` if this error represents an S3 "not found" (NoSuchKey) response.
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, Error::S3NotFound(_))
+    }
 }
