@@ -433,7 +433,7 @@ enum UpstreamState {
     Ahead,      // local has unpushed commits
     Behind,     // remote has newer version
     Diverged,   // both local and remote have changes
-    Local,      // local-only package, no remote origin
+    Local,      // no remote configured, or remote set but never pushed
 }
 ```
 
