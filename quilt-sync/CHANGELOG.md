@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.14.6-alpha2] - 2026-04-02
+
+### Added
+
+- Add create local package UI with optional source directory picker and set remote popup for first-push workflow (<https://github.com/quiltdata/quilt-rs/pull/596>)
+
 ## [v0.14.6-alpha1] - 2026-03-30
 
 ### Added
