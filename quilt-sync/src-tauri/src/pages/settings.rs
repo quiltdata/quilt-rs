@@ -13,6 +13,7 @@ use crate::error::Error;
 use crate::routes::Paths;
 use crate::telemetry::LogsDir;
 use crate::ui::btn;
+use crate::ui::changelog;
 use crate::ui::crumbs;
 use crate::ui::layout::Layout;
 use crate::ui::Icon;
@@ -62,17 +63,14 @@ impl<'a> TmplSettings<'a> {
         }
     }
 
-    fn release_notes_button(version: &Version) -> btn::TmplButton<'static> {
-        let release_url = format!(
-            "https://github.com/quiltdata/quilt-rs/releases/tag/QuiltSync/v{}",
-            version
-        );
+    fn release_notes_button() -> btn::TmplButton<'static> {
+        let entries = changelog::latest_entries();
+        let json = serde_json::to_string(&entries).unwrap_or_default();
         btn::TmplButton::builder()
             .set_label(t!("settings.release_notes"))
             .set_modificator(btn::Modificator::Link)
-            .set_js(btn::JsSelector::OpenInWebBrowser)
-            .set_data("url", release_url.clone())
-            .set_title(release_url)
+            .set_js(btn::JsSelector::ReleaseNotes)
+            .set_data("changelog", json)
     }
 
     fn open_home_dir_button() -> btn::TmplButton<'static> {
@@ -162,7 +160,7 @@ impl From<ViewSettings<'_>> for TmplSettings<'_> {
 
         TmplSettings {
             version: view.version.to_string(),
-            release_notes: TmplSettings::release_notes_button(&view.version),
+            release_notes: TmplSettings::release_notes_button(),
             home_dir: view
                 .home_dir
                 .as_ref()
