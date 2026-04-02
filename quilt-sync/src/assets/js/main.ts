@@ -1099,15 +1099,19 @@ function isValidNamespace(value: string) {
 
 function showCreatePackageForm() {
   popup(`<div class="origin-form">
-    <label>Namespace</label>
-    <div class="origin-input-group">
-      <input class="origin-input js-create-ns-input" type="text" placeholder="owner/package-name" />
-      <span class="origin-hint js-create-ns-hint">Enter a valid namespace, e.g. owner/package-name</span>
+    <div class="origin-field">
+      <label>Namespace</label>
+      <div class="origin-input-group">
+        <input class="origin-input js-create-ns-input" type="text" placeholder="owner/package-name" />
+        <span class="origin-hint js-create-ns-hint">Enter a valid namespace, e.g. owner/package-name</span>
+      </div>
     </div>
-    <label>Source directory (optional)</label>
-    <div class="origin-input-group">
-      <input class="origin-input js-create-source-input" type="text" readonly placeholder="Select a directory..." />
-      <button class="qui-button js-create-source-browse" type="button"><span>Browse</span></button>
+    <div class="origin-field">
+      <label>Source directory (optional)</label>
+      <div class="origin-input-row">
+        <input class="origin-input js-create-source-input" type="text" readonly placeholder="Select a directory..." />
+        <button class="qui-button js-create-source-browse" type="button"><span>Browse</span></button>
+      </div>
     </div>
     <div class="origin-form-actions">
       <button class="qui-button primary js-create-submit"><span>Create</span></button>
