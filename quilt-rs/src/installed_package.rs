@@ -108,6 +108,9 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let lineage = match lineage.remote_uri.as_ref() {
             Some(_) => match flow::refresh_latest_hash(lineage.clone(), &self.remote).await {
                 Ok(lineage) => lineage,
+                Err(Error::LoginRequired(_)) => return Err(Error::LoginRequired(
+                    lineage.remote_uri.as_ref().and_then(|r| r.origin.clone()),
+                )),
                 Err(err) => {
                     log::warn!("Failed to refresh latest hash: {err}");
                     lineage
@@ -368,32 +371,48 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
         // Re-commit with the remote's host_config and workflow so push
         // works immediately without a manual re-commit.
+        // This can fail (e.g. not logged in yet) — the remote is already saved,
+        // so we log a warning and let the user push after logging in.
         if let Some(origin) = origin {
             if lineage.commit.is_some() {
-                let host_config = self.remote.host_config(&Some(origin.clone())).await?;
-                let workflows_config_uri = S3Uri {
-                    key: ".quilt/workflows/config.yml".to_string(),
-                    bucket: bucket.clone(),
-                    ..S3Uri::default()
-                };
-                let workflow =
-                    resolve_workflow(&self.remote, &Some(origin), None, &workflows_config_uri)
-                        .await?;
-                let manifest = self.manifest().await?;
-                let lineage = flow::recommit(
-                    lineage,
-                    &manifest,
-                    &self.paths,
-                    &self.storage,
-                    self.namespace.clone(),
-                    host_config,
-                    workflow,
-                )
-                .await?;
-                self.lineage.write(&self.storage, lineage).await?;
+                if let Err(err) = self
+                    .recommit_for_remote(lineage, origin, bucket)
+                    .await
+                {
+                    log::warn!("Remote saved but recommit failed (will retry on push): {err}");
+                }
             }
         }
 
+        Ok(())
+    }
+
+    async fn recommit_for_remote(
+        &self,
+        lineage: lineage::PackageLineage,
+        origin: Host,
+        bucket: String,
+    ) -> Res {
+        let host_config = self.remote.host_config(&Some(origin.clone())).await?;
+        let workflows_config_uri = S3Uri {
+            key: ".quilt/workflows/config.yml".to_string(),
+            bucket,
+            ..S3Uri::default()
+        };
+        let workflow =
+            resolve_workflow(&self.remote, &Some(origin), None, &workflows_config_uri).await?;
+        let manifest = self.manifest().await?;
+        let lineage = flow::recommit(
+            lineage,
+            &manifest,
+            &self.paths,
+            &self.storage,
+            self.namespace.clone(),
+            host_config,
+            workflow,
+        )
+        .await?;
+        self.lineage.write(&self.storage, lineage).await?;
         Ok(())
     }
 
@@ -1006,6 +1025,105 @@ mod tests {
             manifest.header.user_meta,
             Some(serde_json::json!({"key": "value"})),
             "User meta should be preserved after recommit"
+        );
+
+        Ok(())
+    }
+
+    /// A remote that always returns LoginRequired, simulating a logged-out user.
+    struct LoggedOutRemote;
+
+    impl crate::io::remote::Remote for LoggedOutRemote {
+        async fn exists(&self, _host: &Option<Host>, _s3_uri: &S3Uri) -> Res<bool> {
+            Err(Error::LoginRequired(None))
+        }
+        async fn get_object_stream(
+            &self,
+            _host: &Option<Host>,
+            _s3_uri: &S3Uri,
+        ) -> Res<crate::io::remote::RemoteObjectStream> {
+            Err(Error::LoginRequired(None))
+        }
+        async fn resolve_url(
+            &self,
+            _host: &Option<Host>,
+            _s3_uri: &S3Uri,
+        ) -> Res<S3Uri> {
+            Err(Error::LoginRequired(None))
+        }
+        async fn put_object(
+            &self,
+            _host: &Option<Host>,
+            _s3_uri: &S3Uri,
+            _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
+        ) -> Res {
+            Err(Error::LoginRequired(None))
+        }
+        async fn upload_file(
+            &self,
+            _host_config: &crate::io::remote::HostConfig,
+            _source_path: impl AsRef<std::path::Path>,
+            _dest_uri: &S3Uri,
+            _size: u64,
+        ) -> Res<(S3Uri, crate::checksum::ObjectHash)> {
+            Err(Error::LoginRequired(None))
+        }
+        async fn host_config(
+            &self,
+            _host: &Option<Host>,
+        ) -> Res<crate::io::remote::HostConfig> {
+            Ok(crate::io::remote::HostConfig::default())
+        }
+    }
+
+    #[test(tokio::test)]
+    async fn test_status_propagates_login_required() -> Res {
+        let (home, _temp_dir1) = Home::from_temp_dir()?;
+        let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+
+        let storage = LocalStorage::new();
+        let namespace: Namespace = ("test", "needslogin").into();
+
+        paths
+            .scaffold_for_installing(&storage, &home, &namespace)
+            .await?;
+
+        // Package with remote configured but never pushed (empty hash)
+        let lineage_json = r#"{
+            "packages": {
+                "test/needslogin": {
+                    "commit": null,
+                    "remote": {
+                        "bucket": "my-bucket",
+                        "namespace": "test/needslogin",
+                        "hash": "",
+                        "origin": "nightly.quilttest.com"
+                    },
+                    "base_hash": "",
+                    "latest_hash": "",
+                    "paths": {}
+                }
+            },
+            "home": "/tmp/working_dir"
+        }"#;
+        storage
+            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+            .await?;
+
+        let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+        let package = InstalledPackage {
+            lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+            paths,
+            remote: LoggedOutRemote,
+            storage,
+            namespace,
+        };
+
+        // status() should propagate LoginRequired so the UI can show a Login button
+        let result = package.status(None).await;
+        assert!(
+            matches!(result, Err(Error::LoginRequired(_))),
+            "Expected LoginRequired error, got: {result:?}"
         );
 
         Ok(())
