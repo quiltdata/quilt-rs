@@ -110,6 +110,15 @@ impl TmplStatus<'_> {
                     secondary_button: None,
                 }),
             },
+            UpstreamState::Local if origin_host.is_some() => Some(TmplStatus {
+                description: t!("installed_package_status.push"),
+                button: btn::TmplButton::builder()
+                    .set_data("namespace", namespace.to_string())
+                    .set_js(btn::JsSelector::PackagesPush)
+                    .set_label(t!("buttons.push_package"))
+                    .set_color(btn::Color::Primary),
+                secondary_button: None,
+            }),
             UpstreamState::Local | UpstreamState::UpToDate => None,
         }
     }
@@ -693,7 +702,11 @@ mod tests {
         // Should show commit button
         assert!(html.contains(r#"href="commit.html"#));
 
-        // Should not show any status banner
+        // Should show push status banner (natural next step)
+        assert!(html.contains(r#"js-packages-push"#));
+        assert!(html.contains("Push to remote"));
+
+        // Should not show set-origin or warning
         assert!(!html.contains(r#"js-set-origin"#));
         assert!(!html.contains(r#"warning"#));
 
