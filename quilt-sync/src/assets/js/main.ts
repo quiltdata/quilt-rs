@@ -1104,6 +1104,11 @@ function showCreatePackageForm() {
       <input class="origin-input js-create-ns-input" type="text" placeholder="owner/package-name" />
       <span class="origin-hint js-create-ns-hint">Enter a valid namespace, e.g. owner/package-name</span>
     </div>
+    <label>Source directory (optional)</label>
+    <div class="origin-input-group">
+      <input class="origin-input js-create-source-input" type="text" readonly placeholder="Select a directory..." />
+      <button class="qui-button js-create-source-browse" type="button"><span>Browse</span></button>
+    </div>
     <div class="origin-form-actions">
       <button class="qui-button primary js-create-submit"><span>Create</span></button>
       <button class="qui-button js-create-cancel"><span>Cancel</span></button>
@@ -1119,6 +1124,11 @@ function showCreatePackageForm() {
   ) as HTMLInputElement | null;
   if (!input) return;
   input.focus();
+
+  const sourceInput = findElement(
+    ".js-create-source-input" as Selector,
+    outputElement,
+  ) as HTMLInputElement | null;
 
   const hint = findElement(".js-create-ns-hint" as Selector, outputElement);
 
@@ -1139,7 +1149,12 @@ function showCreatePackageForm() {
       showError();
       return;
     }
-    execPageCommand(CMD_CREATE_PACKAGE, { namespace }).catch(handleError);
+    const data: Record<string, string> = { namespace };
+    const source = sourceInput?.value.trim();
+    if (source) {
+      data.source = source;
+    }
+    execPageCommand(CMD_CREATE_PACKAGE, data).catch(handleError);
   };
 
   const cancel = () => {
@@ -1151,6 +1166,13 @@ function showCreatePackageForm() {
 
   const cancelButton = findElement(".js-create-cancel" as Selector, outputElement);
   cancelButton?.addEventListener("click", cancel);
+
+  const browseButton = findElement(".js-create-source-browse" as Selector, outputElement);
+  browseButton?.addEventListener("click", () => {
+    if (sourceInput) {
+      pickupDirectory((".js-create-source-input" as SELECTOR_DIRECTORY_INPUT));
+    }
+  });
 
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
