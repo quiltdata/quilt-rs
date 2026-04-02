@@ -108,9 +108,11 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let lineage = match lineage.remote_uri.as_ref() {
             Some(_) => match flow::refresh_latest_hash(lineage.clone(), &self.remote).await {
                 Ok(lineage) => lineage,
-                Err(Error::LoginRequired(_)) => return Err(Error::LoginRequired(
-                    lineage.remote_uri.as_ref().and_then(|r| r.origin.clone()),
-                )),
+                Err(Error::LoginRequired(_)) => {
+                    return Err(Error::LoginRequired(
+                        lineage.remote_uri.as_ref().and_then(|r| r.origin.clone()),
+                    ))
+                }
                 Err(err) => {
                     log::warn!("Failed to refresh latest hash: {err}");
                     lineage
@@ -375,10 +377,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         // so we log a warning and let the user push after logging in.
         if let Some(origin) = origin {
             if lineage.commit.is_some() {
-                if let Err(err) = self
-                    .recommit_for_remote(lineage, origin, bucket)
-                    .await
-                {
+                if let Err(err) = self.recommit_for_remote(lineage, origin, bucket).await {
                     log::warn!("Remote saved but recommit failed (will retry on push): {err}");
                 }
             }
@@ -1044,11 +1043,7 @@ mod tests {
         ) -> Res<crate::io::remote::RemoteObjectStream> {
             Err(Error::LoginRequired(None))
         }
-        async fn resolve_url(
-            &self,
-            _host: &Option<Host>,
-            _s3_uri: &S3Uri,
-        ) -> Res<S3Uri> {
+        async fn resolve_url(&self, _host: &Option<Host>, _s3_uri: &S3Uri) -> Res<S3Uri> {
             Err(Error::LoginRequired(None))
         }
         async fn put_object(
@@ -1068,10 +1063,7 @@ mod tests {
         ) -> Res<(S3Uri, crate::checksum::ObjectHash)> {
             Err(Error::LoginRequired(None))
         }
-        async fn host_config(
-            &self,
-            _host: &Option<Host>,
-        ) -> Res<crate::io::remote::HostConfig> {
+        async fn host_config(&self, _host: &Option<Host>) -> Res<crate::io::remote::HostConfig> {
             Ok(crate::io::remote::HostConfig::default())
         }
     }

@@ -696,8 +696,12 @@ mod tests {
         .render()?;
 
         // Should show "Open in Catalog" button but disabled
-        let btn_start = html.find("js-open-in-web-browser").expect("catalog button not found");
-        let btn_end = html[btn_start..].find("</button>").expect("closing </button> not found");
+        let btn_start = html
+            .find("js-open-in-web-browser")
+            .expect("catalog button not found");
+        let btn_end = html[btn_start..]
+            .find("</button>")
+            .expect("closing </button> not found");
         let catalog_btn = &html[btn_start..btn_start + btn_end];
         assert!(catalog_btn.contains("Open in Catalog"));
         assert!(catalog_btn.contains("disabled"));
