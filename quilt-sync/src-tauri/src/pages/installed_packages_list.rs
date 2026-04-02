@@ -566,9 +566,11 @@ mod tests {
         // Should show Push button (natural next step after set_remote)
         assert!(html.contains(r#"js-packages-push"#));
 
-        // Should show "Open in Catalog" but disabled
-        assert!(html.contains(r#"js-open-in-web-browser"#));
-        assert!(html.contains("disabled"));
+        // Should show "Open in Catalog" button but disabled
+        let btn_start = html.find("js-open-in-web-browser").expect("catalog button not found");
+        let btn_end = html[btn_start..].find("</button>").expect("closing </button> not found");
+        let catalog_btn = &html[btn_start..btn_start + btn_end];
+        assert!(catalog_btn.contains("disabled"));
 
         // Should NOT show "Set Remote" button (remote is already set)
         assert!(!html.contains(r#"js-set-remote"#));
