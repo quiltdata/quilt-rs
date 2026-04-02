@@ -47,6 +47,12 @@
     min-width: 320px;
   }
 
+  .origin-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--q-ui-size-1);
+  }
+
   .origin-input-group {
     display: flex;
     flex-direction: column;
@@ -73,6 +79,17 @@
 
   .origin-hint.visible {
     display: block;
+  }
+
+  .origin-input-row {
+    display: flex;
+    gap: var(--q-ui-size-1);
+    align-items: center;
+  }
+
+  .origin-input-row .origin-input {
+    flex: 1;
+    min-width: 0;
   }
 
   .origin-form-actions {
