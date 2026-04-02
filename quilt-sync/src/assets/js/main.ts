@@ -1172,10 +1172,16 @@ function showCreatePackageForm() {
   cancelButton?.addEventListener("click", cancel);
 
   const browseButton = findElement(".js-create-source-browse" as Selector, outputElement);
-  browseButton?.addEventListener("click", () => {
-    if (sourceInput) {
-      pickupDirectory((".js-create-source-input" as SELECTOR_DIRECTORY_INPUT));
+  browseButton?.addEventListener("click", async () => {
+    if (!sourceInput) return;
+    lockUI();
+    try {
+      const directory: string = await invoke(CMD_OPEN_DIRECTORY_PICKER);
+      sourceInput.value = directory || "";
+    } catch (error) {
+      handleError(error);
     }
+    unlockUI();
   });
 
   input.addEventListener("keydown", (event) => {
