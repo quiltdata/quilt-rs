@@ -196,7 +196,11 @@ pub async fn create_status(
             Some(row) => {
                 orig_paths.insert(path.clone(), row.clone());
             }
-            None if lineage.remote_uri.is_none() => {
+            None if lineage
+                .remote_uri
+                .as_ref()
+                .map_or(true, |r| r.hash.is_empty()) =>
+            {
                 warn!(
                     "Lineage path {} not found in manifest, skipping (local-only package)",
                     path.display()
