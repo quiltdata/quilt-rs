@@ -134,7 +134,7 @@ pub enum Error {
     #[error("Domain lineage missing Home directory")]
     LineageMissingHome,
 
-    #[error("Failed to get access token: {0:?}")]
+    #[error("Login required{}", .0.as_ref().map_or(String::new(), |h| format!(": {h}")))]
     LoginRequired(Option<Host>),
 
     #[error("Failed to get registry URL from {0}. Does {0}/config.json have it?")]

@@ -24,7 +24,7 @@ pub enum UpstreamState {
     Behind,
     Ahead,
     Diverged,
-    /// Local-only package with no remote origin
+    /// Local-only package: either no remote configured, or remote set but never pushed
     Local,
     Error,
 }

@@ -110,6 +110,15 @@ impl TmplStatus<'_> {
                     secondary_button: None,
                 }),
             },
+            UpstreamState::Local if origin_host.is_some() => Some(TmplStatus {
+                description: t!("installed_package_status.push"),
+                button: btn::TmplButton::builder()
+                    .set_data("namespace", namespace.to_string())
+                    .set_js(btn::JsSelector::PackagesPush)
+                    .set_label(t!("buttons.push_package"))
+                    .set_color(btn::Color::Primary),
+                secondary_button: None,
+            }),
             UpstreamState::Local | UpstreamState::UpToDate => None,
         }
     }
@@ -166,20 +175,27 @@ impl<'a> TmplPageInstalledPackage<'a> {
         }
     }
 
-    fn actions(uri: &S3PackageUri, origin: Option<&url::Url>) -> Vec<btn::TmplButton<'a>> {
+    fn actions(
+        uri: &S3PackageUri,
+        origin: Option<&url::Url>,
+        status: &UpstreamState,
+    ) -> Vec<btn::TmplButton<'a>> {
         let mut actions = vec![btn::TmplButton::builder()
             .set_data("namespace", uri.namespace.to_string())
             .set_icon(Icon::FolderOpen)
             .set_js(btn::JsSelector::OpenInFileBrowser)
             .set_label(t!("buttons.open_package_in_file_browser"))];
         if let Some(origin) = origin {
-            actions.push(
-                btn::TmplButton::builder()
-                    .set_data("url", origin.to_string())
-                    .set_icon(Icon::OpenInBrowser)
-                    .set_js(btn::JsSelector::OpenInWebBrowser)
-                    .set_label(t!("buttons.open_package_in_catalog")),
-            );
+            let btn = btn::TmplButton::builder()
+                .set_data("url", origin.to_string())
+                .set_icon(Icon::OpenInBrowser)
+                .set_js(btn::JsSelector::OpenInWebBrowser)
+                .set_label(t!("buttons.open_package_in_catalog"));
+            actions.push(if *status == UpstreamState::Local {
+                btn.set_disabled()
+            } else {
+                btn
+            });
         }
         actions.push(
             btn::TmplButton::builder()
@@ -438,7 +454,7 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
 
         let layout = Layout::builder()
             .set_breadcrumbs(Self::breadcrumbs(&uri))
-            .set_actions(Self::actions(&uri, origin.as_ref()))
+            .set_actions(Self::actions(&uri, origin.as_ref(), &status))
             .set_uri(Some(uri.clone()));
         let layout = if matches!(status, UpstreamState::Error) {
             layout
@@ -656,8 +672,50 @@ mod tests {
         // Should show commit button (local packages can be committed)
         assert!(html.contains(r#"href="commit.html"#));
 
+        // Should not show "Open in Catalog" action (no origin)
+        assert!(!html.contains("Open in Catalog"));
+
         // Should still show basic page structure
         assert!(html.contains(r#"data-testid="installed-package-entries""#));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_view_local_with_origin_disables_catalog_button() -> Result {
+        let html = (ViewInstalledPackage {
+            entries_list: vec![],
+            filter: EntriesFilter::for_installed_package(),
+            origin: Some(url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?),
+            origin_host: Some("test.quilt.dev".parse().unwrap()),
+            status: quilt::lineage::UpstreamState::Local,
+            uri: quilt::uri::S3PackageUri::try_from("quilt+s3://C#package=A/B")?,
+            ignored_count: 0,
+            unmodified_count: 0,
+        })
+        .render()?;
+
+        // Should show "Open in Catalog" button but disabled
+        let btn_start = html
+            .find("js-open-in-web-browser")
+            .expect("catalog button not found");
+        let btn_end = html[btn_start..]
+            .find("</button>")
+            .expect("closing </button> not found");
+        let catalog_btn = &html[btn_start..btn_start + btn_end];
+        assert!(catalog_btn.contains("Open in Catalog"));
+        assert!(catalog_btn.contains("disabled"));
+
+        // Should show commit button
+        assert!(html.contains(r#"href="commit.html"#));
+
+        // Should show push status banner (natural next step)
+        assert!(html.contains(r#"js-packages-push"#));
+        assert!(html.contains("Push to remote"));
+
+        // Should not show set-origin or warning
+        assert!(!html.contains(r#"js-set-origin"#));
+        assert!(!html.contains(r#"warning"#));
 
         Ok(())
     }
