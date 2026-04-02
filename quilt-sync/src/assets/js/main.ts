@@ -522,19 +522,27 @@ function showCollectLogsResult(zipPath: string) {
   resultDiv.innerHTML = `<span class="zip-path-label">${I18N.logsCollected}</span>
     <code></code>
     <button class="qui-button link js-file-reveal small" type="button"><img class="qui-icon" src="/assets/img/icons/folder_open.svg" /><span>${I18N.revealFile}</span></button>`;
-  resultDiv.querySelector("code")!.textContent = zipPath;
+  const codeEl = resultDiv.querySelector("code");
+  if (codeEl) {
+    codeEl.textContent = zipPath;
+  }
 
-  resultDiv.querySelector(".js-file-reveal")?.addEventListener("click", async () => {
-    const sep = Math.max(zipPath.lastIndexOf("/"), zipPath.lastIndexOf("\\"));
-    const dir = sep > 0 ? zipPath.substring(0, sep) : zipPath;
-    await invoke(CMD_OPEN_IN_WEB_BROWSER, { url: dir });
-  });
+  resultDiv
+    .querySelector(".js-file-reveal")
+    ?.addEventListener("click", async () => {
+      const sep = Math.max(zipPath.lastIndexOf("/"), zipPath.lastIndexOf("\\"));
+      const dir = sep > 0 ? zipPath.substring(0, sep) : zipPath;
+      await invoke(CMD_OPEN_IN_WEB_BROWSER, { url: dir });
+    });
 }
 
 function enableDeliveryButtons() {
   const container = document.getElementById("diagnostic-actions");
   if (!container) return;
-  for (const selector of [SELECTOR_CRASH_REPORT, SELECTOR_DIAGNOSTIC_LOGS] as Selector[]) {
+  for (const selector of [
+    SELECTOR_CRASH_REPORT,
+    SELECTOR_DIAGNOSTIC_LOGS,
+  ] as Selector[]) {
     const btn = container.querySelector(selector) as HTMLButtonElement | null;
     btn?.removeAttribute("disabled");
   }
@@ -578,12 +586,16 @@ window.addEventListener(EVENT_PAGE_READY, () => {
 
   listen(SELECTOR_CRASH_REPORT, [], async (_data, button) => {
     if (!collectedZipPath) {
-      console.warn("Crash report requested but no diagnostic zip collected yet");
+      console.warn(
+        "Crash report requested but no diagnostic zip collected yet",
+      );
       return;
     }
     button.setAttribute("disabled", "disabled");
     try {
-      const notification: Html = await invoke(CMD_CRASH_REPORT, { zipPath: collectedZipPath });
+      const notification: Html = await invoke(CMD_CRASH_REPORT, {
+        zipPath: collectedZipPath,
+      });
       notify(notification);
     } catch (error) {
       handleError(error);
@@ -594,11 +606,13 @@ window.addEventListener(EVENT_PAGE_READY, () => {
 
   listen(SELECTOR_DIAGNOSTIC_LOGS, ["version", "os"], async (data) => {
     if (!collectedZipPath) {
-      console.warn("Email support requested but no diagnostic zip collected yet");
+      console.warn(
+        "Email support requested but no diagnostic zip collected yet",
+      );
       return;
     }
     const subject = encodeURIComponent(
-      `Quilt issue report (v${data["version"]}, ${data["os"]})`,
+      `Quilt issue report (v${data.version}, ${data.os})`,
     );
     const body = encodeURIComponent(
       `Please describe the issue:\n...\n\nDiagnostic logs saved to:\n${collectedZipPath}\nPlease attach this file to this email.`,
@@ -762,13 +776,9 @@ window.addEventListener(EVENT_PAGE_READY, () => {
   );
 
   // Un-ignore entry — show un-ignore popup
-  listen(
-    SELECTOR_UNIGNORE_ENTRY,
-    ["namespace", "pattern"],
-    async (data) => {
-      showUnignorePopup(data.namespace, data.pattern);
-    },
-  );
+  listen(SELECTOR_UNIGNORE_ENTRY, ["namespace", "pattern"], async (data) => {
+    showUnignorePopup(data.namespace, data.pattern);
+  });
 
   // Filter checkboxes: navigate on change (fragment-only changes need
   // an explicit reload since browsers treat them as same-page navigation)
@@ -826,7 +836,6 @@ window.addEventListener(EVENT_PAGE_READY, () => {
     }
   }
 });
-
 
 async function showIgnorePopup(
   namespace: string,
@@ -975,10 +984,10 @@ function showUnignorePopup(namespace: string, pattern: string) {
     .querySelector(".js-edit-quiltignore")
     ?.addEventListener("click", async () => {
       dismissPopup();
-      const notification: Html = await invoke(
-        CMD_OPEN_IN_DEFAULT_APPLICATION,
-        { namespace, path: ".quiltignore" },
-      );
+      const notification: Html = await invoke(CMD_OPEN_IN_DEFAULT_APPLICATION, {
+        namespace,
+        path: ".quiltignore",
+      });
       notify(notification);
     });
 }
@@ -1165,13 +1174,22 @@ function showCreatePackageForm() {
     dismissPopup();
   };
 
-  const submitButton = findElement(".js-create-submit" as Selector, outputElement);
+  const submitButton = findElement(
+    ".js-create-submit" as Selector,
+    outputElement,
+  );
   submitButton?.addEventListener("click", submit);
 
-  const cancelButton = findElement(".js-create-cancel" as Selector, outputElement);
+  const cancelButton = findElement(
+    ".js-create-cancel" as Selector,
+    outputElement,
+  );
   cancelButton?.addEventListener("click", cancel);
 
-  const browseButton = findElement(".js-create-source-browse" as Selector, outputElement);
+  const browseButton = findElement(
+    ".js-create-source-browse" as Selector,
+    outputElement,
+  );
   browseButton?.addEventListener("click", async () => {
     if (!sourceInput) return;
     lockUI();
@@ -1227,8 +1245,14 @@ function showSetRemoteForm(namespace: Namespace) {
   if (!hostInput || !bucketInput) return;
   hostInput.focus();
 
-  const hostHint = findElement(".js-remote-host-hint" as Selector, outputElement);
-  const bucketHint = findElement(".js-remote-bucket-hint" as Selector, outputElement);
+  const hostHint = findElement(
+    ".js-remote-host-hint" as Selector,
+    outputElement,
+  );
+  const bucketHint = findElement(
+    ".js-remote-bucket-hint" as Selector,
+    outputElement,
+  );
 
   const submit = () => {
     const origin = hostInput.value.trim();
@@ -1245,17 +1269,25 @@ function showSetRemoteForm(namespace: Namespace) {
       valid = false;
     }
     if (!valid) return;
-    execPageCommand(CMD_SET_REMOTE, { namespace, origin, bucket }).catch(handleError);
+    execPageCommand(CMD_SET_REMOTE, { namespace, origin, bucket }).catch(
+      handleError,
+    );
   };
 
   const cancel = () => {
     dismissPopup();
   };
 
-  const submitButton = findElement(".js-remote-submit" as Selector, outputElement);
+  const submitButton = findElement(
+    ".js-remote-submit" as Selector,
+    outputElement,
+  );
   submitButton?.addEventListener("click", submit);
 
-  const cancelButton = findElement(".js-remote-cancel" as Selector, outputElement);
+  const cancelButton = findElement(
+    ".js-remote-cancel" as Selector,
+    outputElement,
+  );
   cancelButton?.addEventListener("click", cancel);
 
   const clearErrors = (input: HTMLInputElement, hint: Element | null) => {
@@ -1264,7 +1296,9 @@ function showSetRemoteForm(namespace: Namespace) {
   };
 
   hostInput.addEventListener("input", () => clearErrors(hostInput, hostHint));
-  bucketInput.addEventListener("input", () => clearErrors(bucketInput, bucketHint));
+  bucketInput.addEventListener("input", () =>
+    clearErrors(bucketInput, bucketHint),
+  );
 
   hostInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") bucketInput.focus();
