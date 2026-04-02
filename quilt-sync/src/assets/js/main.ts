@@ -124,7 +124,8 @@ type Selector =
   | typeof SELECTOR_OPEN_HOME_DIR
   | typeof SELECTOR_OPEN_DATA_DIR
   | typeof SELECTOR_IGNORE_ENTRY
-  | typeof SELECTOR_UNIGNORE_ENTRY;
+  | typeof SELECTOR_UNIGNORE_ENTRY
+  | typeof SELECTOR_RELEASE_NOTES;
 
 const CMD_ERASE_AUTH = "erase_auth";
 const CMD_DEBUG_DOT_QUILT = "debug_dot_quilt";
