@@ -652,12 +652,12 @@ window.addEventListener(EVENT_PAGE_READY, () => {
     const entries: { version: string; date: string; body: string }[] =
       JSON.parse(raw);
     if (!entries.length) return;
-    const escape = (s: string) =>
+    const escapeHtml = (s: string) =>
       s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const html = entries
       .map(
         (e) =>
-          `<div class="release-notes-entry"><h3>${escape(e.version)} — ${escape(e.date)}</h3><pre>${escape(e.body)}</pre></div>`,
+          `<div class="release-notes-entry"><h3>${escapeHtml(e.version)} — ${escapeHtml(e.date)}</h3><pre>${escapeHtml(e.body)}</pre></div>`,
       )
       .join("");
     popup(`<div class="release-notes">${html}</div>`);
