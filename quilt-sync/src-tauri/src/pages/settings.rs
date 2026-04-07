@@ -65,7 +65,7 @@ impl<'a> TmplSettings<'a> {
 
     fn release_notes_button() -> btn::TmplButton<'static> {
         let entries = changelog::latest_entries();
-        let json = serde_json::to_string(&entries).unwrap_or_default();
+        let json = serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string());
         btn::TmplButton::builder()
             .set_label(t!("settings.release_notes"))
             .set_modificator(btn::Modificator::Link)

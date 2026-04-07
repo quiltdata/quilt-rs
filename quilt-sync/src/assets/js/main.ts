@@ -648,8 +648,8 @@ window.addEventListener(EVENT_PAGE_READY, () => {
     showSetRemoteForm(data.namespace);
   });
 
-  listen(SELECTOR_RELEASE_NOTES, ["changelog"], async (_data, button) => {
-    const raw = button.getAttribute("data-changelog") ?? "[]";
+  listen(SELECTOR_RELEASE_NOTES, ["changelog"], async (data) => {
+    const raw = data.changelog ?? "[]";
     const entries: { version: string; date: string; body: string }[] =
       JSON.parse(raw);
     if (!entries.length) return;
