@@ -303,14 +303,14 @@ impl ViewCommit {
 
         // Add ignored files
         let mut entries_ignored = Vec::new();
-        for (filename, pattern) in &status.ignored_files {
+        for (filename, pattern, size) in &status.ignored_files {
             let entry_uri = quilt::uri::S3PackageUri {
                 path: Some(filename.clone()),
                 ..uri.clone()
             };
             entries_ignored.push(entry::ViewEntry {
                 filename: filename.clone(),
-                size: 0,
+                size: *size,
                 status: entry::EntryStatus::Pristine,
                 uri: entry_uri,
                 origin: None,

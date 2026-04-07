@@ -53,8 +53,8 @@ enum WorkdirFile {
 /// Located files and ignored files collected during the directory walk.
 struct LocateResult {
     files: Vec<(PathBuf, WorkdirFile)>,
-    /// Files matched by .quiltignore: (logical_key, absolute_path, matched_pattern)
-    ignored_files: Vec<(PathBuf, PathBuf, String)>,
+    /// Files matched by .quiltignore: (logical_key, absolute_path, matched_pattern, size)
+    ignored_files: Vec<(PathBuf, PathBuf, String, u64)>,
 }
 
 async fn locate_files_in_package_home(
@@ -103,7 +103,8 @@ async fn locate_files_in_package_home(
             let logical_key = file_path.strip_prefix(package_home)?.to_path_buf();
             if let Some(gi) = quiltignore {
                 if let Some(pattern) = quiltignore::matched_pattern(gi, &logical_key, false) {
-                    ignored_files.push((logical_key, file_path, pattern));
+                    let size = dir_entry.metadata().await.map(|m| m.len()).unwrap_or(0);
+                    ignored_files.push((logical_key, file_path, pattern, size));
                     continue;
                 }
             }
@@ -233,10 +234,10 @@ pub async fn create_status(
     debug!("✔️ Computed file fingerprints {:?}", changes);
 
     // Collect ignored files with their matched pattern (captured during the walk)
-    let ignored_files: Vec<(PathBuf, String)> = locate_result
+    let ignored_files: Vec<(PathBuf, String, u64)> = locate_result
         .ignored_files
         .into_iter()
-        .map(|(logical_key, _abs_path, pattern)| (logical_key, pattern))
+        .map(|(logical_key, _abs_path, pattern, size)| (logical_key, pattern, size))
         .collect();
 
     // Detect junky files among the changes
