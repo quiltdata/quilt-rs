@@ -37,6 +37,32 @@
     display: none;
   }
 
+  .release-notes {
+    cursor: pointer;
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+
+  .release-notes-entry h3 {
+    font-size: 0.875rem;
+    font-weight: 600;
+    margin: 0 0 4px;
+  }
+
+  .release-notes-entry + .release-notes-entry {
+    border-top: 1px solid var(--q-ui-palette-border);
+    margin-top: 12px;
+    padding-top: 12px;
+  }
+
+  .release-notes-entry pre {
+    font-family: inherit;
+    font-size: var(--q-ui-font-size-small);
+    margin: 0;
+    overflow-wrap: break-word;
+    white-space: pre-wrap;
+  }
+
   .origin-form {
     display: flex;
     flex-direction: column;

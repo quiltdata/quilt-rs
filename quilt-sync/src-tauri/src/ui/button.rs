@@ -46,6 +46,8 @@ pub enum JsSelector {
     OpenInFileBrowser,
     #[template(source = "js-open-in-web-browser", ext = "txt")]
     OpenInWebBrowser,
+    #[template(source = "js-release-notes", ext = "txt")]
+    ReleaseNotes,
     #[template(source = "js-packages-push", ext = "txt")]
     PackagesPush,
     #[template(source = "js-packages-pull", ext = "txt")]
