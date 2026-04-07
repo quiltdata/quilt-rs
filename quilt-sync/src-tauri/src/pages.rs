@@ -17,6 +17,7 @@ use rust_i18n::t;
 use crate::app::App;
 use crate::error::Error;
 use crate::model::install_package_only;
+use crate::model::InstallOutcome;
 use crate::model::QuiltModel;
 use crate::quilt;
 use installed_packages_list::ViewInstalledPackagesList;
@@ -58,14 +59,11 @@ pub async fn load(
                 .render()
         }
         Paths::Merge(namespace) => ViewMerge::create(model, tracing, namespace).await?.render(),
-        Paths::RemotePackage(uri) => match install_package_only(model, uri).await {
-            Err(Error::Quilt(quilt::Error::InstallPackage(
-                quilt::InstallPackageError::DifferentVersion {
-                    requested_hash,
-                    installed_hash,
-                    ..
-                },
-            ))) => {
+        Paths::RemotePackage(uri) => match install_package_only(model, uri).await? {
+            InstallOutcome::DifferentVersion {
+                requested_hash,
+                installed_hash,
+            } => {
                 // Show the installed package page with a notification.
                 // The page already renders the appropriate sync button
                 // based on UpstreamState (Pull, Push, etc.).
@@ -87,9 +85,7 @@ pub async fn load(
                 .with_notification(notification)
                 .render()
             }
-            result => {
-                let installed_package = result?;
-
+            InstallOutcome::Installed(installed_package) => {
                 // If URI has a path, handle it (for both already-installed and newly-installed packages)
                 if let Some(ref path) = uri.path {
                     if !model.is_path_installed(&installed_package, path).await? {

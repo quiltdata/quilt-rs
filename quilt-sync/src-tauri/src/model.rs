@@ -25,6 +25,28 @@ pub enum InstallCheck {
     NotInstalled,
 }
 
+/// Result of attempting to install a package.
+#[derive(Debug)]
+pub enum InstallOutcome {
+    /// Package was installed (or was already installed with the same hash).
+    Installed(quilt::InstalledPackage),
+    /// A different version is already installed.
+    DifferentVersion {
+        requested_hash: String,
+        installed_hash: String,
+    },
+}
+
+impl InstallOutcome {
+    /// Returns the installed package, or `None` if a different version was found.
+    pub fn installed(self) -> Option<quilt::InstalledPackage> {
+        match self {
+            InstallOutcome::Installed(pkg) => Some(pkg),
+            InstallOutcome::DifferentVersion { .. } => None,
+        }
+    }
+}
+
 pub struct Model {
     quilt: sync::Mutex<quilt::LocalDomain>,
 }
@@ -403,7 +425,7 @@ pub async fn install_paths(
 pub async fn install_package_only(
     model: &impl QuiltModel,
     uri: &quilt::uri::S3PackageUri,
-) -> Result<quilt::InstalledPackage, Error> {
+) -> Result<InstallOutcome, Error> {
     let manifest_uri = model.resolve_manifest_uri(uri).await?;
 
     match model.is_package_installed(&manifest_uri).await? {
@@ -419,24 +441,23 @@ pub async fn install_package_only(
                         ),
                     ))
                 })?;
-            Ok(installed_package)
+            Ok(InstallOutcome::Installed(installed_package))
         }
         InstallCheck::DifferentVersion(installed_hash) => {
             debug!(
                 "Different version already installed: {:?}",
                 manifest_uri.namespace
             );
-            Err(Error::Quilt(quilt::Error::InstallPackage(
-                quilt::InstallPackageError::DifferentVersion {
-                    namespace: manifest_uri.namespace.clone(),
-                    requested_hash: manifest_uri.hash.clone(),
-                    installed_hash,
-                },
-            )))
+            Ok(InstallOutcome::DifferentVersion {
+                requested_hash: manifest_uri.hash.clone(),
+                installed_hash,
+            })
         }
         InstallCheck::NotInstalled => {
             debug!("Package not installed, installing: {:?}", manifest_uri);
-            Ok(model.package_install(&manifest_uri).await?)
+            Ok(InstallOutcome::Installed(
+                model.package_install(&manifest_uri).await?,
+            ))
         }
     }
 }
@@ -808,7 +829,7 @@ pub mod mocks {
             "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs:1740761585",
         )?;
 
-        let installed_package = install_package_only(&model, &uri).await?;
+        let installed_package = install_package_only(&model, &uri).await?.installed().unwrap();
         assert_eq!(
             installed_package.namespace.to_string(),
             "reference/quilt-rs"
@@ -835,7 +856,7 @@ pub mod mocks {
 
         let uri = quilt::uri::S3PackageUri::try_from("quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7")?;
 
-        let first_install = install_package_only(&model, &uri).await?;
+        let first_install = install_package_only(&model, &uri).await?.installed().unwrap();
         assert_eq!(first_install.namespace.to_string(), "reference/quilt-rs");
 
         let first_hash = model
@@ -846,7 +867,7 @@ pub mod mocks {
             .clone();
 
         // TODO: make sure there was no double installation
-        let second_install = install_package_only(&model, &uri).await?;
+        let second_install = install_package_only(&model, &uri).await?.installed().unwrap();
         assert_eq!(second_install.namespace.to_string(), "reference/quilt-rs");
 
         let second_hash = model
@@ -898,14 +919,17 @@ pub mod mocks {
             "quilt+s3://quilt-example#package=foo/bar@bbbb2222",
         )?;
 
-        let result = install_package_only(&model, &uri).await;
-        let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("A different version of foo/bar is already installed"),
-            "unexpected error: {err}"
-        );
-        assert!(err.contains("bbbb2222"), "should contain requested hash: {err}");
-        assert!(err.contains("aaaa1111"), "should contain installed hash: {err}");
+        let result = install_package_only(&model, &uri).await?;
+        match result {
+            InstallOutcome::DifferentVersion {
+                requested_hash,
+                installed_hash,
+            } => {
+                assert_eq!(requested_hash, "bbbb2222");
+                assert_eq!(installed_hash, "aaaa1111");
+            }
+            InstallOutcome::Installed(_) => panic!("expected DifferentVersion, got Installed"),
+        }
 
         Ok(())
     }
