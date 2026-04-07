@@ -653,8 +653,6 @@ window.addEventListener(EVENT_PAGE_READY, () => {
     const entries: { version: string; date: string; body: string }[] =
       JSON.parse(raw);
     if (!entries.length) return;
-    const escapeHtml = (s: string) =>
-      s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const html = entries
       .map(
         (e) =>
@@ -1097,6 +1095,7 @@ function showSetOriginForm(namespace: Namespace, currentOrigin: string = "") {
       showError();
       return;
     }
+    dismissPopup();
     execPageCommand(CMD_SET_ORIGIN, { namespace, origin }).catch(handleError);
   };
 

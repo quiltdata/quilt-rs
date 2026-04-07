@@ -15,9 +15,9 @@ For testing, development workflows, and other general information, see the main
    all crates)
 3. **Create release**:
    a. **Create and push git tag** (optional):
-      `git tag v0.x.x && git push origin v0.x.x`
-      This is cosmetic and makes it easier to compare releases, but doesn't affect
-      the build process.
+   `git tag v0.x.x && git push origin v0.x.x`
+   This is cosmetic and makes it easier to compare releases, but doesn't affect
+   the build process.
    b. **Create release via GitHub Actions**:
    * Go to the Actions tab: <https://github.com/quiltdata/quilt-rs/actions/workflows/release-quilt-rs.yaml>
    * Click "Run workflow" button

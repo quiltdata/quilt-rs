@@ -348,14 +348,14 @@ impl ViewInstalledPackage {
         }
 
         // Add ignored files as separate entries
-        for (filename, pattern) in &status.ignored_files {
+        for (filename, pattern, size) in &status.ignored_files {
             let entry_uri = quilt::uri::S3PackageUri {
                 path: Some(filename.clone()),
                 ..uri.clone()
             };
             entries_list.push(entry::ViewEntry {
                 filename: filename.clone(),
-                size: 0,
+                size: *size,
                 status: entry::EntryStatus::Pristine,
                 uri: entry_uri,
                 origin: None,
