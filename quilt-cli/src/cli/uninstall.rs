@@ -75,7 +75,7 @@ mod tests {
             {
                 assert_eq!(
                     error_str.to_string(),
-                    "quilt_rs error: Install error: The given package is not installed: reference/quilt-rs"
+                    "quilt_rs error: The given package is not installed: reference/quilt-rs"
                 );
             } else {
                 return Err(Error::Test("Expected package not found error".to_string()));
