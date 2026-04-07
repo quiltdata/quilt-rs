@@ -88,6 +88,9 @@ pub async fn push_package(
     namespace: Option<Namespace>,
     host_config: HostConfig,
 ) -> Res<PackageLineage> {
+    // NB: `.take()` moves commit out of lineage before we validate remote.
+    // Safe because the caller reads lineage from disk and discards this copy on error.
+    // If reusing this function elsewhere, ensure the commit isn't lost on early return.
     let commit = match lineage.commit.take() {
         None => {
             info!("No changes to push");
