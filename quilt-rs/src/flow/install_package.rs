@@ -113,10 +113,10 @@ mod tests {
             },
         )
         .await;
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "The package foo/bar is already installed"
-        );
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::Install(InstallError::AlreadyInstalled(ns)) if ns == namespace.into()
+        ));
         Ok(())
     }
 

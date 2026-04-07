@@ -225,11 +225,10 @@ mod tests {
             create_package(lineage, &paths, &storage, namespace.clone(), None, None).await?;
 
         let result = create_package(lineage, &paths, &storage, namespace.clone(), None, None).await;
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "The package test/pkg is already installed"
-        );
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::Install(InstallError::AlreadyInstalled(ns)) if ns == namespace
+        ));
         Ok(())
     }
 

@@ -62,11 +62,12 @@ mod tests {
         let storage = MockStorage::default();
         let paths = paths::DomainPaths::default();
 
-        let result = uninstall_package(lineage, &paths, &storage, ("foo", "bar").into()).await;
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "The given package is not installed: foo/bar"
-        )
+        let namespace: Namespace = ("foo", "bar").into();
+        let result = uninstall_package(lineage, &paths, &storage, namespace.clone()).await;
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::Install(InstallError::NotInstalled(ns)) if ns == namespace
+        ));
     }
 
     #[test(tokio::test)]

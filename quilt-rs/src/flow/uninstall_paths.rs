@@ -69,10 +69,10 @@ mod tests {
         let paths = vec![PathBuf::from("test folde/r")];
 
         let modified_lineage = uninstall_paths(lineage, PathBuf::new(), &storage, &paths).await;
-        assert_eq!(
-            modified_lineage.unwrap_err().to_string(),
-            "Failed to uninstall path: test folde/r"
-        );
+        assert!(matches!(
+            modified_lineage.unwrap_err(),
+            Error::Install(InstallError::Uninstall(p)) if p == PathBuf::from("test folde/r")
+        ));
         Ok(())
     }
 

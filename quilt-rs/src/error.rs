@@ -58,7 +58,7 @@ pub enum AuthError {
     TokensExchange(String),
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq)]
 pub enum InstallError {
     #[error("The package {0} is already installed")]
     AlreadyInstalled(Namespace),

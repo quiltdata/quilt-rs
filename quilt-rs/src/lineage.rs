@@ -469,11 +469,10 @@ mod tests {
         let result = lineage_io
             .read_package_lineage(&storage, &non_existent)
             .await;
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "The given package is not installed: does/notexist"
-        );
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::Install(InstallError::NotInstalled(ns)) if ns == non_existent
+        ));
 
         Ok(())
     }
