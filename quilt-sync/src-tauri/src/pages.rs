@@ -58,64 +58,63 @@ pub async fn load(
                 .render()
         }
         Paths::Merge(namespace) => ViewMerge::create(model, tracing, namespace).await?.render(),
-        Paths::RemotePackage(uri) => {
-            match install_package_only(model, uri).await {
-                Ok(installed_package) => {
-                    // If URI has a path, handle it (for both already-installed and newly-installed packages)
-                    if let Some(ref path) = uri.path {
-                        if !model.is_path_installed(&installed_package, path).await? {
-                            model
-                                .package_install_paths(
-                                    &installed_package,
-                                    std::slice::from_ref(path),
-                                )
-                                .await?;
-                        }
+        Paths::RemotePackage(uri) => match install_package_only(model, uri).await {
+            Err(Error::Quilt(
+                quilt::Error::PackageAlreadyInstalledDifferentVersion {
+                    requested_hash,
+                    installed_hash,
+                    ..
+                },
+            )) => {
+                // Show the installed package page with a notification.
+                // The page already renders the appropriate sync button
+                // based on UpstreamState (Pull, Push, etc.).
+                let short_requested = &requested_hash[..requested_hash.len().min(8)];
+                let short_installed = &installed_hash[..installed_hash.len().min(8)];
+                let notification = t!(
+                    "installed_package_notification.different_version",
+                    requested => short_requested,
+                    installed => short_installed,
+                )
+                .to_string();
+                ViewInstalledPackage::create(
+                    model,
+                    tracing,
+                    &uri.namespace,
+                    &routes::EntriesFilter::for_installed_package(),
+                )
+                .await?
+                .with_notification(notification)
+                .render()
+            }
+            result => {
+                let installed_package = result?;
+
+                // If URI has a path, handle it (for both already-installed and newly-installed packages)
+                if let Some(ref path) = uri.path {
+                    if !model.is_path_installed(&installed_package, path).await? {
                         model
-                            .open_in_default_application(&uri.namespace, path)
+                            .package_install_paths(
+                                &installed_package,
+                                std::slice::from_ref(path),
+                            )
                             .await?;
                     }
+                    model
+                        .open_in_default_application(&uri.namespace, path)
+                        .await?;
+                }
 
-                    ViewInstalledPackage::create(
-                        model,
-                        tracing,
-                        &uri.namespace,
-                        &routes::EntriesFilter::for_installed_package(),
-                    )
-                    .await?
-                    .render()
-                }
-                Err(Error::Quilt(
-                    quilt::Error::PackageAlreadyInstalledDifferentVersion {
-                        requested_hash,
-                        installed_hash,
-                        ..
-                    },
-                )) => {
-                    // Show the installed package page with a notification.
-                    // The page already renders the appropriate sync button
-                    // based on UpstreamState (Pull, Push, etc.).
-                    let short_requested = &requested_hash[..requested_hash.len().min(8)];
-                    let short_installed = &installed_hash[..installed_hash.len().min(8)];
-                    let notification = t!(
-                        "installed_package_notification.different_version",
-                        requested => short_requested,
-                        installed => short_installed,
-                    )
-                    .to_string();
-                    ViewInstalledPackage::create(
-                        model,
-                        tracing,
-                        &uri.namespace,
-                        &routes::EntriesFilter::for_installed_package(),
-                    )
-                    .await?
-                    .with_notification(notification)
-                    .render()
-                }
-                Err(e) => Err(e),
+                ViewInstalledPackage::create(
+                    model,
+                    tracing,
+                    &uri.namespace,
+                    &routes::EntriesFilter::for_installed_package(),
+                )
+                .await?
+                .render()
             }
-        }
+        },
         Paths::Settings => {
             let data_dir_buf = data_dir.to_path_buf();
             let home_dir = model
@@ -269,6 +268,40 @@ mod tests {
         assert!(page.contains(
             r##"<strong class="qui-breadcrumb-current" title="foo/bar">foo/bar</strong>"##,
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_remote_package_different_version() -> Result<(), Error> {
+        let mut model = model_mocks::create();
+        model_mocks::mock_remote_package_different_version(&mut model);
+        let app = App::create()?;
+
+        let uri = "quilt+s3://quilt-example#package=foo/bar@bbbb2222";
+        let url = format!(
+            "https://l/p/remote-package.html?uri={}",
+            urlencoding::encode(uri)
+        );
+        let path: Paths = url.parse()?;
+        let page = load(
+            &model,
+            &app,
+            &default_home(),
+            &default_data_dir(),
+            &default_telemetry(),
+            &path,
+        )
+        .await?;
+
+        // Should show the installed package page (not an error page)
+        assert!(page.contains(
+            r##"<strong class="qui-breadcrumb-current" title="foo/bar">foo/bar</strong>"##,
+        ));
+        // Should show the notification with both short hashes
+        assert!(page.contains("qui-notification"));
+        assert!(page.contains("bbbb2222"));
+        assert!(page.contains("aaaa1111"));
+
         Ok(())
     }
 

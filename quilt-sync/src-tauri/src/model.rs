@@ -17,7 +17,7 @@ use quilt_rs::io::remote::HostConfig;
 /// Result of checking whether a package is already installed.
 pub enum InstallCheck {
     /// Exact same hash — already up to date
-    AlreadyInstalled(Box<quilt::InstalledPackage>),
+    AlreadyInstalled,
     /// Same namespace, different hash — needs pull.
     /// Contains the hash of the currently installed version.
     DifferentVersion(String),
@@ -141,7 +141,7 @@ pub trait QuiltModel {
                     None => return Ok(InstallCheck::NotInstalled),
                 };
                 if manifest_uri.hash == installed_manifest_uri.hash {
-                    Ok(InstallCheck::AlreadyInstalled(Box::new(installed_package)))
+                    Ok(InstallCheck::AlreadyInstalled)
                 } else {
                     Ok(InstallCheck::DifferentVersion(
                         installed_manifest_uri.hash.clone(),
@@ -407,9 +407,13 @@ pub async fn install_package_only(
     let manifest_uri = model.resolve_manifest_uri(uri).await?;
 
     match model.is_package_installed(&manifest_uri).await? {
-        InstallCheck::AlreadyInstalled(installed_package) => {
+        InstallCheck::AlreadyInstalled => {
             debug!("Package already installed: {:?}", manifest_uri.namespace);
-            Ok(*installed_package)
+            let installed_package = model
+                .get_installed_package(&manifest_uri.namespace)
+                .await?
+                .expect("package must exist after InstallCheck::AlreadyInstalled");
+            Ok(installed_package)
         }
         InstallCheck::DifferentVersion(installed_hash) => {
             debug!(
@@ -730,6 +734,53 @@ pub mod mocks {
         model
     }
 
+    /// Mock for the case where the package is already installed with a different hash.
+    pub fn mock_remote_package_different_version(model: &mut MockQuiltModel) -> &MockQuiltModel {
+        model
+            .expect_resolve_manifest_uri()
+            .returning(|uri| Ok(quilt::uri::ManifestUri::try_from(uri.clone()).unwrap()));
+        model
+            .expect_is_package_installed()
+            .returning(|_| Ok(InstallCheck::DifferentVersion("aaaa1111".to_string())));
+
+        // These are needed for ViewInstalledPackage::create after the error is caught
+        model.expect_get_installed_package().returning(|_| {
+            Ok(Some(
+                quilt::LocalDomain::new(PathBuf::new())
+                    .create_installed_package(("foo", "bar").into())
+                    .expect("Failed to create installed package"),
+            ))
+        });
+
+        let remote_manifest = quilt::uri::ManifestUri {
+            bucket: "quilt-example".to_string(),
+            namespace: ("foo", "bar").into(),
+            hash: "aaaa1111".to_string(),
+            origin: None,
+        };
+
+        model
+            .expect_get_installed_package_lineage()
+            .returning(move |_| {
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    remote_manifest.clone(),
+                    remote_manifest.hash.clone(),
+                ))
+            });
+        let status = Ok(quilt::lineage::InstalledPackageStatus::default());
+        model
+            .expect_get_installed_package_status()
+            .return_once(move |_, _| status);
+        model.expect_get_installed_package_records().returning(|_| {
+            Ok(BTreeMap::from([(
+                PathBuf::from("NAME"),
+                quilt::manifest::ManifestRow::default(),
+            )]))
+        });
+
+        model
+    }
+
     pub fn mock_installed_packages_list(model: &mut MockQuiltModel) -> &MockQuiltModel {
         model
             .expect_get_installed_packages_list()
@@ -828,6 +879,27 @@ pub mod mocks {
             .unwrap_err()
             .to_string()
             .contains("Missing HTTP header: x-amz-bucket-region"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_install_package_only_different_version() -> Result {
+        let mut model = create();
+        mock_remote_package_different_version(&mut model);
+
+        let uri = quilt::uri::S3PackageUri::try_from(
+            "quilt+s3://quilt-example#package=foo/bar@bbbb2222",
+        )?;
+
+        let result = install_package_only(&model, &uri).await;
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("A different version of foo/bar is already installed"),
+            "unexpected error: {err}"
+        );
+        assert!(err.contains("bbbb2222"), "should contain requested hash: {err}");
+        assert!(err.contains("aaaa1111"), "should contain installed hash: {err}");
 
         Ok(())
     }
