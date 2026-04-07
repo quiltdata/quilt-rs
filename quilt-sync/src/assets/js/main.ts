@@ -1188,6 +1188,7 @@ function showCreatePackageForm() {
     if (source) {
       data.source = source;
     }
+    dismissPopup();
     execPageCommand(CMD_CREATE_PACKAGE, data).catch(handleError);
   };
 
@@ -1290,6 +1291,7 @@ function showSetRemoteForm(namespace: Namespace) {
       valid = false;
     }
     if (!valid) return;
+    dismissPopup();
     execPageCommand(CMD_SET_REMOTE, { namespace, origin, bucket }).catch(
       handleError,
     );
