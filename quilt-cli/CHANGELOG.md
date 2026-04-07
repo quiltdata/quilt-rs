@@ -8,12 +8,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.24.1-alpha1] - 2026-04-01 (<https://github.com/quiltdata/quilt-rs/pull/596>)
+## [v0.25.0] - 2026-04-07
 
 ### Added
 
-- Add `quilt create` command for creating new local-only packages with optional `--source` and `--message` flags
-- Add `--bucket` and `--origin` flags to `quilt push` for first push of local-only packages
+- Add `quilt create` command for creating new local-only packages with optional `--source` and `--message` flags (<https://github.com/quiltdata/quilt-rs/pull/596>)
+- Add `--bucket` and `--origin` flags to `quilt push` for first push of local-only packages (<https://github.com/quiltdata/quilt-rs/pull/596>)
 
 ## [v0.24.0] - 2025-02-04
 

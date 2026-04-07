@@ -9,23 +9,23 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.14.6-alpha3] - 2026-04-02
+## [v0.15.0] - 2026-04-07
+
+### Added
+
+- Add `.quiltignore` affordance: junk file detection badges, ignore/un-ignore popups, and server-side entry filtering via URL fragment parameters (<https://github.com/quiltdata/quilt-rs/pull/593>)
+- Add create local package UI with optional source directory picker and set remote popup for first-push workflow (<https://github.com/quiltdata/quilt-rs/pull/596>)
 
 ### Changed
 
 - Show release notes in an in-app popup instead of linking to private GitHub releases page (<https://github.com/quiltdata/quilt-rs/pull/603>)
 
-## [v0.14.6-alpha2] - 2026-04-02
+### quilt-rs
 
-### Added
-
-- Add create local package UI with optional source directory picker and set remote popup for first-push workflow (<https://github.com/quiltdata/quilt-rs/pull/596>)
-
-## [v0.14.6-alpha1] - 2026-03-30
-
-### Added
-
-- Add `.quiltignore` affordance: junk file detection badges, ignore/un-ignore popups, and server-side entry filtering via URL fragment parameters (<https://github.com/quiltdata/quilt-rs/pull/593>)
+- Updated [from v0.27.4 to v0.28.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.27.4...quilt-rs/v0.28.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+  - `.quiltignore` support, junk file detection
+  - Local-only package creation and first-push workflow
+  - `PackageLineage.remote` is now optional
 
 ## [v0.14.5] - 2026-03-25
 

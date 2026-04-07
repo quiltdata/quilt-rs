@@ -8,32 +8,19 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.27.5-alpha4] - 2026-04-01 (<https://github.com/quiltdata/quilt-rs/pull/596>)
+## [v0.28.0] - 2026-04-07
 
 ### Added
 
-- Add `flow::create` for creating new local-only packages from scratch, with optional source directory import
-- Add `InstalledPackage::set_remote` for configuring remote origin and bucket on local-only packages
-- Support first push of local-only packages by skipping remote manifest fetch when hash is empty
-- Update `base_hash` after successful push so status correctly shows `UpToDate`
-
-## [v0.27.5-alpha3] - 2026-03-31
+- Support `.quiltignore` files for excluding files from package status and commits (<https://github.com/quiltdata/quilt-rs/pull/589>)
+- Detect junk files (OS metadata, editor temps, build artifacts) via the `junk` module and surface them in package status with suggested `.quiltignore` patterns (<https://github.com/quiltdata/quilt-rs/pull/593>)
+- Add `flow::create` for creating new local-only packages from scratch, with optional source directory import (<https://github.com/quiltdata/quilt-rs/pull/596>)
+- Add `InstalledPackage::set_remote` for configuring remote origin and bucket on local-only packages (<https://github.com/quiltdata/quilt-rs/pull/596>)
+- Support first push of local-only packages by skipping remote manifest fetch when hash is empty (<https://github.com/quiltdata/quilt-rs/pull/596>)
 
 ### Changed
 
 - Make `PackageLineage.remote` optional to support local-only packages without a remote origin (<https://github.com/quiltdata/quilt-rs/pull/594>)
-
-## [v0.27.5-alpha2] - 2026-03-30
-
-### Added
-
-- Detect junk files (OS metadata, editor temps, build artifacts) via the `junk` module and surface them in package status with suggested `.quiltignore` patterns (<https://github.com/quiltdata/quilt-rs/pull/593>)
-
-## [v0.27.5-alpha1] - 2026-03-26
-
-### Added
-
-- Support `.quiltignore` files for excluding files from package status and commits
 
 ## [v0.27.4] - 2026-03-19
 
