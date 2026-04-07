@@ -59,13 +59,13 @@ pub async fn load(
         }
         Paths::Merge(namespace) => ViewMerge::create(model, tracing, namespace).await?.render(),
         Paths::RemotePackage(uri) => match install_package_only(model, uri).await {
-            Err(Error::Quilt(
-                quilt::Error::PackageAlreadyInstalledDifferentVersion {
+            Err(Error::Quilt(quilt::Error::Install(
+                quilt::InstallError::DifferentVersion {
                     requested_hash,
                     installed_hash,
                     ..
                 },
-            )) => {
+            ))) => {
                 // Show the installed package page with a notification.
                 // The page already renders the appropriate sync button
                 // based on UpstreamState (Pull, Push, etc.).

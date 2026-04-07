@@ -7,8 +7,8 @@ use thiserror::Error;
 use url::Url;
 
 use crate::io::remote::HostChecksums;
-use crate::uri;
 use crate::uri::Host;
+use crate::uri::Namespace;
 
 #[derive(Error, Debug, PartialEq)]
 pub enum S3Error {
@@ -58,6 +58,31 @@ pub enum AuthError {
     TokensExchange(String),
 }
 
+#[derive(Error, Debug)]
+pub enum InstallError {
+    #[error("The package {0} is already installed")]
+    AlreadyInstalled(Namespace),
+
+    #[error("A different version of {namespace} is already installed (requested {requested_hash}, installed {installed_hash})")]
+    DifferentVersion {
+        namespace: Namespace,
+        requested_hash: String,
+        installed_hash: String,
+    },
+
+    #[error("The given package is not installed: {0}")]
+    NotInstalled(Namespace),
+
+    #[error("Failed to install path: {}", .0.display())]
+    Path(PathBuf),
+
+    #[error("Some paths are already installed")]
+    PathConflict,
+
+    #[error("Failed to uninstall path: {}", .0.display())]
+    Uninstall(PathBuf),
+}
+
 /// The error type for this library
 #[derive(Error, Debug)]
 pub enum Error {
@@ -85,8 +110,8 @@ pub enum Error {
     #[error("Failed to fetch host config: {0}")]
     HostConfig(String),
 
-    #[error("Failed to install path: {0}")]
-    InstallPath(String),
+    #[error("Install error: {0}")]
+    Install(InstallError),
 
     #[error("Invalid multihash: {0}")]
     InvalidMultihash(String),
@@ -176,19 +201,6 @@ pub enum Error {
     #[error("General error regarding package: {0}")]
     Package(String),
 
-    #[error("The package {0} is already installed")]
-    PackageAlreadyInstalled(uri::Namespace),
-
-    #[error("A different version of {namespace} is already installed (requested {requested_hash}, installed {installed_hash})")]
-    PackageAlreadyInstalledDifferentVersion {
-        namespace: uri::Namespace,
-        requested_hash: String,
-        installed_hash: String,
-    },
-
-    #[error("The given package is not installed: {0}")]
-    PackageNotInstalled(uri::Namespace),
-
     #[error("Invalid package URI: {0}")]
     PackageURI(String),
 
@@ -234,9 +246,6 @@ pub enum Error {
 
     #[error("Unimplemented")]
     Unimplemented,
-
-    #[error("Uninstall error: {0}")]
-    Uninstall(String),
 
     #[error("Error with upload id: {0}")]
     UploadId(String),

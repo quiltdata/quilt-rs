@@ -239,7 +239,7 @@ pub trait QuiltModel {
         let installed_package = self
             .get_installed_package(namespace)
             .await?
-            .ok_or_else(|| Error::Quilt(quilt::Error::PackageNotInstalled(namespace.clone())))?;
+            .ok_or_else(|| Error::Quilt(quilt::Error::Install(quilt::InstallError::NotInstalled(namespace.clone()))))?;
         let working_folder_path = installed_package.package_home().await?;
         if !working_folder_path.exists() {
             return Err(Error::PathNotFound(working_folder_path));
@@ -354,7 +354,7 @@ pub async fn package_commit(
     let installed_package = model
         .get_installed_package(&namespace)
         .await?
-        .ok_or_else(|| Error::Quilt(quilt::Error::PackageNotInstalled(namespace)))?;
+        .ok_or_else(|| Error::Quilt(quilt::Error::Install(quilt::InstallError::NotInstalled(namespace))))?;
 
     let workflow = installed_package.resolve_workflow(workflow).await?;
     model
@@ -420,13 +420,13 @@ pub async fn install_package_only(
                 "Different version already installed: {:?}",
                 manifest_uri.namespace
             );
-            Err(Error::Quilt(
-                quilt::Error::PackageAlreadyInstalledDifferentVersion {
+            Err(Error::Quilt(quilt::Error::Install(
+                quilt::InstallError::DifferentVersion {
                     namespace: manifest_uri.namespace.clone(),
                     requested_hash: manifest_uri.hash.clone(),
                     installed_hash,
                 },
-            ))
+            )))
         }
         InstallCheck::NotInstalled => {
             debug!("Package not installed, installing: {:?}", manifest_uri);
@@ -523,7 +523,7 @@ pub async fn set_origin(
     let installed_package = model
         .get_installed_package(namespace)
         .await?
-        .ok_or_else(|| Error::Quilt(quilt::Error::PackageNotInstalled(namespace.clone())))?;
+        .ok_or_else(|| Error::Quilt(quilt::Error::Install(quilt::InstallError::NotInstalled(namespace.clone()))))?;
     model.set_origin(&installed_package, origin).await?;
     Ok(())
 }
@@ -537,7 +537,7 @@ pub async fn set_remote(
     let installed_package = model
         .get_installed_package(namespace)
         .await?
-        .ok_or_else(|| Error::Quilt(quilt::Error::PackageNotInstalled(namespace.clone())))?;
+        .ok_or_else(|| Error::Quilt(quilt::Error::Install(quilt::InstallError::NotInstalled(namespace.clone()))))?;
     model.set_remote(&installed_package, origin, bucket).await?;
     Ok(())
 }

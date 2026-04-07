@@ -220,7 +220,7 @@ impl ViewInstalledPackage {
         let installed_package = model
             .get_installed_package(namespace)
             .await?
-            .ok_or_else(|| Error::Quilt(quilt::Error::PackageNotInstalled(namespace.clone())))?;
+            .ok_or_else(|| Error::Quilt(quilt::Error::Install(quilt::InstallError::NotInstalled(namespace.clone()))))?;
 
         let lineage = model
             .get_installed_package_lineage(&installed_package)

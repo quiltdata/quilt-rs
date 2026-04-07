@@ -16,6 +16,7 @@ use crate::io::storage::Storage;
 use crate::io::storage::StorageExt;
 use crate::paths;
 use crate::uri::Namespace;
+use crate::InstallError;
 use crate::Error;
 use crate::Res;
 
@@ -124,7 +125,7 @@ impl DomainLineageIo {
                 let package_home = paths::package_home(&domain_lineage.home, namespace);
                 Ok((package_home, package_lineage.clone()))
             }
-            None => Err(Error::PackageNotInstalled(namespace.clone())),
+            None => Err(Error::Install(InstallError::NotInstalled(namespace.clone()))),
         }
     }
 
@@ -471,7 +472,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),
-            "The given package is not installed: does/notexist"
+            "Install error: The given package is not installed: does/notexist"
         );
 
         Ok(())
