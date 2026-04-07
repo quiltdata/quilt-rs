@@ -179,6 +179,13 @@ pub enum Error {
     #[error("The package {0} is already installed")]
     PackageAlreadyInstalled(uri::Namespace),
 
+    #[error("A different version of {namespace} is already installed (requested {requested_hash}, installed {installed_hash})")]
+    PackageAlreadyInstalledDifferentVersion {
+        namespace: uri::Namespace,
+        requested_hash: String,
+        installed_hash: String,
+    },
+
     #[error("The given package is not installed: {0}")]
     PackageNotInstalled(uri::Namespace),
 

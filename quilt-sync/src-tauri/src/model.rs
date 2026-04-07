@@ -14,6 +14,17 @@ use crate::telemetry::prelude::*;
 
 use quilt_rs::io::remote::HostConfig;
 
+/// Result of checking whether a package is already installed.
+pub enum InstallCheck {
+    /// Exact same hash — already up to date
+    AlreadyInstalled(Box<quilt::InstalledPackage>),
+    /// Same namespace, different hash — needs pull.
+    /// Contains the hash of the currently installed version.
+    DifferentVersion(String),
+    /// Not installed at all
+    NotInstalled,
+}
+
 pub struct Model {
     quilt: sync::Mutex<quilt::LocalDomain>,
 }
@@ -119,7 +130,7 @@ pub trait QuiltModel {
     async fn is_package_installed(
         &self,
         manifest_uri: &quilt::uri::ManifestUri,
-    ) -> Result<Option<quilt::InstalledPackage>, Error> {
+    ) -> Result<InstallCheck, Error> {
         match self.get_installed_package(&manifest_uri.namespace).await? {
             Some(installed_package) => {
                 let package_lineage = self
@@ -127,15 +138,17 @@ pub trait QuiltModel {
                     .await?;
                 let installed_manifest_uri = match package_lineage.remote_uri.as_ref() {
                     Some(uri) => uri,
-                    None => return Ok(None),
+                    None => return Ok(InstallCheck::NotInstalled),
                 };
                 if manifest_uri.hash == installed_manifest_uri.hash {
-                    Ok(Some(installed_package))
+                    Ok(InstallCheck::AlreadyInstalled(Box::new(installed_package)))
                 } else {
-                    Ok(None)
+                    Ok(InstallCheck::DifferentVersion(
+                        installed_manifest_uri.hash.clone(),
+                    ))
                 }
             }
-            None => Ok(None),
+            None => Ok(InstallCheck::NotInstalled),
         }
     }
 
@@ -394,11 +407,24 @@ pub async fn install_package_only(
     let manifest_uri = model.resolve_manifest_uri(uri).await?;
 
     match model.is_package_installed(&manifest_uri).await? {
-        Some(installed_package) => {
+        InstallCheck::AlreadyInstalled(installed_package) => {
             debug!("Package already installed: {:?}", manifest_uri.namespace);
-            Ok(installed_package)
+            Ok(*installed_package)
         }
-        None => {
+        InstallCheck::DifferentVersion(installed_hash) => {
+            debug!(
+                "Different version already installed: {:?}",
+                manifest_uri.namespace
+            );
+            Err(Error::Quilt(
+                quilt::Error::PackageAlreadyInstalledDifferentVersion {
+                    namespace: manifest_uri.namespace.clone(),
+                    requested_hash: manifest_uri.hash.clone(),
+                    installed_hash,
+                },
+            ))
+        }
+        InstallCheck::NotInstalled => {
             debug!("Package not installed, installing: {:?}", manifest_uri);
             Ok(model.package_install(&manifest_uri).await?)
         }
@@ -638,7 +664,9 @@ pub mod mocks {
             .expect_resolve_manifest_uri()
             .returning(|uri| Ok(quilt::uri::ManifestUri::try_from(uri.clone()).unwrap()));
         // For the remote package test, the package starts as not installed
-        model.expect_is_package_installed().returning(|_| Ok(None));
+        model
+            .expect_is_package_installed()
+            .returning(|_| Ok(InstallCheck::NotInstalled));
         // After installation, the package should be available
         model.expect_get_installed_package().returning(|_| {
             Ok(Some(

@@ -12,6 +12,8 @@ mod merge;
 mod settings;
 mod setup;
 
+use rust_i18n::t;
+
 use crate::app::App;
 use crate::error::Error;
 use crate::model::install_package_only;
@@ -57,28 +59,62 @@ pub async fn load(
         }
         Paths::Merge(namespace) => ViewMerge::create(model, tracing, namespace).await?.render(),
         Paths::RemotePackage(uri) => {
-            let installed_package = install_package_only(model, uri).await?;
+            match install_package_only(model, uri).await {
+                Ok(installed_package) => {
+                    // If URI has a path, handle it (for both already-installed and newly-installed packages)
+                    if let Some(ref path) = uri.path {
+                        if !model.is_path_installed(&installed_package, path).await? {
+                            model
+                                .package_install_paths(
+                                    &installed_package,
+                                    std::slice::from_ref(path),
+                                )
+                                .await?;
+                        }
+                        model
+                            .open_in_default_application(&uri.namespace, path)
+                            .await?;
+                    }
 
-            // If URI has a path, handle it (for both already-installed and newly-installed packages)
-            if let Some(ref path) = uri.path {
-                if !model.is_path_installed(&installed_package, path).await? {
-                    model
-                        .package_install_paths(&installed_package, std::slice::from_ref(path))
-                        .await?;
+                    ViewInstalledPackage::create(
+                        model,
+                        tracing,
+                        &uri.namespace,
+                        &routes::EntriesFilter::for_installed_package(),
+                    )
+                    .await?
+                    .render()
                 }
-                model
-                    .open_in_default_application(&uri.namespace, path)
-                    .await?;
+                Err(Error::Quilt(
+                    quilt::Error::PackageAlreadyInstalledDifferentVersion {
+                        requested_hash,
+                        installed_hash,
+                        ..
+                    },
+                )) => {
+                    // Show the installed package page with a notification.
+                    // The page already renders the appropriate sync button
+                    // based on UpstreamState (Pull, Push, etc.).
+                    let short_requested = &requested_hash[..requested_hash.len().min(8)];
+                    let short_installed = &installed_hash[..installed_hash.len().min(8)];
+                    let notification = t!(
+                        "installed_package_notification.different_version",
+                        requested => short_requested,
+                        installed => short_installed,
+                    )
+                    .to_string();
+                    ViewInstalledPackage::create(
+                        model,
+                        tracing,
+                        &uri.namespace,
+                        &routes::EntriesFilter::for_installed_package(),
+                    )
+                    .await?
+                    .with_notification(notification)
+                    .render()
+                }
+                Err(e) => Err(e),
             }
-
-            ViewInstalledPackage::create(
-                model,
-                tracing,
-                &uri.namespace,
-                &routes::EntriesFilter::for_installed_package(),
-            )
-            .await?
-            .render()
         }
         Paths::Settings => {
             let data_dir_buf = data_dir.to_path_buf();
