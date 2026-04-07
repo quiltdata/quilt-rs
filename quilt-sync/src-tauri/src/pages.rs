@@ -59,8 +59,8 @@ pub async fn load(
         }
         Paths::Merge(namespace) => ViewMerge::create(model, tracing, namespace).await?.render(),
         Paths::RemotePackage(uri) => match install_package_only(model, uri).await {
-            Err(Error::Quilt(quilt::Error::Install(
-                quilt::InstallError::DifferentVersion {
+            Err(Error::Quilt(quilt::Error::InstallPackage(
+                quilt::InstallPackageError::DifferentVersion {
                     requested_hash,
                     installed_hash,
                     ..

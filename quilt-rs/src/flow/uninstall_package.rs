@@ -5,7 +5,7 @@ use crate::io::storage::Storage;
 use crate::lineage::DomainLineage;
 use crate::paths;
 use crate::uri::Namespace;
-use crate::InstallError;
+use crate::InstallPackageError;
 use crate::Error;
 use crate::Res;
 
@@ -23,7 +23,7 @@ pub async fn uninstall_package(
     lineage
         .packages
         .remove(&namespace)
-        .ok_or(Error::Install(InstallError::NotInstalled(
+        .ok_or(Error::InstallPackage(InstallPackageError::NotInstalled(
             namespace.to_owned(),
         )))?;
     debug!("✔️ Package removed from lineage");
@@ -66,7 +66,7 @@ mod tests {
         let result = uninstall_package(lineage, &paths, &storage, namespace.clone()).await;
         assert!(matches!(
             result.unwrap_err(),
-            Error::Install(InstallError::NotInstalled(ns)) if ns == namespace
+            Error::InstallPackage(InstallPackageError::NotInstalled(ns)) if ns == namespace
         ));
     }
 

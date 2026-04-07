@@ -59,7 +59,7 @@ pub enum AuthError {
 }
 
 #[derive(Error, Debug, PartialEq)]
-pub enum InstallError {
+pub enum InstallPackageError {
     #[error("The package {0} is already installed")]
     AlreadyInstalled(Namespace),
 
@@ -72,12 +72,15 @@ pub enum InstallError {
 
     #[error("The given package is not installed: {0}")]
     NotInstalled(Namespace),
+}
 
+#[derive(Error, Debug, PartialEq)]
+pub enum InstallPathError {
     #[error("Failed to install path: {}", .0.display())]
-    Path(PathBuf),
+    Install(PathBuf),
 
     #[error("Some paths are already installed")]
-    PathConflict,
+    AlreadyInstalled,
 
     #[error("Failed to uninstall path: {}", .0.display())]
     Uninstall(PathBuf),
@@ -111,7 +114,10 @@ pub enum Error {
     HostConfig(String),
 
     #[error(transparent)]
-    Install(InstallError),
+    InstallPackage(InstallPackageError),
+
+    #[error(transparent)]
+    InstallPath(InstallPathError),
 
     #[error("Invalid multihash: {0}")]
     InvalidMultihash(String),

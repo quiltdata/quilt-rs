@@ -20,7 +20,7 @@ use crate::paths::DomainPaths;
 use crate::uri::Host;
 use crate::uri::Namespace;
 use crate::uri::S3Uri;
-use crate::InstallError;
+use crate::InstallPathError;
 use crate::Error;
 use crate::Res;
 
@@ -104,7 +104,7 @@ pub async fn install_paths(
         .is_disjoint(&HashSet::from_iter(entries_paths.to_owned()))
     {
         debug!("❌ Found paths that are already installed");
-        return Err(Error::Install(InstallError::PathConflict));
+        return Err(Error::InstallPath(InstallPathError::AlreadyInstalled));
     }
 
     // for each path in entries_paths:
@@ -143,7 +143,7 @@ pub async fn install_paths(
         }
 
         let place = Url::from_file_path(&object_dest)
-            .map_err(|_| Error::Install(InstallError::Path(object_dest.clone())))?
+            .map_err(|_| Error::InstallPath(InstallPathError::Install(object_dest.clone())))?
             .to_string();
         debug!(
             "✔️ Path {} converted to a `place` {}",

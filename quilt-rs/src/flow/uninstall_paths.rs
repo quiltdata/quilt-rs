@@ -7,12 +7,12 @@ use tracing::info;
 
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
-use crate::InstallError;
+use crate::InstallPathError;
 use crate::Error;
 use crate::Res;
 
 fn not_found_error(path: &PathBuf) -> Error {
-    Error::Install(InstallError::Uninstall(path.clone()))
+    Error::InstallPath(InstallPathError::Uninstall(path.clone()))
 }
 
 /// Uninstalls paths: remote files from home directory and stop tracking in `.quilt/lineage.json`.
@@ -71,7 +71,7 @@ mod tests {
         let modified_lineage = uninstall_paths(lineage, PathBuf::new(), &storage, &paths).await;
         assert!(matches!(
             modified_lineage.unwrap_err(),
-            Error::Install(InstallError::Uninstall(p)) if p == PathBuf::from("test folde/r")
+            Error::InstallPath(InstallPathError::Uninstall(p)) if p == PathBuf::from("test folde/r")
         ));
         Ok(())
     }

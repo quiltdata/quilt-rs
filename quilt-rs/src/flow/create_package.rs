@@ -20,7 +20,7 @@ use crate::manifest::ManifestRow;
 use crate::paths::DomainPaths;
 use crate::quiltignore;
 use crate::uri::Namespace;
-use crate::InstallError;
+use crate::InstallPackageError;
 use crate::Error;
 use crate::Res;
 
@@ -85,7 +85,7 @@ pub async fn create_package(
     message: Option<String>,
 ) -> Res<DomainLineage> {
     if lineage.packages.contains_key(&namespace) {
-        return Err(Error::Install(InstallError::AlreadyInstalled(namespace)));
+        return Err(Error::InstallPackage(InstallPackageError::AlreadyInstalled(namespace)));
     }
 
     info!("⏳ Creating package: {}", namespace);
@@ -227,7 +227,7 @@ mod tests {
         let result = create_package(lineage, &paths, &storage, namespace.clone(), None, None).await;
         assert!(matches!(
             result.unwrap_err(),
-            Error::Install(InstallError::AlreadyInstalled(ns)) if ns == namespace
+            Error::InstallPackage(InstallPackageError::AlreadyInstalled(ns)) if ns == namespace
         ));
         Ok(())
     }

@@ -19,7 +19,8 @@ pub mod uri;
 pub mod fixtures;
 
 pub use error::Error;
-pub use error::InstallError;
+pub use error::InstallPackageError;
+pub use error::InstallPathError;
 pub use installed_package::InstalledPackage;
 pub use local_domain::LocalDomain;
 

@@ -11,7 +11,7 @@ use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::uri::Tag;
-use crate::InstallError;
+use crate::InstallPackageError;
 use crate::Error;
 use crate::Res;
 
@@ -38,7 +38,7 @@ pub async fn install_package(
     // TODO: if compatible (same remote), just return the installed package
     if lineage.packages.contains_key(&manifest_uri.namespace) {
         debug!("❌ Package already installed: {}", manifest_uri.namespace);
-        return Err(Error::Install(InstallError::AlreadyInstalled(
+        return Err(Error::InstallPackage(InstallPackageError::AlreadyInstalled(
             manifest_uri.namespace.clone(),
         )));
     }
@@ -115,7 +115,7 @@ mod tests {
         .await;
         assert!(matches!(
             result.unwrap_err(),
-            Error::Install(InstallError::AlreadyInstalled(ns)) if ns == namespace.into()
+            Error::InstallPackage(InstallPackageError::AlreadyInstalled(ns)) if ns == namespace.into()
         ));
         Ok(())
     }
