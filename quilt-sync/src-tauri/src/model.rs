@@ -412,7 +412,13 @@ pub async fn install_package_only(
             let installed_package = model
                 .get_installed_package(&manifest_uri.namespace)
                 .await?
-                .expect("package must exist after InstallCheck::AlreadyInstalled");
+                .ok_or_else(|| {
+                    Error::Quilt(quilt::Error::InstallPackage(
+                        quilt::InstallPackageError::NotInstalled(
+                            manifest_uri.namespace.clone(),
+                        ),
+                    ))
+                })?;
             Ok(installed_package)
         }
         InstallCheck::DifferentVersion(installed_hash) => {
