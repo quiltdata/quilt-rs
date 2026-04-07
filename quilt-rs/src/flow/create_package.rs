@@ -228,7 +228,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Install error: The package test/pkg is already installed"
+            "The package test/pkg is already installed"
         );
         Ok(())
     }

@@ -115,7 +115,7 @@ mod tests {
         .await;
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Install error: The package foo/bar is already installed"
+            "The package foo/bar is already installed"
         );
         Ok(())
     }

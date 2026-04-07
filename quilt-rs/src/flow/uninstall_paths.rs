@@ -71,7 +71,7 @@ mod tests {
         let modified_lineage = uninstall_paths(lineage, PathBuf::new(), &storage, &paths).await;
         assert_eq!(
             modified_lineage.unwrap_err().to_string(),
-            "Install error: Failed to uninstall path: test folde/r"
+            "Failed to uninstall path: test folde/r"
         );
         Ok(())
     }

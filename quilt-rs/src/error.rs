@@ -110,7 +110,7 @@ pub enum Error {
     #[error("Failed to fetch host config: {0}")]
     HostConfig(String),
 
-    #[error("Install error: {0}")]
+    #[error(transparent)]
     Install(InstallError),
 
     #[error("Invalid multihash: {0}")]

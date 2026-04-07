@@ -472,7 +472,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Install error: The given package is not installed: does/notexist"
+            "The given package is not installed: does/notexist"
         );
 
         Ok(())

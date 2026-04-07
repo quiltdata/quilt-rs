@@ -65,7 +65,7 @@ mod tests {
         let result = uninstall_package(lineage, &paths, &storage, ("foo", "bar").into()).await;
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Install error: The given package is not installed: foo/bar"
+            "The given package is not installed: foo/bar"
         )
     }
 
