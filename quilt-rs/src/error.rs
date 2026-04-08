@@ -63,13 +63,6 @@ pub enum InstallPackageError {
     #[error("The package {0} is already installed")]
     AlreadyInstalled(Namespace),
 
-    #[error("A different version of {namespace} is already installed (requested {requested_hash}, installed {installed_hash})")]
-    DifferentVersion {
-        namespace: Namespace,
-        requested_hash: String,
-        installed_hash: String,
-    },
-
     #[error("The given package is not installed: {0}")]
     NotInstalled(Namespace),
 }
