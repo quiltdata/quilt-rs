@@ -17,7 +17,7 @@ use quilt_rs::io::remote::HostConfig;
 /// Result of checking whether a package is already installed.
 pub enum InstallCheck {
     /// Exact same hash — already up to date
-    AlreadyInstalled,
+    AlreadyInstalled(quilt::InstalledPackage),
     /// Same namespace, different hash — needs pull.
     /// Contains the hash of the currently installed version.
     DifferentVersion(String),
@@ -168,7 +168,7 @@ pub trait QuiltModel {
                     None => return Ok(InstallCheck::LocalOnly),
                 };
                 if manifest_uri.hash == installed_manifest_uri.hash {
-                    Ok(InstallCheck::AlreadyInstalled)
+                    Ok(InstallCheck::AlreadyInstalled(installed_package))
                 } else {
                     Ok(InstallCheck::DifferentVersion(
                         installed_manifest_uri.hash.clone(),
@@ -434,18 +434,8 @@ pub async fn install_package_only(
     let manifest_uri = model.resolve_manifest_uri(uri).await?;
 
     match model.is_package_installed(&manifest_uri).await? {
-        InstallCheck::AlreadyInstalled => {
+        InstallCheck::AlreadyInstalled(installed_package) => {
             debug!("Package already installed: {:?}", manifest_uri.namespace);
-            let installed_package = model
-                .get_installed_package(&manifest_uri.namespace)
-                .await?
-                .ok_or_else(|| {
-                    Error::Quilt(quilt::Error::InstallPackage(
-                        quilt::InstallPackageError::NotInstalled(
-                            manifest_uri.namespace.clone(),
-                        ),
-                    ))
-                })?;
             Ok(InstallOutcome::Installed(installed_package))
         }
         InstallCheck::DifferentVersion(installed_hash) => {
