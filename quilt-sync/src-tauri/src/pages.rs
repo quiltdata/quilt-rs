@@ -12,9 +12,12 @@ mod merge;
 mod settings;
 mod setup;
 
+use rust_i18n::t;
+
 use crate::app::App;
 use crate::error::Error;
 use crate::model::install_package_only;
+use crate::model::InstallOutcome;
 use crate::model::QuiltModel;
 use crate::quilt;
 use installed_packages_list::ViewInstalledPackagesList;
@@ -56,30 +59,79 @@ pub async fn load(
                 .render()
         }
         Paths::Merge(namespace) => ViewMerge::create(model, tracing, namespace).await?.render(),
-        Paths::RemotePackage(uri) => {
-            let installed_package = install_package_only(model, uri).await?;
-
-            // If URI has a path, handle it (for both already-installed and newly-installed packages)
-            if let Some(ref path) = uri.path {
-                if !model.is_path_installed(&installed_package, path).await? {
+        Paths::RemotePackage(uri) => match install_package_only(model, uri).await? {
+            InstallOutcome::DifferentVersion {
+                requested_hash,
+                installed_hash,
+            } => {
+                // Show the installed package page with a notification.
+                // The page already renders the appropriate sync button
+                // based on UpstreamState (Pull, Push, etc.).
+                // uri.path is intentionally ignored: the requested hash differs
+                // from the installed one, so opening a specific file would be unsafe.
+                let short_requested: String = requested_hash.chars().take(8).collect();
+                let short_installed: String = installed_hash.chars().take(8).collect();
+                let notification = t!(
+                    "installed_package_notification.different_version",
+                    requested => short_requested,
+                    installed => short_installed,
+                )
+                .to_string();
+                ViewInstalledPackage::create(
+                    model,
+                    tracing,
+                    &uri.namespace,
+                    &routes::EntriesFilter::for_installed_package(),
+                )
+                .await?
+                .with_notification(notification)
+                .render()
+            }
+            InstallOutcome::LocalOnly => {
+                // uri.path is intentionally ignored: without a remote origin
+                // we can't verify the requested version matches what's installed.
+                let notification = t!("installed_package_notification.local_only").to_string();
+                ViewInstalledPackage::create(
+                    model,
+                    tracing,
+                    &uri.namespace,
+                    &routes::EntriesFilter::for_installed_package(),
+                )
+                .await?
+                .with_notification(notification)
+                .render()
+            }
+            InstallOutcome::Installed => {
+                // If URI has a path, handle it (for both already-installed and newly-installed packages)
+                if let Some(ref path) = uri.path {
+                    let installed_package = model
+                        .get_installed_package(&uri.namespace)
+                        .await?
+                        .ok_or_else(|| {
+                            Error::from(quilt::InstallPackageError::NotInstalled(
+                                uri.namespace.clone(),
+                            ))
+                        })?;
+                    if !model.is_path_installed(&installed_package, path).await? {
+                        model
+                            .package_install_paths(&installed_package, std::slice::from_ref(path))
+                            .await?;
+                    }
                     model
-                        .package_install_paths(&installed_package, std::slice::from_ref(path))
+                        .open_in_default_application(&uri.namespace, path)
                         .await?;
                 }
-                model
-                    .open_in_default_application(&uri.namespace, path)
-                    .await?;
-            }
 
-            ViewInstalledPackage::create(
-                model,
-                tracing,
-                &uri.namespace,
-                &routes::EntriesFilter::for_installed_package(),
-            )
-            .await?
-            .render()
-        }
+                ViewInstalledPackage::create(
+                    model,
+                    tracing,
+                    &uri.namespace,
+                    &routes::EntriesFilter::for_installed_package(),
+                )
+                .await?
+                .render()
+            }
+        },
         Paths::Settings => {
             let data_dir_buf = data_dir.to_path_buf();
             let home_dir = model
@@ -233,6 +285,40 @@ mod tests {
         assert!(page.contains(
             r##"<strong class="qui-breadcrumb-current" title="foo/bar">foo/bar</strong>"##,
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_remote_package_different_version() -> Result<(), Error> {
+        let mut model = model_mocks::create();
+        model_mocks::mock_remote_package_different_version(&mut model);
+        let app = App::create()?;
+
+        let uri = "quilt+s3://quilt-example#package=foo/bar@bbbb2222";
+        let url = format!(
+            "https://l/p/remote-package.html?uri={}",
+            urlencoding::encode(uri)
+        );
+        let path: Paths = url.parse()?;
+        let page = load(
+            &model,
+            &app,
+            &default_home(),
+            &default_data_dir(),
+            &default_telemetry(),
+            &path,
+        )
+        .await?;
+
+        // Should show the installed package page (not an error page)
+        assert!(page.contains(
+            r##"<strong class="qui-breadcrumb-current" title="foo/bar">foo/bar</strong>"##,
+        ));
+        // Should show the notification with both short hashes
+        assert!(page.contains("qui-notification"));
+        assert!(page.contains("bbbb2222"));
+        assert!(page.contains("aaaa1111"));
+
         Ok(())
     }
 

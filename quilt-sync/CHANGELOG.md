@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.15.1] - 2026-04-08
+
+### Changed
+
+- Show a notification instead of an error when the installed package version differs from the requested one or is local-only (<https://github.com/quiltdata/quilt-rs/pull/605>)
+
 ## [v0.15.0] - 2026-04-07
 
 ### Added

@@ -1,4 +1,5 @@
 use std::io::ErrorKind;
+use std::path::Path;
 use std::path::PathBuf;
 
 use tracing::debug;
@@ -8,10 +9,11 @@ use tracing::info;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::Error;
+use crate::InstallPathError;
 use crate::Res;
 
-fn not_found_error(path: &PathBuf) -> Error {
-    Error::Uninstall(format!("path {path:?} not found. Cannot uninstall."))
+fn not_found_error(path: &Path) -> Error {
+    Error::InstallPath(InstallPathError::Uninstall(path.to_path_buf()))
 }
 
 /// Uninstalls paths: remote files from home directory and stop tracking in `.quilt/lineage.json`.
@@ -68,10 +70,10 @@ mod tests {
         let paths = vec![PathBuf::from("test folde/r")];
 
         let modified_lineage = uninstall_paths(lineage, PathBuf::new(), &storage, &paths).await;
-        assert_eq!(
-            modified_lineage.unwrap_err().to_string(),
-            r#"Uninstall error: path "test folde/r" not found. Cannot uninstall."#
-        );
+        assert!(matches!(
+            modified_lineage.unwrap_err(),
+            Error::InstallPath(InstallPathError::Uninstall(p)) if p == Path::new("test folde/r")
+        ));
         Ok(())
     }
 

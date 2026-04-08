@@ -26,6 +26,7 @@ use crate::Result;
 pub struct ViewInstalledPackage {
     entries_list: Vec<entry::ViewEntry>,
     filter: EntriesFilter,
+    notification: Option<String>,
     origin: Option<url::Url>,
     origin_host: Option<quilt::uri::Host>,
     status: UpstreamState,
@@ -142,6 +143,7 @@ struct TmplEntriesToolbar<'a> {
 #[template(path = "./pages/installed-package.html")]
 struct TmplPageInstalledPackage<'a> {
     entries: Vec<entry::TmplEntry<'a>>,
+    notification: Option<String>,
     status: Option<TmplStatus<'a>>,
     toolbar: Option<TmplEntriesToolbar<'a>>,
     uri: quilt::uri::S3PackageUri,
@@ -218,7 +220,9 @@ impl ViewInstalledPackage {
         let installed_package = model
             .get_installed_package(namespace)
             .await?
-            .ok_or_else(|| Error::Quilt(quilt::Error::PackageNotInstalled(namespace.clone())))?;
+            .ok_or_else(|| {
+                Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone()))
+            })?;
 
         let lineage = model
             .get_installed_package_lineage(&installed_package)
@@ -407,6 +411,7 @@ impl ViewInstalledPackage {
         Ok(ViewInstalledPackage {
             entries_list,
             filter: filter.clone(),
+            notification: None,
             origin,
             origin_host,
             status: status.upstream_state,
@@ -414,6 +419,11 @@ impl ViewInstalledPackage {
             ignored_count,
             unmodified_count,
         })
+    }
+
+    pub fn with_notification(mut self, notification: String) -> Self {
+        self.notification = Some(notification);
+        self
     }
 
     pub fn render(self) -> Result<String> {
@@ -430,6 +440,7 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
         let ViewInstalledPackage {
             entries_list,
             filter,
+            notification,
             origin,
             origin_host,
             status,
@@ -463,6 +474,7 @@ impl From<ViewInstalledPackage> for TmplPageInstalledPackage<'_> {
         };
         TmplPageInstalledPackage {
             layout,
+            notification,
             status: TmplStatus::new(&uri.namespace, &status, origin_host.as_ref()),
             entries,
             toolbar: {
@@ -509,6 +521,7 @@ mod tests {
         let html = (ViewInstalledPackage {
             entries_list: vec![],
             filter: EntriesFilter::for_installed_package(),
+            notification: None,
             origin: Some(url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?),
             origin_host: Some("test.quilt.dev".parse().unwrap()),
             status: quilt::lineage::UpstreamState::UpToDate,
@@ -574,6 +587,7 @@ mod tests {
         let view = ViewInstalledPackage {
             entries_list,
             filter: EntriesFilter::for_installed_package(),
+            notification: None,
             origin: Some(url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?),
             origin_host: Some("test.quilt.dev".parse().unwrap()),
             status: quilt::lineage::UpstreamState::UpToDate,
@@ -600,6 +614,7 @@ mod tests {
         let html = (ViewInstalledPackage {
             entries_list: vec![],
             filter: EntriesFilter::for_installed_package(),
+            notification: None,
             origin: None,
             origin_host: None,
             status: quilt::lineage::UpstreamState::Error,
@@ -630,6 +645,7 @@ mod tests {
         let html = (ViewInstalledPackage {
             entries_list: vec![],
             filter: EntriesFilter::for_installed_package(),
+            notification: None,
             origin: Some(url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?),
             origin_host: Some("test.quilt.dev".parse().unwrap()),
             status: quilt::lineage::UpstreamState::Error,
@@ -656,6 +672,7 @@ mod tests {
         let html = (ViewInstalledPackage {
             entries_list: vec![],
             filter: EntriesFilter::for_installed_package(),
+            notification: None,
             origin: None,
             origin_host: None,
             status: quilt::lineage::UpstreamState::Local,
@@ -686,6 +703,7 @@ mod tests {
         let html = (ViewInstalledPackage {
             entries_list: vec![],
             filter: EntriesFilter::for_installed_package(),
+            notification: None,
             origin: Some(url::Url::parse("https://test.quilt.dev/b/C/packages/A/B")?),
             origin_host: Some("test.quilt.dev".parse().unwrap()),
             status: quilt::lineage::UpstreamState::Local,

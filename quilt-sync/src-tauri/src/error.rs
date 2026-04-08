@@ -80,6 +80,12 @@ impl From<quilt::Error> for Error {
     }
 }
 
+impl From<quilt::InstallPackageError> for Error {
+    fn from(err: quilt::InstallPackageError) -> Error {
+        Error::Quilt(quilt::Error::InstallPackage(err))
+    }
+}
+
 impl From<String> for Error {
     fn from(s: String) -> Error {
         Error::General(s)

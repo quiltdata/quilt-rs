@@ -7,6 +7,10 @@
 
   <div class="qui-page-installed-package">
     <div class="container">
+      {% if let Some(notification) = notification.as_ref() %}
+        <div class="qui-notification">{{ notification }}</div>
+      {% endif %}
+
       {% if let Some(status) = status %}
         {{ status | safe }}
       {% endif %}

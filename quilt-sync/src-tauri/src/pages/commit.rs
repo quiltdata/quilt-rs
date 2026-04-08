@@ -221,7 +221,9 @@ impl ViewCommit {
         let installed_package = model
             .get_installed_package(namespace)
             .await?
-            .ok_or_else(|| Error::Quilt(quilt::Error::PackageNotInstalled(namespace.clone())))?;
+            .ok_or_else(|| {
+                Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone()))
+            })?;
         let status = model
             .get_installed_package_status(&installed_package, None)
             .await?;

@@ -14,6 +14,34 @@ use crate::telemetry::prelude::*;
 
 use quilt_rs::io::remote::HostConfig;
 
+/// Result of checking whether a package is already installed.
+#[derive(Debug)]
+pub enum InstallCheck {
+    /// Exact same hash — already up to date
+    AlreadyInstalled,
+    /// Same namespace, different hash — needs pull.
+    /// Contains the hash of the currently installed version.
+    DifferentVersion(String),
+    /// Installed locally without a remote origin
+    LocalOnly,
+    /// Not installed at all
+    NotInstalled,
+}
+
+/// Result of attempting to install a package.
+#[derive(Debug, PartialEq)]
+pub enum InstallOutcome {
+    /// Package was installed (or was already installed with the same hash).
+    Installed,
+    /// A different version is already installed.
+    DifferentVersion {
+        requested_hash: String,
+        installed_hash: String,
+    },
+    /// Installed locally without a remote origin.
+    LocalOnly,
+}
+
 pub struct Model {
     quilt: sync::Mutex<quilt::LocalDomain>,
 }
@@ -119,7 +147,7 @@ pub trait QuiltModel {
     async fn is_package_installed(
         &self,
         manifest_uri: &quilt::uri::ManifestUri,
-    ) -> Result<Option<quilt::InstalledPackage>, Error> {
+    ) -> Result<InstallCheck, Error> {
         match self.get_installed_package(&manifest_uri.namespace).await? {
             Some(installed_package) => {
                 let package_lineage = self
@@ -127,15 +155,17 @@ pub trait QuiltModel {
                     .await?;
                 let installed_manifest_uri = match package_lineage.remote_uri.as_ref() {
                     Some(uri) => uri,
-                    None => return Ok(None),
+                    None => return Ok(InstallCheck::LocalOnly),
                 };
                 if manifest_uri.hash == installed_manifest_uri.hash {
-                    Ok(Some(installed_package))
+                    Ok(InstallCheck::AlreadyInstalled)
                 } else {
-                    Ok(None)
+                    Ok(InstallCheck::DifferentVersion(
+                        installed_manifest_uri.hash.clone(),
+                    ))
                 }
             }
-            None => Ok(None),
+            None => Ok(InstallCheck::NotInstalled),
         }
     }
 
@@ -226,7 +256,9 @@ pub trait QuiltModel {
         let installed_package = self
             .get_installed_package(namespace)
             .await?
-            .ok_or_else(|| Error::Quilt(quilt::Error::PackageNotInstalled(namespace.clone())))?;
+            .ok_or_else(|| {
+                Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone()))
+            })?;
         let working_folder_path = installed_package.package_home().await?;
         if !working_folder_path.exists() {
             return Err(Error::PathNotFound(working_folder_path));
@@ -341,7 +373,7 @@ pub async fn package_commit(
     let installed_package = model
         .get_installed_package(&namespace)
         .await?
-        .ok_or_else(|| Error::Quilt(quilt::Error::PackageNotInstalled(namespace)))?;
+        .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace)))?;
 
     let workflow = installed_package.resolve_workflow(workflow).await?;
     model
@@ -390,17 +422,35 @@ pub async fn install_paths(
 pub async fn install_package_only(
     model: &impl QuiltModel,
     uri: &quilt::uri::S3PackageUri,
-) -> Result<quilt::InstalledPackage, Error> {
+) -> Result<InstallOutcome, Error> {
     let manifest_uri = model.resolve_manifest_uri(uri).await?;
 
     match model.is_package_installed(&manifest_uri).await? {
-        Some(installed_package) => {
+        InstallCheck::AlreadyInstalled => {
             debug!("Package already installed: {:?}", manifest_uri.namespace);
-            Ok(installed_package)
+            Ok(InstallOutcome::Installed)
         }
-        None => {
+        InstallCheck::DifferentVersion(installed_hash) => {
+            debug!(
+                "Different version already installed: {:?}",
+                manifest_uri.namespace
+            );
+            Ok(InstallOutcome::DifferentVersion {
+                requested_hash: manifest_uri.hash.clone(),
+                installed_hash,
+            })
+        }
+        InstallCheck::LocalOnly => {
+            debug!(
+                "Local-only package already installed: {:?}",
+                manifest_uri.namespace
+            );
+            Ok(InstallOutcome::LocalOnly)
+        }
+        InstallCheck::NotInstalled => {
             debug!("Package not installed, installing: {:?}", manifest_uri);
-            Ok(model.package_install(&manifest_uri).await?)
+            model.package_install(&manifest_uri).await?;
+            Ok(InstallOutcome::Installed)
         }
     }
 }
@@ -493,7 +543,7 @@ pub async fn set_origin(
     let installed_package = model
         .get_installed_package(namespace)
         .await?
-        .ok_or_else(|| Error::Quilt(quilt::Error::PackageNotInstalled(namespace.clone())))?;
+        .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone())))?;
     model.set_origin(&installed_package, origin).await?;
     Ok(())
 }
@@ -507,7 +557,7 @@ pub async fn set_remote(
     let installed_package = model
         .get_installed_package(namespace)
         .await?
-        .ok_or_else(|| Error::Quilt(quilt::Error::PackageNotInstalled(namespace.clone())))?;
+        .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone())))?;
     model.set_remote(&installed_package, origin, bucket).await?;
     Ok(())
 }
@@ -638,7 +688,9 @@ pub mod mocks {
             .expect_resolve_manifest_uri()
             .returning(|uri| Ok(quilt::uri::ManifestUri::try_from(uri.clone()).unwrap()));
         // For the remote package test, the package starts as not installed
-        model.expect_is_package_installed().returning(|_| Ok(None));
+        model
+            .expect_is_package_installed()
+            .returning(|_| Ok(InstallCheck::NotInstalled));
         // After installation, the package should be available
         model.expect_get_installed_package().returning(|_| {
             Ok(Some(
@@ -702,6 +754,85 @@ pub mod mocks {
         model
     }
 
+    /// Mock for the case where the package is already installed with a different hash.
+    pub fn mock_remote_package_different_version(model: &mut MockQuiltModel) -> &MockQuiltModel {
+        model
+            .expect_resolve_manifest_uri()
+            .returning(|uri| Ok(quilt::uri::ManifestUri::try_from(uri.clone()).unwrap()));
+        model
+            .expect_is_package_installed()
+            .returning(|_| Ok(InstallCheck::DifferentVersion("aaaa1111".to_string())));
+
+        // These are needed for ViewInstalledPackage::create after the error is caught
+        model.expect_get_installed_package().returning(|_| {
+            Ok(Some(
+                quilt::LocalDomain::new(PathBuf::new())
+                    .create_installed_package(("foo", "bar").into())
+                    .expect("Failed to create installed package"),
+            ))
+        });
+
+        let remote_manifest = quilt::uri::ManifestUri {
+            bucket: "quilt-example".to_string(),
+            namespace: ("foo", "bar").into(),
+            hash: "aaaa1111".to_string(),
+            origin: None,
+        };
+
+        model
+            .expect_get_installed_package_lineage()
+            .returning(move |_| {
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    remote_manifest.clone(),
+                    remote_manifest.hash.clone(),
+                ))
+            });
+        let status = Ok(quilt::lineage::InstalledPackageStatus::default());
+        model
+            .expect_get_installed_package_status()
+            .return_once(move |_, _| status);
+        model.expect_get_installed_package_records().returning(|_| {
+            Ok(BTreeMap::from([(
+                PathBuf::from("NAME"),
+                quilt::manifest::ManifestRow::default(),
+            )]))
+        });
+
+        model
+    }
+
+    pub fn mock_remote_package_local_only(model: &mut MockQuiltModel) -> &MockQuiltModel {
+        model
+            .expect_resolve_manifest_uri()
+            .returning(|uri| Ok(quilt::uri::ManifestUri::try_from(uri.clone()).unwrap()));
+        model
+            .expect_is_package_installed()
+            .returning(|_| Ok(InstallCheck::LocalOnly));
+        model.expect_get_installed_package().returning(|_| {
+            Ok(Some(
+                quilt::LocalDomain::new(PathBuf::new())
+                    .create_installed_package(("foo", "bar").into())
+                    .expect("Failed to create installed package"),
+            ))
+        });
+
+        model
+            .expect_get_installed_package_lineage()
+            .returning(move |_| Ok(quilt::lineage::PackageLineage::default()));
+        let status = Ok(quilt::lineage::InstalledPackageStatus::default());
+        model
+            .expect_get_installed_package_status()
+            .return_once(move |_, _| status);
+        model.expect_get_installed_package_records().returning(|_| {
+            Ok(BTreeMap::from([(
+                PathBuf::from("NAME"),
+                quilt::manifest::ManifestRow::default(),
+            )]))
+        });
+
+        model
+    }
+
     pub fn mock_installed_packages_list(model: &mut MockQuiltModel) -> &MockQuiltModel {
         model
             .expect_get_installed_packages_list()
@@ -723,12 +854,16 @@ pub mod mocks {
             "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs:1740761585",
         )?;
 
-        let installed_package = install_package_only(&model, &uri).await?;
         assert_eq!(
-            installed_package.namespace.to_string(),
-            "reference/quilt-rs"
+            install_package_only(&model, &uri).await?,
+            InstallOutcome::Installed,
         );
 
+        let namespace: quilt::uri::Namespace = ("reference", "quilt-rs").into();
+        let installed_package = model
+            .get_installed_package(&namespace)
+            .await?
+            .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace)))?;
         let lineage = model
             .get_installed_package_lineage(&installed_package)
             .await?;
@@ -750,32 +885,38 @@ pub mod mocks {
 
         let uri = quilt::uri::S3PackageUri::try_from("quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7")?;
 
-        let first_install = install_package_only(&model, &uri).await?;
-        assert_eq!(first_install.namespace.to_string(), "reference/quilt-rs");
+        assert_eq!(
+            install_package_only(&model, &uri).await?,
+            InstallOutcome::Installed,
+        );
+
+        let namespace: quilt::uri::Namespace = ("reference", "quilt-rs").into();
+        let installed_package = model
+            .get_installed_package(&namespace)
+            .await?
+            .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace)))?;
 
         let first_hash = model
-            .get_installed_package_lineage(&first_install)
+            .get_installed_package_lineage(&installed_package)
             .await?
             .remote()?
             .hash
             .clone();
 
         // TODO: make sure there was no double installation
-        let second_install = install_package_only(&model, &uri).await?;
-        assert_eq!(second_install.namespace.to_string(), "reference/quilt-rs");
+        assert_eq!(
+            install_package_only(&model, &uri).await?,
+            InstallOutcome::Installed,
+        );
 
         let second_hash = model
-            .get_installed_package_lineage(&second_install)
+            .get_installed_package_lineage(&installed_package)
             .await?
             .remote()?
             .hash
             .clone();
 
         assert_eq!(first_hash, second_hash);
-        assert_eq!(
-            first_install.package_home().await?,
-            second_install.package_home().await?
-        );
 
         Ok(())
     }
@@ -800,6 +941,48 @@ pub mod mocks {
             .unwrap_err()
             .to_string()
             .contains("Missing HTTP header: x-amz-bucket-region"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_install_package_only_local_only() -> Result {
+        let mut model = create();
+        mock_remote_package_local_only(&mut model);
+
+        let uri = quilt::uri::S3PackageUri::try_from(
+            "quilt+s3://quilt-example#package=foo/bar@some_hash",
+        )?;
+
+        let result = install_package_only(&model, &uri).await?;
+        assert!(
+            matches!(result, InstallOutcome::LocalOnly),
+            "expected LocalOnly, got {result:?}",
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_install_package_only_different_version() -> Result {
+        let mut model = create();
+        mock_remote_package_different_version(&mut model);
+
+        let uri = quilt::uri::S3PackageUri::try_from(
+            "quilt+s3://quilt-example#package=foo/bar@bbbb2222",
+        )?;
+
+        let result = install_package_only(&model, &uri).await?;
+        match result {
+            InstallOutcome::DifferentVersion {
+                requested_hash,
+                installed_hash,
+            } => {
+                assert_eq!(requested_hash, "bbbb2222");
+                assert_eq!(installed_hash, "aaaa1111");
+            }
+            other => panic!("expected DifferentVersion, got {other:?}"),
+        }
 
         Ok(())
     }

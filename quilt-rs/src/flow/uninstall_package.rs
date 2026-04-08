@@ -6,6 +6,7 @@ use crate::lineage::DomainLineage;
 use crate::paths;
 use crate::uri::Namespace;
 use crate::Error;
+use crate::InstallPackageError;
 use crate::Res;
 
 /// Uninstall package: remove files from working directory, manifest from `.quilt` and from
@@ -22,7 +23,9 @@ pub async fn uninstall_package(
     lineage
         .packages
         .remove(&namespace)
-        .ok_or(Error::PackageNotInstalled(namespace.to_owned()))?;
+        .ok_or(Error::InstallPackage(InstallPackageError::NotInstalled(
+            namespace.to_owned(),
+        )))?;
     debug!("✔️ Package removed from lineage");
 
     debug!("⏳ Removing installed manifests");
@@ -59,11 +62,12 @@ mod tests {
         let storage = MockStorage::default();
         let paths = paths::DomainPaths::default();
 
-        let result = uninstall_package(lineage, &paths, &storage, ("foo", "bar").into()).await;
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "The given package is not installed: foo/bar"
-        )
+        let namespace: Namespace = ("foo", "bar").into();
+        let result = uninstall_package(lineage, &paths, &storage, namespace.clone()).await;
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::InstallPackage(InstallPackageError::NotInstalled(ns)) if ns == namespace
+        ));
     }
 
     #[test(tokio::test)]

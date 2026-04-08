@@ -4897,7 +4897,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-rs"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -4940,7 +4940,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-sync"
-version = "0.15.0"
+version = "0.15.1"
 dependencies = [
  "askama",
  "chrono",

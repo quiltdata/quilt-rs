@@ -21,6 +21,7 @@ use crate::uri::Host;
 use crate::uri::Namespace;
 use crate::uri::S3Uri;
 use crate::Error;
+use crate::InstallPathError;
 use crate::Res;
 
 async fn cache_immutable_object(
@@ -103,9 +104,7 @@ pub async fn install_paths(
         .is_disjoint(&HashSet::from_iter(entries_paths.to_owned()))
     {
         debug!("❌ Found paths that are already installed");
-        return Err(Error::InstallPath(
-            "some paths are already installed".to_string(),
-        ));
+        return Err(Error::InstallPath(InstallPathError::AlreadyInstalled));
     }
 
     // for each path in entries_paths:
@@ -144,9 +143,7 @@ pub async fn install_paths(
         }
 
         let place = Url::from_file_path(&object_dest)
-            .map_err(|_| {
-                Error::InstallPath(format!("Failed to create URL from {:?}", &object_dest))
-            })?
+            .map_err(|_| Error::InstallPath(InstallPathError::Install(object_dest.clone())))?
             .to_string();
         debug!(
             "✔️ Path {} converted to a `place` {}",

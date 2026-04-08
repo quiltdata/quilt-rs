@@ -21,6 +21,7 @@ use crate::paths::DomainPaths;
 use crate::quiltignore;
 use crate::uri::Namespace;
 use crate::Error;
+use crate::InstallPackageError;
 use crate::Res;
 
 /// Walk a source directory recursively, collecting `(relative_path, absolute_path)` pairs.
@@ -84,7 +85,9 @@ pub async fn create_package(
     message: Option<String>,
 ) -> Res<DomainLineage> {
     if lineage.packages.contains_key(&namespace) {
-        return Err(Error::PackageAlreadyInstalled(namespace));
+        return Err(Error::InstallPackage(
+            InstallPackageError::AlreadyInstalled(namespace),
+        ));
     }
 
     info!("⏳ Creating package: {}", namespace);
@@ -224,11 +227,10 @@ mod tests {
             create_package(lineage, &paths, &storage, namespace.clone(), None, None).await?;
 
         let result = create_package(lineage, &paths, &storage, namespace.clone(), None, None).await;
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "The package test/pkg is already installed"
-        );
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::InstallPackage(InstallPackageError::AlreadyInstalled(ns)) if ns == namespace
+        ));
         Ok(())
     }
 
