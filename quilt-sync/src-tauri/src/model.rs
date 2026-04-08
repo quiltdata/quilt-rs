@@ -38,15 +38,16 @@ pub enum InstallOutcome {
         installed_hash: String,
     },
     /// Installed locally without a remote origin.
-    LocalOnly(quilt::InstalledPackage),
+    LocalOnly,
 }
 
 impl InstallOutcome {
-    /// Returns the installed package, or `None` if a different version was found.
-    pub fn installed(self) -> Option<quilt::InstalledPackage> {
+    /// Unwrap the installed package, or return an error.
+    #[cfg(test)]
+    fn into_installed(self) -> std::result::Result<quilt::InstalledPackage, Error> {
         match self {
-            InstallOutcome::Installed(pkg) | InstallOutcome::LocalOnly(pkg) => Some(pkg),
-            InstallOutcome::DifferentVersion { .. } => None,
+            InstallOutcome::Installed(pkg) => Ok(pkg),
+            other => Err(Error::Test(format!("expected Installed, got {other:?}"))),
         }
     }
 }
@@ -462,17 +463,7 @@ pub async fn install_package_only(
                 "Local-only package already installed: {:?}",
                 manifest_uri.namespace
             );
-            let installed_package = model
-                .get_installed_package(&manifest_uri.namespace)
-                .await?
-                .ok_or_else(|| {
-                    Error::Quilt(quilt::Error::InstallPackage(
-                        quilt::InstallPackageError::NotInstalled(
-                            manifest_uri.namespace.clone(),
-                        ),
-                    ))
-                })?;
-            Ok(InstallOutcome::LocalOnly(installed_package))
+            Ok(InstallOutcome::LocalOnly)
         }
         InstallCheck::NotInstalled => {
             debug!("Package not installed, installing: {:?}", manifest_uri);
@@ -882,7 +873,7 @@ pub mod mocks {
             "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs:1740761585",
         )?;
 
-        let installed_package = install_package_only(&model, &uri).await?.installed().unwrap();
+        let installed_package = install_package_only(&model, &uri).await?.into_installed()?;
         assert_eq!(
             installed_package.namespace.to_string(),
             "reference/quilt-rs"
@@ -909,7 +900,7 @@ pub mod mocks {
 
         let uri = quilt::uri::S3PackageUri::try_from("quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7")?;
 
-        let first_install = install_package_only(&model, &uri).await?.installed().unwrap();
+        let first_install = install_package_only(&model, &uri).await?.into_installed()?;
         assert_eq!(first_install.namespace.to_string(), "reference/quilt-rs");
 
         let first_hash = model
@@ -920,7 +911,7 @@ pub mod mocks {
             .clone();
 
         // TODO: make sure there was no double installation
-        let second_install = install_package_only(&model, &uri).await?.installed().unwrap();
+        let second_install = install_package_only(&model, &uri).await?.into_installed()?;
         assert_eq!(second_install.namespace.to_string(), "reference/quilt-rs");
 
         let second_hash = model
@@ -973,12 +964,10 @@ pub mod mocks {
         )?;
 
         let result = install_package_only(&model, &uri).await?;
-        match result {
-            InstallOutcome::LocalOnly(pkg) => {
-                assert_eq!(pkg.namespace.to_string(), "foo/bar");
-            }
-            other => panic!("expected LocalOnly, got {other:?}"),
-        }
+        assert!(
+            matches!(result, InstallOutcome::LocalOnly),
+            "expected LocalOnly, got {result:?}",
+        );
 
         Ok(())
     }

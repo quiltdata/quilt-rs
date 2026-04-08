@@ -85,7 +85,7 @@ pub async fn load(
                 .with_notification(notification)
                 .render()
             }
-            InstallOutcome::LocalOnly(_) => {
+            InstallOutcome::LocalOnly => {
                 let notification =
                     t!("installed_package_notification.local_only").to_string();
                 ViewInstalledPackage::create(
