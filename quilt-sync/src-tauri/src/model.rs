@@ -829,6 +829,38 @@ pub mod mocks {
         model
     }
 
+    pub fn mock_remote_package_local_only(model: &mut MockQuiltModel) -> &MockQuiltModel {
+        model
+            .expect_resolve_manifest_uri()
+            .returning(|uri| Ok(quilt::uri::ManifestUri::try_from(uri.clone()).unwrap()));
+        model
+            .expect_is_package_installed()
+            .returning(|_| Ok(InstallCheck::LocalOnly));
+        model.expect_get_installed_package().returning(|_| {
+            Ok(Some(
+                quilt::LocalDomain::new(PathBuf::new())
+                    .create_installed_package(("foo", "bar").into())
+                    .expect("Failed to create installed package"),
+            ))
+        });
+
+        model
+            .expect_get_installed_package_lineage()
+            .returning(move |_| Ok(quilt::lineage::PackageLineage::default()));
+        let status = Ok(quilt::lineage::InstalledPackageStatus::default());
+        model
+            .expect_get_installed_package_status()
+            .return_once(move |_, _| status);
+        model.expect_get_installed_package_records().returning(|_| {
+            Ok(BTreeMap::from([(
+                PathBuf::from("NAME"),
+                quilt::manifest::ManifestRow::default(),
+            )]))
+        });
+
+        model
+    }
+
     pub fn mock_installed_packages_list(model: &mut MockQuiltModel) -> &MockQuiltModel {
         model
             .expect_get_installed_packages_list()
@@ -927,6 +959,26 @@ pub mod mocks {
             .unwrap_err()
             .to_string()
             .contains("Missing HTTP header: x-amz-bucket-region"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_install_package_only_local_only() -> Result {
+        let mut model = create();
+        mock_remote_package_local_only(&mut model);
+
+        let uri = quilt::uri::S3PackageUri::try_from(
+            "quilt+s3://quilt-example#package=foo/bar@some_hash",
+        )?;
+
+        let result = install_package_only(&model, &uri).await?;
+        match result {
+            InstallOutcome::LocalOnly(pkg) => {
+                assert_eq!(pkg.namespace.to_string(), "foo/bar");
+            }
+            other => panic!("expected LocalOnly, got {other:?}"),
+        }
 
         Ok(())
     }
