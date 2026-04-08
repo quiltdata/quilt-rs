@@ -85,6 +85,19 @@ pub async fn load(
                 .with_notification(notification)
                 .render()
             }
+            InstallOutcome::LocalOnly(_) => {
+                let notification =
+                    t!("installed_package_notification.local_only").to_string();
+                ViewInstalledPackage::create(
+                    model,
+                    tracing,
+                    &uri.namespace,
+                    &routes::EntriesFilter::for_installed_package(),
+                )
+                .await?
+                .with_notification(notification)
+                .render()
+            }
             InstallOutcome::Installed(installed_package) => {
                 // If URI has a path, handle it (for both already-installed and newly-installed packages)
                 if let Some(ref path) = uri.path {

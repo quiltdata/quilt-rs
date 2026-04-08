@@ -25,6 +25,7 @@ uninstall = 'Remove'
 
 [installed_package_notification]
 different_version = 'Requested version %{requested}…, but %{installed}… is installed. Showing the installed version.'
+local_only = 'This package is installed locally without a remote origin. Showing the local version.'
 
 [installed_package_status]
 push = 'Push to remote'

@@ -21,6 +21,8 @@ pub enum InstallCheck {
     /// Same namespace, different hash — needs pull.
     /// Contains the hash of the currently installed version.
     DifferentVersion(String),
+    /// Installed locally without a remote origin
+    LocalOnly,
     /// Not installed at all
     NotInstalled,
 }
@@ -35,13 +37,15 @@ pub enum InstallOutcome {
         requested_hash: String,
         installed_hash: String,
     },
+    /// Installed locally without a remote origin.
+    LocalOnly(quilt::InstalledPackage),
 }
 
 impl InstallOutcome {
     /// Returns the installed package, or `None` if a different version was found.
     pub fn installed(self) -> Option<quilt::InstalledPackage> {
         match self {
-            InstallOutcome::Installed(pkg) => Some(pkg),
+            InstallOutcome::Installed(pkg) | InstallOutcome::LocalOnly(pkg) => Some(pkg),
             InstallOutcome::DifferentVersion { .. } => None,
         }
     }
@@ -160,7 +164,7 @@ pub trait QuiltModel {
                     .await?;
                 let installed_manifest_uri = match package_lineage.remote_uri.as_ref() {
                     Some(uri) => uri,
-                    None => return Ok(InstallCheck::NotInstalled),
+                    None => return Ok(InstallCheck::LocalOnly),
                 };
                 if manifest_uri.hash == installed_manifest_uri.hash {
                     Ok(InstallCheck::AlreadyInstalled)
@@ -452,6 +456,23 @@ pub async fn install_package_only(
                 requested_hash: manifest_uri.hash.clone(),
                 installed_hash,
             })
+        }
+        InstallCheck::LocalOnly => {
+            debug!(
+                "Local-only package already installed: {:?}",
+                manifest_uri.namespace
+            );
+            let installed_package = model
+                .get_installed_package(&manifest_uri.namespace)
+                .await?
+                .ok_or_else(|| {
+                    Error::Quilt(quilt::Error::InstallPackage(
+                        quilt::InstallPackageError::NotInstalled(
+                            manifest_uri.namespace.clone(),
+                        ),
+                    ))
+                })?;
+            Ok(InstallOutcome::LocalOnly(installed_package))
         }
         InstallCheck::NotInstalled => {
             debug!("Package not installed, installing: {:?}", manifest_uri);
@@ -928,7 +949,7 @@ pub mod mocks {
                 assert_eq!(requested_hash, "bbbb2222");
                 assert_eq!(installed_hash, "aaaa1111");
             }
-            InstallOutcome::Installed(_) => panic!("expected DifferentVersion, got Installed"),
+            other => panic!("expected DifferentVersion, got {other:?}"),
         }
 
         Ok(())
