@@ -5,8 +5,8 @@ use crate::io::storage::Storage;
 use crate::lineage::DomainLineage;
 use crate::paths;
 use crate::uri::Namespace;
-use crate::InstallPackageError;
 use crate::Error;
+use crate::InstallPackageError;
 use crate::Res;
 
 /// Uninstall package: remove files from working directory, manifest from `.quilt` and from

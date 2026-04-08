@@ -86,8 +86,7 @@ pub async fn load(
                 .render()
             }
             InstallOutcome::LocalOnly => {
-                let notification =
-                    t!("installed_package_notification.local_only").to_string();
+                let notification = t!("installed_package_notification.local_only").to_string();
                 ViewInstalledPackage::create(
                     model,
                     tracing,
@@ -111,10 +110,7 @@ pub async fn load(
                         })?;
                     if !model.is_path_installed(&installed_package, path).await? {
                         model
-                            .package_install_paths(
-                                &installed_package,
-                                std::slice::from_ref(path),
-                            )
+                            .package_install_paths(&installed_package, std::slice::from_ref(path))
                             .await?;
                     }
                     model

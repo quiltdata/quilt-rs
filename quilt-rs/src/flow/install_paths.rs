@@ -20,8 +20,8 @@ use crate::paths::DomainPaths;
 use crate::uri::Host;
 use crate::uri::Namespace;
 use crate::uri::S3Uri;
-use crate::InstallPathError;
 use crate::Error;
+use crate::InstallPathError;
 use crate::Res;
 
 async fn cache_immutable_object(

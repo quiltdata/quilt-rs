@@ -255,7 +255,9 @@ pub trait QuiltModel {
         let installed_package = self
             .get_installed_package(namespace)
             .await?
-            .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone())))?;
+            .ok_or_else(|| {
+                Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone()))
+            })?;
         let working_folder_path = installed_package.package_home().await?;
         if !working_folder_path.exists() {
             return Err(Error::PathNotFound(working_folder_path));

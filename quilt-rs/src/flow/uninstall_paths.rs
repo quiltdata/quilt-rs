@@ -8,8 +8,8 @@ use tracing::info;
 
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
-use crate::InstallPathError;
 use crate::Error;
+use crate::InstallPathError;
 use crate::Res;
 
 fn not_found_error(path: &Path) -> Error {

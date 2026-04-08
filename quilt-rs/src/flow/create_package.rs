@@ -20,8 +20,8 @@ use crate::manifest::ManifestRow;
 use crate::paths::DomainPaths;
 use crate::quiltignore;
 use crate::uri::Namespace;
-use crate::InstallPackageError;
 use crate::Error;
+use crate::InstallPackageError;
 use crate::Res;
 
 /// Walk a source directory recursively, collecting `(relative_path, absolute_path)` pairs.
@@ -85,7 +85,9 @@ pub async fn create_package(
     message: Option<String>,
 ) -> Res<DomainLineage> {
     if lineage.packages.contains_key(&namespace) {
-        return Err(Error::InstallPackage(InstallPackageError::AlreadyInstalled(namespace)));
+        return Err(Error::InstallPackage(
+            InstallPackageError::AlreadyInstalled(namespace),
+        ));
     }
 
     info!("⏳ Creating package: {}", namespace);

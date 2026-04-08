@@ -101,7 +101,11 @@ impl ViewMerge {
         let installed_package = model
             .get_installed_package(namespace)
             .await?
-            .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.to_owned())))?;
+            .ok_or_else(|| {
+                Error::from(quilt::InstallPackageError::NotInstalled(
+                    namespace.to_owned(),
+                ))
+            })?;
         let lineage = model
             .get_installed_package_lineage(&installed_package)
             .await?;
