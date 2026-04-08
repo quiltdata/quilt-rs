@@ -67,8 +67,10 @@ pub async fn load(
                 // Show the installed package page with a notification.
                 // The page already renders the appropriate sync button
                 // based on UpstreamState (Pull, Push, etc.).
-                let short_requested = &requested_hash[..requested_hash.len().min(8)];
-                let short_installed = &installed_hash[..installed_hash.len().min(8)];
+                // uri.path is intentionally ignored: the requested hash differs
+                // from the installed one, so opening a specific file would be unsafe.
+                let short_requested: String = requested_hash.chars().take(8).collect();
+                let short_installed: String = installed_hash.chars().take(8).collect();
                 let notification = t!(
                     "installed_package_notification.different_version",
                     requested => short_requested,
@@ -86,6 +88,8 @@ pub async fn load(
                 .render()
             }
             InstallOutcome::LocalOnly => {
+                // uri.path is intentionally ignored: without a remote origin
+                // we can't verify the requested version matches what's installed.
                 let notification = t!("installed_package_notification.local_only").to_string();
                 ViewInstalledPackage::create(
                     model,

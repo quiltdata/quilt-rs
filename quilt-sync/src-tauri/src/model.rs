@@ -15,6 +15,7 @@ use crate::telemetry::prelude::*;
 use quilt_rs::io::remote::HostConfig;
 
 /// Result of checking whether a package is already installed.
+#[derive(Debug)]
 pub enum InstallCheck {
     /// Exact same hash — already up to date
     AlreadyInstalled,
