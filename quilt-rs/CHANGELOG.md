@@ -8,6 +8,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.28.1] - 2026-04-08
+
+### Changed
+
+- Extract `InstallPackageError` and `InstallPathError` from the monolithic `Error` enum and return `InstallOutcome` instead of erroring when a different version is already installed (<https://github.com/quiltdata/quilt-rs/pull/605>)
+
 ## [v0.28.0] - 2026-04-07
 
 ### Added
