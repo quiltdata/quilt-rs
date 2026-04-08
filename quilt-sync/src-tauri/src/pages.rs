@@ -98,9 +98,17 @@ pub async fn load(
                 .with_notification(notification)
                 .render()
             }
-            InstallOutcome::Installed(installed_package) => {
+            InstallOutcome::Installed => {
                 // If URI has a path, handle it (for both already-installed and newly-installed packages)
                 if let Some(ref path) = uri.path {
+                    let installed_package = model
+                        .get_installed_package(&uri.namespace)
+                        .await?
+                        .ok_or_else(|| {
+                            Error::from(quilt::InstallPackageError::NotInstalled(
+                                uri.namespace.clone(),
+                            ))
+                        })?;
                     if !model.is_path_installed(&installed_package, path).await? {
                         model
                             .package_install_paths(
