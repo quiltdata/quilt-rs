@@ -266,7 +266,7 @@ pub trait QuiltModel {
         let installed_package = self
             .get_installed_package(namespace)
             .await?
-            .ok_or_else(|| Error::Quilt(quilt::Error::InstallPackage(quilt::InstallPackageError::NotInstalled(namespace.clone()))))?;
+            .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone())))?;
         let working_folder_path = installed_package.package_home().await?;
         if !working_folder_path.exists() {
             return Err(Error::PathNotFound(working_folder_path));
@@ -381,7 +381,7 @@ pub async fn package_commit(
     let installed_package = model
         .get_installed_package(&namespace)
         .await?
-        .ok_or_else(|| Error::Quilt(quilt::Error::InstallPackage(quilt::InstallPackageError::NotInstalled(namespace))))?;
+        .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace)))?;
 
     let workflow = installed_package.resolve_workflow(workflow).await?;
     model
@@ -552,7 +552,7 @@ pub async fn set_origin(
     let installed_package = model
         .get_installed_package(namespace)
         .await?
-        .ok_or_else(|| Error::Quilt(quilt::Error::InstallPackage(quilt::InstallPackageError::NotInstalled(namespace.clone()))))?;
+        .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone())))?;
     model.set_origin(&installed_package, origin).await?;
     Ok(())
 }
@@ -566,7 +566,7 @@ pub async fn set_remote(
     let installed_package = model
         .get_installed_package(namespace)
         .await?
-        .ok_or_else(|| Error::Quilt(quilt::Error::InstallPackage(quilt::InstallPackageError::NotInstalled(namespace.clone()))))?;
+        .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone())))?;
     model.set_remote(&installed_package, origin, bucket).await?;
     Ok(())
 }
