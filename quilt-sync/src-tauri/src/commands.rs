@@ -440,7 +440,7 @@ pub async fn get_login_data(location: String) -> Result<LoginData, String> {
 
 // ── Login error data for Leptos UI ──
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoginErrorData {
     pub title: String,
@@ -474,6 +474,42 @@ pub struct MergeData {
     pub origin_host: Option<String>,
 }
 
+async fn get_merge_data_from_model(
+    m: &impl model::QuiltModel,
+    tracing: &crate::telemetry::Telemetry,
+    namespace: &quilt::uri::Namespace,
+) -> Result<MergeData, Error> {
+    let installed_package = m
+        .get_installed_package(namespace)
+        .await?
+        .ok_or_else(|| {
+            Error::from(quilt::InstallPackageError::NotInstalled(
+                namespace.to_owned(),
+            ))
+        })?;
+
+    let lineage = m
+        .get_installed_package_lineage(&installed_package)
+        .await?;
+
+    let (uri, origin_host) =
+        crate::debug_tools::resolve_uri_and_host(lineage.remote_uri.as_ref(), namespace);
+    if let Some(host) = &origin_host {
+        tracing.add_host(host);
+    }
+
+    let origin_url = origin_host
+        .as_ref()
+        .and_then(|host| uri.display_for_host(host).ok())
+        .map(|u| u.to_string());
+
+    Ok(MergeData {
+        namespace: namespace.to_string(),
+        origin_url,
+        origin_host: origin_host.map(|h| h.to_string()),
+    })
+}
+
 #[tauri::command]
 pub async fn get_merge_data(
     m: tauri::State<'_, model::Model>,
@@ -489,35 +525,9 @@ pub async fn get_merge_data(
         _ => return Err("Expected merge route".to_string()),
     };
 
-    let m: &model::Model = &m;
-
-    let installed_package = m
-        .get_installed_package(&namespace)
+    get_merge_data_from_model(&*m, &tracing, &namespace)
         .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("Package {namespace} is not installed"))?;
-
-    let lineage = m
-        .get_installed_package_lineage(&installed_package)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let (uri, origin_host) =
-        crate::debug_tools::resolve_uri_and_host(lineage.remote_uri.as_ref(), &namespace);
-    if let Some(host) = &origin_host {
-        tracing.add_host(host);
-    }
-
-    let origin_url = origin_host
-        .as_ref()
-        .and_then(|host| uri.display_for_host(host).ok())
-        .map(|u| u.to_string());
-
-    Ok(MergeData {
-        namespace: namespace.to_string(),
-        origin_url,
-        origin_host: origin_host.map(|h| h.to_string()),
-    })
+        .map_err(|e| e.to_string())
 }
 
 // ── Setup data for Leptos UI ──
@@ -1360,11 +1370,66 @@ pub async fn test_quiltignore_pattern(pattern: String, path: String) -> Result<b
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::mocks;
 
     #[tokio::test]
     async fn test_load_empty() -> Result<(), String> {
         let result = load_empty().await?;
         assert_eq!(result, "");
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_login_error_data() -> Result<(), String> {
+        let location =
+            "http://test:1234/pages/login-error.html#host=test.quilt.dev&title=Login%20failed&error=Auth%20failed"
+                .to_string();
+        let data = get_login_error_data(location).await?;
+        assert_eq!(data.title, "Login failed");
+        assert_eq!(data.message, "Auth failed");
+        assert_eq!(data.login_host, "test.quilt.dev");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_login_error_data_wrong_route() {
+        let location = "http://test:1234/pages/settings.html".to_string();
+        let result = get_login_error_data(location).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Expected login-error route"));
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_data() -> Result<(), String> {
+        let mut model = mocks::create();
+        mocks::mock_installed_package(&mut model);
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("foo", "bar").into();
+
+        let data = get_merge_data_from_model(&model, &tracing, &namespace)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        assert_eq!(data.namespace, "foo/bar");
+        assert!(data.origin_url.is_some());
+        assert!(data
+            .origin_url
+            .unwrap()
+            .contains("test.quilt.dev"));
+        assert_eq!(data.origin_host, Some("test.quilt.dev".to_string()));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_merge_data_not_installed() {
+        let mut model = mocks::create();
+        model
+            .expect_get_installed_package()
+            .returning(|_| Ok(None));
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("missing", "package").into();
+
+        let result = get_merge_data_from_model(&model, &tracing, &namespace).await;
+        assert!(result.is_err());
     }
 }
