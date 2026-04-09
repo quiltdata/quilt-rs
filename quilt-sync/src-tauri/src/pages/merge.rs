@@ -163,7 +163,7 @@ mod tests {
 
         // Check for breadcrumbs
         assert!(html.contains(
-            r#"<a class="qui-breadcrumb-link" title="test/package" href="installed-package.html#namespace=test/package&#38;filter=unmodified">test/package</a>"#
+            r#"<a class="qui-breadcrumb-link" title="test/package" href="/installed-package?namespace=test/package&#38;filter=unmodified">test/package</a>"#
         ));
         assert!(
             html.contains(r#"<strong class="qui-breadcrumb-current" title="Merge">Merge</strong>"#)

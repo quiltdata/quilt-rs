@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use leptos_router::hooks::use_query_map;
 use serde::{Deserialize, Serialize};
 
 use crate::components::{Layout, Spinner};
@@ -20,16 +21,21 @@ pub struct LoginErrorData {
 pub fn Error() -> impl IntoView {
     let notification = RwSignal::new(String::new());
 
-    let data = LocalResource::new(move || async {
-        let location = web_sys::window()
-            .and_then(|w| w.location().href().ok())
-            .unwrap_or_default();
-
-        #[derive(Serialize)]
-        struct Args {
-            location: String,
+    let query = use_query_map();
+    let data = LocalResource::new(move || {
+        let host = query.read().get("host").unwrap_or_default();
+        let title = query.read().get("title");
+        let error = query.read().get("error").unwrap_or_default();
+        async move {
+            #[derive(Serialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Args {
+                host: String,
+                title: Option<String>,
+                error: String,
+            }
+            tauri::invoke::<_, LoginErrorData>("get_login_error_data", &Args { host, title, error }).await
         }
-        tauri::invoke::<_, LoginErrorData>("get_login_error_data", &Args { location }).await
     });
 
     view! {
@@ -79,8 +85,9 @@ fn ErrorContent(data: LoginErrorData, notification: RwSignal<String>) -> impl In
     };
 
     let login_host = data.login_host.clone();
+    let back_encoded = urlencoding::encode("/installed-packages-list");
     let login_href = format!(
-        "login.html#host={}&back=installed-packages-list.html",
+        "/login?host={}&back={back_encoded}",
         login_host
     );
 
@@ -102,7 +109,7 @@ fn ErrorContent(data: LoginErrorData, notification: RwSignal<String>) -> impl In
                         <span>"Login"</span>
                     </button>
                 </a>
-                <a href="installed-packages-list.html">
+                <a href="/installed-packages-list">
                     <button class="qui-button primary" type="button">
                         <span>"Go home"</span>
                     </button>

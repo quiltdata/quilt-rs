@@ -160,16 +160,13 @@ pub struct InstalledPackageData {
 pub async fn get_installed_package_data(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
-    location: String,
+    namespace: String,
+    filter: Option<String>,
 ) -> Result<InstalledPackageData, String> {
-    let path = location
-        .parse::<routes::Paths>()
-        .map_err(|e| e.to_string())?;
-
-    let (namespace, filter) = match path {
-        routes::Paths::InstalledPackage(ns, f) => (ns, f),
-        _ => return Err("Expected installed-package route".to_string()),
-    };
+    let namespace: quilt::uri::Namespace = namespace.try_into().map_err(|e: quilt::Error| e.to_string())?;
+    let filter = filter
+        .map(|f| routes::EntriesFilter::from_filter_str(&f))
+        .unwrap_or_default();
 
     let m: &model::Model = &m;
 
@@ -420,22 +417,13 @@ pub struct LoginData {
 }
 
 #[tauri::command]
-pub async fn get_login_data(location: String) -> Result<LoginData, String> {
-    let path = location
-        .parse::<routes::Paths>()
-        .map_err(|e| e.to_string())?;
-
-    match path {
-        routes::Paths::Login(host, back) => {
-            let catalog_url = format!("https://{host}/code");
-            Ok(LoginData {
-                host: host.to_string(),
-                back,
-                catalog_url,
-            })
-        }
-        _ => Err("Expected login route".to_string()),
-    }
+pub async fn get_login_data(host: String, back: String) -> Result<LoginData, String> {
+    let catalog_url = format!("https://{host}/code");
+    Ok(LoginData {
+        host,
+        back,
+        catalog_url,
+    })
 }
 
 // ── Login error data for Leptos UI ──
@@ -449,19 +437,16 @@ pub struct LoginErrorData {
 }
 
 #[tauri::command]
-pub async fn get_login_error_data(location: String) -> Result<LoginErrorData, String> {
-    let path = location
-        .parse::<routes::Paths>()
-        .map_err(|e| e.to_string())?;
-
-    match path {
-        routes::Paths::LoginError(host, title, error) => Ok(LoginErrorData {
-            title,
-            message: error,
-            login_host: host.to_string(),
-        }),
-        _ => Err("Expected login-error route".to_string()),
-    }
+pub async fn get_login_error_data(
+    host: String,
+    title: Option<String>,
+    error: String,
+) -> Result<LoginErrorData, String> {
+    Ok(LoginErrorData {
+        title: title.unwrap_or_else(|| "Login failed".into()),
+        message: error,
+        login_host: host,
+    })
 }
 
 // ── Merge data for Leptos UI ──
@@ -514,16 +499,9 @@ async fn get_merge_data_from_model(
 pub async fn get_merge_data(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
-    location: String,
+    namespace: String,
 ) -> Result<MergeData, String> {
-    let path = location
-        .parse::<routes::Paths>()
-        .map_err(|e| e.to_string())?;
-
-    let namespace = match path {
-        routes::Paths::Merge(ns) => ns,
-        _ => return Err("Expected merge route".to_string()),
-    };
+    let namespace: quilt::uri::Namespace = namespace.try_into().map_err(|e: quilt::Error| e.to_string())?;
 
     get_merge_data_from_model(&*m, &tracing, &namespace)
         .await
@@ -730,16 +708,9 @@ async fn get_commit_data_from_model(
 pub async fn get_commit_data(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
-    location: String,
+    namespace: String,
 ) -> Result<CommitData, String> {
-    let path = location
-        .parse::<routes::Paths>()
-        .map_err(|e| e.to_string())?;
-
-    let namespace = match path {
-        routes::Paths::Commit(ns, _) => ns,
-        _ => return Err("Expected commit route".to_string()),
-    };
+    let namespace: quilt::uri::Namespace = namespace.try_into().map_err(|e: quilt::Error| e.to_string())?;
 
     get_commit_data_from_model(&*m, &tracing, &namespace)
         .await
@@ -1699,6 +1670,85 @@ pub async fn test_quiltignore_pattern(pattern: String, path: String) -> Result<b
     Ok(quilt::junk::pattern_matches(&pattern, &path))
 }
 
+// ── Remote package handling for Leptos UI ──
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemotePackageResult {
+    pub namespace: String,
+    pub notification: Option<String>,
+}
+
+#[tauri::command]
+pub async fn handle_remote_package(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    uri: String,
+) -> Result<RemotePackageResult, String> {
+    let s3_uri: quilt::uri::S3PackageUri = uri.parse().map_err(|e: quilt::Error| e.to_string())?;
+    let namespace = s3_uri.namespace.to_string();
+
+    let m: &model::Model = &m;
+    let _tracing: &crate::telemetry::Telemetry = &tracing;
+
+    match model::install_package_only(m, &s3_uri)
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        model::InstallOutcome::DifferentVersion {
+            requested_hash,
+            installed_hash,
+        } => {
+            let short_requested: String = requested_hash.chars().take(8).collect();
+            let short_installed: String = installed_hash.chars().take(8).collect();
+            let notification = rust_i18n::t!(
+                "installed_package_notification.different_version",
+                requested => short_requested,
+                installed => short_installed,
+            )
+            .to_string();
+            Ok(RemotePackageResult {
+                namespace,
+                notification: Some(notification),
+            })
+        }
+        model::InstallOutcome::LocalOnly => {
+            let notification =
+                rust_i18n::t!("installed_package_notification.local_only").to_string();
+            Ok(RemotePackageResult {
+                namespace,
+                notification: Some(notification),
+            })
+        }
+        model::InstallOutcome::Installed => {
+            // If URI has a path, install it and open in default application
+            if let Some(ref path) = s3_uri.path {
+                let installed_package = m
+                    .get_installed_package(&s3_uri.namespace)
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| format!("Package {namespace} is not installed"))?;
+                if !m
+                    .is_path_installed(&installed_package, path)
+                    .await
+                    .map_err(|e| e.to_string())?
+                {
+                    m.package_install_paths(&installed_package, std::slice::from_ref(path))
+                        .await
+                        .map_err(|e| e.to_string())?;
+                }
+                m.open_in_default_application(&s3_uri.namespace, path)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            }
+            Ok(RemotePackageResult {
+                namespace,
+                notification: None,
+            })
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1713,10 +1763,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_login_error_data() -> Result<(), String> {
-        let location =
-            "http://test:1234/pages/login-error.html#host=test.quilt.dev&title=Login%20failed&error=Auth%20failed"
-                .to_string();
-        let data = get_login_error_data(location).await?;
+        let data = get_login_error_data(
+            "test.quilt.dev".to_string(),
+            Some("Login failed".to_string()),
+            "Auth failed".to_string(),
+        )
+        .await?;
         assert_eq!(data.title, "Login failed");
         assert_eq!(data.message, "Auth failed");
         assert_eq!(data.login_host, "test.quilt.dev");
@@ -1724,11 +1776,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_login_error_data_wrong_route() {
-        let location = "http://test:1234/pages/settings.html".to_string();
-        let result = get_login_error_data(location).await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Expected login-error route"));
+    async fn test_get_login_error_data_default_title() -> Result<(), String> {
+        let data = get_login_error_data(
+            "test.quilt.dev".to_string(),
+            None,
+            "Auth failed".to_string(),
+        )
+        .await?;
+        assert_eq!(data.title, "Login failed");
+        assert_eq!(data.message, "Auth failed");
+        Ok(())
     }
 
     #[tokio::test]

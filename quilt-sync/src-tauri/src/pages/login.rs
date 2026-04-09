@@ -107,7 +107,7 @@ mod tests {
 
         let view = ViewLogin {
             host: host.clone(),
-            back: Some("installed-packages-list.html".to_string()),
+            back: Some("/installed-packages-list".to_string()),
         };
 
         let html = view.render()?;
@@ -115,7 +115,7 @@ mod tests {
         // Check for OAuth login button with back
         assert!(html.contains(r#"js-login-oauth"#));
         assert!(html.contains(&format!(r#"data-host="{host}""#)));
-        assert!(html.contains(r#"data-back="installed-packages-list.html"#));
+        assert!(html.contains(r#"data-back="/installed-packages-list"#));
 
         // Check for code input form
         assert!(html.contains(r#"id="code""#));
@@ -135,12 +135,12 @@ mod tests {
     #[test]
     fn test_login_oauth_button_with_back() -> Result {
         let host: Host = "test.quilt.dev".parse()?;
-        let btn = TmplPageLogin::login_oauth(&host, Some("some-page.html"));
+        let btn = TmplPageLogin::login_oauth(&host, Some("/some-page"));
         let html = btn.to_string();
 
         assert!(html.contains(r#"js-login-oauth"#));
         assert!(html.contains(r#"data-host="test.quilt.dev""#));
-        assert!(html.contains(r#"data-back="some-page.html""#));
+        assert!(html.contains(r#"data-back="/some-page""#));
         assert!(html.contains(r#"primary"#));
         assert!(html.contains(r#"large"#));
 

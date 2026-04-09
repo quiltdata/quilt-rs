@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use leptos_router::hooks::use_navigate;
 use serde::{Deserialize, Serialize};
 
 use crate::components::{Layout, Spinner};
@@ -78,12 +79,14 @@ fn SetupContent(default_home: String) -> impl IntoView {
         });
     };
 
+    let navigate = use_navigate();
     let on_save = move |_| {
         if saving.get_untracked() {
             return;
         }
         saving.set(true);
         hint.set(String::new());
+        let navigate = navigate.clone();
         leptos::task::spawn_local(async move {
             #[derive(Serialize)]
             struct Args {
@@ -98,10 +101,7 @@ fn SetupContent(default_home: String) -> impl IntoView {
             .await
             {
                 Ok(_) => {
-                    // Navigate to installed packages list
-                    if let Some(window) = web_sys::window() {
-                        let _ = window.location().assign("installed-packages-list.html");
-                    }
+                    navigate("/installed-packages-list", Default::default());
                 }
                 Err(e) => {
                     hint.set(e);

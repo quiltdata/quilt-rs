@@ -1,11 +1,39 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
-  <head>
-    <script>
-      const base = window.location.href;
-      const url = new URL('/pages/installed-packages-list.html', base);
-      window.location.assign(url);
-    </script>
-  </head>
-  <body></body>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="/assets/css/styles.css" />
+  <link rel="stylesheet" href="/assets/css/views/layout.css" />
+  <link rel="stylesheet" href="/assets/css/views/actionbar.css" />
+  <link rel="stylesheet" href="/assets/css/views/appbar.css" />
+  <link rel="stylesheet" href="/assets/css/views/logo.css" />
+  <link rel="stylesheet" href="/assets/css/views/notify.css" />
+  <link rel="stylesheet" href="/assets/css/views/popup.css" />
+  <link rel="stylesheet" href="/assets/css/views/toolbar.css" />
+  <link rel="stylesheet" href="/assets/css/views/breadcrumbs.css" />
+  <link rel="stylesheet" href="/assets/css/views/entry.css" />
+  <link rel="stylesheet" href="/assets/css/views/uri.css" />
+  <link rel="stylesheet" href="/assets/css/views/status.css" />
+  <link rel="stylesheet" href="/assets/css/views/installed-package-item.css" />
+  <link rel="stylesheet" href="/assets/css/views/progress.css" />
+  <link rel="stylesheet" href="/assets/css/views/entries-toolbar.css" />
+  <link rel="stylesheet" href="/assets/css/components/button.css" />
+  <link rel="stylesheet" href="/assets/css/components/entries-filter.css" />
+  <link rel="stylesheet" href="/assets/css/components/ignore-popup.css" />
+  <link rel="stylesheet" href="/assets/css/pages/commit.css" />
+  <link rel="stylesheet" href="/assets/css/pages/error.css" />
+  <link rel="stylesheet" href="/assets/css/pages/installed-package.css" />
+  <link rel="stylesheet" href="/assets/css/pages/installed-packages-list.css" />
+  <link rel="stylesheet" href="/assets/css/pages/login.css" />
+  <link rel="stylesheet" href="/assets/css/pages/merge.css" />
+  <link rel="stylesheet" href="/assets/css/pages/settings.css" />
+  <link rel="stylesheet" href="/assets/css/pages/setup.css" />
+  <script src="/dist/json-editor.js"></script>
+  <script type="module">
+    import init from '/leptos/quilt-sync-ui.js';
+    await init({ module_or_path: '/leptos/quilt-sync-ui_bg.wasm' });
+  </script>
+</head>
+<body></body>
 </html>

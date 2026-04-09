@@ -404,7 +404,7 @@ mod tests {
         // Check for merge button in the package with Diverged status
         assert!(html.contains(r#"data-namespace="test/diverged""#));
         assert!(html.contains(r#"merge"#));
-        assert!(html.contains(r#"href="merge.html#namespace=test/diverged""#));
+        assert!(html.contains(r#"href="/merge?namespace=test/diverged""#));
 
         // Check that all packages have common buttons
         for namespace in [
@@ -414,7 +414,7 @@ mod tests {
             "test/uptodate",
         ] {
             // Check for commit button
-            assert!(html.contains(&format!(r#"href="commit.html#namespace={namespace}""#)));
+            assert!(html.contains(&format!(r#"href="/commit?namespace={namespace}""#)));
 
             // Check for open local button
             assert!(html.contains(&format!(r#"data-namespace="{namespace}""#)));
@@ -465,13 +465,13 @@ mod tests {
         let diverged_tmpl = TmplInstalledPackage::from(diverged_package);
         let diverged_html = diverged_tmpl.to_string();
         assert!(diverged_html.contains(r#"merge"#));
-        assert!(diverged_html.contains(r#"href="merge.html#namespace=test/diverged""#));
+        assert!(diverged_html.contains(r#"href="/merge?namespace=test/diverged""#));
 
         // Check that UpToDate status doesn't have merge button
         let uptodate_tmpl = TmplInstalledPackage::from(uptodate_package);
         let uptodate_html = uptodate_tmpl.to_string();
         assert!(!uptodate_html.contains(r#"merge"#));
-        assert!(!uptodate_html.contains(r#"href="merge.html"#));
+        assert!(!uptodate_html.contains(r#"href="/merge"#));
 
         Ok(())
     }
@@ -515,18 +515,18 @@ mod tests {
         // Error status should not show push, pull, or merge buttons
         assert!(!error_html.contains(r#"js-packages-push"#));
         assert!(!error_html.contains(r#"js-packages-pull"#));
-        assert!(!error_html.contains(r#"href="merge.html"#));
+        assert!(!error_html.contains(r#"href="/merge"#));
 
         // Should still show "Open in Catalog" since origin is valid
         assert!(error_html.contains(r#"js-open-in-web-browser"#));
 
         // Should show Login button for StatusFailed
         assert!(error_html.contains(
-            r#"href="login.html#host=test.quilt.dev&#38;back=installed-packages-list.html""#
+            r#"href="/login?host=test.quilt.dev&#38;back=%2Finstalled-packages-list""#
         ));
 
         // Should not show commit button for error-state packages
-        assert!(!error_html.contains(r#"href="commit.html"#));
+        assert!(!error_html.contains(r#"href="/commit"#));
 
         // But should still have common buttons
         assert!(error_html.contains(r#"js-open-in-file-browser"#));
@@ -549,7 +549,7 @@ mod tests {
         assert!(no_origin_html.contains(r#"data-namespace="test/noorigin""#));
 
         // Should NOT show Login button
-        assert!(!no_origin_html.contains(r#"href="login.html"#));
+        assert!(!no_origin_html.contains(r#"href="/login"#));
 
         Ok(())
     }
@@ -580,7 +580,7 @@ mod tests {
         assert!(!html.contains(r#"js-set-remote"#));
 
         // Should show commit button
-        assert!(html.contains(r#"href="commit.html"#));
+        assert!(html.contains(r#"href="/commit"#));
 
         Ok(())
     }

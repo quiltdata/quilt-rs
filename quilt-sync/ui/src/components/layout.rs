@@ -3,7 +3,7 @@ use leptos::prelude::*;
 /// Breadcrumb link item (navigates to a page).
 #[derive(Clone)]
 pub struct BreadcrumbLink {
-    pub href: &'static str,
+    pub href: String,
     pub title: String,
 }
 
@@ -49,7 +49,7 @@ pub fn Layout(
                             <img class="qui-icon" src="/assets/img/icons/refresh.svg" />
                             <span>"Refresh"</span>
                         </button>
-                        <a href="settings.html">
+                        <a href="/settings">
                             <button class="qui-button link" type="button">
                                 <img class="qui-icon" src="/assets/img/icons/gear.svg" />
                                 <span>"Settings"</span>

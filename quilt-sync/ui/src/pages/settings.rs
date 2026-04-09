@@ -40,7 +40,7 @@ pub fn Settings() -> impl IntoView {
 
     let breadcrumbs = vec![
         BreadcrumbItem::Link(BreadcrumbLink {
-            href: "installed-packages-list.html",
+            href: "/installed-packages-list".to_string(),
             title: String::new(),
         }),
         BreadcrumbItem::Current("Settings".to_string()),
@@ -185,7 +185,8 @@ fn AccountSection(auth_hosts: Vec<String>, notification: RwSignal<String>) -> im
 fn AuthHostRow(host: String, notification: RwSignal<String>) -> impl IntoView {
     let host_display = host.clone();
     let host_for_logout = host.clone();
-    let login_href = format!("login.html#host={}&back=settings.html", urlencoding(&host));
+    let back_encoded = urlencoding("/settings");
+    let login_href = format!("/login?host={}&back={back_encoded}", urlencoding(&host));
 
     view! {
         <dt>{host_display}</dt>

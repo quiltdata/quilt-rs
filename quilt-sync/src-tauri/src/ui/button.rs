@@ -348,7 +348,7 @@ mod tests {
             .set_href(Paths::InstalledPackagesList);
 
         let html = button.to_string();
-        assert!(html.contains(r#"<a href="installed-packages-list.html">"#));
+        assert!(html.contains(r#"<a href="/installed-packages-list">"#));
         assert!(html.contains("</a>"));
     }
 
@@ -380,7 +380,7 @@ mod tests {
             .set_data("form", "#form")
             .set_href(Paths::InstalledPackagesList);
 
-        let snapshot = r##"<style> @import url("/assets/css/components/button.css"); </style><a href="installed-packages-list.html"><button class="qui-button primary js-packages-commit large" data-form="#form" type="button"><img class="qui-icon" src="/assets/img/icons/done.svg" /><span>Complete Button</span></button></a>"##;
+        let snapshot = r##"<style> @import url("/assets/css/components/button.css"); </style><a href="/installed-packages-list"><button class="qui-button primary js-packages-commit large" data-form="#form" type="button"><img class="qui-icon" src="/assets/img/icons/done.svg" /><span>Complete Button</span></button></a>"##;
 
         let html = button.to_string();
         assert_eq!(strip_whitespace(html), snapshot)

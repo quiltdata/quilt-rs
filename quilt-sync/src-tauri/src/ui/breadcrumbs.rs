@@ -132,7 +132,7 @@ mod tests {
         // The home link should have an empty title but valid href
         assert!(html.contains(r#"<a class="qui-breadcrumb-link""#));
         assert!(html.contains(r#"title="""#));
-        assert!(html.contains(r#"href="installed-packages-list.html""#));
+        assert!(html.contains(r#"href="/installed-packages-list""#));
     }
 
     #[test]

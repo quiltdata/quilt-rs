@@ -185,7 +185,7 @@ fn PackageItem(
     };
 
     let pkg_href = format!(
-        "installed-package.html#namespace={}&filter=unmodified",
+        "/installed-package?namespace={}&filter=unmodified",
         data.namespace
     );
 
@@ -266,7 +266,7 @@ fn build_package_menu(
     };
 
     // ── Commit ──
-    let commit_href = format!("commit.html#namespace={}", namespace);
+    let commit_href = format!("/commit?namespace={}", namespace);
 
     // ── Sync button (Push/Pull) ──
     let sync_button = match status.as_str() {
@@ -278,7 +278,7 @@ fn build_package_menu(
 
     // ── Merge button ──
     let merge_href = if status == "diverged" {
-        Some(format!("merge.html#namespace={}", namespace))
+        Some(format!("/merge?namespace={}", namespace))
     } else {
         None
     };
@@ -499,8 +499,9 @@ fn build_error_action(
         // Has origin_host but error — offer login
         _ if origin_host.is_some() && status == "error" => {
             let host = origin_host.unwrap().to_string();
+            let back_encoded = urlencoding("/installed-packages-list");
             let login_href = format!(
-                "login.html#host={}&back=installed-packages-list.html",
+                "/login?host={}&back={back_encoded}",
                 host
             );
             Some(
@@ -991,4 +992,10 @@ fn unlock_ui() {
     {
         let _ = el.remove_attribute("disabled");
     }
+}
+
+fn urlencoding(s: &str) -> String {
+    js_sys::encode_uri_component(s)
+        .as_string()
+        .unwrap_or_default()
 }

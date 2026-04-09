@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use leptos_router::hooks::{use_navigate, use_query_map};
 use serde::{Deserialize, Serialize};
 
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
@@ -22,16 +23,17 @@ pub struct MergeData {
 pub fn Merge() -> impl IntoView {
     let notification = RwSignal::new(String::new());
 
-    let data = LocalResource::new(move || async {
-        let location = web_sys::window()
-            .and_then(|w| w.location().href().ok())
-            .unwrap_or_default();
-
-        #[derive(Serialize)]
-        struct Args {
-            location: String,
+    let query = use_query_map();
+    let data = LocalResource::new(move || {
+        let namespace = query.read().get("namespace").unwrap_or_default();
+        async move {
+            #[derive(Serialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Args {
+                namespace: String,
+            }
+            tauri::invoke::<_, MergeData>("get_merge_data", &Args { namespace }).await
         }
-        tauri::invoke::<_, MergeData>("get_merge_data", &Args { location }).await
     });
 
     view! {
@@ -46,11 +48,10 @@ pub fn Merge() -> impl IntoView {
                 match data.await {
                     Ok(d) => {
                         let ns = d.namespace.clone();
-                        let pkg_href: &'static str =
-                            Box::leak(format!("installed-package.html#namespace={ns}&filter=unmodified").into_boxed_str());
+                        let pkg_href = format!("/installed-package?namespace={ns}&filter=unmodified");
                         let breadcrumbs = vec![
                             BreadcrumbItem::Link(BreadcrumbLink {
-                                href: "installed-packages-list.html",
+                                href: "/installed-packages-list".to_string(),
                                 title: String::new(),
                             }),
                             BreadcrumbItem::Link(BreadcrumbLink {
@@ -89,10 +90,13 @@ pub fn Merge() -> impl IntoView {
 #[component]
 fn MergeContent(data: MergeData, notification: RwSignal<String>) -> impl IntoView {
     let namespace = data.namespace.clone();
+    let navigate = use_navigate();
 
     let ns_for_certify = namespace.clone();
+    let navigate_for_certify = navigate.clone();
     let on_certify = move |_| {
         let ns = ns_for_certify.clone();
+        let navigate = navigate_for_certify.clone();
         lock_ui();
         leptos::task::spawn_local(async move {
             #[derive(Serialize)]
@@ -104,11 +108,10 @@ fn MergeContent(data: MergeData, notification: RwSignal<String>) -> impl IntoVie
             {
                 Ok(html) => {
                     notification.set(html);
-                    if let Some(window) = web_sys::window() {
-                        let _ = window.location().assign(&format!(
-                            "installed-package.html#namespace={ns}&filter=unmodified"
-                        ));
-                    }
+                    navigate(
+                        &format!("/installed-package?namespace={ns}&filter=unmodified"),
+                        Default::default(),
+                    );
                 }
                 Err(e) => {
                     unlock_ui();
@@ -119,8 +122,10 @@ fn MergeContent(data: MergeData, notification: RwSignal<String>) -> impl IntoVie
     };
 
     let ns_for_reset = namespace.clone();
+    let navigate_for_reset = navigate.clone();
     let on_reset = move |_| {
         let ns = ns_for_reset.clone();
+        let navigate = navigate_for_reset.clone();
         lock_ui();
         leptos::task::spawn_local(async move {
             #[derive(Serialize)]
@@ -130,11 +135,10 @@ fn MergeContent(data: MergeData, notification: RwSignal<String>) -> impl IntoVie
             match tauri::invoke::<_, String>("reset_local", &Args { namespace: ns.clone() }).await {
                 Ok(html) => {
                     notification.set(html);
-                    if let Some(window) = web_sys::window() {
-                        let _ = window.location().assign(&format!(
-                            "installed-package.html#namespace={ns}&filter=unmodified"
-                        ));
-                    }
+                    navigate(
+                        &format!("/installed-package?namespace={ns}&filter=unmodified"),
+                        Default::default(),
+                    );
                 }
                 Err(e) => {
                     unlock_ui();
@@ -182,6 +186,8 @@ fn build_toolbar_actions(data: &MergeData, notification: RwSignal<String>) -> To
     let origin_url = data.origin_url.clone();
 
     ToolbarActions::new(move || {
+        let navigate = use_navigate();
+
         let ns_for_folder = namespace.clone();
         let on_open_folder = move |_| {
             let ns = ns_for_folder.clone();
@@ -216,6 +222,7 @@ fn build_toolbar_actions(data: &MergeData, notification: RwSignal<String>) -> To
         let ns_for_uninstall = namespace.clone();
         let on_uninstall = move |_| {
             let ns = ns_for_uninstall.clone();
+            let navigate = navigate.clone();
             lock_ui();
             leptos::task::spawn_local(async move {
                 #[derive(Serialize)]
@@ -227,9 +234,7 @@ fn build_toolbar_actions(data: &MergeData, notification: RwSignal<String>) -> To
                 {
                     Ok(html) => {
                         notification.set(html);
-                        if let Some(window) = web_sys::window() {
-                            let _ = window.location().assign("installed-packages-list.html");
-                        }
+                        navigate("/installed-packages-list", Default::default());
                     }
                     Err(e) => {
                         unlock_ui();

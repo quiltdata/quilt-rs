@@ -84,7 +84,7 @@ pub enum RouteError {
     MissingS3UriQuery(Url),
 }
 
-/// Dummy base used to resolve relative URLs such as `"settings.html"` that
+/// Dummy base used to resolve relative URLs such as `"/settings"` that
 /// come from `Paths::Display` when used as the `back` parameter.
 const RELATIVE_URL_BASE: &str = "http://relative.invalid/";
 
@@ -97,7 +97,6 @@ fn parse_url(location: &str) -> Result<Url, Error> {
 
 fn parse_page(location: &str) -> Result<String, Error> {
     let uri = parse_url(location)?;
-    // NOTE: it is a temporary variable just to get the last element of it
     let mut segments = match uri.path_segments() {
         Some(segments) => segments,
         None => return Err(Error::PageUrl(RouteError::NoPathSegments(uri))),
@@ -110,7 +109,7 @@ fn parse_page(location: &str) -> Result<String, Error> {
 }
 
 #[derive(Debug, serde::Deserialize)]
-struct FragmentNamespaceParsed {
+struct QueryNamespaceParsed {
     pub namespace: String,
     #[serde(default)]
     pub filter: Option<String>,
@@ -118,21 +117,20 @@ struct FragmentNamespaceParsed {
 
 fn parse_namespace(location: &str) -> Result<String, Error> {
     let uri = parse_url(location)?;
-    let namespace = match uri.fragment() {
-        Some(n) => {
-            let qs: FragmentNamespaceParsed = serde_qs::from_str(n)?;
-            qs.namespace
+    match uri.query() {
+        Some(q) => {
+            let qs: QueryNamespaceParsed = serde_qs::from_str(q)?;
+            Ok(qs.namespace)
         }
-        None => "".to_string(),
-    };
-    Ok(namespace)
+        None => Ok(String::new()),
+    }
 }
 
 fn parse_filter(location: &str) -> Result<EntriesFilter, Error> {
     let uri = parse_url(location)?;
-    match uri.fragment() {
-        Some(n) => {
-            let qs: FragmentNamespaceParsed = serde_qs::from_str(n)?;
+    match uri.query() {
+        Some(q) => {
+            let qs: QueryNamespaceParsed = serde_qs::from_str(q)?;
             Ok(qs
                 .filter
                 .map(|f| EntriesFilter::from_filter_str(&f))
@@ -143,16 +141,16 @@ fn parse_filter(location: &str) -> Result<EntriesFilter, Error> {
 }
 
 #[derive(Debug, serde::Deserialize)]
-struct FragmentLoginParsed {
+struct QueryLoginParsed {
     pub host: quilt::uri::Host,
     pub back: String,
 }
 
 fn parse_login(location: &str) -> Result<(quilt::uri::Host, String), Error> {
     let uri = parse_url(location)?;
-    match uri.fragment() {
-        Some(n) => {
-            let qs: FragmentLoginParsed = serde_qs::from_str(n)?;
+    match uri.query() {
+        Some(q) => {
+            let qs: QueryLoginParsed = serde_qs::from_str(q)?;
             Ok((qs.host, qs.back))
         }
         None => Err(Error::PageUrl(RouteError::MissingHostFragment(uri))),
@@ -160,7 +158,7 @@ fn parse_login(location: &str) -> Result<(quilt::uri::Host, String), Error> {
 }
 
 #[derive(Debug, serde::Deserialize)]
-struct FragmentLoginErrorParsed {
+struct QueryLoginErrorParsed {
     pub host: quilt::uri::Host,
     #[serde(default)]
     pub title: Option<String>,
@@ -169,9 +167,9 @@ struct FragmentLoginErrorParsed {
 
 fn parse_login_error(location: &str) -> Result<(quilt::uri::Host, Option<String>, String), Error> {
     let uri = parse_url(location)?;
-    match uri.fragment() {
-        Some(n) => {
-            let qs: FragmentLoginErrorParsed = serde_qs::from_str(n)?;
+    match uri.query() {
+        Some(q) => {
+            let qs: QueryLoginErrorParsed = serde_qs::from_str(q)?;
             Ok((qs.host, qs.title, qs.error))
         }
         None => Err(Error::PageUrl(RouteError::MissingHostFragment(uri))),
@@ -179,16 +177,15 @@ fn parse_login_error(location: &str) -> Result<(quilt::uri::Host, Option<String>
 }
 
 #[derive(Debug, serde::Deserialize)]
-struct FragmentRemotePackage {
+struct QueryRemotePackage {
     pub uri: String,
 }
 
 fn parse_s3_package_uri(location: &str) -> Result<quilt::uri::S3PackageUri, Error> {
     let uri = parse_url(location)?;
     match uri.query() {
-        Some(n) => {
-            // TODO: replace unwrap() with ? to avoid a panic on a malformed uri query param
-            let qs: FragmentRemotePackage = serde_qs::from_str(n).unwrap();
+        Some(q) => {
+            let qs: QueryRemotePackage = serde_qs::from_str(q)?;
             debug!("Pre-parsed URI is {}", qs.uri);
             Ok(quilt::uri::S3PackageUri::try_from(qs.uri.as_str())?)
         }
@@ -225,50 +222,50 @@ impl fmt::Display for Paths {
             Paths::Commit(namespace, filter) => {
                 let filter_str = filter.to_string();
                 if filter_str.is_empty() {
-                    write!(f, "commit.html#namespace={namespace}")
+                    write!(f, "/commit?namespace={namespace}")
                 } else {
-                    write!(f, "commit.html#namespace={namespace}&filter={filter_str}")
+                    write!(f, "/commit?namespace={namespace}&filter={filter_str}")
                 }
             }
             Paths::InstalledPackage(namespace, filter) => {
                 let filter_str = filter.to_string();
                 if filter_str.is_empty() {
-                    write!(f, "installed-package.html#namespace={namespace}")
+                    write!(f, "/installed-package?namespace={namespace}")
                 } else {
                     write!(
                         f,
-                        "installed-package.html#namespace={namespace}&filter={filter_str}"
+                        "/installed-package?namespace={namespace}&filter={filter_str}"
                     )
                 }
             }
             Paths::InstalledPackagesList => {
-                write!(f, "installed-packages-list.html")
+                write!(f, "/installed-packages-list")
             }
             Paths::Login(host, back) => {
                 let back_encoded = urlencoding::encode(back);
-                write!(f, "login.html#host={host}&back={back_encoded}")
+                write!(f, "/login?host={host}&back={back_encoded}")
             }
             Paths::LoginError(host, title, error) => {
                 let title_encoded = urlencoding::encode(title);
                 let error_encoded = urlencoding::encode(error);
                 write!(
                     f,
-                    "login-error.html#host={host}&title={title_encoded}&error={error_encoded}"
+                    "/error?host={host}&title={title_encoded}&error={error_encoded}"
                 )
             }
             Paths::Merge(namespace) => {
-                write!(f, "merge.html#namespace={namespace}")
+                write!(f, "/merge?namespace={namespace}")
             }
             Paths::RemotePackage(uri) => {
                 let uri_str = uri.to_string();
                 let uri_encoded = urlencoding::encode(&uri_str);
-                write!(f, "remote-package.html?uri={uri_encoded}")
+                write!(f, "/remote-package?uri={uri_encoded}")
             }
             Paths::Settings => {
-                write!(f, "settings.html")
+                write!(f, "/settings")
             }
             Paths::Setup => {
-                write!(f, "setup.html")
+                write!(f, "/setup")
             }
         }
     }
@@ -293,7 +290,7 @@ impl Paths {
     }
 }
 
-fn format_namespace_filter_fragment(
+fn format_namespace_filter_query(
     namespace: &quilt::uri::Namespace,
     filter: &EntriesFilter,
 ) -> String {
@@ -306,54 +303,58 @@ fn format_namespace_filter_fragment(
 }
 
 pub fn from_url(path: Paths, mut url: Url) -> url::Url {
+    url.set_fragment(None);
     match path {
         Paths::Commit(ref namespace, ref filter) => {
-            url.set_path("pages/commit.html");
-            url.set_fragment(Some(&format_namespace_filter_fragment(namespace, filter)));
+            url.set_path("/commit");
+            url.set_query(Some(&format_namespace_filter_query(namespace, filter)));
             url
         }
         Paths::InstalledPackage(ref namespace, ref filter) => {
-            url.set_path("pages/installed-package.html");
-            url.set_fragment(Some(&format_namespace_filter_fragment(namespace, filter)));
+            url.set_path("/installed-package");
+            url.set_query(Some(&format_namespace_filter_query(namespace, filter)));
             url
         }
         Paths::InstalledPackagesList => {
-            url.set_path("pages/installed-packages-list.html");
+            url.set_path("/installed-packages-list");
+            url.set_query(None);
             url
         }
         Paths::Login(host, ref back) => {
             let back_encoded = urlencoding::encode(back);
-            url.set_path("pages/login.html");
-            url.set_fragment(Some(&format!("host={host}&back={back_encoded}")));
+            url.set_path("/login");
+            url.set_query(Some(&format!("host={host}&back={back_encoded}")));
             url
         }
         Paths::LoginError(host, ref title, ref error) => {
             let title_encoded = urlencoding::encode(title);
             let error_encoded = urlencoding::encode(error);
-            url.set_path("pages/login-error.html");
-            url.set_fragment(Some(&format!(
+            url.set_path("/error");
+            url.set_query(Some(&format!(
                 "host={host}&title={title_encoded}&error={error_encoded}"
             )));
             url
         }
         Paths::Merge(namespace) => {
-            url.set_path("pages/merge.html");
-            url.set_fragment(Some(&format!("namespace={namespace}")));
+            url.set_path("/merge");
+            url.set_query(Some(&format!("namespace={namespace}")));
             url
         }
         Paths::RemotePackage(uri) => {
             let uri_str = uri.to_string();
             let uri_encoded = urlencoding::encode(&uri_str);
-            url.set_path("pages/remote-package.html");
+            url.set_path("/remote-package");
             url.set_query(Some(&format!("uri={uri_encoded}")));
             url
         }
         Paths::Settings => {
-            url.set_path("pages/settings.html");
+            url.set_path("/settings");
+            url.set_query(None);
             url
         }
         Paths::Setup => {
-            url.set_path("pages/setup.html");
+            url.set_path("/setup");
+            url.set_query(None);
             url
         }
     }
@@ -365,36 +366,36 @@ impl str::FromStr for Paths {
     fn from_str(location: &str) -> Result<Self, Self::Err> {
         let page = parse_page(location)?;
         match page.as_str() {
-            "commit.html" => {
+            "commit" => {
                 let namespace = parse_namespace(location)?;
                 let filter = parse_filter(location)?;
                 Ok(Paths::Commit(namespace.try_into()?, filter))
             }
-            "installed-package.html" => {
+            "installed-package" => {
                 let namespace = parse_namespace(location)?;
                 let filter = parse_filter(location)?;
                 Ok(Paths::InstalledPackage(namespace.try_into()?, filter))
             }
-            "installed-packages-list.html" => Ok(Paths::InstalledPackagesList),
-            "login.html" => {
+            "installed-packages-list" => Ok(Paths::InstalledPackagesList),
+            "login" => {
                 let (host, loc) = parse_login(location)?;
                 Ok(Paths::Login(host, loc))
             }
-            "login-error.html" => {
+            "error" => {
                 let (host, title, error) = parse_login_error(location)?;
                 let title = title.unwrap_or_else(|| "Login failed".into());
                 Ok(Paths::LoginError(host, title, error))
             }
-            "merge.html" => {
+            "merge" => {
                 let namespace = parse_namespace(location)?;
                 Ok(Paths::Merge(namespace.try_into()?))
             }
-            "remote-package.html" => {
+            "remote-package" => {
                 let uri = parse_s3_package_uri(location)?;
                 Ok(Paths::RemotePackage(uri))
             }
-            "settings.html" => Ok(Paths::Settings),
-            "setup.html" => Ok(Paths::Setup),
+            "settings" => Ok(Paths::Settings),
+            "setup" => Ok(Paths::Setup),
             _ => Err(Error::PageNotFound(page)),
         }
     }
@@ -417,7 +418,7 @@ mod tests {
         let page_url_str = page_url.as_str();
         assert_eq!(
             page_url_str,
-            "http://test:1234/pages/commit.html#namespace=foo/bar"
+            "http://test:1234/commit?namespace=foo/bar"
         );
 
         let route: Paths = page_url_str.parse()?;
@@ -426,7 +427,7 @@ mod tests {
             route,
             Paths::Commit(("foo", "bar").into(), EntriesFilter::default())
         );
-        assert_eq!(format!("{route}"), "commit.html#namespace=foo/bar");
+        assert_eq!(format!("{route}"), "/commit?namespace=foo/bar");
 
         Ok(())
     }
@@ -444,7 +445,7 @@ mod tests {
         let page_url_str = page_url.as_str();
         assert_eq!(
             page_url_str,
-            "http://test:1234/pages/commit.html#namespace=foo/bar&filter=unmodified,ignored"
+            "http://test:1234/commit?namespace=foo/bar&filter=unmodified,ignored"
         );
 
         let route: Paths = page_url_str.parse()?;
@@ -462,7 +463,7 @@ mod tests {
         let page_url_str = page_url.as_str();
         assert_eq!(
             page_url_str,
-            "http://test:1234/pages/installed-package.html#namespace=foo/bar"
+            "http://test:1234/installed-package?namespace=foo/bar"
         );
 
         let route: Paths = page_url_str.parse()?;
@@ -473,7 +474,7 @@ mod tests {
         );
         assert_eq!(
             format!("{route}"),
-            "installed-package.html#namespace=foo/bar"
+            "/installed-package?namespace=foo/bar"
         );
 
         Ok(())
@@ -489,7 +490,7 @@ mod tests {
         let page_url_str = page_url.as_str();
         assert_eq!(
             page_url_str,
-            "http://test:1234/pages/installed-package.html#namespace=foo/bar&filter=unmodified"
+            "http://test:1234/installed-package?namespace=foo/bar&filter=unmodified"
         );
 
         let route: Paths = page_url_str.parse()?;
@@ -510,13 +511,13 @@ mod tests {
         let page_url_str = page_url.as_str();
         assert_eq!(
             page_url_str,
-            "http://test:1234/pages/installed-packages-list.html"
+            "http://test:1234/installed-packages-list"
         );
 
         let route: Paths = page_url_str.parse()?;
 
         assert_eq!(route, Paths::InstalledPackagesList);
-        assert_eq!(format!("{route}"), "installed-packages-list.html");
+        assert_eq!(format!("{route}"), "/installed-packages-list");
 
         Ok(())
     }
@@ -532,7 +533,7 @@ mod tests {
         let page_url_str = page_url.as_str();
         assert_eq!(
             page_url_str,
-            "http://test:1234/pages/login.html#host=test.quilt.dev&back=installed-packages-list.html"
+            "http://test:1234/login?host=test.quilt.dev&back=%2Finstalled-packages-list"
         );
 
         let route: Paths = page_url_str.parse()?;
@@ -540,7 +541,7 @@ mod tests {
         assert_eq!(route, Paths::Login(host, back));
         assert_eq!(
             format!("{route}"),
-            "login.html#host=test.quilt.dev&back=installed-packages-list.html"
+            "/login?host=test.quilt.dev&back=%2Finstalled-packages-list"
         );
 
         Ok(())
@@ -557,7 +558,7 @@ mod tests {
         );
         let page_url_str = page_url.as_str();
         assert!(page_url_str
-            .starts_with("http://test:1234/pages/login-error.html#host=test.quilt.dev&title="));
+            .starts_with("http://test:1234/error?host=test.quilt.dev&title="));
 
         let route: Paths = page_url_str.parse()?;
         assert_eq!(
@@ -572,9 +573,8 @@ mod tests {
     fn test_login_error_without_title_defaults_to_login_failed() -> Result<()> {
         let host: Host = "test.quilt.dev".parse()?;
         let error = "Auth failed";
-        // Old URL format without title — must parse without panicking and default gracefully.
         let url = format!(
-            "http://test:1234/pages/login-error.html#host={host}&error={}",
+            "http://test:1234/error?host={host}&error={}",
             urlencoding::encode(error)
         );
         let route: Paths = url.parse()?;
@@ -594,13 +594,13 @@ mod tests {
         let page_url_str = page_url.as_str();
         assert_eq!(
             page_url_str,
-            "http://test:1234/pages/merge.html#namespace=foo/bar"
+            "http://test:1234/merge?namespace=foo/bar"
         );
 
         let route: Paths = page_url_str.parse()?;
 
         assert_eq!(route, Paths::Merge(("foo", "bar").into()));
-        assert_eq!(format!("{route}"), "merge.html#namespace=foo/bar");
+        assert_eq!(format!("{route}"), "/merge?namespace=foo/bar");
 
         Ok(())
     }
@@ -615,7 +615,7 @@ mod tests {
         let page_url_str = page_url.as_str();
         assert_eq!(
             page_url_str,
-            "http://test:1234/pages/remote-package.html?uri=quilt%2Bs3%3A%2F%2Ftest%23package%3Dfoo%2Fbar"
+            "http://test:1234/remote-package?uri=quilt%2Bs3%3A%2F%2Ftest%23package%3Dfoo%2Fbar"
         );
 
         let route: Paths = page_url_str.parse()?;
@@ -623,7 +623,7 @@ mod tests {
         assert_eq!(route, Paths::RemotePackage(uri));
         assert_eq!(
             format!("{route}"),
-            "remote-package.html?uri=quilt%2Bs3%3A%2F%2Ftest%23package%3Dfoo%2Fbar"
+            "/remote-package?uri=quilt%2Bs3%3A%2F%2Ftest%23package%3Dfoo%2Fbar"
         );
 
         Ok(())
@@ -633,12 +633,12 @@ mod tests {
     fn test_settings() -> Result<()> {
         let page_url = from_url(Paths::Settings, Url::parse("http://test:1234/")?);
         let page_url_str = page_url.as_str();
-        assert_eq!(page_url_str, "http://test:1234/pages/settings.html");
+        assert_eq!(page_url_str, "http://test:1234/settings");
 
         let route: Paths = page_url_str.parse()?;
 
         assert_eq!(route, Paths::Settings);
-        assert_eq!(format!("{route}"), "settings.html");
+        assert_eq!(format!("{route}"), "/settings");
 
         Ok(())
     }
@@ -647,24 +647,23 @@ mod tests {
     fn test_setup() -> Result<()> {
         let page_url = from_url(Paths::Setup, Url::parse("http://test:1234/")?);
         let page_url_str = page_url.as_str();
-        assert_eq!(page_url_str, "http://test:1234/pages/setup.html");
+        assert_eq!(page_url_str, "http://test:1234/setup");
 
         let route: Paths = page_url_str.parse()?;
 
         assert_eq!(route, Paths::Setup);
-        assert_eq!(format!("{route}"), "setup.html");
+        assert_eq!(format!("{route}"), "/setup");
 
         Ok(())
     }
 
     #[test]
     fn test_pathname_privacy() -> Result<()> {
-        // Test that pathname() returns only the variant name without sensitive data (in snake_case)
         let commit_path =
             Paths::Commit(("sensitive", "namespace").into(), EntriesFilter::default());
         assert_eq!(commit_path.pathname(), "commit");
 
-        let login_path = Paths::Login("sensitive.host.com".parse()?, "secret-page.html".into());
+        let login_path = Paths::Login("sensitive.host.com".parse()?, "/secret-page".into());
         assert_eq!(login_path.pathname(), "login");
 
         let installed_package_path =
@@ -696,7 +695,6 @@ mod tests {
     fn test_serde_pathname() -> Result<()> {
         use serde_json::Value;
 
-        // Test that serde serialization produces the expected snake_case variant names
         let setup_path = Paths::Setup;
         let serialized = serde_json::to_value(&setup_path)?;
         match serialized {
@@ -712,7 +710,7 @@ mod tests {
         match serialized {
             Value::Object(map) => {
                 assert_eq!(map.get("t"), Some(&Value::String("commit".to_string())));
-                assert!(map.contains_key("c")); // Should have content
+                assert!(map.contains_key("c"));
                 assert_eq!(commit_path.pathname(), "commit");
             }
             _ => panic!("Expected adjacently tagged object for Commit"),

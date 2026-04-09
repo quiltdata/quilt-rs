@@ -120,6 +120,7 @@ fn main() {
             commands::setup,
             commands::add_to_quiltignore,
             commands::test_quiltignore_pattern,
+            commands::handle_remote_package,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

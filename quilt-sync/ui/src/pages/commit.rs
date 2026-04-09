@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use leptos_router::hooks::{use_navigate, use_query_map};
 use serde::{Deserialize, Serialize};
 
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
@@ -52,16 +53,17 @@ pub struct EntryData {
 pub fn Commit() -> impl IntoView {
     let notification = RwSignal::new(String::new());
 
-    let data = LocalResource::new(move || async {
-        let location = web_sys::window()
-            .and_then(|w| w.location().href().ok())
-            .unwrap_or_default();
-
-        #[derive(Serialize)]
-        struct Args {
-            location: String,
+    let query = use_query_map();
+    let data = LocalResource::new(move || {
+        let namespace = query.read().get("namespace").unwrap_or_default();
+        async move {
+            #[derive(Serialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Args {
+                namespace: String,
+            }
+            tauri::invoke::<_, CommitData>("get_commit_data", &Args { namespace }).await
         }
-        tauri::invoke::<_, CommitData>("get_commit_data", &Args { location }).await
     });
 
     view! {
@@ -76,16 +78,13 @@ pub fn Commit() -> impl IntoView {
                 match data.await {
                     Ok(d) => {
                         let ns = d.namespace.clone();
-                        let pkg_href: &'static str = Box::leak(
-                            format!(
-                                "installed-package.html#namespace={}&filter=unmodified",
-                                d.namespace
-                            )
-                            .into_boxed_str(),
+                        let pkg_href = format!(
+                            "/installed-package?namespace={}&filter=unmodified",
+                            d.namespace
                         );
                         let breadcrumbs = vec![
                             BreadcrumbItem::Link(BreadcrumbLink {
-                                href: "installed-packages-list.html",
+                                href: "/installed-packages-list".to_string(),
                                 title: String::new(),
                             }),
                             BreadcrumbItem::Link(BreadcrumbLink {
@@ -123,6 +122,7 @@ pub fn Commit() -> impl IntoView {
 
 #[component]
 fn CommitContent(data: CommitData, notification: RwSignal<String>) -> impl IntoView {
+    let navigate = use_navigate();
     let filter_unmodified = RwSignal::new(false);
     let filter_ignored = RwSignal::new(false);
     let show_ignore_popup = RwSignal::new(None::<IgnorePopupData>);
@@ -177,7 +177,9 @@ fn CommitContent(data: CommitData, notification: RwSignal<String>) -> impl IntoV
     // Commit action
     let ns_for_commit = namespace.clone();
     let committing = RwSignal::new(false);
+    let navigate_for_commit = navigate.clone();
     let on_commit = move |_| {
+        let navigate = navigate_for_commit.clone();
         if committing.get_untracked() {
             return;
         }
@@ -215,14 +217,10 @@ fn CommitContent(data: CommitData, notification: RwSignal<String>) -> impl IntoV
             {
                 Ok(html) => {
                     notification.set(html);
-                    // Navigate to installed package page
-                    if let Some(window) = web_sys::window() {
-                        let href = format!(
-                            "installed-package.html#namespace={}&filter=unmodified",
-                            ns
-                        );
-                        let _ = window.location().assign(&href);
-                    }
+                    navigate(
+                        &format!("/installed-package?namespace={ns}&filter=unmodified"),
+                        Default::default(),
+                    );
                 }
                 Err(e) => {
                     unlock_ui();
@@ -485,6 +483,7 @@ fn build_toolbar_actions(
     let has_catalog = origin_url.is_some();
 
     ToolbarActions::new(move || {
+        let navigate = use_navigate();
         let ns_for_folder = namespace.clone();
         let on_open_folder = move |_| {
             let ns = ns_for_folder.clone();
@@ -519,6 +518,7 @@ fn build_toolbar_actions(
         let ns_for_uninstall = namespace.clone();
         let on_uninstall = move |_| {
             let ns = ns_for_uninstall.clone();
+            let navigate = navigate.clone();
             lock_ui();
             leptos::task::spawn_local(async move {
                 #[derive(Serialize)]
@@ -530,9 +530,7 @@ fn build_toolbar_actions(
                 {
                     Ok(html) => {
                         notification.set(html);
-                        if let Some(window) = web_sys::window() {
-                            let _ = window.location().assign("installed-packages-list.html");
-                        }
+                        navigate("/installed-packages-list", Default::default());
                     }
                     Err(e) => {
                         unlock_ui();

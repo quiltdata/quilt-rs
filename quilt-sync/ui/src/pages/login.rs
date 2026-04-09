@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use leptos_router::hooks::{use_navigate, use_query_map};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsCast;
 
@@ -21,16 +22,19 @@ pub struct LoginData {
 pub fn Login() -> impl IntoView {
     let notification = RwSignal::new(String::new());
 
-    let data = LocalResource::new(move || async {
-        let location = web_sys::window()
-            .and_then(|w| w.location().href().ok())
-            .unwrap_or_default();
-
-        #[derive(Serialize)]
-        struct Args {
-            location: String,
+    let query = use_query_map();
+    let data = LocalResource::new(move || {
+        let host = query.read().get("host").unwrap_or_default();
+        let back = query.read().get("back").unwrap_or_default();
+        async move {
+            #[derive(Serialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Args {
+                host: String,
+                back: String,
+            }
+            tauri::invoke::<_, LoginData>("get_login_data", &Args { host, back }).await
         }
-        tauri::invoke::<_, LoginData>("get_login_data", &Args { location }).await
     });
 
     view! {
@@ -77,6 +81,7 @@ fn LoginContent(data: LoginData, notification: RwSignal<String>) -> impl IntoVie
     let host_for_submit = host.clone();
     let back_for_submit = back.clone();
 
+    let navigate = use_navigate();
     let on_submit = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
         if submitting.get_untracked() {
@@ -85,6 +90,7 @@ fn LoginContent(data: LoginData, notification: RwSignal<String>) -> impl IntoVie
         submitting.set(true);
         let host = host_for_submit.clone();
         let back = back_for_submit.clone();
+        let navigate = navigate.clone();
         leptos::task::spawn_local(async move {
             #[derive(Serialize)]
             struct Args {
@@ -108,9 +114,7 @@ fn LoginContent(data: LoginData, notification: RwSignal<String>) -> impl IntoVie
                     // Rust's login command calls navigate_after_login when back is present;
                     // only navigate from JS when there is no back to avoid double navigation.
                     if back_opt.is_none() {
-                        if let Some(window) = web_sys::window() {
-                            let _ = window.location().assign("installed-packages-list.html");
-                        }
+                        navigate("/installed-packages-list", Default::default());
                     }
                 }
                 Err(e) => {

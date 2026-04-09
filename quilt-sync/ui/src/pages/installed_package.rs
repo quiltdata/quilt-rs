@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use leptos_router::hooks::{use_navigate, use_query_map};
 use serde::{Deserialize, Serialize};
 
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
@@ -41,20 +42,23 @@ pub struct EntryData {
 pub fn InstalledPackage() -> impl IntoView {
     let notification = RwSignal::new(String::new());
 
-    let data = LocalResource::new(move || async {
-        let location = web_sys::window()
-            .and_then(|w| w.location().href().ok())
-            .unwrap_or_default();
-
-        #[derive(Serialize)]
-        struct Args {
-            location: String,
+    let query = use_query_map();
+    let data = LocalResource::new(move || {
+        let namespace = query.read().get("namespace").unwrap_or_default();
+        let filter = query.read().get("filter");
+        async move {
+            #[derive(Serialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Args {
+                namespace: String,
+                filter: Option<String>,
+            }
+            tauri::invoke::<_, InstalledPackageData>(
+                "get_installed_package_data",
+                &Args { namespace, filter },
+            )
+            .await
         }
-        tauri::invoke::<_, InstalledPackageData>(
-            "get_installed_package_data",
-            &Args { location },
-        )
-        .await
     });
 
     view! {
@@ -71,7 +75,7 @@ pub fn InstalledPackage() -> impl IntoView {
                         let ns = d.namespace.clone();
                         let breadcrumbs = vec![
                             BreadcrumbItem::Link(BreadcrumbLink {
-                                href: "installed-packages-list.html",
+                                href: "/installed-packages-list".to_string(),
                                 title: String::new(),
                             }),
                             BreadcrumbItem::Current(ns),
@@ -228,7 +232,7 @@ fn InstalledPackageContent(
 
     // Commit button: primary when no remote entries are checked
     let commit_href = format!(
-        "commit.html#namespace={}",
+        "/commit?namespace={}",
         namespace
     );
     let commit_href_clone = commit_href.clone();
@@ -371,6 +375,7 @@ fn build_toolbar_actions(
     let catalog_disabled = data.status == "local";
 
     ToolbarActions::new(move || {
+        let navigate = use_navigate();
         let ns_for_folder = namespace.clone();
         let on_open_folder = move |_| {
             let ns = ns_for_folder.clone();
@@ -398,6 +403,7 @@ fn build_toolbar_actions(
         let ns_for_uninstall = namespace.clone();
         let on_uninstall = move |_| {
             let ns = ns_for_uninstall.clone();
+            let navigate = navigate.clone();
             lock_ui();
             leptos::task::spawn_local(async move {
                 #[derive(Serialize)]
@@ -405,9 +411,7 @@ fn build_toolbar_actions(
                 match tauri::invoke::<_, String>("package_uninstall", &Args { namespace: ns }).await {
                     Ok(html) => {
                         notification.set(html);
-                        if let Some(window) = web_sys::window() {
-                            let _ = window.location().assign("installed-packages-list.html");
-                        }
+                        navigate("/installed-packages-list", Default::default());
                     }
                     Err(e) => {
                         unlock_ui();
@@ -482,7 +486,7 @@ fn StatusBanner(
             }.into_any())
         }
         "diverged" => {
-            let merge_href = format!("merge.html#namespace={ns}");
+            let merge_href = format!("/merge?namespace={ns}");
             Some(view! {
                 <StatusBannerInner description="Your commits are detached from the remote">
                     <a href=merge_href>
@@ -496,10 +500,11 @@ fn StatusBanner(
         "error" => {
             match host {
                 Some(ref h) => {
+                    let back = format!("/installed-package?namespace={}&filter=unmodified", urlencoding(&ns));
                     let login_href = format!(
-                        "login.html#host={}&back=installed-package.html%23namespace%3D{}%26filter%3Dunmodified",
+                        "/login?host={}&back={}",
                         h,
-                        urlencoding(&ns)
+                        urlencoding(&back)
                     );
                     Some(view! {
                         <StatusBannerInner description="Unable to check remote status">

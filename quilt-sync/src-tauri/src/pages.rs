@@ -182,7 +182,7 @@ mod tests {
         model_mocks::mock_installed_package(&mut model);
         let app = App::create()?;
 
-        let url = "https://l/p/commit.html#namespace=doesnt/matter";
+        let url = "https://l/commit?namespace=doesnt/matter";
         let path: Paths = url.parse()?;
         let page = load(
             &model,
@@ -203,7 +203,7 @@ mod tests {
         model_mocks::mock_installed_package(&mut model);
         let app = App::create()?;
 
-        let url = "https://l/p/installed-package.html#namespace=doesnt/matter";
+        let url = "https://l/installed-package?namespace=doesnt/matter";
         let path: Paths = url.parse()?;
         let page = load(
             &model,
@@ -224,7 +224,7 @@ mod tests {
         model_mocks::mock_installed_packages_list(&mut model);
         let app = App::create()?;
 
-        let url = "https://l/p/installed-packages-list.html";
+        let url = "https://l/installed-packages-list";
         let path: Paths = url.parse()?;
         let page = load(
             &model,
@@ -245,7 +245,7 @@ mod tests {
         model_mocks::mock_installed_package(&mut model);
         let app = App::create()?;
 
-        let url = "https://l/p/merge.html#namespace=doesnt/matter";
+        let url = "https://l/merge?namespace=doesnt/matter";
         let path: Paths = url.parse()?;
         let page = load(
             &model,
@@ -269,7 +269,7 @@ mod tests {
         let uri =
             "quilt+s3://quilt-example#package=foo/bar@6c3758a4d2bf8fe730be5d12f5e095950dc123c373f55f66ca4b3ced74772b22&path=NAME";
         let url = format!(
-            "https://l/p/remote-package.html?uri={}",
+            "https://l/remote-package?uri={}",
             urlencoding::encode(uri)
         );
         let path: Paths = url.parse()?;
@@ -296,7 +296,7 @@ mod tests {
 
         let uri = "quilt+s3://quilt-example#package=foo/bar@bbbb2222";
         let url = format!(
-            "https://l/p/remote-package.html?uri={}",
+            "https://l/remote-package?uri={}",
             urlencoding::encode(uri)
         );
         let path: Paths = url.parse()?;
@@ -327,7 +327,7 @@ mod tests {
         let model = model_mocks::create();
         let app = App::create()?;
 
-        let url = "https://l/p/setup.html";
+        let url = "https://l/setup";
         let path: Paths = url.parse()?;
         let page = load(
             &model,

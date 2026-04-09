@@ -629,7 +629,7 @@ mod tests {
         assert!(html.contains(r#"warning"#));
 
         // Should not show commit button
-        assert!(!html.contains(r#"href="commit.html"#));
+        assert!(!html.contains(r#"href="/commit"#));
 
         // Should not show "Open in Catalog" action
         assert!(!html.contains("Open in Catalog"));
@@ -656,10 +656,10 @@ mod tests {
         .render()?;
 
         // Should show Login button
-        assert!(html.contains(r#"href="login.html#host=test.quilt.dev&#38;back=installed-package.html%23namespace%3DA%2FB%26filter%3Dunmodified""#));
+        assert!(html.contains(r#"href="/login?host=test.quilt.dev&#38;back=%2Finstalled-package%3Fnamespace%3DA%2FB%26filter%3Dunmodified""#));
 
         // Should not show commit button
-        assert!(!html.contains(r#"href="commit.html"#));
+        assert!(!html.contains(r#"href="/commit"#));
 
         // Should still show "Open in Catalog" since origin is valid
         assert!(html.contains("Open in Catalog"));
@@ -687,7 +687,7 @@ mod tests {
         assert!(!html.contains(r#"warning"#));
 
         // Should show commit button (local packages can be committed)
-        assert!(html.contains(r#"href="commit.html"#));
+        assert!(html.contains(r#"href="/commit"#));
 
         // Should not show "Open in Catalog" action (no origin)
         assert!(!html.contains("Open in Catalog"));
@@ -725,7 +725,7 @@ mod tests {
         assert!(catalog_btn.contains("disabled"));
 
         // Should show commit button
-        assert!(html.contains(r#"href="commit.html"#));
+        assert!(html.contains(r#"href="/commit"#));
 
         // Should show push status banner (natural next step)
         assert!(html.contains(r#"js-packages-push"#));
