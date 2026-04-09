@@ -1,7 +1,7 @@
 {
   "name": "quilt-sync",
   "description": "Cross-platform desktop application for editing Quilt data packages",
-  "source": "src/assets/js/main.ts",
+  "source": ["src/assets/js/main.ts", "src/assets/js/json-editor.js"],
   "targets": {
     "default": {
       "distDir": "./src/dist"

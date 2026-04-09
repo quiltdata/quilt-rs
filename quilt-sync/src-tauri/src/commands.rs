@@ -530,6 +530,222 @@ pub async fn get_merge_data(
         .map_err(|e| e.to_string())
 }
 
+// ── Commit data for Leptos UI ──
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitData {
+    pub namespace: String,
+    pub uri: String,
+    pub origin_url: Option<String>,
+    pub origin_host: Option<String>,
+    pub message: String,
+    pub user_meta: String,
+    pub user_meta_error: Option<String>,
+    pub workflow: Option<CommitWorkflowData>,
+    pub entries: Vec<InstalledPackageEntryData>,
+    pub ignored_count: usize,
+    pub unmodified_count: usize,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitWorkflowData {
+    pub id: Option<String>,
+    pub url: Option<String>,
+    pub config_url: Option<String>,
+}
+
+async fn get_commit_data_from_model(
+    m: &impl model::QuiltModel,
+    tracing: &crate::telemetry::Telemetry,
+    namespace: &quilt::uri::Namespace,
+) -> Result<CommitData, Error> {
+    let installed_package = m
+        .get_installed_package(namespace)
+        .await?
+        .ok_or_else(|| {
+            Error::from(quilt::InstallPackageError::NotInstalled(
+                namespace.to_owned(),
+            ))
+        })?;
+
+    let status = m
+        .get_installed_package_status(&installed_package, None)
+        .await?;
+
+    let lineage = m
+        .get_installed_package_lineage(&installed_package)
+        .await?;
+
+    let (uri, origin_host) =
+        crate::debug_tools::resolve_uri_and_host(lineage.remote_uri.as_ref(), namespace);
+    if let Some(host) = &origin_host {
+        tracing.add_host(host);
+    }
+
+    // Build lookup maps for junky files
+    let junky_map: std::collections::HashMap<_, _> = status
+        .junky_changes
+        .iter()
+        .map(|(p, pat)| (p.clone(), pat.clone()))
+        .collect();
+
+    // Modified entries
+    let mut entries_list = Vec::new();
+    for (filename, change) in &status.changes {
+        let entry_uri = quilt::uri::S3PackageUri {
+            path: Some(filename.clone()),
+            ..uri.clone()
+        };
+        let origin = match &origin_host {
+            Some(host) => entry_uri.display_for_host(host).ok().map(|u| u.to_string()),
+            None => None,
+        };
+        let (status_str, size) = match change {
+            quilt::lineage::Change::Added(r) => ("added", r.size),
+            quilt::lineage::Change::Modified(r) => ("modified", r.size),
+            quilt::lineage::Change::Removed(r) => ("deleted", r.size),
+        };
+        entries_list.push(InstalledPackageEntryData {
+            filename: filename.display().to_string(),
+            size,
+            status: status_str.to_string(),
+            origin_url: origin,
+            junky_pattern: junky_map.get(filename).cloned(),
+            ignored_by: None,
+            namespace: namespace.to_string(),
+        });
+        if entries_list.len() > 1000 {
+            break;
+        }
+    }
+
+    // Unmodified entries (from manifest, not changed)
+    let manifest_entries = m
+        .get_installed_package_records(&installed_package)
+        .await?;
+    for (filename, row) in &manifest_entries {
+        if status.changes.contains_key(filename) {
+            continue;
+        }
+        let entry_uri = quilt::uri::S3PackageUri {
+            path: Some(filename.clone()),
+            ..uri.clone()
+        };
+        let origin = match &origin_host {
+            Some(host) => entry_uri.display_for_host(host).ok().map(|u| u.to_string()),
+            None => None,
+        };
+        entries_list.push(InstalledPackageEntryData {
+            filename: filename.display().to_string(),
+            size: row.size,
+            status: if lineage.paths.contains_key(filename) {
+                "pristine"
+            } else {
+                "remote"
+            }
+            .to_string(),
+            origin_url: origin,
+            junky_pattern: None,
+            ignored_by: None,
+            namespace: namespace.to_string(),
+        });
+    }
+
+    // Ignored files
+    for (filename, pattern, size) in &status.ignored_files {
+        entries_list.push(InstalledPackageEntryData {
+            filename: filename.display().to_string(),
+            size: *size,
+            status: "pristine".to_string(),
+            origin_url: None,
+            junky_pattern: None,
+            ignored_by: Some(pattern.clone()),
+            namespace: namespace.to_string(),
+        });
+    }
+
+    entries_list.sort_by(|a, b| a.filename.cmp(&b.filename));
+
+    let ignored_count = entries_list.iter().filter(|e| e.ignored_by.is_some()).count();
+    let unmodified_count = entries_list
+        .iter()
+        .filter(|e| {
+            e.ignored_by.is_none()
+                && (e.status == "pristine" || e.status == "remote")
+        })
+        .count();
+
+    let origin_url = origin_host
+        .as_ref()
+        .and_then(|host| uri.display_for_host(host).ok())
+        .map(|u| u.to_string());
+
+    // Generate commit message from changes
+    let message = pages::commit::generate_commit_message(&status.changes);
+
+    // Load remote manifest for user_meta and workflow
+    let (user_meta, user_meta_error, workflow) =
+        match lineage.remote_uri.as_ref().filter(|r| !r.hash.is_empty()) {
+            Some(remote_uri) => {
+                let remote_manifest = m.browse_remote_manifest(remote_uri).await?;
+                let (meta_value, meta_error) = match &remote_manifest.header.user_meta {
+                    Some(meta) => match serde_json::to_string(meta) {
+                        Ok(v) => (v, None),
+                        Err(_) => (String::new(), Some("Failed to stringify meta".to_string())),
+                    },
+                    None => (String::new(), None),
+                };
+                let workflow = origin_host.as_ref().and_then(|host| {
+                    remote_manifest.header.workflow.as_ref().map(|w| {
+                        CommitWorkflowData {
+                            id: w.id.as_ref().map(|id| id.id.clone()),
+                            url: w.config.display_for_host(host).ok().map(|u| u.to_string()),
+                            config_url: None,
+                        }
+                    })
+                });
+                (meta_value, meta_error, workflow)
+            }
+            None => (String::new(), None, None),
+        };
+
+    Ok(CommitData {
+        namespace: namespace.to_string(),
+        uri: uri.to_string(),
+        origin_url,
+        origin_host: origin_host.map(|h| h.to_string()),
+        message,
+        user_meta,
+        user_meta_error,
+        workflow,
+        entries: entries_list,
+        ignored_count,
+        unmodified_count,
+    })
+}
+
+#[tauri::command]
+pub async fn get_commit_data(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    location: String,
+) -> Result<CommitData, String> {
+    let path = location
+        .parse::<routes::Paths>()
+        .map_err(|e| e.to_string())?;
+
+    let namespace = match path {
+        routes::Paths::Commit(ns, _) => ns,
+        _ => return Err("Expected commit route".to_string()),
+    };
+
+    get_commit_data_from_model(&*m, &tracing, &namespace)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 // ── Installed Packages List data for Leptos UI ──
 
 #[derive(Serialize, Debug)]
@@ -1814,5 +2030,39 @@ mod tests {
         assert_eq!(pkg.origin_host.as_deref(), Some("test.quilt.dev"));
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_commit_data() -> Result<(), String> {
+        let mut model = mocks::create();
+        mocks::mock_installed_package(&mut model);
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("foo", "bar").into();
+
+        let data = get_commit_data_from_model(&model, &tracing, &namespace)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        assert_eq!(data.namespace, "foo/bar");
+        assert!(data.origin_url.is_some());
+        assert!(data
+            .origin_url
+            .unwrap()
+            .contains("test.quilt.dev"));
+        assert_eq!(data.origin_host, Some("test.quilt.dev".to_string()));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_commit_data_not_installed() {
+        let mut model = mocks::create();
+        model
+            .expect_get_installed_package()
+            .returning(|_| Ok(None));
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("missing", "package").into();
+
+        let result = get_commit_data_from_model(&model, &tracing, &namespace).await;
+        assert!(result.is_err());
     }
 }

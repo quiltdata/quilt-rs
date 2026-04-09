@@ -1,3 +1,4 @@
+mod commit;
 mod error;
 mod installed_package;
 mod installed_packages_list;
@@ -6,6 +7,7 @@ mod merge;
 mod settings;
 mod setup;
 
+pub use commit::Commit;
 pub use error::Error;
 pub use installed_package::InstalledPackage;
 pub use installed_packages_list::InstalledPackagesList;

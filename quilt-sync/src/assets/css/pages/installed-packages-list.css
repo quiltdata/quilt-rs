@@ -30,30 +30,6 @@
   }
 }
 
-/* ── Popup overlay (shared base for Leptos popups) ── */
-
-.popup-overlay {
-  align-items: center;
-  background: rgb(0 0 0 / 30%);
-  display: flex;
-  inset: 0;
-  justify-content: center;
-  position: fixed;
-  z-index: var(--q-ui-z-index-popover);
-}
-
-.popup-overlay .popup-content {
-  animation: 0.15s ease-out popup-slide;
-  background: var(--q-ui-palette-background-primary);
-  border-radius: var(--q-ui-border-radius);
-  box-shadow: var(--q-ui-shadows-popup);
-  max-height: 80vh;
-  max-width: 600px;
-  overflow-y: auto;
-  padding: var(--q-ui-size-3);
-  width: 90%;
-}
-
 /* ── Create Package popup ── */
 
 .create-package-form {

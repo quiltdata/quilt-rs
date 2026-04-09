@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::routes;
 use crate::routes::Paths;
 
-mod commit;
+pub(crate) mod commit;
 mod error;
 mod installed_package;
 mod installed_packages_list;

@@ -157,11 +157,16 @@ fn change_count(n: usize, verb: &str) -> String {
     }
 }
 
+/// Generates a concise, human-readable commit message string from the set of changed files.
+pub fn generate_commit_message(changes: &ChangeSet) -> String {
+    generate_commit_message_view(changes).value
+}
+
 /// Generates a concise, human-readable commit message from the set of changed files.
 ///
 /// For three or fewer total changes, individual file names are listed.
 /// For larger changesets, counts are used instead.
-fn generate_commit_message(changes: &ChangeSet) -> ViewCommitMessage {
+fn generate_commit_message_view(changes: &ChangeSet) -> ViewCommitMessage {
     let added: Vec<_> = changes
         .iter()
         .filter(|(_, c)| matches!(c, Change::Added(_)))
@@ -361,7 +366,7 @@ impl ViewCommit {
             entries_rest,
             entries_ignored,
             filter: filter.clone(),
-            message: generate_commit_message(&status.changes),
+            message: generate_commit_message_view(&status.changes),
             user_meta,
             uri,
             origin,
@@ -614,20 +619,20 @@ mod tests {
 
     #[test]
     fn test_generate_commit_message_empty() {
-        assert_eq!(generate_commit_message(&BTreeMap::new()).value, "");
+        assert_eq!(generate_commit_message_view(&BTreeMap::new()).value, "");
     }
 
     #[test]
     fn test_generate_commit_message_single_add() {
         let changes = make_changes(&["results.csv"], &[], &[]);
-        assert_eq!(generate_commit_message(&changes).value, "Add results.csv");
+        assert_eq!(generate_commit_message_view(&changes).value, "Add results.csv");
     }
 
     #[test]
     fn test_generate_commit_message_single_modify() {
         let changes = make_changes(&[], &["data.parquet"], &[]);
         assert_eq!(
-            generate_commit_message(&changes).value,
+            generate_commit_message_view(&changes).value,
             "Update data.parquet"
         );
     }
@@ -635,14 +640,14 @@ mod tests {
     #[test]
     fn test_generate_commit_message_single_remove() {
         let changes = make_changes(&[], &[], &["old.csv"]);
-        assert_eq!(generate_commit_message(&changes).value, "Remove old.csv");
+        assert_eq!(generate_commit_message_view(&changes).value, "Remove old.csv");
     }
 
     #[test]
     fn test_generate_commit_message_mixed_few() {
         let changes = make_changes(&["results.csv"], &[], &["old.csv"]);
         assert_eq!(
-            generate_commit_message(&changes).value,
+            generate_commit_message_view(&changes).value,
             "Add results.csv, Remove old.csv"
         );
     }
@@ -651,7 +656,7 @@ mod tests {
     fn test_generate_commit_message_three_files() {
         let changes = make_changes(&["a.csv", "b.csv"], &["c.csv"], &[]);
         assert_eq!(
-            generate_commit_message(&changes).value,
+            generate_commit_message_view(&changes).value,
             "Add a.csv, b.csv, Update c.csv"
         );
     }
@@ -661,7 +666,7 @@ mod tests {
         let names: Vec<String> = (1..=5).map(|i| format!("file{i}.csv")).collect();
         let name_refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
         let changes = make_changes(&name_refs, &[], &[]);
-        assert_eq!(generate_commit_message(&changes).value, "Add 5 files");
+        assert_eq!(generate_commit_message_view(&changes).value, "Add 5 files");
     }
 
     #[test]
@@ -675,7 +680,7 @@ mod tests {
             &removed.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
         );
         assert_eq!(
-            generate_commit_message(&changes).value,
+            generate_commit_message_view(&changes).value,
             "Add 3 files, Update 2 files, Remove 1 file"
         );
     }
@@ -683,7 +688,7 @@ mod tests {
     #[test]
     fn test_generate_commit_message_uses_filename_not_full_path() {
         let changes = make_changes(&["subdir/data/results.csv"], &[], &[]);
-        assert_eq!(generate_commit_message(&changes).value, "Add results.csv");
+        assert_eq!(generate_commit_message_view(&changes).value, "Add results.csv");
     }
 
     #[test]
