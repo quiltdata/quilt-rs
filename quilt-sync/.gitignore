@@ -10,6 +10,7 @@ dist
 node_modules
 .env
 .parcel-cache
+src/leptos
 
 # TODO: move to dist directory
 src/assets/js/main.js

@@ -1,0 +1,7 @@
+[build]
+target = "index.html"
+dist = "../src/leptos"
+filehash = false
+
+[watch]
+watch = ["src", "index.html"]
