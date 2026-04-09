@@ -8,17 +8,18 @@ use tokio::sync;
 use crate::telemetry::prelude::*;
 
 mod app;
+mod changelog;
+mod commit_message;
 mod commands;
 mod debug_tools;
 mod env;
 mod error;
 mod model;
+mod notify;
 mod oauth;
-mod pages;
 mod quilt;
 mod routes;
 mod telemetry;
-mod ui;
 mod uri;
 
 use app::App;
@@ -95,8 +96,6 @@ fn main() {
             commands::get_setup_data,
             commands::debug_dot_quilt,
             commands::debug_logs,
-            commands::load_empty,
-            commands::load_page,
             commands::open_data_dir,
             commands::open_home_dir,
             commands::collect_diagnostic_logs,

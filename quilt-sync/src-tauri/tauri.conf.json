@@ -1,8 +1,8 @@
 {
   "build": {
-    "beforeDevCommand": "",
-    "beforeBuildCommand": "npm run frontend:build",
-    "frontendDist": "../src"
+    "beforeDevCommand": "cd ui && trunk build",
+    "beforeBuildCommand": "cd ui && trunk build --release",
+    "frontendDist": "../ui/dist"
   },
   "bundle": {
     "active": true,

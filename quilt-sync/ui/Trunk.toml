@@ -1,6 +1,6 @@
 [build]
 target = "index.html"
-dist = "../src/leptos"
+dist = "dist"
 filehash = false
 
 [watch]

@@ -6,14 +6,10 @@
 # echo .os-specific-file >> ~/.gitignore
 # ```
 
-dist
+# Trunk build output
+ui/dist
+
 node_modules
 .env
 .parcel-cache
-src/leptos
-
-# TODO: move to dist directory
-src/assets/js/main.js
-src/assets/js/main.js.map
-
 tarpaulin-report.html

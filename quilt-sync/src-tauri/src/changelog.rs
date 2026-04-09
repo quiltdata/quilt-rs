@@ -3,7 +3,7 @@ use serde::Serialize;
 /// How many recent changelog entries to display.
 const MAX_ENTRIES: usize = 5;
 
-static CHANGELOG: &str = include_str!("../../../CHANGELOG.md");
+static CHANGELOG: &str = include_str!("../../CHANGELOG.md");
 
 /// A single version entry from CHANGELOG.md.
 #[derive(Serialize)]

@@ -2,7 +2,7 @@
 
 # Start QuiltSync development server
 start:
-    cd quilt-sync && npm start
+    cd quilt-sync && cargo tauri dev
 
 # Run test coverage for all packages
 coverage:

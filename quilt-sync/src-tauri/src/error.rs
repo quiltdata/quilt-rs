@@ -37,9 +37,6 @@ pub enum Error {
     #[error("Tauri failed with {0}")]
     Tauri(#[from] tauri::Error),
 
-    #[error("Failed rendering template: {0}")]
-    Template(#[from] askama::Error),
-
     #[error("Test failed: {0}")]
     Test(String),
 

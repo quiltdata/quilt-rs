@@ -11,7 +11,6 @@ use tokio::sync;
 use crate::app;
 use crate::model;
 use crate::oauth::OAuthState;
-use crate::pages;
 use crate::quilt;
 use crate::routes;
 use crate::Error;
@@ -19,111 +18,13 @@ use crate::Error;
 use crate::model::QuiltModel;
 use crate::telemetry::diagnostics;
 use crate::telemetry::{mixpanel::LoginFlow, prelude::*, MixpanelEvent};
-use crate::ui::changelog;
-use crate::ui::notify::TmplNotify;
+use crate::changelog;
+use crate::notify::TmplNotify;
 
 fn get_default_home_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, Error> {
     let path_resolver = app_handle.path();
     let user_home = path_resolver.home_dir()?;
     Ok(user_home.join("QuiltSync"))
-}
-
-async fn load_page_command(
-    m: &model::Model,
-    app: &app::App,
-    app_handle: &tauri::AppHandle,
-    tracing: &crate::telemetry::Telemetry,
-    location: &str,
-) -> Result<String, Error> {
-    let home = get_default_home_dir(app_handle)?;
-    let data_dir = app_handle.path().app_local_data_dir()?;
-
-    let path = location.parse::<routes::Paths>()?;
-
-    let page_result = pages::load(m, app, &home, &data_dir, tracing, &path).await;
-
-    match page_result {
-        Ok(output) => {
-            debug!("Page loaded successfully, URL: {}", location);
-            tracing
-                .track(MixpanelEvent::PageLoaded {
-                    pathname: path.pathname(),
-                    error: None,
-                })
-                .await;
-            Ok(output)
-        }
-        Err(Error::Quilt(quilt::Error::LineageMissing | quilt::Error::LineageMissingHome)) => {
-            let err = "Lineage file is required";
-            error!("{}", err);
-            let setup_page = pages::ViewSetup::create(&home).await?;
-            tracing
-                .track(MixpanelEvent::PageLoaded {
-                    pathname: path.pathname(),
-                    error: Some(err.to_string()),
-                })
-                .await;
-            Ok(setup_page.render()?)
-        }
-        Err(Error::Quilt(quilt::Error::LoginRequired(Some(host)))) => {
-            let warn = "Login is required";
-            warn!("{}", warn);
-            // `location` (the page URL) is passed as `back` so the user
-            // returns here after successful login. It is stored verbatim in
-            // PendingAuth and parsed back into a typed Paths after a
-            // successful OAuth callback (see uri::login_with_code).
-            let login_page =
-                pages::ViewLogin::create(tracing, host.clone(), Some(location.to_string())).await?;
-            tracing
-                .track(MixpanelEvent::PageLoaded {
-                    pathname: path.pathname(),
-                    error: Some(warn.to_string()),
-                })
-                .await;
-            Ok(login_page.render()?)
-        }
-        Err(err) => {
-            error!("{}", err);
-            let error = Some(err.to_string());
-            let error_page = pages::ViewError::create(err).await?;
-            tracing
-                .track(MixpanelEvent::PageLoaded {
-                    pathname: path.pathname(),
-                    error,
-                })
-                .await;
-            Ok(error_page.render()?)
-        }
-    }
-}
-
-#[tauri::command]
-pub async fn load_page(
-    m: tauri::State<'_, model::Model>,
-    app: tauri::State<'_, app::App>,
-    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
-    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
-    location: String,
-) -> Result<String, String> {
-    let m: &model::Model = &m;
-    let app: &app::App = &app;
-    let tracing: &crate::telemetry::Telemetry = &tracing;
-
-    let app_handle = &app_handle.lock().await;
-
-    match load_page_command(m, app, app_handle, tracing, &location).await {
-        Ok(result) => Ok(result),
-        Err(err) => {
-            error!("Failed to load page: {}", err);
-            match pages::ViewError::create(err).await {
-                Ok(error_page) => match error_page.render() {
-                    Ok(rendered) => Ok(rendered),
-                    Err(render_err) => Ok(format!("Critical error: {}", render_err)),
-                },
-                Err(create_err) => Ok(format!("Critical error: {}", create_err)),
-            }
-        }
-    }
 }
 
 // ── Installed Package data for Leptos UI ──
@@ -661,7 +562,7 @@ async fn get_commit_data_from_model(
         .map(|u| u.to_string());
 
     // Generate commit message from changes
-    let message = pages::commit::generate_commit_message(&status.changes);
+    let message = crate::commit_message::generate(&status.changes);
 
     // Load remote manifest for user_meta and workflow
     let (user_meta, user_meta_error, workflow) =
@@ -1171,11 +1072,6 @@ pub async fn reveal_in_file_browser(
         msg_ok,
         msg_err,
     )
-}
-
-#[tauri::command]
-pub async fn load_empty() -> Result<String, String> {
-    Ok("".to_string())
 }
 
 async fn open_in_file_browser_command(m: &model::Model, namespace: &str) -> Result<(), Error> {
@@ -1753,13 +1649,6 @@ pub async fn handle_remote_package(
 mod tests {
     use super::*;
     use crate::model::mocks;
-
-    #[tokio::test]
-    async fn test_load_empty() -> Result<(), String> {
-        let result = load_empty().await?;
-        assert_eq!(result, "");
-        Ok(())
-    }
 
     #[tokio::test]
     async fn test_get_login_error_data() -> Result<(), String> {
