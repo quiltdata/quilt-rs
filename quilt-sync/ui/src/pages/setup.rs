@@ -1,0 +1,162 @@
+use leptos::prelude::*;
+use serde::{Deserialize, Serialize};
+
+use crate::components::{Layout, Spinner};
+use crate::tauri;
+
+// ── Data types (mirror the Tauri command response) ──
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetupData {
+    pub default_home: String,
+}
+
+// ── Setup page ──
+
+#[component]
+pub fn Setup() -> impl IntoView {
+    let notification = RwSignal::new(String::new());
+
+    let data = LocalResource::new(move || async {
+        tauri::invoke_unit::<SetupData>("get_setup_data").await
+    });
+
+    view! {
+        <Layout breadcrumbs=vec![] notification=notification>
+            <Suspense fallback=move || {
+                view! { <Spinner /> }
+            }>
+                {move || Suspend::new(async move {
+                    match data.await {
+                        Ok(d) => {
+                            view! {
+                                <SetupContent default_home=d.default_home />
+                            }
+                                .into_any()
+                        }
+                        Err(e) => {
+                            let msg = format!("Failed to load setup data: {e}");
+                            view! {
+                                <div class="qui-page-setup container">
+                                    <p>{msg}</p>
+                                </div>
+                            }
+                                .into_any()
+                        }
+                    }
+                })}
+            </Suspense>
+        </Layout>
+    }
+}
+
+// ── Main content (rendered after data loads) ──
+
+#[component]
+fn SetupContent(default_home: String) -> impl IntoView {
+    let directory = RwSignal::new(default_home);
+    let hint = RwSignal::new(String::new());
+    let saving = RwSignal::new(false);
+    let browsing = RwSignal::new(false);
+
+    let on_browse = move |_| {
+        if browsing.get_untracked() {
+            return;
+        }
+        browsing.set(true);
+        hint.set(String::new());
+        leptos::task::spawn_local(async move {
+            match tauri::invoke_unit::<String>("open_directory_picker").await {
+                Ok(path) => {
+                    directory.set(path);
+                    hint.set(String::new());
+                }
+                Err(e) => hint.set(e),
+            }
+            browsing.set(false);
+        });
+    };
+
+    let on_save = move |_| {
+        if saving.get_untracked() {
+            return;
+        }
+        saving.set(true);
+        hint.set(String::new());
+        leptos::task::spawn_local(async move {
+            #[derive(Serialize)]
+            struct Args {
+                directory: String,
+            }
+            match tauri::invoke::<_, String>(
+                "setup",
+                &Args {
+                    directory: directory.get_untracked(),
+                },
+            )
+            .await
+            {
+                Ok(_) => {
+                    // Navigate to installed packages list
+                    if let Some(window) = web_sys::window() {
+                        let _ = window.location().assign("installed-packages-list.html");
+                    }
+                }
+                Err(e) => {
+                    hint.set(e);
+                    saving.set(false);
+                }
+            }
+        });
+    };
+
+    view! {
+        <div class="qui-page-setup container">
+            <div class="main">
+                <p class="message">
+                    "Select a directory where QuiltSync will store your packages, ex. ~/QuiltSync"
+                </p>
+
+                <form class="form" on:submit=|ev| ev.prevent_default()>
+                    <p class="field">
+                        <label class="label" for="directory">
+                            "Set home directory"
+                        </label>
+                        <input
+                            class="input"
+                            id="directory"
+                            name="directory"
+                            required
+                            readonly
+                            prop:value=move || directory.get()
+                        />
+                        <span class="hint">{move || hint.get()}</span>
+                    </p>
+
+                    <button
+                        class="qui-button"
+                        type="button"
+                        prop:disabled=move || browsing.get()
+                        on:click=on_browse
+                    >
+                        <span>"Browse"</span>
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        // Action bar with Save button
+        <div class="qui-actionbar">
+            <button
+                class="qui-button primary large"
+                type="button"
+                prop:disabled=move || saving.get()
+                on:click=on_save
+            >
+                <img class="qui-icon" src="/assets/img/icons/done.svg" />
+                <span>{move || if saving.get() { "Saving\u{2026}" } else { "Save" }}</span>
+            </button>
+        </div>
+    }
+}

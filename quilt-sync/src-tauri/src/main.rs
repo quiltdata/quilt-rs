@@ -86,6 +86,7 @@ fn main() {
             commands::certify_latest,
             commands::erase_auth,
             commands::get_settings_data,
+            commands::get_setup_data,
             commands::debug_dot_quilt,
             commands::debug_logs,
             commands::load_empty,

@@ -2,7 +2,7 @@ use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
-use crate::components::Layout;
+use crate::components::{Layout, Spinner};
 use crate::tauri;
 
 // ── Data types (mirror the Tauri command response) ──
@@ -69,18 +69,6 @@ pub fn Settings() -> impl IntoView {
                 })}
             </Suspense>
         </Layout>
-    }
-}
-
-#[component]
-fn Spinner() -> impl IntoView {
-    view! {
-        <div class="q-spinner">
-            <div></div>
-            <div></div>
-            <div></div>
-            <div></div>
-        </div>
     }
 }
 

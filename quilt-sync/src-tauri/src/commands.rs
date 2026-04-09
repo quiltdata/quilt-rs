@@ -183,6 +183,25 @@ pub async fn get_settings_data(
     })
 }
 
+// ── Setup data for Leptos UI ──
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetupData {
+    pub default_home: String,
+}
+
+#[tauri::command]
+pub async fn get_setup_data(
+    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
+) -> Result<SetupData, String> {
+    let app_handle = app_handle.lock().await;
+    let home = get_default_home_dir(&app_handle).map_err(|e| e.to_string())?;
+    Ok(SetupData {
+        default_home: home.display().to_string(),
+    })
+}
+
 async fn package_commit_command(
     m: &model::Model,
     namespace: &str,
