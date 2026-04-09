@@ -183,6 +183,35 @@ pub async fn get_settings_data(
     })
 }
 
+// ── Login data for Leptos UI ──
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginData {
+    pub host: String,
+    pub back: String,
+    pub catalog_url: String,
+}
+
+#[tauri::command]
+pub async fn get_login_data(location: String) -> Result<LoginData, String> {
+    let path = location
+        .parse::<routes::Paths>()
+        .map_err(|e| e.to_string())?;
+
+    match path {
+        routes::Paths::Login(host, back) => {
+            let catalog_url = format!("https://{host}/code");
+            Ok(LoginData {
+                host: host.to_string(),
+                back,
+                catalog_url,
+            })
+        }
+        _ => Err("Expected login route".to_string()),
+    }
+}
+
 // ── Setup data for Leptos UI ──
 
 #[derive(Serialize)]

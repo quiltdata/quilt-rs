@@ -85,6 +85,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::certify_latest,
             commands::erase_auth,
+            commands::get_login_data,
             commands::get_settings_data,
             commands::get_setup_data,
             commands::debug_dot_quilt,

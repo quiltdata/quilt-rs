@@ -13,6 +13,8 @@ fn main() {
 
     if pathname.ends_with("setup.html") {
         mount_to_body(pages::Setup);
+    } else if pathname.ends_with("login.html") {
+        mount_to_body(pages::Login);
     } else {
         mount_to_body(pages::Settings);
     }
