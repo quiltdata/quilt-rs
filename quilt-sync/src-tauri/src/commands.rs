@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use rfd::FileDialog;
+use serde::Serialize;
 use tauri::Manager;
 use tokio::sync;
 
@@ -18,6 +19,7 @@ use crate::Error;
 use crate::model::QuiltModel;
 use crate::telemetry::diagnostics;
 use crate::telemetry::{mixpanel::LoginFlow, prelude::*, MixpanelEvent};
+use crate::ui::changelog;
 use crate::ui::notify::TmplNotify;
 
 fn get_default_home_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, Error> {
@@ -122,6 +124,63 @@ pub async fn load_page(
             }
         }
     }
+}
+
+// ── Settings data for Leptos UI ──
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsData {
+    pub version: String,
+    pub home_dir: Option<String>,
+    pub data_dir: String,
+    pub auth_hosts: Vec<String>,
+    pub log_level: String,
+    pub logs_dir: String,
+    pub logs_dir_is_temporary: bool,
+    pub os: String,
+    pub changelog: Vec<changelog::ChangelogEntry>,
+}
+
+#[tauri::command]
+pub async fn get_settings_data(
+    m: tauri::State<'_, model::Model>,
+    app: tauri::State<'_, app::App>,
+    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+) -> Result<SettingsData, String> {
+    let m: &model::Model = &m;
+    let app: &app::App = &app;
+
+    let app_handle = app_handle.lock().await;
+    let data_dir = app_handle
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| e.to_string())?;
+
+    let home_dir = m
+        .get_quilt()
+        .lock()
+        .await
+        .get_home()
+        .await
+        .ok()
+        .map(|h| h.as_ref().display().to_string());
+
+    let auth_hosts = quilt::paths::list_auth_hosts(&data_dir);
+    let log_level = tracing.log_level();
+
+    Ok(SettingsData {
+        version: app.version.to_string(),
+        home_dir,
+        data_dir: data_dir.display().to_string(),
+        auth_hosts,
+        log_level,
+        logs_dir: app.logs_dir.path().display().to_string(),
+        logs_dir_is_temporary: matches!(app.logs_dir, crate::telemetry::LogsDir::Temporary(_)),
+        os: std::env::consts::OS.to_string(),
+        changelog: changelog::latest_entries(),
+    })
 }
 
 async fn package_commit_command(

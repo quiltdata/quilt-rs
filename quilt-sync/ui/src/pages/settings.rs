@@ -1,0 +1,507 @@
+use leptos::prelude::*;
+use serde::{Deserialize, Serialize};
+
+use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
+use crate::components::Layout;
+use crate::tauri;
+
+// ── Data types (mirror the Tauri command response) ──
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsData {
+    pub version: String,
+    pub home_dir: Option<String>,
+    pub data_dir: String,
+    pub auth_hosts: Vec<String>,
+    pub log_level: String,
+    pub logs_dir: String,
+    pub logs_dir_is_temporary: bool,
+    pub os: String,
+    pub changelog: Vec<ChangelogEntry>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct ChangelogEntry {
+    pub version: String,
+    pub date: String,
+    pub body: String,
+}
+
+// ── Settings page ──
+
+#[component]
+pub fn Settings() -> impl IntoView {
+    let notification = RwSignal::new(String::new());
+
+    let data = LocalResource::new(move || async {
+        tauri::invoke_unit::<SettingsData>("get_settings_data").await
+    });
+
+    let breadcrumbs = vec![
+        BreadcrumbItem::Link(BreadcrumbLink {
+            href: "installed-packages-list.html",
+            title: String::new(),
+        }),
+        BreadcrumbItem::Current("Settings".to_string()),
+    ];
+
+    view! {
+        <Layout breadcrumbs=breadcrumbs notification=notification>
+            <Suspense fallback=move || {
+                view! { <Spinner /> }
+            }>
+                {move || Suspend::new(async move {
+                    match data.await {
+                        Ok(d) => {
+                            view! { <SettingsContent data=d notification=notification /> }.into_any()
+                        }
+                        Err(e) => {
+                            let msg = format!("Failed to load settings: {e}");
+                            view! {
+                                <div class="qui-page-settings container">
+                                    <p>{msg}</p>
+                                </div>
+                            }
+                                .into_any()
+                        }
+                    }
+                })}
+            </Suspense>
+        </Layout>
+    }
+}
+
+#[component]
+fn Spinner() -> impl IntoView {
+    view! {
+        <div class="q-spinner">
+            <div></div>
+            <div></div>
+            <div></div>
+            <div></div>
+        </div>
+    }
+}
+
+// ── Main content (rendered after data loads) ──
+
+#[component]
+fn SettingsContent(data: SettingsData, notification: RwSignal<String>) -> impl IntoView {
+    let zip_path = RwSignal::new(None::<String>);
+
+    view! {
+        <div class="qui-page-settings container">
+            <GeneralSection
+                version=data.version.clone()
+                home_dir=data.home_dir
+                data_dir=data.data_dir
+                changelog=data.changelog
+                notification=notification
+            />
+            <AccountSection auth_hosts=data.auth_hosts notification=notification />
+            <DiagnosticsSection
+                version=data.version
+                os=data.os
+                log_level=data.log_level
+                logs_dir=data.logs_dir
+                logs_dir_is_temporary=data.logs_dir_is_temporary
+                notification=notification
+                zip_path=zip_path
+            />
+        </div>
+    }
+}
+
+// ── General section ──
+
+#[component]
+fn GeneralSection(
+    version: String,
+    home_dir: Option<String>,
+    data_dir: String,
+    changelog: Vec<ChangelogEntry>,
+    notification: RwSignal<String>,
+) -> impl IntoView {
+    let home_display = home_dir.unwrap_or_else(|| "Not set".to_string());
+    let home_title = home_display.clone();
+    let data_title = data_dir.clone();
+    let show_release_notes = RwSignal::new(false);
+
+    view! {
+        <section class="settings-section">
+            <h2 class="section-title">"General"</h2>
+            <dl class="settings-list">
+                <dt>"Version"</dt>
+                <dd>
+                    <span>{version}</span>
+                    <button
+                        class="qui-button link"
+                        type="button"
+                        on:click=move |_| show_release_notes.set(true)
+                    >
+                        <span>"Release notes"</span>
+                    </button>
+                </dd>
+
+                <dt>"Home directory"</dt>
+                <dd>
+                    <span class="path" title=home_title>{home_display}</span>
+                    <OpenDirButton command="open_home_dir" notification=notification />
+                </dd>
+
+                <dt>"Data directory"</dt>
+                <dd>
+                    <span class="path" title=data_title>{data_dir}</span>
+                    <OpenDirButton command="open_data_dir" notification=notification />
+                </dd>
+            </dl>
+        </section>
+
+        <Show when=move || show_release_notes.get()>
+            <ReleaseNotesPopup
+                changelog=changelog.clone()
+                on_close=move || show_release_notes.set(false)
+            />
+        </Show>
+    }
+}
+
+// ── Account section ──
+
+#[component]
+fn AccountSection(auth_hosts: Vec<String>, notification: RwSignal<String>) -> impl IntoView {
+    view! {
+        <section class="settings-section">
+            <h2 class="section-title">"Auth"</h2>
+            {if auth_hosts.is_empty() {
+                view! { <p class="empty-state">"No authenticated hosts"</p> }.into_any()
+            } else {
+                view! {
+                    <dl class="settings-list">
+                        {auth_hosts
+                            .into_iter()
+                            .map(|host| {
+                                view! { <AuthHostRow host=host notification=notification /> }
+                            })
+                            .collect_view()}
+                    </dl>
+                }
+                    .into_any()
+            }}
+        </section>
+    }
+}
+
+#[component]
+fn AuthHostRow(host: String, notification: RwSignal<String>) -> impl IntoView {
+    let host_display = host.clone();
+    let host_for_logout = host.clone();
+    let login_href = format!("login.html#host={}&back=settings.html", urlencoding(&host));
+
+    view! {
+        <dt>{host_display}</dt>
+        <dd>
+            <a href=login_href>
+                <button class="qui-button small" type="button">
+                    <span>"Re-login"</span>
+                </button>
+            </a>
+            <div class="logout-popover">
+                <button
+                    class="qui-button small"
+                    type="button"
+                    on:click=move |_| {
+                        let host = host_for_logout.clone();
+                        leptos::task::spawn_local(async move {
+                            #[derive(Serialize)]
+                            struct Args {
+                                host: String,
+                            }
+                            match tauri::invoke::<_, String>("erase_auth", &Args { host }).await {
+                                Ok(html) => notification.set(html),
+                                Err(e) => {
+                                    notification
+                                        .set(format!("<div class=\"error\">{e}</div>"))
+                                }
+                            }
+                            let _ = web_sys::window().and_then(|w| w.location().reload().ok());
+                        });
+                    }
+                >
+                    <img class="qui-icon" src="/assets/img/icons/warning.svg" />
+                    <span>"Logout"</span>
+                </button>
+                <div class="popover-wrapper">
+                    <div class="popover">
+                        "This will erase stored credentials for this host. You will need to log in again."
+                    </div>
+                </div>
+            </div>
+        </dd>
+    }
+}
+
+// ── Diagnostics section ──
+
+#[component]
+fn DiagnosticsSection(
+    version: String,
+    os: String,
+    log_level: String,
+    logs_dir: String,
+    logs_dir_is_temporary: bool,
+    notification: RwSignal<String>,
+    zip_path: RwSignal<Option<String>>,
+) -> impl IntoView {
+    let collecting = RwSignal::new(false);
+    let logs_icon = if logs_dir_is_temporary {
+        "/assets/img/icons/warning.svg"
+    } else {
+        "/assets/img/icons/folder_open.svg"
+    };
+    let logs_title = logs_dir.clone();
+
+    view! {
+        <section class="settings-section">
+            <h2 class="section-title">"Diagnostics"</h2>
+            <dl class="settings-list">
+                <dt>"Log level"</dt>
+                <dd>{log_level}</dd>
+
+                <dt>"Logs directory"</dt>
+                <dd>
+                    <span class="path" title=logs_title>{logs_dir}</span>
+                    <button
+                        class="qui-button link small"
+                        type="button"
+                        on:click=move |_| {
+                            leptos::task::spawn_local(async move {
+                                match tauri::invoke_unit::<String>("debug_logs").await {
+                                    Ok(html) => notification.set(html),
+                                    Err(e) => {
+                                        notification
+                                            .set(format!("<div class=\"error\">{e}</div>"))
+                                    }
+                                }
+                            });
+                        }
+                    >
+                        <img class="qui-icon" src=logs_icon />
+                        <span>"Open"</span>
+                    </button>
+                </dd>
+            </dl>
+
+            <div class="settings-actions" id="diagnostic-actions">
+                // Collect Logs
+                <button
+                    class="qui-button"
+                    type="button"
+                    prop:disabled=move || collecting.get()
+                    on:click=move |_| {
+                        collecting.set(true);
+                        leptos::task::spawn_local(async move {
+                            match tauri::invoke_unit::<String>("collect_diagnostic_logs").await {
+                                Ok(path) => zip_path.set(Some(path)),
+                                Err(e) => {
+                                    web_sys::console::error_1(
+                                        &format!("Failed to collect logs: {e}").into(),
+                                    );
+                                }
+                            }
+                            collecting.set(false);
+                        });
+                    }
+                >
+                    <span>
+                        {move || {
+                            if collecting.get() { "Collecting\u{2026}" } else { "Collect Logs" }
+                        }}
+                    </span>
+                </button>
+
+                <span class="actions-divider">"then"</span>
+
+                // Send to Sentry
+                <button
+                    class="qui-button"
+                    type="button"
+                    prop:disabled=move || zip_path.get().is_none()
+                    on:click=move |_| {
+                        if let Some(path) = zip_path.get_untracked() {
+                            leptos::task::spawn_local(async move {
+                                #[derive(Serialize)]
+                                #[serde(rename_all = "camelCase")]
+                                struct Args {
+                                    zip_path: String,
+                                }
+                                match tauri::invoke::<_, String>(
+                                    "send_crash_report",
+                                    &Args { zip_path: path },
+                                )
+                                    .await
+                                {
+                                    Ok(html) => notification.set(html),
+                                    Err(e) => {
+                                        notification
+                                            .set(format!("<div class=\"error\">{e}</div>"))
+                                    }
+                                }
+                            });
+                        }
+                    }
+                >
+                    <span>"Send to Sentry"</span>
+                </button>
+
+                <span class="actions-divider">"or"</span>
+
+                // Email Support
+                <EmailSupportButton version=version os=os zip_path=zip_path />
+
+                // Collected logs result
+                <Show when=move || zip_path.get().is_some()>
+                    <div class="collect-logs-result">
+                        <span class="zip-path-label">"Logs collected:"</span>
+                        <code>{move || zip_path.get().unwrap_or_default()}</code>
+                        <button
+                            class="qui-button link small"
+                            type="button"
+                            on:click=move |_| {
+                                if let Some(path) = zip_path.get_untracked() {
+                                    leptos::task::spawn_local(async move {
+                                        let sep = path.rfind('/').or_else(|| path.rfind('\\'));
+                                        let dir = match sep {
+                                            Some(i) if i > 0 => path[..i].to_string(),
+                                            _ => path,
+                                        };
+                                        #[derive(Serialize)]
+                                        struct UrlArgs {
+                                            url: String,
+                                        }
+                                        let _ = tauri::invoke::<_, String>(
+                                                "open_in_web_browser",
+                                                &UrlArgs { url: dir },
+                                            )
+                                            .await;
+                                    });
+                                }
+                            }
+                        >
+                            <img class="qui-icon" src="/assets/img/icons/folder_open.svg" />
+                            <span>"Reveal"</span>
+                        </button>
+                    </div>
+                </Show>
+
+                <p class="crash-report-description">
+                    "Sends app version, OS, directory paths, authenticated host names, log files, and OAuth client IDs."
+                </p>
+            </div>
+        </section>
+    }
+}
+
+#[component]
+fn EmailSupportButton(
+    version: String,
+    os: String,
+    zip_path: RwSignal<Option<String>>,
+) -> impl IntoView {
+    view! {
+        <button
+            class="qui-button"
+            type="button"
+            prop:disabled=move || zip_path.get().is_none()
+            on:click=move |_| {
+                if let Some(path) = zip_path.get_untracked() {
+                    let version = version.clone();
+                    let os = os.clone();
+                    leptos::task::spawn_local(async move {
+                        let subject =
+                            urlencoding(&format!("Quilt issue report (v{version}, {os})"));
+                        let body = urlencoding(&format!(
+                            "Please describe the issue:\n...\n\nDiagnostic logs saved to:\n{path}\nPlease attach this file to this email."
+                        ));
+                        let mailto =
+                            format!("mailto:support@quilt.bio?subject={subject}&body={body}");
+                        #[derive(Serialize)]
+                        struct UrlArgs {
+                            url: String,
+                        }
+                        let _ = tauri::invoke::<_, String>(
+                                "open_in_web_browser",
+                                &UrlArgs { url: mailto },
+                            )
+                            .await;
+                    });
+                }
+            }
+        >
+            <span>"Email Support"</span>
+        </button>
+    }
+}
+
+// ── Shared components ──
+
+#[component]
+fn OpenDirButton(command: &'static str, notification: RwSignal<String>) -> impl IntoView {
+    view! {
+        <button
+            class="qui-button link small"
+            type="button"
+            on:click=move |_| {
+                leptos::task::spawn_local(async move {
+                    match tauri::invoke_unit::<String>(command).await {
+                        Ok(html) => notification.set(html),
+                        Err(e) => notification.set(format!("<div class=\"error\">{e}</div>")),
+                    }
+                });
+            }
+        >
+            <img class="qui-icon" src="/assets/img/icons/folder_open.svg" />
+            <span>"Open"</span>
+        </button>
+    }
+}
+
+// ── Release notes popup ──
+
+#[component]
+fn ReleaseNotesPopup(
+    changelog: Vec<ChangelogEntry>,
+    on_close: impl Fn() + 'static,
+) -> impl IntoView {
+    view! {
+        <div class="popup-overlay" on:click=move |_| on_close()>
+            <div
+                class="popup-content release-notes"
+                on:click=|ev| ev.stop_propagation()
+            >
+                <h2 class="section-title">"Release Notes"</h2>
+                {changelog
+                    .into_iter()
+                    .map(|entry| {
+                        view! {
+                            <div class="release-notes-entry">
+                                <h3>{entry.version}</h3>
+                                <p>{entry.date}</p>
+                                <pre>{entry.body}</pre>
+                            </div>
+                        }
+                    })
+                    .collect_view()}
+            </div>
+        </div>
+    }
+}
+
+// ── Helpers ──
+
+fn urlencoding(s: &str) -> String {
+    js_sys::encode_uri_component(s)
+        .as_string()
+        .unwrap_or_default()
+}
