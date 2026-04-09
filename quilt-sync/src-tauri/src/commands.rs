@@ -530,6 +530,122 @@ pub async fn get_merge_data(
         .map_err(|e| e.to_string())
 }
 
+// ── Installed Packages List data for Leptos UI ──
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct InstalledPackagesListData {
+    pub packages: Vec<InstalledPackageListItem>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct InstalledPackageListItem {
+    pub namespace: String,
+    pub status: String,
+    pub origin_url: Option<String>,
+    pub origin_host: Option<String>,
+    pub remote_display: Option<String>,
+}
+
+async fn get_installed_packages_list_data_from_model(
+    m: &impl model::QuiltModel,
+    tracing: &crate::telemetry::Telemetry,
+) -> Result<InstalledPackagesListData, Error> {
+    let list = m.get_installed_packages_list().await?;
+    let mut packages = Vec::new();
+    for installed_package in list {
+        match load_package_item(m, tracing, &installed_package).await {
+            Ok(item) => packages.push(item),
+            Err(err) => {
+                tracing::warn!(
+                    "Failed to load package {}: {err}",
+                    installed_package.namespace,
+                );
+            }
+        }
+    }
+    Ok(InstalledPackagesListData { packages })
+}
+
+async fn load_package_item(
+    m: &impl model::QuiltModel,
+    tracing: &crate::telemetry::Telemetry,
+    installed_package: &quilt::InstalledPackage,
+) -> Result<InstalledPackageListItem, Error> {
+    let lineage = m
+        .get_installed_package_lineage(installed_package)
+        .await?;
+
+    let remote_uri = match lineage.remote_uri.as_ref() {
+        Some(uri) => uri,
+        None => {
+            return Ok(InstalledPackageListItem {
+                namespace: installed_package.namespace.to_string(),
+                status: "local".to_string(),
+                origin_url: None,
+                origin_host: None,
+                remote_display: None,
+            });
+        }
+    };
+
+    if remote_uri.origin.is_none() {
+        return Ok(InstalledPackageListItem {
+            namespace: installed_package.namespace.to_string(),
+            status: "error".to_string(),
+            origin_url: None,
+            origin_host: None,
+            remote_display: Some(remote_uri.to_string()),
+        });
+    }
+
+    let origin_host = crate::debug_tools::try_remote_origin_host(remote_uri)?;
+    tracing.add_host(&origin_host);
+    let uri = quilt::uri::S3PackageUri::from(remote_uri);
+    let origin_url = uri.display_for_host(&origin_host)?;
+    let status = match m
+        .get_installed_package_status(installed_package, None)
+        .await
+    {
+        Ok(s) => s.upstream_state,
+        Err(err) => {
+            tracing::warn!(
+                "Failed to get status for {}: {err}",
+                installed_package.namespace,
+            );
+            quilt::lineage::UpstreamState::Error
+        }
+    };
+
+    let status_str = match status {
+        quilt::lineage::UpstreamState::Ahead => "ahead",
+        quilt::lineage::UpstreamState::Behind => "behind",
+        quilt::lineage::UpstreamState::Diverged => "diverged",
+        quilt::lineage::UpstreamState::UpToDate => "uptodate",
+        quilt::lineage::UpstreamState::Local => "local",
+        quilt::lineage::UpstreamState::Error => "error",
+    };
+
+    Ok(InstalledPackageListItem {
+        namespace: installed_package.namespace.to_string(),
+        status: status_str.to_string(),
+        origin_url: Some(origin_url.to_string()),
+        origin_host: Some(origin_host.to_string()),
+        remote_display: Some(remote_uri.to_string()),
+    })
+}
+
+#[tauri::command]
+pub async fn get_installed_packages_list_data(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+) -> Result<InstalledPackagesListData, String> {
+    get_installed_packages_list_data_from_model(&*m, &tracing)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 // ── Setup data for Leptos UI ──
 
 #[derive(Serialize)]
@@ -1431,5 +1547,272 @@ mod tests {
 
         let result = get_merge_data_from_model(&model, &tracing, &namespace).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_get_installed_packages_list_data_empty() -> Result<(), String> {
+        let mut model = mocks::create();
+        mocks::mock_installed_packages_list(&mut model);
+        let tracing = crate::telemetry::Telemetry::default();
+
+        let data = get_installed_packages_list_data_from_model(&model, &tracing)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        assert!(data.packages.is_empty());
+        Ok(())
+    }
+
+    /// Helper: create a quilt::InstalledPackage with a given namespace.
+    fn make_installed_package(
+        namespace: impl Into<quilt::uri::Namespace>,
+    ) -> quilt::InstalledPackage {
+        quilt::LocalDomain::new(std::path::PathBuf::new())
+            .create_installed_package(namespace.into())
+            .expect("Failed to create installed package")
+    }
+
+    /// Helper: create a ManifestUri with origin for a given namespace.
+    fn make_manifest_uri(namespace: &str) -> quilt::uri::ManifestUri {
+        quilt::uri::ManifestUri {
+            origin: Some("test.quilt.dev".parse().unwrap()),
+            bucket: "test".to_string(),
+            namespace: namespace.try_into().unwrap(),
+            hash: "abcdef".to_string(),
+        }
+    }
+
+    /// Helper: create a ManifestUri **without** origin (triggers error state).
+    fn make_manifest_uri_no_origin(namespace: &str) -> quilt::uri::ManifestUri {
+        quilt::uri::ManifestUri {
+            origin: None,
+            bucket: "test".to_string(),
+            namespace: namespace.try_into().unwrap(),
+            hash: "abcdef".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_installed_packages_list_data_statuses() -> Result<(), String> {
+        let mut model = mocks::create();
+
+        let pkgs = vec![
+            make_installed_package(("test", "ahead")),
+            make_installed_package(("test", "behind")),
+            make_installed_package(("test", "diverged")),
+            make_installed_package(("test", "uptodate")),
+        ];
+        model
+            .expect_get_installed_packages_list()
+            .return_once(move || Ok(pkgs));
+
+        // All four packages have a remote URI with origin
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|pkg| {
+                let uri = make_manifest_uri(&pkg.namespace.to_string());
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    uri,
+                    "abcdef".to_string(),
+                ))
+            });
+
+        // Return the status matching the namespace name
+        model
+            .expect_get_installed_package_status()
+            .returning(|pkg, _| {
+                let state = match pkg.namespace.to_string().as_str() {
+                    "test/ahead" => quilt::lineage::UpstreamState::Ahead,
+                    "test/behind" => quilt::lineage::UpstreamState::Behind,
+                    "test/diverged" => quilt::lineage::UpstreamState::Diverged,
+                    "test/uptodate" => quilt::lineage::UpstreamState::UpToDate,
+                    _ => quilt::lineage::UpstreamState::Error,
+                };
+                Ok(quilt::lineage::InstalledPackageStatus::new(
+                    state,
+                    Default::default(),
+                ))
+            });
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let data = get_installed_packages_list_data_from_model(&model, &tracing)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        assert_eq!(data.packages.len(), 4);
+
+        let find = |ns: &str| data.packages.iter().find(|p| p.namespace == ns).unwrap();
+
+        let ahead = find("test/ahead");
+        assert_eq!(ahead.status, "ahead");
+        assert!(ahead.origin_url.is_some());
+        assert_eq!(ahead.origin_host.as_deref(), Some("test.quilt.dev"));
+        assert!(ahead.remote_display.is_some());
+
+        let behind = find("test/behind");
+        assert_eq!(behind.status, "behind");
+        assert!(behind.origin_url.is_some());
+
+        let diverged = find("test/diverged");
+        assert_eq!(diverged.status, "diverged");
+        assert!(diverged.origin_url.is_some());
+
+        let uptodate = find("test/uptodate");
+        assert_eq!(uptodate.status, "uptodate");
+        assert!(uptodate.origin_url.is_some());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_installed_packages_list_data_error_with_origin() -> Result<(), String> {
+        let mut model = mocks::create();
+
+        let pkgs = vec![make_installed_package(("test", "error"))];
+        model
+            .expect_get_installed_packages_list()
+            .return_once(move || Ok(pkgs));
+
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|pkg| {
+                let uri = make_manifest_uri(&pkg.namespace.to_string());
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    uri,
+                    "abcdef".to_string(),
+                ))
+            });
+
+        model
+            .expect_get_installed_package_status()
+            .returning(|_, _| Ok(quilt::lineage::InstalledPackageStatus::error()));
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let data = get_installed_packages_list_data_from_model(&model, &tracing)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        assert_eq!(data.packages.len(), 1);
+        let pkg = &data.packages[0];
+        assert_eq!(pkg.namespace, "test/error");
+        assert_eq!(pkg.status, "error");
+        // Should still have origin (for Login button in UI)
+        assert!(pkg.origin_url.is_some());
+        assert_eq!(pkg.origin_host.as_deref(), Some("test.quilt.dev"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_installed_packages_list_data_no_origin() -> Result<(), String> {
+        let mut model = mocks::create();
+
+        let pkgs = vec![make_installed_package(("test", "noorigin"))];
+        model
+            .expect_get_installed_packages_list()
+            .return_once(move || Ok(pkgs));
+
+        // Remote URI exists but has no origin → triggers early return with error status
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|pkg| {
+                let uri = make_manifest_uri_no_origin(&pkg.namespace.to_string());
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    uri,
+                    "abcdef".to_string(),
+                ))
+            });
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let data = get_installed_packages_list_data_from_model(&model, &tracing)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        assert_eq!(data.packages.len(), 1);
+        let pkg = &data.packages[0];
+        assert_eq!(pkg.namespace, "test/noorigin");
+        assert_eq!(pkg.status, "error");
+        // No origin_url or origin_host (for Set Origin button in UI)
+        assert!(pkg.origin_url.is_none());
+        assert!(pkg.origin_host.is_none());
+        // remote_display should still be present
+        assert!(pkg.remote_display.is_some());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_installed_packages_list_data_local_without_remote() -> Result<(), String> {
+        let mut model = mocks::create();
+
+        let pkgs = vec![make_installed_package(("test", "local"))];
+        model
+            .expect_get_installed_packages_list()
+            .return_once(move || Ok(pkgs));
+
+        // No remote_uri at all → local-only package
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|_| Ok(quilt::lineage::PackageLineage::default()));
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let data = get_installed_packages_list_data_from_model(&model, &tracing)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        assert_eq!(data.packages.len(), 1);
+        let pkg = &data.packages[0];
+        assert_eq!(pkg.namespace, "test/local");
+        assert_eq!(pkg.status, "local");
+        assert!(pkg.origin_url.is_none());
+        assert!(pkg.origin_host.is_none());
+        assert!(pkg.remote_display.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_installed_packages_list_data_local_with_origin() -> Result<(), String> {
+        let mut model = mocks::create();
+
+        let pkgs = vec![make_installed_package(("test", "localpush"))];
+        model
+            .expect_get_installed_packages_list()
+            .return_once(move || Ok(pkgs));
+
+        // Has remote URI with origin but status is Local
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|pkg| {
+                let uri = quilt::uri::ManifestUri {
+                    origin: Some("test.quilt.dev".parse().unwrap()),
+                    bucket: "test".to_string(),
+                    namespace: pkg.namespace.clone(),
+                    hash: String::new(),
+                };
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    uri,
+                    String::new(),
+                ))
+            });
+
+        model
+            .expect_get_installed_package_status()
+            .returning(|_, _| Ok(quilt::lineage::InstalledPackageStatus::local()));
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let data = get_installed_packages_list_data_from_model(&model, &tracing)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        assert_eq!(data.packages.len(), 1);
+        let pkg = &data.packages[0];
+        assert_eq!(pkg.namespace, "test/localpush");
+        assert_eq!(pkg.status, "local");
+        // Has origin (for Push button and disabled Catalog button in UI)
+        assert!(pkg.origin_url.is_some());
+        assert_eq!(pkg.origin_host.as_deref(), Some("test.quilt.dev"));
+
+        Ok(())
     }
 }

@@ -86,6 +86,7 @@ fn main() {
             commands::certify_latest,
             commands::erase_auth,
             commands::get_installed_package_data,
+            commands::get_installed_packages_list_data,
             commands::get_login_data,
             commands::get_login_error_data,
             commands::get_merge_data,

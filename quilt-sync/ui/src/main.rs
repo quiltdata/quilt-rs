@@ -19,6 +19,8 @@ fn main() {
         mount_to_body(pages::Error);
     } else if pathname.ends_with("merge.html") {
         mount_to_body(pages::Merge);
+    } else if pathname.ends_with("installed-packages-list.html") {
+        mount_to_body(pages::InstalledPackagesList);
     } else if pathname.ends_with("installed-package.html") {
         mount_to_body(pages::InstalledPackage);
     } else {
