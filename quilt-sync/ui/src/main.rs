@@ -15,6 +15,10 @@ fn main() {
         mount_to_body(pages::Setup);
     } else if pathname.ends_with("login.html") {
         mount_to_body(pages::Login);
+    } else if pathname.ends_with("login-error.html") {
+        mount_to_body(pages::Error);
+    } else if pathname.ends_with("merge.html") {
+        mount_to_body(pages::Merge);
     } else if pathname.ends_with("installed-package.html") {
         mount_to_body(pages::InstalledPackage);
     } else {

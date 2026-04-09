@@ -438,6 +438,88 @@ pub async fn get_login_data(location: String) -> Result<LoginData, String> {
     }
 }
 
+// ── Login error data for Leptos UI ──
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginErrorData {
+    pub title: String,
+    pub message: String,
+    pub login_host: String,
+}
+
+#[tauri::command]
+pub async fn get_login_error_data(location: String) -> Result<LoginErrorData, String> {
+    let path = location
+        .parse::<routes::Paths>()
+        .map_err(|e| e.to_string())?;
+
+    match path {
+        routes::Paths::LoginError(host, title, error) => Ok(LoginErrorData {
+            title,
+            message: error,
+            login_host: host.to_string(),
+        }),
+        _ => Err("Expected login-error route".to_string()),
+    }
+}
+
+// ── Merge data for Leptos UI ──
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeData {
+    pub namespace: String,
+    pub origin_url: Option<String>,
+    pub origin_host: Option<String>,
+}
+
+#[tauri::command]
+pub async fn get_merge_data(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    location: String,
+) -> Result<MergeData, String> {
+    let path = location
+        .parse::<routes::Paths>()
+        .map_err(|e| e.to_string())?;
+
+    let namespace = match path {
+        routes::Paths::Merge(ns) => ns,
+        _ => return Err("Expected merge route".to_string()),
+    };
+
+    let m: &model::Model = &m;
+
+    let installed_package = m
+        .get_installed_package(&namespace)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Package {namespace} is not installed"))?;
+
+    let lineage = m
+        .get_installed_package_lineage(&installed_package)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let (uri, origin_host) =
+        crate::debug_tools::resolve_uri_and_host(lineage.remote_uri.as_ref(), &namespace);
+    if let Some(host) = &origin_host {
+        tracing.add_host(host);
+    }
+
+    let origin_url = origin_host
+        .as_ref()
+        .and_then(|host| uri.display_for_host(host).ok())
+        .map(|u| u.to_string());
+
+    Ok(MergeData {
+        namespace: namespace.to_string(),
+        origin_url,
+        origin_host: origin_host.map(|h| h.to_string()),
+    })
+}
+
 // ── Setup data for Leptos UI ──
 
 #[derive(Serialize)]

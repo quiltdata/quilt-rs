@@ -87,6 +87,8 @@ fn main() {
             commands::erase_auth,
             commands::get_installed_package_data,
             commands::get_login_data,
+            commands::get_login_error_data,
+            commands::get_merge_data,
             commands::get_settings_data,
             commands::get_setup_data,
             commands::debug_dot_quilt,
