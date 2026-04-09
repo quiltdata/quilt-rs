@@ -18,12 +18,15 @@ pub enum BreadcrumbItem {
 
 /// Top-level page layout matching the existing Askama layout.html structure.
 ///
-/// Provides: app bar, toolbar with breadcrumbs, notification area,
-/// content slot (children), and popup overlay.
+/// Provides: app bar, toolbar with breadcrumbs and optional actions,
+/// notification area, content slot (children), and popup overlay.
 #[component]
 pub fn Layout(
     breadcrumbs: Vec<BreadcrumbItem>,
     notification: RwSignal<String>,
+    /// Optional toolbar actions rendered to the right of breadcrumbs.
+    #[prop(optional)]
+    actions: Option<ToolbarActions>,
     children: Children,
 ) -> impl IntoView {
     view! {
@@ -60,6 +63,13 @@ pub fn Layout(
             <div class="layout-toolbar qui-toolbar">
                 <div class="container">
                     <Breadcrumbs items=breadcrumbs />
+                    {actions.map(|a| view! {
+                        <div class="actions">
+                            <ul class="secondary-actions">
+                                {(a.0)()}
+                            </ul>
+                        </div>
+                    })}
                 </div>
                 <div class="qui-notify">
                     <div
@@ -86,6 +96,15 @@ pub fn Layout(
                 <div id="popup" class="root"></div>
             </div>
         </div>
+    }
+}
+
+/// Wrapper for toolbar action content (passed as `actions` prop to Layout).
+pub struct ToolbarActions(pub Box<dyn FnOnce() -> AnyView>);
+
+impl ToolbarActions {
+    pub fn new(f: impl FnOnce() -> AnyView + 'static) -> Self {
+        Self(Box::new(f))
     }
 }
 

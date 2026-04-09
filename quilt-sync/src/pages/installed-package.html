@@ -3,15 +3,29 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- base styles (theme, spinner, fonts) -->
     <link rel="stylesheet" href="../assets/css/styles.css" />
-    <script type="module" src="../dist/main.js"></script>
+    <!-- layout components -->
+    <link rel="stylesheet" href="../assets/css/views/layout.css" />
+    <link rel="stylesheet" href="../assets/css/views/actionbar.css" />
+    <link rel="stylesheet" href="../assets/css/views/appbar.css" />
+    <link rel="stylesheet" href="../assets/css/views/logo.css" />
+    <link rel="stylesheet" href="../assets/css/components/button.css" />
+    <link rel="stylesheet" href="../assets/css/views/notify.css" />
+    <link rel="stylesheet" href="../assets/css/views/popup.css" />
+    <link rel="stylesheet" href="../assets/css/views/toolbar.css" />
+    <link rel="stylesheet" href="../assets/css/views/breadcrumbs.css" />
+    <!-- page-specific -->
+    <link rel="stylesheet" href="../assets/css/pages/installed-package.css" />
+    <link rel="stylesheet" href="../assets/css/views/status.css" />
+    <link rel="stylesheet" href="../assets/css/views/entry.css" />
+    <link rel="stylesheet" href="../assets/css/views/entries-toolbar.css" />
+    <link rel="stylesheet" href="../assets/css/components/entries-filter.css" />
+    <link rel="stylesheet" href="../assets/css/components/ignore-popup.css" />
+    <script type="module">
+      import init from "../leptos/quilt-sync-ui.js";
+      init();
+    </script>
   </head>
-  <body>
-    <div class="q-spinner">
-      <div></div>
-      <div></div>
-      <div></div>
-      <div></div>
-    </div>
-  </body>
+  <body></body>
 </html>

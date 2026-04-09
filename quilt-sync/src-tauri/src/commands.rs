@@ -126,6 +126,232 @@ pub async fn load_page(
     }
 }
 
+// ── Installed Package data for Leptos UI ──
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstalledPackageEntryData {
+    pub filename: String,
+    pub size: u64,
+    pub status: String,
+    pub origin_url: Option<String>,
+    pub junky_pattern: Option<String>,
+    pub ignored_by: Option<String>,
+    pub namespace: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstalledPackageData {
+    pub namespace: String,
+    pub uri: String,
+    pub status: String,
+    pub origin_url: Option<String>,
+    pub origin_host: Option<String>,
+    pub entries: Vec<InstalledPackageEntryData>,
+    pub has_remote_entries: bool,
+    pub ignored_count: usize,
+    pub unmodified_count: usize,
+    pub filter_unmodified: bool,
+    pub filter_ignored: bool,
+}
+
+#[tauri::command]
+pub async fn get_installed_package_data(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    location: String,
+) -> Result<InstalledPackageData, String> {
+    let path = location
+        .parse::<routes::Paths>()
+        .map_err(|e| e.to_string())?;
+
+    let (namespace, filter) = match path {
+        routes::Paths::InstalledPackage(ns, f) => (ns, f),
+        _ => return Err("Expected installed-package route".to_string()),
+    };
+
+    let m: &model::Model = &m;
+
+    let installed_package = m
+        .get_installed_package(&namespace)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Package {namespace} is not installed"))?;
+
+    let lineage = m
+        .get_installed_package_lineage(&installed_package)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let (uri, origin_host) =
+        crate::debug_tools::resolve_uri_and_host(lineage.remote_uri.as_ref(), &namespace);
+    if let Some(host) = &origin_host {
+        tracing.add_host(host);
+    }
+
+    let pkg_status = if lineage.remote_uri.is_none() || origin_host.is_some() {
+        match m
+            .get_installed_package_status(&installed_package, None)
+            .await
+        {
+            Ok(s) => s,
+            Err(_) => quilt::lineage::InstalledPackageStatus::error(),
+        }
+    } else {
+        quilt::lineage::InstalledPackageStatus::error()
+    };
+
+    let modified_entries = &pkg_status.changes;
+    let installed_paths = &lineage.paths;
+    let manifest_entries = m
+        .get_installed_package_records(&installed_package)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let junky_map: std::collections::HashMap<_, _> = pkg_status
+        .junky_changes
+        .iter()
+        .map(|(p, pat)| (p.clone(), pat.clone()))
+        .collect();
+
+    let mut entries_list = Vec::new();
+    for (filename, change) in modified_entries {
+        let entry_uri = quilt::uri::S3PackageUri {
+            path: Some(filename.to_owned()),
+            ..uri.clone()
+        };
+        let origin = match &origin_host {
+            Some(host) => entry_uri.display_for_host(host).ok().map(|u| u.to_string()),
+            None => None,
+        };
+        let (status_str, size) = match change {
+            quilt::lineage::Change::Added(r) => ("added", r.size),
+            quilt::lineage::Change::Modified(r) => ("modified", r.size),
+            quilt::lineage::Change::Removed(r) => ("deleted", r.size),
+        };
+        entries_list.push(InstalledPackageEntryData {
+            filename: filename.display().to_string(),
+            size,
+            status: status_str.to_string(),
+            origin_url: origin,
+            junky_pattern: junky_map.get(filename).cloned(),
+            ignored_by: None,
+            namespace: namespace.to_string(),
+        });
+        if entries_list.len() > 1000 {
+            break;
+        }
+    }
+    for filename in installed_paths.keys() {
+        if modified_entries.contains_key(filename) {
+            continue;
+        }
+        if let Some(row) = manifest_entries.get(filename) {
+            let entry_uri = quilt::uri::S3PackageUri {
+                path: Some(filename.to_owned()),
+                ..uri.clone()
+            };
+            let origin = match &origin_host {
+                Some(host) => entry_uri.display_for_host(host).ok().map(|u| u.to_string()),
+                None => None,
+            };
+            entries_list.push(InstalledPackageEntryData {
+                filename: filename.display().to_string(),
+                size: row.size,
+                status: "pristine".to_string(),
+                origin_url: origin,
+                junky_pattern: None,
+                ignored_by: None,
+                namespace: namespace.to_string(),
+            });
+        }
+        if entries_list.len() > 1000 {
+            break;
+        }
+    }
+    for (filename, row) in &manifest_entries {
+        if installed_paths.contains_key(filename) || modified_entries.contains_key(filename) {
+            continue;
+        }
+        let entry_uri = quilt::uri::S3PackageUri {
+            path: Some(filename.clone()),
+            ..uri.clone()
+        };
+        let origin = match &origin_host {
+            Some(host) => entry_uri.display_for_host(host).ok().map(|u| u.to_string()),
+            None => None,
+        };
+        entries_list.push(InstalledPackageEntryData {
+            filename: filename.display().to_string(),
+            size: row.size,
+            status: "remote".to_string(),
+            origin_url: origin,
+            junky_pattern: None,
+            ignored_by: None,
+            namespace: namespace.to_string(),
+        });
+        if entries_list.len() > 1000 {
+            break;
+        }
+    }
+    for (filename, pattern, size) in &pkg_status.ignored_files {
+        entries_list.push(InstalledPackageEntryData {
+            filename: filename.display().to_string(),
+            size: *size,
+            status: "pristine".to_string(),
+            origin_url: None,
+            junky_pattern: None,
+            ignored_by: Some(pattern.clone()),
+            namespace: namespace.to_string(),
+        });
+        if entries_list.len() > 1000 {
+            break;
+        }
+    }
+
+    entries_list.sort_by(|a, b| a.filename.cmp(&b.filename));
+
+    let origin_url = match &origin_host {
+        Some(host) => uri.display_for_host(host).ok().map(|u| u.to_string()),
+        None => None,
+    };
+
+    let ignored_count = entries_list.iter().filter(|e| e.ignored_by.is_some()).count();
+    let unmodified_count = entries_list
+        .iter()
+        .filter(|e| {
+            e.ignored_by.is_none()
+                && (e.status == "pristine" || e.status == "remote")
+        })
+        .count();
+
+    let has_remote_entries = entries_list.iter().any(|e| e.status == "remote");
+
+    let status_str = match pkg_status.upstream_state {
+        quilt::lineage::UpstreamState::UpToDate => "up_to_date",
+        quilt::lineage::UpstreamState::Ahead => "ahead",
+        quilt::lineage::UpstreamState::Behind => "behind",
+        quilt::lineage::UpstreamState::Diverged => "diverged",
+        quilt::lineage::UpstreamState::Local => "local",
+        quilt::lineage::UpstreamState::Error => "error",
+    };
+
+    Ok(InstalledPackageData {
+        namespace: namespace.to_string(),
+        uri: uri.to_string(),
+        status: status_str.to_string(),
+        origin_url,
+        origin_host: origin_host.map(|h| h.to_string()),
+        entries: entries_list,
+        has_remote_entries,
+        ignored_count,
+        unmodified_count,
+        filter_unmodified: filter.unmodified,
+        filter_ignored: filter.ignored,
+    })
+}
+
 // ── Settings data for Leptos UI ──
 
 #[derive(Serialize)]
