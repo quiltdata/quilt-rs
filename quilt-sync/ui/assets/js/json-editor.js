@@ -210,11 +210,10 @@
 })({"fT99R":[function(require,module,exports,__globalThis) {
 var _standaloneJs = require("vanilla-jsoneditor/standalone.js");
 const editors = new Map();
-function mountEditor(targetId) {
+function mountEditor(targetId, initialValue) {
     if (editors.has(targetId)) return;
     const target = document.getElementById(targetId);
     if (!target) return;
-    const initialValue = target.dataset.initial || "";
     // Hide the textarea field
     const textarea = document.getElementById("metadata");
     if (textarea && textarea.parentElement) textarea.parentElement.style.display = "none";
@@ -236,6 +235,9 @@ function mountEditor(targetId) {
     });
     editors.set(targetId, editor);
 }
+window.__createJsonEditor = function(targetId, initialValue) {
+    mountEditor(targetId, initialValue);
+};
 window.__getJsonEditorValue = function(targetId) {
     const editor = editors.get(targetId);
     if (!editor) return "";
@@ -250,16 +252,6 @@ window.__destroyJsonEditor = function(targetId) {
         editors.delete(targetId);
     }
 };
-// Watch for the editor target div to appear in the DOM
-const observer = new MutationObserver(()=>{
-    mountEditor("metadata-editor");
-});
-observer.observe(document.documentElement, {
-    childList: true,
-    subtree: true
-});
-// Also try immediately in case the element already exists
-mountEditor("metadata-editor");
 
 },{"vanilla-jsoneditor/standalone.js":"jsk8o"}],"jsk8o":[function(require,module,exports,__globalThis) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");

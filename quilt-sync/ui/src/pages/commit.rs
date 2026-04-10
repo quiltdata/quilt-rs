@@ -675,12 +675,19 @@ fn CommitEntryRow(
 
 // ── JSON editor integration ──
 
+use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 
 #[wasm_bindgen::prelude::wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = ["window"], js_name = "__getJsonEditorValue")]
     fn get_json_editor_value_js(target_id: &str) -> String;
+
+    #[wasm_bindgen(js_namespace = ["window"], js_name = "__createJsonEditor")]
+    fn create_json_editor_js(target_id: &str, initial_value: &str);
+
+    #[wasm_bindgen(js_namespace = ["window"], js_name = "__destroyJsonEditor")]
+    fn destroy_json_editor_js(target_id: &str);
 }
 
 fn get_json_editor_value(target_id: &str) -> String {
@@ -702,8 +709,22 @@ fn get_json_editor_value(target_id: &str) -> String {
 
 #[component]
 fn JsonEditor(id: &'static str, initial_value: String) -> impl IntoView {
+    let init_value = initial_value.clone();
+    let cb = Closure::<dyn Fn()>::new(move || {
+        create_json_editor_js(id, &init_value);
+    });
+    // Schedule after the current frame so Leptos has committed the DOM.
+    let _ = web_sys::window()
+        .unwrap()
+        .request_animation_frame(cb.as_ref().unchecked_ref());
+    cb.forget();
+
+    on_cleanup(move || {
+        destroy_json_editor_js(id);
+    });
+
     view! {
-        <div class="metadata" id=id data-initial=initial_value></div>
+        <div class="metadata" id=id></div>
     }
 }
 
