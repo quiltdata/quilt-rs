@@ -57,33 +57,27 @@ pub struct InstalledPackageData {
     pub filter_ignored: bool,
 }
 
-#[tauri::command]
-pub async fn get_installed_package_data(
-    m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
-    namespace: String,
-    filter: Option<String>,
-) -> Result<InstalledPackageData, String> {
-    let namespace: quilt::uri::Namespace = namespace.try_into().map_err(|e: quilt::Error| e.to_string())?;
-    let filter = filter
-        .map(|f| routes::EntriesFilter::from_filter_str(&f))
-        .unwrap_or_default();
-
-    let m: &model::Model = &m;
-
+async fn get_installed_package_data_from_model(
+    m: &impl model::QuiltModel,
+    tracing: &crate::telemetry::Telemetry,
+    namespace: &quilt::uri::Namespace,
+    filter: routes::EntriesFilter,
+) -> Result<InstalledPackageData, Error> {
     let installed_package = m
-        .get_installed_package(&namespace)
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("Package {namespace} is not installed"))?;
+        .get_installed_package(namespace)
+        .await?
+        .ok_or_else(|| {
+            Error::from(quilt::InstallPackageError::NotInstalled(
+                namespace.to_owned(),
+            ))
+        })?;
 
     let lineage = m
         .get_installed_package_lineage(&installed_package)
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
 
     let (uri, origin_host) =
-        crate::debug_tools::resolve_uri_and_host(lineage.remote_uri.as_ref(), &namespace);
+        crate::debug_tools::resolve_uri_and_host(lineage.remote_uri.as_ref(), namespace);
     if let Some(host) = &origin_host {
         tracing.add_host(host);
     }
@@ -104,8 +98,7 @@ pub async fn get_installed_package_data(
     let installed_paths = &lineage.paths;
     let manifest_entries = m
         .get_installed_package_records(&installed_package)
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
 
     let junky_map: std::collections::HashMap<_, _> = pkg_status
         .junky_changes
@@ -248,6 +241,23 @@ pub async fn get_installed_package_data(
         filter_unmodified: filter.unmodified,
         filter_ignored: filter.ignored,
     })
+}
+
+#[tauri::command]
+pub async fn get_installed_package_data(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    namespace: String,
+    filter: Option<String>,
+) -> Result<InstalledPackageData, String> {
+    let namespace: quilt::uri::Namespace = namespace.try_into().map_err(|e: quilt::Error| e.to_string())?;
+    let filter = filter
+        .map(|f| routes::EntriesFilter::from_filter_str(&f))
+        .unwrap_or_default();
+
+    get_installed_package_data_from_model(&*m, &tracing, &namespace, filter)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 // ── Settings data for Leptos UI ──
@@ -1978,6 +1988,291 @@ mod tests {
         Ok(())
     }
 
+    // ── Installed package data tests ──
+    // (Adapted from pages/installed_package.rs: test_view, test_view_entries,
+    //  test_view_no_origin, test_view_status_failed, test_view_local_only,
+    //  test_view_local_with_origin_disables_catalog_button)
+
+    #[tokio::test]
+    async fn test_get_installed_package_data() -> Result<(), String> {
+        let mut model = mocks::create();
+        mocks::mock_installed_package(&mut model);
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("foo", "bar").into();
+
+        let data =
+            get_installed_package_data_from_model(&model, &tracing, &namespace, Default::default())
+                .await
+                .map_err(|e| e.to_string())?;
+
+        assert_eq!(data.namespace, "foo/bar");
+        assert!(data.origin_url.is_some());
+        assert!(data.origin_url.unwrap().contains("test.quilt.dev"));
+        assert_eq!(data.origin_host, Some("test.quilt.dev".to_string()));
+        // Mock has one record "NAME" — should appear as an entry
+        assert!(!data.entries.is_empty());
+        let entry = data.entries.iter().find(|e| e.filename == "NAME");
+        assert!(entry.is_some(), "Entry 'NAME' should be present");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_installed_package_data_not_installed() {
+        let mut model = mocks::create();
+        model
+            .expect_get_installed_package()
+            .returning(|_| Ok(None));
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("missing", "package").into();
+
+        let result =
+            get_installed_package_data_from_model(&model, &tracing, &namespace, Default::default())
+                .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_get_installed_package_data_no_origin() -> Result<(), String> {
+        let mut model = mocks::create();
+
+        model.expect_get_installed_package().returning(move |_| {
+            Ok(Some(make_installed_package(("foo", "bar"))))
+        });
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|pkg| {
+                let uri = make_manifest_uri_no_origin(&pkg.namespace.to_string());
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    uri,
+                    "abcdef".to_string(),
+                ))
+            });
+        model.expect_get_installed_package_records().returning(|_| {
+            Ok(std::collections::BTreeMap::new())
+        });
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("foo", "bar").into();
+
+        let data =
+            get_installed_package_data_from_model(&model, &tracing, &namespace, Default::default())
+                .await
+                .map_err(|e| e.to_string())?;
+
+        assert_eq!(data.status, "error");
+        assert!(data.origin_url.is_none());
+        assert!(data.origin_host.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_installed_package_data_error_with_origin() -> Result<(), String> {
+        let mut model = mocks::create();
+
+        model.expect_get_installed_package().returning(move |_| {
+            Ok(Some(make_installed_package(("foo", "bar"))))
+        });
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|pkg| {
+                let uri = make_manifest_uri(&pkg.namespace.to_string());
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    uri,
+                    "abcdef".to_string(),
+                ))
+            });
+        model
+            .expect_get_installed_package_status()
+            .returning(|_, _| Ok(quilt::lineage::InstalledPackageStatus::error()));
+        model.expect_get_installed_package_records().returning(|_| {
+            Ok(std::collections::BTreeMap::new())
+        });
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("foo", "bar").into();
+
+        let data =
+            get_installed_package_data_from_model(&model, &tracing, &namespace, Default::default())
+                .await
+                .map_err(|e| e.to_string())?;
+
+        assert_eq!(data.status, "error");
+        assert!(data.origin_url.is_some());
+        assert_eq!(data.origin_host.as_deref(), Some("test.quilt.dev"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_installed_package_data_local_only() -> Result<(), String> {
+        let mut model = mocks::create();
+
+        model.expect_get_installed_package().returning(move |_| {
+            Ok(Some(make_installed_package(("foo", "bar"))))
+        });
+        // No remote URI → local-only package
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|_| Ok(quilt::lineage::PackageLineage::default()));
+        model
+            .expect_get_installed_package_status()
+            .returning(|_, _| Ok(quilt::lineage::InstalledPackageStatus::local()));
+        model.expect_get_installed_package_records().returning(|_| {
+            Ok(std::collections::BTreeMap::new())
+        });
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("foo", "bar").into();
+
+        let data =
+            get_installed_package_data_from_model(&model, &tracing, &namespace, Default::default())
+                .await
+                .map_err(|e| e.to_string())?;
+
+        assert_eq!(data.status, "local");
+        assert!(data.origin_url.is_none());
+        assert!(data.origin_host.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_installed_package_data_local_with_origin() -> Result<(), String> {
+        let mut model = mocks::create();
+
+        model.expect_get_installed_package().returning(move |_| {
+            Ok(Some(make_installed_package(("foo", "bar"))))
+        });
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|pkg| {
+                let uri = quilt::uri::ManifestUri {
+                    origin: Some("test.quilt.dev".parse().unwrap()),
+                    bucket: "test".to_string(),
+                    namespace: pkg.namespace.clone(),
+                    hash: String::new(),
+                };
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    uri,
+                    String::new(),
+                ))
+            });
+        model
+            .expect_get_installed_package_status()
+            .returning(|_, _| Ok(quilt::lineage::InstalledPackageStatus::local()));
+        model.expect_get_installed_package_records().returning(|_| {
+            Ok(std::collections::BTreeMap::new())
+        });
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("foo", "bar").into();
+
+        let data =
+            get_installed_package_data_from_model(&model, &tracing, &namespace, Default::default())
+                .await
+                .map_err(|e| e.to_string())?;
+
+        assert_eq!(data.status, "local");
+        // Has origin for Push button and disabled Catalog button
+        assert!(data.origin_url.is_some());
+        assert_eq!(data.origin_host.as_deref(), Some("test.quilt.dev"));
+        Ok(())
+    }
+
+    // (Adapted from pages/installed_package.rs: test_sizes)
+
+    #[tokio::test]
+    async fn test_get_installed_package_data_entry_sizes() -> Result<(), String> {
+        let mut model = mocks::create();
+
+        model.expect_get_installed_package().returning(move |_| {
+            Ok(Some(make_installed_package(("foo", "bar"))))
+        });
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|pkg| {
+                let uri = make_manifest_uri(&pkg.namespace.to_string());
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    uri,
+                    "abcdef".to_string(),
+                ))
+            });
+        model
+            .expect_get_installed_package_status()
+            .returning(|_, _| Ok(quilt::lineage::InstalledPackageStatus::default()));
+
+        let expected_sizes: Vec<(&str, u64)> = vec![
+            ("empty.csv", 0),
+            ("small.csv", 12),
+            ("kilobytes.csv", 1_234),
+            ("megabytes.csv", 12_345_678),
+            ("petabytes.csv", 1_234_567_890_123_456),
+        ];
+        let records: std::collections::BTreeMap<std::path::PathBuf, quilt::manifest::ManifestRow> =
+            expected_sizes
+                .iter()
+                .map(|(name, size)| {
+                    let row = quilt::manifest::ManifestRow {
+                        logical_key: std::path::PathBuf::from(name),
+                        size: *size,
+                        ..Default::default()
+                    };
+                    (std::path::PathBuf::from(name), row)
+                })
+                .collect();
+        model
+            .expect_get_installed_package_records()
+            .return_once(move |_| Ok(records));
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("foo", "bar").into();
+
+        let data =
+            get_installed_package_data_from_model(&model, &tracing, &namespace, Default::default())
+                .await
+                .map_err(|e| e.to_string())?;
+
+        assert_eq!(data.entries.len(), expected_sizes.len());
+        for (name, expected_size) in &expected_sizes {
+            let entry = data
+                .entries
+                .iter()
+                .find(|e| e.filename == *name)
+                .unwrap_or_else(|| panic!("Entry '{name}' should be present"));
+            assert_eq!(entry.size, *expected_size, "Size mismatch for '{name}'");
+        }
+        Ok(())
+    }
+
+    // ── Login data tests ──
+    // (Adapted from pages/login.rs: test_login_page_rendering)
+
+    #[tokio::test]
+    async fn test_get_login_data() -> Result<(), String> {
+        let data = get_login_data(
+            "test.quilt.dev".to_string(),
+            "/installed-packages-list".to_string(),
+        )
+        .await?;
+
+        assert_eq!(data.host, "test.quilt.dev");
+        assert_eq!(data.back, "/installed-packages-list");
+        assert_eq!(data.catalog_url, "https://test.quilt.dev/code");
+        Ok(())
+    }
+
+    // (Adapted from pages/login.rs: test_login_oauth_button_without_back)
+
+    #[tokio::test]
+    async fn test_get_login_data_empty_back() -> Result<(), String> {
+        let data = get_login_data("test.quilt.dev".to_string(), String::new()).await?;
+
+        assert_eq!(data.host, "test.quilt.dev");
+        assert_eq!(data.back, "");
+        assert_eq!(data.catalog_url, "https://test.quilt.dev/code");
+        Ok(())
+    }
+
+    // ── Commit data tests ──
+
     #[tokio::test]
     async fn test_get_commit_data() -> Result<(), String> {
         let mut model = mocks::create();
@@ -2010,5 +2305,194 @@ mod tests {
 
         let result = get_commit_data_from_model(&model, &tracing, &namespace).await;
         assert!(result.is_err());
+    }
+
+    // (Adapted from pages/commit.rs: test_workflow_with_value)
+
+    #[tokio::test]
+    async fn test_get_commit_data_with_workflow() -> Result<(), String> {
+        let mut model = mocks::create();
+
+        let remote_manifest = quilt::uri::ManifestUri {
+            bucket: "quilt-example".to_string(),
+            namespace: ("foo", "bar").into(),
+            hash: "abcdef".to_string(),
+            origin: Some("test.quilt.dev".parse().unwrap()),
+        };
+        model.expect_get_installed_package().returning(move |_| {
+            Ok(Some(make_installed_package(("foo", "bar"))))
+        });
+        model
+            .expect_get_installed_package_lineage()
+            .returning(move |_| {
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    remote_manifest.clone(),
+                    remote_manifest.hash.clone(),
+                ))
+            });
+        let status = Ok(quilt::lineage::InstalledPackageStatus::default());
+        model
+            .expect_get_installed_package_status()
+            .return_once(move |_, _| status);
+        model.expect_get_installed_package_records().returning(|_| {
+            Ok(std::collections::BTreeMap::new())
+        });
+        // Return a manifest with workflow data
+        model
+            .expect_browse_remote_manifest()
+            .returning(|_| {
+                let config_uri = quilt::uri::S3Uri {
+                    bucket: "quilt-example".to_string(),
+                    key: ".quilt/workflows/config.yaml".to_string(),
+                    version: None,
+                };
+                Ok(quilt::manifest::Manifest {
+                    header: quilt::manifest::ManifestHeader {
+                        version: "v0".to_string(),
+                        message: None,
+                        user_meta: None,
+                        workflow: Some(quilt::manifest::Workflow {
+                            config: config_uri,
+                            id: Some(quilt::manifest::WorkflowId {
+                                id: "gamma".to_string(),
+                                metadata: None,
+                            }),
+                        }),
+                    },
+                    rows: Vec::new(),
+                })
+            });
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("foo", "bar").into();
+
+        let data = get_commit_data_from_model(&model, &tracing, &namespace)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        assert!(data.workflow.is_some());
+        let workflow = data.workflow.unwrap();
+        assert_eq!(workflow.id, Some("gamma".to_string()));
+        assert!(workflow.url.is_some());
+        Ok(())
+    }
+
+    // (Adapted from pages/commit.rs: test_workflow_null_checked)
+
+    #[tokio::test]
+    async fn test_get_commit_data_workflow_null_id() -> Result<(), String> {
+        let mut model = mocks::create();
+
+        let remote_manifest = quilt::uri::ManifestUri {
+            bucket: "quilt-example".to_string(),
+            namespace: ("foo", "bar").into(),
+            hash: "abcdef".to_string(),
+            origin: Some("test.quilt.dev".parse().unwrap()),
+        };
+        model.expect_get_installed_package().returning(move |_| {
+            Ok(Some(make_installed_package(("foo", "bar"))))
+        });
+        model
+            .expect_get_installed_package_lineage()
+            .returning(move |_| {
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    remote_manifest.clone(),
+                    remote_manifest.hash.clone(),
+                ))
+            });
+        let status = Ok(quilt::lineage::InstalledPackageStatus::default());
+        model
+            .expect_get_installed_package_status()
+            .return_once(move |_, _| status);
+        model.expect_get_installed_package_records().returning(|_| {
+            Ok(std::collections::BTreeMap::new())
+        });
+        // Workflow exists but has no ID (null/checked state)
+        model.expect_browse_remote_manifest().returning(|_| {
+            let config_uri = quilt::uri::S3Uri {
+                bucket: "quilt-example".to_string(),
+                key: ".quilt/workflows/config.yaml".to_string(),
+                version: None,
+            };
+            Ok(quilt::manifest::Manifest {
+                header: quilt::manifest::ManifestHeader {
+                    version: "v0".to_string(),
+                    message: None,
+                    user_meta: None,
+                    workflow: Some(quilt::manifest::Workflow {
+                        config: config_uri,
+                        id: None,
+                    }),
+                },
+                rows: Vec::new(),
+            })
+        });
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("foo", "bar").into();
+
+        let data = get_commit_data_from_model(&model, &tracing, &namespace)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        assert!(data.workflow.is_some());
+        let workflow = data.workflow.unwrap();
+        assert!(workflow.id.is_none());
+        assert!(workflow.url.is_some());
+        Ok(())
+    }
+
+    // (Adapted from pages/commit.rs: test_workflow_not_available)
+
+    #[tokio::test]
+    async fn test_get_commit_data_no_workflow() -> Result<(), String> {
+        let mut model = mocks::create();
+
+        let remote_manifest = quilt::uri::ManifestUri {
+            bucket: "quilt-example".to_string(),
+            namespace: ("foo", "bar").into(),
+            hash: "abcdef".to_string(),
+            origin: Some("test.quilt.dev".parse().unwrap()),
+        };
+        model.expect_get_installed_package().returning(move |_| {
+            Ok(Some(make_installed_package(("foo", "bar"))))
+        });
+        model
+            .expect_get_installed_package_lineage()
+            .returning(move |_| {
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    remote_manifest.clone(),
+                    remote_manifest.hash.clone(),
+                ))
+            });
+        let status = Ok(quilt::lineage::InstalledPackageStatus::default());
+        model
+            .expect_get_installed_package_status()
+            .return_once(move |_, _| status);
+        model.expect_get_installed_package_records().returning(|_| {
+            Ok(std::collections::BTreeMap::new())
+        });
+        // No workflow in manifest
+        model.expect_browse_remote_manifest().returning(|_| {
+            Ok(quilt::manifest::Manifest {
+                header: quilt::manifest::ManifestHeader {
+                    version: "v0".to_string(),
+                    message: None,
+                    user_meta: None,
+                    workflow: None,
+                },
+                rows: Vec::new(),
+            })
+        });
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("foo", "bar").into();
+
+        let data = get_commit_data_from_model(&model, &tracing, &namespace)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        assert!(data.workflow.is_none());
+        Ok(())
     }
 }
