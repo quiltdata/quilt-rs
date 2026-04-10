@@ -20,10 +20,6 @@ impl LogsDir {
         }
     }
 
-    #[cfg(test)]
-    pub fn create() -> Result<Self> {
-        Ok(LogsDir::Temporary(tempfile::TempDir::new()?))
-    }
 }
 
 fn get_logs_dir(base_path: &Path) -> Result<LogsDir> {

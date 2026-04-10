@@ -16,6 +16,7 @@ pub struct EntriesFilter {
 
 impl EntriesFilter {
     /// Default for installed-package page: show unmodified, hide ignored.
+    #[cfg(test)]
     pub fn for_installed_package() -> Self {
         Self {
             unmodified: true,
@@ -37,19 +38,6 @@ impl EntriesFilter {
         f
     }
 
-    pub fn toggle_unmodified(&self) -> Self {
-        Self {
-            unmodified: !self.unmodified,
-            ..*self
-        }
-    }
-
-    pub fn toggle_ignored(&self) -> Self {
-        Self {
-            ignored: !self.ignored,
-            ..*self
-        }
-    }
 }
 
 impl fmt::Display for EntriesFilter {
@@ -273,6 +261,7 @@ impl fmt::Display for Paths {
 
 impl Paths {
     /// Returns the path name without any sensitive data values using serde serialization
+    #[cfg(test)]
     pub fn pathname(&self) -> String {
         use serde_json::Value;
 
