@@ -3,13 +3,13 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 use wasm_bindgen::JsCast;
 
 use crate::commands::{self, LoginData};
-use crate::components::{Layout, Spinner};
+use crate::components::{Layout, Notification, Spinner};
 
 // ── Login page ──
 
 #[component]
 pub fn Login() -> impl IntoView {
-    let notification = RwSignal::new(String::new());
+    let notification = RwSignal::new(None);
 
     let query = use_query_map();
     let data = LocalResource::new(move || {
@@ -52,7 +52,7 @@ pub fn Login() -> impl IntoView {
 // ── Main content (rendered after data loads) ──
 
 #[component]
-fn LoginContent(data: LoginData, notification: RwSignal<String>) -> impl IntoView {
+fn LoginContent(data: LoginData, notification: RwSignal<Option<Notification>>) -> impl IntoView {
     let code = RwSignal::new(String::new());
     let submitting = RwSignal::new(false);
     let oauth_loading = RwSignal::new(false);
@@ -77,8 +77,8 @@ fn LoginContent(data: LoginData, notification: RwSignal<String>) -> impl IntoVie
         leptos::task::spawn_local(async move {
             let back_opt = if back.is_empty() { None } else { Some(back.clone()) };
             match commands::login(host, code.get_untracked(), back_opt.clone()).await {
-                Ok(html) => {
-                    notification.set(html);
+                Ok(msg) => {
+                    notification.set(Some(Notification::Success(msg)));
                     // Rust's login command calls navigate_after_login when back is present;
                     // only navigate from JS when there is no back to avoid double navigation.
                     if back_opt.is_none() {
@@ -86,7 +86,7 @@ fn LoginContent(data: LoginData, notification: RwSignal<String>) -> impl IntoVie
                     }
                 }
                 Err(e) => {
-                    notification.set(format!("<div class=\"error\">{e}</div>"));
+                    notification.set(Some(Notification::Error(e)));
                     submitting.set(false);
                 }
             }
@@ -106,8 +106,8 @@ fn LoginContent(data: LoginData, notification: RwSignal<String>) -> impl IntoVie
         leptos::task::spawn_local(async move {
             let back_opt = if back.is_empty() { None } else { Some(back) };
             match commands::login_oauth(host, back_opt).await {
-                Ok(html) => notification.set(html),
-                Err(e) => notification.set(format!("<div class=\"error\">{e}</div>")),
+                Ok(msg) => notification.set(Some(Notification::Success(msg))),
+                Err(e) => notification.set(Some(Notification::Error(e))),
             }
             oauth_loading.set(false);
         });

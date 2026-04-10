@@ -1,12 +1,14 @@
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
 
+use crate::components::Notification;
+
 /// Handle a command error by either navigating to an error/login/setup page
 /// or setting the notification signal with the error message.
 ///
 /// Call this from each page's `Suspense` error branch instead of showing
 /// raw error text. It replicates the redirect logic from `load_page_command`.
-pub fn handle_or_display(error: &str, notification: RwSignal<String>) -> AnyView {
+pub fn handle_or_display(error: &str, notification: RwSignal<Option<Notification>>) -> AnyView {
     if let Ok(parsed) = serde_json::from_str::<ErrorResponse>(error) {
         match parsed.kind.as_str() {
             "login_required" => {
@@ -26,16 +28,11 @@ pub fn handle_or_display(error: &str, notification: RwSignal<String>) -> AnyView
                 return view! {}.into_any();
             }
             _ => {
-                notification.set(format!(
-                    r#"<div class="qui-notify error"><p>{}</p></div>"#,
-                    parsed.message
-                ));
+                notification.set(Some(Notification::Error(parsed.message)));
             }
         }
     } else {
-        notification.set(format!(
-            r#"<div class="qui-notify error"><p>{error}</p></div>"#,
-        ));
+        notification.set(Some(Notification::Error(error.to_string())));
     }
     view! {}.into_any()
 }

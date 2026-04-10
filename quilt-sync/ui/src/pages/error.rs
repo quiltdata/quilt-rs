@@ -2,13 +2,13 @@ use leptos::prelude::*;
 use leptos_router::hooks::use_query_map;
 
 use crate::commands::{self, LoginErrorData};
-use crate::components::{Layout, Spinner};
+use crate::components::{Layout, Notification, Spinner};
 
 // ── Error page ──
 
 #[component]
 pub fn Error() -> impl IntoView {
-    let notification = RwSignal::new(String::new());
+    let notification = RwSignal::new(None);
 
     let query = use_query_map();
     let data = LocalResource::new(move || {
@@ -52,7 +52,7 @@ pub fn Error() -> impl IntoView {
 // ── Main content (rendered after data loads) ──
 
 #[component]
-fn ErrorContent(data: LoginErrorData, notification: RwSignal<String>) -> impl IntoView {
+fn ErrorContent(data: LoginErrorData, notification: RwSignal<Option<Notification>>) -> impl IntoView {
     let on_reload = move |_| {
         let _ = web_sys::window().and_then(|w| w.location().reload().ok());
     };
@@ -60,8 +60,8 @@ fn ErrorContent(data: LoginErrorData, notification: RwSignal<String>) -> impl In
     let on_dot_quilt = move |_| {
         leptos::task::spawn_local(async move {
             match commands::debug_dot_quilt().await {
-                Ok(html) => notification.set(html),
-                Err(e) => notification.set(format!("<div class=\"error\">{e}</div>")),
+                Ok(msg) => notification.set(Some(Notification::Success(msg))),
+                Err(e) => notification.set(Some(Notification::Error(e))),
             }
         });
     };

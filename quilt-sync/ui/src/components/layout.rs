@@ -1,5 +1,12 @@
 use leptos::prelude::*;
 
+/// Notification variant for the layout notification bar.
+#[derive(Clone)]
+pub enum Notification {
+    Success(String),
+    Error(String),
+}
+
 /// Breadcrumb link item (navigates to a page).
 #[derive(Clone)]
 pub struct BreadcrumbLink {
@@ -23,7 +30,7 @@ pub enum BreadcrumbItem {
 #[component]
 pub fn Layout(
     breadcrumbs: Vec<BreadcrumbItem>,
-    notification: RwSignal<String>,
+    notification: RwSignal<Option<Notification>>,
     /// Optional toolbar actions rendered to the right of breadcrumbs.
     #[prop(optional)]
     actions: Option<ToolbarActions>,
@@ -75,25 +82,30 @@ pub fn Layout(
 
             // ── Notification dismiss overlay ──
             {move || {
-                if notification.get().is_empty() {
-                    None
-                } else {
+                if notification.get().is_some() {
                     Some(view! {
                         <div
                             class="popup-overlay"
-                            on:click=move |_| notification.set(String::new())
+                            on:click=move |_| notification.set(None)
                         ></div>
                     })
+                } else {
+                    None
                 }
             }}
 
             // ── Notification bar ──
             <div class="qui-notify">
-                <div
-                    id="notify"
-                    class="root"
-                    inner_html=move || notification.get()
-                ></div>
+                <div id="notify" class="root">
+                    {move || notification.get().map(|n| match n {
+                        Notification::Success(msg) => view! {
+                            <div class="js-success success">{msg}</div>
+                        }.into_any(),
+                        Notification::Error(msg) => view! {
+                            <div class="error">{msg}</div>
+                        }.into_any(),
+                    })}
+                </div>
             </div>
 
             // ── Page content ──

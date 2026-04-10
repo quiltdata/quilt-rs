@@ -6,7 +6,7 @@ use crate::components::{Layout, Spinner};
 
 #[component]
 pub fn RemotePackage() -> impl IntoView {
-    let notification = RwSignal::new(String::new());
+    let notification = RwSignal::new(None);
     let navigate = use_navigate();
     let query = use_query_map();
 

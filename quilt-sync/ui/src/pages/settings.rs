@@ -2,13 +2,13 @@ use leptos::prelude::*;
 
 use crate::commands::{self, ChangelogEntry, SettingsData};
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
-use crate::components::{Layout, Spinner};
+use crate::components::{Layout, Notification, Spinner};
 
 // ── Settings page ──
 
 #[component]
 pub fn Settings() -> impl IntoView {
-    let notification = RwSignal::new(String::new());
+    let notification = RwSignal::new(None);
 
     let data = LocalResource::new(move || async {
         commands::get_settings_data().await
@@ -51,7 +51,7 @@ pub fn Settings() -> impl IntoView {
 // ── Main content (rendered after data loads) ──
 
 #[component]
-fn SettingsContent(data: SettingsData, notification: RwSignal<String>) -> impl IntoView {
+fn SettingsContent(data: SettingsData, notification: RwSignal<Option<Notification>>) -> impl IntoView {
     let zip_path = RwSignal::new(None::<String>);
 
     view! {
@@ -85,7 +85,7 @@ fn GeneralSection(
     home_dir: Option<String>,
     data_dir: String,
     changelog: Vec<ChangelogEntry>,
-    notification: RwSignal<String>,
+    notification: RwSignal<Option<Notification>>,
 ) -> impl IntoView {
     let home_display = home_dir.unwrap_or_else(|| "Not set".to_string());
     let home_title = home_display.clone();
@@ -95,8 +95,8 @@ fn GeneralSection(
     let on_open_home = move |_| {
         leptos::task::spawn_local(async move {
             match commands::open_home_dir().await {
-                Ok(html) => notification.set(html),
-                Err(e) => notification.set(format!("<div class=\"error\">{e}</div>")),
+                Ok(msg) => notification.set(Some(Notification::Success(msg))),
+                Err(e) => notification.set(Some(Notification::Error(e))),
             }
         });
     };
@@ -104,8 +104,8 @@ fn GeneralSection(
     let on_open_data = move |_| {
         leptos::task::spawn_local(async move {
             match commands::open_data_dir().await {
-                Ok(html) => notification.set(html),
-                Err(e) => notification.set(format!("<div class=\"error\">{e}</div>")),
+                Ok(msg) => notification.set(Some(Notification::Success(msg))),
+                Err(e) => notification.set(Some(Notification::Error(e))),
             }
         });
     };
@@ -166,7 +166,7 @@ fn GeneralSection(
 // ── Account section ──
 
 #[component]
-fn AccountSection(auth_hosts: Vec<String>, notification: RwSignal<String>) -> impl IntoView {
+fn AccountSection(auth_hosts: Vec<String>, notification: RwSignal<Option<Notification>>) -> impl IntoView {
     view! {
         <section class="settings-section">
             <h2 class="section-title">"Auth"</h2>
@@ -190,7 +190,7 @@ fn AccountSection(auth_hosts: Vec<String>, notification: RwSignal<String>) -> im
 }
 
 #[component]
-fn AuthHostRow(host: String, notification: RwSignal<String>) -> impl IntoView {
+fn AuthHostRow(host: String, notification: RwSignal<Option<Notification>>) -> impl IntoView {
     let host_display = host.clone();
     let host_for_logout = host.clone();
     let back_encoded = urlencoding("/settings");
@@ -212,10 +212,10 @@ fn AuthHostRow(host: String, notification: RwSignal<String>) -> impl IntoView {
                         let host = host_for_logout.clone();
                         leptos::task::spawn_local(async move {
                             match commands::erase_auth(host).await {
-                                Ok(html) => notification.set(html),
+                                Ok(msg) => notification.set(Some(Notification::Success(msg))),
                                 Err(e) => {
                                     notification
-                                        .set(format!("<div class=\"error\">{e}</div>"))
+                                        .set(Some(Notification::Error(e)))
                                 }
                             }
                             let _ = web_sys::window().and_then(|w| w.location().reload().ok());
@@ -244,7 +244,7 @@ fn DiagnosticsSection(
     log_level: String,
     logs_dir: String,
     logs_dir_is_temporary: bool,
-    notification: RwSignal<String>,
+    notification: RwSignal<Option<Notification>>,
     zip_path: RwSignal<Option<String>>,
 ) -> impl IntoView {
     let collecting = RwSignal::new(false);
@@ -271,10 +271,10 @@ fn DiagnosticsSection(
                         on:click=move |_| {
                             leptos::task::spawn_local(async move {
                                 match commands::debug_logs().await {
-                                    Ok(html) => notification.set(html),
+                                    Ok(msg) => notification.set(Some(Notification::Success(msg))),
                                     Err(e) => {
                                         notification
-                                            .set(format!("<div class=\"error\">{e}</div>"))
+                                            .set(Some(Notification::Error(e)))
                                     }
                                 }
                             });
@@ -325,10 +325,10 @@ fn DiagnosticsSection(
                         if let Some(path) = zip_path.get_untracked() {
                             leptos::task::spawn_local(async move {
                                 match commands::send_crash_report(path).await {
-                                    Ok(html) => notification.set(html),
+                                    Ok(msg) => notification.set(Some(Notification::Success(msg))),
                                     Err(e) => {
                                         notification
-                                            .set(format!("<div class=\"error\">{e}</div>"))
+                                            .set(Some(Notification::Error(e)))
                                     }
                                 }
                             });

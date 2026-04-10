@@ -1,15 +1,5 @@
 use crate::telemetry::prelude::*;
 
-fn render_success(message: &str) -> String {
-    debug!("{}", message);
-    format!(r#"<div class="js-success success">{message}</div>"#)
-}
-
-fn render_error(message: &str) -> String {
-    error!("{}", message);
-    format!(r#"<div class="error">{message}</div>"#)
-}
-
 pub struct TmplNotify;
 
 impl TmplNotify {
@@ -28,8 +18,15 @@ impl TmplNotify {
         F: FnOnce(&E) -> String,
     {
         match result {
-            Ok(_) => Ok(render_success(&success_msg)),
-            Err(e) => Ok(render_error(&error_fn(&e))),
+            Ok(_) => {
+                debug!("{}", success_msg);
+                Ok(success_msg)
+            }
+            Err(e) => {
+                let msg = error_fn(&e);
+                error!("{}", msg);
+                Err(msg)
+            }
         }
     }
 }
@@ -40,15 +37,19 @@ mod tests {
 
     #[test]
     fn test_success() {
-        let snapshot = r#"<div class="js-success success">SUCCESS</div>"#;
-        let html = render_success("SUCCESS");
-        assert_eq!(html, snapshot);
+        let notify = TmplNotify::new("test".to_string());
+        let result = notify.map(Ok::<(), &str>(()), "SUCCESS".to_string(), |e| e.to_string());
+        assert_eq!(result, Ok("SUCCESS".to_string()));
     }
 
     #[test]
     fn test_error() {
-        let snapshot = r#"<div class="error">ERROR</div>"#;
-        let html = render_error("ERROR");
-        assert_eq!(html, snapshot);
+        let notify = TmplNotify::new("test".to_string());
+        let result = notify.map(
+            Err::<(), &str>("something broke"),
+            "unused".to_string(),
+            |e| e.to_string(),
+        );
+        assert_eq!(result, Err("something broke".to_string()));
     }
 }

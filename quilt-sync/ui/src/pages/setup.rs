@@ -8,7 +8,7 @@ use crate::components::{Layout, Spinner};
 
 #[component]
 pub fn Setup() -> impl IntoView {
-    let notification = RwSignal::new(String::new());
+    let notification = RwSignal::new(None);
 
     let data = LocalResource::new(move || async {
         commands::get_setup_data().await

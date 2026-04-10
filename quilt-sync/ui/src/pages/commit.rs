@@ -3,13 +3,13 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 
 use crate::commands::{self, CommitData, EntryData, WorkflowData};
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
-use crate::components::{Layout, Spinner, ToolbarActions};
+use crate::components::{Layout, Notification, Spinner, ToolbarActions};
 
 // ── Commit page ──
 
 #[component]
 pub fn Commit() -> impl IntoView {
-    let notification = RwSignal::new(String::new());
+    let notification = RwSignal::new(None);
 
     let query = use_query_map();
     let data = LocalResource::new(move || {
@@ -74,7 +74,7 @@ pub fn Commit() -> impl IntoView {
 // ── Main content ──
 
 #[component]
-fn CommitContent(data: CommitData, notification: RwSignal<String>) -> impl IntoView {
+fn CommitContent(data: CommitData, notification: RwSignal<Option<Notification>>) -> impl IntoView {
     let navigate = use_navigate();
     let filter_unmodified = RwSignal::new(false);
     let filter_ignored = RwSignal::new(false);
@@ -152,8 +152,8 @@ fn CommitContent(data: CommitData, notification: RwSignal<String>) -> impl IntoV
         leptos::task::spawn_local(async move {
             match commands::package_commit(ns.clone(), msg, meta, wf).await
             {
-                Ok(html) => {
-                    notification.set(html);
+                Ok(msg) => {
+                    notification.set(Some(Notification::Success(msg)));
                     navigate(
                         &format!("/installed-package?namespace={ns}&filter=unmodified"),
                         Default::default(),
@@ -161,7 +161,7 @@ fn CommitContent(data: CommitData, notification: RwSignal<String>) -> impl IntoV
                 }
                 Err(e) => {
                     unlock_ui();
-                    notification.set(format!("<div class=\"error\">{e}</div>"));
+                    notification.set(Some(Notification::Error(e)));
                     committing.set(false);
                 }
             }
@@ -411,7 +411,7 @@ fn WorkflowSection(
 
 fn build_toolbar_actions(
     data: &CommitData,
-    notification: RwSignal<String>,
+    notification: RwSignal<Option<Notification>>,
 ) -> ToolbarActions {
     let namespace = data.namespace.clone();
     let origin_url = data.origin_url.clone();
@@ -425,8 +425,8 @@ fn build_toolbar_actions(
             let ns = ns_for_folder.clone();
             leptos::task::spawn_local(async move {
                 match commands::open_in_file_browser(ns).await {
-                    Ok(html) => notification.set(html),
-                    Err(e) => notification.set(format!("<div class=\"error\">{e}</div>")),
+                    Ok(msg) => notification.set(Some(Notification::Success(msg))),
+                    Err(e) => notification.set(Some(Notification::Error(e))),
                 }
             });
         };
@@ -447,13 +447,13 @@ fn build_toolbar_actions(
             lock_ui();
             leptos::task::spawn_local(async move {
                 match commands::package_uninstall(ns).await {
-                    Ok(html) => {
-                        notification.set(html);
+                    Ok(msg) => {
+                        notification.set(Some(Notification::Success(msg)));
                         navigate("/installed-packages-list", Default::default());
                     }
                     Err(e) => {
                         unlock_ui();
-                        notification.set(format!("<div class=\"error\">{e}</div>"));
+                        notification.set(Some(Notification::Error(e)));
                     }
                 }
             });
@@ -500,7 +500,7 @@ fn build_toolbar_actions(
 #[component]
 fn CommitEntryRow(
     entry: EntryData,
-    notification: RwSignal<String>,
+    notification: RwSignal<Option<Notification>>,
     show_ignore_popup: RwSignal<Option<IgnorePopupData>>,
     show_unignore_popup: RwSignal<Option<UnignorePopupData>>,
 ) -> impl IntoView {
@@ -546,8 +546,8 @@ fn CommitEntryRow(
         let path = path_for_open.clone();
         leptos::task::spawn_local(async move {
             match commands::open_in_default_application(ns, path).await {
-                Ok(html) => notification.set(html),
-                Err(e) => notification.set(format!("<div class=\"error\">{e}</div>")),
+                Ok(msg) => notification.set(Some(Notification::Success(msg))),
+                Err(e) => notification.set(Some(Notification::Error(e))),
             }
         });
     };
@@ -559,8 +559,8 @@ fn CommitEntryRow(
         let path = path_for_reveal.clone();
         leptos::task::spawn_local(async move {
             match commands::reveal_in_file_browser(ns, path).await {
-                Ok(html) => notification.set(html),
-                Err(e) => notification.set(format!("<div class=\"error\">{e}</div>")),
+                Ok(msg) => notification.set(Some(Notification::Success(msg))),
+                Err(e) => notification.set(Some(Notification::Error(e))),
             }
         });
     };
@@ -740,7 +740,7 @@ struct IgnorePopupData {
 #[component]
 fn IgnorePopup(
     data: IgnorePopupData,
-    notification: RwSignal<String>,
+    notification: RwSignal<Option<Notification>>,
     on_close: impl Fn() + Clone + 'static,
 ) -> impl IntoView {
     let pattern = RwSignal::new(data.suggested_pattern.clone());
@@ -807,13 +807,13 @@ fn IgnorePopup(
         leptos::task::spawn_local(async move {
             match commands::add_to_quiltignore(ns, p).await
             {
-                Ok(html) => {
-                    notification.set(html);
+                Ok(msg) => {
+                    notification.set(Some(Notification::Success(msg)));
                     on_close();
                     let _ = web_sys::window().and_then(|w| w.location().reload().ok());
                 }
                 Err(e) => {
-                    notification.set(format!("<div class=\"error\">{e}</div>"));
+                    notification.set(Some(Notification::Error(e)));
                     submitting.set(false);
                 }
             }
@@ -884,7 +884,7 @@ struct UnignorePopupData {
 #[component]
 fn UnignorePopup(
     data: UnignorePopupData,
-    notification: RwSignal<String>,
+    notification: RwSignal<Option<Notification>>,
     on_close: impl Fn() + Clone + 'static,
 ) -> impl IntoView {
     let ns = data.namespace.clone();
@@ -897,8 +897,8 @@ fn UnignorePopup(
         leptos::task::spawn_local(async move {
             match commands::open_in_default_application(ns, ".quiltignore".to_string()).await
             {
-                Ok(html) => notification.set(html),
-                Err(e) => notification.set(format!("<div class=\"error\">{e}</div>")),
+                Ok(msg) => notification.set(Some(Notification::Success(msg))),
+                Err(e) => notification.set(Some(Notification::Error(e))),
             }
             on_close();
         });

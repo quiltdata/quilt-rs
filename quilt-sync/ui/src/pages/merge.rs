@@ -3,13 +3,13 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 
 use crate::commands::{self, MergeData};
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
-use crate::components::{Layout, Spinner, ToolbarActions};
+use crate::components::{Layout, Notification, Spinner, ToolbarActions};
 
 // ── Merge page ──
 
 #[component]
 pub fn Merge() -> impl IntoView {
-    let notification = RwSignal::new(String::new());
+    let notification = RwSignal::new(None);
 
     let query = use_query_map();
     let data = LocalResource::new(move || {
@@ -71,7 +71,7 @@ pub fn Merge() -> impl IntoView {
 // ── Main content ──
 
 #[component]
-fn MergeContent(data: MergeData, notification: RwSignal<String>) -> impl IntoView {
+fn MergeContent(data: MergeData, notification: RwSignal<Option<Notification>>) -> impl IntoView {
     let namespace = data.namespace.clone();
     let navigate = use_navigate();
 
@@ -83,8 +83,8 @@ fn MergeContent(data: MergeData, notification: RwSignal<String>) -> impl IntoVie
         lock_ui();
         leptos::task::spawn_local(async move {
             match commands::certify_latest(ns.clone()).await {
-                Ok(html) => {
-                    notification.set(html);
+                Ok(msg) => {
+                    notification.set(Some(Notification::Success(msg)));
                     navigate(
                         &format!("/installed-package?namespace={ns}&filter=unmodified"),
                         Default::default(),
@@ -92,7 +92,7 @@ fn MergeContent(data: MergeData, notification: RwSignal<String>) -> impl IntoVie
                 }
                 Err(e) => {
                     unlock_ui();
-                    notification.set(format!("<div class=\"error\">{e}</div>"));
+                    notification.set(Some(Notification::Error(e)));
                 }
             }
         });
@@ -106,8 +106,8 @@ fn MergeContent(data: MergeData, notification: RwSignal<String>) -> impl IntoVie
         lock_ui();
         leptos::task::spawn_local(async move {
             match commands::reset_local(ns.clone()).await {
-                Ok(html) => {
-                    notification.set(html);
+                Ok(msg) => {
+                    notification.set(Some(Notification::Success(msg)));
                     navigate(
                         &format!("/installed-package?namespace={ns}&filter=unmodified"),
                         Default::default(),
@@ -115,7 +115,7 @@ fn MergeContent(data: MergeData, notification: RwSignal<String>) -> impl IntoVie
                 }
                 Err(e) => {
                     unlock_ui();
-                    notification.set(format!("<div class=\"error\">{e}</div>"));
+                    notification.set(Some(Notification::Error(e)));
                 }
             }
         });
@@ -154,7 +154,7 @@ fn MergeContent(data: MergeData, notification: RwSignal<String>) -> impl IntoVie
 
 // ── Toolbar actions ──
 
-fn build_toolbar_actions(data: &MergeData, notification: RwSignal<String>) -> ToolbarActions {
+fn build_toolbar_actions(data: &MergeData, notification: RwSignal<Option<Notification>>) -> ToolbarActions {
     let namespace = data.namespace.clone();
     let origin_url = data.origin_url.clone();
 
@@ -166,8 +166,8 @@ fn build_toolbar_actions(data: &MergeData, notification: RwSignal<String>) -> To
             let ns = ns_for_folder.clone();
             leptos::task::spawn_local(async move {
                 match commands::open_in_file_browser(ns).await {
-                    Ok(html) => notification.set(html),
-                    Err(e) => notification.set(format!("<div class=\"error\">{e}</div>")),
+                    Ok(msg) => notification.set(Some(Notification::Success(msg))),
+                    Err(e) => notification.set(Some(Notification::Error(e))),
                 }
             });
         };
@@ -188,13 +188,13 @@ fn build_toolbar_actions(data: &MergeData, notification: RwSignal<String>) -> To
             lock_ui();
             leptos::task::spawn_local(async move {
                 match commands::package_uninstall(ns).await {
-                    Ok(html) => {
-                        notification.set(html);
+                    Ok(msg) => {
+                        notification.set(Some(Notification::Success(msg)));
                         navigate("/installed-packages-list", Default::default());
                     }
                     Err(e) => {
                         unlock_ui();
-                        notification.set(format!("<div class=\"error\">{e}</div>"));
+                        notification.set(Some(Notification::Error(e)));
                     }
                 }
             });

@@ -3,13 +3,13 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 
 use crate::commands::{self, EntryData, InstalledPackageData};
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
-use crate::components::{Layout, Spinner, ToolbarActions};
+use crate::components::{Layout, Notification, Spinner, ToolbarActions};
 
 // ── Installed Package page ──
 
 #[component]
 pub fn InstalledPackage() -> impl IntoView {
-    let notification = RwSignal::new(String::new());
+    let notification = RwSignal::new(None);
 
     let query = use_query_map();
     let data = LocalResource::new(move || {
@@ -71,7 +71,7 @@ pub fn InstalledPackage() -> impl IntoView {
 #[component]
 fn InstalledPackageContent(
     data: InstalledPackageData,
-    notification: RwSignal<String>,
+    notification: RwSignal<Option<Notification>>,
 ) -> impl IntoView {
     let filter_unmodified = RwSignal::new(data.filter_unmodified);
     let filter_ignored = RwSignal::new(data.filter_ignored);
@@ -141,13 +141,13 @@ fn InstalledPackageContent(
         leptos::task::spawn_local(async move {
             match commands::package_install_paths(uri, paths).await
             {
-                Ok(html) => {
-                    notification.set(html);
+                Ok(msg) => {
+                    notification.set(Some(Notification::Success(msg)));
                     let _ = web_sys::window().and_then(|w| w.location().reload().ok());
                 }
                 Err(e) => {
                     unlock_ui();
-                    notification.set(format!("<div class=\"error\">{e}</div>"));
+                    notification.set(Some(Notification::Error(e)));
                 }
             }
         });
@@ -317,7 +317,7 @@ fn InstalledPackageContent(
 
 fn build_toolbar_actions(
     data: &InstalledPackageData,
-    notification: RwSignal<String>,
+    notification: RwSignal<Option<Notification>>,
 ) -> ToolbarActions {
     let namespace = data.namespace.clone();
     let origin_url = data.origin_url.clone();
@@ -331,8 +331,8 @@ fn build_toolbar_actions(
             let ns = ns_for_folder.clone();
             leptos::task::spawn_local(async move {
                 match commands::open_in_file_browser(ns).await {
-                    Ok(html) => notification.set(html),
-                    Err(e) => notification.set(format!("<div class=\"error\">{e}</div>")),
+                    Ok(msg) => notification.set(Some(Notification::Success(msg))),
+                    Err(e) => notification.set(Some(Notification::Error(e))),
                 }
             });
         };
@@ -353,13 +353,13 @@ fn build_toolbar_actions(
             lock_ui();
             leptos::task::spawn_local(async move {
                 match commands::package_uninstall(ns).await {
-                    Ok(html) => {
-                        notification.set(html);
+                    Ok(msg) => {
+                        notification.set(Some(Notification::Success(msg)));
                         navigate("/installed-packages-list", Default::default());
                     }
                     Err(e) => {
                         unlock_ui();
-                        notification.set(format!("<div class=\"error\">{e}</div>"));
+                        notification.set(Some(Notification::Error(e)));
                     }
                 }
             });
@@ -406,7 +406,7 @@ fn StatusBanner(
     namespace: String,
     status: String,
     origin_host: Option<String>,
-    notification: RwSignal<String>,
+    notification: RwSignal<Option<Notification>>,
     show_origin_popup: RwSignal<bool>,
 ) -> impl IntoView {
     let ns = namespace.clone();
@@ -518,7 +518,7 @@ fn StatusBannerInner(
 }
 
 #[component]
-fn PushButton(namespace: String, notification: RwSignal<String>) -> impl IntoView {
+fn PushButton(namespace: String, notification: RwSignal<Option<Notification>>) -> impl IntoView {
     let pushing = RwSignal::new(false);
     view! {
         <button
@@ -532,13 +532,13 @@ fn PushButton(namespace: String, notification: RwSignal<String>) -> impl IntoVie
                 let ns = namespace.clone();
                 leptos::task::spawn_local(async move {
                     match commands::package_push(ns).await {
-                        Ok(html) => {
-                            notification.set(html);
+                        Ok(msg) => {
+                            notification.set(Some(Notification::Success(msg)));
                             let _ = web_sys::window().and_then(|w| w.location().reload().ok());
                         }
                         Err(e) => {
                             unlock_ui();
-                            notification.set(format!("<div class=\"error\">{e}</div>"));
+                            notification.set(Some(Notification::Error(e)));
                             pushing.set(false);
                         }
                     }
@@ -551,7 +551,7 @@ fn PushButton(namespace: String, notification: RwSignal<String>) -> impl IntoVie
 }
 
 #[component]
-fn PullButton(namespace: String, notification: RwSignal<String>) -> impl IntoView {
+fn PullButton(namespace: String, notification: RwSignal<Option<Notification>>) -> impl IntoView {
     let pulling = RwSignal::new(false);
     view! {
         <button
@@ -565,13 +565,13 @@ fn PullButton(namespace: String, notification: RwSignal<String>) -> impl IntoVie
                 let ns = namespace.clone();
                 leptos::task::spawn_local(async move {
                     match commands::package_pull(ns).await {
-                        Ok(html) => {
-                            notification.set(html);
+                        Ok(msg) => {
+                            notification.set(Some(Notification::Success(msg)));
                             let _ = web_sys::window().and_then(|w| w.location().reload().ok());
                         }
                         Err(e) => {
                             unlock_ui();
-                            notification.set(format!("<div class=\"error\">{e}</div>"));
+                            notification.set(Some(Notification::Error(e)));
                             pulling.set(false);
                         }
                     }
@@ -708,7 +708,7 @@ fn EntryRow(
     index: usize,
     entry: EntryData,
     checked_indices: RwSignal<Vec<usize>>,
-    notification: RwSignal<String>,
+    notification: RwSignal<Option<Notification>>,
     show_ignore_popup: RwSignal<Option<IgnorePopupData>>,
     show_unignore_popup: RwSignal<Option<UnignorePopupData>>,
 ) -> impl IntoView {
@@ -776,8 +776,8 @@ fn EntryRow(
         let notification = notification;
         leptos::task::spawn_local(async move {
             match commands::open_in_default_application(ns, path).await {
-                Ok(html) => notification.set(html),
-                Err(e) => notification.set(format!("<div class=\"error\">{e}</div>")),
+                Ok(msg) => notification.set(Some(Notification::Success(msg))),
+                Err(e) => notification.set(Some(Notification::Error(e))),
             }
         });
     };
@@ -790,8 +790,8 @@ fn EntryRow(
         let notification = notification;
         leptos::task::spawn_local(async move {
             match commands::reveal_in_file_browser(ns, path).await {
-                Ok(html) => notification.set(html),
-                Err(e) => notification.set(format!("<div class=\"error\">{e}</div>")),
+                Ok(msg) => notification.set(Some(Notification::Success(msg))),
+                Err(e) => notification.set(Some(Notification::Error(e))),
             }
         });
     };
@@ -921,7 +921,7 @@ struct IgnorePopupData {
 #[component]
 fn IgnorePopup(
     data: IgnorePopupData,
-    notification: RwSignal<String>,
+    notification: RwSignal<Option<Notification>>,
     on_close: impl Fn() + Clone + 'static,
 ) -> impl IntoView {
     let pattern = RwSignal::new(data.suggested_pattern.clone());
@@ -998,13 +998,13 @@ fn IgnorePopup(
         leptos::task::spawn_local(async move {
             match commands::add_to_quiltignore(ns, p).await
             {
-                Ok(html) => {
-                    notification.set(html);
+                Ok(msg) => {
+                    notification.set(Some(Notification::Success(msg)));
                     on_close();
                     let _ = web_sys::window().and_then(|w| w.location().reload().ok());
                 }
                 Err(e) => {
-                    notification.set(format!("<div class=\"error\">{e}</div>"));
+                    notification.set(Some(Notification::Error(e)));
                     submitting.set(false);
                 }
             }
@@ -1075,7 +1075,7 @@ struct UnignorePopupData {
 #[component]
 fn UnignorePopup(
     data: UnignorePopupData,
-    notification: RwSignal<String>,
+    notification: RwSignal<Option<Notification>>,
     on_close: impl Fn() + Clone + 'static,
 ) -> impl IntoView {
     let ns = data.namespace.clone();
@@ -1089,8 +1089,8 @@ fn UnignorePopup(
         leptos::task::spawn_local(async move {
             match commands::open_in_default_application(ns, ".quiltignore".to_string()).await
             {
-                Ok(html) => notification.set(html),
-                Err(e) => notification.set(format!("<div class=\"error\">{e}</div>")),
+                Ok(msg) => notification.set(Some(Notification::Success(msg))),
+                Err(e) => notification.set(Some(Notification::Error(e))),
             }
             on_close();
         });
@@ -1121,7 +1121,7 @@ fn UnignorePopup(
 fn SetOriginPopup(
     namespace: String,
     current_origin: String,
-    notification: RwSignal<String>,
+    notification: RwSignal<Option<Notification>>,
     on_close: impl Fn() + Clone + 'static,
 ) -> impl IntoView {
     let origin = RwSignal::new(current_origin);
@@ -1146,13 +1146,13 @@ fn SetOriginPopup(
         leptos::task::spawn_local(async move {
             match commands::set_origin(ns, value).await
             {
-                Ok(html) => {
-                    notification.set(html);
+                Ok(msg) => {
+                    notification.set(Some(Notification::Success(msg)));
                     on_close();
                     let _ = web_sys::window().and_then(|w| w.location().reload().ok());
                 }
                 Err(e) => {
-                    notification.set(format!("<div class=\"error\">{e}</div>"));
+                    notification.set(Some(Notification::Error(e)));
                     submitting.set(false);
                 }
             }
