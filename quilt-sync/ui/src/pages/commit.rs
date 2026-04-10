@@ -416,6 +416,7 @@ fn build_toolbar_actions(
     let namespace = data.namespace.clone();
     let origin_url = data.origin_url.clone();
     let has_catalog = origin_url.is_some();
+    let catalog_disabled = data.status == "local";
 
     ToolbarActions::new(move || {
         let navigate = use_navigate();
@@ -468,7 +469,12 @@ fn build_toolbar_actions(
             {if has_catalog {
                 view! {
                     <li>
-                        <button class="qui-button" type="button" on:click=on_open_catalog>
+                        <button
+                            class="qui-button"
+                            type="button"
+                            prop:disabled=catalog_disabled
+                            on:click=on_open_catalog
+                        >
                             <img class="qui-icon" src="/assets/img/icons/open_in_browser.svg" />
                             <span>"Open in Catalog"</span>
                         </button>

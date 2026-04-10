@@ -426,6 +426,7 @@ pub async fn get_merge_data(
 pub struct CommitData {
     pub namespace: String,
     pub uri: String,
+    pub status: String,
     pub origin_url: Option<String>,
     pub origin_host: Option<String>,
     pub message: String,
@@ -462,6 +463,15 @@ async fn get_commit_data_from_model(
     let status = m
         .get_installed_package_status(&installed_package, None)
         .await?;
+
+    let pkg_status_str = match status.upstream_state {
+        quilt::lineage::UpstreamState::UpToDate => "up_to_date",
+        quilt::lineage::UpstreamState::Ahead => "ahead",
+        quilt::lineage::UpstreamState::Behind => "behind",
+        quilt::lineage::UpstreamState::Diverged => "diverged",
+        quilt::lineage::UpstreamState::Local => "local",
+        quilt::lineage::UpstreamState::Error => "error",
+    };
 
     let lineage = m
         .get_installed_package_lineage(&installed_package)
@@ -603,6 +613,7 @@ async fn get_commit_data_from_model(
     Ok(CommitData {
         namespace: namespace.to_string(),
         uri: uri.to_string(),
+        status: pkg_status_str.to_string(),
         origin_url,
         origin_host: origin_host.map(|h| h.to_string()),
         message,

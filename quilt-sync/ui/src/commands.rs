@@ -38,6 +38,7 @@ pub struct CommitData {
     pub namespace: String,
     #[allow(dead_code)]
     pub uri: String,
+    pub status: String,
     pub origin_url: Option<String>,
     #[allow(dead_code)]
     pub origin_host: Option<String>,
