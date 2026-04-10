@@ -530,7 +530,8 @@ fn CommitEntryRow(
 
     // Action buttons
     let show_open_reveal = !is_deleted && !is_ignored && entry.status != "remote";
-    let show_catalog = entry.origin_url.is_some();
+    let show_catalog = (entry.status == "remote" || entry.status == "pristine")
+        && entry.origin_url.is_some();
 
     let ns_for_open = entry.namespace.clone();
     let path_for_open = entry.filename.clone();
