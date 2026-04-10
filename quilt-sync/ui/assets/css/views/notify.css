@@ -15,10 +15,11 @@
   margin: auto;
   max-width: var(--q-ui-container-size);
   padding: 0 var(--q-ui-size-2);
-  position: absolute;
+  position: fixed;
   left: 0;
   top: var(--q-ui-size-10);
   right: 0;
+  z-index: calc(var(--q-ui-z-index-popover) + 1);
 
   .root {
     animation: 0.15s ease-out notify-slide;
@@ -29,7 +30,6 @@
     min-width: 30%;
     max-width: 50%;
     padding: var(--q-ui-size-2);
-    z-index: 1;
   }
 
   .root:empty {

@@ -71,21 +71,29 @@ pub fn Layout(
                         </div>
                     })}
                 </div>
-                <div class="qui-notify">
-                    <div
-                        id="notify"
-                        class="root"
-                        inner_html=move || notification.get()
-                        on:click=move |_| {
-                            if let Some(el) = web_sys::window()
-                                .and_then(|w| w.document())
-                                .and_then(|d| d.get_element_by_id("notify"))
-                            {
-                                el.set_inner_html("");
-                            }
-                        }
-                    ></div>
-                </div>
+            </div>
+
+            // ── Notification dismiss overlay ──
+            {move || {
+                if notification.get().is_empty() {
+                    None
+                } else {
+                    Some(view! {
+                        <div
+                            class="popup-overlay"
+                            on:click=move |_| notification.set(String::new())
+                        ></div>
+                    })
+                }
+            }}
+
+            // ── Notification bar ──
+            <div class="qui-notify">
+                <div
+                    id="notify"
+                    class="root"
+                    inner_html=move || notification.get()
+                ></div>
             </div>
 
             // ── Page content ──
