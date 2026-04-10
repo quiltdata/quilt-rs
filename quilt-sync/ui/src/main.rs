@@ -79,6 +79,7 @@ fn legacy_to_clean_url(pathname: &str) -> Option<String> {
 #[component]
 fn App() -> impl IntoView {
     view! {
+        <components::UpdateChecker />
         <Router>
             <Routes fallback=|| view! { <pages::Error /> }>
                 <Route path=path!("/") view=|| view! {

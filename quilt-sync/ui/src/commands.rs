@@ -135,6 +135,12 @@ pub struct RemotePackageResult {
     pub notification: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateInfo {
+    pub version: String,
+}
+
 // ── Data-fetching commands ──────────────────────────────────
 
 pub async fn get_installed_package_data(
@@ -212,6 +218,16 @@ pub async fn handle_remote_package(uri: String) -> Result<RemotePackageResult, S
         uri: String,
     }
     tauri::invoke("handle_remote_package", &Args { uri }).await
+}
+
+// ── Auto-update ────────────────────────────────────────────
+
+pub async fn check_for_update() -> Result<Option<UpdateInfo>, String> {
+    tauri::invoke_unit("check_for_update").await
+}
+
+pub async fn download_and_install_update() -> Result<(), String> {
+    tauri::invoke_unit("download_and_install_update").await
 }
 
 // ── Package actions ─────────────────────────────────────────
