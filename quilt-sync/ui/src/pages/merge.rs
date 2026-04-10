@@ -1,21 +1,9 @@
 use leptos::prelude::*;
 use leptos_router::hooks::{use_navigate, use_query_map};
-use serde::{Deserialize, Serialize};
 
+use crate::commands::{self, MergeData};
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{Layout, Spinner, ToolbarActions};
-use crate::tauri;
-
-// ── Data types (mirror the Tauri command response) ──
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MergeData {
-    pub namespace: String,
-    pub origin_url: Option<String>,
-    #[allow(dead_code)]
-    pub origin_host: Option<String>,
-}
 
 // ── Merge page ──
 
@@ -27,12 +15,7 @@ pub fn Merge() -> impl IntoView {
     let data = LocalResource::new(move || {
         let namespace = query.read().get("namespace").unwrap_or_default();
         async move {
-            #[derive(Serialize)]
-            #[serde(rename_all = "camelCase")]
-            struct Args {
-                namespace: String,
-            }
-            tauri::invoke::<_, MergeData>("get_merge_data", &Args { namespace }).await
+            commands::get_merge_data(namespace).await
         }
     });
 
@@ -99,13 +82,7 @@ fn MergeContent(data: MergeData, notification: RwSignal<String>) -> impl IntoVie
         let navigate = navigate_for_certify.clone();
         lock_ui();
         leptos::task::spawn_local(async move {
-            #[derive(Serialize)]
-            struct Args {
-                namespace: String,
-            }
-            match tauri::invoke::<_, String>("certify_latest", &Args { namespace: ns.clone() })
-                .await
-            {
+            match commands::certify_latest(ns.clone()).await {
                 Ok(html) => {
                     notification.set(html);
                     navigate(
@@ -128,11 +105,7 @@ fn MergeContent(data: MergeData, notification: RwSignal<String>) -> impl IntoVie
         let navigate = navigate_for_reset.clone();
         lock_ui();
         leptos::task::spawn_local(async move {
-            #[derive(Serialize)]
-            struct Args {
-                namespace: String,
-            }
-            match tauri::invoke::<_, String>("reset_local", &Args { namespace: ns.clone() }).await {
+            match commands::reset_local(ns.clone()).await {
                 Ok(html) => {
                     notification.set(html);
                     navigate(
@@ -192,13 +165,7 @@ fn build_toolbar_actions(data: &MergeData, notification: RwSignal<String>) -> To
         let on_open_folder = move |_| {
             let ns = ns_for_folder.clone();
             leptos::task::spawn_local(async move {
-                #[derive(Serialize)]
-                struct Args {
-                    namespace: String,
-                }
-                match tauri::invoke::<_, String>("open_in_file_browser", &Args { namespace: ns })
-                    .await
-                {
+                match commands::open_in_file_browser(ns).await {
                     Ok(html) => notification.set(html),
                     Err(e) => notification.set(format!("<div class=\"error\">{e}</div>")),
                 }
@@ -209,12 +176,7 @@ fn build_toolbar_actions(data: &MergeData, notification: RwSignal<String>) -> To
         let on_open_catalog = move |_| {
             if let Some(url) = origin_for_catalog.clone() {
                 leptos::task::spawn_local(async move {
-                    #[derive(Serialize)]
-                    struct Args {
-                        url: String,
-                    }
-                    let _ =
-                        tauri::invoke::<_, String>("open_in_web_browser", &Args { url }).await;
+                    let _ = commands::open_in_web_browser(url).await;
                 });
             }
         };
@@ -225,13 +187,7 @@ fn build_toolbar_actions(data: &MergeData, notification: RwSignal<String>) -> To
             let navigate = navigate.clone();
             lock_ui();
             leptos::task::spawn_local(async move {
-                #[derive(Serialize)]
-                struct Args {
-                    namespace: String,
-                }
-                match tauri::invoke::<_, String>("package_uninstall", &Args { namespace: ns })
-                    .await
-                {
+                match commands::package_uninstall(ns).await {
                     Ok(html) => {
                         notification.set(html);
                         navigate("/installed-packages-list", Default::default());

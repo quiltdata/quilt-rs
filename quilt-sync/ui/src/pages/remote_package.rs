@@ -1,16 +1,8 @@
 use leptos::prelude::*;
 use leptos_router::hooks::{use_navigate, use_query_map};
-use serde::{Deserialize, Serialize};
 
+use crate::commands;
 use crate::components::{Layout, Spinner};
-use crate::tauri;
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RemotePackageResult {
-    namespace: String,
-    notification: Option<String>,
-}
 
 #[component]
 pub fn RemotePackage() -> impl IntoView {
@@ -22,14 +14,7 @@ pub fn RemotePackage() -> impl IntoView {
         let uri = query.read().get("uri").unwrap_or_default();
         let navigate = navigate.clone();
         async move {
-            #[derive(Serialize)]
-            #[serde(rename_all = "camelCase")]
-            struct Args {
-                uri: String,
-            }
-            let result =
-                tauri::invoke::<_, RemotePackageResult>("handle_remote_package", &Args { uri })
-                    .await?;
+            let result = commands::handle_remote_package(uri).await?;
 
             // Navigate to the installed package page
             let ns = &result.namespace;

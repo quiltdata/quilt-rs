@@ -1,17 +1,8 @@
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
-use serde::{Deserialize, Serialize};
 
+use crate::commands;
 use crate::components::{Layout, Spinner};
-use crate::tauri;
-
-// ── Data types (mirror the Tauri command response) ──
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SetupData {
-    pub default_home: String,
-}
 
 // ── Setup page ──
 
@@ -20,7 +11,7 @@ pub fn Setup() -> impl IntoView {
     let notification = RwSignal::new(String::new());
 
     let data = LocalResource::new(move || async {
-        tauri::invoke_unit::<SetupData>("get_setup_data").await
+        commands::get_setup_data().await
     });
 
     view! {
@@ -68,7 +59,7 @@ fn SetupContent(default_home: String) -> impl IntoView {
         browsing.set(true);
         hint.set(String::new());
         leptos::task::spawn_local(async move {
-            match tauri::invoke_unit::<String>("open_directory_picker").await {
+            match commands::open_directory_picker().await {
                 Ok(path) => {
                     directory.set(path);
                     hint.set(String::new());
@@ -88,18 +79,7 @@ fn SetupContent(default_home: String) -> impl IntoView {
         hint.set(String::new());
         let navigate = navigate.clone();
         leptos::task::spawn_local(async move {
-            #[derive(Serialize)]
-            struct Args {
-                directory: String,
-            }
-            match tauri::invoke::<_, String>(
-                "setup",
-                &Args {
-                    directory: directory.get_untracked(),
-                },
-            )
-            .await
-            {
+            match commands::setup(directory.get_untracked()).await {
                 Ok(_) => {
                     navigate("/installed-packages-list", Default::default());
                 }

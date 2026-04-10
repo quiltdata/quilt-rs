@@ -1,32 +1,8 @@
 use leptos::prelude::*;
-use serde::{Deserialize, Serialize};
 
+use crate::commands::{self, ChangelogEntry, SettingsData};
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{Layout, Spinner};
-use crate::tauri;
-
-// ── Data types (mirror the Tauri command response) ──
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SettingsData {
-    pub version: String,
-    pub home_dir: Option<String>,
-    pub data_dir: String,
-    pub auth_hosts: Vec<String>,
-    pub log_level: String,
-    pub logs_dir: String,
-    pub logs_dir_is_temporary: bool,
-    pub os: String,
-    pub changelog: Vec<ChangelogEntry>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct ChangelogEntry {
-    pub version: String,
-    pub date: String,
-    pub body: String,
-}
 
 // ── Settings page ──
 
@@ -35,7 +11,7 @@ pub fn Settings() -> impl IntoView {
     let notification = RwSignal::new(String::new());
 
     let data = LocalResource::new(move || async {
-        tauri::invoke_unit::<SettingsData>("get_settings_data").await
+        commands::get_settings_data().await
     });
 
     let breadcrumbs = vec![
@@ -116,6 +92,24 @@ fn GeneralSection(
     let data_title = data_dir.clone();
     let show_release_notes = RwSignal::new(false);
 
+    let on_open_home = move |_| {
+        leptos::task::spawn_local(async move {
+            match commands::open_home_dir().await {
+                Ok(html) => notification.set(html),
+                Err(e) => notification.set(format!("<div class=\"error\">{e}</div>")),
+            }
+        });
+    };
+
+    let on_open_data = move |_| {
+        leptos::task::spawn_local(async move {
+            match commands::open_data_dir().await {
+                Ok(html) => notification.set(html),
+                Err(e) => notification.set(format!("<div class=\"error\">{e}</div>")),
+            }
+        });
+    };
+
     view! {
         <section class="settings-section">
             <h2 class="section-title">"General"</h2>
@@ -135,13 +129,27 @@ fn GeneralSection(
                 <dt>"Home directory"</dt>
                 <dd>
                     <span class="path" title=home_title>{home_display}</span>
-                    <OpenDirButton command="open_home_dir" notification=notification />
+                    <button
+                        class="qui-button link small"
+                        type="button"
+                        on:click=on_open_home
+                    >
+                        <img class="qui-icon" src="/assets/img/icons/folder_open.svg" />
+                        <span>"Open"</span>
+                    </button>
                 </dd>
 
                 <dt>"Data directory"</dt>
                 <dd>
                     <span class="path" title=data_title>{data_dir}</span>
-                    <OpenDirButton command="open_data_dir" notification=notification />
+                    <button
+                        class="qui-button link small"
+                        type="button"
+                        on:click=on_open_data
+                    >
+                        <img class="qui-icon" src="/assets/img/icons/folder_open.svg" />
+                        <span>"Open"</span>
+                    </button>
                 </dd>
             </dl>
         </section>
@@ -203,11 +211,7 @@ fn AuthHostRow(host: String, notification: RwSignal<String>) -> impl IntoView {
                     on:click=move |_| {
                         let host = host_for_logout.clone();
                         leptos::task::spawn_local(async move {
-                            #[derive(Serialize)]
-                            struct Args {
-                                host: String,
-                            }
-                            match tauri::invoke::<_, String>("erase_auth", &Args { host }).await {
+                            match commands::erase_auth(host).await {
                                 Ok(html) => notification.set(html),
                                 Err(e) => {
                                     notification
@@ -266,7 +270,7 @@ fn DiagnosticsSection(
                         type="button"
                         on:click=move |_| {
                             leptos::task::spawn_local(async move {
-                                match tauri::invoke_unit::<String>("debug_logs").await {
+                                match commands::debug_logs().await {
                                     Ok(html) => notification.set(html),
                                     Err(e) => {
                                         notification
@@ -291,7 +295,7 @@ fn DiagnosticsSection(
                     on:click=move |_| {
                         collecting.set(true);
                         leptos::task::spawn_local(async move {
-                            match tauri::invoke_unit::<String>("collect_diagnostic_logs").await {
+                            match commands::collect_diagnostic_logs().await {
                                 Ok(path) => zip_path.set(Some(path)),
                                 Err(e) => {
                                     web_sys::console::error_1(
@@ -320,17 +324,7 @@ fn DiagnosticsSection(
                     on:click=move |_| {
                         if let Some(path) = zip_path.get_untracked() {
                             leptos::task::spawn_local(async move {
-                                #[derive(Serialize)]
-                                #[serde(rename_all = "camelCase")]
-                                struct Args {
-                                    zip_path: String,
-                                }
-                                match tauri::invoke::<_, String>(
-                                    "send_crash_report",
-                                    &Args { zip_path: path },
-                                )
-                                    .await
-                                {
+                                match commands::send_crash_report(path).await {
                                     Ok(html) => notification.set(html),
                                     Err(e) => {
                                         notification
@@ -365,15 +359,7 @@ fn DiagnosticsSection(
                                             Some(i) if i > 0 => path[..i].to_string(),
                                             _ => path,
                                         };
-                                        #[derive(Serialize)]
-                                        struct UrlArgs {
-                                            url: String,
-                                        }
-                                        let _ = tauri::invoke::<_, String>(
-                                                "open_in_web_browser",
-                                                &UrlArgs { url: dir },
-                                            )
-                                            .await;
+                                        let _ = commands::open_in_web_browser(dir).await;
                                     });
                                 }
                             }
@@ -415,43 +401,12 @@ fn EmailSupportButton(
                         ));
                         let mailto =
                             format!("mailto:support@quilt.bio?subject={subject}&body={body}");
-                        #[derive(Serialize)]
-                        struct UrlArgs {
-                            url: String,
-                        }
-                        let _ = tauri::invoke::<_, String>(
-                                "open_in_web_browser",
-                                &UrlArgs { url: mailto },
-                            )
-                            .await;
+                        let _ = commands::open_in_web_browser(mailto).await;
                     });
                 }
             }
         >
             <span>"Email Support"</span>
-        </button>
-    }
-}
-
-// ── Shared components ──
-
-#[component]
-fn OpenDirButton(command: &'static str, notification: RwSignal<String>) -> impl IntoView {
-    view! {
-        <button
-            class="qui-button link small"
-            type="button"
-            on:click=move |_| {
-                leptos::task::spawn_local(async move {
-                    match tauri::invoke_unit::<String>(command).await {
-                        Ok(html) => notification.set(html),
-                        Err(e) => notification.set(format!("<div class=\"error\">{e}</div>")),
-                    }
-                });
-            }
-        >
-            <img class="qui-icon" src="/assets/img/icons/folder_open.svg" />
-            <span>"Open"</span>
         </button>
     }
 }

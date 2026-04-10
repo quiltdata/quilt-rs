@@ -1,20 +1,9 @@
 use leptos::prelude::*;
 use leptos_router::hooks::{use_navigate, use_query_map};
-use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsCast;
 
+use crate::commands::{self, LoginData};
 use crate::components::{Layout, Spinner};
-use crate::tauri;
-
-// ── Data types (mirror the Tauri command response) ──
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LoginData {
-    pub host: String,
-    pub back: String,
-    pub catalog_url: String,
-}
 
 // ── Login page ──
 
@@ -27,13 +16,7 @@ pub fn Login() -> impl IntoView {
         let host = query.read().get("host").unwrap_or_default();
         let back = query.read().get("back").unwrap_or_default();
         async move {
-            #[derive(Serialize)]
-            #[serde(rename_all = "camelCase")]
-            struct Args {
-                host: String,
-                back: String,
-            }
-            tauri::invoke::<_, LoginData>("get_login_data", &Args { host, back }).await
+            commands::get_login_data(host, back).await
         }
     });
 
@@ -92,23 +75,8 @@ fn LoginContent(data: LoginData, notification: RwSignal<String>) -> impl IntoVie
         let back = back_for_submit.clone();
         let navigate = navigate.clone();
         leptos::task::spawn_local(async move {
-            #[derive(Serialize)]
-            struct Args {
-                host: String,
-                code: String,
-                back: Option<String>,
-            }
             let back_opt = if back.is_empty() { None } else { Some(back.clone()) };
-            match tauri::invoke::<_, String>(
-                "login",
-                &Args {
-                    host,
-                    code: code.get_untracked(),
-                    back: back_opt.clone(),
-                },
-            )
-            .await
-            {
+            match commands::login(host, code.get_untracked(), back_opt.clone()).await {
                 Ok(html) => {
                     notification.set(html);
                     // Rust's login command calls navigate_after_login when back is present;
@@ -136,13 +104,8 @@ fn LoginContent(data: LoginData, notification: RwSignal<String>) -> impl IntoVie
         let host = host_for_oauth.clone();
         let back = back_for_oauth.clone();
         leptos::task::spawn_local(async move {
-            #[derive(Serialize)]
-            struct Args {
-                host: String,
-                back: Option<String>,
-            }
             let back_opt = if back.is_empty() { None } else { Some(back) };
-            match tauri::invoke::<_, String>("login_oauth", &Args { host, back: back_opt }).await {
+            match commands::login_oauth(host, back_opt).await {
                 Ok(html) => notification.set(html),
                 Err(e) => notification.set(format!("<div class=\"error\">{e}</div>")),
             }
@@ -155,11 +118,7 @@ fn LoginContent(data: LoginData, notification: RwSignal<String>) -> impl IntoVie
         move |_| {
             let url = catalog_url.clone();
             leptos::task::spawn_local(async move {
-                #[derive(Serialize)]
-                struct UrlArgs {
-                    url: String,
-                }
-                let _ = tauri::invoke::<_, String>("open_in_web_browser", &UrlArgs { url }).await;
+                let _ = commands::open_in_web_browser(url).await;
             });
         }
     };

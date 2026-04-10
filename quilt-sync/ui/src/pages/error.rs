@@ -1,19 +1,8 @@
 use leptos::prelude::*;
 use leptos_router::hooks::use_query_map;
-use serde::{Deserialize, Serialize};
 
+use crate::commands::{self, LoginErrorData};
 use crate::components::{Layout, Spinner};
-use crate::tauri;
-
-// ── Data types (mirror the Tauri command response) ──
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LoginErrorData {
-    pub title: String,
-    pub message: String,
-    pub login_host: String,
-}
 
 // ── Error page ──
 
@@ -27,14 +16,7 @@ pub fn Error() -> impl IntoView {
         let title = query.read().get("title");
         let error = query.read().get("error").unwrap_or_default();
         async move {
-            #[derive(Serialize)]
-            #[serde(rename_all = "camelCase")]
-            struct Args {
-                host: String,
-                title: Option<String>,
-                error: String,
-            }
-            tauri::invoke::<_, LoginErrorData>("get_login_error_data", &Args { host, title, error }).await
+            commands::get_login_error_data(host, title, error).await
         }
     });
 
@@ -77,7 +59,7 @@ fn ErrorContent(data: LoginErrorData, notification: RwSignal<String>) -> impl In
 
     let on_dot_quilt = move |_| {
         leptos::task::spawn_local(async move {
-            match tauri::invoke_unit::<String>("debug_dot_quilt").await {
+            match commands::debug_dot_quilt().await {
                 Ok(html) => notification.set(html),
                 Err(e) => notification.set(format!("<div class=\"error\">{e}</div>")),
             }

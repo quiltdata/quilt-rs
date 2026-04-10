@@ -2,6 +2,7 @@ use leptos::prelude::*;
 use leptos_router::components::{Redirect, Route, Router, Routes};
 use leptos_router::path;
 
+mod commands;
 mod components;
 mod error_handler;
 mod pages;

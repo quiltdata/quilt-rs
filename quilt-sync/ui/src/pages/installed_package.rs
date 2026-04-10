@@ -1,40 +1,9 @@
 use leptos::prelude::*;
 use leptos_router::hooks::{use_navigate, use_query_map};
-use serde::{Deserialize, Serialize};
 
+use crate::commands::{self, EntryData, InstalledPackageData};
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{Layout, Spinner, ToolbarActions};
-use crate::tauri;
-
-// ── Data types (mirror the Tauri command response) ──
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InstalledPackageData {
-    pub namespace: String,
-    pub uri: String,
-    pub status: String,
-    pub origin_url: Option<String>,
-    pub origin_host: Option<String>,
-    pub entries: Vec<EntryData>,
-    pub has_remote_entries: bool,
-    pub ignored_count: usize,
-    pub unmodified_count: usize,
-    pub filter_unmodified: bool,
-    pub filter_ignored: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EntryData {
-    pub filename: String,
-    pub size: u64,
-    pub status: String,
-    pub origin_url: Option<String>,
-    pub junky_pattern: Option<String>,
-    pub ignored_by: Option<String>,
-    pub namespace: String,
-}
 
 // ── Installed Package page ──
 
@@ -47,17 +16,7 @@ pub fn InstalledPackage() -> impl IntoView {
         let namespace = query.read().get("namespace").unwrap_or_default();
         let filter = query.read().get("filter");
         async move {
-            #[derive(Serialize)]
-            #[serde(rename_all = "camelCase")]
-            struct Args {
-                namespace: String,
-                filter: Option<String>,
-            }
-            tauri::invoke::<_, InstalledPackageData>(
-                "get_installed_package_data",
-                &Args { namespace, filter },
-            )
-            .await
+            commands::get_installed_package_data(namespace, filter).await
         }
     });
 
@@ -180,16 +139,7 @@ fn InstalledPackageContent(
         let notification = notification;
         lock_ui();
         leptos::task::spawn_local(async move {
-            #[derive(Serialize)]
-            struct Args {
-                uri: String,
-                paths: Vec<String>,
-            }
-            match tauri::invoke::<_, String>(
-                "package_install_paths",
-                &Args { uri, paths },
-            )
-            .await
+            match commands::package_install_paths(uri, paths).await
             {
                 Ok(html) => {
                     notification.set(html);
@@ -380,9 +330,7 @@ fn build_toolbar_actions(
         let on_open_folder = move |_| {
             let ns = ns_for_folder.clone();
             leptos::task::spawn_local(async move {
-                #[derive(Serialize)]
-                struct Args { namespace: String }
-                match tauri::invoke::<_, String>("open_in_file_browser", &Args { namespace: ns }).await {
+                match commands::open_in_file_browser(ns).await {
                     Ok(html) => notification.set(html),
                     Err(e) => notification.set(format!("<div class=\"error\">{e}</div>")),
                 }
@@ -393,9 +341,7 @@ fn build_toolbar_actions(
         let on_open_catalog = move |_| {
             if let Some(url) = origin_for_catalog.clone() {
                 leptos::task::spawn_local(async move {
-                    #[derive(Serialize)]
-                    struct Args { url: String }
-                    let _ = tauri::invoke::<_, String>("open_in_web_browser", &Args { url }).await;
+                    let _ = commands::open_in_web_browser(url).await;
                 });
             }
         };
@@ -406,9 +352,7 @@ fn build_toolbar_actions(
             let navigate = navigate.clone();
             lock_ui();
             leptos::task::spawn_local(async move {
-                #[derive(Serialize)]
-                struct Args { namespace: String }
-                match tauri::invoke::<_, String>("package_uninstall", &Args { namespace: ns }).await {
+                match commands::package_uninstall(ns).await {
                     Ok(html) => {
                         notification.set(html);
                         navigate("/installed-packages-list", Default::default());
@@ -587,9 +531,7 @@ fn PushButton(namespace: String, notification: RwSignal<String>) -> impl IntoVie
                 lock_ui();
                 let ns = namespace.clone();
                 leptos::task::spawn_local(async move {
-                    #[derive(Serialize)]
-                    struct Args { namespace: String }
-                    match tauri::invoke::<_, String>("package_push", &Args { namespace: ns }).await {
+                    match commands::package_push(ns).await {
                         Ok(html) => {
                             notification.set(html);
                             let _ = web_sys::window().and_then(|w| w.location().reload().ok());
@@ -622,9 +564,7 @@ fn PullButton(namespace: String, notification: RwSignal<String>) -> impl IntoVie
                 lock_ui();
                 let ns = namespace.clone();
                 leptos::task::spawn_local(async move {
-                    #[derive(Serialize)]
-                    struct Args { namespace: String }
-                    match tauri::invoke::<_, String>("package_pull", &Args { namespace: ns }).await {
+                    match commands::package_pull(ns).await {
                         Ok(html) => {
                             notification.set(html);
                             let _ = web_sys::window().and_then(|w| w.location().reload().ok());
@@ -835,17 +775,7 @@ fn EntryRow(
         let path = path_for_open.clone();
         let notification = notification;
         leptos::task::spawn_local(async move {
-            #[derive(Serialize)]
-            struct Args {
-                namespace: String,
-                path: String,
-            }
-            match tauri::invoke::<_, String>(
-                "open_in_default_application",
-                &Args { namespace: ns, path },
-            )
-            .await
-            {
+            match commands::open_in_default_application(ns, path).await {
                 Ok(html) => notification.set(html),
                 Err(e) => notification.set(format!("<div class=\"error\">{e}</div>")),
             }
@@ -859,17 +789,7 @@ fn EntryRow(
         let path = path_for_reveal.clone();
         let notification = notification;
         leptos::task::spawn_local(async move {
-            #[derive(Serialize)]
-            struct Args {
-                namespace: String,
-                path: String,
-            }
-            match tauri::invoke::<_, String>(
-                "reveal_in_file_browser",
-                &Args { namespace: ns, path },
-            )
-            .await
-            {
+            match commands::reveal_in_file_browser(ns, path).await {
                 Ok(html) => notification.set(html),
                 Err(e) => notification.set(format!("<div class=\"error\">{e}</div>")),
             }
@@ -880,12 +800,7 @@ fn EntryRow(
     let on_catalog = move |_| {
         if let Some(url) = origin_for_catalog.clone() {
             leptos::task::spawn_local(async move {
-                #[derive(Serialize)]
-                struct Args {
-                    url: String,
-                }
-                let _ =
-                    tauri::invoke::<_, String>("open_in_web_browser", &Args { url }).await;
+                let _ = commands::open_in_web_browser(url).await;
             });
         }
     };
@@ -1029,20 +944,9 @@ fn IgnorePopup(
                 hint_html.set(String::new());
                 return;
             }
-            #[derive(Serialize)]
-            struct Args {
-                pattern: String,
-                path: String,
-            }
-            let matches = tauri::invoke::<_, bool>(
-                "test_quiltignore_pattern",
-                &Args {
-                    pattern: current.clone(),
-                    path: path.clone(),
-                },
-            )
-            .await
-            .unwrap_or(false);
+            let matches = commands::test_quiltignore_pattern(current.clone(), path.clone())
+                .await
+                .unwrap_or(false);
 
             let is_suggested = current == suggested;
             let is_exact = current == path;
@@ -1092,19 +996,7 @@ fn IgnorePopup(
         let ns = ns_for_submit.clone();
         let on_close = on_close_for_submit.clone();
         leptos::task::spawn_local(async move {
-            #[derive(Serialize)]
-            struct Args {
-                namespace: String,
-                pattern: String,
-            }
-            match tauri::invoke::<_, String>(
-                "add_to_quiltignore",
-                &Args {
-                    namespace: ns,
-                    pattern: p,
-                },
-            )
-            .await
+            match commands::add_to_quiltignore(ns, p).await
             {
                 Ok(html) => {
                     notification.set(html);
@@ -1195,19 +1087,7 @@ fn UnignorePopup(
         let notification = notification;
         let on_close = on_close_for_edit.clone();
         leptos::task::spawn_local(async move {
-            #[derive(Serialize)]
-            struct Args {
-                namespace: String,
-                path: String,
-            }
-            match tauri::invoke::<_, String>(
-                "open_in_default_application",
-                &Args {
-                    namespace: ns,
-                    path: ".quiltignore".to_string(),
-                },
-            )
-            .await
+            match commands::open_in_default_application(ns, ".quiltignore".to_string()).await
             {
                 Ok(html) => notification.set(html),
                 Err(e) => notification.set(format!("<div class=\"error\">{e}</div>")),
@@ -1264,19 +1144,7 @@ fn SetOriginPopup(
         let ns = ns.clone();
         let on_close = on_close_submit.clone();
         leptos::task::spawn_local(async move {
-            #[derive(Serialize)]
-            struct Args {
-                namespace: String,
-                origin: String,
-            }
-            match tauri::invoke::<_, String>(
-                "set_origin",
-                &Args {
-                    namespace: ns,
-                    origin: value,
-                },
-            )
-            .await
+            match commands::set_origin(ns, value).await
             {
                 Ok(html) => {
                     notification.set(html);

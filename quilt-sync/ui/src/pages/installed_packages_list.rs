@@ -1,28 +1,9 @@
 use leptos::prelude::*;
-use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsCast;
 
+use crate::commands::{self, PackageItemData};
 use crate::components::layout::BreadcrumbItem;
 use crate::components::{Layout, Spinner, ToolbarActions};
-use crate::tauri;
-
-// ── Data types (mirror the Tauri command response) ──
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InstalledPackagesListData {
-    pub packages: Vec<PackageItemData>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PackageItemData {
-    pub namespace: String,
-    pub status: String,
-    pub origin_url: Option<String>,
-    pub origin_host: Option<String>,
-    pub remote_display: Option<String>,
-}
 
 // ── Installed Packages List page ──
 
@@ -31,7 +12,7 @@ pub fn InstalledPackagesList() -> impl IntoView {
     let notification = RwSignal::new(String::new());
 
     let data = LocalResource::new(move || async {
-        tauri::invoke_unit::<InstalledPackagesListData>("get_installed_packages_list_data").await
+        commands::get_installed_packages_list_data().await
     });
 
     view! {
@@ -238,12 +219,7 @@ fn build_package_menu(
     let on_open_folder = move |_| {
         let ns = ns_for_folder.clone();
         leptos::task::spawn_local(async move {
-            #[derive(Serialize)]
-            struct Args {
-                namespace: String,
-            }
-            match tauri::invoke::<_, String>("open_in_file_browser", &Args { namespace: ns }).await
-            {
+            match commands::open_in_file_browser(ns).await {
                 Ok(html) => notification.set(html),
                 Err(e) => notification.set(format!("<div class=\"error\">{e}</div>")),
             }
@@ -256,11 +232,7 @@ fn build_package_menu(
     let on_open_catalog = move |_| {
         if let Some(url) = origin_for_catalog.clone() {
             leptos::task::spawn_local(async move {
-                #[derive(Serialize)]
-                struct Args {
-                    url: String,
-                }
-                let _ = tauri::invoke::<_, String>("open_in_web_browser", &Args { url }).await;
+                let _ = commands::open_in_web_browser(url).await;
             });
         }
     };
@@ -298,11 +270,7 @@ fn build_package_menu(
         let ns = ns_for_uninstall.clone();
         lock_ui();
         leptos::task::spawn_local(async move {
-            #[derive(Serialize)]
-            struct Args {
-                namespace: String,
-            }
-            match tauri::invoke::<_, String>("package_uninstall", &Args { namespace: ns }).await {
+            match commands::package_uninstall(ns).await {
                 Ok(html) => {
                     notification.set(html);
                     let _ = web_sys::window().and_then(|w| w.location().reload().ok());
@@ -408,19 +376,19 @@ enum SyncAction {
 fn SyncButton(action: SyncAction, notification: RwSignal<String>) -> impl IntoView {
     let busy = RwSignal::new(false);
 
-    let (cmd, label, busy_label, icon) = match &action {
-        SyncAction::Push(_) => (
-            "package_push",
+    let is_push = matches!(&action, SyncAction::Push(_));
+    let (label, busy_label, icon) = if is_push {
+        (
             "Push",
             "Pushing\u{2026}",
             "/assets/img/icons/cloud_upload.svg",
-        ),
-        SyncAction::Pull(_) => (
-            "package_pull",
+        )
+    } else {
+        (
             "Pull",
             "Pulling\u{2026}",
             "/assets/img/icons/cloud_download.svg",
-        ),
+        )
     };
 
     let ns = match action {
@@ -434,13 +402,13 @@ fn SyncButton(action: SyncAction, notification: RwSignal<String>) -> impl IntoVi
         busy.set(true);
         lock_ui();
         let ns = ns.clone();
-        let cmd = cmd;
         leptos::task::spawn_local(async move {
-            #[derive(Serialize)]
-            struct Args {
-                namespace: String,
-            }
-            match tauri::invoke::<_, String>(cmd, &Args { namespace: ns }).await {
+            let result = if is_push {
+                commands::package_push(ns).await
+            } else {
+                commands::package_pull(ns).await
+            };
+            match result {
                 Ok(html) => {
                     notification.set(html);
                     let _ = web_sys::window().and_then(|w| w.location().reload().ok());
@@ -563,22 +531,7 @@ fn CreatePackagePopup(
         let src = source.get_untracked();
         let on_close = on_close_submit.clone();
         leptos::task::spawn_local(async move {
-            #[derive(Serialize)]
-            struct Args {
-                namespace: String,
-                source: Option<String>,
-                message: Option<String>,
-            }
-            match tauri::invoke::<_, String>(
-                "package_create",
-                &Args {
-                    namespace: ns,
-                    source: src,
-                    message: None,
-                },
-            )
-            .await
-            {
+            match commands::package_create(ns, src, None).await {
                 Ok(html) => {
                     notification.set(html);
                     on_close();
@@ -594,7 +547,7 @@ fn CreatePackagePopup(
 
     let on_browse = move |_| {
         leptos::task::spawn_local(async move {
-            match tauri::invoke_unit::<String>("open_directory_picker").await {
+            match commands::open_directory_picker().await {
                 Ok(path) => source.set(Some(path)),
                 Err(_) => {} // user cancelled
             }
@@ -705,22 +658,7 @@ fn SetRemotePopup(
         let ns = ns.clone();
         let on_close = on_close_submit.clone();
         leptos::task::spawn_local(async move {
-            #[derive(Serialize)]
-            struct Args {
-                namespace: String,
-                origin: String,
-                bucket: String,
-            }
-            match tauri::invoke::<_, String>(
-                "set_remote",
-                &Args {
-                    namespace: ns,
-                    origin: origin_val,
-                    bucket: bucket_val,
-                },
-            )
-            .await
-            {
+            match commands::set_remote(ns, origin_val, bucket_val).await {
                 Ok(html) => {
                     notification.set(html);
                     on_close();
@@ -874,20 +812,7 @@ fn SetOriginPopup(
         let ns = ns.clone();
         let on_close = on_close_submit.clone();
         leptos::task::spawn_local(async move {
-            #[derive(Serialize)]
-            struct Args {
-                namespace: String,
-                origin: String,
-            }
-            match tauri::invoke::<_, String>(
-                "set_origin",
-                &Args {
-                    namespace: ns,
-                    origin: value,
-                },
-            )
-            .await
-            {
+            match commands::set_origin(ns, value).await {
                 Ok(html) => {
                     notification.set(html);
                     on_close();
