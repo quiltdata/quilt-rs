@@ -112,6 +112,10 @@
     display: flex;
   }
 
+  .release-notes pre {
+    white-space: pre-wrap;
+  }
+
   .logout-popover .popover {
     background: var(--q-ui-palette-background-primary);
     border-radius: var(--q-ui-border-radius);
