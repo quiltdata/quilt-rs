@@ -205,14 +205,17 @@ async fn get_installed_package_data_from_model(
         None => None,
     };
 
-    let ignored_count = entries_list
-        .iter()
-        .filter(|e| e.ignored_by.is_some())
-        .count();
-    let unmodified_count = entries_list
-        .iter()
-        .filter(|e| e.ignored_by.is_none() && (e.status == "pristine" || e.status == "remote"))
-        .count();
+    // Compute counts from the full source data, not the capped entries_list,
+    // so the filter toolbar is shown even when the list is truncated.
+    let ignored_count = pkg_status.ignored_files.len();
+    let unmodified_count = installed_paths
+        .keys()
+        .filter(|f| !modified_entries.contains_key(*f))
+        .count()
+        + manifest_entries
+            .keys()
+            .filter(|f| !installed_paths.contains_key(*f) && !modified_entries.contains_key(*f))
+            .count();
 
     let has_remote_entries = entries_list.iter().any(|e| e.status == "remote");
 
@@ -562,13 +565,12 @@ async fn get_commit_data_from_model(
 
     entries_list.sort_by(|a, b| a.filename.cmp(&b.filename));
 
-    let ignored_count = entries_list
-        .iter()
-        .filter(|e| e.ignored_by.is_some())
-        .count();
-    let unmodified_count = entries_list
-        .iter()
-        .filter(|e| e.ignored_by.is_none() && (e.status == "pristine" || e.status == "remote"))
+    // Compute counts from the full source data, not the capped entries_list,
+    // so the filter toolbar is shown even when the list is truncated.
+    let ignored_count = status.ignored_files.len();
+    let unmodified_count = manifest_entries
+        .keys()
+        .filter(|f| !status.changes.contains_key(*f))
         .count();
 
     let origin_url = origin_host

@@ -43,6 +43,8 @@ enum UpdateState {
     Available(String),
     /// Download and install in progress.
     Installing,
+    /// Download or install failed; show error and allow retry.
+    Failed { version: String, error: String },
 }
 
 /// App-level component that checks for updates on mount and shows a
@@ -77,14 +79,14 @@ pub fn UpdateChecker() -> impl IntoView {
 
     let install = move |_| {
         let version = match state.get() {
-            UpdateState::Available(v) => v,
+            UpdateState::Available(v) | UpdateState::Failed { version: v, .. } => v,
             _ => return,
         };
         state.set(UpdateState::Installing);
         leptos::task::spawn_local(async move {
             if let Err(e) = commands::download_and_install_update().await {
                 leptos::logging::error!("Update failed: {e}");
-                state.set(UpdateState::Available(version));
+                state.set(UpdateState::Failed { version, error: e });
             }
             // On success the app restarts, so we never reach here.
         });
@@ -126,6 +128,34 @@ pub fn UpdateChecker() -> impl IntoView {
                     <div class="root">
                         <div class="update-bar">
                             <span>"Downloading and installing update\u{2026}"</span>
+                        </div>
+                    </div>
+                </div>
+            }
+            .into_any(),
+        ),
+        UpdateState::Failed { version, error } => Some(
+            view! {
+                <div class="qui-notify error">
+                    <div class="root">
+                        <div class="update-bar">
+                            <span>"Update " {version} " failed: " {error}</span>
+                            <div class="update-bar-actions">
+                                <button
+                                    class="qui-button primary"
+                                    type="button"
+                                    on:click=install
+                                >
+                                    <span>"Retry"</span>
+                                </button>
+                                <button
+                                    class="qui-button"
+                                    type="button"
+                                    on:click=dismiss
+                                >
+                                    <span>"Dismiss"</span>
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

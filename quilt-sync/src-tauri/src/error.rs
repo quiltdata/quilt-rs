@@ -95,12 +95,16 @@ impl Error {
     /// all other errors.
     pub fn to_frontend_string(&self) -> String {
         match self {
-            Error::Quilt(quilt::Error::LoginRequired(host)) => serde_json::json!({
-                "kind": "login_required",
-                "message": self.to_string(),
-                "host": host.as_ref().map(|h| h.to_string()).unwrap_or_default(),
-            })
-            .to_string(),
+            Error::Quilt(quilt::Error::LoginRequired(host)) => {
+                let mut json = serde_json::json!({
+                    "kind": "login_required",
+                    "message": self.to_string(),
+                });
+                if let Some(h) = host {
+                    json["host"] = serde_json::Value::String(h.to_string());
+                }
+                json.to_string()
+            }
             Error::Quilt(quilt::Error::LoginRequiredRegistryUrl(host)) => serde_json::json!({
                 "kind": "login_required",
                 "message": self.to_string(),
@@ -146,7 +150,10 @@ mod tests {
         let err = Error::Quilt(quilt::Error::LoginRequired(None));
         let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
         assert_eq!(json["kind"], "login_required");
-        assert_eq!(json["host"], "");
+        assert!(
+            json.get("host").is_none(),
+            "host should be absent when None"
+        );
     }
 
     #[test]

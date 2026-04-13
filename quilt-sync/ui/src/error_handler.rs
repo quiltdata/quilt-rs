@@ -15,15 +15,20 @@ pub fn handle_or_display(error: &str, notification: RwSignal<Option<Notification
     if let Ok(parsed) = serde_json::from_str::<ErrorResponse>(error) {
         match parsed.kind.as_str() {
             "login_required" => {
-                let navigate = use_navigate();
-                let host = parsed.host.unwrap_or_default();
-                let back = current_path_and_query();
-                let back_encoded = urlencoding::encode(&back);
-                navigate(
-                    &format!("/login?host={host}&back={back_encoded}"),
-                    Default::default(),
-                );
-                ().into_any()
+                let host = parsed.host.filter(|h| !h.is_empty());
+                match host {
+                    Some(host) => {
+                        let navigate = use_navigate();
+                        let back = current_path_and_query();
+                        let back_encoded = urlencoding::encode(&back);
+                        navigate(
+                            &format!("/login?host={host}&back={back_encoded}"),
+                            Default::default(),
+                        );
+                        ().into_any()
+                    }
+                    None => render_page_error(&parsed.message, notification),
+                }
             }
             "setup_required" => {
                 let navigate = use_navigate();
