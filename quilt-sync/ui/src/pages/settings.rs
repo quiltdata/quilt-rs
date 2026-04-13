@@ -196,10 +196,8 @@ fn AuthHostRow(host: String, notification: RwSignal<Option<Notification>>, refet
     view! {
         <dt>{host_display}</dt>
         <dd>
-            <a href=login_href>
-                <button class="qui-button small" type="button">
-                    <span>"Re-login"</span>
-                </button>
+            <a class="qui-button small" href=login_href>
+                <span>"Re-login"</span>
             </a>
             <div class="logout-popover">
                 <button

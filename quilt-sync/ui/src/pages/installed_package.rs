@@ -244,13 +244,6 @@ fn InstalledPackageContent(
             </div>
         </div>
 
-        // ── Toolbar actions (rendered into Layout's toolbar area) ──
-        // These are placed here as toolbar buttons via the header, but since
-        // Layout doesn't have an actions prop, we use absolute positioning
-        // or integrate into breadcrumbs. Actually, looking at the pattern,
-        // the actions go in the toolbar above content.
-        // Let me use a toolbar actions div instead.
-
         // ── Action bar: Commit ──
         <Show when=move || show_commit>
             {
@@ -267,11 +260,9 @@ fn InstalledPackageContent(
                 let href = commit_href_clone.clone();
                 view! {
                     <div class="qui-actionbar">
-                        <a href=href>
-                            <button class=move || commit_btn_class.get() type="button">
-                                <span>"Create new revision"</span>
-                                <img class="qui-icon" src="/assets/img/icons/arrow_forward.svg" />
-                            </button>
+                        <a class=move || commit_btn_class.get() href=href>
+                            <span>"Create new revision"</span>
+                            <img class="qui-icon" src="/assets/img/icons/arrow_forward.svg" />
                         </a>
                     </div>
                 }
@@ -439,10 +430,8 @@ fn StatusBanner(
             let merge_href = format!("/merge?namespace={ns}");
             Some(view! {
                 <StatusBannerInner description="Your commits are detached from the remote">
-                    <a href=merge_href>
-                        <button class="qui-button primary" type="button">
-                            <span>"Merge"</span>
-                        </button>
+                    <a class="qui-button primary" href=merge_href>
+                        <span>"Merge"</span>
                     </a>
                 </StatusBannerInner>
             }.into_any())
@@ -458,11 +447,9 @@ fn StatusBanner(
                     );
                     Some(view! {
                         <StatusBannerInner description="Unable to check remote status">
-                            <a href=login_href>
-                                <button class="qui-button warning" type="button">
-                                    <img class="qui-icon" src="/assets/img/icons/warning.svg" />
-                                    <span>"Login"</span>
-                                </button>
+                            <a class="qui-button warning" href=login_href>
+                                <img class="qui-icon" src="/assets/img/icons/warning.svg" />
+                                <span>"Login"</span>
                             </a>
                             <button
                                 class="qui-button"

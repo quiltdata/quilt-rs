@@ -19,7 +19,7 @@ fn App() -> impl IntoView {
     view! {
         <components::UpdateChecker />
         <Router>
-            <Routes fallback=|| view! { <pages::Error /> }>
+            <Routes fallback=|| view! { <pages::NotFound /> }>
                 <Route path=path!("/") view=|| view! {
                     <Redirect path="/installed-packages-list" />
                 } />

@@ -36,12 +36,8 @@ pub struct EntryData {
 #[serde(rename_all = "camelCase")]
 pub struct CommitData {
     pub namespace: String,
-    #[allow(dead_code)]
-    pub uri: String,
     pub status: String,
     pub origin_url: Option<String>,
-    #[allow(dead_code)]
-    pub origin_host: Option<String>,
     pub message: String,
     pub user_meta: String,
     pub user_meta_error: Option<String>,
@@ -56,8 +52,6 @@ pub struct CommitData {
 pub struct WorkflowData {
     pub id: Option<String>,
     pub url: Option<String>,
-    #[allow(dead_code)]
-    pub config_url: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -65,8 +59,6 @@ pub struct WorkflowData {
 pub struct MergeData {
     pub namespace: String,
     pub origin_url: Option<String>,
-    #[allow(dead_code)]
-    pub origin_host: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

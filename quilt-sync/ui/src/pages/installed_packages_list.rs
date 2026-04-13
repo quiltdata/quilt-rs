@@ -324,11 +324,9 @@ fn build_package_menu(
             let href = commit_href.clone();
             view! {
                 <li class="menu-item">
-                    <a href=href>
-                        <button class="qui-button small" type="button">
-                            <img class="qui-icon" src="/assets/img/icons/commit.svg" />
-                            <span>"Commit"</span>
-                        </button>
+                    <a class="qui-button small" href=href>
+                        <img class="qui-icon" src="/assets/img/icons/commit.svg" />
+                        <span>"Commit"</span>
                     </a>
                 </li>
             }
@@ -346,11 +344,9 @@ fn build_package_menu(
         {merge_href.map(|href| view! {
             <li class="menu-item menu-divider"></li>
             <li class="menu-item">
-                <a href=href>
-                    <button class="qui-button primary small" type="button">
-                        <img class="qui-icon" src="/assets/img/icons/merge.svg" />
-                        <span>"Merge"</span>
-                    </button>
+                <a class="qui-button primary small" href=href>
+                    <img class="qui-icon" src="/assets/img/icons/merge.svg" />
+                    <span>"Merge"</span>
                 </a>
             </li>
         })}
@@ -490,11 +486,9 @@ fn build_error_action(
             );
             Some(
                 view! {
-                    <a href=login_href>
-                        <button class="qui-button warning small" type="button">
-                            <img class="qui-icon" src="/assets/img/icons/warning.svg" />
-                            <span>"Login"</span>
-                        </button>
+                    <a class="qui-button warning small" href=login_href>
+                        <img class="qui-icon" src="/assets/img/icons/warning.svg" />
+                        <span>"Login"</span>
                     </a>
                 }
                 .into_any(),

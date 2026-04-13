@@ -88,15 +88,11 @@ fn ErrorContent(data: LoginErrorData, notification: RwSignal<Option<Notification
                 <button class="qui-button" type="button" on:click=on_dot_quilt>
                     <span>"Open .quilt directory"</span>
                 </button>
-                <a href=login_href>
-                    <button class="qui-button" type="button">
-                        <span>"Login"</span>
-                    </button>
+                <a class="qui-button" href=login_href>
+                    <span>"Login"</span>
                 </a>
-                <a href="/installed-packages-list">
-                    <button class="qui-button primary" type="button">
-                        <span>"Go home"</span>
-                    </button>
+                <a class="qui-button primary" href="/installed-packages-list">
+                    <span>"Go home"</span>
                 </a>
             </div>
         </div>

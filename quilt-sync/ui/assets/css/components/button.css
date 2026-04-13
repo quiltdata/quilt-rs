@@ -4,6 +4,7 @@
   border-radius: 4px;
   border: 1px solid var(--q-ui-palette-border);
   box-shadow: var(--q-ui-shadows-button);
+  color: inherit;
   cursor: pointer;
   display: inline-flex;
   font-family: var(--q-ui-font-family);
