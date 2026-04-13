@@ -3,7 +3,6 @@ use leptos::prelude::*;
 use crate::commands::{self, ChangelogEntry, SettingsData};
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{Layout, Notification, Spinner};
-use crate::util::urlencoding;
 
 // ── Settings page ──
 
@@ -205,8 +204,8 @@ fn AuthHostRow(
 ) -> impl IntoView {
     let host_display = host.clone();
     let host_for_logout = host.clone();
-    let back_encoded = urlencoding("/settings");
-    let login_href = format!("/login?host={}&back={back_encoded}", urlencoding(&host));
+    let back_encoded = urlencoding::encode("/settings");
+    let login_href = format!("/login?host={}&back={back_encoded}", urlencoding::encode(&host));
 
     view! {
         <dt>{host_display}</dt>
@@ -404,13 +403,15 @@ fn EmailSupportButton(
                     let version = version.clone();
                     let os = os.clone();
                     leptos::task::spawn_local(async move {
-                        let subject =
-                            urlencoding(&format!("Quilt issue report (v{version}, {os})"));
-                        let body = urlencoding(&format!(
+                        let subject_raw = format!("Quilt issue report (v{version}, {os})");
+                        let body_raw = format!(
                             "Please describe the issue:\n...\n\nDiagnostic logs saved to:\n{path}\nPlease attach this file to this email."
-                        ));
-                        let mailto =
-                            format!("mailto:support@quilt.bio?subject={subject}&body={body}");
+                        );
+                        let mailto = format!(
+                            "mailto:support@quilt.bio?subject={}&body={}",
+                            urlencoding::encode(&subject_raw),
+                            urlencoding::encode(&body_raw),
+                        );
                         let _ = commands::open_in_web_browser(mailto).await;
                     });
                 }

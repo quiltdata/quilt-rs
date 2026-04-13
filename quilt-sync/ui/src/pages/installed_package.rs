@@ -7,7 +7,7 @@ use crate::components::{
     IgnorePopup, IgnorePopupData, Layout, Notification, SetOriginPopup, Spinner, ToolbarActions,
     UnignorePopup, UnignorePopupData,
 };
-use crate::util::{format_size, urlencoding};
+use crate::util::format_size;
 
 // ── Installed Package page ──
 
@@ -456,9 +456,9 @@ fn StatusBanner(
             Some(ref h) => {
                 let back = format!(
                     "/installed-package?namespace={}&filter=unmodified",
-                    urlencoding(&ns)
+                    urlencoding::encode(&ns)
                 );
-                let login_href = format!("/login?host={}&back={}", h, urlencoding(&back));
+                let login_href = format!("/login?host={}&back={}", h, urlencoding::encode(&back));
                 Some(
                     view! {
                         <StatusBannerInner description="Unable to check remote status">

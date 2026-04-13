@@ -84,7 +84,10 @@ async fn get_installed_package_data_from_model(
             .await
         {
             Ok(s) => s,
-            Err(_) => quilt::lineage::InstalledPackageStatus::error(),
+            Err(err) => {
+                tracing::warn!("Failed to get package status: {err}");
+                quilt::lineage::InstalledPackageStatus::error()
+            }
         }
     } else {
         quilt::lineage::InstalledPackageStatus::error()
@@ -1619,20 +1622,20 @@ pub async fn handle_remote_package(
                 let installed_package = m
                     .get_installed_package(&s3_uri.namespace)
                     .await
-                    .map_err(|e| e.to_string())?
+                    .map_err(|e| e.to_frontend_string())?
                     .ok_or_else(|| format!("Package {namespace} is not installed"))?;
                 if !m
                     .is_path_installed(&installed_package, path)
                     .await
-                    .map_err(|e| e.to_string())?
+                    .map_err(|e| e.to_frontend_string())?
                 {
                     m.package_install_paths(&installed_package, std::slice::from_ref(path))
                         .await
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| e.to_frontend_string())?;
                 }
                 m.open_in_default_application(&s3_uri.namespace, path)
                     .await
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| e.to_frontend_string())?;
             }
             Ok(RemotePackageResult {
                 namespace,

@@ -6,7 +6,7 @@ use crate::components::layout::BreadcrumbItem;
 use crate::components::{
     Layout, Notification, SetOriginPopup, SetOriginPopupData, Spinner, ToolbarActions,
 };
-use crate::util::{is_valid_hostname, urlencoding};
+use crate::util::is_valid_hostname;
 
 // ── Installed Packages List page ──
 
@@ -481,7 +481,7 @@ fn build_error_action(
         // Has origin_host but error — offer login
         _ if origin_host.is_some() && status == "error" => {
             let host = origin_host.unwrap().to_string();
-            let back_encoded = urlencoding("/installed-packages-list");
+            let back_encoded = urlencoding::encode("/installed-packages-list");
             let login_href = format!("/login?host={}&back={back_encoded}", host);
             Some(
                 view! {

@@ -40,12 +40,6 @@ pub fn format_size(bytes: u64) -> String {
     format!("{value:.2} EB")
 }
 
-pub fn urlencoding(s: &str) -> String {
-    js_sys::encode_uri_component(s)
-        .as_string()
-        .unwrap_or_default()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
