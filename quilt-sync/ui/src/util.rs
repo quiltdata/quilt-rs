@@ -20,6 +20,30 @@ fn is_valid_label(label: &str) -> bool {
         && bytes.iter().all(|&b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
+pub fn format_size(bytes: u64) -> String {
+    const UNITS: &[&str] = &["B", "kB", "MB", "GB", "TB", "PB", "EB"];
+    if bytes == 0 {
+        return "0 B".to_string();
+    }
+    let mut value = bytes as f64;
+    for unit in UNITS {
+        if value < 1000.0 {
+            if *unit == "B" {
+                return format!("{value} {unit}");
+            }
+            return format!("{value:.2} {unit}");
+        }
+        value /= 1000.0;
+    }
+    format!("{value:.2} EB")
+}
+
+pub fn urlencoding(s: &str) -> String {
+    js_sys::encode_uri_component(s)
+        .as_string()
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -67,5 +91,25 @@ mod tests {
         assert!(!is_valid_hostname(".example.com"));
         assert!(!is_valid_hostname("example..com"));
         assert!(!is_valid_hostname("example.com."));
+    }
+
+    #[test]
+    fn format_size_zero() {
+        assert_eq!(format_size(0), "0 B");
+    }
+
+    #[test]
+    fn format_size_bytes() {
+        assert_eq!(format_size(512), "512 B");
+    }
+
+    #[test]
+    fn format_size_kilobytes() {
+        assert_eq!(format_size(1500), "1.50 kB");
+    }
+
+    #[test]
+    fn format_size_megabytes() {
+        assert_eq!(format_size(2_500_000), "2.50 MB");
     }
 }

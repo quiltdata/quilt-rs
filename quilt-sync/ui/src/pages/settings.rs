@@ -3,6 +3,7 @@ use leptos::prelude::*;
 use crate::commands::{self, ChangelogEntry, SettingsData};
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{Layout, Notification, Spinner};
+use crate::util::urlencoding;
 
 // ── Settings page ──
 
@@ -438,10 +439,3 @@ fn ReleaseNotesPopup(
     }
 }
 
-// ── Helpers ──
-
-fn urlencoding(s: &str) -> String {
-    js_sys::encode_uri_component(s)
-        .as_string()
-        .unwrap_or_default()
-}

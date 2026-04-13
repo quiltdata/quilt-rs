@@ -4,7 +4,7 @@ use wasm_bindgen::JsCast;
 use crate::commands::{self, PackageItemData};
 use crate::components::layout::BreadcrumbItem;
 use crate::components::{Layout, Notification, Spinner, ToolbarActions};
-use crate::util::is_valid_hostname;
+use crate::util::{is_valid_hostname, urlencoding};
 
 // ── Installed Packages List page ──
 
@@ -910,11 +910,3 @@ fn SetOriginPopup(
     }
 }
 
-// ── Helpers ──
-
-
-fn urlencoding(s: &str) -> String {
-    js_sys::encode_uri_component(s)
-        .as_string()
-        .unwrap_or_default()
-}
