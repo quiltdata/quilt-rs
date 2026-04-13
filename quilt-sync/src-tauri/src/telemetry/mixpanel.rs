@@ -37,20 +37,13 @@ pub enum MixpanelEvent {
     LocalReset,
     OriginSet,
     RemoteSet,
-    OAuthLoginInitiated {
-        host: String,
-    },
-    UserLoggedIn {
-        host: String,
-        flow: LoginFlow,
-    },
+    OAuthLoginInitiated { host: String },
+    UserLoggedIn { host: String, flow: LoginFlow },
     SetupCompleted,
     CrashReportSent,
     DiagnosticLogsSaved,
     QuiltignorePatternAdded,
-    ErrorOccurred {
-        error_type: String,
-    },
+    ErrorOccurred { error_type: String },
 }
 
 impl TryFrom<MixpanelEvent> for (String, Option<HashMap<String, Value>>) {
