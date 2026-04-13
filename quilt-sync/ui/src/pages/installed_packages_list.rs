@@ -557,9 +557,8 @@ fn CreatePackagePopup(
 
     let on_browse = move |_| {
         leptos::task::spawn_local(async move {
-            match commands::open_directory_picker().await {
-                Ok(path) => source.set(Some(path)),
-                Err(_) => {} // user cancelled
+            if let Ok(path) = commands::open_directory_picker().await {
+                source.set(Some(path));
             }
         });
     };

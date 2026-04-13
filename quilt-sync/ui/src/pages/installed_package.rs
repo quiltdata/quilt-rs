@@ -394,7 +394,7 @@ fn build_toolbar_actions(
                     </li>
                 }.into_any()
             } else {
-                view! {}.into_any()
+                ().into_any()
             }}
             <li>
                 <button class="qui-button" type="button" on:click=on_uninstall>
@@ -653,7 +653,7 @@ fn EntriesToolbar(
                         }.into_any()
                     }
                 } else {
-                    view! {}.into_any()
+                    ().into_any()
                 }}
                 <EntriesFilter
                     filter_unmodified=filter_unmodified
@@ -882,7 +882,7 @@ fn EntryRow(
                             </li>
                         }.into_any()
                     } else {
-                        view! {}.into_any()
+                        ().into_any()
                     }}
                     {if show_catalog {
                         view! {
@@ -894,7 +894,7 @@ fn EntryRow(
                             </li>
                         }.into_any()
                     } else {
-                        view! {}.into_any()
+                        ().into_any()
                     }}
                     {if is_junky {
                         view! {
@@ -906,7 +906,7 @@ fn EntryRow(
                             </li>
                         }.into_any()
                     } else {
-                        view! {}.into_any()
+                        ().into_any()
                     }}
                     {if is_ignored {
                         view! {
@@ -918,7 +918,7 @@ fn EntryRow(
                             </li>
                         }.into_any()
                     } else {
-                        view! {}.into_any()
+                        ().into_any()
                     }}
                 </ul>
             </div>

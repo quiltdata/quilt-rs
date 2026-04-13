@@ -23,19 +23,17 @@ pub fn handle_or_display(error: &str, notification: RwSignal<Option<Notification
                     &format!("/login?host={host}&back={back_encoded}"),
                     Default::default(),
                 );
-                return view! {}.into_any();
+                ().into_any()
             }
             "setup_required" => {
                 let navigate = use_navigate();
                 navigate("/setup", Default::default());
-                return view! {}.into_any();
+                ().into_any()
             }
-            _ => {
-                return render_page_error(&parsed.message, notification);
-            }
+            _ => render_page_error(&parsed.message, notification),
         }
     } else {
-        return render_page_error(error, notification);
+        render_page_error(error, notification)
     }
 }
 
