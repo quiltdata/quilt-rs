@@ -10,6 +10,7 @@ use crate::components::{Layout, Notification, Spinner, ToolbarActions};
 #[component]
 pub fn Commit() -> impl IntoView {
     let notification = RwSignal::new(None);
+    let ui_locked = RwSignal::new(false);
 
     let query = use_query_map();
     let data = LocalResource::new(move || {
@@ -22,7 +23,7 @@ pub fn Commit() -> impl IntoView {
     view! {
         <Suspense fallback=move || {
             view! {
-                <Layout breadcrumbs=vec![] notification=notification>
+                <Layout breadcrumbs=vec![] notification=notification ui_locked=ui_locked>
                     <Spinner />
                 </Layout>
             }
@@ -46,10 +47,10 @@ pub fn Commit() -> impl IntoView {
                             }),
                             BreadcrumbItem::Current("Commit".to_string()),
                         ];
-                        let actions = build_toolbar_actions(&d, notification);
+                        let actions = build_toolbar_actions(&d, notification, ui_locked);
                         view! {
-                            <Layout breadcrumbs=breadcrumbs notification=notification actions=actions>
-                                <CommitContent data=d notification=notification />
+                            <Layout breadcrumbs=breadcrumbs notification=notification actions=actions ui_locked=ui_locked>
+                                <CommitContent data=d notification=notification ui_locked=ui_locked />
                             </Layout>
                         }
                             .into_any()
@@ -57,7 +58,7 @@ pub fn Commit() -> impl IntoView {
                     Err(e) => {
                         let msg = format!("Failed to load commit page: {e}");
                         view! {
-                            <Layout breadcrumbs=vec![] notification=notification>
+                            <Layout breadcrumbs=vec![] notification=notification ui_locked=ui_locked>
                                 <div class="qui-page-commit container">
                                     <p>{msg}</p>
                                 </div>
@@ -74,7 +75,11 @@ pub fn Commit() -> impl IntoView {
 // ── Main content ──
 
 #[component]
-fn CommitContent(data: CommitData, notification: RwSignal<Option<Notification>>) -> impl IntoView {
+fn CommitContent(
+    data: CommitData,
+    notification: RwSignal<Option<Notification>>,
+    ui_locked: RwSignal<bool>,
+) -> impl IntoView {
     let navigate = use_navigate();
     let filter_unmodified = RwSignal::new(false);
     let filter_ignored = RwSignal::new(false);
@@ -141,7 +146,7 @@ fn CommitContent(data: CommitData, notification: RwSignal<Option<Notification>>)
             return;
         }
         committing.set(true);
-        lock_ui();
+        ui_locked.set(true);
         let ns = ns_for_commit.clone();
         let meta = get_json_editor_value("metadata-editor");
         let wf = if has_workflow && !workflow_null.get_untracked() {
@@ -160,7 +165,7 @@ fn CommitContent(data: CommitData, notification: RwSignal<Option<Notification>>)
                     );
                 }
                 Err(e) => {
-                    unlock_ui();
+                    ui_locked.set(false);
                     notification.set(Some(Notification::Error(e)));
                     committing.set(false);
                 }
@@ -412,6 +417,7 @@ fn WorkflowSection(
 fn build_toolbar_actions(
     data: &CommitData,
     notification: RwSignal<Option<Notification>>,
+    ui_locked: RwSignal<bool>,
 ) -> ToolbarActions {
     let namespace = data.namespace.clone();
     let origin_url = data.origin_url.clone();
@@ -444,7 +450,7 @@ fn build_toolbar_actions(
         let on_uninstall = move |_| {
             let ns = ns_for_uninstall.clone();
             let navigate = navigate.clone();
-            lock_ui();
+            ui_locked.set(true);
             leptos::task::spawn_local(async move {
                 match commands::package_uninstall(ns).await {
                     Ok(msg) => {
@@ -452,7 +458,7 @@ fn build_toolbar_actions(
                         navigate("/installed-packages-list", Default::default());
                     }
                     Err(e) => {
-                        unlock_ui();
+                        ui_locked.set(false);
                         notification.set(Some(Notification::Error(e)));
                     }
                 }
@@ -950,20 +956,3 @@ fn escape_html(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
-fn lock_ui() {
-    if let Some(el) = web_sys::window()
-        .and_then(|w| w.document())
-        .and_then(|d| d.get_element_by_id("layout"))
-    {
-        let _ = el.set_attribute("disabled", "disabled");
-    }
-}
-
-fn unlock_ui() {
-    if let Some(el) = web_sys::window()
-        .and_then(|w| w.document())
-        .and_then(|d| d.get_element_by_id("layout"))
-    {
-        let _ = el.remove_attribute("disabled");
-    }
-}

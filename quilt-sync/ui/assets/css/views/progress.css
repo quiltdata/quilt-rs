@@ -8,7 +8,7 @@
   top: var(--q-ui-size-8);
   z-index: var(--q-ui-z-index-progress);
 
-  #layout[disabled] & {
+  #layout.disabled & {
     display: flex;
   }
 

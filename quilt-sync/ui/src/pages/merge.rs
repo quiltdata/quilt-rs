@@ -10,6 +10,7 @@ use crate::components::{Layout, Notification, Spinner, ToolbarActions};
 #[component]
 pub fn Merge() -> impl IntoView {
     let notification = RwSignal::new(None);
+    let ui_locked = RwSignal::new(false);
 
     let query = use_query_map();
     let data = LocalResource::new(move || {
@@ -22,7 +23,7 @@ pub fn Merge() -> impl IntoView {
     view! {
         <Suspense fallback=move || {
             view! {
-                <Layout breadcrumbs=vec![] notification=notification>
+                <Layout breadcrumbs=vec![] notification=notification ui_locked=ui_locked>
                     <Spinner />
                 </Layout>
             }
@@ -43,10 +44,10 @@ pub fn Merge() -> impl IntoView {
                             }),
                             BreadcrumbItem::Current("Merge".to_string()),
                         ];
-                        let actions = build_toolbar_actions(&d, notification);
+                        let actions = build_toolbar_actions(&d, notification, ui_locked);
                         view! {
-                            <Layout breadcrumbs=breadcrumbs notification=notification actions=actions>
-                                <MergeContent data=d notification=notification />
+                            <Layout breadcrumbs=breadcrumbs notification=notification actions=actions ui_locked=ui_locked>
+                                <MergeContent data=d notification=notification ui_locked=ui_locked />
                             </Layout>
                         }
                             .into_any()
@@ -54,7 +55,7 @@ pub fn Merge() -> impl IntoView {
                     Err(e) => {
                         let msg = format!("Failed to load merge data: {e}");
                         view! {
-                            <Layout breadcrumbs=vec![] notification=notification>
+                            <Layout breadcrumbs=vec![] notification=notification ui_locked=ui_locked>
                                 <div class="qui-page-merge container">
                                     <p>{msg}</p>
                                 </div>
@@ -71,7 +72,11 @@ pub fn Merge() -> impl IntoView {
 // ── Main content ──
 
 #[component]
-fn MergeContent(data: MergeData, notification: RwSignal<Option<Notification>>) -> impl IntoView {
+fn MergeContent(
+    data: MergeData,
+    notification: RwSignal<Option<Notification>>,
+    ui_locked: RwSignal<bool>,
+) -> impl IntoView {
     let namespace = data.namespace.clone();
     let navigate = use_navigate();
 
@@ -80,7 +85,7 @@ fn MergeContent(data: MergeData, notification: RwSignal<Option<Notification>>) -
     let on_certify = move |_| {
         let ns = ns_for_certify.clone();
         let navigate = navigate_for_certify.clone();
-        lock_ui();
+        ui_locked.set(true);
         leptos::task::spawn_local(async move {
             match commands::certify_latest(ns.clone()).await {
                 Ok(msg) => {
@@ -91,7 +96,7 @@ fn MergeContent(data: MergeData, notification: RwSignal<Option<Notification>>) -
                     );
                 }
                 Err(e) => {
-                    unlock_ui();
+                    ui_locked.set(false);
                     notification.set(Some(Notification::Error(e)));
                 }
             }
@@ -103,7 +108,7 @@ fn MergeContent(data: MergeData, notification: RwSignal<Option<Notification>>) -
     let on_reset = move |_| {
         let ns = ns_for_reset.clone();
         let navigate = navigate_for_reset.clone();
-        lock_ui();
+        ui_locked.set(true);
         leptos::task::spawn_local(async move {
             match commands::reset_local(ns.clone()).await {
                 Ok(msg) => {
@@ -114,7 +119,7 @@ fn MergeContent(data: MergeData, notification: RwSignal<Option<Notification>>) -
                     );
                 }
                 Err(e) => {
-                    unlock_ui();
+                    ui_locked.set(false);
                     notification.set(Some(Notification::Error(e)));
                 }
             }
@@ -154,7 +159,11 @@ fn MergeContent(data: MergeData, notification: RwSignal<Option<Notification>>) -
 
 // ── Toolbar actions ──
 
-fn build_toolbar_actions(data: &MergeData, notification: RwSignal<Option<Notification>>) -> ToolbarActions {
+fn build_toolbar_actions(
+    data: &MergeData,
+    notification: RwSignal<Option<Notification>>,
+    ui_locked: RwSignal<bool>,
+) -> ToolbarActions {
     let namespace = data.namespace.clone();
     let origin_url = data.origin_url.clone();
 
@@ -185,7 +194,7 @@ fn build_toolbar_actions(data: &MergeData, notification: RwSignal<Option<Notific
         let on_uninstall = move |_| {
             let ns = ns_for_uninstall.clone();
             let navigate = navigate.clone();
-            lock_ui();
+            ui_locked.set(true);
             leptos::task::spawn_local(async move {
                 match commands::package_uninstall(ns).await {
                     Ok(msg) => {
@@ -193,7 +202,7 @@ fn build_toolbar_actions(data: &MergeData, notification: RwSignal<Option<Notific
                         navigate("/installed-packages-list", Default::default());
                     }
                     Err(e) => {
-                        unlock_ui();
+                        ui_locked.set(false);
                         notification.set(Some(Notification::Error(e)));
                     }
                 }
@@ -226,24 +235,4 @@ fn build_toolbar_actions(data: &MergeData, notification: RwSignal<Option<Notific
         }
         .into_any()
     })
-}
-
-// ── Helpers ──
-
-fn lock_ui() {
-    if let Some(el) = web_sys::window()
-        .and_then(|w| w.document())
-        .and_then(|d| d.get_element_by_id("layout"))
-    {
-        let _ = el.set_attribute("disabled", "disabled");
-    }
-}
-
-fn unlock_ui() {
-    if let Some(el) = web_sys::window()
-        .and_then(|w| w.document())
-        .and_then(|d| d.get_element_by_id("layout"))
-    {
-        let _ = el.remove_attribute("disabled");
-    }
 }

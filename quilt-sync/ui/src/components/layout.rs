@@ -34,10 +34,19 @@ pub fn Layout(
     /// Optional toolbar actions rendered to the right of breadcrumbs.
     #[prop(optional)]
     actions: Option<ToolbarActions>,
+    /// When `true`, the layout shows a disabled overlay (progress indicator).
+    #[prop(optional)]
+    ui_locked: Option<RwSignal<bool>>,
     children: Children,
 ) -> impl IntoView {
     view! {
-        <div class="qui-layout" id="layout">
+        <div
+            class="qui-layout"
+            id="layout"
+            class:disabled=move || {
+                ui_locked.is_some_and(|s| s.get())
+            }
+        >
             // ── App bar ──
             <div class="qui-appbar layout-appbar">
                 <div class="container">

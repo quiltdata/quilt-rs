@@ -10,6 +10,7 @@ use crate::components::{Layout, Notification, Spinner, ToolbarActions};
 #[component]
 pub fn InstalledPackage() -> impl IntoView {
     let notification = RwSignal::new(None);
+    let ui_locked = RwSignal::new(false);
 
     let query = use_query_map();
     let data = LocalResource::new(move || {
@@ -23,7 +24,7 @@ pub fn InstalledPackage() -> impl IntoView {
     view! {
         <Suspense fallback=move || {
             view! {
-                <Layout breadcrumbs=vec![] notification=notification>
+                <Layout breadcrumbs=vec![] notification=notification ui_locked=ui_locked>
                     <Spinner />
                 </Layout>
             }
@@ -39,10 +40,10 @@ pub fn InstalledPackage() -> impl IntoView {
                             }),
                             BreadcrumbItem::Current(ns),
                         ];
-                        let actions = build_toolbar_actions(&d, notification);
+                        let actions = build_toolbar_actions(&d, notification, ui_locked);
                         view! {
-                            <Layout breadcrumbs=breadcrumbs notification=notification actions=actions>
-                                <InstalledPackageContent data=d notification=notification />
+                            <Layout breadcrumbs=breadcrumbs notification=notification actions=actions ui_locked=ui_locked>
+                                <InstalledPackageContent data=d notification=notification ui_locked=ui_locked />
                             </Layout>
                         }
                             .into_any()
@@ -50,7 +51,7 @@ pub fn InstalledPackage() -> impl IntoView {
                     Err(e) => {
                         let msg = format!("Failed to load package: {e}");
                         view! {
-                            <Layout breadcrumbs=vec![] notification=notification>
+                            <Layout breadcrumbs=vec![] notification=notification ui_locked=ui_locked>
                                 <div class="qui-page-installed-package">
                                     <div class="container">
                                         <p>{msg}</p>
@@ -72,6 +73,7 @@ pub fn InstalledPackage() -> impl IntoView {
 fn InstalledPackageContent(
     data: InstalledPackageData,
     notification: RwSignal<Option<Notification>>,
+    ui_locked: RwSignal<bool>,
 ) -> impl IntoView {
     let filter_unmodified = RwSignal::new(data.filter_unmodified);
     let filter_ignored = RwSignal::new(data.filter_ignored);
@@ -137,7 +139,7 @@ fn InstalledPackageContent(
             return;
         }
         let notification = notification;
-        lock_ui();
+        ui_locked.set(true);
         leptos::task::spawn_local(async move {
             match commands::package_install_paths(uri, paths).await
             {
@@ -146,7 +148,7 @@ fn InstalledPackageContent(
                     let _ = web_sys::window().and_then(|w| w.location().reload().ok());
                 }
                 Err(e) => {
-                    unlock_ui();
+                    ui_locked.set(false);
                     notification.set(Some(Notification::Error(e)));
                 }
             }
@@ -201,6 +203,7 @@ fn InstalledPackageContent(
                     status=status_clone
                     origin_host=origin_host_for_status
                     notification=notification
+                    ui_locked=ui_locked
                     show_origin_popup=show_origin_popup
                 />
 
@@ -318,6 +321,7 @@ fn InstalledPackageContent(
 fn build_toolbar_actions(
     data: &InstalledPackageData,
     notification: RwSignal<Option<Notification>>,
+    ui_locked: RwSignal<bool>,
 ) -> ToolbarActions {
     let namespace = data.namespace.clone();
     let origin_url = data.origin_url.clone();
@@ -350,7 +354,7 @@ fn build_toolbar_actions(
         let on_uninstall = move |_| {
             let ns = ns_for_uninstall.clone();
             let navigate = navigate.clone();
-            lock_ui();
+            ui_locked.set(true);
             leptos::task::spawn_local(async move {
                 match commands::package_uninstall(ns).await {
                     Ok(msg) => {
@@ -358,7 +362,7 @@ fn build_toolbar_actions(
                         navigate("/installed-packages-list", Default::default());
                     }
                     Err(e) => {
-                        unlock_ui();
+                        ui_locked.set(false);
                         notification.set(Some(Notification::Error(e)));
                     }
                 }
@@ -407,6 +411,7 @@ fn StatusBanner(
     status: String,
     origin_host: Option<String>,
     notification: RwSignal<Option<Notification>>,
+    ui_locked: RwSignal<bool>,
     show_origin_popup: RwSignal<bool>,
 ) -> impl IntoView {
     let ns = namespace.clone();
@@ -417,7 +422,7 @@ fn StatusBanner(
             let ns = ns.clone();
             Some(view! {
                 <StatusBannerInner description="Your commits are ahead of the remote">
-                    <PushButton namespace=ns notification=notification />
+                    <PushButton namespace=ns notification=notification ui_locked=ui_locked />
                 </StatusBannerInner>
             }.into_any())
         }
@@ -425,7 +430,7 @@ fn StatusBanner(
             let ns = ns.clone();
             Some(view! {
                 <StatusBannerInner description="Your commits are behind the remote">
-                    <PullButton namespace=ns notification=notification />
+                    <PullButton namespace=ns notification=notification ui_locked=ui_locked />
                 </StatusBannerInner>
             }.into_any())
         }
@@ -488,7 +493,7 @@ fn StatusBanner(
             let ns = ns.clone();
             Some(view! {
                 <StatusBannerInner description="Push to remote">
-                    <PushButton namespace=ns notification=notification />
+                    <PushButton namespace=ns notification=notification ui_locked=ui_locked />
                 </StatusBannerInner>
             }.into_any())
         }
@@ -518,7 +523,11 @@ fn StatusBannerInner(
 }
 
 #[component]
-fn PushButton(namespace: String, notification: RwSignal<Option<Notification>>) -> impl IntoView {
+fn PushButton(
+    namespace: String,
+    notification: RwSignal<Option<Notification>>,
+    ui_locked: RwSignal<bool>,
+) -> impl IntoView {
     let pushing = RwSignal::new(false);
     view! {
         <button
@@ -528,7 +537,7 @@ fn PushButton(namespace: String, notification: RwSignal<Option<Notification>>) -
             on:click=move |_| {
                 if pushing.get_untracked() { return; }
                 pushing.set(true);
-                lock_ui();
+                ui_locked.set(true);
                 let ns = namespace.clone();
                 leptos::task::spawn_local(async move {
                     match commands::package_push(ns).await {
@@ -537,7 +546,7 @@ fn PushButton(namespace: String, notification: RwSignal<Option<Notification>>) -
                             let _ = web_sys::window().and_then(|w| w.location().reload().ok());
                         }
                         Err(e) => {
-                            unlock_ui();
+                            ui_locked.set(false);
                             notification.set(Some(Notification::Error(e)));
                             pushing.set(false);
                         }
@@ -551,7 +560,11 @@ fn PushButton(namespace: String, notification: RwSignal<Option<Notification>>) -
 }
 
 #[component]
-fn PullButton(namespace: String, notification: RwSignal<Option<Notification>>) -> impl IntoView {
+fn PullButton(
+    namespace: String,
+    notification: RwSignal<Option<Notification>>,
+    ui_locked: RwSignal<bool>,
+) -> impl IntoView {
     let pulling = RwSignal::new(false);
     view! {
         <button
@@ -561,7 +574,7 @@ fn PullButton(namespace: String, notification: RwSignal<Option<Notification>>) -
             on:click=move |_| {
                 if pulling.get_untracked() { return; }
                 pulling.set(true);
-                lock_ui();
+                ui_locked.set(true);
                 let ns = namespace.clone();
                 leptos::task::spawn_local(async move {
                     match commands::package_pull(ns).await {
@@ -570,7 +583,7 @@ fn PullButton(namespace: String, notification: RwSignal<Option<Notification>>) -
                             let _ = web_sys::window().and_then(|w| w.location().reload().ok());
                         }
                         Err(e) => {
-                            unlock_ui();
+                            ui_locked.set(false);
                             notification.set(Some(Notification::Error(e)));
                             pulling.set(false);
                         }
@@ -1265,23 +1278,3 @@ fn is_valid_hostname(value: &str) -> bool {
     re.test(value)
 }
 
-/// Block the UI with a semi-transparent overlay (matches the old `lockUI()` behavior).
-/// Sets the `disabled` attribute on `#layout`; the existing `layout.css` rule
-/// renders a translucent `::after` overlay on top.
-fn lock_ui() {
-    if let Some(el) = web_sys::window()
-        .and_then(|w| w.document())
-        .and_then(|d| d.get_element_by_id("layout"))
-    {
-        let _ = el.set_attribute("disabled", "disabled");
-    }
-}
-
-fn unlock_ui() {
-    if let Some(el) = web_sys::window()
-        .and_then(|w| w.document())
-        .and_then(|d| d.get_element_by_id("layout"))
-    {
-        let _ = el.remove_attribute("disabled");
-    }
-}
