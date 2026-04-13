@@ -1,0 +1,128 @@
+.qui-button {
+  align-items: center;
+  background-color: var(--q-ui-palette-background-primary);
+  border-radius: 4px;
+  border: 1px solid var(--q-ui-palette-border);
+  box-shadow: var(--q-ui-shadows-button);
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  font-family: var(--q-ui-font-family);
+  font-size: var(--q-ui-font-size-normal);
+  line-height: 1.75;
+  min-width: 64px;
+  padding: 2px 8px;
+  text-decoration: none;
+  text-transform: uppercase;
+
+  &:hover {
+    background: var(--q-ui-palette-action-hover);
+    box-shadow: var(--q-ui-shadows-button-hover);
+  }
+
+  &[disabled] {
+    opacity: 0.7;
+    cursor: not-allowed;
+  }
+
+  &[disabled]:hover {
+    background-color: #fff;
+    box-shadow: var(--q-ui-shadows-button);
+  }
+
+  &.primary {
+    color: #fff;
+    background: var(--q-ui-palette-primary);
+  }
+
+  &.primary[disabled]:hover {
+    color: #fff;
+    background: var(--q-ui-palette-primary);
+  }
+
+  &.warning {
+    color: #fff;
+    background: var(--q-ui-palette-warning);
+  }
+
+  &.warning[disabled]:hover {
+    color: #fff;
+    background: var(--q-ui-palette-warning);
+  }
+
+  &.link {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    color: inherit;
+    font-weight: 500;
+  }
+
+  &.link:hover {
+    background: var(--q-ui-palette-action-hover);
+    box-shadow: none;
+    color: inherit;
+  }
+
+  &.large {
+    font-size: var(--q-ui-font-size-large);
+    min-width: 144px;
+    padding: 4px 16px;
+  }
+
+  &.small {
+    font-size: var(--q-ui-font-size-small);
+  }
+
+  span {
+    transition: transform var(--q-ui-transition-duration-normal)
+      var(--q-ui-transition-type-normal);
+  }
+
+  span:empty {
+    display: none;
+  }
+
+  .qui-icon {
+    height: 20px;
+    width: 20px;
+    transition: transform var(--q-ui-transition-duration-normal)
+      var(--q-ui-transition-type-normal);
+  }
+
+  span:first-child {
+    margin-right: auto;
+  }
+
+  span + .qui-icon {
+    margin-left: 8px;
+  }
+
+  .qui-icon + span {
+    margin-left: 8px;
+  }
+
+  &.primary .qui-icon,
+  &.primary .icon,
+  &.warning .qui-icon,
+  &.warning .icon {
+    filter: invert(1);
+  }
+
+  &:hover span,
+  &:hover .qui-icon,
+  &:hover .icon {
+    transform: translateY(-1px);
+  }
+
+  span:empty + .qui-icon,
+  .qui-icon + span:empty {
+    margin-left: 0;
+  }
+
+  &.large:hover span,
+  &.large:hover .qui-icon,
+  &.large:hover .icon {
+    transform: translateY(-2px);
+  }
+}

@@ -8,17 +8,18 @@ use tokio::sync;
 use crate::telemetry::prelude::*;
 
 mod app;
+mod changelog;
 mod commands;
+mod commit_message;
 mod debug_tools;
 mod env;
 mod error;
 mod model;
+mod notify;
 mod oauth;
-mod pages;
 mod quilt;
 mod routes;
 mod telemetry;
-mod ui;
 mod uri;
 
 use app::App;
@@ -85,10 +86,16 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::certify_latest,
             commands::erase_auth,
+            commands::get_commit_data,
+            commands::get_installed_package_data,
+            commands::get_installed_packages_list_data,
+            commands::get_login_data,
+            commands::get_login_error_data,
+            commands::get_merge_data,
+            commands::get_settings_data,
+            commands::get_setup_data,
             commands::debug_dot_quilt,
             commands::debug_logs,
-            commands::load_empty,
-            commands::load_page,
             commands::open_data_dir,
             commands::open_home_dir,
             commands::collect_diagnostic_logs,
@@ -112,6 +119,9 @@ fn main() {
             commands::setup,
             commands::add_to_quiltignore,
             commands::test_quiltignore_pattern,
+            commands::handle_remote_package,
+            commands::check_for_update,
+            commands::download_and_install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

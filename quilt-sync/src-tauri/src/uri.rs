@@ -348,7 +348,7 @@ mod tests {
     #[test]
     fn test_parse_auth_params_with_redirect() {
         let url = Url::parse(
-            "quilt://auth/callback?code=ABC123&host=test.quilt.dev&state=xyz&redirect=https%3A%2F%2Flocalhost%3A1234%2Fpages%2Fremote-package.html"
+            "quilt://auth/callback?code=ABC123&host=test.quilt.dev&state=xyz&redirect=https%3A%2F%2Flocalhost%3A1234%2Fremote-package"
         ).unwrap();
         let params = parse_auth_params(&url).unwrap();
         assert_eq!(params.code, "ABC123");
@@ -356,7 +356,7 @@ mod tests {
         assert_eq!(params.host.to_string(), "test.quilt.dev");
         assert_eq!(
             params.redirect.as_deref(),
-            Some("https://localhost:1234/pages/remote-package.html")
+            Some("https://localhost:1234/remote-package")
         );
     }
 

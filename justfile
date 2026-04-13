@@ -2,7 +2,7 @@
 
 # Start QuiltSync development server
 start:
-    cd quilt-sync && npm start
+    cd quilt-sync && cargo tauri dev
 
 # Run test coverage for all packages
 coverage:
@@ -11,3 +11,4 @@ coverage:
 # Lint all packages with all features
 lint:
     cargo clippy --all-features -- --deny warnings
+    cargo clippy --target wasm32-unknown-unknown -p quilt-sync-ui -- --deny warnings

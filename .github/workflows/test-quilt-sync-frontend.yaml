@@ -3,38 +3,45 @@ name: Test QuiltSync Frontend
 on:
   push:
     paths:
-      - 'quilt-sync/src/**'
-      - '!quilt-sync/src/**/*.md'
-      - 'quilt-sync/*.json'
-      - '.github/workflows/test-quilt-sync-frontend.yaml'
+      - "quilt-sync/ui/**"
+      - "!quilt-sync/ui/**/*.md"
+      - "rust-toolchain.toml"
+      - ".github/workflows/test-quilt-sync-frontend.yaml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  frontend-quality:
+  quality:
     name: Frontend Quality (Ubuntu)
+    if: github.ref != 'refs/heads/main'
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust-dev
+        with:
+          targets: wasm32-unknown-unknown
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: '24'
           cache: 'npm'
-          cache-dependency-path: 'quilt-sync/package-lock.json'
+          cache-dependency-path: 'quilt-sync/ui/package-lock.json'
 
-      - name: Install frontend dependencies
-        run: npm install
-        working-directory: ./quilt-sync
+      - name: Install trunk
+        uses: taiki-e/install-action@trunk
 
-      - name: Frontend TypeScript check
-        run: npm run frontend:check
-        working-directory: ./quilt-sync
+      - name: Format
+        run: cargo fmt --check -p quilt-sync-ui
 
-      - name: Frontend linting
-        run: npm run frontend:lint
-        working-directory: ./quilt-sync
+      - name: Lint
+        run: cargo clippy --target wasm32-unknown-unknown -p quilt-sync-ui -- --deny warnings
+
+      - name: Build
+        run: trunk build --release
+        working-directory: ./quilt-sync/ui

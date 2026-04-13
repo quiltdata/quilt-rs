@@ -1,0 +1,182 @@
+.qui-page-installed-packages-list {
+  box-sizing: border-box;
+  flex-grow: 1;
+  margin: auto;
+  max-width: var(--q-ui-container-size);
+  padding: var(--q-ui-size-3) 0;
+  width: 100%;
+
+  .empty {
+    max-width: 880px;
+    margin: auto;
+  }
+
+  .empty-title {
+    font-size: 1.2rem;
+  }
+
+  .empty-img {
+    border-radius: var(--q-ui-border-radius);
+    box-shadow: var(--q-ui-shadows-appbar);
+    box-sizing: border-box;
+    display: block;
+    margin: auto;
+    max-width: 100%;
+  }
+
+  .list {
+    margin: 0;
+    padding: 0;
+  }
+}
+
+/* ── Create Package popup ── */
+
+.create-package-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-ui-size-2);
+  min-width: 320px;
+}
+
+.create-package-form label {
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+.create-package-form .create-package-input {
+  border: 1px solid var(--q-ui-palette-border);
+  border-radius: var(--q-ui-border-radius);
+  box-sizing: border-box;
+  font: inherit;
+  padding: var(--q-ui-size-1) var(--q-ui-size-2);
+  width: 100%;
+}
+
+.create-package-form .create-package-input:focus {
+  border-color: var(--q-ui-palette-primary);
+  outline: none;
+}
+
+.create-package-form .create-package-source {
+  align-items: center;
+  display: flex;
+  gap: var(--q-ui-size-2);
+}
+
+.create-package-form .source-path {
+  color: var(--q-ui-palette-text-secondary);
+  font-size: 0.875rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.create-package-form .create-package-actions {
+  display: flex;
+  gap: var(--q-ui-size-2);
+  margin-top: var(--q-ui-size-1);
+}
+
+/* ── Set Remote popup ── */
+
+.set-remote-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-ui-size-2);
+  min-width: 320px;
+}
+
+.set-remote-form label {
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+.set-remote-form .set-remote-input-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.set-remote-form .set-remote-input {
+  border: 1px solid var(--q-ui-palette-border);
+  border-radius: var(--q-ui-border-radius);
+  box-sizing: border-box;
+  font: inherit;
+  padding: var(--q-ui-size-1) var(--q-ui-size-2);
+  width: 100%;
+}
+
+.set-remote-form .set-remote-input:focus {
+  border-color: var(--q-ui-palette-primary);
+  outline: none;
+}
+
+.set-remote-form .set-remote-input.error {
+  border-color: var(--q-ui-palette-error);
+}
+
+.set-remote-form .set-remote-hint {
+  color: var(--q-ui-palette-error);
+  display: none;
+  font-size: 0.85em;
+}
+
+.set-remote-form .set-remote-hint.visible {
+  display: block;
+}
+
+.set-remote-form .set-remote-actions {
+  display: flex;
+  gap: var(--q-ui-size-2);
+  margin-top: var(--q-ui-size-1);
+}
+
+/* ── Set Origin popup (top-level, outside .qui-popup) ── */
+
+.popup-overlay .origin-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-ui-size-2);
+  min-width: 320px;
+}
+
+.popup-overlay .origin-form label {
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+.popup-overlay .origin-input-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.popup-overlay .origin-input {
+  border: 1px solid var(--q-ui-palette-border);
+  border-radius: var(--q-ui-border-radius);
+  box-sizing: border-box;
+  font: inherit;
+  padding: var(--q-ui-size-1) var(--q-ui-size-2);
+  width: 100%;
+}
+
+.popup-overlay .origin-input.error {
+  border-color: var(--q-ui-palette-error);
+}
+
+.popup-overlay .origin-hint {
+  color: var(--q-ui-palette-error);
+  display: none;
+  font-size: 0.85em;
+}
+
+.popup-overlay .origin-hint.visible {
+  display: block;
+}
+
+.popup-overlay .origin-form-actions {
+  display: flex;
+  gap: var(--q-ui-size-2);
+  margin-top: var(--q-ui-size-1);
+}

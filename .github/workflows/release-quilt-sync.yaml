@@ -44,18 +44,17 @@ jobs:
         uses: ./.github/actions/setup-rust-minimal
         with:
           cache-target: release
-          targets: ${{ matrix.platform == 'macos-15' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.platform == 'macos-15' && 'aarch64-apple-darwin,x86_64-apple-darwin,wasm32-unknown-unknown' || 'wasm32-unknown-unknown' }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: '24'
           cache: 'npm'
-          cache-dependency-path: 'quilt-sync/package-lock.json'
+          cache-dependency-path: 'quilt-sync/ui/package-lock.json'
 
-      - name: Install frontend dependencies
-        run: npm install
-        working-directory: ./quilt-sync
+      - name: Install trunk
+        uses: taiki-e/install-action@trunk
 
       - name: Build the app
         uses: tauri-apps/tauri-action@v0

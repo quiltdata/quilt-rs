@@ -1,0 +1,16 @@
+[build]
+target = "index.html"
+dist = "dist"
+filehash = false
+
+[watch]
+watch = ["src", "index.html", "assets"]
+ignore = ["assets/js/json-editor.js"]
+
+# Bundle vanilla-jsoneditor before Trunk compiles the WASM crate.
+# The glue JS source lives in js/; the output lands in assets/js/
+# where index.html picks it up via <script src="assets/js/json-editor.js">.
+[[hooks]]
+stage = "pre_build"
+command = "sh"
+command_arguments = ["-c", "npm install --prefer-offline --no-audit --no-fund && npx esbuild js/json-editor-glue.js --bundle --format=iife --outfile=assets/js/json-editor.js"]

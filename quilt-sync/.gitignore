@@ -6,13 +6,15 @@
 # echo .os-specific-file >> ~/.gitignore
 # ```
 
-dist
+# Trunk build output (keep .gitkeep so the directory exists for cargo clippy;
+# tauri::generate_context!() panics if frontendDist is missing)
+ui/dist/*
+!ui/dist/.gitkeep
+
+# Bundled by esbuild during trunk build (see ui/Trunk.toml hook)
+ui/assets/js/json-editor.js
+
 node_modules
 .env
 .parcel-cache
-
-# TODO: move to dist directory
-src/assets/js/main.js
-src/assets/js/main.js.map
-
 tarpaulin-report.html

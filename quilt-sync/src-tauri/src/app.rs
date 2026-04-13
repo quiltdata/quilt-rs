@@ -17,12 +17,4 @@ impl App {
             logs_dir,
         }
     }
-
-    #[cfg(test)]
-    pub fn create() -> crate::Result<Self> {
-        Ok(App {
-            version: Version::new(0, 0, 999),
-            logs_dir: LogsDir::create()?,
-        })
-    }
 }
