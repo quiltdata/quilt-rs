@@ -1,6 +1,6 @@
 .qui-status {
   background: var(--q-ui-palette-background-primary);
-  padding: 32px 0 16px;
+  margin: var(--q-ui-size-4) 0 var(--q-ui-size-2);
   position: sticky;
   top: 128px;
   z-index: 20;

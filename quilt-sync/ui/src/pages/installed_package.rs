@@ -205,7 +205,11 @@ fn InstalledPackageContent(
             <div class="container">
                 // ── Persistent page warning (e.g. version mismatch from deep link) ──
                 {page_warning.map(|msg| view! {
-                    <div class="qui-notification">{msg}</div>
+                    <div class="qui-status">
+                        <div class="root">
+                            <h2 class="description">{msg}</h2>
+                        </div>
+                    </div>
                 })}
 
                 // ── Status banner ──
