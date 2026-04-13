@@ -5,6 +5,7 @@ filehash = false
 
 [watch]
 watch = ["src", "index.html", "assets"]
+ignore = ["assets/js/json-editor.js"]
 
 # Bundle vanilla-jsoneditor before Trunk compiles the WASM crate.
 # The glue JS source lives in js/; the output lands in assets/js/
