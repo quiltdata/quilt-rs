@@ -285,6 +285,7 @@ fn build_package_menu(
         leptos::task::spawn_local(async move {
             match commands::package_uninstall(ns).await {
                 Ok(msg) => {
+                    ui_locked.set(false);
                     notification.set(Some(Notification::Success(msg)));
                     refetch.notify();
                 }
@@ -424,6 +425,7 @@ fn SyncButton(
             };
             match result {
                 Ok(msg) => {
+                    ui_locked.set(false);
                     notification.set(Some(Notification::Success(msg)));
                     refetch.notify();
                 }

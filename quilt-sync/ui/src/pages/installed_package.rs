@@ -147,6 +147,7 @@ fn InstalledPackageContent(
         leptos::task::spawn_local(async move {
             match commands::package_install_paths(uri, paths).await {
                 Ok(msg) => {
+                    ui_locked.set(false);
                     notification.set(Some(Notification::Success(msg)));
                     refetch.notify();
                 }
@@ -545,6 +546,7 @@ fn PushButton(
                 leptos::task::spawn_local(async move {
                     match commands::package_push(ns).await {
                         Ok(msg) => {
+                            ui_locked.set(false);
                             notification.set(Some(Notification::Success(msg)));
                             refetch.notify();
                         }
@@ -583,6 +585,7 @@ fn PullButton(
                 leptos::task::spawn_local(async move {
                     match commands::package_pull(ns).await {
                         Ok(msg) => {
+                            ui_locked.set(false);
                             notification.set(Some(Notification::Success(msg)));
                             refetch.notify();
                         }
