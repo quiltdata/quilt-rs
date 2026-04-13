@@ -1,68 +1,104 @@
 # QuiltSync Frontend Architecture
 
 > **Audience**: Contributors who need to understand how the desktop UI
-> works end-to-end, from the Tauri webview to the Rust page renderers.
+> works end-to-end, from the Tauri webview to the Leptos components.
 
 ## Overview
 
-QuiltSync is a Tauri v2 desktop application. The UI runs inside a
-webview that loads static HTML shells, then delegates all rendering
-to the Rust backend via IPC. The result is a **server-side rendering
-pattern inside a desktop app**: Rust builds the entire page HTML on
-every navigation, and a single TypeScript file wires up interactivity
-after each render.
+QuiltSync is a Tauri v2 desktop application. The UI is a
+**client-side rendered Leptos WASM app** running inside the webview.
+Rust compiles to WebAssembly via Trunk, and Leptos handles routing,
+reactivity, and DOM rendering entirely in the browser. The Tauri
+backend exposes data through `#[tauri::command]` handlers that return
+serializable structs -- the frontend owns all rendering.
 
 ## Stack
 
 | Layer | Technology | Location |
 |---|---|---|
-| Webview shell | Static HTML (one per page) | `quilt-sync/src/pages/*.html` |
-| Interactivity | TypeScript (single file) | `quilt-sync/src/assets/js/main.ts` |
-| Styles | Plain CSS (per-page and per-view) | `quilt-sync/src/assets/css/` |
-| Templates | Askama (Jinja-like, compiled into Rust) | `quilt-sync/src/templates/` |
-| Page renderers | Rust structs + Askama `#[derive(Template)]` | `quilt-sync/src-tauri/src/pages/` |
-| UI components | Rust builder structs (button, breadcrumbs, entry, ...) | `quilt-sync/src-tauri/src/ui/` |
-| Bundler | Parcel | `package.json` |
-| IPC | Tauri commands (`#[tauri::command]`) | `quilt-sync/src-tauri/src/commands.rs` |
+| Framework | Leptos 0.8 (CSR mode) | `quilt-sync/ui/src/` |
+| Routing | leptos\_router 0.8 | `ui/src/main.rs` |
+| WASM bridge | wasm-bindgen + serde-wasm-bindgen | `ui/src/tauri.rs` |
+| Styles | Plain CSS (global, no scoping) | `ui/assets/css/` |
+| Build tool | Trunk | `ui/Trunk.toml` |
+| IPC | Tauri commands (`#[tauri::command]`) | `src-tauri/src/commands.rs` |
+
+## Directory Structure
+
+```text
+quilt-sync/ui/
+├── Cargo.toml
+├── Trunk.toml
+├── index.html                  # Entry point (CSS links, Trunk directives)
+├── assets/
+│   ├── css/
+│   │   ├── styles.css          # Global resets
+│   │   ├── theme.css           # CSS custom properties
+│   │   ├── layout.css          # Layout helpers
+│   │   ├── spinner.css         # Loading indicator
+│   │   ├── components/         # Reusable component styles
+│   │   ├── pages/              # Per-page styles
+│   │   ├── views/              # Layout section styles (appbar, toolbar, ...)
+│   │   └── external/           # Vendored webfont files
+│   ├── img/
+│   │   └── icons/              # SVG icons
+│   └── js/
+│       └── json-editor.js      # Third-party JSON editor (commit metadata)
+└── src/
+    ├── main.rs                 # App root, router, legacy URL redirect
+    ├── components.rs           # Module re-exports
+    ├── components/
+    │   ├── layout.rs           # Layout, Notification, BreadcrumbItem
+    │   ├── spinner.rs          # Loading spinner
+    │   └── update_checker.rs   # Auto-update polling
+    ├── pages.rs                # Module re-exports
+    ├── pages/                  # One file per page (9 pages)
+    │   ├── installed_packages_list.rs
+    │   ├── installed_package.rs
+    │   ├── commit.rs
+    │   ├── settings.rs
+    │   ├── merge.rs
+    │   ├── login.rs
+    │   ├── setup.rs
+    │   ├── error.rs
+    │   └── remote_package.rs
+    ├── commands.rs             # Typed Tauri command wrappers + response DTOs
+    ├── tauri.rs                # Low-level WASM-to-JS invoke bridge
+    └── error_handler.rs        # Error parsing and redirect logic
+```
 
 ## Data Flow
 
 ### Page load cycle
 
-Every page navigation follows the same cycle:
+Every page follows the same reactive pattern:
 
 ```text
-Browser navigates to e.g. installed-package.html#namespace=foo/bar
+Browser navigates to e.g. /installed-package?namespace=foo/bar
     |
     v
-DOMContentLoaded fires
+leptos_router matches route, mounts page component
     |
     v
-main.ts calls invoke("load_page", { location: window.location.href })
-    |                                                    (Tauri IPC)
-    v
-commands::load_page_command()
+Component creates LocalResource (async data fetch)
     |
     v
-routes::Paths::from_str(location)   -- parse URL into typed enum
+Suspense renders <Layout> + <Spinner /> while loading
     |
     v
-pages::load(model, path)            -- fetch data, build view struct
+LocalResource calls commands::get_page_data() [typed wrapper]
+    |                                              (Tauri IPC)
+    v
+tauri::invoke() → wasm-bindgen → window.__TAURI__.core.invoke()
     |
     v
-ViewXxx::create(model, ...).render() -- Askama renders HTML string
+Rust #[tauri::command] handler returns serializable struct
     |
     v
-HTML string returned to JS via IPC
+serde-wasm-bindgen deserializes response into Rust DTO
     |
     v
-main.ts sets document.body.innerHTML = html
-    |
-    v
-main.ts fires "page-is-ready" event
-    |
-    v
-Event listeners re-attached for the new DOM
+Suspend::new resolves, Leptos renders the page reactively
 ```
 
 ### User action cycle
@@ -70,242 +106,265 @@ Event listeners re-attached for the new DOM
 When the user clicks a button (push, commit, pull, etc.):
 
 ```text
-JS click handler reads data-* attributes from the button
+Leptos event handler fires (on:click)
     |
     v
-invoke(command, data)                -- Tauri IPC
+ui_locked.set(true) — disables UI via reactive signal
     |
+    v
+spawn_local(async { commands::action(...).await })
+    |                                        (Tauri IPC)
     v
 Rust command executes the operation (e.g. push_package)
     |
     v
-Rust returns a notification HTML string (success or error)
+Returns Ok(success_message) or Err(error_message)
     |
     v
-JS injects notification into #notify
+notification.set(Some(Notification::Success(msg)))
+    or
+notification.set(Some(Notification::Error(msg)))
     |
     v
-JS navigates to the next page (triggers the full page load cycle)
-    or reloads the current page
+Navigate to next page or reload current page
 ```
 
 ### Popup cycle
 
-Popups (ignore, set-remote, create-package) are **built entirely in
-TypeScript** as inline HTML strings. They do not use Askama templates:
+Popups (ignore, set-remote, create-package) are **Leptos
+components** controlled by a `RwSignal<bool>`:
 
 ```text
-JS click handler fires
+User clicks trigger button
     |
     v
-JS builds popup HTML with string concatenation + escapeHtml()
+show_popup.set(true) — signal drives conditional rendering
     |
     v
-JS injects HTML into #popup, makes overlay visible
+<Show when=move || show_popup.get()>
+    <PopupComponent on_submit=... on_cancel=... />
+</Show>
     |
     v
-JS attaches event listeners to popup elements
+Popup renders over overlay, user fills form
     |
     v
-On submit: JS calls invoke(command, data), dismisses popup,
-           triggers page reload
+On submit: spawn_local calls Tauri command,
+           show_popup.set(false), page reloads
 ```
 
 ## Routing
 
-Routes are defined in `routes.rs` as the `Paths` enum:
+Routes are defined in `main.rs` using leptos\_router:
+
+| Path | Component | Query params |
+|---|---|---|
+| `/` | redirect | → `/installed-packages-list` |
+| `/installed-packages-list` | `InstalledPackagesList` | |
+| `/installed-package` | `InstalledPackage` | `namespace`, `filter` |
+| `/commit` | `Commit` | `namespace` |
+| `/merge` | `Merge` | `namespace` |
+| `/login` | `Login` | `host`, `back` |
+| `/error` | `Error` | `host`, `back`, `message` |
+| `/settings` | `Settings` | |
+| `/setup` | `Setup` | |
+| `/remote-package` | `RemotePackage` | `uri` |
+
+Query parameters are read via `use_query_map()`. Navigation uses
+`use_navigate()` for client-side transitions.
+
+## Component Pattern
+
+Every page component follows the same structure:
 
 ```rust
-pub enum Paths {
-    Commit(Namespace, EntriesFilter),
-    InstalledPackage(Namespace, EntriesFilter),
-    InstalledPackagesList,
-    Login(Host, String),
-    LoginError(Host, String, String),
-    Merge(Namespace),
-    RemotePackage(S3PackageUri),
-    Settings,
-    Setup,
-}
-```
+#[component]
+pub fn PageName() -> impl IntoView {
+    let notification = RwSignal::new(None);
+    let ui_locked = RwSignal::new(false);
 
-Each variant maps to a static HTML shell file (`src/pages/*.html`)
-and an Askama template (`src/templates/pages/*.html`). The URL format
-uses fragments for parameters:
+    // Async data fetch — runs on mount
+    let data = LocalResource::new(move || async move {
+        commands::get_page_data(params).await
+    });
 
-```text
-installed-package.html#namespace=foo/bar&filter=unmodified
-commit.html#namespace=foo/bar
-login.html#host=open.quiltdata.com&back=installed-packages-list.html
-```
-
-Navigation from JS is a plain `window.location.assign(url)` which
-triggers a full `DOMContentLoaded` -> `load_page` cycle.
-
-## Rust-Side Rendering
-
-### Page renderers (`src-tauri/src/pages/`)
-
-Each page has a `ViewXxx` struct that:
-
-1. Fetches data from the model (package status, entries, etc.)
-2. Builds UI component structs (buttons, breadcrumbs, entries)
-3. Holds an Askama `#[derive(Template)]` inner struct that references
-   the `.html` template
-4. Exposes a `.render()` method that returns `Result<String, Error>`
-
-Example pattern:
-
-```rust
-// pages/installed_package.rs
-
-pub struct ViewInstalledPackage { /* data fields */ }
-
-#[derive(Template)]
-#[template(path = "./pages/installed-package.html")]
-struct TmplInstalledPackage<'a> {
-    layout: Layout<'a>,
-    entries: Vec<entry::ViewEntry>,
-    // ...
-}
-
-impl ViewInstalledPackage {
-    pub async fn create(model, namespace, filter) -> Result<Self> { /* ... */ }
-    pub fn render(self) -> Result<String> {
-        let tmpl = TmplInstalledPackage { /* ... */ };
-        Ok(tmpl.render()?)
+    view! {
+        // Show spinner while loading
+        <Suspense fallback=move || view! {
+            <Layout notification=notification>
+                <Spinner />
+            </Layout>
+        }>
+            {move || Suspend::new(async move {
+                match data.await {
+                    Ok(d) => view! {
+                        <PageContent data=d notification ui_locked />
+                    }.into_any(),
+                    Err(e) => {
+                        // Redirect to login/setup, or show error
+                        error_handler::handle(e, notification)
+                    }
+                }
+            })}
+        </Suspense>
     }
 }
 ```
 
-### UI components (`src-tauri/src/ui/`)
+Key conventions:
 
-Reusable Askama sub-templates with builder-pattern Rust structs:
+- **Data fetching**: `LocalResource` triggers on mount; the
+  component awaits it inside `Suspend::new`
+- **Loading state**: `Suspense` with `<Spinner />` fallback
+- **Error handling**: `error_handler.rs` parses structured errors
+  and redirects to `/login` or `/setup` when needed
+- **UI locking**: `RwSignal<bool>` passed to `Layout`, which adds
+  a `.disabled` CSS class during async operations
+- **Derived state**: `Memo::new` for filtered/computed views
+- **Async actions**: `leptos::task::spawn_local` for button handlers
 
-- `btn::TmplButton` -- buttons with icon, label, href, data
-  attributes, JS selector class
-- `crumbs::TmplBreadcrumbs` -- navigation breadcrumb trail
-- `entry::ViewEntry` -- file entry row with checkbox, size, status
-- `layout::Layout` -- page shell (appbar, toolbar, notification
-  area, popup overlay, action bar)
-- `uri::TmplUri` -- package URI display
-- `notify::Notify` -- success/error notification result mapper
+## IPC Bridge
 
-### Layout template (`src/templates/components/layout.html`)
+Two layers connect Leptos components to Tauri commands:
 
-Every page extends the layout template, which provides:
+### Low-level (`tauri.rs`)
 
-- App bar (logo, package URI, refresh button, settings button)
-- Toolbar (breadcrumbs, secondary action buttons)
-- Notification area (`#notify`)
-- Page content area (`{% block children %}`)
-- Action bar (primary action button)
-- Popup overlay (`#popup`)
+```rust
+pub async fn invoke<A, R>(cmd: &str, args: &A) -> Result<R, String>
+```
 
-## TypeScript Side
+Calls `window.__TAURI__.core.invoke()` via wasm-bindgen, serializing
+args with serde-wasm-bindgen and deserializing the response.
 
-### Single-file architecture
+### Typed wrappers (`commands.rs`)
 
-All client-side logic lives in `src/assets/js/main.ts` (~1,400
-lines). It is responsible for:
+Each Tauri command has a corresponding async function with proper
+arg/return types:
 
-- **Page lifecycle**: calling `load_page` on `DOMContentLoaded`,
-  replacing `body.innerHTML`, dispatching `page-is-ready`
-- **Event binding**: the `page-is-ready` handler attaches ~30 click
-  listeners using the `listen()` helper, which finds elements by CSS
-  selector and reads `data-*` attributes
-- **Command execution**: `execPageCommand()`, `execFormCommand()`,
-  and `execInlineCommand()` call Tauri `invoke()` with different
-  post-action behaviors (navigate, reload, or just show notification)
-- **Popup builders**: `showIgnorePopup()`, `showSetOriginForm()`,
-  `showCreatePackageForm()`, `showSetRemoteForm()` build HTML strings
-  and attach event listeners manually
-- **Auto-update UI**: check for updates, show download/install
-  notifications
+```rust
+pub async fn get_installed_package_data(
+    namespace: &str,
+    filter: &str,
+) -> Result<InstalledPackageData, String> { ... }
 
-### Key helpers
+pub async fn package_push(namespace: &str) -> Result<String, String> { ... }
+```
 
-```typescript
-// Find elements and wire up click -> invoke pattern
-listen(SELECTOR, ["data-attr1", "data-attr2"], async (data, button) => {
-    await execPageCommand(COMMAND, data, optionalRedirectRoute);
-});
+Response DTOs (e.g. `InstalledPackageData`, `CommitData`,
+`SettingsData`) are defined here with `#[derive(Deserialize)]`.
+The backend returns **data structs**, not pre-rendered HTML -- the
+Leptos components own all rendering.
 
-// Execute a Tauri command that returns notification HTML
-async function execPageCommand(command, data, redirect?) { /* ... */ }
+## Layout Component
 
-// Replace body with Rust-rendered HTML
-async function loadCurrentPage() {
-    const page = await invoke("load_page", { location: window.location.href });
-    document.body.innerHTML = page;
-    window.dispatchEvent(new Event("page-is-ready"));
+`components/layout.rs` provides the shared page shell:
+
+```text
++--[appbar]----------------------------------------------+
+| [logo]  [package URI]                  [refresh] [gear] |
++--[toolbar]---------------------------------------------+
+| [breadcrumbs...]              [optional toolbar actions] |
++--[notification bar]------------------------------------+
+| Success or error message (dismissible)                  |
++---------------------------------------------------------+
+|                                                         |
+|   [page content — children]                             |
+|                                                         |
++---------------------------------------------------------+
+```
+
+### Notification
+
+```rust
+pub enum Notification {
+    Success(String),
+    Error(String),
 }
 ```
+
+Messages are rendered as text nodes (not `inner_html`), so they
+are auto-escaped by Leptos. Users dismiss notifications by clicking
+the overlay.
+
+### Breadcrumbs
+
+```rust
+pub enum BreadcrumbItem {
+    Link(BreadcrumbLink),   // Navigable parent page
+    Current(String),        // Non-linked current page label
+}
+```
+
+### Toolbar Actions
+
+```rust
+pub struct ToolbarActions(pub Box<dyn FnOnce() -> AnyView>);
+```
+
+Pages pass custom buttons (Push, Pull, Uninstall, etc.) to appear
+to the right of breadcrumbs.
+
+### UI Lock
+
+When `ui_locked` signal is `true`, the layout adds a CSS class that
+disables all interaction — used during async operations to prevent
+double-submission.
+
+## Auto-Update Checker
+
+`components/update_checker.rs` renders an update notification bar
+at the top of the app (outside the router). It polls
+`commands::check_for_update()` on mount and offers Download, Install,
+and Dismiss actions. Dismissal is persisted in localStorage for 5
+minutes.
 
 ## CSS Organization
 
 ```text
-src/assets/css/
-  styles.css              -- entry point (imports theme + layout + spinner)
-  theme.css               -- CSS custom properties (colors, spacing, fonts)
-  layout.css              -- top-level grid
-  spinner.css             -- loading spinner (shown before Rust renders)
-  components/             -- reusable component styles
-    button.css
-    entries-filter.css
-    ignore-popup.css
-  pages/                  -- page-specific styles
-    commit.css
-    installed-package.css
-    settings.css
-    ...
-  views/                  -- layout section styles
-    actionbar.css
-    appbar.css
-    breadcrumbs.css
-    entry.css
-    toolbar.css
-    ...
-  external/               -- vendored font-face files
-    400.css, 500.css, 700.css
+ui/assets/css/
+├── theme.css               # CSS custom properties (colors, spacing, fonts)
+├── layout.css              # Layout helpers
+├── spinner.css             # Loading spinner
+├── components/             # Reusable component styles
+│   ├── button.css
+│   ├── entries-filter.css
+│   └── ignore-popup.css
+├── pages/                  # Per-page styles
+│   ├── commit.css
+│   ├── installed-package.css
+│   ├── installed-packages-list.css
+│   └── ...
+├── views/                  # Layout section styles
+│   ├── appbar.css
+│   ├── breadcrumbs.css
+│   ├── entry.css
+│   ├── notify.css
+│   ├── toolbar.css
+│   └── ...
+└── external/               # Vendored webfont @font-face files
+    ├── 400.css
+    ├── 500.css
+    └── 700.css
 ```
 
-Styles are loaded via `@import url(...)` inside Askama templates
-(e.g. `layout.html` imports view CSS, page templates import
-page-specific CSS). There is no CSS scoping or encapsulation --
-all selectors are global.
+All CSS is loaded via `<link>` tags in `index.html`. Trunk copies
+the `assets/` directory to `dist/` at build time. There is no CSS
+scoping -- all selectors are global, using a `qui-*` naming
+convention.
 
-## Size Inventory
+## Key Differences from Previous Architecture
 
-| Layer | Files | Lines |
+The frontend was migrated from Askama server-side templates +
+TypeScript to Leptos client-side WASM. Key changes:
+
+| Aspect | Before (Askama + TS) | After (Leptos) |
 |---|---|---|
-| TypeScript (`main.ts`) | 1 | ~1,400 |
-| CSS (custom, excluding fonts) | ~25 | ~1,400 |
-| Askama templates | ~25 | ~670 |
-| Rust page renderers (`pages/`) | ~8 | ~1,500 |
-| Rust UI components (`ui/`) | ~8 | ~800 |
-
-## Known Limitations
-
-1. **Single monolithic JS file** -- all selectors, event listeners,
-   and popup builders live in one 1,400-line file with no way to
-   scope behavior to a specific page.
-
-2. **Re-attach-everything pattern** -- after every `innerHTML`
-   replacement, `page-is-ready` binds ~30 listeners to the document.
-   Most won't find matching elements on the current page.
-
-3. **Two templating systems** -- Askama on the Rust side for pages,
-   raw HTML strings in TypeScript for popups and notifications.
-
-4. **No component model** -- there is no encapsulation of markup +
-   style + behavior as a unit. CSS selectors are global, and the
-   connection between a Rust UI struct, an Askama template, a CSS
-   file, and a JS selector constant is implicit.
-
-5. **Full-page reloads** -- every user action re-renders the entire
-   page from Rust, even for small state changes.
-
-6. **No type safety across the Rust/JS boundary** -- Rust renders
-   HTML with `data-*` attributes that JS reads manually. A renamed
-   attribute silently breaks behavior at runtime.
+| Rendering | Backend builds HTML strings | Frontend renders reactively |
+| Interactivity | Single `main.ts` re-attaches listeners | Leptos event handlers |
+| Type safety | `data-*` attributes parsed manually | Typed Rust DTOs end-to-end |
+| Routing | Static `.html` files + `#fragment` params | leptos\_router + query strings |
+| State | None (full re-render on every action) | Reactive signals (`RwSignal`, `Memo`) |
+| Popups | HTML strings built in TypeScript | Leptos components with signal toggles |
+| Notifications | Raw HTML via `inner_html` (XSS risk) | Typed `Notification` enum (auto-escaped) |
+| Build | Parcel (npm) | Trunk (no npm/node dependency) |
+| UI disable | Imperative `lock_ui()` DOM manipulation | Reactive `ui_locked` signal |
