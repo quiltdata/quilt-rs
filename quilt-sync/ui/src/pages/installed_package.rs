@@ -13,11 +13,17 @@ use crate::util::{format_size, urlencoding};
 
 #[component]
 pub fn InstalledPackage() -> impl IntoView {
-    let notification = RwSignal::new(None);
+    let query = use_query_map();
+
+    // Pick up notification passed via query param (e.g. from remote-package deep link).
+    let initial_notification = query
+        .read_untracked()
+        .get("notification")
+        .map(Notification::Success);
+    let notification = RwSignal::new(initial_notification);
     let ui_locked = RwSignal::new(false);
     let refetch = Trigger::new();
 
-    let query = use_query_map();
     let data = LocalResource::new(move || {
         refetch.track();
         let namespace = query.read().get("namespace").unwrap_or_default();
