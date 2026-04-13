@@ -4,10 +4,10 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 use crate::commands::{self, EntryData, InstalledPackageData};
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{
-    IgnorePopup, IgnorePopupData, Layout, Notification, Spinner, ToolbarActions, UnignorePopup,
-    UnignorePopupData,
+    IgnorePopup, IgnorePopupData, Layout, Notification, SetOriginPopup, Spinner, ToolbarActions,
+    UnignorePopup, UnignorePopupData,
 };
-use crate::util::{format_size, is_valid_hostname, urlencoding};
+use crate::util::{format_size, urlencoding};
 
 // ── Installed Package page ──
 
@@ -907,117 +907,6 @@ fn EntryRow(
                         view! {}.into_any()
                     }}
                 </ul>
-            </div>
-        </div>
-    }
-}
-
-
-// ── Set origin popup ──
-
-#[component]
-fn SetOriginPopup(
-    namespace: String,
-    current_origin: String,
-    notification: RwSignal<Option<Notification>>,
-    refetch: Trigger,
-    on_close: impl Fn() + Clone + 'static,
-) -> impl IntoView {
-    let origin = RwSignal::new(current_origin);
-    let show_error = RwSignal::new(false);
-    let submitting = RwSignal::new(false);
-
-    let ns = namespace.clone();
-
-    let on_close_submit = on_close.clone();
-    let on_submit = move || {
-        let value = origin.get_untracked().trim().to_string();
-        if value.is_empty() || submitting.get_untracked() {
-            return;
-        }
-        if !is_valid_hostname(&value) {
-            show_error.set(true);
-            return;
-        }
-        submitting.set(true);
-        let ns = ns.clone();
-        let on_close = on_close_submit.clone();
-        leptos::task::spawn_local(async move {
-            match commands::set_origin(ns, value).await
-            {
-                Ok(msg) => {
-                    notification.set(Some(Notification::Success(msg)));
-                    on_close();
-                    refetch.notify();
-                }
-                Err(e) => {
-                    notification.set(Some(Notification::Error(e)));
-                    submitting.set(false);
-                }
-            }
-        });
-    };
-
-    let on_submit_click = {
-        let on_submit = on_submit.clone();
-        move |_| on_submit()
-    };
-
-    let on_close_cancel = on_close.clone();
-    let on_cancel = move |_: leptos::ev::MouseEvent| on_close_cancel();
-
-    let on_submit_key = on_submit.clone();
-    let on_close_key = on_close.clone();
-    let on_keydown = move |ev: leptos::ev::KeyboardEvent| {
-        if ev.key() == "Enter" {
-            on_submit_key();
-        } else if ev.key() == "Escape" {
-            on_close_key();
-        }
-    };
-
-    view! {
-        <div class="popup-overlay" on:click={
-            let on_close = on_close.clone();
-            move |_| on_close()
-        }>
-            <div class="popup-content" on:click=|ev| ev.stop_propagation()>
-                <div class="origin-form">
-                    <label>"Catalog origin"</label>
-                    <div class="origin-input-group">
-                        <input
-                            class="origin-input"
-                            class:error=move || show_error.get()
-                            type="text"
-                            placeholder="open.quilt.bio"
-                            prop:value=move || origin.get()
-                            on:input=move |ev| {
-                                origin.set(event_target_value(&ev));
-                                show_error.set(false);
-                            }
-                            on:keydown=on_keydown
-                        />
-                        <span
-                            class="origin-hint"
-                            class:visible=move || show_error.get()
-                        >
-                            "Enter a valid hostname, e.g. open.quilt.bio"
-                        </span>
-                    </div>
-                    <div class="origin-form-actions">
-                        <button
-                            class="qui-button primary"
-                            type="button"
-                            prop:disabled=move || submitting.get()
-                            on:click=on_submit_click
-                        >
-                            <span>"Submit"</span>
-                        </button>
-                        <button class="qui-button" type="button" on:click=on_cancel>
-                            <span>"Cancel"</span>
-                        </button>
-                    </div>
-                </div>
             </div>
         </div>
     }
