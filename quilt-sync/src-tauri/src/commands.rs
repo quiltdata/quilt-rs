@@ -539,6 +539,9 @@ async fn get_commit_data_from_model(
             ignored_by: None,
             namespace: namespace.to_string(),
         });
+        if entries_list.len() > 1000 {
+            break;
+        }
     }
 
     // Ignored files
@@ -552,6 +555,9 @@ async fn get_commit_data_from_model(
             ignored_by: Some(pattern.clone()),
             namespace: namespace.to_string(),
         });
+        if entries_list.len() > 1000 {
+            break;
+        }
     }
 
     entries_list.sort_by(|a, b| a.filename.cmp(&b.filename));
@@ -722,7 +728,7 @@ async fn load_package_item(
         quilt::lineage::UpstreamState::Ahead => "ahead",
         quilt::lineage::UpstreamState::Behind => "behind",
         quilt::lineage::UpstreamState::Diverged => "diverged",
-        quilt::lineage::UpstreamState::UpToDate => "uptodate",
+        quilt::lineage::UpstreamState::UpToDate => "up_to_date",
         quilt::lineage::UpstreamState::Local => "local",
         quilt::lineage::UpstreamState::Error => "error",
     };
@@ -1850,7 +1856,7 @@ mod tests {
         assert!(diverged.origin_url.is_some());
 
         let uptodate = find("test/uptodate");
-        assert_eq!(uptodate.status, "uptodate");
+        assert_eq!(uptodate.status, "up_to_date");
         assert!(uptodate.origin_url.is_some());
 
         Ok(())

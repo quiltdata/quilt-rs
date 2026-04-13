@@ -19,10 +19,6 @@ pub enum LoginFlow {
 #[serde(rename_all = "snake_case")]
 pub enum MixpanelEvent {
     AppLaunched,
-    PageLoaded {
-        pathname: String,
-        error: Option<String>,
-    },
     PackagePulled,
     PackagePushed,
     PackageCommitted,
@@ -235,47 +231,6 @@ mod tests {
         assert!(p.is_none());
 
         Ok(())
-    }
-
-    #[test]
-    fn test_page_loaded_event() -> Result {
-        // Test PageLoaded with no error
-        let event = MixpanelEvent::PageLoaded {
-            pathname: "commit".to_string(),
-            error: None,
-        };
-        match event.try_into()? {
-            (name, Some(props)) => {
-                assert_eq!(name, "page_loaded");
-                assert_eq!(
-                    props.get("pathname"),
-                    Some(&Value::String("commit".to_string()))
-                );
-                assert_eq!(props.get("error"), Some(&Value::Null));
-            }
-            _ => return Err(Error::MixpanelSer("PageLoaded with no error".to_string())),
-        }
-
-        // Test PageLoaded with error
-        let event = MixpanelEvent::PageLoaded {
-            pathname: "login".to_string(),
-            error: Some("Authentication failed".to_string()),
-        };
-        match event.try_into()? {
-            (name, Some(props)) => {
-                assert_eq!(name, "page_loaded");
-                assert_eq!(
-                    props.get("pathname"),
-                    Some(&Value::String("login".to_string()))
-                );
-                assert_eq!(
-                    props.get("error"),
-                    Some(&Value::String("Authentication failed".to_string()))
-                );
-                Ok(())
-            }
-            _ => Err(Error::MixpanelSer("PageLoaded with error".to_string())),
-        }
     }
 
     #[test]
