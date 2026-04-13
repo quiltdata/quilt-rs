@@ -205,7 +205,10 @@ fn AuthHostRow(
     let host_display = host.clone();
     let host_for_logout = host.clone();
     let back_encoded = urlencoding::encode("/settings");
-    let login_href = format!("/login?host={}&back={back_encoded}", urlencoding::encode(&host));
+    let login_href = format!(
+        "/login?host={}&back={back_encoded}",
+        urlencoding::encode(&host)
+    );
 
     view! {
         <dt>{host_display}</dt>
