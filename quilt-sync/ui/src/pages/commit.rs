@@ -743,6 +743,13 @@ struct IgnorePopupData {
     suggested_pattern: String,
 }
 
+#[derive(Clone)]
+enum IgnoreHint {
+    WillBeIgnored(String),
+    OnlyExact(String),
+    NoMatch(String),
+}
+
 #[component]
 fn IgnorePopup(
     data: IgnorePopupData,
@@ -750,7 +757,7 @@ fn IgnorePopup(
     on_close: impl Fn() + Clone + 'static,
 ) -> impl IntoView {
     let pattern = RwSignal::new(data.suggested_pattern.clone());
-    let hint_html = RwSignal::new(String::new());
+    let hint = RwSignal::new(Option::<IgnoreHint>::None);
     let submitting = RwSignal::new(false);
 
     let path = data.path.clone();
@@ -765,7 +772,7 @@ fn IgnorePopup(
         let suggested = suggested_for_hint.clone();
         leptos::task::spawn_local(async move {
             if current.trim().is_empty() {
-                hint_html.set(String::new());
+                hint.set(None);
                 return;
             }
             let matches = commands::test_quiltignore_pattern(current.clone(), path.clone())
@@ -775,20 +782,14 @@ fn IgnorePopup(
             let is_suggested = current == suggested;
             let is_exact = current == path;
 
-            let html = if (is_suggested || !is_exact) && matches {
-                format!(
-                    "<code class=\"inactive\">{}</code> will be ignored",
-                    escape_html(&path)
-                )
+            let value = if (is_suggested || !is_exact) && matches {
+                IgnoreHint::WillBeIgnored(path)
             } else if matches && is_exact {
-                format!("Only {} will be ignored", escape_html(&path))
+                IgnoreHint::OnlyExact(path)
             } else {
-                format!(
-                    "Doesn't match <code class=\"inactive\">{}</code>",
-                    escape_html(&path)
-                )
+                IgnoreHint::NoMatch(path)
             };
-            hint_html.set(html);
+            hint.set(Some(value));
         });
     };
 
@@ -859,7 +860,19 @@ fn IgnorePopup(
                         on:input=on_input
                         on:keydown=on_keydown
                     />
-                    <div class="ignore-hint" inner_html=move || hint_html.get()></div>
+                    <div class="ignore-hint">
+                        {move || hint.get().map(|h| match h {
+                            IgnoreHint::WillBeIgnored(path) => view! {
+                                <code class="inactive">{path}</code>" will be ignored"
+                            }.into_any(),
+                            IgnoreHint::OnlyExact(path) => view! {
+                                "Only "{path}" will be ignored"
+                            }.into_any(),
+                            IgnoreHint::NoMatch(path) => view! {
+                                "Doesn't match "<code class="inactive">{path}</code>
+                            }.into_any(),
+                        })}
+                    </div>
                     <div class="ignore-actions">
                         <button
                             class="qui-button primary"
@@ -949,10 +962,4 @@ fn format_size(bytes: u64) -> String {
     format!("{value:.2} EB")
 }
 
-fn escape_html(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
 
