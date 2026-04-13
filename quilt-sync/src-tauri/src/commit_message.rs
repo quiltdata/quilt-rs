@@ -150,7 +150,10 @@ mod tests {
             &modified.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
             &removed.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
         );
-        assert_eq!(generate(&changes), "Add 3 files, Update 2 files, Remove 1 file");
+        assert_eq!(
+            generate(&changes),
+            "Add 3 files, Update 2 files, Remove 1 file"
+        );
     }
 
     #[test]

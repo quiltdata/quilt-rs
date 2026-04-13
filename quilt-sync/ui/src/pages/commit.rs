@@ -21,9 +21,7 @@ pub fn Commit() -> impl IntoView {
     let data = LocalResource::new(move || {
         refetch.track();
         let namespace = query.read().get("namespace").unwrap_or_default();
-        async move {
-            commands::get_commit_data(namespace).await
-        }
+        async move { commands::get_commit_data(namespace).await }
     });
 
     view! {
@@ -103,12 +101,7 @@ fn CommitContent(
             .and_then(|w| w.id.clone())
             .unwrap_or_default(),
     );
-    let workflow_null = RwSignal::new(
-        workflow
-            .as_ref()
-            .map(|w| w.id.is_none())
-            .unwrap_or(true),
-    );
+    let workflow_null = RwSignal::new(workflow.as_ref().map(|w| w.id.is_none()).unwrap_or(true));
 
     // Filtered entries
     let entries_for_view = entries.clone();
@@ -154,8 +147,7 @@ fn CommitContent(
             None
         };
         leptos::task::spawn_local(async move {
-            match commands::package_commit(ns.clone(), msg, meta, wf).await
-            {
+            match commands::package_commit(ns.clone(), msg, meta, wf).await {
                 Ok(msg) => {
                     notification.set(Some(Notification::Success(msg)));
                     navigate(
@@ -392,23 +384,21 @@ fn WorkflowSection(
             }
             .into_any()
         }
-        None => {
-            view! {
-                <div class="workflow">
-                    <p class="field">
-                        <label class="label" for="workflow">"Workflow ID"</label>
-                        <input class="input" disabled prop:value="Workflow not available" />
-                    </p>
-                    <div class="workflow-null">
-                        <input id="workflow-null" type="checkbox" checked disabled />
-                        <label class="workflow-null-label" for="workflow-null">
-                            "No workflow"
-                        </label>
-                    </div>
+        None => view! {
+            <div class="workflow">
+                <p class="field">
+                    <label class="label" for="workflow">"Workflow ID"</label>
+                    <input class="input" disabled prop:value="Workflow not available" />
+                </p>
+                <div class="workflow-null">
+                    <input id="workflow-null" type="checkbox" checked disabled />
+                    <label class="workflow-null-label" for="workflow-null">
+                        "No workflow"
+                    </label>
                 </div>
-            }
-            .into_any()
+            </div>
         }
+        .into_any(),
     }
 }
 
@@ -542,8 +532,8 @@ fn CommitEntryRow(
 
     // Action buttons
     let show_open_reveal = !is_deleted && !is_ignored && entry.status != "remote";
-    let show_catalog = (entry.status == "remote" || entry.status == "pristine")
-        && entry.origin_url.is_some();
+    let show_catalog =
+        (entry.status == "remote" || entry.status == "pristine") && entry.origin_url.is_some();
 
     let ns_for_open = entry.namespace.clone();
     let path_for_open = entry.filename.clone();

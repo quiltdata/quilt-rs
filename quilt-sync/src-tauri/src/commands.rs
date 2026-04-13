@@ -16,11 +16,11 @@ use crate::quilt;
 use crate::routes;
 use crate::Error;
 
+use crate::changelog;
 use crate::model::QuiltModel;
+use crate::notify::Notify;
 use crate::telemetry::diagnostics;
 use crate::telemetry::{mixpanel::LoginFlow, prelude::*, MixpanelEvent};
-use crate::changelog;
-use crate::notify::Notify;
 
 fn get_default_home_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, Error> {
     let path_resolver = app_handle.path();
@@ -64,18 +64,13 @@ async fn get_installed_package_data_from_model(
     namespace: &quilt::uri::Namespace,
     filter: routes::EntriesFilter,
 ) -> Result<InstalledPackageData, Error> {
-    let installed_package = m
-        .get_installed_package(namespace)
-        .await?
-        .ok_or_else(|| {
-            Error::from(quilt::InstallPackageError::NotInstalled(
-                namespace.to_owned(),
-            ))
-        })?;
+    let installed_package = m.get_installed_package(namespace).await?.ok_or_else(|| {
+        Error::from(quilt::InstallPackageError::NotInstalled(
+            namespace.to_owned(),
+        ))
+    })?;
 
-    let lineage = m
-        .get_installed_package_lineage(&installed_package)
-        .await?;
+    let lineage = m.get_installed_package_lineage(&installed_package).await?;
 
     let (uri, origin_host) =
         crate::debug_tools::resolve_uri_and_host(lineage.remote_uri.as_ref(), namespace);
@@ -97,9 +92,7 @@ async fn get_installed_package_data_from_model(
 
     let modified_entries = &pkg_status.changes;
     let installed_paths = &lineage.paths;
-    let manifest_entries = m
-        .get_installed_package_records(&installed_package)
-        .await?;
+    let manifest_entries = m.get_installed_package_records(&installed_package).await?;
 
     let junky_map: std::collections::HashMap<_, _> = pkg_status
         .junky_changes
@@ -209,13 +202,13 @@ async fn get_installed_package_data_from_model(
         None => None,
     };
 
-    let ignored_count = entries_list.iter().filter(|e| e.ignored_by.is_some()).count();
+    let ignored_count = entries_list
+        .iter()
+        .filter(|e| e.ignored_by.is_some())
+        .count();
     let unmodified_count = entries_list
         .iter()
-        .filter(|e| {
-            e.ignored_by.is_none()
-                && (e.status == "pristine" || e.status == "remote")
-        })
+        .filter(|e| e.ignored_by.is_none() && (e.status == "pristine" || e.status == "remote"))
         .count();
 
     let has_remote_entries = entries_list.iter().any(|e| e.status == "remote");
@@ -251,7 +244,9 @@ pub async fn get_installed_package_data(
     namespace: String,
     filter: Option<String>,
 ) -> Result<InstalledPackageData, String> {
-    let namespace: quilt::uri::Namespace = namespace.try_into().map_err(|e: quilt::Error| e.to_string())?;
+    let namespace: quilt::uri::Namespace = namespace
+        .try_into()
+        .map_err(|e: quilt::Error| e.to_string())?;
     let filter = filter
         .map(|f| routes::EntriesFilter::from_filter_str(&f))
         .unwrap_or_default();
@@ -376,18 +371,13 @@ async fn get_merge_data_from_model(
     tracing: &crate::telemetry::Telemetry,
     namespace: &quilt::uri::Namespace,
 ) -> Result<MergeData, Error> {
-    let installed_package = m
-        .get_installed_package(namespace)
-        .await?
-        .ok_or_else(|| {
-            Error::from(quilt::InstallPackageError::NotInstalled(
-                namespace.to_owned(),
-            ))
-        })?;
+    let installed_package = m.get_installed_package(namespace).await?.ok_or_else(|| {
+        Error::from(quilt::InstallPackageError::NotInstalled(
+            namespace.to_owned(),
+        ))
+    })?;
 
-    let lineage = m
-        .get_installed_package_lineage(&installed_package)
-        .await?;
+    let lineage = m.get_installed_package_lineage(&installed_package).await?;
 
     let (uri, origin_host) =
         crate::debug_tools::resolve_uri_and_host(lineage.remote_uri.as_ref(), namespace);
@@ -413,7 +403,9 @@ pub async fn get_merge_data(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     namespace: String,
 ) -> Result<MergeData, String> {
-    let namespace: quilt::uri::Namespace = namespace.try_into().map_err(|e: quilt::Error| e.to_string())?;
+    let namespace: quilt::uri::Namespace = namespace
+        .try_into()
+        .map_err(|e: quilt::Error| e.to_string())?;
 
     get_merge_data_from_model(&*m, &tracing, &namespace)
         .await
@@ -452,14 +444,11 @@ async fn get_commit_data_from_model(
     tracing: &crate::telemetry::Telemetry,
     namespace: &quilt::uri::Namespace,
 ) -> Result<CommitData, Error> {
-    let installed_package = m
-        .get_installed_package(namespace)
-        .await?
-        .ok_or_else(|| {
-            Error::from(quilt::InstallPackageError::NotInstalled(
-                namespace.to_owned(),
-            ))
-        })?;
+    let installed_package = m.get_installed_package(namespace).await?.ok_or_else(|| {
+        Error::from(quilt::InstallPackageError::NotInstalled(
+            namespace.to_owned(),
+        ))
+    })?;
 
     let status = m
         .get_installed_package_status(&installed_package, None)
@@ -474,9 +463,7 @@ async fn get_commit_data_from_model(
         quilt::lineage::UpstreamState::Error => "error",
     };
 
-    let lineage = m
-        .get_installed_package_lineage(&installed_package)
-        .await?;
+    let lineage = m.get_installed_package_lineage(&installed_package).await?;
 
     let (uri, origin_host) =
         crate::debug_tools::resolve_uri_and_host(lineage.remote_uri.as_ref(), namespace);
@@ -522,9 +509,7 @@ async fn get_commit_data_from_model(
     }
 
     // Unmodified entries (from manifest, not changed)
-    let manifest_entries = m
-        .get_installed_package_records(&installed_package)
-        .await?;
+    let manifest_entries = m.get_installed_package_records(&installed_package).await?;
     for (filename, row) in &manifest_entries {
         if status.changes.contains_key(filename) {
             continue;
@@ -568,13 +553,13 @@ async fn get_commit_data_from_model(
 
     entries_list.sort_by(|a, b| a.filename.cmp(&b.filename));
 
-    let ignored_count = entries_list.iter().filter(|e| e.ignored_by.is_some()).count();
+    let ignored_count = entries_list
+        .iter()
+        .filter(|e| e.ignored_by.is_some())
+        .count();
     let unmodified_count = entries_list
         .iter()
-        .filter(|e| {
-            e.ignored_by.is_none()
-                && (e.status == "pristine" || e.status == "remote")
-        })
+        .filter(|e| e.ignored_by.is_none() && (e.status == "pristine" || e.status == "remote"))
         .count();
 
     let origin_url = origin_host
@@ -598,13 +583,15 @@ async fn get_commit_data_from_model(
                     None => (String::new(), None),
                 };
                 let workflow = origin_host.as_ref().and_then(|host| {
-                    remote_manifest.header.workflow.as_ref().map(|w| {
-                        CommitWorkflowData {
+                    remote_manifest
+                        .header
+                        .workflow
+                        .as_ref()
+                        .map(|w| CommitWorkflowData {
                             id: w.id.as_ref().map(|id| id.id.clone()),
                             url: w.config.display_for_host(host).ok().map(|u| u.to_string()),
                             config_url: None,
-                        }
-                    })
+                        })
                 });
                 (meta_value, meta_error, workflow)
             }
@@ -633,7 +620,9 @@ pub async fn get_commit_data(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     namespace: String,
 ) -> Result<CommitData, String> {
-    let namespace: quilt::uri::Namespace = namespace.try_into().map_err(|e: quilt::Error| e.to_string())?;
+    let namespace: quilt::uri::Namespace = namespace
+        .try_into()
+        .map_err(|e: quilt::Error| e.to_string())?;
 
     get_commit_data_from_model(&*m, &tracing, &namespace)
         .await
@@ -683,9 +672,7 @@ async fn load_package_item(
     tracing: &crate::telemetry::Telemetry,
     installed_package: &quilt::InstalledPackage,
 ) -> Result<InstalledPackageListItem, Error> {
-    let lineage = m
-        .get_installed_package_lineage(installed_package)
-        .await?;
+    let lineage = m.get_installed_package_lineage(installed_package).await?;
 
     let remote_uri = match lineage.remote_uri.as_ref() {
         Some(uri) => uri,
@@ -1735,10 +1722,7 @@ mod tests {
 
         assert_eq!(data.namespace, "foo/bar");
         assert!(data.origin_url.is_some());
-        assert!(data
-            .origin_url
-            .unwrap()
-            .contains("test.quilt.dev"));
+        assert!(data.origin_url.unwrap().contains("test.quilt.dev"));
         assert_eq!(data.origin_host, Some("test.quilt.dev".to_string()));
         Ok(())
     }
@@ -1746,9 +1730,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_merge_data_not_installed() {
         let mut model = mocks::create();
-        model
-            .expect_get_installed_package()
-            .returning(|_| Ok(None));
+        model.expect_get_installed_package().returning(|_| Ok(None));
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("missing", "package").into();
 
@@ -2054,9 +2036,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_installed_package_data_not_installed() {
         let mut model = mocks::create();
-        model
-            .expect_get_installed_package()
-            .returning(|_| Ok(None));
+        model.expect_get_installed_package().returning(|_| Ok(None));
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("missing", "package").into();
 
@@ -2070,9 +2050,9 @@ mod tests {
     async fn test_get_installed_package_data_no_origin() -> Result<(), String> {
         let mut model = mocks::create();
 
-        model.expect_get_installed_package().returning(move |_| {
-            Ok(Some(make_installed_package(("foo", "bar"))))
-        });
+        model
+            .expect_get_installed_package()
+            .returning(move |_| Ok(Some(make_installed_package(("foo", "bar")))));
         model
             .expect_get_installed_package_lineage()
             .returning(|pkg| {
@@ -2082,9 +2062,9 @@ mod tests {
                     "abcdef".to_string(),
                 ))
             });
-        model.expect_get_installed_package_records().returning(|_| {
-            Ok(std::collections::BTreeMap::new())
-        });
+        model
+            .expect_get_installed_package_records()
+            .returning(|_| Ok(std::collections::BTreeMap::new()));
 
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
@@ -2104,9 +2084,9 @@ mod tests {
     async fn test_get_installed_package_data_error_with_origin() -> Result<(), String> {
         let mut model = mocks::create();
 
-        model.expect_get_installed_package().returning(move |_| {
-            Ok(Some(make_installed_package(("foo", "bar"))))
-        });
+        model
+            .expect_get_installed_package()
+            .returning(move |_| Ok(Some(make_installed_package(("foo", "bar")))));
         model
             .expect_get_installed_package_lineage()
             .returning(|pkg| {
@@ -2119,9 +2099,9 @@ mod tests {
         model
             .expect_get_installed_package_status()
             .returning(|_, _| Ok(quilt::lineage::InstalledPackageStatus::error()));
-        model.expect_get_installed_package_records().returning(|_| {
-            Ok(std::collections::BTreeMap::new())
-        });
+        model
+            .expect_get_installed_package_records()
+            .returning(|_| Ok(std::collections::BTreeMap::new()));
 
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
@@ -2141,9 +2121,9 @@ mod tests {
     async fn test_get_installed_package_data_local_only() -> Result<(), String> {
         let mut model = mocks::create();
 
-        model.expect_get_installed_package().returning(move |_| {
-            Ok(Some(make_installed_package(("foo", "bar"))))
-        });
+        model
+            .expect_get_installed_package()
+            .returning(move |_| Ok(Some(make_installed_package(("foo", "bar")))));
         // No remote URI → local-only package
         model
             .expect_get_installed_package_lineage()
@@ -2151,9 +2131,9 @@ mod tests {
         model
             .expect_get_installed_package_status()
             .returning(|_, _| Ok(quilt::lineage::InstalledPackageStatus::local()));
-        model.expect_get_installed_package_records().returning(|_| {
-            Ok(std::collections::BTreeMap::new())
-        });
+        model
+            .expect_get_installed_package_records()
+            .returning(|_| Ok(std::collections::BTreeMap::new()));
 
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
@@ -2173,9 +2153,9 @@ mod tests {
     async fn test_get_installed_package_data_local_with_origin() -> Result<(), String> {
         let mut model = mocks::create();
 
-        model.expect_get_installed_package().returning(move |_| {
-            Ok(Some(make_installed_package(("foo", "bar"))))
-        });
+        model
+            .expect_get_installed_package()
+            .returning(move |_| Ok(Some(make_installed_package(("foo", "bar")))));
         model
             .expect_get_installed_package_lineage()
             .returning(|pkg| {
@@ -2193,9 +2173,9 @@ mod tests {
         model
             .expect_get_installed_package_status()
             .returning(|_, _| Ok(quilt::lineage::InstalledPackageStatus::local()));
-        model.expect_get_installed_package_records().returning(|_| {
-            Ok(std::collections::BTreeMap::new())
-        });
+        model
+            .expect_get_installed_package_records()
+            .returning(|_| Ok(std::collections::BTreeMap::new()));
 
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
@@ -2218,9 +2198,9 @@ mod tests {
     async fn test_get_installed_package_data_entry_sizes() -> Result<(), String> {
         let mut model = mocks::create();
 
-        model.expect_get_installed_package().returning(move |_| {
-            Ok(Some(make_installed_package(("foo", "bar"))))
-        });
+        model
+            .expect_get_installed_package()
+            .returning(move |_| Ok(Some(make_installed_package(("foo", "bar")))));
         model
             .expect_get_installed_package_lineage()
             .returning(|pkg| {
@@ -2321,10 +2301,7 @@ mod tests {
 
         assert_eq!(data.namespace, "foo/bar");
         assert!(data.origin_url.is_some());
-        assert!(data
-            .origin_url
-            .unwrap()
-            .contains("test.quilt.dev"));
+        assert!(data.origin_url.unwrap().contains("test.quilt.dev"));
         assert_eq!(data.origin_host, Some("test.quilt.dev".to_string()));
         Ok(())
     }
@@ -2332,9 +2309,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_commit_data_not_installed() {
         let mut model = mocks::create();
-        model
-            .expect_get_installed_package()
-            .returning(|_| Ok(None));
+        model.expect_get_installed_package().returning(|_| Ok(None));
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("missing", "package").into();
 
@@ -2354,9 +2329,9 @@ mod tests {
             hash: "abcdef".to_string(),
             origin: Some("test.quilt.dev".parse().unwrap()),
         };
-        model.expect_get_installed_package().returning(move |_| {
-            Ok(Some(make_installed_package(("foo", "bar"))))
-        });
+        model
+            .expect_get_installed_package()
+            .returning(move |_| Ok(Some(make_installed_package(("foo", "bar")))));
         model
             .expect_get_installed_package_lineage()
             .returning(move |_| {
@@ -2369,34 +2344,32 @@ mod tests {
         model
             .expect_get_installed_package_status()
             .return_once(move |_, _| status);
-        model.expect_get_installed_package_records().returning(|_| {
-            Ok(std::collections::BTreeMap::new())
-        });
-        // Return a manifest with workflow data
         model
-            .expect_browse_remote_manifest()
-            .returning(|_| {
-                let config_uri = quilt::uri::S3Uri {
-                    bucket: "quilt-example".to_string(),
-                    key: ".quilt/workflows/config.yaml".to_string(),
-                    version: None,
-                };
-                Ok(quilt::manifest::Manifest {
-                    header: quilt::manifest::ManifestHeader {
-                        version: "v0".to_string(),
-                        message: None,
-                        user_meta: None,
-                        workflow: Some(quilt::manifest::Workflow {
-                            config: config_uri,
-                            id: Some(quilt::manifest::WorkflowId {
-                                id: "gamma".to_string(),
-                                metadata: None,
-                            }),
+            .expect_get_installed_package_records()
+            .returning(|_| Ok(std::collections::BTreeMap::new()));
+        // Return a manifest with workflow data
+        model.expect_browse_remote_manifest().returning(|_| {
+            let config_uri = quilt::uri::S3Uri {
+                bucket: "quilt-example".to_string(),
+                key: ".quilt/workflows/config.yaml".to_string(),
+                version: None,
+            };
+            Ok(quilt::manifest::Manifest {
+                header: quilt::manifest::ManifestHeader {
+                    version: "v0".to_string(),
+                    message: None,
+                    user_meta: None,
+                    workflow: Some(quilt::manifest::Workflow {
+                        config: config_uri,
+                        id: Some(quilt::manifest::WorkflowId {
+                            id: "gamma".to_string(),
+                            metadata: None,
                         }),
-                    },
-                    rows: Vec::new(),
-                })
-            });
+                    }),
+                },
+                rows: Vec::new(),
+            })
+        });
 
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
@@ -2424,9 +2397,9 @@ mod tests {
             hash: "abcdef".to_string(),
             origin: Some("test.quilt.dev".parse().unwrap()),
         };
-        model.expect_get_installed_package().returning(move |_| {
-            Ok(Some(make_installed_package(("foo", "bar"))))
-        });
+        model
+            .expect_get_installed_package()
+            .returning(move |_| Ok(Some(make_installed_package(("foo", "bar")))));
         model
             .expect_get_installed_package_lineage()
             .returning(move |_| {
@@ -2439,9 +2412,9 @@ mod tests {
         model
             .expect_get_installed_package_status()
             .return_once(move |_, _| status);
-        model.expect_get_installed_package_records().returning(|_| {
-            Ok(std::collections::BTreeMap::new())
-        });
+        model
+            .expect_get_installed_package_records()
+            .returning(|_| Ok(std::collections::BTreeMap::new()));
         // Workflow exists but has no ID (null/checked state)
         model.expect_browse_remote_manifest().returning(|_| {
             let config_uri = quilt::uri::S3Uri {
@@ -2489,9 +2462,9 @@ mod tests {
             hash: "abcdef".to_string(),
             origin: Some("test.quilt.dev".parse().unwrap()),
         };
-        model.expect_get_installed_package().returning(move |_| {
-            Ok(Some(make_installed_package(("foo", "bar"))))
-        });
+        model
+            .expect_get_installed_package()
+            .returning(move |_| Ok(Some(make_installed_package(("foo", "bar")))));
         model
             .expect_get_installed_package_lineage()
             .returning(move |_| {
@@ -2504,9 +2477,9 @@ mod tests {
         model
             .expect_get_installed_package_status()
             .return_once(move |_, _| status);
-        model.expect_get_installed_package_records().returning(|_| {
-            Ok(std::collections::BTreeMap::new())
-        });
+        model
+            .expect_get_installed_package_records()
+            .returning(|_| Ok(std::collections::BTreeMap::new()));
         // No workflow in manifest
         model.expect_browse_remote_manifest().returning(|_| {
             Ok(quilt::manifest::Manifest {

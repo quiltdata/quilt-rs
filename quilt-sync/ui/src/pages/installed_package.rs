@@ -27,9 +27,7 @@ pub fn InstalledPackage() -> impl IntoView {
         refetch.track();
         let namespace = query.read().get("namespace").unwrap_or_default();
         let filter = query.read().get("filter");
-        async move {
-            commands::get_installed_package_data(namespace, filter).await
-        }
+        async move { commands::get_installed_package_data(namespace, filter).await }
     });
 
     view! {
@@ -147,8 +145,7 @@ fn InstalledPackageContent(
         let notification = notification;
         ui_locked.set(true);
         leptos::task::spawn_local(async move {
-            match commands::package_install_paths(uri, paths).await
-            {
+            match commands::package_install_paths(uri, paths).await {
                 Ok(msg) => {
                     notification.set(Some(Notification::Success(msg)));
                     refetch.notify();
@@ -189,10 +186,7 @@ fn InstalledPackageContent(
     });
 
     // Commit button: primary when no remote entries are checked
-    let commit_href = format!(
-        "/commit?namespace={}",
-        namespace
-    );
+    let commit_href = format!("/commit?namespace={}", namespace);
     let commit_href_clone = commit_href.clone();
 
     let ns_for_status = namespace.clone();
@@ -408,7 +402,8 @@ fn build_toolbar_actions(
                     <span>"Remove"</span>
                 </button>
             </li>
-        }.into_any()
+        }
+        .into_any()
     })
 }
 
@@ -446,24 +441,26 @@ fn StatusBanner(
         }
         "diverged" => {
             let merge_href = format!("/merge?namespace={ns}");
-            Some(view! {
-                <StatusBannerInner description="Your commits are detached from the remote">
-                    <a class="qui-button primary" href=merge_href>
-                        <span>"Merge"</span>
-                    </a>
-                </StatusBannerInner>
-            }.into_any())
+            Some(
+                view! {
+                    <StatusBannerInner description="Your commits are detached from the remote">
+                        <a class="qui-button primary" href=merge_href>
+                            <span>"Merge"</span>
+                        </a>
+                    </StatusBannerInner>
+                }
+                .into_any(),
+            )
         }
-        "error" => {
-            match host {
-                Some(ref h) => {
-                    let back = format!("/installed-package?namespace={}&filter=unmodified", urlencoding(&ns));
-                    let login_href = format!(
-                        "/login?host={}&back={}",
-                        h,
-                        urlencoding(&back)
-                    );
-                    Some(view! {
+        "error" => match host {
+            Some(ref h) => {
+                let back = format!(
+                    "/installed-package?namespace={}&filter=unmodified",
+                    urlencoding(&ns)
+                );
+                let login_href = format!("/login?host={}&back={}", h, urlencoding(&back));
+                Some(
+                    view! {
                         <StatusBannerInner description="Unable to check remote status">
                             <a class="qui-button warning" href=login_href>
                                 <img class="qui-icon" src="/assets/img/icons/warning.svg" />
@@ -477,24 +474,26 @@ fn StatusBanner(
                                 <span>"Change origin"</span>
                             </button>
                         </StatusBannerInner>
-                    }.into_any())
-                }
-                None => {
-                    Some(view! {
-                        <StatusBannerInner description="No catalog origin configured">
-                            <button
-                                class="qui-button warning"
-                                type="button"
-                                on:click=move |_| show_origin_popup.set(true)
-                            >
-                                <img class="qui-icon" src="/assets/img/icons/warning.svg" />
-                                <span>"Set origin"</span>
-                            </button>
-                        </StatusBannerInner>
-                    }.into_any())
-                }
+                    }
+                    .into_any(),
+                )
             }
-        }
+            None => Some(
+                view! {
+                    <StatusBannerInner description="No catalog origin configured">
+                        <button
+                            class="qui-button warning"
+                            type="button"
+                            on:click=move |_| show_origin_popup.set(true)
+                        >
+                            <img class="qui-icon" src="/assets/img/icons/warning.svg" />
+                            <span>"Set origin"</span>
+                        </button>
+                    </StatusBannerInner>
+                }
+                .into_any(),
+            ),
+        },
         "local" if origin_host.is_some() => {
             let ns = ns.clone();
             Some(view! {
@@ -512,10 +511,7 @@ fn StatusBanner(
 }
 
 #[component]
-fn StatusBannerInner(
-    description: &'static str,
-    children: Children,
-) -> impl IntoView {
+fn StatusBannerInner(description: &'static str, children: Children) -> impl IntoView {
     view! {
         <div class="qui-status">
             <div class="root">
@@ -929,5 +925,3 @@ fn EntryRow(
         </div>
     }
 }
-
-

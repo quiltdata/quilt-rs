@@ -294,7 +294,15 @@ pub async fn package_create(
         source: Option<String>,
         message: Option<String>,
     }
-    tauri::invoke("package_create", &Args { namespace, source, message }).await
+    tauri::invoke(
+        "package_create",
+        &Args {
+            namespace,
+            source,
+            message,
+        },
+    )
+    .await
 }
 
 // ── Merge actions ───────────────────────────────────────────
@@ -433,11 +441,7 @@ pub async fn open_in_default_application(
         namespace: String,
         path: String,
     }
-    tauri::invoke(
-        "open_in_default_application",
-        &Args { namespace, path },
-    )
-    .await
+    tauri::invoke("open_in_default_application", &Args { namespace, path }).await
 }
 
 pub async fn reveal_in_file_browser(namespace: String, path: String) -> Result<String, String> {

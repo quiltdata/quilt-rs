@@ -82,8 +82,7 @@ pub fn IgnorePopup(
         let ns = ns_for_submit.clone();
         let on_close = on_close_for_submit.clone();
         leptos::task::spawn_local(async move {
-            match commands::add_to_quiltignore(ns, p).await
-            {
+            match commands::add_to_quiltignore(ns, p).await {
                 Ok(msg) => {
                     notification.set(Some(Notification::Success(msg)));
                     on_close();
@@ -184,8 +183,7 @@ pub fn UnignorePopup(
         let ns = ns.clone();
         let on_close = on_close_for_edit.clone();
         leptos::task::spawn_local(async move {
-            match commands::open_in_default_application(ns, ".quiltignore".to_string()).await
-            {
+            match commands::open_in_default_application(ns, ".quiltignore".to_string()).await {
                 Ok(msg) => notification.set(Some(Notification::Success(msg))),
                 Err(e) => notification.set(Some(Notification::Error(e))),
             }

@@ -19,7 +19,6 @@ impl LogsDir {
             LogsDir::Temporary(temp_dir) => temp_dir.path(),
         }
     }
-
 }
 
 fn get_logs_dir(base_path: &Path) -> Result<LogsDir> {

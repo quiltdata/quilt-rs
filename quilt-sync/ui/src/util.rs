@@ -17,7 +17,9 @@ fn is_valid_label(label: &str) -> bool {
     !bytes.is_empty()
         && bytes[0].is_ascii_alphanumeric()
         && bytes[bytes.len() - 1].is_ascii_alphanumeric()
-        && bytes.iter().all(|&b| b.is_ascii_alphanumeric() || b == b'-')
+        && bytes
+            .iter()
+            .all(|&b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
 pub fn format_size(bytes: u64) -> String {

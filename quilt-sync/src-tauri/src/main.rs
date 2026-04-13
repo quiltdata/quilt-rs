@@ -9,8 +9,8 @@ use crate::telemetry::prelude::*;
 
 mod app;
 mod changelog;
-mod commit_message;
 mod commands;
+mod commit_message;
 mod debug_tools;
 mod env;
 mod error;

@@ -51,7 +51,11 @@ pub fn Settings() -> impl IntoView {
 // ── Main content (rendered after data loads) ──
 
 #[component]
-fn SettingsContent(data: SettingsData, notification: RwSignal<Option<Notification>>, refetch: Trigger) -> impl IntoView {
+fn SettingsContent(
+    data: SettingsData,
+    notification: RwSignal<Option<Notification>>,
+    refetch: Trigger,
+) -> impl IntoView {
     let zip_path = RwSignal::new(None::<String>);
 
     view! {
@@ -166,7 +170,11 @@ fn GeneralSection(
 // ── Account section ──
 
 #[component]
-fn AccountSection(auth_hosts: Vec<String>, notification: RwSignal<Option<Notification>>, refetch: Trigger) -> impl IntoView {
+fn AccountSection(
+    auth_hosts: Vec<String>,
+    notification: RwSignal<Option<Notification>>,
+    refetch: Trigger,
+) -> impl IntoView {
     view! {
         <section class="settings-section">
             <h2 class="section-title">"Auth"</h2>
@@ -190,7 +198,11 @@ fn AccountSection(auth_hosts: Vec<String>, notification: RwSignal<Option<Notific
 }
 
 #[component]
-fn AuthHostRow(host: String, notification: RwSignal<Option<Notification>>, refetch: Trigger) -> impl IntoView {
+fn AuthHostRow(
+    host: String,
+    notification: RwSignal<Option<Notification>>,
+    refetch: Trigger,
+) -> impl IntoView {
     let host_display = host.clone();
     let host_for_logout = host.clone();
     let back_encoded = urlencoding("/settings");
@@ -439,4 +451,3 @@ fn ReleaseNotesPopup(
         </div>
     }
 }
-

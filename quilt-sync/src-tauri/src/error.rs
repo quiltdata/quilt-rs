@@ -95,22 +95,18 @@ impl Error {
     /// all other errors.
     pub fn to_frontend_string(&self) -> String {
         match self {
-            Error::Quilt(quilt::Error::LoginRequired(host)) => {
-                serde_json::json!({
-                    "kind": "login_required",
-                    "message": self.to_string(),
-                    "host": host.as_ref().map(|h| h.to_string()).unwrap_or_default(),
-                })
-                .to_string()
-            }
-            Error::Quilt(quilt::Error::LoginRequiredRegistryUrl(host)) => {
-                serde_json::json!({
-                    "kind": "login_required",
-                    "message": self.to_string(),
-                    "host": host.to_string(),
-                })
-                .to_string()
-            }
+            Error::Quilt(quilt::Error::LoginRequired(host)) => serde_json::json!({
+                "kind": "login_required",
+                "message": self.to_string(),
+                "host": host.as_ref().map(|h| h.to_string()).unwrap_or_default(),
+            })
+            .to_string(),
+            Error::Quilt(quilt::Error::LoginRequiredRegistryUrl(host)) => serde_json::json!({
+                "kind": "login_required",
+                "message": self.to_string(),
+                "host": host.to_string(),
+            })
+            .to_string(),
             Error::Quilt(quilt::Error::LineageMissing | quilt::Error::LineageMissingHome) => {
                 serde_json::json!({
                     "kind": "setup_required",

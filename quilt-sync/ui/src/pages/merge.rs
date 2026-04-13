@@ -15,9 +15,7 @@ pub fn Merge() -> impl IntoView {
     let query = use_query_map();
     let data = LocalResource::new(move || {
         let namespace = query.read().get("namespace").unwrap_or_default();
-        async move {
-            commands::get_merge_data(namespace).await
-        }
+        async move { commands::get_merge_data(namespace).await }
     });
 
     view! {

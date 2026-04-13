@@ -10,9 +10,7 @@ use crate::components::{Layout, Spinner};
 pub fn Setup() -> impl IntoView {
     let notification = RwSignal::new(None);
 
-    let data = LocalResource::new(move || async {
-        commands::get_setup_data().await
-    });
+    let data = LocalResource::new(move || async { commands::get_setup_data().await });
 
     view! {
         <Layout breadcrumbs=vec![] notification=notification>

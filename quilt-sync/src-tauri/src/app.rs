@@ -17,5 +17,4 @@ impl App {
             logs_dir,
         }
     }
-
 }

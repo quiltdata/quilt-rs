@@ -482,10 +482,7 @@ fn build_error_action(
         _ if origin_host.is_some() && status == "error" => {
             let host = origin_host.unwrap().to_string();
             let back_encoded = urlencoding("/installed-packages-list");
-            let login_href = format!(
-                "/login?host={}&back={back_encoded}",
-                host
-            );
+            let login_href = format!("/login?host={}&back={back_encoded}", host);
             Some(
                 view! {
                     <a class="qui-button warning small" href=login_href>
@@ -791,5 +788,3 @@ fn SetRemotePopup(
         </div>
     }
 }
-
-

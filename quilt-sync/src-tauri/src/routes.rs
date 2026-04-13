@@ -37,7 +37,6 @@ impl EntriesFilter {
         }
         f
     }
-
 }
 
 impl fmt::Display for EntriesFilter {
@@ -405,10 +404,7 @@ mod tests {
             Url::parse("http://test:1234/")?,
         );
         let page_url_str = page_url.as_str();
-        assert_eq!(
-            page_url_str,
-            "http://test:1234/commit?namespace=foo/bar"
-        );
+        assert_eq!(page_url_str, "http://test:1234/commit?namespace=foo/bar");
 
         let route: Paths = page_url_str.parse()?;
 
@@ -461,10 +457,7 @@ mod tests {
             route,
             Paths::InstalledPackage(("foo", "bar").into(), EntriesFilter::default())
         );
-        assert_eq!(
-            format!("{route}"),
-            "/installed-package?namespace=foo/bar"
-        );
+        assert_eq!(format!("{route}"), "/installed-package?namespace=foo/bar");
 
         Ok(())
     }
@@ -498,10 +491,7 @@ mod tests {
             Url::parse("http://test:1234/")?,
         );
         let page_url_str = page_url.as_str();
-        assert_eq!(
-            page_url_str,
-            "http://test:1234/installed-packages-list"
-        );
+        assert_eq!(page_url_str, "http://test:1234/installed-packages-list");
 
         let route: Paths = page_url_str.parse()?;
 
@@ -546,8 +536,7 @@ mod tests {
             Url::parse("http://test:1234/")?,
         );
         let page_url_str = page_url.as_str();
-        assert!(page_url_str
-            .starts_with("http://test:1234/error?host=test.quilt.dev&title="));
+        assert!(page_url_str.starts_with("http://test:1234/error?host=test.quilt.dev&title="));
 
         let route: Paths = page_url_str.parse()?;
         assert_eq!(
@@ -581,10 +570,7 @@ mod tests {
             Url::parse("http://test:1234/")?,
         );
         let page_url_str = page_url.as_str();
-        assert_eq!(
-            page_url_str,
-            "http://test:1234/merge?namespace=foo/bar"
-        );
+        assert_eq!(page_url_str, "http://test:1234/merge?namespace=foo/bar");
 
         let route: Paths = page_url_str.parse()?;
 

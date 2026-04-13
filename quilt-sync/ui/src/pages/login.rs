@@ -15,9 +15,7 @@ pub fn Login() -> impl IntoView {
     let data = LocalResource::new(move || {
         let host = query.read().get("host").unwrap_or_default();
         let back = query.read().get("back").unwrap_or_default();
-        async move {
-            commands::get_login_data(host, back).await
-        }
+        async move { commands::get_login_data(host, back).await }
     });
 
     view! {
