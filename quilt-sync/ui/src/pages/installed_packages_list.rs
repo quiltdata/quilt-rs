@@ -4,6 +4,7 @@ use wasm_bindgen::JsCast;
 use crate::commands::{self, PackageItemData};
 use crate::components::layout::BreadcrumbItem;
 use crate::components::{Layout, Notification, Spinner, ToolbarActions};
+use crate::util::is_valid_hostname;
 
 // ── Installed Packages List page ──
 
@@ -918,14 +919,6 @@ fn SetOriginPopup(
 }
 
 // ── Helpers ──
-
-fn is_valid_hostname(value: &str) -> bool {
-    let re = js_sys::RegExp::new(
-        r"^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+$",
-        "",
-    );
-    re.test(value)
-}
 
 
 fn urlencoding(s: &str) -> String {

@@ -4,6 +4,7 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 use crate::commands::{self, EntryData, InstalledPackageData};
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{Layout, Notification, Spinner, ToolbarActions};
+use crate::util::is_valid_hostname;
 
 // ── Installed Package page ──
 
@@ -1278,13 +1279,5 @@ fn urlencoding(s: &str) -> String {
     js_sys::encode_uri_component(s)
         .as_string()
         .unwrap_or_default()
-}
-
-fn is_valid_hostname(value: &str) -> bool {
-    let re = js_sys::RegExp::new(
-        r"^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+$",
-        "",
-    );
-    re.test(value)
 }
 
