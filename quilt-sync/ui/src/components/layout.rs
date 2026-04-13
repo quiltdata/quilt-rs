@@ -23,7 +23,7 @@ pub enum BreadcrumbItem {
     Current(String),
 }
 
-/// Top-level page layout matching the existing Askama layout.html structure.
+/// Top-level page layout.
 ///
 /// Provides: app bar, toolbar with breadcrumbs and optional actions,
 /// notification area, content slot (children), and popup overlay.
