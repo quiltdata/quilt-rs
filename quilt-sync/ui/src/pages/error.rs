@@ -9,9 +9,11 @@ use crate::components::{Layout, Notification, Spinner};
 #[component]
 pub fn Error() -> impl IntoView {
     let notification = RwSignal::new(None);
+    let refetch = Trigger::new();
 
     let query = use_query_map();
     let data = LocalResource::new(move || {
+        refetch.track();
         let host = query.read().get("host").unwrap_or_default();
         let title = query.read().get("title");
         let error = query.read().get("error").unwrap_or_default();
@@ -29,7 +31,7 @@ pub fn Error() -> impl IntoView {
                     match data.await {
                         Ok(d) => {
                             view! {
-                                <ErrorContent data=d notification=notification />
+                                <ErrorContent data=d notification=notification refetch=refetch />
                             }
                                 .into_any()
                         }
@@ -52,9 +54,9 @@ pub fn Error() -> impl IntoView {
 // ── Main content (rendered after data loads) ──
 
 #[component]
-fn ErrorContent(data: LoginErrorData, notification: RwSignal<Option<Notification>>) -> impl IntoView {
+fn ErrorContent(data: LoginErrorData, notification: RwSignal<Option<Notification>>, refetch: Trigger) -> impl IntoView {
     let on_reload = move |_| {
-        let _ = web_sys::window().and_then(|w| w.location().reload().ok());
+        refetch.notify();
     };
 
     let on_dot_quilt = move |_| {

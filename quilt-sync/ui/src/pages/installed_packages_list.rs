@@ -11,9 +11,11 @@ use crate::components::{Layout, Notification, Spinner, ToolbarActions};
 pub fn InstalledPackagesList() -> impl IntoView {
     let notification = RwSignal::new(None);
     let ui_locked = RwSignal::new(false);
+    let refetch = Trigger::new();
 
-    let data = LocalResource::new(move || async {
-        commands::get_installed_packages_list_data().await
+    let data = LocalResource::new(move || {
+        refetch.track();
+        async { commands::get_installed_packages_list_data().await }
     });
 
     view! {
@@ -52,6 +54,7 @@ pub fn InstalledPackagesList() -> impl IntoView {
                                     packages=d.packages
                                     notification=notification
                                     ui_locked=ui_locked
+                                    refetch=refetch
                                     show_create_popup=show_create_popup
                                 />
                             </Layout>
@@ -82,6 +85,7 @@ fn PackagesListContent(
     packages: Vec<PackageItemData>,
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
+    refetch: Trigger,
     show_create_popup: RwSignal<bool>,
 ) -> impl IntoView {
     let show_set_remote_popup = RwSignal::new(None::<String>);
@@ -108,6 +112,7 @@ fn PackagesListContent(
                                     data=pkg
                                     notification=notification
                                     ui_locked=ui_locked
+                                    refetch=refetch
                                     show_set_remote_popup=show_set_remote_popup
                                     show_set_origin_popup=show_set_origin_popup
                                 />
@@ -122,6 +127,7 @@ fn PackagesListContent(
         <Show when=move || show_create_popup.get()>
             <CreatePackagePopup
                 notification=notification
+                refetch=refetch
                 on_close=move || show_create_popup.set(false)
             />
         </Show>
@@ -132,6 +138,7 @@ fn PackagesListContent(
                     <SetRemotePopup
                         namespace=ns
                         notification=notification
+                        refetch=refetch
                         on_close=move || show_set_remote_popup.set(None)
                     />
                 }
@@ -145,6 +152,7 @@ fn PackagesListContent(
                         namespace=data.namespace
                         current_origin=data.current_origin
                         notification=notification
+                        refetch=refetch
                         on_close=move || show_set_origin_popup.set(None)
                     />
                 }
@@ -160,6 +168,7 @@ fn PackageItem(
     data: PackageItemData,
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
+    refetch: Trigger,
     show_set_remote_popup: RwSignal<Option<String>>,
     show_set_origin_popup: RwSignal<Option<SetOriginPopupData>>,
 ) -> impl IntoView {
@@ -183,6 +192,7 @@ fn PackageItem(
         &data,
         notification,
         ui_locked,
+        refetch,
         show_set_remote_popup,
         show_set_origin_popup,
     );
@@ -211,6 +221,7 @@ fn build_package_menu(
     data: &PackageItemData,
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
+    refetch: Trigger,
     show_set_remote_popup: RwSignal<Option<String>>,
     show_set_origin_popup: RwSignal<Option<SetOriginPopupData>>,
 ) -> impl IntoView {
@@ -280,7 +291,7 @@ fn build_package_menu(
             match commands::package_uninstall(ns).await {
                 Ok(msg) => {
                     notification.set(Some(Notification::Success(msg)));
-                    let _ = web_sys::window().and_then(|w| w.location().reload().ok());
+                    refetch.notify();
                 }
                 Err(e) => {
                     ui_locked.set(false);
@@ -334,7 +345,7 @@ fn build_package_menu(
         {sync_button.map(|action| view! {
             <li class="menu-item menu-divider"></li>
             <li class="menu-item">
-                <SyncButton action=action notification=notification ui_locked=ui_locked />
+                <SyncButton action=action notification=notification ui_locked=ui_locked refetch=refetch />
             </li>
         })}
 
@@ -384,6 +395,7 @@ fn SyncButton(
     action: SyncAction,
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
+    refetch: Trigger,
 ) -> impl IntoView {
     let busy = RwSignal::new(false);
 
@@ -422,7 +434,7 @@ fn SyncButton(
             match result {
                 Ok(msg) => {
                     notification.set(Some(Notification::Success(msg)));
-                    let _ = web_sys::window().and_then(|w| w.location().reload().ok());
+                    refetch.notify();
                 }
                 Err(e) => {
                     ui_locked.set(false);
@@ -526,6 +538,7 @@ fn build_error_action(
 #[component]
 fn CreatePackagePopup(
     notification: RwSignal<Option<Notification>>,
+    refetch: Trigger,
     on_close: impl Fn() + Clone + 'static,
 ) -> impl IntoView {
     let namespace = RwSignal::new(String::new());
@@ -546,7 +559,7 @@ fn CreatePackagePopup(
                 Ok(msg) => {
                     notification.set(Some(Notification::Success(msg)));
                     on_close();
-                    let _ = web_sys::window().and_then(|w| w.location().reload().ok());
+                    refetch.notify();
                 }
                 Err(e) => {
                     notification.set(Some(Notification::Error(e)));
@@ -635,6 +648,7 @@ fn CreatePackagePopup(
 fn SetRemotePopup(
     namespace: String,
     notification: RwSignal<Option<Notification>>,
+    refetch: Trigger,
     on_close: impl Fn() + Clone + 'static,
 ) -> impl IntoView {
     let origin = RwSignal::new(String::new());
@@ -673,7 +687,7 @@ fn SetRemotePopup(
                 Ok(msg) => {
                     notification.set(Some(Notification::Success(msg)));
                     on_close();
-                    let _ = web_sys::window().and_then(|w| w.location().reload().ok());
+                    refetch.notify();
                 }
                 Err(e) => {
                     notification.set(Some(Notification::Error(e)));
@@ -802,6 +816,7 @@ fn SetOriginPopup(
     namespace: String,
     current_origin: String,
     notification: RwSignal<Option<Notification>>,
+    refetch: Trigger,
     on_close: impl Fn() + Clone + 'static,
 ) -> impl IntoView {
     let origin = RwSignal::new(current_origin);
@@ -827,7 +842,7 @@ fn SetOriginPopup(
                 Ok(msg) => {
                     notification.set(Some(Notification::Success(msg)));
                     on_close();
-                    let _ = web_sys::window().and_then(|w| w.location().reload().ok());
+                    refetch.notify();
                 }
                 Err(e) => {
                     notification.set(Some(Notification::Error(e)));

@@ -11,9 +11,11 @@ use crate::components::{Layout, Notification, Spinner, ToolbarActions};
 pub fn Commit() -> impl IntoView {
     let notification = RwSignal::new(None);
     let ui_locked = RwSignal::new(false);
+    let refetch = Trigger::new();
 
     let query = use_query_map();
     let data = LocalResource::new(move || {
+        refetch.track();
         let namespace = query.read().get("namespace").unwrap_or_default();
         async move {
             commands::get_commit_data(namespace).await
@@ -50,7 +52,7 @@ pub fn Commit() -> impl IntoView {
                         let actions = build_toolbar_actions(&d, notification, ui_locked);
                         view! {
                             <Layout breadcrumbs=breadcrumbs notification=notification actions=actions ui_locked=ui_locked>
-                                <CommitContent data=d notification=notification ui_locked=ui_locked />
+                                <CommitContent data=d notification=notification ui_locked=ui_locked refetch=refetch />
                             </Layout>
                         }
                             .into_any()
@@ -79,6 +81,7 @@ fn CommitContent(
     data: CommitData,
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
+    refetch: Trigger,
 ) -> impl IntoView {
     let navigate = use_navigate();
     let filter_unmodified = RwSignal::new(false);
@@ -310,6 +313,7 @@ fn CommitContent(
                     <IgnorePopup
                         data=data
                         notification=notification
+                        refetch=refetch
                         on_close=move || show_ignore_popup.set(None)
                     />
                 }
@@ -754,6 +758,7 @@ enum IgnoreHint {
 fn IgnorePopup(
     data: IgnorePopupData,
     notification: RwSignal<Option<Notification>>,
+    refetch: Trigger,
     on_close: impl Fn() + Clone + 'static,
 ) -> impl IntoView {
     let pattern = RwSignal::new(data.suggested_pattern.clone());
@@ -817,7 +822,7 @@ fn IgnorePopup(
                 Ok(msg) => {
                     notification.set(Some(Notification::Success(msg)));
                     on_close();
-                    let _ = web_sys::window().and_then(|w| w.location().reload().ok());
+                    refetch.notify();
                 }
                 Err(e) => {
                     notification.set(Some(Notification::Error(e)));

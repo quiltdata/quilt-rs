@@ -9,9 +9,11 @@ use crate::components::{Layout, Notification, Spinner};
 #[component]
 pub fn Settings() -> impl IntoView {
     let notification = RwSignal::new(None);
+    let refetch = Trigger::new();
 
-    let data = LocalResource::new(move || async {
-        commands::get_settings_data().await
+    let data = LocalResource::new(move || {
+        refetch.track();
+        async { commands::get_settings_data().await }
     });
 
     let breadcrumbs = vec![
@@ -30,7 +32,7 @@ pub fn Settings() -> impl IntoView {
                 {move || Suspend::new(async move {
                     match data.await {
                         Ok(d) => {
-                            view! { <SettingsContent data=d notification=notification /> }.into_any()
+                            view! { <SettingsContent data=d notification=notification refetch=refetch /> }.into_any()
                         }
                         Err(e) => {
                             let msg = format!("Failed to load settings: {e}");
@@ -51,7 +53,7 @@ pub fn Settings() -> impl IntoView {
 // ── Main content (rendered after data loads) ──
 
 #[component]
-fn SettingsContent(data: SettingsData, notification: RwSignal<Option<Notification>>) -> impl IntoView {
+fn SettingsContent(data: SettingsData, notification: RwSignal<Option<Notification>>, refetch: Trigger) -> impl IntoView {
     let zip_path = RwSignal::new(None::<String>);
 
     view! {
@@ -63,7 +65,7 @@ fn SettingsContent(data: SettingsData, notification: RwSignal<Option<Notificatio
                 changelog=data.changelog
                 notification=notification
             />
-            <AccountSection auth_hosts=data.auth_hosts notification=notification />
+            <AccountSection auth_hosts=data.auth_hosts notification=notification refetch=refetch />
             <DiagnosticsSection
                 version=data.version
                 os=data.os
@@ -166,7 +168,7 @@ fn GeneralSection(
 // ── Account section ──
 
 #[component]
-fn AccountSection(auth_hosts: Vec<String>, notification: RwSignal<Option<Notification>>) -> impl IntoView {
+fn AccountSection(auth_hosts: Vec<String>, notification: RwSignal<Option<Notification>>, refetch: Trigger) -> impl IntoView {
     view! {
         <section class="settings-section">
             <h2 class="section-title">"Auth"</h2>
@@ -178,7 +180,7 @@ fn AccountSection(auth_hosts: Vec<String>, notification: RwSignal<Option<Notific
                         {auth_hosts
                             .into_iter()
                             .map(|host| {
-                                view! { <AuthHostRow host=host notification=notification /> }
+                                view! { <AuthHostRow host=host notification=notification refetch=refetch /> }
                             })
                             .collect_view()}
                     </dl>
@@ -190,7 +192,7 @@ fn AccountSection(auth_hosts: Vec<String>, notification: RwSignal<Option<Notific
 }
 
 #[component]
-fn AuthHostRow(host: String, notification: RwSignal<Option<Notification>>) -> impl IntoView {
+fn AuthHostRow(host: String, notification: RwSignal<Option<Notification>>, refetch: Trigger) -> impl IntoView {
     let host_display = host.clone();
     let host_for_logout = host.clone();
     let back_encoded = urlencoding("/settings");
@@ -218,7 +220,7 @@ fn AuthHostRow(host: String, notification: RwSignal<Option<Notification>>) -> im
                                         .set(Some(Notification::Error(e)))
                                 }
                             }
-                            let _ = web_sys::window().and_then(|w| w.location().reload().ok());
+                            refetch.notify();
                         });
                     }
                 >

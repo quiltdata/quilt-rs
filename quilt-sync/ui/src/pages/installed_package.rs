@@ -11,9 +11,11 @@ use crate::components::{Layout, Notification, Spinner, ToolbarActions};
 pub fn InstalledPackage() -> impl IntoView {
     let notification = RwSignal::new(None);
     let ui_locked = RwSignal::new(false);
+    let refetch = Trigger::new();
 
     let query = use_query_map();
     let data = LocalResource::new(move || {
+        refetch.track();
         let namespace = query.read().get("namespace").unwrap_or_default();
         let filter = query.read().get("filter");
         async move {
@@ -43,7 +45,7 @@ pub fn InstalledPackage() -> impl IntoView {
                         let actions = build_toolbar_actions(&d, notification, ui_locked);
                         view! {
                             <Layout breadcrumbs=breadcrumbs notification=notification actions=actions ui_locked=ui_locked>
-                                <InstalledPackageContent data=d notification=notification ui_locked=ui_locked />
+                                <InstalledPackageContent data=d notification=notification ui_locked=ui_locked refetch=refetch />
                             </Layout>
                         }
                             .into_any()
@@ -74,6 +76,7 @@ fn InstalledPackageContent(
     data: InstalledPackageData,
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
+    refetch: Trigger,
 ) -> impl IntoView {
     let filter_unmodified = RwSignal::new(data.filter_unmodified);
     let filter_ignored = RwSignal::new(data.filter_ignored);
@@ -145,7 +148,7 @@ fn InstalledPackageContent(
             {
                 Ok(msg) => {
                     notification.set(Some(Notification::Success(msg)));
-                    let _ = web_sys::window().and_then(|w| w.location().reload().ok());
+                    refetch.notify();
                 }
                 Err(e) => {
                     ui_locked.set(false);
@@ -204,6 +207,7 @@ fn InstalledPackageContent(
                     origin_host=origin_host_for_status
                     notification=notification
                     ui_locked=ui_locked
+                    refetch=refetch
                     show_origin_popup=show_origin_popup
                 />
 
@@ -287,6 +291,7 @@ fn InstalledPackageContent(
                     <IgnorePopup
                         data=data
                         notification=notification
+                        refetch=refetch
                         on_close=move || show_ignore_popup.set(None)
                     />
                 }
@@ -310,6 +315,7 @@ fn InstalledPackageContent(
                 namespace=data.namespace.clone()
                 current_origin=data.origin_host.clone().unwrap_or_default()
                 notification=notification
+                refetch=refetch
                 on_close=move || show_origin_popup.set(false)
             />
         </Show>
@@ -412,6 +418,7 @@ fn StatusBanner(
     origin_host: Option<String>,
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
+    refetch: Trigger,
     show_origin_popup: RwSignal<bool>,
 ) -> impl IntoView {
     let ns = namespace.clone();
@@ -422,7 +429,7 @@ fn StatusBanner(
             let ns = ns.clone();
             Some(view! {
                 <StatusBannerInner description="Your commits are ahead of the remote">
-                    <PushButton namespace=ns notification=notification ui_locked=ui_locked />
+                    <PushButton namespace=ns notification=notification ui_locked=ui_locked refetch=refetch />
                 </StatusBannerInner>
             }.into_any())
         }
@@ -430,7 +437,7 @@ fn StatusBanner(
             let ns = ns.clone();
             Some(view! {
                 <StatusBannerInner description="Your commits are behind the remote">
-                    <PullButton namespace=ns notification=notification ui_locked=ui_locked />
+                    <PullButton namespace=ns notification=notification ui_locked=ui_locked refetch=refetch />
                 </StatusBannerInner>
             }.into_any())
         }
@@ -493,7 +500,7 @@ fn StatusBanner(
             let ns = ns.clone();
             Some(view! {
                 <StatusBannerInner description="Push to remote">
-                    <PushButton namespace=ns notification=notification ui_locked=ui_locked />
+                    <PushButton namespace=ns notification=notification ui_locked=ui_locked refetch=refetch />
                 </StatusBannerInner>
             }.into_any())
         }
@@ -527,6 +534,7 @@ fn PushButton(
     namespace: String,
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
+    refetch: Trigger,
 ) -> impl IntoView {
     let pushing = RwSignal::new(false);
     view! {
@@ -543,7 +551,7 @@ fn PushButton(
                     match commands::package_push(ns).await {
                         Ok(msg) => {
                             notification.set(Some(Notification::Success(msg)));
-                            let _ = web_sys::window().and_then(|w| w.location().reload().ok());
+                            refetch.notify();
                         }
                         Err(e) => {
                             ui_locked.set(false);
@@ -564,6 +572,7 @@ fn PullButton(
     namespace: String,
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
+    refetch: Trigger,
 ) -> impl IntoView {
     let pulling = RwSignal::new(false);
     view! {
@@ -580,7 +589,7 @@ fn PullButton(
                     match commands::package_pull(ns).await {
                         Ok(msg) => {
                             notification.set(Some(Notification::Success(msg)));
-                            let _ = web_sys::window().and_then(|w| w.location().reload().ok());
+                            refetch.notify();
                         }
                         Err(e) => {
                             ui_locked.set(false);
@@ -942,6 +951,7 @@ enum IgnoreHint {
 fn IgnorePopup(
     data: IgnorePopupData,
     notification: RwSignal<Option<Notification>>,
+    refetch: Trigger,
     on_close: impl Fn() + Clone + 'static,
 ) -> impl IntoView {
     let pattern = RwSignal::new(data.suggested_pattern.clone());
@@ -1007,7 +1017,7 @@ fn IgnorePopup(
                 Ok(msg) => {
                     notification.set(Some(Notification::Success(msg)));
                     on_close();
-                    let _ = web_sys::window().and_then(|w| w.location().reload().ok());
+                    refetch.notify();
                 }
                 Err(e) => {
                     notification.set(Some(Notification::Error(e)));
@@ -1140,6 +1150,7 @@ fn SetOriginPopup(
     namespace: String,
     current_origin: String,
     notification: RwSignal<Option<Notification>>,
+    refetch: Trigger,
     on_close: impl Fn() + Clone + 'static,
 ) -> impl IntoView {
     let origin = RwSignal::new(current_origin);
@@ -1167,7 +1178,7 @@ fn SetOriginPopup(
                 Ok(msg) => {
                     notification.set(Some(Notification::Success(msg)));
                     on_close();
-                    let _ = web_sys::window().and_then(|w| w.location().reload().ok());
+                    refetch.notify();
                 }
                 Err(e) => {
                     notification.set(Some(Notification::Error(e)));
