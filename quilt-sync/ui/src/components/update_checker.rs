@@ -2,6 +2,8 @@ use leptos::prelude::*;
 
 use crate::commands;
 
+// Intentionally short: we want to aggressively encourage updates.
+// Previously this was a fully automatic updater; 5 minutes is a concession.
 const DISMISS_DURATION_MS: f64 = 5.0 * 60.0 * 1000.0;
 const STORAGE_KEY: &str = "updateDismissedAt";
 
