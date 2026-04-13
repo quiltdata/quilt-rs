@@ -25,6 +25,9 @@ pub fn Settings() -> impl IntoView {
         BreadcrumbItem::Current("Settings".to_string()),
     ];
 
+    // Layout wraps Suspense here (not the other way around) because
+    // breadcrumbs are static and can render immediately while data loads.
+    // Pages with data-dependent breadcrumbs use Suspense outside Layout.
     view! {
         <Layout breadcrumbs=breadcrumbs notification=notification>
             <Suspense fallback=move || {

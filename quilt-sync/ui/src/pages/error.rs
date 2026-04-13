@@ -22,6 +22,9 @@ pub fn Error() -> impl IntoView {
         }
     });
 
+    // Layout wraps Suspense here (not the other way around) because
+    // breadcrumbs are static and can render immediately while data loads.
+    // Pages with data-dependent breadcrumbs use Suspense outside Layout.
     view! {
         <Layout breadcrumbs=vec![] notification=notification>
             <Suspense fallback=move || {
