@@ -217,7 +217,9 @@ async fn get_installed_package_data_from_model(
             .filter(|f| !installed_paths.contains_key(*f) && !modified_entries.contains_key(*f))
             .count();
 
-    let has_remote_entries = entries_list.iter().any(|e| e.status == "remote");
+    let has_remote_entries = manifest_entries
+        .keys()
+        .any(|f| !installed_paths.contains_key(f) && !modified_entries.contains_key(f));
 
     let status_str = match pkg_status.upstream_state {
         quilt::lineage::UpstreamState::UpToDate => "up_to_date",
