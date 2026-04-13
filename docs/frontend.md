@@ -189,7 +189,7 @@ Reusable Askama sub-templates with builder-pattern Rust structs:
 - `layout::Layout` -- page shell (appbar, toolbar, notification
   area, popup overlay, action bar)
 - `uri::TmplUri` -- package URI display
-- `notify::TmplNotify` -- success/error notification snippets
+- `notify::Notify` -- success/error notification result mapper
 
 ### Layout template (`src/templates/components/layout.html`)
 

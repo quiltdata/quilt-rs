@@ -1,11 +1,11 @@
 use crate::telemetry::prelude::*;
 
-pub struct TmplNotify;
+pub struct Notify;
 
-impl TmplNotify {
+impl Notify {
     pub fn new(debug_msg: String) -> Self {
         debug!("{}", debug_msg);
-        TmplNotify
+        Notify
     }
 
     pub fn map<T, E: std::fmt::Display, F>(
@@ -37,14 +37,14 @@ mod tests {
 
     #[test]
     fn test_success() {
-        let notify = TmplNotify::new("test".to_string());
+        let notify = Notify::new("test".to_string());
         let result = notify.map(Ok::<(), &str>(()), "SUCCESS".to_string(), |e| e.to_string());
         assert_eq!(result, Ok("SUCCESS".to_string()));
     }
 
     #[test]
     fn test_error() {
-        let notify = TmplNotify::new("test".to_string());
+        let notify = Notify::new("test".to_string());
         let result = notify.map(
             Err::<(), &str>("something broke"),
             "unused".to_string(),
