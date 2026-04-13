@@ -716,14 +716,15 @@ fn get_json_editor_value(target_id: &str) -> String {
 #[component]
 fn JsonEditor(id: &'static str, initial_value: String) -> impl IntoView {
     let init_value = initial_value.clone();
-    let cb = Closure::<dyn Fn()>::new(move || {
+    // once_into_js creates a JS function that frees the Rust closure after
+    // a single call, avoiding the permanent leak from Closure::forget().
+    let cb = Closure::once_into_js(move || {
         create_json_editor_js(id, &init_value);
     });
     // Schedule after the current frame so Leptos has committed the DOM.
     if let Some(window) = web_sys::window() {
-        let _ = window.request_animation_frame(cb.as_ref().unchecked_ref());
+        let _ = window.request_animation_frame(cb.unchecked_ref());
     }
-    cb.forget();
 
     on_cleanup(move || {
         destroy_json_editor_js(id);
