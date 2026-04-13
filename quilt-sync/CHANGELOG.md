@@ -13,7 +13,7 @@
 
 ### Changed
 
-- Replace Askama templates, TypeScript, and npm with a Leptos WASM client-side rendered frontend
+- Replace Askama templates, TypeScript, and npm with a Leptos WASM client-side rendered frontend (<https://github.com/quiltdata/quilt-rs/pull/606>)
 
 ## [v0.15.1] - 2026-04-08
 
