@@ -1,10 +1,10 @@
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
 
-use crate::components::Notification;
+use crate::components::{Layout, Notification};
 
 /// Handle a command error by either navigating to an error/login/setup page
-/// or setting the notification signal with the error message.
+/// or rendering a Layout with the error as a notification.
 ///
 /// Call this from each page's `Suspense` error branch instead of showing
 /// raw error text. It replicates the redirect logic from `load_page_command`.
@@ -34,7 +34,12 @@ pub fn handle_or_display(error: &str, notification: RwSignal<Option<Notification
     } else {
         notification.set(Some(Notification::Error(error.to_string())));
     }
-    view! {}.into_any()
+    view! {
+        <Layout breadcrumbs=vec![] notification=notification>
+            <div></div>
+        </Layout>
+    }
+    .into_any()
 }
 
 /// Get the current browser path and query string (e.g. "/installed-package?namespace=user/pkg").
