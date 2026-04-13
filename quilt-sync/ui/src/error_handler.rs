@@ -14,7 +14,7 @@ pub fn handle_or_display(error: &str, notification: RwSignal<Option<Notification
             "login_required" => {
                 let navigate = use_navigate();
                 let host = parsed.host.unwrap_or_default();
-                let back = parsed.back.unwrap_or_default();
+                let back = current_path_and_query();
                 let back_encoded = urlencoding::encode(&back);
                 navigate(
                     &format!("/login?host={host}&back={back_encoded}"),
@@ -37,12 +37,22 @@ pub fn handle_or_display(error: &str, notification: RwSignal<Option<Notification
     view! {}.into_any()
 }
 
+/// Get the current browser path and query string (e.g. "/installed-package?namespace=user/pkg").
+fn current_path_and_query() -> String {
+    web_sys::window()
+        .and_then(|w| {
+            let loc = w.location();
+            let path = loc.pathname().ok()?;
+            let search = loc.search().ok().unwrap_or_default();
+            Some(format!("{path}{search}"))
+        })
+        .unwrap_or_default()
+}
+
 #[derive(serde::Deserialize)]
 struct ErrorResponse {
     kind: String,
     message: String,
     #[serde(default)]
     host: Option<String>,
-    #[serde(default)]
-    back: Option<String>,
 }

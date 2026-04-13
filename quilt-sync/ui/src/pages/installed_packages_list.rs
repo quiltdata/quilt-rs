@@ -63,15 +63,7 @@ pub fn InstalledPackagesList() -> impl IntoView {
                             .into_any()
                     }
                     Err(e) => {
-                        let msg = format!("Failed to load packages list: {e}");
-                        view! {
-                            <Layout breadcrumbs=vec![] notification=notification ui_locked=ui_locked>
-                                <div class="qui-page-installed-packages-list">
-                                    <p>{msg}</p>
-                                </div>
-                            </Layout>
-                        }
-                            .into_any()
+                        crate::error_handler::handle_or_display(&e, notification)
                     }
                 }
             })}

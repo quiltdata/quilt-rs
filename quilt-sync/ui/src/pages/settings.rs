@@ -35,13 +35,7 @@ pub fn Settings() -> impl IntoView {
                             view! { <SettingsContent data=d notification=notification refetch=refetch /> }.into_any()
                         }
                         Err(e) => {
-                            let msg = format!("Failed to load settings: {e}");
-                            view! {
-                                <div class="qui-page-settings container">
-                                    <p>{msg}</p>
-                                </div>
-                            }
-                                .into_any()
+                            crate::error_handler::handle_or_display(&e, notification)
                         }
                     }
                 })}

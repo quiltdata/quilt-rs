@@ -52,17 +52,7 @@ pub fn InstalledPackage() -> impl IntoView {
                             .into_any()
                     }
                     Err(e) => {
-                        let msg = format!("Failed to load package: {e}");
-                        view! {
-                            <Layout breadcrumbs=vec![] notification=notification ui_locked=ui_locked>
-                                <div class="qui-page-installed-package">
-                                    <div class="container">
-                                        <p>{msg}</p>
-                                    </div>
-                                </div>
-                            </Layout>
-                        }
-                            .into_any()
+                        crate::error_handler::handle_or_display(&e, notification)
                     }
                 }
             })}

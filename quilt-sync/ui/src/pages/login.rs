@@ -75,15 +75,15 @@ fn LoginContent(data: LoginData, notification: RwSignal<Option<Notification>>) -
         let back = back_for_submit.clone();
         let navigate = navigate.clone();
         leptos::task::spawn_local(async move {
-            let back_opt = if back.is_empty() { None } else { Some(back.clone()) };
-            match commands::login(host, code.get_untracked(), back_opt.clone()).await {
+            match commands::login(host, code.get_untracked()).await {
                 Ok(msg) => {
                     notification.set(Some(Notification::Success(msg)));
-                    // Rust's login command calls navigate_after_login when back is present;
-                    // only navigate from JS when there is no back to avoid double navigation.
-                    if back_opt.is_none() {
-                        navigate("/installed-packages-list", Default::default());
-                    }
+                    let target = if back.is_empty() {
+                        "/installed-packages-list".to_string()
+                    } else {
+                        back
+                    };
+                    navigate(&target, Default::default());
                 }
                 Err(e) => {
                     notification.set(Some(Notification::Error(e)));

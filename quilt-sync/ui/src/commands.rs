@@ -358,18 +358,13 @@ pub async fn set_remote(
 
 // ── Auth ────────────────────────────────────────────────────
 
-pub async fn login(
-    host: String,
-    code: String,
-    back: Option<String>,
-) -> Result<String, String> {
+pub async fn login(host: String, code: String) -> Result<String, String> {
     #[derive(Serialize)]
     struct Args {
         host: String,
         code: String,
-        back: Option<String>,
     }
-    tauri::invoke("login", &Args { host, code, back }).await
+    tauri::invoke("login", &Args { host, code }).await
 }
 
 pub async fn login_oauth(host: String, back: Option<String>) -> Result<String, String> {

@@ -58,15 +58,7 @@ pub fn Commit() -> impl IntoView {
                             .into_any()
                     }
                     Err(e) => {
-                        let msg = format!("Failed to load commit page: {e}");
-                        view! {
-                            <Layout breadcrumbs=vec![] notification=notification ui_locked=ui_locked>
-                                <div class="qui-page-commit container">
-                                    <p>{msg}</p>
-                                </div>
-                            </Layout>
-                        }
-                            .into_any()
+                        crate::error_handler::handle_or_display(&e, notification)
                     }
                 }
             })}

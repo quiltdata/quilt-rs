@@ -258,7 +258,7 @@ pub async fn get_installed_package_data(
 
     get_installed_package_data_from_model(&*m, &tracing, &namespace, filter)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_frontend_string())
 }
 
 // ── Settings data for Leptos UI ──
@@ -417,7 +417,7 @@ pub async fn get_merge_data(
 
     get_merge_data_from_model(&*m, &tracing, &namespace)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_frontend_string())
 }
 
 // ── Commit data for Leptos UI ──
@@ -637,7 +637,7 @@ pub async fn get_commit_data(
 
     get_commit_data_from_model(&*m, &tracing, &namespace)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_frontend_string())
 }
 
 // ── Installed Packages List data for Leptos UI ──
@@ -753,7 +753,7 @@ pub async fn get_installed_packages_list_data(
 ) -> Result<InstalledPackagesListData, String> {
     get_installed_packages_list_data_from_model(&*m, &tracing)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_frontend_string())
 }
 
 // ── Setup data for Leptos UI ──
@@ -1402,8 +1402,6 @@ async fn login_command(
     tracing: &crate::telemetry::Telemetry,
     host: &str,
     code: String,
-    back: Option<String>,
-    app_handle: &tauri::AppHandle,
 ) -> Result<(), Error> {
     let host = quilt::uri::Host::from_str(host)?;
     model::login(m, &host, code).await?;
@@ -1415,13 +1413,6 @@ async fn login_command(
         })
         .await;
 
-    if let Some(back) = back {
-        let path = back
-            .parse::<routes::Paths>()
-            .map_err(|e| Error::PostLogin(e.to_string()))?;
-        navigate_after_login(app_handle, path).map_err(|e| Error::PostLogin(e.to_string()))?;
-    }
-
     Ok(())
 }
 
@@ -1431,16 +1422,13 @@ pub async fn login(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     host: String,
     code: String,
-    back: Option<String>,
-    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
 ) -> Result<String, String> {
     let msg_init = format!("Login with code for host {host}");
     let msg_ok = format!("Successfully logged in to {host}");
     let msg_err = |err: &Error| format!("Failed to login: {err}");
 
-    let app_handle = app_handle.lock().await;
     Notify::new(msg_init).map(
-        login_command(&m, &tracing, &host, code, back, &app_handle).await,
+        login_command(&m, &tracing, &host, code).await,
         msg_ok,
         msg_err,
     )
@@ -1611,7 +1599,7 @@ pub async fn handle_remote_package(
 
     match model::install_package_only(m, &s3_uri)
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_frontend_string())?
     {
         model::InstallOutcome::DifferentVersion {
             requested_hash,
