@@ -3,10 +3,8 @@
   border-radius: 4px;
   box-sizing: border-box;
   font-size: 1rem;
-  margin: 32px auto 0;
-  max-width: 1024px;
+  margin: 16px 0;
   padding: 16px;
-  width: calc(100% - 32px);
 }
 
 .qui-page-installed-package {

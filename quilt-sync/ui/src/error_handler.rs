@@ -1,13 +1,16 @@
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
 
+use crate::commands;
 use crate::components::{Layout, Notification};
 
 /// Handle a command error by either navigating to an error/login/setup page
-/// or rendering a Layout with the error as a notification.
+/// or rendering an inline error page.
 ///
-/// Call this from each page's `Suspense` error branch instead of showing
-/// raw error text. It replicates the redirect logic from `load_page_command`.
+/// - `login_required` → navigates to `/login`
+/// - `setup_required` → navigates to `/setup`
+/// - anything else → renders an error page inline (preserves the original URL
+///   so a browser reload retries the failed page)
 pub fn handle_or_display(error: &str, notification: RwSignal<Option<Notification>>) -> AnyView {
     if let Ok(parsed) = serde_json::from_str::<ErrorResponse>(error) {
         match parsed.kind.as_str() {
@@ -28,15 +31,41 @@ pub fn handle_or_display(error: &str, notification: RwSignal<Option<Notification
                 return view! {}.into_any();
             }
             _ => {
-                notification.set(Some(Notification::Error(parsed.message)));
+                return render_page_error(&parsed.message, notification);
             }
         }
     } else {
-        notification.set(Some(Notification::Error(error.to_string())));
+        return render_page_error(error, notification);
     }
+}
+
+fn render_page_error(message: &str, notification: RwSignal<Option<Notification>>) -> AnyView {
+    let message = message.to_string();
+    let on_reload = move |_| {
+        let _ = web_sys::window().and_then(|w| w.location().reload().ok());
+    };
+    let on_dot_quilt = move |_| {
+        leptos::task::spawn_local(async move {
+            let _ = commands::debug_dot_quilt().await;
+        });
+    };
     view! {
         <Layout breadcrumbs=vec![] notification=notification>
-            <div></div>
+            <div class="qui-page-error container">
+                <h1 class="title">"Error"</h1>
+                <p class="message">{message}</p>
+                <div class="button-group">
+                    <button class="qui-button" type="button" on:click=on_reload>
+                        <span>"Reload page"</span>
+                    </button>
+                    <button class="qui-button" type="button" on:click=on_dot_quilt>
+                        <span>"Open .quilt directory"</span>
+                    </button>
+                    <a class="qui-button primary" href="/installed-packages-list">
+                        <span>"Go home"</span>
+                    </a>
+                </div>
+            </div>
         </Layout>
     }
     .into_any()

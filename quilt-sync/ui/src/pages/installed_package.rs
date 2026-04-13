@@ -15,12 +15,11 @@ use crate::util::{format_size, urlencoding};
 pub fn InstalledPackage() -> impl IntoView {
     let query = use_query_map();
 
-    // Pick up notification passed via query param (e.g. from remote-package deep link).
-    let initial_notification = query
-        .read_untracked()
-        .get("notification")
-        .map(Notification::Success);
-    let notification = RwSignal::new(initial_notification);
+    // Persistent warning passed via query param (e.g. version mismatch from deep link).
+    // Rendered as inline page content, not as a dismissable notification popup.
+    let page_warning = query.read_untracked().get("notification");
+
+    let notification = RwSignal::new(None);
     let ui_locked = RwSignal::new(false);
     let refetch = Trigger::new();
 
@@ -41,30 +40,33 @@ pub fn InstalledPackage() -> impl IntoView {
                 </Layout>
             }
         }>
-            {move || Suspend::new(async move {
-                match data.await {
-                    Ok(d) => {
-                        let ns = d.namespace.clone();
-                        let breadcrumbs = vec![
-                            BreadcrumbItem::Link(BreadcrumbLink {
-                                href: "/installed-packages-list".to_string(),
-                                title: String::new(),
-                            }),
-                            BreadcrumbItem::Current(ns),
-                        ];
-                        let actions = build_toolbar_actions(&d, notification, ui_locked);
-                        view! {
-                            <Layout breadcrumbs=breadcrumbs notification=notification actions=actions ui_locked=ui_locked>
-                                <InstalledPackageContent data=d notification=notification ui_locked=ui_locked refetch=refetch />
-                            </Layout>
+            {move || {
+                let page_warning = page_warning.clone();
+                Suspend::new(async move {
+                    match data.await {
+                        Ok(d) => {
+                            let ns = d.namespace.clone();
+                            let breadcrumbs = vec![
+                                BreadcrumbItem::Link(BreadcrumbLink {
+                                    href: "/installed-packages-list".to_string(),
+                                    title: String::new(),
+                                }),
+                                BreadcrumbItem::Current(ns),
+                            ];
+                            let actions = build_toolbar_actions(&d, notification, ui_locked);
+                            view! {
+                                <Layout breadcrumbs=breadcrumbs notification=notification actions=actions ui_locked=ui_locked>
+                                    <InstalledPackageContent data=d notification=notification ui_locked=ui_locked refetch=refetch page_warning />
+                                </Layout>
+                            }
+                                .into_any()
                         }
-                            .into_any()
+                        Err(e) => {
+                            crate::error_handler::handle_or_display(&e, notification)
+                        }
                     }
-                    Err(e) => {
-                        crate::error_handler::handle_or_display(&e, notification)
-                    }
-                }
-            })}
+                })
+            }}
         </Suspense>
     }
 }
@@ -77,6 +79,7 @@ fn InstalledPackageContent(
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
     refetch: Trigger,
+    page_warning: Option<String>,
 ) -> impl IntoView {
     let filter_unmodified = RwSignal::new(data.filter_unmodified);
     let filter_ignored = RwSignal::new(data.filter_ignored);
@@ -200,6 +203,11 @@ fn InstalledPackageContent(
     view! {
         <div class="qui-page-installed-package">
             <div class="container">
+                // ── Persistent page warning (e.g. version mismatch from deep link) ──
+                {page_warning.map(|msg| view! {
+                    <div class="qui-notification">{msg}</div>
+                })}
+
                 // ── Status banner ──
                 <StatusBanner
                     namespace=ns_for_status
