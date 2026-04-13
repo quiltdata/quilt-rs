@@ -1,6 +1,6 @@
 {
   "build": {
-    "beforeDevCommand": "cd ../ui && trunk build",
+    "beforeDevCommand": "cd ../ui && trunk watch",
     "beforeBuildCommand": "cd ../ui && trunk build --release",
     "frontendDist": "../ui/dist"
   },

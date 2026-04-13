@@ -4,7 +4,7 @@ dist = "dist"
 filehash = false
 
 [watch]
-watch = ["src", "index.html"]
+watch = ["src", "index.html", "assets"]
 
 # Bundle vanilla-jsoneditor before Trunk compiles the WASM crate.
 # The glue JS source lives in js/; the output lands in assets/js/
