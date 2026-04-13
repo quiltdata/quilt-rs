@@ -720,9 +720,9 @@ fn JsonEditor(id: &'static str, initial_value: String) -> impl IntoView {
         create_json_editor_js(id, &init_value);
     });
     // Schedule after the current frame so Leptos has committed the DOM.
-    let _ = web_sys::window()
-        .unwrap()
-        .request_animation_frame(cb.as_ref().unchecked_ref());
+    if let Some(window) = web_sys::window() {
+        let _ = window.request_animation_frame(cb.as_ref().unchecked_ref());
+    }
     cb.forget();
 
     on_cleanup(move || {
