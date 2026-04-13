@@ -50,12 +50,6 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: 'quilt-sync/package-lock.json'
-
-      - name: Install frontend dependencies
-        run: npm install
-        working-directory: ./quilt-sync
 
       - name: Build the app
         uses: tauri-apps/tauri-action@v0

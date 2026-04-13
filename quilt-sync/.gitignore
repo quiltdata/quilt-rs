@@ -9,6 +9,9 @@
 # Trunk build output
 ui/dist
 
+# Bundled by esbuild during trunk build (see ui/Trunk.toml hook)
+ui/assets/js/json-editor.js
+
 node_modules
 .env
 .parcel-cache

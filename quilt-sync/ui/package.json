@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "dependencies": {
+    "vanilla-jsoneditor": "^3.11.0"
+  }
+}
