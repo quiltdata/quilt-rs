@@ -8,7 +8,7 @@ use crate::components::{
     IgnorePopup, IgnorePopupData, Layout, Notification, SetOriginPopup, Spinner, ToolbarActions,
     UnignorePopup, UnignorePopupData,
 };
-use crate::util::format_size;
+use crate::util::{format_size, make_action};
 
 // ── Installed Package page ──
 
@@ -406,30 +406,16 @@ fn StatusBanner(
 
     let content = match status.as_str() {
         "ahead" => {
-            let push_busy = RwSignal::new(false);
             let ns_for_push = ns.clone();
-            let on_push = move |_| {
-                if push_busy.get_untracked() {
-                    return;
-                }
-                push_busy.set(true);
-                ui_locked.set(true);
-                let ns = ns_for_push.clone();
-                leptos::task::spawn_local(async move {
-                    match commands::package_push(ns).await {
-                        Ok(msg) => {
-                            ui_locked.set(false);
-                            notification.set(Some(Notification::Success(msg)));
-                            refetch.notify();
-                        }
-                        Err(e) => {
-                            ui_locked.set(false);
-                            notification.set(Some(Notification::Error(e)));
-                            push_busy.set(false);
-                        }
-                    }
-                });
-            };
+            let (push_busy, on_push) = make_action(
+                move || {
+                    let ns = ns_for_push.clone();
+                    async move { commands::package_push(ns).await }
+                },
+                notification,
+                Some(ui_locked),
+                move || refetch.notify(),
+            );
             Some(
                 view! {
                     <StatusBannerInner description="Your commits are ahead of the remote">
@@ -440,30 +426,16 @@ fn StatusBanner(
             )
         }
         "behind" => {
-            let pull_busy = RwSignal::new(false);
             let ns_for_pull = ns.clone();
-            let on_pull = move |_| {
-                if pull_busy.get_untracked() {
-                    return;
-                }
-                pull_busy.set(true);
-                ui_locked.set(true);
-                let ns = ns_for_pull.clone();
-                leptos::task::spawn_local(async move {
-                    match commands::package_pull(ns).await {
-                        Ok(msg) => {
-                            ui_locked.set(false);
-                            notification.set(Some(Notification::Success(msg)));
-                            refetch.notify();
-                        }
-                        Err(e) => {
-                            ui_locked.set(false);
-                            notification.set(Some(Notification::Error(e)));
-                            pull_busy.set(false);
-                        }
-                    }
-                });
-            };
+            let (pull_busy, on_pull) = make_action(
+                move || {
+                    let ns = ns_for_pull.clone();
+                    async move { commands::package_pull(ns).await }
+                },
+                notification,
+                Some(ui_locked),
+                move || refetch.notify(),
+            );
             Some(
                 view! {
                     <StatusBannerInner description="Your commits are behind the remote">
@@ -512,30 +484,16 @@ fn StatusBanner(
             ),
         },
         "local" if origin_host.is_some() => {
-            let push_busy = RwSignal::new(false);
             let ns_for_push = ns.clone();
-            let on_push = move |_| {
-                if push_busy.get_untracked() {
-                    return;
-                }
-                push_busy.set(true);
-                ui_locked.set(true);
-                let ns = ns_for_push.clone();
-                leptos::task::spawn_local(async move {
-                    match commands::package_push(ns).await {
-                        Ok(msg) => {
-                            ui_locked.set(false);
-                            notification.set(Some(Notification::Success(msg)));
-                            refetch.notify();
-                        }
-                        Err(e) => {
-                            ui_locked.set(false);
-                            notification.set(Some(Notification::Error(e)));
-                            push_busy.set(false);
-                        }
-                    }
-                });
-            };
+            let (push_busy, on_push) = make_action(
+                move || {
+                    let ns = ns_for_push.clone();
+                    async move { commands::package_push(ns).await }
+                },
+                notification,
+                Some(ui_locked),
+                move || refetch.notify(),
+            );
             Some(
                 view! {
                     <StatusBannerInner description="Push to remote">

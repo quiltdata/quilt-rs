@@ -7,7 +7,7 @@ use crate::components::layout::BreadcrumbItem;
 use crate::components::{
     Layout, Notification, SetOriginPopup, SetOriginPopupData, Spinner, ToolbarActions,
 };
-use crate::util::is_valid_hostname;
+use crate::util::{is_valid_hostname, make_action};
 
 // ── Installed Packages List page ──
 
@@ -270,56 +270,28 @@ fn build_package_menu(
     };
 
     // ── Push ──
-    let push_busy = RwSignal::new(false);
     let ns_for_push = namespace.clone();
-    let on_push = move |_| {
-        if push_busy.get_untracked() {
-            return;
-        }
-        push_busy.set(true);
-        ui_locked.set(true);
-        let ns = ns_for_push.clone();
-        leptos::task::spawn_local(async move {
-            match commands::package_push(ns).await {
-                Ok(msg) => {
-                    ui_locked.set(false);
-                    notification.set(Some(Notification::Success(msg)));
-                    refetch.notify();
-                }
-                Err(e) => {
-                    ui_locked.set(false);
-                    notification.set(Some(Notification::Error(e)));
-                    push_busy.set(false);
-                }
-            }
-        });
-    };
+    let (push_busy, on_push) = make_action(
+        move || {
+            let ns = ns_for_push.clone();
+            async move { commands::package_push(ns).await }
+        },
+        notification,
+        Some(ui_locked),
+        move || refetch.notify(),
+    );
 
     // ── Pull ──
-    let pull_busy = RwSignal::new(false);
     let ns_for_pull = namespace.clone();
-    let on_pull = move |_| {
-        if pull_busy.get_untracked() {
-            return;
-        }
-        pull_busy.set(true);
-        ui_locked.set(true);
-        let ns = ns_for_pull.clone();
-        leptos::task::spawn_local(async move {
-            match commands::package_pull(ns).await {
-                Ok(msg) => {
-                    ui_locked.set(false);
-                    notification.set(Some(Notification::Success(msg)));
-                    refetch.notify();
-                }
-                Err(e) => {
-                    ui_locked.set(false);
-                    notification.set(Some(Notification::Error(e)));
-                    pull_busy.set(false);
-                }
-            }
-        });
-    };
+    let (pull_busy, on_pull) = make_action(
+        move || {
+            let ns = ns_for_pull.clone();
+            async move { commands::package_pull(ns).await }
+        },
+        notification,
+        Some(ui_locked),
+        move || refetch.notify(),
+    );
 
     // ── Uninstall ──
     let ns_for_uninstall = namespace.clone();
