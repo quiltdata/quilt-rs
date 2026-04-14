@@ -6,8 +6,7 @@ use super::IconButton;
 #[component]
 pub fn CollectLogs(
     on_click: impl Fn(leptos::ev::MouseEvent) + 'static,
-    #[prop(optional, into)]
-    busy: MaybeProp<bool>,
+    #[prop(optional, into)] busy: MaybeProp<bool>,
 ) -> impl IntoView {
     view! {
         <IconButton on_click=UnsyncCallback::new(on_click) disabled=busy>

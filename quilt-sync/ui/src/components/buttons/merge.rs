@@ -5,11 +5,7 @@ use super::{ButtonKind, IconButton};
 const KIND: ButtonKind = ButtonKind::Merge;
 
 #[component]
-pub fn Merge(
-    namespace: String,
-    #[prop(optional)]
-    small: bool,
-) -> impl IntoView {
+pub fn Merge(namespace: String, #[prop(optional)] small: bool) -> impl IntoView {
     let href = format!("/merge?namespace={}", namespace);
 
     view! {
@@ -38,14 +34,20 @@ mod tests {
     fn builds_href_from_namespace() {
         let el = mount(|| view! { <Merge namespace="user/pkg".to_string() /> });
         let link = el.query_selector("a").unwrap().unwrap();
-        assert_eq!(link.get_attribute("href").unwrap(), "/merge?namespace=user/pkg");
+        assert_eq!(
+            link.get_attribute("href").unwrap(),
+            "/merge?namespace=user/pkg"
+        );
     }
 
     #[wasm_bindgen_test]
     fn uses_merge_icon_and_label() {
         let el = mount(|| view! { <Merge namespace="a/b".to_string() /> });
         let icon = el.query_selector("img.qui-icon").unwrap().unwrap();
-        assert_eq!(icon.get_attribute("src").unwrap(), "/assets/img/icons/merge.svg");
+        assert_eq!(
+            icon.get_attribute("src").unwrap(),
+            "/assets/img/icons/merge.svg"
+        );
         assert_eq!(el.text_content().unwrap().trim(), "Merge");
     }
 

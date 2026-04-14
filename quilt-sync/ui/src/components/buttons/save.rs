@@ -8,8 +8,7 @@ const KIND: ButtonKind = ButtonKind::Save;
 #[component]
 pub fn Save(
     on_click: impl Fn(leptos::ev::MouseEvent) + 'static,
-    #[prop(optional, into)]
-    busy: MaybeProp<bool>,
+    #[prop(optional, into)] busy: MaybeProp<bool>,
 ) -> impl IntoView {
     view! {
         <IconButton icon=KIND.icon() on_click=UnsyncCallback::new(on_click) primary=true large=true disabled=busy>

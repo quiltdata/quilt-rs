@@ -2,8 +2,8 @@ use leptos::prelude::*;
 use leptos_router::hooks::{use_navigate, use_query_map};
 
 use crate::commands::{self, CommitData, EntryData, WorkflowData};
-use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::buttons;
+use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{
     IgnorePopup, IgnorePopupData, Layout, Notification, Spinner, ToolbarActions, UnignorePopup,
     UnignorePopupData,

@@ -6,8 +6,7 @@ use super::IconButton;
 #[component]
 pub fn FormPrimary(
     on_click: impl Fn(leptos::ev::MouseEvent) + 'static,
-    #[prop(optional, into)]
-    disabled: MaybeProp<bool>,
+    #[prop(optional, into)] disabled: MaybeProp<bool>,
     children: Children,
 ) -> impl IntoView {
     view! {

@@ -2,8 +2,8 @@ use leptos::prelude::*;
 use leptos_router::hooks::{use_navigate, use_query_map};
 
 use crate::commands::{self, EntryData, InstalledPackageData};
-use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::buttons;
+use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{
     IgnorePopup, IgnorePopupData, Layout, Notification, SetOriginPopup, Spinner, ToolbarActions,
     UnignorePopup, UnignorePopupData,
@@ -430,11 +430,14 @@ fn StatusBanner(
                     }
                 });
             };
-            Some(view! {
-                <StatusBannerInner description="Your commits are ahead of the remote">
-                    <buttons::Push on_click=on_push busy=push_busy />
-                </StatusBannerInner>
-            }.into_any())
+            Some(
+                view! {
+                    <StatusBannerInner description="Your commits are ahead of the remote">
+                        <buttons::Push on_click=on_push busy=push_busy />
+                    </StatusBannerInner>
+                }
+                .into_any(),
+            )
         }
         "behind" => {
             let pull_busy = RwSignal::new(false);
@@ -461,22 +464,23 @@ fn StatusBanner(
                     }
                 });
             };
-            Some(view! {
-                <StatusBannerInner description="Your commits are behind the remote">
-                    <buttons::Pull on_click=on_pull busy=pull_busy />
-                </StatusBannerInner>
-            }.into_any())
-        }
-        "diverged" => {
             Some(
                 view! {
-                    <StatusBannerInner description="Your commits are detached from the remote">
-                        <buttons::Merge namespace=ns.clone() />
+                    <StatusBannerInner description="Your commits are behind the remote">
+                        <buttons::Pull on_click=on_pull busy=pull_busy />
                     </StatusBannerInner>
                 }
                 .into_any(),
             )
         }
+        "diverged" => Some(
+            view! {
+                <StatusBannerInner description="Your commits are detached from the remote">
+                    <buttons::Merge namespace=ns.clone() />
+                </StatusBannerInner>
+            }
+            .into_any(),
+        ),
         "error" => match host {
             Some(ref h) => {
                 let back = format!(
@@ -532,11 +536,14 @@ fn StatusBanner(
                     }
                 });
             };
-            Some(view! {
-                <StatusBannerInner description="Push to remote">
-                    <buttons::Push on_click=on_push busy=push_busy />
-                </StatusBannerInner>
-            }.into_any())
+            Some(
+                view! {
+                    <StatusBannerInner description="Push to remote">
+                        <buttons::Push on_click=on_push busy=push_busy />
+                    </StatusBannerInner>
+                }
+                .into_any(),
+            )
         }
         _ => None,
     };

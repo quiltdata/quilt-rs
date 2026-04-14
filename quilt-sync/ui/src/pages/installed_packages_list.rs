@@ -2,8 +2,8 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
 use crate::commands::{self, PackageItemData};
-use crate::components::layout::BreadcrumbItem;
 use crate::components::buttons;
+use crate::components::layout::BreadcrumbItem;
 use crate::components::{
     Layout, Notification, SetOriginPopup, SetOriginPopupData, Spinner, ToolbarActions,
 };

@@ -8,8 +8,7 @@ const KIND: ButtonKind = ButtonKind::OpenInFileBrowser;
 #[component]
 pub fn OpenLogsDir(
     on_click: impl Fn(leptos::ev::MouseEvent) + 'static,
-    #[prop(optional)]
-    is_temporary: bool,
+    #[prop(optional)] is_temporary: bool,
 ) -> impl IntoView {
     let icon = if is_temporary {
         ButtonKind::Login.icon() // warning.svg

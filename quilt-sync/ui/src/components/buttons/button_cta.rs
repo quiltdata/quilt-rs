@@ -5,16 +5,11 @@ use leptos::prelude::*;
 /// after the label (trailing position).
 #[component]
 pub fn ButtonCta(
-    #[prop(optional)]
-    icon: Option<&'static str>,
-    #[prop(optional)]
-    on_click: Option<UnsyncCallback<leptos::ev::MouseEvent>>,
-    #[prop(optional)]
-    href: Option<String>,
-    #[prop(optional, into)]
-    primary: MaybeProp<bool>,
-    #[prop(optional, into)]
-    disabled: MaybeProp<bool>,
+    #[prop(optional)] icon: Option<&'static str>,
+    #[prop(optional)] on_click: Option<UnsyncCallback<leptos::ev::MouseEvent>>,
+    #[prop(optional)] href: Option<String>,
+    #[prop(optional, into)] primary: MaybeProp<bool>,
+    #[prop(optional, into)] disabled: MaybeProp<bool>,
     children: Children,
 ) -> impl IntoView {
     let class = move || {
@@ -75,8 +70,10 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn renders_button_with_large_class() {
-        let el = mount(|| view! {
-            <ButtonCta on_click=UnsyncCallback::new(|_| {})>"Go"</ButtonCta>
+        let el = mount(|| {
+            view! {
+                <ButtonCta on_click=UnsyncCallback::new(|_| {})>"Go"</ButtonCta>
+            }
         });
         let btn = el.query_selector("button").unwrap().unwrap();
         assert!(btn.class_list().contains("qui-button"));
@@ -85,8 +82,10 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn renders_anchor_when_href_provided() {
-        let el = mount(|| view! {
-            <ButtonCta href="/test".to_string()>"Go"</ButtonCta>
+        let el = mount(|| {
+            view! {
+                <ButtonCta href="/test".to_string()>"Go"</ButtonCta>
+            }
         });
         let link = el.query_selector("a").unwrap().unwrap();
         assert_eq!(link.tag_name(), "A");
@@ -96,8 +95,10 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn primary_class() {
-        let el = mount(|| view! {
-            <ButtonCta on_click=UnsyncCallback::new(|_| {}) primary=true>"Go"</ButtonCta>
+        let el = mount(|| {
+            view! {
+                <ButtonCta on_click=UnsyncCallback::new(|_| {}) primary=true>"Go"</ButtonCta>
+            }
         });
         let btn = el.query_selector("button").unwrap().unwrap();
         assert!(btn.class_list().contains("primary"));
@@ -105,15 +106,15 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn trailing_icon() {
-        let el = mount(|| view! {
-            <ButtonCta on_click=UnsyncCallback::new(|_| {}) icon="/icons/arrow.svg">"Go"</ButtonCta>
+        let el = mount(|| {
+            view! {
+                <ButtonCta on_click=UnsyncCallback::new(|_| {}) icon="/icons/arrow.svg">"Go"</ButtonCta>
+            }
         });
         // Icon should come after span
         let btn = el.query_selector("button").unwrap().unwrap();
         let children: Vec<web_sys::Element> = (0..btn.child_element_count())
-            .filter_map(|i| {
-                btn.children().item(i)
-            })
+            .filter_map(|i| btn.children().item(i))
             .collect();
         assert_eq!(children[0].tag_name(), "SPAN");
         assert_eq!(children[1].tag_name(), "IMG");
@@ -121,16 +122,20 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn no_icon_when_omitted() {
-        let el = mount(|| view! {
-            <ButtonCta on_click=UnsyncCallback::new(|_| {})>"Go"</ButtonCta>
+        let el = mount(|| {
+            view! {
+                <ButtonCta on_click=UnsyncCallback::new(|_| {})>"Go"</ButtonCta>
+            }
         });
         assert!(el.query_selector("img").unwrap().is_none());
     }
 
     #[wasm_bindgen_test]
     fn disabled_when_set() {
-        let el = mount(|| view! {
-            <ButtonCta on_click=UnsyncCallback::new(|_| {}) disabled=true>"Go"</ButtonCta>
+        let el = mount(|| {
+            view! {
+                <ButtonCta on_click=UnsyncCallback::new(|_| {}) disabled=true>"Go"</ButtonCta>
+            }
         });
         let btn: web_sys::HtmlButtonElement = el
             .query_selector("button")
@@ -145,8 +150,10 @@ mod tests {
     fn click_fires_handler() {
         let clicked = Rc::new(Cell::new(false));
         let clicked_clone = clicked.clone();
-        let el = mount(move || view! {
-            <ButtonCta on_click=UnsyncCallback::new(move |_| clicked_clone.set(true))>"Go"</ButtonCta>
+        let el = mount(move || {
+            view! {
+                <ButtonCta on_click=UnsyncCallback::new(move |_| clicked_clone.set(true))>"Go"</ButtonCta>
+            }
         });
         let btn: web_sys::HtmlElement = el
             .query_selector("button")

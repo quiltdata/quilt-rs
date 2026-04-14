@@ -5,11 +5,7 @@ use super::{ButtonKind, IconButton};
 const KIND: ButtonKind = ButtonKind::Commit;
 
 #[component]
-pub fn Commit(
-    namespace: String,
-    #[prop(optional)]
-    small: bool,
-) -> impl IntoView {
+pub fn Commit(namespace: String, #[prop(optional)] small: bool) -> impl IntoView {
     let href = format!("/commit?namespace={}", namespace);
 
     view! {
@@ -38,14 +34,20 @@ mod tests {
     fn builds_href_from_namespace() {
         let el = mount(|| view! { <Commit namespace="user/pkg".to_string() /> });
         let link = el.query_selector("a").unwrap().unwrap();
-        assert_eq!(link.get_attribute("href").unwrap(), "/commit?namespace=user/pkg");
+        assert_eq!(
+            link.get_attribute("href").unwrap(),
+            "/commit?namespace=user/pkg"
+        );
     }
 
     #[wasm_bindgen_test]
     fn uses_commit_icon_and_label() {
         let el = mount(|| view! { <Commit namespace="a/b".to_string() /> });
         let icon = el.query_selector("img.qui-icon").unwrap().unwrap();
-        assert_eq!(icon.get_attribute("src").unwrap(), "/assets/img/icons/commit.svg");
+        assert_eq!(
+            icon.get_attribute("src").unwrap(),
+            "/assets/img/icons/commit.svg"
+        );
         assert_eq!(el.text_content().unwrap().trim(), "Commit");
     }
 

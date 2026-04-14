@@ -6,8 +6,7 @@ use super::IconButton;
 #[component]
 pub fn FormSecondary(
     on_click: impl Fn(leptos::ev::MouseEvent) + 'static,
-    #[prop(optional)]
-    children: Option<Children>,
+    #[prop(optional)] children: Option<Children>,
 ) -> impl IntoView {
     view! {
         <IconButton on_click=UnsyncCallback::new(on_click)>
