@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.16.0-alpha2] - 2026-04-14
+
+### Changed
+
+- Update logo to Quilt.bio branding (<https://github.com/quiltdata/quilt-rs/pull/612>)
+
 ## [v0.16.0-alpha1] - 2026-04-13
 
 ### Changed
