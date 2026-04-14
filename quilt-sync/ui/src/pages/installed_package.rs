@@ -5,7 +5,8 @@ use crate::commands::{self, EntryData, InstalledPackageData};
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{
     IgnorePopup, IgnorePopupData, Layout, Notification, OpenInCatalog, OpenInFileBrowser,
-    SetOriginPopup, Spinner, ToolbarActions, UnignorePopup, UnignorePopupData,
+    PullButton, PushButton, SetOriginPopup, Spinner, ToolbarActions, UnignorePopup,
+    UnignorePopupData,
 };
 use crate::util::format_size;
 
@@ -491,84 +492,6 @@ fn StatusBannerInner(description: &'static str, children: Children) -> impl Into
                 </div>
             </div>
         </div>
-    }
-}
-
-#[component]
-fn PushButton(
-    namespace: String,
-    notification: RwSignal<Option<Notification>>,
-    ui_locked: RwSignal<bool>,
-    refetch: Trigger,
-) -> impl IntoView {
-    let pushing = RwSignal::new(false);
-    view! {
-        <button
-            class="qui-button primary"
-            type="button"
-            prop:disabled=move || pushing.get()
-            on:click=move |_| {
-                if pushing.get_untracked() { return; }
-                pushing.set(true);
-                ui_locked.set(true);
-                let ns = namespace.clone();
-                leptos::task::spawn_local(async move {
-                    match commands::package_push(ns).await {
-                        Ok(msg) => {
-                            ui_locked.set(false);
-                            notification.set(Some(Notification::Success(msg)));
-                            refetch.notify();
-                        }
-                        Err(e) => {
-                            ui_locked.set(false);
-                            notification.set(Some(Notification::Error(e)));
-                            pushing.set(false);
-                        }
-                    }
-                });
-            }
-        >
-            <span>{move || if pushing.get() { "Pushing\u{2026}" } else { "Push" }}</span>
-        </button>
-    }
-}
-
-#[component]
-fn PullButton(
-    namespace: String,
-    notification: RwSignal<Option<Notification>>,
-    ui_locked: RwSignal<bool>,
-    refetch: Trigger,
-) -> impl IntoView {
-    let pulling = RwSignal::new(false);
-    view! {
-        <button
-            class="qui-button primary"
-            type="button"
-            prop:disabled=move || pulling.get()
-            on:click=move |_| {
-                if pulling.get_untracked() { return; }
-                pulling.set(true);
-                ui_locked.set(true);
-                let ns = namespace.clone();
-                leptos::task::spawn_local(async move {
-                    match commands::package_pull(ns).await {
-                        Ok(msg) => {
-                            ui_locked.set(false);
-                            notification.set(Some(Notification::Success(msg)));
-                            refetch.notify();
-                        }
-                        Err(e) => {
-                            ui_locked.set(false);
-                            notification.set(Some(Notification::Error(e)));
-                            pulling.set(false);
-                        }
-                    }
-                });
-            }
-        >
-            <span>{move || if pulling.get() { "Pulling\u{2026}" } else { "Pull" }}</span>
-        </button>
     }
 }
 

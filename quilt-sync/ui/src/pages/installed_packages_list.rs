@@ -4,8 +4,8 @@ use wasm_bindgen::JsCast;
 use crate::commands::{self, PackageItemData};
 use crate::components::layout::BreadcrumbItem;
 use crate::components::{
-    CommitLink, Layout, MergeLink, Notification, OpenInCatalog, OpenInFileBrowser, SetOriginPopup,
-    SetOriginPopupData, Spinner, ToolbarActions,
+    CommitLink, Layout, MergeLink, Notification, OpenInCatalog, OpenInFileBrowser, PullButton,
+    PushButton, SetOriginPopup, SetOriginPopupData, Spinner, ToolbarActions,
 };
 use crate::util::is_valid_hostname;
 
@@ -232,10 +232,10 @@ fn build_package_menu(
     let catalog_disabled = status == "local";
 
     // ── Sync button (Push/Pull) ──
-    let sync_button = match status.as_str() {
-        "ahead" => Some(SyncAction::Push(namespace.clone())),
-        "behind" => Some(SyncAction::Pull(namespace.clone())),
-        "local" if has_origin => Some(SyncAction::Push(namespace.clone())),
+    let sync_action = match status.as_str() {
+        "ahead" => Some(SyncAction::Push),
+        "behind" => Some(SyncAction::Pull),
+        "local" if has_origin => Some(SyncAction::Push),
         _ => None,
     };
 
@@ -293,10 +293,17 @@ fn build_package_menu(
         })}
 
         // Sync (Push/Pull)
-        {sync_button.map(|action| view! {
+        {sync_action.map(|action| view! {
             <li class="menu-item menu-divider"></li>
             <li class="menu-item">
-                <SyncButton action=action notification=notification ui_locked=ui_locked refetch=refetch />
+                {match action {
+                    SyncAction::Push => view! {
+                        <PushButton namespace=namespace.clone() notification=notification ui_locked=ui_locked refetch=refetch small=true />
+                    }.into_any(),
+                    SyncAction::Pull => view! {
+                        <PullButton namespace=namespace.clone() notification=notification ui_locked=ui_locked refetch=refetch small=true />
+                    }.into_any(),
+                }}
             </li>
         })}
 
@@ -328,81 +335,11 @@ fn build_package_menu(
     }
 }
 
-// ── Sync button (Push or Pull) ──
+// ── Sync action ──
 
-#[derive(Clone)]
 enum SyncAction {
-    Push(String),
-    Pull(String),
-}
-
-#[component]
-fn SyncButton(
-    action: SyncAction,
-    notification: RwSignal<Option<Notification>>,
-    ui_locked: RwSignal<bool>,
-    refetch: Trigger,
-) -> impl IntoView {
-    let busy = RwSignal::new(false);
-
-    let is_push = matches!(&action, SyncAction::Push(_));
-    let (label, busy_label, icon) = if is_push {
-        (
-            "Push",
-            "Pushing\u{2026}",
-            "/assets/img/icons/cloud_upload.svg",
-        )
-    } else {
-        (
-            "Pull",
-            "Pulling\u{2026}",
-            "/assets/img/icons/cloud_download.svg",
-        )
-    };
-
-    let ns = match action {
-        SyncAction::Push(ns) | SyncAction::Pull(ns) => ns,
-    };
-
-    let on_click = move |_| {
-        if busy.get_untracked() {
-            return;
-        }
-        busy.set(true);
-        ui_locked.set(true);
-        let ns = ns.clone();
-        leptos::task::spawn_local(async move {
-            let result = if is_push {
-                commands::package_push(ns).await
-            } else {
-                commands::package_pull(ns).await
-            };
-            match result {
-                Ok(msg) => {
-                    ui_locked.set(false);
-                    notification.set(Some(Notification::Success(msg)));
-                    refetch.notify();
-                }
-                Err(e) => {
-                    ui_locked.set(false);
-                    notification.set(Some(Notification::Error(e)));
-                    busy.set(false);
-                }
-            }
-        });
-    };
-
-    view! {
-        <button
-            class="qui-button primary small"
-            type="button"
-            prop:disabled=move || busy.get()
-            on:click=on_click
-        >
-            <img class="qui-icon" src=icon />
-            <span>{move || if busy.get() { busy_label } else { label }}</span>
-        </button>
-    }
+    Push,
+    Pull,
 }
 
 // ── Error action button logic ──
