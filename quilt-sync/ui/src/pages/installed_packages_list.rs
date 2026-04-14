@@ -556,10 +556,10 @@ fn CreatePackagePopup(
                     </div>
 
                     <div class="create-package-actions">
-                        <buttons::FormSubmit on_click=on_submit_click disabled=submitting>
+                        <buttons::FormPrimary on_click=on_submit_click disabled=submitting>
                             "Create"
-                        </buttons::FormSubmit>
-                        <buttons::FormCancel on_click=on_cancel />
+                        </buttons::FormPrimary>
+                        <buttons::FormSecondary on_click=on_cancel />
                     </div>
                 </div>
             </div>
@@ -710,10 +710,10 @@ fn SetRemotePopup(
                     </div>
 
                     <div class="set-remote-actions">
-                        <buttons::FormSubmit on_click=on_submit_click disabled=submitting>
+                        <buttons::FormPrimary on_click=on_submit_click disabled=submitting>
                             "Save"
-                        </buttons::FormSubmit>
-                        <buttons::FormCancel on_click=on_cancel />
+                        </buttons::FormPrimary>
+                        <buttons::FormSecondary on_click=on_cancel />
                     </div>
                 </div>
             </div>

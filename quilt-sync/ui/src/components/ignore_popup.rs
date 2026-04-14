@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 
 use crate::commands;
+use crate::components::buttons;
 use crate::components::Notification;
 
 // ── Ignore popup ──
@@ -143,17 +144,10 @@ pub fn IgnorePopup(
                         })}
                     </div>
                     <div class="ignore-actions">
-                        <button
-                            class="qui-button primary"
-                            type="button"
-                            prop:disabled=move || submitting.get()
-                            on:click=on_submit_click
-                        >
-                            <span>"Add to .quiltignore"</span>
-                        </button>
-                        <button class="qui-button" type="button" on:click=on_cancel>
-                            <span>"Cancel"</span>
-                        </button>
+                        <buttons::FormPrimary on_click=on_submit_click disabled=submitting>
+                            "Add to .quiltignore"
+                        </buttons::FormPrimary>
+                        <buttons::FormSecondary on_click=on_cancel />
                     </div>
                 </div>
             </div>
@@ -200,9 +194,9 @@ pub fn UnignorePopup(
                 <div class="unignore-popup">
                     <span>"Ignored by: "<span class="pattern-display">{pattern_display}</span></span>
                     <div>
-                        <button class="qui-button primary" type="button" on:click=on_edit>
-                            <span>"Edit .quiltignore"</span>
-                        </button>
+                        <buttons::FormPrimary on_click=on_edit>
+                            "Edit .quiltignore"
+                        </buttons::FormPrimary>
                     </div>
                 </div>
             </div>
