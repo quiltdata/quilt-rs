@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 
-use super::{ButtonKind, IconLink};
+use super::{ButtonKind, IconButton};
 
 const KIND: ButtonKind = ButtonKind::Login;
 
@@ -11,8 +11,8 @@ pub fn Login(
     small: bool,
 ) -> impl IntoView {
     view! {
-        <IconLink href=href icon=KIND.icon() small=small warning=true>
+        <IconButton href=href icon=KIND.icon() small=small warning=true>
             {KIND.label()}
-        </IconLink>
+        </IconButton>
     }
 }

@@ -1,5 +1,7 @@
 use leptos::prelude::*;
 
+use leptos::callback::UnsyncCallback;
+
 use super::{ButtonKind, IconButton};
 
 const KIND: ButtonKind = ButtonKind::SetOrigin;
@@ -11,7 +13,7 @@ pub fn SetOrigin(
     small: bool,
 ) -> impl IntoView {
     view! {
-        <IconButton icon=KIND.icon() on_click=on_click small=small warning=true>
+        <IconButton icon=KIND.icon() on_click=UnsyncCallback::new(on_click) small=small warning=true>
             {KIND.label()}
         </IconButton>
     }

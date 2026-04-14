@@ -1,5 +1,4 @@
 mod icon_button;
-mod icon_link;
 pub mod commit;
 pub mod create_local_package;
 pub mod login;
@@ -25,7 +24,6 @@ pub use set_origin::SetOrigin;
 pub use set_remote::SetRemote;
 
 use icon_button::IconButton;
-use icon_link::IconLink;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ButtonKind {

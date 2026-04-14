@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 
-use super::{ButtonKind, IconLink};
+use super::{ButtonKind, IconButton};
 
 const KIND: ButtonKind = ButtonKind::Merge;
 
@@ -13,9 +13,9 @@ pub fn Merge(
     let href = format!("/merge?namespace={}", namespace);
 
     view! {
-        <IconLink href=href icon=KIND.icon() small=small primary=true>
+        <IconButton href=href icon=KIND.icon() small=small primary=true>
             {KIND.label()}
-        </IconLink>
+        </IconButton>
     }
 }
 

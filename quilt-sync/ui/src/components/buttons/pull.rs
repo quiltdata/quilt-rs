@@ -1,5 +1,7 @@
 use leptos::prelude::*;
 
+use leptos::callback::UnsyncCallback;
+
 use super::{ButtonKind, IconButton};
 
 const KIND: ButtonKind = ButtonKind::Pull;
@@ -13,7 +15,7 @@ pub fn Pull(
     busy: MaybeProp<bool>,
 ) -> impl IntoView {
     view! {
-        <IconButton icon=KIND.icon() on_click=on_click small=small primary=true disabled=busy>
+        <IconButton icon=KIND.icon() on_click=UnsyncCallback::new(on_click) small=small primary=true disabled=busy>
             {move || if busy.get().unwrap_or(false) { "Pulling\u{2026}" } else { KIND.label() }}
         </IconButton>
     }
