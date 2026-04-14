@@ -128,9 +128,7 @@ fn MergeContent(
                         <code>"latest"</code>
                         " with your latest commit."
                     </p>
-                    <button class="qui-button" type="button" on:click=on_certify>
-                        <span>"Certify latest"</span>
-                    </button>
+                    <buttons::CertifyLatest on_click=on_certify />
                 </div>
 
                 <div class="field">
@@ -139,9 +137,7 @@ fn MergeContent(
                         <code>"latest"</code>
                         " the same as remote."
                     </p>
-                    <button class="qui-button" type="button" on:click=on_reset>
-                        <span>"Reset local"</span>
-                    </button>
+                    <buttons::ResetLocal on_click=on_reset />
                 </div>
             </div>
         </div>
