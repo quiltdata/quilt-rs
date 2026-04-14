@@ -3,7 +3,9 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 
 use crate::commands::{self, MergeData};
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
-use crate::components::{Layout, Notification, OpenInCatalog, Spinner, ToolbarActions};
+use crate::components::{
+    Layout, Notification, OpenInCatalog, OpenInFileBrowser, Spinner, ToolbarActions,
+};
 
 // ── Merge page ──
 
@@ -160,17 +162,6 @@ fn build_toolbar_actions(
     ToolbarActions::new(move || {
         let navigate = use_navigate();
 
-        let ns_for_folder = namespace.clone();
-        let on_open_folder = move |_| {
-            let ns = ns_for_folder.clone();
-            leptos::task::spawn_local(async move {
-                match commands::open_in_file_browser(ns).await {
-                    Ok(msg) => notification.set(Some(Notification::Success(msg))),
-                    Err(e) => notification.set(Some(Notification::Error(e))),
-                }
-            });
-        };
-
         let ns_for_uninstall = namespace.clone();
         let on_uninstall = move |_| {
             let ns = ns_for_uninstall.clone();
@@ -194,10 +185,7 @@ fn build_toolbar_actions(
 
         view! {
             <li>
-                <button class="qui-button small" type="button" on:click=on_open_folder>
-                    <img class="qui-icon" src="/assets/img/icons/folder_open.svg" />
-                    <span>"Open"</span>
-                </button>
+                <OpenInFileBrowser namespace=namespace.clone() notification=notification small=true />
             </li>
             {has_catalog.then(|| view! {
                 <li>

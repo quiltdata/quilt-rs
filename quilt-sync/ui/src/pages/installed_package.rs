@@ -4,8 +4,8 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 use crate::commands::{self, EntryData, InstalledPackageData};
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{
-    IgnorePopup, IgnorePopupData, Layout, Notification, OpenInCatalog, SetOriginPopup, Spinner,
-    ToolbarActions, UnignorePopup, UnignorePopupData,
+    IgnorePopup, IgnorePopupData, Layout, Notification, OpenInCatalog, OpenInFileBrowser,
+    SetOriginPopup, Spinner, ToolbarActions, UnignorePopup, UnignorePopupData,
 };
 use crate::util::format_size;
 
@@ -334,17 +334,6 @@ fn build_toolbar_actions(
 
     ToolbarActions::new(move || {
         let navigate = use_navigate();
-        let ns_for_folder = namespace.clone();
-        let on_open_folder = move |_| {
-            let ns = ns_for_folder.clone();
-            leptos::task::spawn_local(async move {
-                match commands::open_in_file_browser(ns).await {
-                    Ok(msg) => notification.set(Some(Notification::Success(msg))),
-                    Err(e) => notification.set(Some(Notification::Error(e))),
-                }
-            });
-        };
-
         let ns_for_uninstall = namespace.clone();
         let on_uninstall = move |_| {
             let ns = ns_for_uninstall.clone();
@@ -366,10 +355,7 @@ fn build_toolbar_actions(
 
         view! {
             <li>
-                <button class="qui-button" type="button" on:click=on_open_folder>
-                    <img class="qui-icon" src="/assets/img/icons/folder_open.svg" />
-                    <span>"Open"</span>
-                </button>
+                <OpenInFileBrowser namespace=namespace.clone() notification=notification />
             </li>
             {if has_catalog {
                 view! {

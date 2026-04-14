@@ -4,8 +4,8 @@ use wasm_bindgen::JsCast;
 use crate::commands::{self, PackageItemData};
 use crate::components::layout::BreadcrumbItem;
 use crate::components::{
-    Layout, Notification, OpenInCatalog, SetOriginPopup, SetOriginPopupData, Spinner,
-    ToolbarActions,
+    Layout, Notification, OpenInCatalog, OpenInFileBrowser, SetOriginPopup, SetOriginPopupData,
+    Spinner, ToolbarActions,
 };
 use crate::util::is_valid_hostname;
 
@@ -228,18 +228,6 @@ fn build_package_menu(
     let has_origin = origin_url.is_some();
     let is_error = status == "error";
 
-    // ── Open local ──
-    let ns_for_folder = namespace.clone();
-    let on_open_folder = move |_| {
-        let ns = ns_for_folder.clone();
-        leptos::task::spawn_local(async move {
-            match commands::open_in_file_browser(ns).await {
-                Ok(msg) => notification.set(Some(Notification::Success(msg))),
-                Err(e) => notification.set(Some(Notification::Error(e))),
-            }
-        });
-    };
-
     // ── Open remote (catalog) ──
     let catalog_disabled = status == "local";
 
@@ -293,10 +281,7 @@ fn build_package_menu(
     view! {
         // Open local
         <li class="menu-item">
-            <button class="qui-button small" type="button" on:click=on_open_folder>
-                <img class="qui-icon" src="/assets/img/icons/folder_open.svg" />
-                <span>"Open"</span>
-            </button>
+            <OpenInFileBrowser namespace=namespace.clone() notification=notification small=true />
         </li>
         // Open remote
         {has_origin.then(|| view! {
