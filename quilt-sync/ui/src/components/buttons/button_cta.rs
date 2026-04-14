@@ -1,8 +1,9 @@
 use leptos::callback::UnsyncCallback;
 use leptos::prelude::*;
 
-/// Call-to-action button. Like IconButton but always large and icon renders
-/// after the label (trailing position).
+/// Call-to-action button — the primary action the page exists for.
+/// Always large and visually prominent; icon renders after the label
+/// (trailing position). Use `IconButton` for secondary actions.
 #[component]
 pub fn ButtonCta(
     #[prop(optional)] icon: Option<&'static str>,
