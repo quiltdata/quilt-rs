@@ -18,16 +18,10 @@ pub fn IconButton(
     disabled: MaybeProp<bool>,
     children: Children,
 ) -> impl IntoView {
-    let class = match (small, primary, warning) {
-        (false, false, false) => "qui-button",
-        (true, false, false) => "qui-button small",
-        (false, true, false) => "qui-button primary",
-        (true, true, false) => "qui-button primary small",
-        (false, false, true) => "qui-button warning",
-        (true, false, true) => "qui-button warning small",
-        (false, true, true) => "qui-button primary warning",
-        (true, true, true) => "qui-button primary warning small",
-    };
+    let mut class = "qui-button".to_string();
+    if primary { class.push_str(" primary"); }
+    if warning { class.push_str(" warning"); }
+    if small { class.push_str(" small"); }
 
     let content = view! {
         <img class="qui-icon" src=icon />
