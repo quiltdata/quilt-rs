@@ -2,7 +2,9 @@ use leptos::prelude::*;
 
 use crate::commands;
 
-use super::IconButton;
+use super::{ButtonKind, IconButton};
+
+const KIND: ButtonKind = ButtonKind::OpenInCatalog;
 
 #[component]
 pub fn OpenInCatalog(
@@ -21,8 +23,8 @@ pub fn OpenInCatalog(
     };
 
     view! {
-        <IconButton icon="/assets/img/icons/open_in_browser.svg" on_click=on_click small=small disabled=disabled>
-            "Open in Catalog"
+        <IconButton icon=KIND.icon() on_click=on_click small=small disabled=disabled>
+            {KIND.label()}
         </IconButton>
     }
 }

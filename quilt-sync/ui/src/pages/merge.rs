@@ -3,9 +3,8 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 
 use crate::commands::{self, MergeData};
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
-use crate::components::{
-    Layout, Notification, OpenInCatalog, OpenInFileBrowser, Spinner, ToolbarActions,
-};
+use crate::components::buttons;
+use crate::components::{Layout, Notification, Spinner, ToolbarActions};
 
 // ── Merge page ──
 
@@ -185,11 +184,11 @@ fn build_toolbar_actions(
 
         view! {
             <li>
-                <OpenInFileBrowser namespace=namespace.clone() notification=notification small=true />
+                <buttons::OpenInFileBrowser namespace=namespace.clone() notification=notification small=true />
             </li>
             {has_catalog.then(|| view! {
                 <li>
-                    <OpenInCatalog url=origin_url.clone() small=true />
+                    <buttons::OpenInCatalog url=origin_url.clone() small=true />
                 </li>
             })}
             <li>

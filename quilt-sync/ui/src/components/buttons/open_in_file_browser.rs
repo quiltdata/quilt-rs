@@ -3,7 +3,9 @@ use leptos::prelude::*;
 use crate::commands;
 use crate::components::Notification;
 
-use super::IconButton;
+use super::{ButtonKind, IconButton};
+
+const KIND: ButtonKind = ButtonKind::OpenInFileBrowser;
 
 #[component]
 pub fn OpenInFileBrowser(
@@ -23,8 +25,8 @@ pub fn OpenInFileBrowser(
     };
 
     view! {
-        <IconButton icon="/assets/img/icons/folder_open.svg" on_click=on_click small=small>
-            "Open"
+        <IconButton icon=KIND.icon() on_click=on_click small=small>
+            {KIND.label()}
         </IconButton>
     }
 }

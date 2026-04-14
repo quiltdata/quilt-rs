@@ -3,9 +3,9 @@ use wasm_bindgen::JsCast;
 
 use crate::commands::{self, PackageItemData};
 use crate::components::layout::BreadcrumbItem;
+use crate::components::buttons;
 use crate::components::{
-    CommitLink, Layout, MergeLink, Notification, OpenInCatalog, OpenInFileBrowser, PullButton,
-    PushButton, SetOriginPopup, SetOriginPopupData, Spinner, ToolbarActions,
+    Layout, Notification, SetOriginPopup, SetOriginPopupData, Spinner, ToolbarActions,
 };
 use crate::util::is_valid_hostname;
 
@@ -274,12 +274,12 @@ fn build_package_menu(
     view! {
         // Open local
         <li class="menu-item">
-            <OpenInFileBrowser namespace=namespace.clone() notification=notification small=true />
+            <buttons::OpenInFileBrowser namespace=namespace.clone() notification=notification small=true />
         </li>
         // Open remote
         {has_origin.then(|| view! {
             <li class="menu-item">
-                <OpenInCatalog url=origin_url.clone() small=true disabled=catalog_disabled />
+                <buttons::OpenInCatalog url=origin_url.clone() small=true disabled=catalog_disabled />
             </li>
         })}
 
@@ -288,7 +288,7 @@ fn build_package_menu(
         // Commit (unless error)
         {(!is_error).then(|| view! {
             <li class="menu-item">
-                <CommitLink namespace=namespace.clone() small=true />
+                <buttons::Commit namespace=namespace.clone() small=true />
             </li>
         })}
 
@@ -298,10 +298,10 @@ fn build_package_menu(
             <li class="menu-item">
                 {match action {
                     SyncAction::Push => view! {
-                        <PushButton namespace=namespace.clone() notification=notification ui_locked=ui_locked refetch=refetch small=true />
+                        <buttons::Push namespace=namespace.clone() notification=notification ui_locked=ui_locked refetch=refetch small=true />
                     }.into_any(),
                     SyncAction::Pull => view! {
-                        <PullButton namespace=namespace.clone() notification=notification ui_locked=ui_locked refetch=refetch small=true />
+                        <buttons::Pull namespace=namespace.clone() notification=notification ui_locked=ui_locked refetch=refetch small=true />
                     }.into_any(),
                 }}
             </li>
@@ -311,7 +311,7 @@ fn build_package_menu(
         {show_merge.then(|| view! {
             <li class="menu-item menu-divider"></li>
             <li class="menu-item">
-                <MergeLink namespace=namespace.clone() small=true />
+                <buttons::Merge namespace=namespace.clone() small=true />
             </li>
         })}
 

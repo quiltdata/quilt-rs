@@ -3,10 +3,10 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 
 use crate::commands::{self, EntryData, InstalledPackageData};
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
+use crate::components::buttons;
 use crate::components::{
-    IgnorePopup, IgnorePopupData, Layout, Notification, OpenInCatalog, OpenInFileBrowser,
-    PullButton, PushButton, SetOriginPopup, Spinner, ToolbarActions, UnignorePopup,
-    UnignorePopupData,
+    IgnorePopup, IgnorePopupData, Layout, Notification, SetOriginPopup, Spinner, ToolbarActions,
+    UnignorePopup, UnignorePopupData,
 };
 use crate::util::format_size;
 
@@ -356,12 +356,12 @@ fn build_toolbar_actions(
 
         view! {
             <li>
-                <OpenInFileBrowser namespace=namespace.clone() notification=notification />
+                <buttons::OpenInFileBrowser namespace=namespace.clone() notification=notification />
             </li>
             {if has_catalog {
                 view! {
                     <li>
-                        <OpenInCatalog url=origin_url.clone() disabled=catalog_disabled />
+                        <buttons::OpenInCatalog url=origin_url.clone() disabled=catalog_disabled />
                     </li>
                 }.into_any()
             } else {
@@ -398,7 +398,7 @@ fn StatusBanner(
             let ns = ns.clone();
             Some(view! {
                 <StatusBannerInner description="Your commits are ahead of the remote">
-                    <PushButton namespace=ns notification=notification ui_locked=ui_locked refetch=refetch />
+                    <buttons::Push namespace=ns notification=notification ui_locked=ui_locked refetch=refetch />
                 </StatusBannerInner>
             }.into_any())
         }
@@ -406,7 +406,7 @@ fn StatusBanner(
             let ns = ns.clone();
             Some(view! {
                 <StatusBannerInner description="Your commits are behind the remote">
-                    <PullButton namespace=ns notification=notification ui_locked=ui_locked refetch=refetch />
+                    <buttons::Pull namespace=ns notification=notification ui_locked=ui_locked refetch=refetch />
                 </StatusBannerInner>
             }.into_any())
         }
@@ -469,7 +469,7 @@ fn StatusBanner(
             let ns = ns.clone();
             Some(view! {
                 <StatusBannerInner description="Push to remote">
-                    <PushButton namespace=ns notification=notification ui_locked=ui_locked refetch=refetch />
+                    <buttons::Push namespace=ns notification=notification ui_locked=ui_locked refetch=refetch />
                 </StatusBannerInner>
             }.into_any())
         }
@@ -775,7 +775,7 @@ fn EntryRow(
                     {if show_catalog {
                         view! {
                             <li class="menu-item">
-                                <OpenInCatalog url=catalog_url small=true />
+                                <buttons::OpenInCatalog url=catalog_url small=true />
                             </li>
                         }.into_any()
                     } else {

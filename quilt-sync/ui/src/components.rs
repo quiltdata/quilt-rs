@@ -1,27 +1,12 @@
-pub mod commit_link;
-pub mod icon_button;
-pub mod icon_link;
+pub mod buttons;
 pub mod ignore_popup;
 pub mod layout;
-pub mod merge_link;
-pub mod open_in_catalog;
-pub mod open_in_file_browser;
-pub mod pull_button;
-pub mod push_button;
 pub mod set_origin_popup;
 pub mod spinner;
 pub mod update_checker;
 
-pub use commit_link::CommitLink;
-pub use icon_button::IconButton;
-pub use icon_link::IconLink;
 pub use ignore_popup::{IgnorePopup, IgnorePopupData, UnignorePopup, UnignorePopupData};
 pub use layout::{Layout, Notification, ToolbarActions};
-pub use merge_link::MergeLink;
-pub use open_in_catalog::OpenInCatalog;
-pub use open_in_file_browser::OpenInFileBrowser;
-pub use pull_button::PullButton;
-pub use push_button::PushButton;
 pub use set_origin_popup::{SetOriginPopup, SetOriginPopupData};
 pub use spinner::Spinner;
 pub use update_checker::UpdateChecker;

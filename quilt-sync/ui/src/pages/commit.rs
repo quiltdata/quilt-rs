@@ -3,9 +3,10 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 
 use crate::commands::{self, CommitData, EntryData, WorkflowData};
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
+use crate::components::buttons;
 use crate::components::{
-    IgnorePopup, IgnorePopupData, Layout, Notification, OpenInCatalog, OpenInFileBrowser, Spinner,
-    ToolbarActions, UnignorePopup, UnignorePopupData,
+    IgnorePopup, IgnorePopupData, Layout, Notification, Spinner, ToolbarActions, UnignorePopup,
+    UnignorePopupData,
 };
 use crate::util::format_size;
 
@@ -437,12 +438,12 @@ fn build_toolbar_actions(
 
         view! {
             <li>
-                <OpenInFileBrowser namespace=namespace.clone() notification=notification />
+                <buttons::OpenInFileBrowser namespace=namespace.clone() notification=notification />
             </li>
             {if has_catalog {
                 view! {
                     <li>
-                        <OpenInCatalog url=origin_url.clone() disabled=catalog_disabled />
+                        <buttons::OpenInCatalog url=origin_url.clone() disabled=catalog_disabled />
                     </li>
                 }
                 .into_any()
@@ -589,7 +590,7 @@ fn CommitEntryRow(
                     {if show_catalog {
                         view! {
                             <li class="menu-item">
-                                <OpenInCatalog url=catalog_url small=true />
+                                <buttons::OpenInCatalog url=catalog_url small=true />
                             </li>
                         }
                         .into_any()
