@@ -247,6 +247,80 @@ fn build_package_menu(
         show_set_origin_popup,
     );
 
+    // ── Open in file browser ──
+    let ns_for_open = namespace.clone();
+    let on_open_file_browser = move |_| {
+        let ns = ns_for_open.clone();
+        leptos::task::spawn_local(async move {
+            match commands::open_in_file_browser(ns).await {
+                Ok(msg) => notification.set(Some(Notification::Success(msg))),
+                Err(e) => notification.set(Some(Notification::Error(e))),
+            }
+        });
+    };
+
+    // ── Open in catalog ──
+    let url_for_catalog = origin_url.clone();
+    let on_open_catalog = move |_| {
+        if let Some(url) = url_for_catalog.clone() {
+            leptos::task::spawn_local(async move {
+                let _ = commands::open_in_web_browser(url).await;
+            });
+        }
+    };
+
+    // ── Push ──
+    let push_busy = RwSignal::new(false);
+    let ns_for_push = namespace.clone();
+    let on_push = move |_| {
+        if push_busy.get_untracked() {
+            return;
+        }
+        push_busy.set(true);
+        ui_locked.set(true);
+        let ns = ns_for_push.clone();
+        leptos::task::spawn_local(async move {
+            match commands::package_push(ns).await {
+                Ok(msg) => {
+                    ui_locked.set(false);
+                    notification.set(Some(Notification::Success(msg)));
+                    refetch.notify();
+                }
+                Err(e) => {
+                    ui_locked.set(false);
+                    notification.set(Some(Notification::Error(e)));
+                    push_busy.set(false);
+                }
+            }
+        });
+    };
+
+    // ── Pull ──
+    let pull_busy = RwSignal::new(false);
+    let ns_for_pull = namespace.clone();
+    let on_pull = move |_| {
+        if pull_busy.get_untracked() {
+            return;
+        }
+        pull_busy.set(true);
+        ui_locked.set(true);
+        let ns = ns_for_pull.clone();
+        leptos::task::spawn_local(async move {
+            match commands::package_pull(ns).await {
+                Ok(msg) => {
+                    ui_locked.set(false);
+                    notification.set(Some(Notification::Success(msg)));
+                    refetch.notify();
+                }
+                Err(e) => {
+                    ui_locked.set(false);
+                    notification.set(Some(Notification::Error(e)));
+                    pull_busy.set(false);
+                }
+            }
+        });
+    };
+
     // ── Uninstall ──
     let ns_for_uninstall = namespace.clone();
     let on_uninstall = move |_| {
@@ -270,12 +344,12 @@ fn build_package_menu(
     view! {
         // Open local
         <li class="menu-item">
-            <buttons::OpenInFileBrowser namespace=namespace.clone() notification=notification small=true />
+            <buttons::OpenInFileBrowser on_click=on_open_file_browser small=true />
         </li>
         // Open remote
         {has_origin.then(|| view! {
             <li class="menu-item">
-                <buttons::OpenInCatalog url=origin_url.clone() small=true disabled=catalog_disabled />
+                <buttons::OpenInCatalog on_click=on_open_catalog small=true disabled=catalog_disabled />
             </li>
         })}
 
@@ -294,10 +368,10 @@ fn build_package_menu(
             <li class="menu-item">
                 {match action {
                     SyncAction::Push => view! {
-                        <buttons::Push namespace=namespace.clone() notification=notification ui_locked=ui_locked refetch=refetch small=true />
+                        <buttons::Push on_click=on_push small=true busy=push_busy />
                     }.into_any(),
                     SyncAction::Pull => view! {
-                        <buttons::Pull namespace=namespace.clone() notification=notification ui_locked=ui_locked refetch=refetch small=true />
+                        <buttons::Pull on_click=on_pull small=true busy=pull_busy />
                     }.into_any(),
                 }}
             </li>

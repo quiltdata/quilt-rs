@@ -335,6 +335,27 @@ fn build_toolbar_actions(
 
     ToolbarActions::new(move || {
         let navigate = use_navigate();
+
+        let ns_for_open = namespace.clone();
+        let on_open_file_browser = move |_| {
+            let ns = ns_for_open.clone();
+            leptos::task::spawn_local(async move {
+                match commands::open_in_file_browser(ns).await {
+                    Ok(msg) => notification.set(Some(Notification::Success(msg))),
+                    Err(e) => notification.set(Some(Notification::Error(e))),
+                }
+            });
+        };
+
+        let url_for_catalog = origin_url.clone();
+        let on_open_catalog = move |_| {
+            if let Some(url) = url_for_catalog.clone() {
+                leptos::task::spawn_local(async move {
+                    let _ = commands::open_in_web_browser(url).await;
+                });
+            }
+        };
+
         let ns_for_uninstall = namespace.clone();
         let on_uninstall = move |_| {
             let ns = ns_for_uninstall.clone();
@@ -356,22 +377,19 @@ fn build_toolbar_actions(
 
         view! {
             <li>
-                <buttons::OpenInFileBrowser namespace=namespace.clone() notification=notification />
+                <buttons::OpenInFileBrowser on_click=on_open_file_browser />
             </li>
             {if has_catalog {
                 view! {
                     <li>
-                        <buttons::OpenInCatalog url=origin_url.clone() disabled=catalog_disabled />
+                        <buttons::OpenInCatalog on_click=on_open_catalog disabled=catalog_disabled />
                     </li>
                 }.into_any()
             } else {
                 ().into_any()
             }}
             <li>
-                <button class="qui-button" type="button" on:click=on_uninstall>
-                    <img class="qui-icon" src="/assets/img/icons/block.svg" />
-                    <span>"Remove"</span>
-                </button>
+                <buttons::Remove on_click=on_uninstall />
             </li>
         }
         .into_any()
@@ -395,18 +413,64 @@ fn StatusBanner(
 
     let content = match status.as_str() {
         "ahead" => {
-            let ns = ns.clone();
+            let push_busy = RwSignal::new(false);
+            let ns_for_push = ns.clone();
+            let on_push = move |_| {
+                if push_busy.get_untracked() {
+                    return;
+                }
+                push_busy.set(true);
+                ui_locked.set(true);
+                let ns = ns_for_push.clone();
+                leptos::task::spawn_local(async move {
+                    match commands::package_push(ns).await {
+                        Ok(msg) => {
+                            ui_locked.set(false);
+                            notification.set(Some(Notification::Success(msg)));
+                            refetch.notify();
+                        }
+                        Err(e) => {
+                            ui_locked.set(false);
+                            notification.set(Some(Notification::Error(e)));
+                            push_busy.set(false);
+                        }
+                    }
+                });
+            };
             Some(view! {
                 <StatusBannerInner description="Your commits are ahead of the remote">
-                    <buttons::Push namespace=ns notification=notification ui_locked=ui_locked refetch=refetch />
+                    <buttons::Push on_click=on_push busy=push_busy />
                 </StatusBannerInner>
             }.into_any())
         }
         "behind" => {
-            let ns = ns.clone();
+            let pull_busy = RwSignal::new(false);
+            let ns_for_pull = ns.clone();
+            let on_pull = move |_| {
+                if pull_busy.get_untracked() {
+                    return;
+                }
+                pull_busy.set(true);
+                ui_locked.set(true);
+                let ns = ns_for_pull.clone();
+                leptos::task::spawn_local(async move {
+                    match commands::package_pull(ns).await {
+                        Ok(msg) => {
+                            ui_locked.set(false);
+                            notification.set(Some(Notification::Success(msg)));
+                            refetch.notify();
+                        }
+                        Err(e) => {
+                            ui_locked.set(false);
+                            notification.set(Some(Notification::Error(e)));
+                            pull_busy.set(false);
+                        }
+                    }
+                });
+            };
             Some(view! {
                 <StatusBannerInner description="Your commits are behind the remote">
-                    <buttons::Pull namespace=ns notification=notification ui_locked=ui_locked refetch=refetch />
+                    <buttons::Pull on_click=on_pull busy=pull_busy />
                 </StatusBannerInner>
             }.into_any())
         }
@@ -433,10 +497,7 @@ fn StatusBanner(
                 Some(
                     view! {
                         <StatusBannerInner description="Unable to check remote status">
-                            <a class="qui-button warning" href=login_href>
-                                <img class="qui-icon" src="/assets/img/icons/warning.svg" />
-                                <span>"Login"</span>
-                            </a>
+                            <buttons::Login href=login_href />
                             <button
                                 class="qui-button"
                                 type="button"
@@ -452,24 +513,42 @@ fn StatusBanner(
             None => Some(
                 view! {
                     <StatusBannerInner description="No catalog origin configured">
-                        <button
-                            class="qui-button warning"
-                            type="button"
-                            on:click=move |_| show_origin_popup.set(true)
-                        >
-                            <img class="qui-icon" src="/assets/img/icons/warning.svg" />
-                            <span>"Set origin"</span>
-                        </button>
+                        <buttons::SetOrigin
+                            on_click=move |_| show_origin_popup.set(true)
+                        />
                     </StatusBannerInner>
                 }
                 .into_any(),
             ),
         },
         "local" if origin_host.is_some() => {
-            let ns = ns.clone();
+            let push_busy = RwSignal::new(false);
+            let ns_for_push = ns.clone();
+            let on_push = move |_| {
+                if push_busy.get_untracked() {
+                    return;
+                }
+                push_busy.set(true);
+                ui_locked.set(true);
+                let ns = ns_for_push.clone();
+                leptos::task::spawn_local(async move {
+                    match commands::package_push(ns).await {
+                        Ok(msg) => {
+                            ui_locked.set(false);
+                            notification.set(Some(Notification::Success(msg)));
+                            refetch.notify();
+                        }
+                        Err(e) => {
+                            ui_locked.set(false);
+                            notification.set(Some(Notification::Error(e)));
+                            push_busy.set(false);
+                        }
+                    }
+                });
+            };
             Some(view! {
                 <StatusBannerInner description="Push to remote">
-                    <buttons::Push namespace=ns notification=notification ui_locked=ui_locked refetch=refetch />
+                    <buttons::Push on_click=on_push busy=push_busy />
                 </StatusBannerInner>
             }.into_any())
         }
@@ -709,6 +788,13 @@ fn EntryRow(
     };
 
     let catalog_url = entry.origin_url.clone();
+    let on_open_catalog = move |_| {
+        if let Some(url) = catalog_url.clone() {
+            leptos::task::spawn_local(async move {
+                let _ = commands::open_in_web_browser(url).await;
+            });
+        }
+    };
 
     let junky_pattern = entry.junky_pattern.clone();
     let ns_for_ignore = entry.namespace.clone();
@@ -775,7 +861,7 @@ fn EntryRow(
                     {if show_catalog {
                         view! {
                             <li class="menu-item">
-                                <buttons::OpenInCatalog url=catalog_url small=true />
+                                <buttons::OpenInCatalog on_click=on_open_catalog small=true />
                             </li>
                         }.into_any()
                     } else {

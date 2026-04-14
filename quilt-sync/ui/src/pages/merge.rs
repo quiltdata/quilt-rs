@@ -161,6 +161,26 @@ fn build_toolbar_actions(
     ToolbarActions::new(move || {
         let navigate = use_navigate();
 
+        let ns_for_open = namespace.clone();
+        let on_open_file_browser = move |_| {
+            let ns = ns_for_open.clone();
+            leptos::task::spawn_local(async move {
+                match commands::open_in_file_browser(ns).await {
+                    Ok(msg) => notification.set(Some(Notification::Success(msg))),
+                    Err(e) => notification.set(Some(Notification::Error(e))),
+                }
+            });
+        };
+
+        let url_for_catalog = origin_url.clone();
+        let on_open_catalog = move |_| {
+            if let Some(url) = url_for_catalog.clone() {
+                leptos::task::spawn_local(async move {
+                    let _ = commands::open_in_web_browser(url).await;
+                });
+            }
+        };
+
         let ns_for_uninstall = namespace.clone();
         let on_uninstall = move |_| {
             let ns = ns_for_uninstall.clone();
@@ -184,18 +204,15 @@ fn build_toolbar_actions(
 
         view! {
             <li>
-                <buttons::OpenInFileBrowser namespace=namespace.clone() notification=notification small=true />
+                <buttons::OpenInFileBrowser on_click=on_open_file_browser small=true />
             </li>
             {has_catalog.then(|| view! {
                 <li>
-                    <buttons::OpenInCatalog url=origin_url.clone() small=true />
+                    <buttons::OpenInCatalog on_click=on_open_catalog small=true />
                 </li>
             })}
             <li>
-                <button class="qui-button small" type="button" on:click=on_uninstall>
-                    <img class="qui-icon" src="/assets/img/icons/block.svg" />
-                    <span>"Remove"</span>
-                </button>
+                <buttons::Remove on_click=on_uninstall small=true />
             </li>
         }
         .into_any()
