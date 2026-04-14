@@ -1,7 +1,10 @@
+mod button_cta;
 mod icon_button;
 pub mod browse;
 pub mod change_origin;
 pub mod commit;
+pub mod commit_revision;
+pub mod create_new_revision;
 pub mod create_local_package;
 pub mod ignore;
 pub mod log_in_with_browser;
@@ -24,7 +27,9 @@ pub mod unignore;
 pub use browse::Browse;
 pub use change_origin::ChangeOrigin;
 pub use commit::Commit;
+pub use commit_revision::CommitRevision;
 pub use create_local_package::CreateLocalPackage;
+pub use create_new_revision::CreateNewRevision;
 pub use ignore::Ignore;
 pub use log_in_with_browser::LogInWithBrowser;
 pub use login::Login;
@@ -48,7 +53,9 @@ use icon_button::IconButton;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ButtonKind {
     Commit,
+    CommitRevision,
     CreateLocalPackage,
+    CreateNewRevision,
     Ignore,
     LogInWithBrowser,
     Login,
@@ -72,7 +79,9 @@ impl ButtonKind {
     pub const fn icon(self) -> &'static str {
         match self {
             Self::Commit => "/assets/img/icons/commit.svg",
+            Self::CommitRevision => "/assets/img/icons/done.svg",
             Self::CreateLocalPackage => "/assets/img/icons/add.svg",
+            Self::CreateNewRevision => "/assets/img/icons/arrow_forward.svg",
             Self::Ignore => "/assets/img/icons/visibility_off.svg",
             Self::LogInWithBrowser => "/assets/img/icons/open_in_browser.svg",
             Self::Login => "/assets/img/icons/warning.svg",
@@ -96,7 +105,9 @@ impl ButtonKind {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Commit => "Commit",
+            Self::CommitRevision => "Commit",
             Self::CreateLocalPackage => "Create local package",
+            Self::CreateNewRevision => "Create new revision",
             Self::Ignore => "Ignore",
             Self::LogInWithBrowser => "Log in with browser",
             Self::Login => "Login",

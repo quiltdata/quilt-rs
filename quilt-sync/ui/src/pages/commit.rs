@@ -284,15 +284,7 @@ fn CommitContent(
 
         // ── Action bar ──
         <div class="qui-actionbar">
-            <button
-                class="qui-button primary large"
-                type="button"
-                prop:disabled=move || committing.get()
-                on:click=on_commit
-            >
-                <span>{move || if committing.get() { "Committing\u{2026}" } else { "Commit" }}</span>
-                <img class="qui-icon" src="/assets/img/icons/done.svg" />
-            </button>
+            <buttons::CommitRevision on_click=on_commit busy=committing />
         </div>
 
         // ── Popups ──

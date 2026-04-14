@@ -264,20 +264,13 @@ fn InstalledPackageContent(
                 let has_changes = entries.iter().any(|e| {
                     matches!(e.status.as_str(), "added" | "modified" | "deleted")
                 });
-                let commit_btn_class = Memo::new(move |_| {
-                    if has_changes && checked_count.get() == 0 {
-                        "qui-button primary large"
-                    } else {
-                        "qui-button large"
-                    }
+                let is_primary = Memo::new(move |_| {
+                    has_changes && checked_count.get() == 0
                 });
                 let href = commit_href_clone.clone();
                 view! {
                     <div class="qui-actionbar">
-                        <a class=move || commit_btn_class.get() href=href>
-                            <span>"Create new revision"</span>
-                            <img class="qui-icon" src="/assets/img/icons/arrow_forward.svg" />
-                        </a>
+                        <buttons::CreateNewRevision href=href primary=is_primary />
                     </div>
                 }
             }
