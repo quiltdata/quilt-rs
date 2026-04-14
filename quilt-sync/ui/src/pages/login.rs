@@ -3,6 +3,7 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 use wasm_bindgen::JsCast;
 
 use crate::commands::{self, LoginData};
+use crate::components::buttons;
 use crate::components::{Layout, Notification, Spinner};
 
 // ── Login page ──
@@ -127,29 +128,14 @@ fn LoginContent(data: LoginData, notification: RwSignal<Option<Notification>>) -
         <div class="qui-page-login container">
             <div class="main">
                 <p class="message">
-                    <button
-                        class="qui-button primary large"
-                        type="button"
-                        prop:disabled=move || oauth_loading.get()
-                        on:click=on_oauth
-                    >
-                        <img class="qui-icon" src="/assets/img/icons/open_in_browser.svg" />
-                        <span>"Log in with browser"</span>
-                    </button>
+                    <buttons::LogInWithBrowser on_click=on_oauth disabled=oauth_loading />
                 </p>
 
                 <hr class="divider" />
 
                 <p class="message">{instructions}</p>
                 <p class="message">
-                    <button
-                        class="qui-button"
-                        type="button"
-                        on:click=on_open_catalog
-                    >
-                        <img class="qui-icon" src="/assets/img/icons/open_in_browser.svg" />
-                        <span>"Open browser"</span>
-                    </button>
+                    <buttons::OpenBrowser on_click=on_open_catalog />
                 </p>
 
                 <form class="form" on:submit=on_submit>
@@ -173,11 +159,8 @@ fn LoginContent(data: LoginData, notification: RwSignal<Option<Notification>>) -
 
         // Action bar with Submit button
         <div class="qui-actionbar">
-            <button
-                class="qui-button primary large"
-                type="button"
-                prop:disabled=move || submitting.get() || code.get().is_empty()
-                on:click=move |_| {
+            <buttons::SubmitLogin
+                on_click=move |_| {
                     // Programmatically submit the form
                     if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
                         if let Some(form) = doc.query_selector("form").ok().flatten() {
@@ -187,12 +170,9 @@ fn LoginContent(data: LoginData, notification: RwSignal<Option<Notification>>) -
                         }
                     }
                 }
-            >
-                <img class="qui-icon" src="/assets/img/icons/done.svg" />
-                <span>
-                    {move || if submitting.get() { "Logging in\u{2026}" } else { "Submit code and Log in" }}
-                </span>
-            </button>
+                busy=submitting
+                disabled=Signal::derive(move || submitting.get() || code.get().is_empty())
+            />
         </div>
     }
 }
