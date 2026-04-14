@@ -20,7 +20,7 @@ pub fn IconLink(
     view! {
         <a class=class href=href>
             <img class="qui-icon" src=icon />
-            {children()}
+            <span>{children()}</span>
         </a>
     }
 }

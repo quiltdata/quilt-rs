@@ -27,7 +27,7 @@ pub fn IconButton(
             on:click=on_click
         >
             <img class="qui-icon" src=icon />
-            {children()}
+            <span>{children()}</span>
         </button>
     }
 }

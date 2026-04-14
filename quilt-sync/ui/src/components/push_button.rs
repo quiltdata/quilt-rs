@@ -41,7 +41,7 @@ pub fn PushButton(
 
     view! {
         <IconButton icon="/assets/img/icons/cloud_upload.svg" on_click=on_click small=small primary=true disabled=busy>
-            <span>{move || if busy.get() { "Pushing\u{2026}" } else { "Push" }}</span>
+            {move || if busy.get() { "Pushing\u{2026}" } else { "Push" }}
         </IconButton>
     }
 }

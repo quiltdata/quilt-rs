@@ -24,7 +24,7 @@ pub fn OpenInFileBrowser(
 
     view! {
         <IconButton icon="/assets/img/icons/folder_open.svg" on_click=on_click small=small>
-            <span>"Open"</span>
+            "Open"
         </IconButton>
     }
 }

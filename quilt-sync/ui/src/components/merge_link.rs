@@ -12,7 +12,7 @@ pub fn MergeLink(
 
     view! {
         <IconLink href=href icon="/assets/img/icons/merge.svg" small=small primary=true>
-            <span>"Merge"</span>
+            "Merge"
         </IconLink>
     }
 }

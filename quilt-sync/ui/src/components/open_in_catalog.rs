@@ -22,7 +22,7 @@ pub fn OpenInCatalog(
 
     view! {
         <IconButton icon="/assets/img/icons/open_in_browser.svg" on_click=on_click small=small disabled=disabled>
-            <span>"Open in Catalog"</span>
+            "Open in Catalog"
         </IconButton>
     }
 }

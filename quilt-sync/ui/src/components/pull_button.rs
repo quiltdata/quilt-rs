@@ -41,7 +41,7 @@ pub fn PullButton(
 
     view! {
         <IconButton icon="/assets/img/icons/cloud_download.svg" on_click=on_click small=small primary=true disabled=busy>
-            <span>{move || if busy.get() { "Pulling\u{2026}" } else { "Pull" }}</span>
+            {move || if busy.get() { "Pulling\u{2026}" } else { "Pull" }}
         </IconButton>
     }
 }

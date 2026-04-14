@@ -12,7 +12,7 @@ pub fn CommitLink(
 
     view! {
         <IconLink href=href icon="/assets/img/icons/commit.svg" small=small>
-            <span>"Commit"</span>
+            "Commit"
         </IconLink>
     }
 }
