@@ -10,7 +10,7 @@ const KIND: ButtonKind = ButtonKind::OpenInCatalog;
 pub fn OpenInCatalog(
     on_click: impl Fn(leptos::ev::MouseEvent) + 'static,
     #[prop(optional)] small: bool,
-    #[prop(optional)] disabled: bool,
+    #[prop(optional, into)] disabled: MaybeProp<bool>,
 ) -> impl IntoView {
     view! {
         <IconButton icon=KIND.icon() on_click=UnsyncCallback::new(on_click) small=small disabled=disabled>
