@@ -11,7 +11,7 @@ pub fn OpenLogsDir(
     #[prop(optional)] is_temporary: bool,
 ) -> impl IntoView {
     let icon = if is_temporary {
-        ButtonKind::Login.icon() // warning.svg
+        ButtonKind::OpenLogsDir.icon()
     } else {
         KIND.icon() // folder_open.svg
     };
