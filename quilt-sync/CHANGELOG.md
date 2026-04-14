@@ -14,6 +14,7 @@
 ### Changed
 
 - Reorganize button components into a `buttons` submodule with `ButtonKind` enum, `IconButton` and `ButtonCta` base components, and specific button components for every UI button
+  (<https://github.com/quiltdata/quilt-rs/pull/613>)
 
 ## [v0.16.0-alpha1] - 2026-04-13
 
