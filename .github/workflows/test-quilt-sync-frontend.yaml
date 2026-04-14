@@ -42,6 +42,14 @@ jobs:
       - name: Lint
         run: cargo clippy --target wasm32-unknown-unknown -p quilt-sync-ui -- --deny warnings
 
+      - name: Install wasm-bindgen-cli
+        uses: taiki-e/install-action@wasm-bindgen
+
+      - name: Test
+        run: cargo test -p quilt-sync-ui --target wasm32-unknown-unknown
+        env:
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+
       - name: Build
         run: trunk build --release
         working-directory: ./quilt-sync/ui

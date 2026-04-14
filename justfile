@@ -12,3 +12,7 @@ coverage:
 lint:
     cargo clippy --all-features -- --deny warnings
     cargo clippy --target wasm32-unknown-unknown -p quilt-sync-ui -- --deny warnings
+
+# Run QuiltSync frontend tests in headless Firefox
+test-frontend:
+    CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner cargo test -p quilt-sync-ui --target wasm32-unknown-unknown
