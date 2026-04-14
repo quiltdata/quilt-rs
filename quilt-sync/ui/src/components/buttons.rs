@@ -84,6 +84,8 @@ pub use unignore::Unignore;
 
 use icon_button::IconButton;
 
+/// Icon and label registry for button components. Only buttons with icons
+/// need a variant here; text-only buttons don't use `ButtonKind`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ButtonKind {
     Commit,
