@@ -475,13 +475,10 @@ fn StatusBanner(
             }.into_any())
         }
         "diverged" => {
-            let merge_href = format!("/merge?namespace={ns}");
             Some(
                 view! {
                     <StatusBannerInner description="Your commits are detached from the remote">
-                        <a class="qui-button primary" href=merge_href>
-                            <span>"Merge"</span>
-                        </a>
+                        <buttons::Merge namespace=ns.clone() />
                     </StatusBannerInner>
                 }
                 .into_any(),
