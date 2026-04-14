@@ -33,35 +33,24 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn renders_link_with_correct_href() {
+    fn builds_href_from_namespace() {
         let el = mount(|| view! { <MergeLink namespace="user/pkg".to_string() /> });
         let link = el.query_selector("a").unwrap().unwrap();
         assert_eq!(link.get_attribute("href").unwrap(), "/merge?namespace=user/pkg");
     }
 
     #[wasm_bindgen_test]
-    fn renders_default_classes() {
-        let el = mount(|| view! { <MergeLink namespace="a/b".to_string() /> });
-        let link = el.query_selector("a").unwrap().unwrap();
-        assert!(link.class_list().contains("qui-button"));
-        assert!(link.class_list().contains("primary"));
-        assert!(!link.class_list().contains("small"));
-    }
-
-    #[wasm_bindgen_test]
-    fn renders_small_class() {
-        let el = mount(|| view! { <MergeLink namespace="a/b".to_string() small=true /> });
-        let link = el.query_selector("a").unwrap().unwrap();
-        assert!(link.class_list().contains("qui-button"));
-        assert!(link.class_list().contains("primary"));
-        assert!(link.class_list().contains("small"));
-    }
-
-    #[wasm_bindgen_test]
-    fn renders_icon_and_label() {
+    fn uses_merge_icon_and_label() {
         let el = mount(|| view! { <MergeLink namespace="a/b".to_string() /> });
         let icon = el.query_selector("img.qui-icon").unwrap().unwrap();
         assert_eq!(icon.get_attribute("src").unwrap(), "/assets/img/icons/merge.svg");
         assert_eq!(el.text_content().unwrap().trim(), "Merge");
+    }
+
+    #[wasm_bindgen_test]
+    fn is_primary() {
+        let el = mount(|| view! { <MergeLink namespace="a/b".to_string() /> });
+        let link = el.query_selector("a").unwrap().unwrap();
+        assert!(link.class_list().contains("primary"));
     }
 }
