@@ -8,20 +8,27 @@ pub mod create_new_revision;
 pub mod create_local_package;
 pub mod form_cancel;
 pub mod form_submit;
+pub mod collect_logs;
+pub mod email_support;
 pub mod ignore;
 pub mod log_in_with_browser;
 pub mod login;
+pub mod logout;
 pub mod merge;
 pub mod open;
 pub mod open_browser;
 pub mod open_in_catalog;
+pub mod open_logs_dir;
 pub mod open_in_file_browser;
 pub mod pull;
 pub mod push;
+pub mod re_login;
 pub mod refresh;
+pub mod release_notes;
 pub mod remove;
 pub mod reveal;
 pub mod save;
+pub mod send_to_sentry;
 pub mod settings;
 pub mod set_origin;
 pub mod set_remote;
@@ -36,20 +43,27 @@ pub use create_local_package::CreateLocalPackage;
 pub use create_new_revision::CreateNewRevision;
 pub use form_cancel::FormCancel;
 pub use form_submit::FormSubmit;
+pub use collect_logs::CollectLogs;
+pub use email_support::EmailSupport;
 pub use ignore::Ignore;
 pub use log_in_with_browser::LogInWithBrowser;
 pub use login::Login;
+pub use logout::Logout;
 pub use merge::Merge;
 pub use open::Open;
 pub use open_browser::OpenBrowser;
 pub use open_in_catalog::OpenInCatalog;
+pub use open_logs_dir::OpenLogsDir;
 pub use open_in_file_browser::OpenInFileBrowser;
 pub use pull::Pull;
 pub use push::Push;
+pub use re_login::ReLogin;
 pub use refresh::Refresh;
+pub use release_notes::ReleaseNotes;
 pub use remove::Remove;
 pub use reveal::Reveal;
 pub use save::Save;
+pub use send_to_sentry::SendToSentry;
 pub use settings::Settings;
 pub use set_origin::SetOrigin;
 pub use set_remote::SetRemote;
@@ -67,6 +81,7 @@ pub enum ButtonKind {
     Ignore,
     LogInWithBrowser,
     Login,
+    Logout,
     Merge,
     Open,
     OpenBrowser,
@@ -95,6 +110,7 @@ impl ButtonKind {
             Self::Ignore => "/assets/img/icons/visibility_off.svg",
             Self::LogInWithBrowser => "/assets/img/icons/open_in_browser.svg",
             Self::Login => "/assets/img/icons/warning.svg",
+            Self::Logout => "/assets/img/icons/warning.svg",
             Self::Merge => "/assets/img/icons/merge.svg",
             Self::Open => "/assets/img/icons/open_in_new.svg",
             Self::OpenBrowser => "/assets/img/icons/open_in_browser.svg",
@@ -123,6 +139,7 @@ impl ButtonKind {
             Self::Ignore => "Ignore",
             Self::LogInWithBrowser => "Log in with browser",
             Self::Login => "Login",
+            Self::Logout => "Logout",
             Self::Merge => "Merge",
             Self::Open => "Open",
             Self::OpenBrowser => "Open browser",
