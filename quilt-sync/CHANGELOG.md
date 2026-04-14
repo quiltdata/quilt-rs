@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.16.0-alpha2] - 2026-04-14
+
+### Changed
+
+- Reorganize button components into a `buttons` submodule with `ButtonKind` enum, `IconButton` and `ButtonCta` base components, and specific button components for every UI button
+
 ## [v0.16.0-alpha1] - 2026-04-13
 
 ### Changed
