@@ -495,13 +495,9 @@ fn StatusBanner(
                     view! {
                         <StatusBannerInner description="Unable to check remote status">
                             <buttons::Login href=login_href />
-                            <button
-                                class="qui-button"
-                                type="button"
-                                on:click=move |_| show_origin_popup.set(true)
-                            >
-                                <span>"Change origin"</span>
-                            </button>
+                            <buttons::ChangeOrigin
+                                on_click=move |_| show_origin_popup.set(true)
+                            />
                         </StatusBannerInner>
                     }
                     .into_any(),

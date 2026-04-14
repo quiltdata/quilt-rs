@@ -1,4 +1,5 @@
 mod icon_button;
+pub mod change_origin;
 pub mod commit;
 pub mod create_local_package;
 pub mod ignore;
@@ -15,6 +16,7 @@ pub mod set_origin;
 pub mod set_remote;
 pub mod unignore;
 
+pub use change_origin::ChangeOrigin;
 pub use commit::Commit;
 pub use create_local_package::CreateLocalPackage;
 pub use ignore::Ignore;

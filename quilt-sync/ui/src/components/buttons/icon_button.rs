@@ -3,7 +3,8 @@ use leptos::prelude::*;
 
 #[component]
 pub fn IconButton(
-    icon: &'static str,
+    #[prop(optional)]
+    icon: Option<&'static str>,
     #[prop(optional)]
     on_click: Option<UnsyncCallback<leptos::ev::MouseEvent>>,
     #[prop(optional)]
@@ -24,7 +25,7 @@ pub fn IconButton(
     if small { class.push_str(" small"); }
 
     let content = view! {
-        <img class="qui-icon" src=icon />
+        {icon.map(|src| view! { <img class="qui-icon" src=src /> })}
         <span>{children()}</span>
     };
 
@@ -207,6 +208,16 @@ mod tests {
             .unwrap();
         btn.click();
         assert!(clicked.get());
+    }
+
+    #[wasm_bindgen_test]
+    fn no_icon_when_omitted() {
+        let el = mount(|| view! {
+            <IconButton on_click=UnsyncCallback::new(|_| {})>"Label"</IconButton>
+        });
+        assert!(el.query_selector("img.qui-icon").unwrap().is_none());
+        let span = el.query_selector("button > span").unwrap().unwrap();
+        assert_eq!(span.text_content().unwrap(), "Label");
     }
 
     // ── Link mode (with href) ──
