@@ -552,23 +552,14 @@ fn CreatePackagePopup(
                         <span class="source-path">{move || {
                             source.get().unwrap_or_else(|| "No directory selected".to_string())
                         }}</span>
-                        <button class="qui-button small" type="button" on:click=on_browse>
-                            <span>"Browse..."</span>
-                        </button>
+                        <buttons::Browse on_click=on_browse small=true />
                     </div>
 
                     <div class="create-package-actions">
-                        <button
-                            class="qui-button primary"
-                            type="button"
-                            prop:disabled=move || submitting.get()
-                            on:click=on_submit_click
-                        >
-                            <span>"Create"</span>
-                        </button>
-                        <button class="qui-button" type="button" on:click=on_cancel>
-                            <span>"Cancel"</span>
-                        </button>
+                        <buttons::FormSubmit on_click=on_submit_click disabled=submitting>
+                            "Create"
+                        </buttons::FormSubmit>
+                        <buttons::FormCancel on_click=on_cancel />
                     </div>
                 </div>
             </div>
@@ -719,17 +710,10 @@ fn SetRemotePopup(
                     </div>
 
                     <div class="set-remote-actions">
-                        <button
-                            class="qui-button primary"
-                            type="button"
-                            prop:disabled=move || submitting.get()
-                            on:click=on_submit_click
-                        >
-                            <span>"Save"</span>
-                        </button>
-                        <button class="qui-button" type="button" on:click=on_cancel>
-                            <span>"Cancel"</span>
-                        </button>
+                        <buttons::FormSubmit on_click=on_submit_click disabled=submitting>
+                            "Save"
+                        </buttons::FormSubmit>
+                        <buttons::FormCancel on_click=on_cancel />
                     </div>
                 </div>
             </div>
