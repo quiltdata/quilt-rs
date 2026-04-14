@@ -4,8 +4,8 @@ use wasm_bindgen::JsCast;
 use crate::commands::{self, PackageItemData};
 use crate::components::layout::BreadcrumbItem;
 use crate::components::{
-    Layout, Notification, OpenInCatalog, OpenInFileBrowser, SetOriginPopup, SetOriginPopupData,
-    Spinner, ToolbarActions,
+    CommitLink, Layout, MergeLink, Notification, OpenInCatalog, OpenInFileBrowser, SetOriginPopup,
+    SetOriginPopupData, Spinner, ToolbarActions,
 };
 use crate::util::is_valid_hostname;
 
@@ -231,9 +231,6 @@ fn build_package_menu(
     // ── Open remote (catalog) ──
     let catalog_disabled = status == "local";
 
-    // ── Commit ──
-    let commit_href = format!("/commit?namespace={}", namespace);
-
     // ── Sync button (Push/Pull) ──
     let sync_button = match status.as_str() {
         "ahead" => Some(SyncAction::Push(namespace.clone())),
@@ -243,11 +240,7 @@ fn build_package_menu(
     };
 
     // ── Merge button ──
-    let merge_href = if status == "diverged" {
-        Some(format!("/merge?namespace={}", namespace))
-    } else {
-        None
-    };
+    let show_merge = status == "diverged";
 
     // ── Error action button ──
     let error_action = build_error_action(
@@ -293,16 +286,10 @@ fn build_package_menu(
         <li class="menu-item menu-divider"></li>
 
         // Commit (unless error)
-        {(!is_error).then(|| {
-            let href = commit_href.clone();
-            view! {
-                <li class="menu-item">
-                    <a class="qui-button small" href=href>
-                        <img class="qui-icon" src="/assets/img/icons/commit.svg" />
-                        <span>"Commit"</span>
-                    </a>
-                </li>
-            }
+        {(!is_error).then(|| view! {
+            <li class="menu-item">
+                <CommitLink namespace=namespace.clone() small=true />
+            </li>
         })}
 
         // Sync (Push/Pull)
@@ -314,13 +301,10 @@ fn build_package_menu(
         })}
 
         // Merge
-        {merge_href.map(|href| view! {
+        {show_merge.then(|| view! {
             <li class="menu-item menu-divider"></li>
             <li class="menu-item">
-                <a class="qui-button primary small" href=href>
-                    <img class="qui-icon" src="/assets/img/icons/merge.svg" />
-                    <span>"Merge"</span>
-                </a>
+                <MergeLink namespace=namespace.clone() small=true />
             </li>
         })}
 
