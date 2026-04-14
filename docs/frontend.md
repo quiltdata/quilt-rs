@@ -48,6 +48,8 @@ quilt-sync/ui/
     ├── main.rs                 # App root, router, legacy URL redirect
     ├── components.rs           # Module re-exports
     ├── components/
+    │   ├── buttons.rs          # Button module: ButtonKind enum, re-exports
+    │   ├── buttons/            # IconButton/ButtonCta bases + specific buttons
     │   ├── layout.rs           # Layout, Notification, BreadcrumbItem
     │   ├── spinner.rs          # Loading spinner
     │   └── update_checker.rs   # Auto-update polling
@@ -301,8 +303,11 @@ pub enum BreadcrumbItem {
 pub struct ToolbarActions(pub Box<dyn FnOnce() -> AnyView>);
 ```
 
-Pages pass custom buttons (Push, Pull, Uninstall, etc.) to appear
-to the right of breadcrumbs.
+Pages pass button components (e.g. `buttons::Push`, `buttons::Remove`)
+to appear to the right of breadcrumbs. All buttons are defined in
+`components/buttons/` — each is a thin wrapper around `IconButton`
+(leading icon) or `ButtonCta` (trailing icon, always large).
+`ButtonKind` centralizes icon paths and labels for icon buttons.
 
 ### UI Lock
 
