@@ -18,9 +18,11 @@ pub mod open_in_catalog;
 pub mod open_in_file_browser;
 pub mod pull;
 pub mod push;
+pub mod refresh;
 pub mod remove;
 pub mod reveal;
 pub mod save;
+pub mod settings;
 pub mod set_origin;
 pub mod set_remote;
 pub mod submit_login;
@@ -44,9 +46,11 @@ pub use open_in_catalog::OpenInCatalog;
 pub use open_in_file_browser::OpenInFileBrowser;
 pub use pull::Pull;
 pub use push::Push;
+pub use refresh::Refresh;
 pub use remove::Remove;
 pub use reveal::Reveal;
 pub use save::Save;
+pub use settings::Settings;
 pub use set_origin::SetOrigin;
 pub use set_remote::SetRemote;
 pub use submit_login::SubmitLogin;
@@ -70,9 +74,11 @@ pub enum ButtonKind {
     OpenInFileBrowser,
     Pull,
     Push,
+    Refresh,
     Remove,
     Reveal,
     Save,
+    Settings,
     SetOrigin,
     SetRemote,
     SubmitLogin,
@@ -96,9 +102,11 @@ impl ButtonKind {
             Self::OpenInFileBrowser => "/assets/img/icons/folder_open.svg",
             Self::Pull => "/assets/img/icons/cloud_download.svg",
             Self::Push => "/assets/img/icons/cloud_upload.svg",
+            Self::Refresh => "/assets/img/icons/refresh.svg",
             Self::Remove => "/assets/img/icons/block.svg",
             Self::Reveal => "/assets/img/icons/folder_open.svg",
             Self::Save => "/assets/img/icons/done.svg",
+            Self::Settings => "/assets/img/icons/gear.svg",
             Self::SetOrigin => "/assets/img/icons/warning.svg",
             Self::SetRemote => "/assets/img/icons/cloud_upload.svg",
             Self::SubmitLogin => "/assets/img/icons/done.svg",
@@ -122,9 +130,11 @@ impl ButtonKind {
             Self::OpenInFileBrowser => "Open",
             Self::Pull => "Pull",
             Self::Push => "Push",
+            Self::Refresh => "Refresh",
             Self::Remove => "Remove",
             Self::Reveal => "Reveal",
             Self::Save => "Save",
+            Self::Settings => "Settings",
             Self::SetOrigin => "Set origin",
             Self::SetRemote => "Set remote",
             Self::SubmitLogin => "Submit code and Log in",

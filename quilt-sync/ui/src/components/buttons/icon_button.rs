@@ -17,6 +17,8 @@ pub fn IconButton(
     warning: bool,
     #[prop(optional)]
     large: bool,
+    #[prop(optional)]
+    link: bool,
     #[prop(optional, into)]
     disabled: MaybeProp<bool>,
     children: Children,
@@ -26,6 +28,7 @@ pub fn IconButton(
     if warning { class.push_str(" warning"); }
     if small { class.push_str(" small"); }
     if large { class.push_str(" large"); }
+    if link { class.push_str(" link"); }
 
     let content = view! {
         {icon.map(|src| view! { <img class="qui-icon" src=src /> })}
@@ -176,6 +179,16 @@ mod tests {
         let btn = el.query_selector("button").unwrap().unwrap();
         assert!(btn.class_list().contains("qui-button"));
         assert!(btn.class_list().contains("large"));
+    }
+
+    #[wasm_bindgen_test]
+    fn link_style_class() {
+        let el = mount(|| view! {
+            <IconButton icon="/icons/x.svg" on_click=UnsyncCallback::new(|_| {}) link=true>"X"</IconButton>
+        });
+        let btn = el.query_selector("button").unwrap().unwrap();
+        assert!(btn.class_list().contains("qui-button"));
+        assert!(btn.class_list().contains("link"));
     }
 
     #[wasm_bindgen_test]
