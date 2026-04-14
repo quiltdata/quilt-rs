@@ -596,16 +596,10 @@ fn CommitEntryRow(
                     {if show_open_reveal {
                         view! {
                             <li class="menu-item">
-                                <button class="qui-button small" type="button" on:click=on_open>
-                                    <img class="qui-icon" src="/assets/img/icons/open_in_new.svg" />
-                                    <span>"Open"</span>
-                                </button>
+                                <buttons::Open on_click=on_open small=true />
                             </li>
                             <li class="menu-item">
-                                <button class="qui-button small" type="button" on:click=on_reveal>
-                                    <img class="qui-icon" src="/assets/img/icons/folder_open.svg" />
-                                    <span>"Reveal"</span>
-                                </button>
+                                <buttons::Reveal on_click=on_reveal small=true />
                             </li>
                         }
                         .into_any()
@@ -625,10 +619,7 @@ fn CommitEntryRow(
                     {if is_junky {
                         view! {
                             <li class="menu-item">
-                                <button class="qui-button small" type="button" on:click=on_ignore>
-                                    <img class="qui-icon" src="/assets/img/icons/visibility_off.svg" />
-                                    <span>"Ignore"</span>
-                                </button>
+                                <buttons::Ignore on_click=on_ignore small=true />
                             </li>
                         }
                         .into_any()
@@ -638,10 +629,7 @@ fn CommitEntryRow(
                     {if is_ignored {
                         view! {
                             <li class="menu-item">
-                                <button class="qui-button small" type="button" on:click=on_unignore>
-                                    <img class="qui-icon" src="/assets/img/icons/visibility.svg" />
-                                    <span>"Ignored"</span>
-                                </button>
+                                <buttons::Unignore on_click=on_unignore small=true />
                             </li>
                         }
                         .into_any()
