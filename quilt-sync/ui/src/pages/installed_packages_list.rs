@@ -4,7 +4,8 @@ use wasm_bindgen::JsCast;
 use crate::commands::{self, PackageItemData};
 use crate::components::layout::BreadcrumbItem;
 use crate::components::{
-    Layout, Notification, SetOriginPopup, SetOriginPopupData, Spinner, ToolbarActions,
+    Layout, Notification, OpenInCatalog, SetOriginPopup, SetOriginPopupData, Spinner,
+    ToolbarActions,
 };
 use crate::util::is_valid_hostname;
 
@@ -240,15 +241,7 @@ fn build_package_menu(
     };
 
     // ── Open remote (catalog) ──
-    let origin_for_catalog = origin_url.clone();
     let catalog_disabled = status == "local";
-    let on_open_catalog = move |_| {
-        if let Some(url) = origin_for_catalog.clone() {
-            leptos::task::spawn_local(async move {
-                let _ = commands::open_in_web_browser(url).await;
-            });
-        }
-    };
 
     // ── Commit ──
     let commit_href = format!("/commit?namespace={}", namespace);
@@ -308,15 +301,7 @@ fn build_package_menu(
         // Open remote
         {has_origin.then(|| view! {
             <li class="menu-item">
-                <button
-                    class="qui-button small"
-                    type="button"
-                    prop:disabled=catalog_disabled
-                    on:click=on_open_catalog
-                >
-                    <img class="qui-icon" src="/assets/img/icons/open_in_browser.svg" />
-                    <span>"Open in Catalog"</span>
-                </button>
+                <OpenInCatalog url=origin_url.clone() small=true disabled=catalog_disabled />
             </li>
         })}
 

@@ -3,7 +3,7 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 
 use crate::commands::{self, MergeData};
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
-use crate::components::{Layout, Notification, Spinner, ToolbarActions};
+use crate::components::{Layout, Notification, OpenInCatalog, Spinner, ToolbarActions};
 
 // ── Merge page ──
 
@@ -171,15 +171,6 @@ fn build_toolbar_actions(
             });
         };
 
-        let origin_for_catalog = origin_url.clone();
-        let on_open_catalog = move |_| {
-            if let Some(url) = origin_for_catalog.clone() {
-                leptos::task::spawn_local(async move {
-                    let _ = commands::open_in_web_browser(url).await;
-                });
-            }
-        };
-
         let ns_for_uninstall = namespace.clone();
         let on_uninstall = move |_| {
             let ns = ns_for_uninstall.clone();
@@ -210,10 +201,7 @@ fn build_toolbar_actions(
             </li>
             {has_catalog.then(|| view! {
                 <li>
-                    <button class="qui-button small" type="button" on:click=on_open_catalog>
-                        <img class="qui-icon" src="/assets/img/icons/open_in_browser.svg" />
-                        <span>"Open in Catalog"</span>
-                    </button>
+                    <OpenInCatalog url=origin_url.clone() small=true />
                 </li>
             })}
             <li>

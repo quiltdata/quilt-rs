@@ -4,8 +4,8 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 use crate::commands::{self, CommitData, EntryData, WorkflowData};
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{
-    IgnorePopup, IgnorePopupData, Layout, Notification, Spinner, ToolbarActions, UnignorePopup,
-    UnignorePopupData,
+    IgnorePopup, IgnorePopupData, Layout, Notification, OpenInCatalog, Spinner, ToolbarActions,
+    UnignorePopup, UnignorePopupData,
 };
 use crate::util::format_size;
 
@@ -427,15 +427,6 @@ fn build_toolbar_actions(
             });
         };
 
-        let origin_for_catalog = origin_url.clone();
-        let on_open_catalog = move |_| {
-            if let Some(url) = origin_for_catalog.clone() {
-                leptos::task::spawn_local(async move {
-                    let _ = commands::open_in_web_browser(url).await;
-                });
-            }
-        };
-
         let ns_for_uninstall = namespace.clone();
         let on_uninstall = move |_| {
             let ns = ns_for_uninstall.clone();
@@ -465,15 +456,7 @@ fn build_toolbar_actions(
             {if has_catalog {
                 view! {
                     <li>
-                        <button
-                            class="qui-button"
-                            type="button"
-                            prop:disabled=catalog_disabled
-                            on:click=on_open_catalog
-                        >
-                            <img class="qui-icon" src="/assets/img/icons/open_in_browser.svg" />
-                            <span>"Open in Catalog"</span>
-                        </button>
+                        <OpenInCatalog url=origin_url.clone() disabled=catalog_disabled />
                     </li>
                 }
                 .into_any()
@@ -561,14 +544,7 @@ fn CommitEntryRow(
         });
     };
 
-    let origin_for_catalog = entry.origin_url.clone();
-    let on_catalog = move |_| {
-        if let Some(url) = origin_for_catalog.clone() {
-            leptos::task::spawn_local(async move {
-                let _ = commands::open_in_web_browser(url).await;
-            });
-        }
-    };
+    let catalog_url = entry.origin_url.clone();
 
     let junky_pattern = entry.junky_pattern.clone();
     let ns_for_ignore = entry.namespace.clone();
@@ -627,10 +603,7 @@ fn CommitEntryRow(
                     {if show_catalog {
                         view! {
                             <li class="menu-item">
-                                <button class="qui-button small" type="button" on:click=on_catalog>
-                                    <img class="qui-icon" src="/assets/img/icons/open_in_browser.svg" />
-                                    <span>"Open in Catalog"</span>
-                                </button>
+                                <OpenInCatalog url=catalog_url small=true />
                             </li>
                         }
                         .into_any()
