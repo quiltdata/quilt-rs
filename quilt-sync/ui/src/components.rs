@@ -1,4 +1,6 @@
 pub mod commit_link;
+pub mod icon_button;
+pub mod icon_link;
 pub mod ignore_popup;
 pub mod layout;
 pub mod merge_link;
@@ -11,6 +13,8 @@ pub mod spinner;
 pub mod update_checker;
 
 pub use commit_link::CommitLink;
+pub use icon_button::IconButton;
+pub use icon_link::IconLink;
 pub use ignore_popup::{IgnorePopup, IgnorePopupData, UnignorePopup, UnignorePopupData};
 pub use layout::{Layout, Notification, ToolbarActions};
 pub use merge_link::MergeLink;

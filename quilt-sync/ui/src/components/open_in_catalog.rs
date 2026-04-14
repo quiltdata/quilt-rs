@@ -2,6 +2,8 @@ use leptos::prelude::*;
 
 use crate::commands;
 
+use super::IconButton;
+
 #[component]
 pub fn OpenInCatalog(
     url: Option<String>,
@@ -18,12 +20,9 @@ pub fn OpenInCatalog(
         }
     };
 
-    let class = if small { "qui-button small" } else { "qui-button" };
-
     view! {
-        <button class=class type="button" prop:disabled=disabled on:click=on_click>
-            <img class="qui-icon" src="/assets/img/icons/open_in_browser.svg" />
+        <IconButton icon="/assets/img/icons/open_in_browser.svg" on_click=on_click small=small disabled=disabled>
             <span>"Open in Catalog"</span>
-        </button>
+        </IconButton>
     }
 }

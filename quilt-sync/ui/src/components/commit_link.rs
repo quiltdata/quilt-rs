@@ -1,5 +1,7 @@
 use leptos::prelude::*;
 
+use super::IconLink;
+
 #[component]
 pub fn CommitLink(
     namespace: String,
@@ -7,13 +9,11 @@ pub fn CommitLink(
     small: bool,
 ) -> impl IntoView {
     let href = format!("/commit?namespace={}", namespace);
-    let class = if small { "qui-button small" } else { "qui-button" };
 
     view! {
-        <a class=class href=href>
-            <img class="qui-icon" src="/assets/img/icons/commit.svg" />
+        <IconLink href=href icon="/assets/img/icons/commit.svg" small=small>
             <span>"Commit"</span>
-        </a>
+        </IconLink>
     }
 }
 

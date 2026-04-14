@@ -1,5 +1,7 @@
 use leptos::prelude::*;
 
+use super::IconLink;
+
 #[component]
 pub fn MergeLink(
     namespace: String,
@@ -7,17 +9,11 @@ pub fn MergeLink(
     small: bool,
 ) -> impl IntoView {
     let href = format!("/merge?namespace={}", namespace);
-    let class = if small {
-        "qui-button primary small"
-    } else {
-        "qui-button primary"
-    };
 
     view! {
-        <a class=class href=href>
-            <img class="qui-icon" src="/assets/img/icons/merge.svg" />
+        <IconLink href=href icon="/assets/img/icons/merge.svg" small=small primary=true>
             <span>"Merge"</span>
-        </a>
+        </IconLink>
     }
 }
 

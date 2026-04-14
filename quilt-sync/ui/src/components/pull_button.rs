@@ -3,6 +3,8 @@ use leptos::prelude::*;
 use crate::commands;
 use crate::components::Notification;
 
+use super::IconButton;
+
 #[component]
 pub fn PullButton(
     namespace: String,
@@ -37,16 +39,9 @@ pub fn PullButton(
         });
     };
 
-    let class = if small {
-        "qui-button primary small"
-    } else {
-        "qui-button primary"
-    };
-
     view! {
-        <button class=class type="button" prop:disabled=move || busy.get() on:click=on_click>
-            <img class="qui-icon" src="/assets/img/icons/cloud_download.svg" />
+        <IconButton icon="/assets/img/icons/cloud_download.svg" on_click=on_click small=small primary=true disabled=busy>
             <span>{move || if busy.get() { "Pulling\u{2026}" } else { "Pull" }}</span>
-        </button>
+        </IconButton>
     }
 }
