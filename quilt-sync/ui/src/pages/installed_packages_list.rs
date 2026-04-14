@@ -41,14 +41,10 @@ pub fn InstalledPackagesList() -> impl IntoView {
                         let actions = ToolbarActions::new(move || {
                             view! {
                                 <li>
-                                    <button
-                                        class="qui-button small"
-                                        type="button"
-                                        on:click=move |_| show_create_popup_for_action.set(true)
-                                    >
-                                        <img class="qui-icon" src="/assets/img/icons/add.svg" />
-                                        <span>"Create local package"</span>
-                                    </button>
+                                    <buttons::CreateLocalPackage
+                                        on_click=move |_| show_create_popup_for_action.set(true)
+                                        small=true
+                                    />
                                 </li>
                             }.into_any()
                         });
@@ -327,10 +323,7 @@ fn build_package_menu(
 
         // Uninstall
         <li class="menu-item">
-            <button class="qui-button small" type="button" on:click=on_uninstall>
-                <img class="qui-icon" src="/assets/img/icons/block.svg" />
-                <span>"Remove"</span>
-            </button>
+            <buttons::Remove on_click=on_uninstall small=true />
         </li>
     }
 }
@@ -357,14 +350,10 @@ fn build_error_action(
             let ns = namespace.to_string();
             Some(
                 view! {
-                    <button
-                        class="qui-button small"
-                        type="button"
-                        on:click=move |_| show_set_remote_popup.set(Some(ns.clone()))
-                    >
-                        <img class="qui-icon" src="/assets/img/icons/cloud_upload.svg" />
-                        <span>"Set remote"</span>
-                    </button>
+                    <buttons::SetRemote
+                        on_click=move |_| show_set_remote_popup.set(Some(ns.clone()))
+                        small=true
+                    />
                 }
                 .into_any(),
             )
@@ -378,10 +367,7 @@ fn build_error_action(
             let login_href = format!("/login?host={}&back={back_encoded}", host);
             Some(
                 view! {
-                    <a class="qui-button warning small" href=login_href>
-                        <img class="qui-icon" src="/assets/img/icons/warning.svg" />
-                        <span>"Login"</span>
-                    </a>
+                    <buttons::Login href=login_href small=true />
                 }
                 .into_any(),
             )
@@ -391,19 +377,15 @@ fn build_error_action(
             let ns = namespace.to_string();
             Some(
                 view! {
-                    <button
-                        class="qui-button warning small"
-                        type="button"
-                        on:click=move |_| {
+                    <buttons::SetOrigin
+                        on_click=move |_| {
                             show_set_origin_popup.set(Some(SetOriginPopupData {
                                 namespace: ns.clone(),
                                 current_origin: String::new(),
                             }))
                         }
-                    >
-                        <img class="qui-icon" src="/assets/img/icons/warning.svg" />
-                        <span>"Set origin"</span>
-                    </button>
+                        small=true
+                    />
                 }
                 .into_any(),
             )

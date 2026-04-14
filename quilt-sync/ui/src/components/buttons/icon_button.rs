@@ -8,15 +8,21 @@ pub fn IconButton(
     small: bool,
     #[prop(optional)]
     primary: bool,
+    #[prop(optional)]
+    warning: bool,
     #[prop(optional, into)]
     disabled: MaybeProp<bool>,
     children: Children,
 ) -> impl IntoView {
-    let class = match (small, primary) {
-        (false, false) => "qui-button",
-        (true, false) => "qui-button small",
-        (false, true) => "qui-button primary",
-        (true, true) => "qui-button primary small",
+    let class = match (small, primary, warning) {
+        (false, false, false) => "qui-button",
+        (true, false, false) => "qui-button small",
+        (false, true, false) => "qui-button primary",
+        (true, true, false) => "qui-button primary small",
+        (false, false, true) => "qui-button warning",
+        (true, false, true) => "qui-button warning small",
+        (false, true, true) => "qui-button primary warning",
+        (true, true, true) => "qui-button primary warning small",
     };
 
     view! {
@@ -117,6 +123,27 @@ mod tests {
         assert!(btn.class_list().contains("qui-button"));
         assert!(btn.class_list().contains("small"));
         assert!(btn.class_list().contains("primary"));
+    }
+
+    #[wasm_bindgen_test]
+    fn warning_class() {
+        let el = mount(|| view! {
+            <IconButton icon="/icons/x.svg" on_click=|_| {} warning=true>"X"</IconButton>
+        });
+        let btn = el.query_selector("button").unwrap().unwrap();
+        assert!(btn.class_list().contains("qui-button"));
+        assert!(btn.class_list().contains("warning"));
+    }
+
+    #[wasm_bindgen_test]
+    fn warning_and_small_classes() {
+        let el = mount(|| view! {
+            <IconButton icon="/icons/x.svg" on_click=|_| {} warning=true small=true>"X"</IconButton>
+        });
+        let btn = el.query_selector("button").unwrap().unwrap();
+        assert!(btn.class_list().contains("qui-button"));
+        assert!(btn.class_list().contains("warning"));
+        assert!(btn.class_list().contains("small"));
     }
 
     #[wasm_bindgen_test]

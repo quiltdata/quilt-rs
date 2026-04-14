@@ -8,13 +8,19 @@ pub fn IconLink(
     small: bool,
     #[prop(optional)]
     primary: bool,
+    #[prop(optional)]
+    warning: bool,
     children: Children,
 ) -> impl IntoView {
-    let class = match (small, primary) {
-        (false, false) => "qui-button",
-        (true, false) => "qui-button small",
-        (false, true) => "qui-button primary",
-        (true, true) => "qui-button primary small",
+    let class = match (small, primary, warning) {
+        (false, false, false) => "qui-button",
+        (true, false, false) => "qui-button small",
+        (false, true, false) => "qui-button primary",
+        (true, true, false) => "qui-button primary small",
+        (false, false, true) => "qui-button warning",
+        (true, false, true) => "qui-button warning small",
+        (false, true, true) => "qui-button primary warning",
+        (true, true, true) => "qui-button primary warning small",
     };
 
     view! {
@@ -116,5 +122,26 @@ mod tests {
         assert!(link.class_list().contains("qui-button"));
         assert!(link.class_list().contains("small"));
         assert!(link.class_list().contains("primary"));
+    }
+
+    #[wasm_bindgen_test]
+    fn warning_class() {
+        let el = mount(|| view! {
+            <IconLink href="/x".to_string() icon="/icons/x.svg" warning=true>"X"</IconLink>
+        });
+        let link = el.query_selector("a").unwrap().unwrap();
+        assert!(link.class_list().contains("qui-button"));
+        assert!(link.class_list().contains("warning"));
+    }
+
+    #[wasm_bindgen_test]
+    fn warning_and_small_classes() {
+        let el = mount(|| view! {
+            <IconLink href="/x".to_string() icon="/icons/x.svg" warning=true small=true>"X"</IconLink>
+        });
+        let link = el.query_selector("a").unwrap().unwrap();
+        assert!(link.class_list().contains("qui-button"));
+        assert!(link.class_list().contains("warning"));
+        assert!(link.class_list().contains("small"));
     }
 }
