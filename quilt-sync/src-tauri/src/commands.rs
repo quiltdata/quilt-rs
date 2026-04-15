@@ -837,8 +837,7 @@ pub async fn package_has_changes(
     let namespace: quilt::uri::Namespace = namespace
         .try_into()
         .map_err(|e: quilt::Error| e.to_string())?;
-    let m: &model::Model = &m;
-    has_changes(m, &namespace)
+    has_changes(&*m, &namespace)
         .await
         .map_err(|e| e.to_string())
 }
