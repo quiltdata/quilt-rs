@@ -100,6 +100,7 @@ pub async fn push_package(
     };
 
     let remote_uri = lineage.remote()?.clone();
+    let is_first_push = lineage.base_hash.is_empty();
 
     debug!("⏳ Fetching remote manifest");
     let remote_manifest = if remote_uri.hash.is_empty() {
@@ -201,9 +202,13 @@ pub async fn push_package(
         ))?
     }
 
-    // Try certifying latest if tracking, or if this is the first push (no existing latest)
-    if lineage.base_hash == lineage.latest_hash || lineage.latest_hash.is_empty() {
-        debug!("⏳ Remote latest not updated, certifying new latest");
+    // Certify latest when:
+    // - first push (base_hash was empty): always certify, even if the remote already
+    //   has a different "latest" — the user explicitly pushed this version;
+    // - tracking (base_hash == latest_hash): we're up-to-date with remote;
+    // - no existing latest: remote has never had a "latest" tag.
+    if is_first_push || lineage.base_hash == lineage.latest_hash || lineage.latest_hash.is_empty() {
+        debug!("⏳ Certifying new latest (first push, tracking, or no existing latest)");
         return flow::certify_latest(lineage, remote, new_manifest_uri).await;
     } else {
         warn!(r#"⏳ We do not "track" the latest hash, so we will not certify it"#);
@@ -308,12 +313,14 @@ mod tests {
             hash: fixtures::top_hash::EMPTY_NULL_TOP_HASH.to_string(),
             origin: None,
         };
+        // First push with an existing remote "latest": certify_latest is called,
+        // so both base_hash and latest_hash point to the pushed hash.
         assert_eq!(
             lineage,
             PackageLineage {
                 remote_uri: Some(manifest_uri.clone()),
-                base_hash: manifest_uri.hash,
-                latest_hash: "abcdef".to_string(),
+                base_hash: manifest_uri.hash.clone(),
+                latest_hash: manifest_uri.hash,
                 ..PackageLineage::default()
             }
         );
@@ -398,12 +405,14 @@ mod tests {
             hash: fixtures::manifest::TOP_HASH.to_string(),
             origin: None,
         };
+        // First push with an existing remote "latest": certify_latest is called,
+        // so both base_hash and latest_hash point to the pushed hash.
         assert_eq!(
             lineage,
             PackageLineage {
                 remote_uri: Some(manifest_uri.clone()),
-                base_hash: manifest_uri.hash,
-                latest_hash: "latest-hash-abcdef".to_string(),
+                base_hash: manifest_uri.hash.clone(),
+                latest_hash: manifest_uri.hash,
                 ..PackageLineage::default()
             }
         );
