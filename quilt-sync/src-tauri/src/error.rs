@@ -64,6 +64,9 @@ pub enum Error {
     #[error("Package has no catalog origin")]
     MissingOrigin,
 
+    #[error("Pushed {0}, but could not update latest: remote has newer changes")]
+    PushNotCertified(String),
+
     #[error("Post-login navigation failed: {0}")]
     PostLogin(String),
 
