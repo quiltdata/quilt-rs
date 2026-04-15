@@ -207,8 +207,7 @@ pub async fn push_package(
     //   has a different "latest" — the user explicitly pushed this version;
     // - tracking (base_hash == latest_hash): we're up-to-date with remote;
     // - no existing latest: remote has never had a "latest" tag.
-    if is_first_push || lineage.base_hash == lineage.latest_hash || lineage.latest_hash.is_empty()
-    {
+    if is_first_push || lineage.base_hash == lineage.latest_hash || lineage.latest_hash.is_empty() {
         debug!("⏳ Remote latest not updated, certifying new latest");
         return flow::certify_latest(lineage, remote, new_manifest_uri).await;
     } else {
