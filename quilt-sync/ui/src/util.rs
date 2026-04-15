@@ -34,6 +34,7 @@ where
         leptos::task::spawn_local(async move {
             match command().await {
                 Ok(msg) => {
+                    busy.set(false);
                     if let Some(ui_locked) = ui_locked {
                         ui_locked.set(false);
                     }
@@ -41,7 +42,7 @@ where
                     on_done();
                 }
                 Err(e) => {
-                    // Don't call on_done; reset busy so the user can retry.
+                    // Don't call on_done — nothing changed on the server.
                     if let Some(ui_locked) = ui_locked {
                         ui_locked.set(false);
                     }
