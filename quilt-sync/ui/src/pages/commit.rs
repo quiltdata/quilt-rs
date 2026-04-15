@@ -2,6 +2,7 @@ use leptos::prelude::*;
 use leptos_router::hooks::{use_navigate, use_query_map};
 
 use crate::commands::{self, CommitData, EntryData, WorkflowData};
+use crate::components::buttons;
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{
     IgnorePopup, IgnorePopupData, Layout, Notification, Spinner, ToolbarActions, UnignorePopup,
@@ -283,15 +284,7 @@ fn CommitContent(
 
         // ── Action bar ──
         <div class="qui-actionbar">
-            <button
-                class="qui-button primary large"
-                type="button"
-                prop:disabled=move || committing.get()
-                on:click=on_commit
-            >
-                <span>{move || if committing.get() { "Committing\u{2026}" } else { "Commit" }}</span>
-                <img class="qui-icon" src="/assets/img/icons/done.svg" />
-            </button>
+            <buttons::CommitRevision on_click=on_commit busy=committing />
         </div>
 
         // ── Popups ──
@@ -416,9 +409,10 @@ fn build_toolbar_actions(
 
     ToolbarActions::new(move || {
         let navigate = use_navigate();
-        let ns_for_folder = namespace.clone();
-        let on_open_folder = move |_| {
-            let ns = ns_for_folder.clone();
+
+        let ns_for_open = namespace.clone();
+        let on_open_file_browser = move |_| {
+            let ns = ns_for_open.clone();
             leptos::task::spawn_local(async move {
                 match commands::open_in_file_browser(ns).await {
                     Ok(msg) => notification.set(Some(Notification::Success(msg))),
@@ -427,9 +421,9 @@ fn build_toolbar_actions(
             });
         };
 
-        let origin_for_catalog = origin_url.clone();
+        let url_for_catalog = origin_url.clone();
         let on_open_catalog = move |_| {
-            if let Some(url) = origin_for_catalog.clone() {
+            if let Some(url) = url_for_catalog.clone() {
                 leptos::task::spawn_local(async move {
                     let _ = commands::open_in_web_browser(url).await;
                 });
@@ -457,23 +451,12 @@ fn build_toolbar_actions(
 
         view! {
             <li>
-                <button class="qui-button" type="button" on:click=on_open_folder>
-                    <img class="qui-icon" src="/assets/img/icons/folder_open.svg" />
-                    <span>"Open"</span>
-                </button>
+                <buttons::OpenInFileBrowser on_click=on_open_file_browser />
             </li>
             {if has_catalog {
                 view! {
                     <li>
-                        <button
-                            class="qui-button"
-                            type="button"
-                            prop:disabled=catalog_disabled
-                            on:click=on_open_catalog
-                        >
-                            <img class="qui-icon" src="/assets/img/icons/open_in_browser.svg" />
-                            <span>"Open in Catalog"</span>
-                        </button>
+                        <buttons::OpenInCatalog on_click=on_open_catalog disabled=catalog_disabled />
                     </li>
                 }
                 .into_any()
@@ -481,10 +464,7 @@ fn build_toolbar_actions(
                 ().into_any()
             }}
             <li>
-                <button class="qui-button" type="button" on:click=on_uninstall>
-                    <img class="qui-icon" src="/assets/img/icons/block.svg" />
-                    <span>"Remove"</span>
-                </button>
+                <buttons::Remove on_click=on_uninstall />
             </li>
         }
         .into_any()
@@ -561,9 +541,9 @@ fn CommitEntryRow(
         });
     };
 
-    let origin_for_catalog = entry.origin_url.clone();
-    let on_catalog = move |_| {
-        if let Some(url) = origin_for_catalog.clone() {
+    let catalog_url = entry.origin_url.clone();
+    let on_open_catalog = move |_| {
+        if let Some(url) = catalog_url.clone() {
             leptos::task::spawn_local(async move {
                 let _ = commands::open_in_web_browser(url).await;
             });
@@ -608,16 +588,10 @@ fn CommitEntryRow(
                     {if show_open_reveal {
                         view! {
                             <li class="menu-item">
-                                <button class="qui-button small" type="button" on:click=on_open>
-                                    <img class="qui-icon" src="/assets/img/icons/open_in_new.svg" />
-                                    <span>"Open"</span>
-                                </button>
+                                <buttons::Open on_click=on_open small=true />
                             </li>
                             <li class="menu-item">
-                                <button class="qui-button small" type="button" on:click=on_reveal>
-                                    <img class="qui-icon" src="/assets/img/icons/folder_open.svg" />
-                                    <span>"Reveal"</span>
-                                </button>
+                                <buttons::Reveal on_click=on_reveal small=true />
                             </li>
                         }
                         .into_any()
@@ -627,10 +601,7 @@ fn CommitEntryRow(
                     {if show_catalog {
                         view! {
                             <li class="menu-item">
-                                <button class="qui-button small" type="button" on:click=on_catalog>
-                                    <img class="qui-icon" src="/assets/img/icons/open_in_browser.svg" />
-                                    <span>"Open in Catalog"</span>
-                                </button>
+                                <buttons::OpenInCatalog on_click=on_open_catalog small=true />
                             </li>
                         }
                         .into_any()
@@ -640,10 +611,7 @@ fn CommitEntryRow(
                     {if is_junky {
                         view! {
                             <li class="menu-item">
-                                <button class="qui-button small" type="button" on:click=on_ignore>
-                                    <img class="qui-icon" src="/assets/img/icons/visibility_off.svg" />
-                                    <span>"Ignore"</span>
-                                </button>
+                                <buttons::Ignore on_click=on_ignore small=true />
                             </li>
                         }
                         .into_any()
@@ -653,10 +621,7 @@ fn CommitEntryRow(
                     {if is_ignored {
                         view! {
                             <li class="menu-item">
-                                <button class="qui-button small" type="button" on:click=on_unignore>
-                                    <img class="qui-icon" src="/assets/img/icons/visibility.svg" />
-                                    <span>"Ignored"</span>
-                                </button>
+                                <buttons::Unignore on_click=on_unignore small=true />
                             </li>
                         }
                         .into_any()

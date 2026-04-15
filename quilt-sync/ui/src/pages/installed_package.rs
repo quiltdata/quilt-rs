@@ -2,12 +2,13 @@ use leptos::prelude::*;
 use leptos_router::hooks::{use_navigate, use_query_map};
 
 use crate::commands::{self, EntryData, InstalledPackageData};
+use crate::components::buttons;
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{
     IgnorePopup, IgnorePopupData, Layout, Notification, SetOriginPopup, Spinner, ToolbarActions,
     UnignorePopup, UnignorePopupData,
 };
-use crate::util::format_size;
+use crate::util::{format_size, make_action};
 
 // ── Installed Package page ──
 
@@ -263,20 +264,13 @@ fn InstalledPackageContent(
                 let has_changes = entries.iter().any(|e| {
                     matches!(e.status.as_str(), "added" | "modified" | "deleted")
                 });
-                let commit_btn_class = Memo::new(move |_| {
-                    if has_changes && checked_count.get() == 0 {
-                        "qui-button primary large"
-                    } else {
-                        "qui-button large"
-                    }
+                let is_primary = Memo::new(move |_| {
+                    has_changes && checked_count.get() == 0
                 });
                 let href = commit_href_clone.clone();
                 view! {
                     <div class="qui-actionbar">
-                        <a class=move || commit_btn_class.get() href=href>
-                            <span>"Create new revision"</span>
-                            <img class="qui-icon" src="/assets/img/icons/arrow_forward.svg" />
-                        </a>
+                        <buttons::CreateNewRevision href=href primary=is_primary />
                     </div>
                 }
             }
@@ -334,9 +328,10 @@ fn build_toolbar_actions(
 
     ToolbarActions::new(move || {
         let navigate = use_navigate();
-        let ns_for_folder = namespace.clone();
-        let on_open_folder = move |_| {
-            let ns = ns_for_folder.clone();
+
+        let ns_for_open = namespace.clone();
+        let on_open_file_browser = move |_| {
+            let ns = ns_for_open.clone();
             leptos::task::spawn_local(async move {
                 match commands::open_in_file_browser(ns).await {
                     Ok(msg) => notification.set(Some(Notification::Success(msg))),
@@ -345,9 +340,9 @@ fn build_toolbar_actions(
             });
         };
 
-        let origin_for_catalog = origin_url.clone();
+        let url_for_catalog = origin_url.clone();
         let on_open_catalog = move |_| {
-            if let Some(url) = origin_for_catalog.clone() {
+            if let Some(url) = url_for_catalog.clone() {
                 leptos::task::spawn_local(async move {
                     let _ = commands::open_in_web_browser(url).await;
                 });
@@ -375,33 +370,19 @@ fn build_toolbar_actions(
 
         view! {
             <li>
-                <button class="qui-button" type="button" on:click=on_open_folder>
-                    <img class="qui-icon" src="/assets/img/icons/folder_open.svg" />
-                    <span>"Open"</span>
-                </button>
+                <buttons::OpenInFileBrowser on_click=on_open_file_browser />
             </li>
             {if has_catalog {
                 view! {
                     <li>
-                        <button
-                            class="qui-button"
-                            type="button"
-                            prop:disabled=catalog_disabled
-                            on:click=on_open_catalog
-                        >
-                            <img class="qui-icon" src="/assets/img/icons/open_in_browser.svg" />
-                            <span>"Open in Catalog"</span>
-                        </button>
+                        <buttons::OpenInCatalog on_click=on_open_catalog disabled=catalog_disabled />
                     </li>
                 }.into_any()
             } else {
                 ().into_any()
             }}
             <li>
-                <button class="qui-button" type="button" on:click=on_uninstall>
-                    <img class="qui-icon" src="/assets/img/icons/block.svg" />
-                    <span>"Remove"</span>
-                </button>
+                <buttons::Remove on_click=on_uninstall />
             </li>
         }
         .into_any()
@@ -425,34 +406,53 @@ fn StatusBanner(
 
     let content = match status.as_str() {
         "ahead" => {
-            let ns = ns.clone();
-            Some(view! {
-                <StatusBannerInner description="Your commits are ahead of the remote">
-                    <PushButton namespace=ns notification=notification ui_locked=ui_locked refetch=refetch />
-                </StatusBannerInner>
-            }.into_any())
-        }
-        "behind" => {
-            let ns = ns.clone();
-            Some(view! {
-                <StatusBannerInner description="Your commits are behind the remote">
-                    <PullButton namespace=ns notification=notification ui_locked=ui_locked refetch=refetch />
-                </StatusBannerInner>
-            }.into_any())
-        }
-        "diverged" => {
-            let merge_href = format!("/merge?namespace={ns}");
+            let ns_for_push = ns.clone();
+            let (push_busy, on_push) = make_action(
+                move || {
+                    let ns = ns_for_push.clone();
+                    async move { commands::package_push(ns).await }
+                },
+                notification,
+                Some(ui_locked),
+                move || refetch.notify(),
+            );
             Some(
                 view! {
-                    <StatusBannerInner description="Your commits are detached from the remote">
-                        <a class="qui-button primary" href=merge_href>
-                            <span>"Merge"</span>
-                        </a>
+                    <StatusBannerInner description="Your commits are ahead of the remote">
+                        <buttons::Push on_click=on_push busy=push_busy />
                     </StatusBannerInner>
                 }
                 .into_any(),
             )
         }
+        "behind" => {
+            let ns_for_pull = ns.clone();
+            let (pull_busy, on_pull) = make_action(
+                move || {
+                    let ns = ns_for_pull.clone();
+                    async move { commands::package_pull(ns).await }
+                },
+                notification,
+                Some(ui_locked),
+                move || refetch.notify(),
+            );
+            Some(
+                view! {
+                    <StatusBannerInner description="Your commits are behind the remote">
+                        <buttons::Pull on_click=on_pull busy=pull_busy />
+                    </StatusBannerInner>
+                }
+                .into_any(),
+            )
+        }
+        "diverged" => Some(
+            view! {
+                <StatusBannerInner description="Your commits are detached from the remote">
+                    <buttons::Merge namespace=ns.clone() />
+                </StatusBannerInner>
+            }
+            .into_any(),
+        ),
         "error" => match host {
             Some(ref h) => {
                 let back = format!(
@@ -463,17 +463,10 @@ fn StatusBanner(
                 Some(
                     view! {
                         <StatusBannerInner description="Unable to check remote status">
-                            <a class="qui-button warning" href=login_href>
-                                <img class="qui-icon" src="/assets/img/icons/warning.svg" />
-                                <span>"Login"</span>
-                            </a>
-                            <button
-                                class="qui-button"
-                                type="button"
-                                on:click=move |_| show_origin_popup.set(true)
-                            >
-                                <span>"Change origin"</span>
-                            </button>
+                            <buttons::Login href=login_href />
+                            <buttons::ChangeOrigin
+                                on_click=move |_| show_origin_popup.set(true)
+                            />
                         </StatusBannerInner>
                     }
                     .into_any(),
@@ -482,26 +475,33 @@ fn StatusBanner(
             None => Some(
                 view! {
                     <StatusBannerInner description="No catalog origin configured">
-                        <button
-                            class="qui-button warning"
-                            type="button"
-                            on:click=move |_| show_origin_popup.set(true)
-                        >
-                            <img class="qui-icon" src="/assets/img/icons/warning.svg" />
-                            <span>"Set origin"</span>
-                        </button>
+                        <buttons::SetOrigin
+                            on_click=move |_| show_origin_popup.set(true)
+                        />
                     </StatusBannerInner>
                 }
                 .into_any(),
             ),
         },
         "local" if origin_host.is_some() => {
-            let ns = ns.clone();
-            Some(view! {
-                <StatusBannerInner description="Push to remote">
-                    <PushButton namespace=ns notification=notification ui_locked=ui_locked refetch=refetch />
-                </StatusBannerInner>
-            }.into_any())
+            let ns_for_push = ns.clone();
+            let (push_busy, on_push) = make_action(
+                move || {
+                    let ns = ns_for_push.clone();
+                    async move { commands::package_push(ns).await }
+                },
+                notification,
+                Some(ui_locked),
+                move || refetch.notify(),
+            );
+            Some(
+                view! {
+                    <StatusBannerInner description="Push to remote">
+                        <buttons::Push on_click=on_push busy=push_busy />
+                    </StatusBannerInner>
+                }
+                .into_any(),
+            )
         }
         _ => None,
     };
@@ -522,84 +522,6 @@ fn StatusBannerInner(description: &'static str, children: Children) -> impl Into
                 </div>
             </div>
         </div>
-    }
-}
-
-#[component]
-fn PushButton(
-    namespace: String,
-    notification: RwSignal<Option<Notification>>,
-    ui_locked: RwSignal<bool>,
-    refetch: Trigger,
-) -> impl IntoView {
-    let pushing = RwSignal::new(false);
-    view! {
-        <button
-            class="qui-button primary"
-            type="button"
-            prop:disabled=move || pushing.get()
-            on:click=move |_| {
-                if pushing.get_untracked() { return; }
-                pushing.set(true);
-                ui_locked.set(true);
-                let ns = namespace.clone();
-                leptos::task::spawn_local(async move {
-                    match commands::package_push(ns).await {
-                        Ok(msg) => {
-                            ui_locked.set(false);
-                            notification.set(Some(Notification::Success(msg)));
-                            refetch.notify();
-                        }
-                        Err(e) => {
-                            ui_locked.set(false);
-                            notification.set(Some(Notification::Error(e)));
-                            pushing.set(false);
-                        }
-                    }
-                });
-            }
-        >
-            <span>{move || if pushing.get() { "Pushing\u{2026}" } else { "Push" }}</span>
-        </button>
-    }
-}
-
-#[component]
-fn PullButton(
-    namespace: String,
-    notification: RwSignal<Option<Notification>>,
-    ui_locked: RwSignal<bool>,
-    refetch: Trigger,
-) -> impl IntoView {
-    let pulling = RwSignal::new(false);
-    view! {
-        <button
-            class="qui-button primary"
-            type="button"
-            prop:disabled=move || pulling.get()
-            on:click=move |_| {
-                if pulling.get_untracked() { return; }
-                pulling.set(true);
-                ui_locked.set(true);
-                let ns = namespace.clone();
-                leptos::task::spawn_local(async move {
-                    match commands::package_pull(ns).await {
-                        Ok(msg) => {
-                            ui_locked.set(false);
-                            notification.set(Some(Notification::Success(msg)));
-                            refetch.notify();
-                        }
-                        Err(e) => {
-                            ui_locked.set(false);
-                            notification.set(Some(Notification::Error(e)));
-                            pulling.set(false);
-                        }
-                    }
-                });
-            }
-        >
-            <span>{move || if pulling.get() { "Pulling\u{2026}" } else { "Pull" }}</span>
-        </button>
     }
 }
 
@@ -816,9 +738,9 @@ fn EntryRow(
         });
     };
 
-    let origin_for_catalog = entry.origin_url.clone();
-    let on_catalog = move |_| {
-        if let Some(url) = origin_for_catalog.clone() {
+    let catalog_url = entry.origin_url.clone();
+    let on_open_catalog = move |_| {
+        if let Some(url) = catalog_url.clone() {
             leptos::task::spawn_local(async move {
                 let _ = commands::open_in_web_browser(url).await;
             });
@@ -872,16 +794,10 @@ fn EntryRow(
                     {if show_open_reveal {
                         view! {
                             <li class="menu-item">
-                                <button class="qui-button small" type="button" on:click=on_open>
-                                    <img class="qui-icon" src="/assets/img/icons/open_in_new.svg" />
-                                    <span>"Open"</span>
-                                </button>
+                                <buttons::Open on_click=on_open small=true />
                             </li>
                             <li class="menu-item">
-                                <button class="qui-button small" type="button" on:click=on_reveal>
-                                    <img class="qui-icon" src="/assets/img/icons/folder_open.svg" />
-                                    <span>"Reveal"</span>
-                                </button>
+                                <buttons::Reveal on_click=on_reveal small=true />
                             </li>
                         }.into_any()
                     } else {
@@ -890,10 +806,7 @@ fn EntryRow(
                     {if show_catalog {
                         view! {
                             <li class="menu-item">
-                                <button class="qui-button small" type="button" on:click=on_catalog>
-                                    <img class="qui-icon" src="/assets/img/icons/open_in_browser.svg" />
-                                    <span>"Open in Catalog"</span>
-                                </button>
+                                <buttons::OpenInCatalog on_click=on_open_catalog small=true />
                             </li>
                         }.into_any()
                     } else {
@@ -902,10 +815,7 @@ fn EntryRow(
                     {if is_junky {
                         view! {
                             <li class="menu-item">
-                                <button class="qui-button small" type="button" on:click=on_ignore>
-                                    <img class="qui-icon" src="/assets/img/icons/visibility_off.svg" />
-                                    <span>"Ignore"</span>
-                                </button>
+                                <buttons::Ignore on_click=on_ignore small=true />
                             </li>
                         }.into_any()
                     } else {
@@ -914,10 +824,7 @@ fn EntryRow(
                     {if is_ignored {
                         view! {
                             <li class="menu-item">
-                                <button class="qui-button small" type="button" on:click=on_unignore>
-                                    <img class="qui-icon" src="/assets/img/icons/visibility.svg" />
-                                    <span>"Ignored"</span>
-                                </button>
+                                <buttons::Unignore on_click=on_unignore small=true />
                             </li>
                         }.into_any()
                     } else {

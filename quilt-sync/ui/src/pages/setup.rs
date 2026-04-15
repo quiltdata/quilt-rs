@@ -2,6 +2,7 @@ use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
 
 use crate::commands;
+use crate::components::buttons;
 use crate::components::{Layout, Spinner};
 
 // ── Setup page ──
@@ -112,29 +113,14 @@ fn SetupContent(default_home: String) -> impl IntoView {
                         <span class="hint">{move || hint.get()}</span>
                     </p>
 
-                    <button
-                        class="qui-button"
-                        type="button"
-                        prop:disabled=move || browsing.get()
-                        on:click=on_browse
-                    >
-                        <span>"Browse"</span>
-                    </button>
+                    <buttons::Browse on_click=on_browse disabled=browsing />
                 </form>
             </div>
         </div>
 
         // Action bar with Save button
         <div class="qui-actionbar">
-            <button
-                class="qui-button primary large"
-                type="button"
-                prop:disabled=move || saving.get()
-                on:click=on_save
-            >
-                <img class="qui-icon" src="/assets/img/icons/done.svg" />
-                <span>{move || if saving.get() { "Saving\u{2026}" } else { "Save" }}</span>
-            </button>
+            <buttons::Save on_click=on_save busy=saving />
         </div>
     }
 }

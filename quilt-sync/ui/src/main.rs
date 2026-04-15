@@ -2,6 +2,9 @@ use leptos::prelude::*;
 use leptos_router::components::{Redirect, Route, Router, Routes};
 use leptos_router::path;
 
+#[cfg(test)]
+wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+
 mod commands;
 mod components;
 mod error_handler;

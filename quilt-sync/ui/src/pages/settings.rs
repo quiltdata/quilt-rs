@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 
 use crate::commands::{self, ChangelogEntry, SettingsData};
+use crate::components::buttons;
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{Layout, Notification, Spinner};
 
@@ -120,39 +121,19 @@ fn GeneralSection(
                 <dt>"Version"</dt>
                 <dd>
                     <span>{version}</span>
-                    <button
-                        class="qui-button link"
-                        type="button"
-                        on:click=move |_| show_release_notes.set(true)
-                    >
-                        <span>"Release notes"</span>
-                    </button>
+                    <buttons::ReleaseNotes on_click=move |_| show_release_notes.set(true) />
                 </dd>
 
                 <dt>"Home directory"</dt>
                 <dd>
                     <span class="path" title=home_title>{home_display}</span>
-                    <button
-                        class="qui-button link small"
-                        type="button"
-                        on:click=on_open_home
-                    >
-                        <img class="qui-icon" src="/assets/img/icons/folder_open.svg" />
-                        <span>"Open"</span>
-                    </button>
+                    <buttons::OpenInFileBrowser on_click=on_open_home small=true link=true />
                 </dd>
 
                 <dt>"Data directory"</dt>
                 <dd>
                     <span class="path" title=data_title>{data_dir}</span>
-                    <button
-                        class="qui-button link small"
-                        type="button"
-                        on:click=on_open_data
-                    >
-                        <img class="qui-icon" src="/assets/img/icons/folder_open.svg" />
-                        <span>"Open"</span>
-                    </button>
+                    <buttons::OpenInFileBrowser on_click=on_open_data small=true link=true />
                 </dd>
             </dl>
         </section>
@@ -213,14 +194,10 @@ fn AuthHostRow(
     view! {
         <dt>{host_display}</dt>
         <dd>
-            <a class="qui-button small" href=login_href>
-                <span>"Re-login"</span>
-            </a>
+            <buttons::ReLogin href=login_href />
             <div class="logout-popover">
-                <button
-                    class="qui-button small"
-                    type="button"
-                    on:click=move |_| {
+                <buttons::Logout
+                    on_click=move |_| {
                         let host = host_for_logout.clone();
                         leptos::task::spawn_local(async move {
                             match commands::erase_auth(host).await {
@@ -233,10 +210,8 @@ fn AuthHostRow(
                             refetch.notify();
                         });
                     }
-                >
-                    <img class="qui-icon" src="/assets/img/icons/warning.svg" />
-                    <span>"Logout"</span>
-                </button>
+                    small=true
+                />
                 <div class="popover-wrapper">
                     <div class="popover">
                         "This will erase stored credentials for this host. You will need to log in again."
@@ -260,11 +235,6 @@ fn DiagnosticsSection(
     zip_path: RwSignal<Option<String>>,
 ) -> impl IntoView {
     let collecting = RwSignal::new(false);
-    let logs_icon = if logs_dir_is_temporary {
-        "/assets/img/icons/warning.svg"
-    } else {
-        "/assets/img/icons/folder_open.svg"
-    };
     let logs_title = logs_dir.clone();
 
     view! {
@@ -277,10 +247,8 @@ fn DiagnosticsSection(
                 <dt>"Logs directory"</dt>
                 <dd>
                     <span class="path" title=logs_title>{logs_dir}</span>
-                    <button
-                        class="qui-button link small"
-                        type="button"
-                        on:click=move |_| {
+                    <buttons::OpenLogsDir
+                        on_click=move |_| {
                             leptos::task::spawn_local(async move {
                                 match commands::debug_logs().await {
                                     Ok(msg) => notification.set(Some(Notification::Success(msg))),
@@ -291,20 +259,15 @@ fn DiagnosticsSection(
                                 }
                             });
                         }
-                    >
-                        <img class="qui-icon" src=logs_icon />
-                        <span>"Open"</span>
-                    </button>
+                        is_temporary=logs_dir_is_temporary
+                    />
                 </dd>
             </dl>
 
             <div class="settings-actions" id="diagnostic-actions">
                 // Collect Logs
-                <button
-                    class="qui-button"
-                    type="button"
-                    prop:disabled=move || collecting.get()
-                    on:click=move |_| {
+                <buttons::CollectLogs
+                    on_click=move |_| {
                         collecting.set(true);
                         leptos::task::spawn_local(async move {
                             match commands::collect_diagnostic_logs().await {
@@ -318,22 +281,14 @@ fn DiagnosticsSection(
                             collecting.set(false);
                         });
                     }
-                >
-                    <span>
-                        {move || {
-                            if collecting.get() { "Collecting\u{2026}" } else { "Collect Logs" }
-                        }}
-                    </span>
-                </button>
+                    busy=collecting
+                />
 
                 <span class="actions-divider">"then"</span>
 
                 // Send to Sentry
-                <button
-                    class="qui-button"
-                    type="button"
-                    prop:disabled=move || zip_path.get().is_none()
-                    on:click=move |_| {
+                <buttons::SendToSentry
+                    on_click=move |_| {
                         if let Some(path) = zip_path.get_untracked() {
                             leptos::task::spawn_local(async move {
                                 match commands::send_crash_report(path).await {
@@ -346,9 +301,8 @@ fn DiagnosticsSection(
                             });
                         }
                     }
-                >
-                    <span>"Send to Sentry"</span>
-                </button>
+                    disabled=Signal::derive(move || zip_path.get().is_none())
+                />
 
                 <span class="actions-divider">"or"</span>
 
@@ -360,10 +314,8 @@ fn DiagnosticsSection(
                     <div class="collect-logs-result">
                         <span class="zip-path-label">"Logs collected:"</span>
                         <code>{move || zip_path.get().unwrap_or_default()}</code>
-                        <button
-                            class="qui-button link small"
-                            type="button"
-                            on:click=move |_| {
+                        <buttons::Reveal
+                            on_click=move |_| {
                                 if let Some(path) = zip_path.get_untracked() {
                                     leptos::task::spawn_local(async move {
                                         let sep = path.rfind('/').or_else(|| path.rfind('\\'));
@@ -375,10 +327,9 @@ fn DiagnosticsSection(
                                     });
                                 }
                             }
-                        >
-                            <img class="qui-icon" src="/assets/img/icons/folder_open.svg" />
-                            <span>"Reveal"</span>
-                        </button>
+                            small=true
+                            link=true
+                        />
                     </div>
                 </Show>
 
@@ -397,11 +348,8 @@ fn EmailSupportButton(
     zip_path: RwSignal<Option<String>>,
 ) -> impl IntoView {
     view! {
-        <button
-            class="qui-button"
-            type="button"
-            prop:disabled=move || zip_path.get().is_none()
-            on:click=move |_| {
+        <buttons::EmailSupport
+            on_click=move |_| {
                 if let Some(path) = zip_path.get_untracked() {
                     let version = version.clone();
                     let os = os.clone();
@@ -419,9 +367,8 @@ fn EmailSupportButton(
                     });
                 }
             }
-        >
-            <span>"Email Support"</span>
-        </button>
+            disabled=Signal::derive(move || zip_path.get().is_none())
+        />
     }
 }
 

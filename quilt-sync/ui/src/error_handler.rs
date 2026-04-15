@@ -2,6 +2,7 @@ use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
 
 use crate::commands;
+use crate::components::buttons;
 use crate::components::{Layout, Notification};
 
 /// Handle a command error by either navigating to an error/login/setup page
@@ -58,15 +59,9 @@ fn render_page_error(message: &str, notification: RwSignal<Option<Notification>>
                 <h1 class="title">"Error"</h1>
                 <p class="message">{message}</p>
                 <div class="button-group">
-                    <button class="qui-button" type="button" on:click=on_reload>
-                        <span>"Reload page"</span>
-                    </button>
-                    <button class="qui-button" type="button" on:click=on_dot_quilt>
-                        <span>"Open .quilt directory"</span>
-                    </button>
-                    <a class="qui-button primary" href="/installed-packages-list">
-                        <span>"Go home"</span>
-                    </a>
+                    <buttons::ReloadPage on_click=on_reload />
+                    <buttons::OpenDotQuilt on_click=on_dot_quilt />
+                    <buttons::GoHome />
                 </div>
             </div>
         </Layout>

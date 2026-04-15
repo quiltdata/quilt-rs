@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 
 use crate::commands;
+use crate::components::buttons;
 
 // Intentionally short: we want to aggressively encourage updates.
 // Previously this was a fully automatic updater; 5 minutes is a concession.
@@ -101,20 +102,12 @@ pub fn UpdateChecker() -> impl IntoView {
                         <div class="update-bar">
                             <span>"Update available: " {version}</span>
                             <div class="update-bar-actions">
-                                <button
-                                    class="qui-button primary"
-                                    type="button"
-                                    on:click=install
-                                >
-                                    <span>"Download & Install"</span>
-                                </button>
-                                <button
-                                    class="qui-button"
-                                    type="button"
-                                    on:click=dismiss
-                                >
-                                    <span>"Dismiss"</span>
-                                </button>
+                                <buttons::FormPrimary on_click=install>
+                                    "Download & Install"
+                                </buttons::FormPrimary>
+                                <buttons::FormSecondary on_click=dismiss>
+                                    "Dismiss"
+                                </buttons::FormSecondary>
                             </div>
                         </div>
                     </div>
@@ -141,20 +134,12 @@ pub fn UpdateChecker() -> impl IntoView {
                         <div class="update-bar">
                             <span>"Update " {version} " failed: " {error}</span>
                             <div class="update-bar-actions">
-                                <button
-                                    class="qui-button primary"
-                                    type="button"
-                                    on:click=install
-                                >
-                                    <span>"Retry"</span>
-                                </button>
-                                <button
-                                    class="qui-button"
-                                    type="button"
-                                    on:click=dismiss
-                                >
-                                    <span>"Dismiss"</span>
-                                </button>
+                                <buttons::FormPrimary on_click=install>
+                                    "Retry"
+                                </buttons::FormPrimary>
+                                <buttons::FormSecondary on_click=dismiss>
+                                    "Dismiss"
+                                </buttons::FormSecondary>
                             </div>
                         </div>
                     </div>
