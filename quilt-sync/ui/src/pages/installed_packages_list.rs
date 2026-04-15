@@ -269,30 +269,6 @@ fn build_package_menu(
         }
     };
 
-    // ── Push ──
-    let ns_for_push = namespace.clone();
-    let (push_busy, on_push) = make_action(
-        move || {
-            let ns = ns_for_push.clone();
-            async move { commands::package_push(ns).await }
-        },
-        notification,
-        Some(ui_locked),
-        move || refetch.notify(),
-    );
-
-    // ── Pull ──
-    let ns_for_pull = namespace.clone();
-    let (pull_busy, on_pull) = make_action(
-        move || {
-            let ns = ns_for_pull.clone();
-            async move { commands::package_pull(ns).await }
-        },
-        notification,
-        Some(ui_locked),
-        move || refetch.notify(),
-    );
-
     // ── Uninstall ──
     let ns_for_uninstall = namespace.clone();
     let on_uninstall = move |_| {
@@ -335,18 +311,43 @@ fn build_package_menu(
         })}
 
         // Sync (Push/Pull)
-        {sync_action.map(|action| view! {
-            <li class="menu-item menu-divider"></li>
-            <li class="menu-item">
-                {match action {
-                    SyncAction::Push => view! {
-                        <buttons::Push on_click=on_push small=true busy=push_busy />
-                    }.into_any(),
-                    SyncAction::Pull => view! {
-                        <buttons::Pull on_click=on_pull small=true busy=pull_busy />
-                    }.into_any(),
-                }}
-            </li>
+        {sync_action.map(|action| match action {
+            SyncAction::Push => {
+                let ns = namespace.clone();
+                let (busy, on_click) = make_action(
+                    move || {
+                        let ns = ns.clone();
+                        async move { commands::package_push(ns).await }
+                    },
+                    notification,
+                    Some(ui_locked),
+                    move || refetch.notify(),
+                );
+                view! {
+                    <li class="menu-item menu-divider"></li>
+                    <li class="menu-item">
+                        <buttons::Push on_click=on_click small=true busy=busy />
+                    </li>
+                }.into_any()
+            }
+            SyncAction::Pull => {
+                let ns = namespace.clone();
+                let (busy, on_click) = make_action(
+                    move || {
+                        let ns = ns.clone();
+                        async move { commands::package_pull(ns).await }
+                    },
+                    notification,
+                    Some(ui_locked),
+                    move || refetch.notify(),
+                );
+                view! {
+                    <li class="menu-item menu-divider"></li>
+                    <li class="menu-item">
+                        <buttons::Pull on_click=on_click small=true busy=busy />
+                    </li>
+                }.into_any()
+            }
         })}
 
         // Merge
