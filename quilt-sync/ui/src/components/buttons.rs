@@ -1,5 +1,5 @@
 pub mod browse;
-mod button_cta;
+mod base;
 pub mod certify_latest;
 pub mod change_origin;
 pub mod collect_logs;
@@ -11,7 +11,6 @@ pub mod email_support;
 pub mod form_primary;
 pub mod form_secondary;
 pub mod go_home;
-mod icon_button;
 pub mod ignore;
 pub mod log_in_with_browser;
 pub mod login;
@@ -82,8 +81,8 @@ pub use settings::Settings;
 pub use submit_login::SubmitLogin;
 pub use unignore::Unignore;
 
-use icon_button::IconButton;
-use icon_button::IconLink;
+use base::icon::IconButton;
+use base::icon::IconLink;
 
 /// Icon and label registry for button components. Only buttons with icons
 /// need a variant here; text-only buttons don't use `ButtonKind`.

@@ -1,15 +1,7 @@
 use leptos::callback::UnsyncCallback;
 use leptos::prelude::*;
 
-fn build_class(primary: MaybeProp<bool>) -> impl Fn() -> String {
-    move || {
-        let mut c = "qui-button large".to_string();
-        if primary.get().unwrap_or(false) {
-            c.push_str(" primary");
-        }
-        c
-    }
-}
+use super::classname::build_class;
 
 /// Call-to-action button — the primary action the page exists for.
 /// Always large and visually prominent; icon renders after the label
@@ -22,7 +14,7 @@ pub fn ButtonCta(
     #[prop(optional, into)] disabled: MaybeProp<bool>,
     children: Children,
 ) -> impl IntoView {
-    let class = build_class(primary);
+    let class = move || build_class(primary.get().unwrap_or(false), false, false, true, false);
 
     view! {
         <button
@@ -48,7 +40,7 @@ pub fn CtaLink(
     #[prop(optional, into)] primary: MaybeProp<bool>,
     children: Children,
 ) -> impl IntoView {
-    let class = build_class(primary);
+    let class = move || build_class(primary.get().unwrap_or(false), false, false, true, false);
 
     view! {
         <a class=class href=href>
