@@ -179,6 +179,8 @@ fn PackageItem(
     let namespace_display = data.namespace.clone();
     let remote_display = data.remote_display.clone();
 
+    // TODO: N+1 problem — each PackageItem fires its own has_changes command.
+    // Batch into the initial list response or add a bulk endpoint.
     let has_changes = RwSignal::new(false);
     if !is_error {
         let ns = data.namespace.clone();
