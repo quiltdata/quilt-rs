@@ -195,7 +195,7 @@ fn AuthHostRow(
         <dt>{host_display}</dt>
         <dd>
             <buttons::ReLogin href=login_href />
-            <div class="logout-popover">
+            <div class="qui-popover">
                 <buttons::Logout
                     on_click=move |_| {
                         let host = host_for_logout.clone();

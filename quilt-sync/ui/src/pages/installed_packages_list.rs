@@ -358,7 +358,16 @@ fn build_package_menu(
                 view! {
                     <li class="menu-item menu-divider"></li>
                     <li class="menu-item">
-                        <buttons::Pull on_click=on_click small=true busy=busy />
+                        <div class="qui-popover">
+                            <buttons::Pull on_click=on_click small=true busy=busy disabled=has_changes />
+                            <Show when=move || has_changes.get()>
+                                <div class="popover-wrapper">
+                                    <div class="popover">
+                                        "Commit or discard local changes before pulling"
+                                    </div>
+                                </div>
+                            </Show>
+                        </div>
                     </li>
                 }.into_any()
             }
