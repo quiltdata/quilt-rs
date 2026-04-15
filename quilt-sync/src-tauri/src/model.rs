@@ -518,9 +518,7 @@ pub async fn package_push(
         .get_installed_package(namespace)
         .await?
         .unwrap_or_else(|| panic!("Package {namespace} not found"));
-    Ok(model
-        .package_push(&installed_package, host_config)
-        .await?)
+    Ok(model.package_push(&installed_package, host_config).await?)
 }
 
 pub async fn package_pull(

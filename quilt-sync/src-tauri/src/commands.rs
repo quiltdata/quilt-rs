@@ -1243,7 +1243,10 @@ pub async fn reset_local(
     Notify::new(msg_init).map(reset_local_command(m, &namespace).await, msg_ok, msg_err)
 }
 
-async fn package_push_command(m: &model::Model, namespace: &str) -> Result<quilt::PushOutcome, Error> {
+async fn package_push_command(
+    m: &model::Model,
+    namespace: &str,
+) -> Result<quilt::PushOutcome, Error> {
     let namespace = quilt::uri::Namespace::try_from(namespace)?;
     model::package_push(m, &namespace, None).await
 }
@@ -2557,9 +2560,9 @@ mod tests {
     async fn test_has_changes_true() {
         let mut model = mocks::create();
 
-        model.expect_get_installed_package().returning(|_| {
-            Ok(Some(make_installed_package(("foo", "bar"))))
-        });
+        model
+            .expect_get_installed_package()
+            .returning(|_| Ok(Some(make_installed_package(("foo", "bar")))));
 
         let changes = std::collections::BTreeMap::from([(
             std::path::PathBuf::from("file.txt"),
@@ -2583,9 +2586,9 @@ mod tests {
     async fn test_has_changes_false() {
         let mut model = mocks::create();
 
-        model.expect_get_installed_package().returning(|_| {
-            Ok(Some(make_installed_package(("foo", "bar"))))
-        });
+        model
+            .expect_get_installed_package()
+            .returning(|_| Ok(Some(make_installed_package(("foo", "bar")))));
 
         model
             .expect_get_installed_package_status()

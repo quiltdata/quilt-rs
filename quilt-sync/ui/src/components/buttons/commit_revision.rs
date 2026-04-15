@@ -11,9 +11,8 @@ pub fn CommitRevision(
     #[prop(optional, into)] busy: MaybeProp<bool>,
     #[prop(optional, into)] disabled: MaybeProp<bool>,
 ) -> impl IntoView {
-    let is_disabled = Signal::derive(move || {
-        busy.get().unwrap_or(false) || disabled.get().unwrap_or(false)
-    });
+    let is_disabled =
+        Signal::derive(move || busy.get().unwrap_or(false) || disabled.get().unwrap_or(false));
     view! {
         <ButtonCta icon=KIND.icon() on_click=UnsyncCallback::new(on_click) primary=true disabled=is_disabled>
             {move || if busy.get().unwrap_or(false) { "Committing\u{2026}" } else { KIND.label() }}
