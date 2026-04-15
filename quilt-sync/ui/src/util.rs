@@ -34,7 +34,10 @@ where
         leptos::task::spawn_local(async move {
             match command().await {
                 Ok(msg) => {
-                    busy.set(false);
+                    // Don't reset `busy` here — the refetch triggered by
+                    // `on_done` will destroy/rebuild the component, clearing
+                    // the signal. Resetting early would briefly re-enable the
+                    // button and allow duplicate clicks.
                     if let Some(ui_locked) = ui_locked {
                         ui_locked.set(false);
                     }
