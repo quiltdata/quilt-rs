@@ -1,5 +1,5 @@
-pub mod browse;
 mod base;
+pub mod browse;
 pub mod certify_latest;
 pub mod change_origin;
 pub mod collect_logs;
