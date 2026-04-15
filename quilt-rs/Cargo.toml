@@ -11,22 +11,17 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-async-stream.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 aws-config.workspace = true
 aws-credential-types.workspace = true
 aws-sdk-s3.workspace = true
-aws-smithy-async.workspace = true
 aws-smithy-checksums.workspace = true
 aws-smithy-types.workspace = true
 aws-types.workspace = true
 chrono.workspace = true
-dirs.workspace = true
 getrandom.workspace = true
 gitignores.workspace = true
-futures.workspace = true
-futures-util.workspace = true
 hex.workspace = true
 ignore.workspace = true
 multibase.workspace = true
@@ -38,7 +33,6 @@ serde_json.workspace = true
 serde-json-fmt.workspace = true
 sha2.workspace = true
 serde_yaml.workspace = true
-tabled.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
@@ -48,5 +42,4 @@ url.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-tokio-test.workspace = true
 test-log.workspace = true
