@@ -172,7 +172,7 @@ impl ButtonKind {
             Self::SetOrigin => "Set origin",
             Self::SetRemote => "Set remote",
             Self::SubmitLogin => "Submit code and Log in",
-            Self::Unignore => "Ignored",
+            Self::Unignore => "Unignore",
         }
     }
 }
