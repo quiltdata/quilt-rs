@@ -1,8 +1,6 @@
 use leptos::callback::UnsyncCallback;
 use leptos::prelude::*;
 
-use super::classname::build_class;
-
 #[component]
 pub fn IconButton(
     #[prop(optional)] icon: Option<&'static str>,
@@ -15,11 +13,14 @@ pub fn IconButton(
     #[prop(optional, into)] disabled: MaybeProp<bool>,
     children: Children,
 ) -> impl IntoView {
-    let class = build_class(primary, warning, small, large, link);
-
     view! {
         <button
-            class=class
+            class="qui-button"
+            class:primary=primary
+            class:warning=warning
+            class:small=small
+            class:large=large
+            class:link=link
             type="button"
             prop:disabled=move || disabled.get().unwrap_or(false)
             on:click=move |ev| {
@@ -45,10 +46,16 @@ pub fn IconLink(
     #[prop(optional)] link: bool,
     children: Children,
 ) -> impl IntoView {
-    let class = build_class(primary, warning, small, large, link);
-
     view! {
-        <a class=class href=href>
+        <a
+            class="qui-button"
+            class:primary=primary
+            class:warning=warning
+            class:small=small
+            class:large=large
+            class:link=link
+            href=href
+        >
             {icon.map(|src| view! { <img class="qui-icon" src=src /> })}
             <span>{children()}</span>
         </a>

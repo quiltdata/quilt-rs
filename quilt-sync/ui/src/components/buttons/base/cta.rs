@@ -1,8 +1,6 @@
 use leptos::callback::UnsyncCallback;
 use leptos::prelude::*;
 
-use super::classname::build_class;
-
 /// Call-to-action button — the primary action the page exists for.
 /// Always large and visually prominent; icon renders after the label
 /// (trailing position). Use `IconButton` for secondary actions.
@@ -14,11 +12,10 @@ pub fn ButtonCta(
     #[prop(optional, into)] disabled: MaybeProp<bool>,
     children: Children,
 ) -> impl IntoView {
-    let class = move || build_class(primary.get().unwrap_or(false), false, false, true, false);
-
     view! {
         <button
-            class=class
+            class="qui-button large"
+            class:primary=move || primary.get().unwrap_or(false)
             type="button"
             prop:disabled=move || disabled.get().unwrap_or(false)
             on:click=move |ev| {
@@ -40,10 +37,12 @@ pub fn CtaLink(
     #[prop(optional, into)] primary: MaybeProp<bool>,
     children: Children,
 ) -> impl IntoView {
-    let class = move || build_class(primary.get().unwrap_or(false), false, false, true, false);
-
     view! {
-        <a class=class href=href>
+        <a
+            class="qui-button large"
+            class:primary=move || primary.get().unwrap_or(false)
+            href=href
+        >
             <span>{children()}</span>
             {icon.map(|src| view! { <img class="qui-icon" src=src /> })}
         </a>
