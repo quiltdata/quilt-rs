@@ -2,6 +2,7 @@ use leptos::prelude::*;
 use leptos_router::hooks::use_query_map;
 
 use crate::commands::{self, LoginErrorData};
+use crate::components::buttons;
 use crate::components::{Layout, Notification, Spinner};
 
 // ── Error page ──
@@ -84,18 +85,10 @@ fn ErrorContent(
             <p class="message" data-testid="error-msg">{data.message}</p>
 
             <div class="button-group">
-                <button class="qui-button" type="button" on:click=on_reload>
-                    <span>"Reload page"</span>
-                </button>
-                <button class="qui-button" type="button" on:click=on_dot_quilt>
-                    <span>"Open .quilt directory"</span>
-                </button>
-                <a class="qui-button" href=login_href>
-                    <span>"Login"</span>
-                </a>
-                <a class="qui-button primary" href="/installed-packages-list">
-                    <span>"Go home"</span>
-                </a>
+                <buttons::ReloadPage on_click=on_reload />
+                <buttons::OpenDotQuilt on_click=on_dot_quilt />
+                <buttons::LoginLink href=login_href />
+                <buttons::GoHome />
             </div>
         </div>
     }

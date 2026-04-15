@@ -1,3 +1,67 @@
+use std::future::Future;
+
+use leptos::prelude::*;
+
+use crate::components::layout::Notification;
+
+/// Create a busy-guarded async action handler.
+///
+/// Returns `(busy_signal, click_handler)`. The handler guards against
+/// double-clicks, optionally locks the UI, runs the command, and shows
+/// a success/error notification. On success it calls `on_done` (e.g.
+/// to trigger a refetch or navigate).
+///
+/// `busy` is **not** reset on success — `on_done` is expected to trigger
+/// a re-render that destroys the component (and its signal). If `on_done`
+/// does not rebuild the component, the button will remain disabled.
+pub fn make_action<F, Fut>(
+    command: F,
+    notification: RwSignal<Option<Notification>>,
+    ui_locked: Option<RwSignal<bool>>,
+    on_done: impl Fn() + 'static + Clone,
+) -> (RwSignal<bool>, impl Fn(leptos::ev::MouseEvent) + 'static)
+where
+    F: Fn() -> Fut + 'static + Clone,
+    Fut: Future<Output = Result<String, String>> + 'static,
+{
+    let busy = RwSignal::new(false);
+    let handler = move |_| {
+        if busy.get_untracked() {
+            return;
+        }
+        busy.set(true);
+        if let Some(ui_locked) = ui_locked {
+            ui_locked.set(true);
+        }
+        let command = command.clone();
+        let on_done = on_done.clone();
+        leptos::task::spawn_local(async move {
+            match command().await {
+                Ok(msg) => {
+                    // Don't reset `busy` here — the refetch triggered by
+                    // `on_done` will destroy/rebuild the component, clearing
+                    // the signal. Resetting early would briefly re-enable the
+                    // button and allow duplicate clicks.
+                    if let Some(ui_locked) = ui_locked {
+                        ui_locked.set(false);
+                    }
+                    notification.set(Some(Notification::Success(msg)));
+                    on_done();
+                }
+                Err(e) => {
+                    // Don't call on_done — nothing changed on the server.
+                    if let Some(ui_locked) = ui_locked {
+                        ui_locked.set(false);
+                    }
+                    notification.set(Some(Notification::Error(e)));
+                    busy.set(false);
+                }
+            }
+        });
+    };
+    (busy, handler)
+}
+
 /// Validate that `value` is a syntactically valid hostname
 /// (two or more dot-separated labels, each starting and ending with
 /// an ASCII alphanumeric character, with hyphens allowed in the middle).

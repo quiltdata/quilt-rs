@@ -1,5 +1,7 @@
 use leptos::prelude::*;
 
+use super::buttons;
+
 /// Notification variant for the layout notification bar.
 #[derive(Clone)]
 pub enum Notification {
@@ -54,21 +56,11 @@ pub fn Layout(
                         <img class="img" src="/assets/img/quilt.png" />
                     </a>
                     <div class="nav">
-                        <button
-                            class="qui-button link"
-                            type="button"
-                            on:click=move |_| {
-                                let _ = web_sys::window()
-                                    .and_then(|w| w.location().reload().ok());
-                            }
-                        >
-                            <img class="qui-icon" src="/assets/img/icons/refresh.svg" />
-                            <span>"Refresh"</span>
-                        </button>
-                        <a class="qui-button link" href="/settings">
-                            <img class="qui-icon" src="/assets/img/icons/gear.svg" />
-                            <span>"Settings"</span>
-                        </a>
+                        <buttons::Refresh on_click=move |_| {
+                            let _ = web_sys::window()
+                                .and_then(|w| w.location().reload().ok());
+                        } />
+                        <buttons::Settings />
                     </div>
                 </div>
             </div>

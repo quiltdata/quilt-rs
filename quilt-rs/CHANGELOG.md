@@ -8,6 +8,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.28.2-alpha1] - 2026-04-15
+
+### Fixed
+
+- Always certify latest on first push, even when the remote already has a different "latest" tag — fixes incorrect "Behind" status after pushing a local package with the same name as an existing remote package
+
 ## [v0.28.1] - 2026-04-08
 
 ### Changed

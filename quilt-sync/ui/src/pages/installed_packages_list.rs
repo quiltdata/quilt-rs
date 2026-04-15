@@ -2,11 +2,12 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
 use crate::commands::{self, PackageItemData};
+use crate::components::buttons;
 use crate::components::layout::BreadcrumbItem;
 use crate::components::{
     Layout, Notification, SetOriginPopup, SetOriginPopupData, Spinner, ToolbarActions,
 };
-use crate::util::is_valid_hostname;
+use crate::util::{is_valid_hostname, make_action};
 
 // ── Installed Packages List page ──
 
@@ -40,14 +41,10 @@ pub fn InstalledPackagesList() -> impl IntoView {
                         let actions = ToolbarActions::new(move || {
                             view! {
                                 <li>
-                                    <button
-                                        class="qui-button small"
-                                        type="button"
-                                        on:click=move |_| show_create_popup_for_action.set(true)
-                                    >
-                                        <img class="qui-icon" src="/assets/img/icons/add.svg" />
-                                        <span>"Create local package"</span>
-                                    </button>
+                                    <buttons::CreateLocalPackage
+                                        on_click=move |_| show_create_popup_for_action.set(true)
+                                        small=true
+                                    />
                                 </li>
                             }.into_any()
                         });
@@ -227,46 +224,19 @@ fn build_package_menu(
     let has_origin = origin_url.is_some();
     let is_error = status == "error";
 
-    // ── Open local ──
-    let ns_for_folder = namespace.clone();
-    let on_open_folder = move |_| {
-        let ns = ns_for_folder.clone();
-        leptos::task::spawn_local(async move {
-            match commands::open_in_file_browser(ns).await {
-                Ok(msg) => notification.set(Some(Notification::Success(msg))),
-                Err(e) => notification.set(Some(Notification::Error(e))),
-            }
-        });
-    };
-
     // ── Open remote (catalog) ──
-    let origin_for_catalog = origin_url.clone();
     let catalog_disabled = status == "local";
-    let on_open_catalog = move |_| {
-        if let Some(url) = origin_for_catalog.clone() {
-            leptos::task::spawn_local(async move {
-                let _ = commands::open_in_web_browser(url).await;
-            });
-        }
-    };
-
-    // ── Commit ──
-    let commit_href = format!("/commit?namespace={}", namespace);
 
     // ── Sync button (Push/Pull) ──
-    let sync_button = match status.as_str() {
-        "ahead" => Some(SyncAction::Push(namespace.clone())),
-        "behind" => Some(SyncAction::Pull(namespace.clone())),
-        "local" if has_origin => Some(SyncAction::Push(namespace.clone())),
+    let sync_action = match status.as_str() {
+        "ahead" => Some(SyncAction::Push),
+        "behind" => Some(SyncAction::Pull),
+        "local" if has_origin => Some(SyncAction::Push),
         _ => None,
     };
 
     // ── Merge button ──
-    let merge_href = if status == "diverged" {
-        Some(format!("/merge?namespace={}", namespace))
-    } else {
-        None
-    };
+    let show_merge = status == "diverged";
 
     // ── Error action button ──
     let error_action = build_error_action(
@@ -276,6 +246,28 @@ fn build_package_menu(
         show_set_remote_popup,
         show_set_origin_popup,
     );
+
+    // ── Open in file browser ──
+    let ns_for_open = namespace.clone();
+    let on_open_file_browser = move |_| {
+        let ns = ns_for_open.clone();
+        leptos::task::spawn_local(async move {
+            match commands::open_in_file_browser(ns).await {
+                Ok(msg) => notification.set(Some(Notification::Success(msg))),
+                Err(e) => notification.set(Some(Notification::Error(e))),
+            }
+        });
+    };
+
+    // ── Open in catalog ──
+    let url_for_catalog = origin_url.clone();
+    let on_open_catalog = move |_| {
+        if let Some(url) = url_for_catalog.clone() {
+            leptos::task::spawn_local(async move {
+                let _ = commands::open_in_web_browser(url).await;
+            });
+        }
+    };
 
     // ── Uninstall ──
     let ns_for_uninstall = namespace.clone();
@@ -300,57 +292,69 @@ fn build_package_menu(
     view! {
         // Open local
         <li class="menu-item">
-            <button class="qui-button small" type="button" on:click=on_open_folder>
-                <img class="qui-icon" src="/assets/img/icons/folder_open.svg" />
-                <span>"Open"</span>
-            </button>
+            <buttons::OpenInFileBrowser on_click=on_open_file_browser small=true />
         </li>
         // Open remote
         {has_origin.then(|| view! {
             <li class="menu-item">
-                <button
-                    class="qui-button small"
-                    type="button"
-                    prop:disabled=catalog_disabled
-                    on:click=on_open_catalog
-                >
-                    <img class="qui-icon" src="/assets/img/icons/open_in_browser.svg" />
-                    <span>"Open in Catalog"</span>
-                </button>
+                <buttons::OpenInCatalog on_click=on_open_catalog small=true disabled=catalog_disabled />
             </li>
         })}
 
         <li class="menu-item menu-divider"></li>
 
         // Commit (unless error)
-        {(!is_error).then(|| {
-            let href = commit_href.clone();
-            view! {
-                <li class="menu-item">
-                    <a class="qui-button small" href=href>
-                        <img class="qui-icon" src="/assets/img/icons/commit.svg" />
-                        <span>"Commit"</span>
-                    </a>
-                </li>
-            }
-        })}
-
-        // Sync (Push/Pull)
-        {sync_button.map(|action| view! {
-            <li class="menu-item menu-divider"></li>
+        {(!is_error).then(|| view! {
             <li class="menu-item">
-                <SyncButton action=action notification=notification ui_locked=ui_locked refetch=refetch />
+                <buttons::Commit namespace=namespace.clone() small=true />
             </li>
         })}
 
+        // Sync (Push/Pull)
+        {sync_action.map(|action| match action {
+            SyncAction::Push => {
+                let ns = namespace.clone();
+                let (busy, on_click) = make_action(
+                    move || {
+                        let ns = ns.clone();
+                        async move { commands::package_push(ns).await }
+                    },
+                    notification,
+                    Some(ui_locked),
+                    move || refetch.notify(),
+                );
+                view! {
+                    <li class="menu-item menu-divider"></li>
+                    <li class="menu-item">
+                        <buttons::Push on_click=on_click small=true busy=busy />
+                    </li>
+                }.into_any()
+            }
+            SyncAction::Pull => {
+                let ns = namespace.clone();
+                let (busy, on_click) = make_action(
+                    move || {
+                        let ns = ns.clone();
+                        async move { commands::package_pull(ns).await }
+                    },
+                    notification,
+                    Some(ui_locked),
+                    move || refetch.notify(),
+                );
+                view! {
+                    <li class="menu-item menu-divider"></li>
+                    <li class="menu-item">
+                        <buttons::Pull on_click=on_click small=true busy=busy />
+                    </li>
+                }.into_any()
+            }
+        })}
+
         // Merge
-        {merge_href.map(|href| view! {
+        {show_merge.then(|| view! {
             <li class="menu-item menu-divider"></li>
             <li class="menu-item">
-                <a class="qui-button primary small" href=href>
-                    <img class="qui-icon" src="/assets/img/icons/merge.svg" />
-                    <span>"Merge"</span>
-                </a>
+                <buttons::Merge namespace=namespace.clone() small=true />
             </li>
         })}
 
@@ -366,89 +370,16 @@ fn build_package_menu(
 
         // Uninstall
         <li class="menu-item">
-            <button class="qui-button small" type="button" on:click=on_uninstall>
-                <img class="qui-icon" src="/assets/img/icons/block.svg" />
-                <span>"Remove"</span>
-            </button>
+            <buttons::Remove on_click=on_uninstall small=true />
         </li>
     }
 }
 
-// ── Sync button (Push or Pull) ──
+// ── Sync action ──
 
-#[derive(Clone)]
 enum SyncAction {
-    Push(String),
-    Pull(String),
-}
-
-#[component]
-fn SyncButton(
-    action: SyncAction,
-    notification: RwSignal<Option<Notification>>,
-    ui_locked: RwSignal<bool>,
-    refetch: Trigger,
-) -> impl IntoView {
-    let busy = RwSignal::new(false);
-
-    let is_push = matches!(&action, SyncAction::Push(_));
-    let (label, busy_label, icon) = if is_push {
-        (
-            "Push",
-            "Pushing\u{2026}",
-            "/assets/img/icons/cloud_upload.svg",
-        )
-    } else {
-        (
-            "Pull",
-            "Pulling\u{2026}",
-            "/assets/img/icons/cloud_download.svg",
-        )
-    };
-
-    let ns = match action {
-        SyncAction::Push(ns) | SyncAction::Pull(ns) => ns,
-    };
-
-    let on_click = move |_| {
-        if busy.get_untracked() {
-            return;
-        }
-        busy.set(true);
-        ui_locked.set(true);
-        let ns = ns.clone();
-        leptos::task::spawn_local(async move {
-            let result = if is_push {
-                commands::package_push(ns).await
-            } else {
-                commands::package_pull(ns).await
-            };
-            match result {
-                Ok(msg) => {
-                    ui_locked.set(false);
-                    notification.set(Some(Notification::Success(msg)));
-                    refetch.notify();
-                }
-                Err(e) => {
-                    ui_locked.set(false);
-                    notification.set(Some(Notification::Error(e)));
-                    busy.set(false);
-                }
-            }
-        });
-    };
-
-    view! {
-        <button
-            class="qui-button primary small"
-            type="button"
-            prop:disabled=move || busy.get()
-            on:click=on_click
-        >
-            <img class="qui-icon" src=icon />
-            <span>{move || if busy.get() { busy_label } else { label }}</span>
-        </button>
-    }
+    Push,
+    Pull,
 }
 
 // ── Error action button logic ──
@@ -466,14 +397,10 @@ fn build_error_action(
             let ns = namespace.to_string();
             Some(
                 view! {
-                    <button
-                        class="qui-button small"
-                        type="button"
-                        on:click=move |_| show_set_remote_popup.set(Some(ns.clone()))
-                    >
-                        <img class="qui-icon" src="/assets/img/icons/cloud_upload.svg" />
-                        <span>"Set remote"</span>
-                    </button>
+                    <buttons::SetRemote
+                        on_click=move |_| show_set_remote_popup.set(Some(ns.clone()))
+                        small=true
+                    />
                 }
                 .into_any(),
             )
@@ -487,10 +414,7 @@ fn build_error_action(
             let login_href = format!("/login?host={}&back={back_encoded}", host);
             Some(
                 view! {
-                    <a class="qui-button warning small" href=login_href>
-                        <img class="qui-icon" src="/assets/img/icons/warning.svg" />
-                        <span>"Login"</span>
-                    </a>
+                    <buttons::Login href=login_href small=true />
                 }
                 .into_any(),
             )
@@ -500,19 +424,15 @@ fn build_error_action(
             let ns = namespace.to_string();
             Some(
                 view! {
-                    <button
-                        class="qui-button warning small"
-                        type="button"
-                        on:click=move |_| {
+                    <buttons::SetOrigin
+                        on_click=move |_| {
                             show_set_origin_popup.set(Some(SetOriginPopupData {
                                 namespace: ns.clone(),
                                 current_origin: String::new(),
                             }))
                         }
-                    >
-                        <img class="qui-icon" src="/assets/img/icons/warning.svg" />
-                        <span>"Set origin"</span>
-                    </button>
+                        small=true
+                    />
                 }
                 .into_any(),
             )
@@ -605,23 +525,14 @@ fn CreatePackagePopup(
                         <span class="source-path">{move || {
                             source.get().unwrap_or_else(|| "No directory selected".to_string())
                         }}</span>
-                        <button class="qui-button small" type="button" on:click=on_browse>
-                            <span>"Browse..."</span>
-                        </button>
+                        <buttons::Browse on_click=on_browse small=true />
                     </div>
 
                     <div class="create-package-actions">
-                        <button
-                            class="qui-button primary"
-                            type="button"
-                            prop:disabled=move || submitting.get()
-                            on:click=on_submit_click
-                        >
-                            <span>"Create"</span>
-                        </button>
-                        <button class="qui-button" type="button" on:click=on_cancel>
-                            <span>"Cancel"</span>
-                        </button>
+                        <buttons::FormPrimary on_click=on_submit_click disabled=submitting>
+                            "Create"
+                        </buttons::FormPrimary>
+                        <buttons::FormSecondary on_click=on_cancel />
                     </div>
                 </div>
             </div>
@@ -772,17 +683,10 @@ fn SetRemotePopup(
                     </div>
 
                     <div class="set-remote-actions">
-                        <button
-                            class="qui-button primary"
-                            type="button"
-                            prop:disabled=move || submitting.get()
-                            on:click=on_submit_click
-                        >
-                            <span>"Save"</span>
-                        </button>
-                        <button class="qui-button" type="button" on:click=on_cancel>
-                            <span>"Cancel"</span>
-                        </button>
+                        <buttons::FormPrimary on_click=on_submit_click disabled=submitting>
+                            "Save"
+                        </buttons::FormPrimary>
+                        <buttons::FormSecondary on_click=on_cancel />
                     </div>
                 </div>
             </div>

@@ -2,6 +2,7 @@ use leptos::prelude::*;
 use leptos_router::hooks::{use_navigate, use_query_map};
 
 use crate::commands::{self, MergeData};
+use crate::components::buttons;
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{Layout, Notification, Spinner, ToolbarActions};
 
@@ -127,9 +128,7 @@ fn MergeContent(
                         <code>"latest"</code>
                         " with your latest commit."
                     </p>
-                    <button class="qui-button" type="button" on:click=on_certify>
-                        <span>"Certify latest"</span>
-                    </button>
+                    <buttons::CertifyLatest on_click=on_certify />
                 </div>
 
                 <div class="field">
@@ -138,9 +137,7 @@ fn MergeContent(
                         <code>"latest"</code>
                         " the same as remote."
                     </p>
-                    <button class="qui-button" type="button" on:click=on_reset>
-                        <span>"Reset local"</span>
-                    </button>
+                    <buttons::ResetLocal on_click=on_reset />
                 </div>
             </div>
         </div>
@@ -160,9 +157,9 @@ fn build_toolbar_actions(
     ToolbarActions::new(move || {
         let navigate = use_navigate();
 
-        let ns_for_folder = namespace.clone();
-        let on_open_folder = move |_| {
-            let ns = ns_for_folder.clone();
+        let ns_for_open = namespace.clone();
+        let on_open_file_browser = move |_| {
+            let ns = ns_for_open.clone();
             leptos::task::spawn_local(async move {
                 match commands::open_in_file_browser(ns).await {
                     Ok(msg) => notification.set(Some(Notification::Success(msg))),
@@ -171,9 +168,9 @@ fn build_toolbar_actions(
             });
         };
 
-        let origin_for_catalog = origin_url.clone();
+        let url_for_catalog = origin_url.clone();
         let on_open_catalog = move |_| {
-            if let Some(url) = origin_for_catalog.clone() {
+            if let Some(url) = url_for_catalog.clone() {
                 leptos::task::spawn_local(async move {
                     let _ = commands::open_in_web_browser(url).await;
                 });
@@ -203,24 +200,15 @@ fn build_toolbar_actions(
 
         view! {
             <li>
-                <button class="qui-button small" type="button" on:click=on_open_folder>
-                    <img class="qui-icon" src="/assets/img/icons/folder_open.svg" />
-                    <span>"Open"</span>
-                </button>
+                <buttons::OpenInFileBrowser on_click=on_open_file_browser small=true />
             </li>
             {has_catalog.then(|| view! {
                 <li>
-                    <button class="qui-button small" type="button" on:click=on_open_catalog>
-                        <img class="qui-icon" src="/assets/img/icons/open_in_browser.svg" />
-                        <span>"Open in Catalog"</span>
-                    </button>
+                    <buttons::OpenInCatalog on_click=on_open_catalog small=true />
                 </li>
             })}
             <li>
-                <button class="qui-button small" type="button" on:click=on_uninstall>
-                    <img class="qui-icon" src="/assets/img/icons/block.svg" />
-                    <span>"Remove"</span>
-                </button>
+                <buttons::Remove on_click=on_uninstall small=true />
             </li>
         }
         .into_any()

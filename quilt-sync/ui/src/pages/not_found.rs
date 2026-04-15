@@ -1,5 +1,6 @@
 use leptos::prelude::*;
 
+use crate::components::buttons;
 use crate::components::Layout;
 
 #[component]
@@ -10,9 +11,7 @@ pub fn NotFound() -> impl IntoView {
                 <h1 class="title">"Page not found"</h1>
                 <p class="message">"The page you are looking for does not exist."</p>
                 <div class="button-group">
-                    <a class="qui-button primary" href="/installed-packages-list">
-                        <span>"Go home"</span>
-                    </a>
+                    <buttons::GoHome />
                 </div>
             </div>
         </Layout>

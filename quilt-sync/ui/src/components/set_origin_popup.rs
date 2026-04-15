@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 
 use crate::commands;
+use crate::components::buttons;
 use crate::components::Notification;
 use crate::util::is_valid_hostname;
 
@@ -99,17 +100,10 @@ pub fn SetOriginPopup(
                         </span>
                     </div>
                     <div class="origin-form-actions">
-                        <button
-                            class="qui-button primary"
-                            type="button"
-                            prop:disabled=move || submitting.get()
-                            on:click=on_submit_click
-                        >
-                            <span>"Submit"</span>
-                        </button>
-                        <button class="qui-button" type="button" on:click=on_cancel>
-                            <span>"Cancel"</span>
-                        </button>
+                        <buttons::FormPrimary on_click=on_submit_click disabled=submitting>
+                            "Submit"
+                        </buttons::FormPrimary>
+                        <buttons::FormSecondary on_click=on_cancel />
                     </div>
                 </div>
             </div>
