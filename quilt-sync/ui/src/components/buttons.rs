@@ -128,7 +128,7 @@ impl ButtonKind {
             Self::Logout => "/assets/img/icons/warning.svg",
             Self::Merge => "/assets/img/icons/merge.svg",
             Self::Open => "/assets/img/icons/open_in_new.svg",
-            Self::OpenLogsDir => "/assets/img/icons/warning.svg",
+            Self::OpenLogsDir => "/assets/img/icons/folder_open.svg",
             Self::OpenBrowser => "/assets/img/icons/open_in_browser.svg",
             Self::OpenInCatalog => "/assets/img/icons/open_in_browser.svg",
             Self::OpenInFileBrowser => "/assets/img/icons/folder_open.svg",

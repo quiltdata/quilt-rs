@@ -3,7 +3,7 @@ use leptos::prelude::*;
 
 use super::{ButtonKind, IconButton};
 
-const KIND: ButtonKind = ButtonKind::OpenInFileBrowser;
+const KIND: ButtonKind = ButtonKind::OpenLogsDir;
 
 #[component]
 pub fn OpenLogsDir(
@@ -11,7 +11,7 @@ pub fn OpenLogsDir(
     #[prop(optional)] is_temporary: bool,
 ) -> impl IntoView {
     let icon = if is_temporary {
-        ButtonKind::OpenLogsDir.icon()
+        "/assets/img/icons/warning.svg"
     } else {
         KIND.icon() // folder_open.svg
     };
