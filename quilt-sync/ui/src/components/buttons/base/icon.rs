@@ -40,7 +40,7 @@ pub fn IconLink(
     href: String,
     #[prop(optional)] icon: Option<&'static str>,
     #[prop(optional)] small: bool,
-    #[prop(optional)] primary: bool,
+    #[prop(optional, into)] primary: MaybeProp<bool>,
     #[prop(optional)] warning: bool,
     #[prop(optional)] large: bool,
     #[prop(optional)] link: bool,
@@ -49,7 +49,7 @@ pub fn IconLink(
     view! {
         <a
             class="qui-button"
-            class:primary=primary
+            class:primary=move || primary.get().unwrap_or(false)
             class:warning=warning
             class:small=small
             class:large=large

@@ -815,6 +815,33 @@ pub async fn package_commit(
     )
 }
 
+async fn has_changes(
+    m: &impl model::QuiltModel,
+    namespace: &quilt::uri::Namespace,
+) -> Result<bool, Error> {
+    let installed_package = m
+        .get_installed_package(namespace)
+        .await?
+        .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone())))?;
+    let status = m
+        .get_installed_package_status(&installed_package, None)
+        .await?;
+    Ok(!status.changes.is_empty())
+}
+
+#[tauri::command]
+pub async fn package_has_changes(
+    m: tauri::State<'_, model::Model>,
+    namespace: String,
+) -> Result<bool, String> {
+    let namespace: quilt::uri::Namespace = namespace
+        .try_into()
+        .map_err(|e: quilt::Error| e.to_string())?;
+    has_changes(&*m, &namespace)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 async fn open_directory_picker_command(app_handle: &tauri::AppHandle) -> Result<PathBuf, Error> {
     let paths = app_handle.path();
     let home_dir = paths.home_dir()?;
@@ -2515,5 +2542,60 @@ mod tests {
 
         assert!(data.workflow.is_none());
         Ok(())
+    }
+
+    // ── has_changes tests ──
+
+    #[tokio::test]
+    async fn test_has_changes_true() {
+        let mut model = mocks::create();
+
+        model.expect_get_installed_package().returning(|_| {
+            Ok(Some(make_installed_package(("foo", "bar"))))
+        });
+
+        let changes = std::collections::BTreeMap::from([(
+            std::path::PathBuf::from("file.txt"),
+            quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+        )]);
+        model
+            .expect_get_installed_package_status()
+            .return_once(move |_, _| {
+                Ok(quilt::lineage::InstalledPackageStatus::new(
+                    quilt::lineage::UpstreamState::default(),
+                    changes,
+                ))
+            });
+
+        let namespace = ("foo", "bar").into();
+        let result = has_changes(&model, &namespace).await.unwrap();
+        assert!(result);
+    }
+
+    #[tokio::test]
+    async fn test_has_changes_false() {
+        let mut model = mocks::create();
+
+        model.expect_get_installed_package().returning(|_| {
+            Ok(Some(make_installed_package(("foo", "bar"))))
+        });
+
+        model
+            .expect_get_installed_package_status()
+            .return_once(|_, _| Ok(quilt::lineage::InstalledPackageStatus::default()));
+
+        let namespace = ("foo", "bar").into();
+        let result = has_changes(&model, &namespace).await.unwrap();
+        assert!(!result);
+    }
+
+    #[tokio::test]
+    async fn test_has_changes_not_installed() {
+        let mut model = mocks::create();
+        model.expect_get_installed_package().returning(|_| Ok(None));
+
+        let namespace = ("missing", "package").into();
+        let result = has_changes(&model, &namespace).await;
+        assert!(result.is_err());
     }
 }

@@ -179,9 +179,20 @@ fn PackageItem(
     let namespace_display = data.namespace.clone();
     let remote_display = data.remote_display.clone();
 
+    let has_changes = RwSignal::new(false);
+    if !is_error {
+        let ns = data.namespace.clone();
+        leptos::task::spawn_local(async move {
+            if let Ok(changed) = commands::package_has_changes(ns).await {
+                has_changes.set(changed);
+            }
+        });
+    }
+
     // Build menu buttons
     let menu = build_package_menu(
         &data,
+        has_changes,
         notification,
         ui_locked,
         refetch,
@@ -211,6 +222,7 @@ fn PackageItem(
 
 fn build_package_menu(
     data: &PackageItemData,
+    has_changes: RwSignal<bool>,
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
     refetch: Trigger,
@@ -306,7 +318,7 @@ fn build_package_menu(
         // Commit (unless error)
         {(!is_error).then(|| view! {
             <li class="menu-item">
-                <buttons::Commit namespace=namespace.clone() small=true />
+                <buttons::Commit namespace=namespace.clone() small=true primary=has_changes />
             </li>
         })}
 
