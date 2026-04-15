@@ -1263,16 +1263,21 @@ pub async fn package_push(
     let msg_init = format!("Pushing package {namespace}");
 
     let result = package_push_command(m, &namespace).await;
-    let result: Result<(), Error> = match result {
-        Ok(outcome) if outcome.certified_latest => Ok(()),
-        Ok(_) => Err(Error::PushNotCertified(namespace.clone())),
-        Err(e) => Err(e),
+    // TODO: push-not-certified should be surfaced as a warning, not a success.
+    // Currently both outcomes go through the success path because converting to
+    // Err skips on_done()/refetch and leaves the UI stale.
+    let msg_ok = match &result {
+        Ok(outcome) if outcome.certified_latest => {
+            format!("Successfully pushed package {namespace}")
+        }
+        Ok(_) => format!(
+            "Pushed {namespace}, but could not update latest: remote has newer changes"
+        ),
+        _ => String::new(),
     };
+    let msg_err = |err: &Error| format!("Failed to push package: {err}");
 
-    let msg_ok = format!("Successfully pushed package {namespace}");
-    let msg_err = |err: &Error| err.to_string();
-
-    Notify::new(msg_init).map(result, msg_ok, msg_err)
+    Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
 }
 
 async fn package_pull_command(m: &model::Model, namespace: &str) -> Result<(), Error> {
