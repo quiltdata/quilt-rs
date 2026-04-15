@@ -1,19 +1,7 @@
 use leptos::callback::UnsyncCallback;
 use leptos::prelude::*;
 
-#[component]
-pub fn IconButton(
-    #[prop(optional)] icon: Option<&'static str>,
-    #[prop(optional)] on_click: Option<UnsyncCallback<leptos::ev::MouseEvent>>,
-    #[prop(optional)] href: Option<String>,
-    #[prop(optional)] small: bool,
-    #[prop(optional)] primary: bool,
-    #[prop(optional)] warning: bool,
-    #[prop(optional)] large: bool,
-    #[prop(optional)] link: bool,
-    #[prop(optional, into)] disabled: MaybeProp<bool>,
-    children: Children,
-) -> impl IntoView {
+fn build_class(primary: bool, warning: bool, small: bool, large: bool, link: bool) -> String {
     let mut class = "qui-button".to_string();
     if primary {
         class.push_str(" primary");
@@ -30,35 +18,58 @@ pub fn IconButton(
     if link {
         class.push_str(" link");
     }
+    class
+}
 
-    let content = view! {
-        {icon.map(|src| view! { <img class="qui-icon" src=src /> })}
-        <span>{children()}</span>
-    };
+#[component]
+pub fn IconButton(
+    #[prop(optional)] icon: Option<&'static str>,
+    #[prop(optional)] on_click: Option<UnsyncCallback<leptos::ev::MouseEvent>>,
+    #[prop(optional)] small: bool,
+    #[prop(optional)] primary: bool,
+    #[prop(optional)] warning: bool,
+    #[prop(optional)] large: bool,
+    #[prop(optional)] link: bool,
+    #[prop(optional, into)] disabled: MaybeProp<bool>,
+    children: Children,
+) -> impl IntoView {
+    let class = build_class(primary, warning, small, large, link);
 
-    if let Some(href) = href {
-        view! {
-            <a class=class href=href>
-                {content}
-            </a>
-        }
-        .into_any()
-    } else {
-        view! {
-            <button
-                class=class
-                type="button"
-                prop:disabled=move || disabled.get().unwrap_or(false)
-                on:click=move |ev| {
-                    if let Some(cb) = &on_click {
-                        cb.run(ev);
-                    }
+    view! {
+        <button
+            class=class
+            type="button"
+            prop:disabled=move || disabled.get().unwrap_or(false)
+            on:click=move |ev| {
+                if let Some(cb) = &on_click {
+                    cb.run(ev);
                 }
-            >
-                {content}
-            </button>
-        }
-        .into_any()
+            }
+        >
+            {icon.map(|src| view! { <img class="qui-icon" src=src /> })}
+            <span>{children()}</span>
+        </button>
+    }
+}
+
+#[component]
+pub fn IconLink(
+    href: String,
+    #[prop(optional)] icon: Option<&'static str>,
+    #[prop(optional)] small: bool,
+    #[prop(optional)] primary: bool,
+    #[prop(optional)] warning: bool,
+    #[prop(optional)] large: bool,
+    #[prop(optional)] link: bool,
+    children: Children,
+) -> impl IntoView {
+    let class = build_class(primary, warning, small, large, link);
+
+    view! {
+        <a class=class href=href>
+            {icon.map(|src| view! { <img class="qui-icon" src=src /> })}
+            <span>{children()}</span>
+        </a>
     }
 }
 
@@ -79,7 +90,7 @@ mod tests {
         container.into()
     }
 
-    // ── Button mode (no href) ──
+    // ── IconButton ──
 
     #[wasm_bindgen_test]
     fn renders_button_tag() {
@@ -277,13 +288,13 @@ mod tests {
         assert_eq!(span.text_content().unwrap(), "Label");
     }
 
-    // ── Link mode (with href) ──
+    // ── IconLink ──
 
     #[wasm_bindgen_test]
     fn renders_anchor_when_href_provided() {
         let el = mount(|| {
             view! {
-                <IconButton icon="/icons/test.svg" href="/test".to_string()>"Label"</IconButton>
+                <IconLink icon="/icons/test.svg" href="/test".to_string()>"Label"</IconLink>
             }
         });
         let link = el.query_selector("a").unwrap().unwrap();
@@ -295,7 +306,7 @@ mod tests {
     fn renders_href() {
         let el = mount(|| {
             view! {
-                <IconButton icon="/icons/test.svg" href="/some/path".to_string()>"X"</IconButton>
+                <IconLink icon="/icons/test.svg" href="/some/path".to_string()>"X"</IconLink>
             }
         });
         let link = el.query_selector("a").unwrap().unwrap();
@@ -306,7 +317,7 @@ mod tests {
     fn renders_label_in_span_for_link() {
         let el = mount(|| {
             view! {
-                <IconButton icon="/icons/x.svg" href="/x".to_string()>"My Label"</IconButton>
+                <IconLink icon="/icons/x.svg" href="/x".to_string()>"My Label"</IconLink>
             }
         });
         let span = el.query_selector("a > span").unwrap().unwrap();
@@ -317,7 +328,7 @@ mod tests {
     fn link_classes() {
         let el = mount(|| {
             view! {
-                <IconButton icon="/icons/x.svg" href="/x".to_string() small=true primary=true>"X"</IconButton>
+                <IconLink icon="/icons/x.svg" href="/x".to_string() small=true primary=true>"X"</IconLink>
             }
         });
         let link = el.query_selector("a").unwrap().unwrap();
@@ -330,7 +341,7 @@ mod tests {
     fn link_renders_icon() {
         let el = mount(|| {
             view! {
-                <IconButton icon="/icons/custom.svg" href="/x".to_string()>"X"</IconButton>
+                <IconLink icon="/icons/custom.svg" href="/x".to_string()>"X"</IconLink>
             }
         });
         let icon = el.query_selector("img.qui-icon").unwrap().unwrap();

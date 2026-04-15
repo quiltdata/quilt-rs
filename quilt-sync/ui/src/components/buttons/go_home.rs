@@ -1,12 +1,12 @@
 use leptos::prelude::*;
 
-use super::IconButton;
+use super::IconLink;
 
 #[component]
 pub fn GoHome() -> impl IntoView {
     view! {
-        <IconButton href="/installed-packages-list".to_string() primary=true>
+        <IconLink href="/installed-packages-list".to_string() primary=true>
             "Go home"
-        </IconButton>
+        </IconLink>
     }
 }

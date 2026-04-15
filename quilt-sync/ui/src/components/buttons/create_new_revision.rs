@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 
-use super::{button_cta::ButtonCta, ButtonKind};
+use super::{button_cta::CtaLink, ButtonKind};
 
 const KIND: ButtonKind = ButtonKind::CreateNewRevision;
 
@@ -10,8 +10,8 @@ pub fn CreateNewRevision(
     #[prop(optional, into)] primary: MaybeProp<bool>,
 ) -> impl IntoView {
     view! {
-        <ButtonCta href=href icon=KIND.icon() primary=primary>
+        <CtaLink href=href icon=KIND.icon() primary=primary>
             {KIND.label()}
-        </ButtonCta>
+        </CtaLink>
     }
 }

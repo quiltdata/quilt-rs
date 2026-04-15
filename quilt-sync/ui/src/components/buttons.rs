@@ -83,6 +83,7 @@ pub use submit_login::SubmitLogin;
 pub use unignore::Unignore;
 
 use icon_button::IconButton;
+use icon_button::IconLink;
 
 /// Icon and label registry for button components. Only buttons with icons
 /// need a variant here; text-only buttons don't use `ButtonKind`.

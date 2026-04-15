@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 
-use super::{ButtonKind, IconButton};
+use super::{ButtonKind, IconLink};
 
 const KIND: ButtonKind = ButtonKind::Commit;
 
@@ -9,9 +9,9 @@ pub fn Commit(namespace: String, #[prop(optional)] small: bool) -> impl IntoView
     let href = format!("/commit?namespace={}", namespace);
 
     view! {
-        <IconButton href=href icon=KIND.icon() small=small>
+        <IconLink href=href icon=KIND.icon() small=small>
             {KIND.label()}
-        </IconButton>
+        </IconLink>
     }
 }
 

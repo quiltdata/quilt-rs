@@ -1,6 +1,16 @@
 use leptos::callback::UnsyncCallback;
 use leptos::prelude::*;
 
+fn build_class(primary: MaybeProp<bool>) -> impl Fn() -> String {
+    move || {
+        let mut c = "qui-button large".to_string();
+        if primary.get().unwrap_or(false) {
+            c.push_str(" primary");
+        }
+        c
+    }
+}
+
 /// Call-to-action button — the primary action the page exists for.
 /// Always large and visually prominent; icon renders after the label
 /// (trailing position). Use `IconButton` for secondary actions.
@@ -8,47 +18,43 @@ use leptos::prelude::*;
 pub fn ButtonCta(
     #[prop(optional)] icon: Option<&'static str>,
     #[prop(optional)] on_click: Option<UnsyncCallback<leptos::ev::MouseEvent>>,
-    #[prop(optional)] href: Option<String>,
     #[prop(optional, into)] primary: MaybeProp<bool>,
     #[prop(optional, into)] disabled: MaybeProp<bool>,
     children: Children,
 ) -> impl IntoView {
-    let class = move || {
-        let mut c = "qui-button large".to_string();
-        if primary.get().unwrap_or(false) {
-            c.push_str(" primary");
-        }
-        c
-    };
+    let class = build_class(primary);
 
-    let content = view! {
-        <span>{children()}</span>
-        {icon.map(|src| view! { <img class="qui-icon" src=src /> })}
-    };
-
-    if let Some(href) = href {
-        view! {
-            <a class=class href=href>
-                {content}
-            </a>
-        }
-        .into_any()
-    } else {
-        view! {
-            <button
-                class=class
-                type="button"
-                prop:disabled=move || disabled.get().unwrap_or(false)
-                on:click=move |ev| {
-                    if let Some(cb) = &on_click {
-                        cb.run(ev);
-                    }
+    view! {
+        <button
+            class=class
+            type="button"
+            prop:disabled=move || disabled.get().unwrap_or(false)
+            on:click=move |ev| {
+                if let Some(cb) = &on_click {
+                    cb.run(ev);
                 }
-            >
-                {content}
-            </button>
-        }
-        .into_any()
+            }
+        >
+            <span>{children()}</span>
+            {icon.map(|src| view! { <img class="qui-icon" src=src /> })}
+        </button>
+    }
+}
+
+#[component]
+pub fn CtaLink(
+    href: String,
+    #[prop(optional)] icon: Option<&'static str>,
+    #[prop(optional, into)] primary: MaybeProp<bool>,
+    children: Children,
+) -> impl IntoView {
+    let class = build_class(primary);
+
+    view! {
+        <a class=class href=href>
+            <span>{children()}</span>
+            {icon.map(|src| view! { <img class="qui-icon" src=src /> })}
+        </a>
     }
 }
 
@@ -69,6 +75,8 @@ mod tests {
         container.into()
     }
 
+    // ── ButtonCta ──
+
     #[wasm_bindgen_test]
     fn renders_button_with_large_class() {
         let el = mount(|| {
@@ -79,19 +87,6 @@ mod tests {
         let btn = el.query_selector("button").unwrap().unwrap();
         assert!(btn.class_list().contains("qui-button"));
         assert!(btn.class_list().contains("large"));
-    }
-
-    #[wasm_bindgen_test]
-    fn renders_anchor_when_href_provided() {
-        let el = mount(|| {
-            view! {
-                <ButtonCta href="/test".to_string()>"Go"</ButtonCta>
-            }
-        });
-        let link = el.query_selector("a").unwrap().unwrap();
-        assert_eq!(link.tag_name(), "A");
-        assert!(link.class_list().contains("large"));
-        assert!(el.query_selector("button").unwrap().is_none());
     }
 
     #[wasm_bindgen_test]
@@ -164,5 +159,20 @@ mod tests {
             .unwrap();
         btn.click();
         assert!(clicked.get());
+    }
+
+    // ── CtaLink ──
+
+    #[wasm_bindgen_test]
+    fn renders_anchor_when_href_provided() {
+        let el = mount(|| {
+            view! {
+                <CtaLink href="/test".to_string()>"Go"</CtaLink>
+            }
+        });
+        let link = el.query_selector("a").unwrap().unwrap();
+        assert_eq!(link.tag_name(), "A");
+        assert!(link.class_list().contains("large"));
+        assert!(el.query_selector("button").unwrap().is_none());
     }
 }

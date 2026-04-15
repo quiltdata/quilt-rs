@@ -1,12 +1,12 @@
 use leptos::prelude::*;
 
-use super::IconButton;
+use super::IconLink;
 
 #[component]
 pub fn ReLogin(href: String) -> impl IntoView {
     view! {
-        <IconButton href=href small=true>
+        <IconLink href=href small=true>
             "Re-login"
-        </IconButton>
+        </IconLink>
     }
 }
