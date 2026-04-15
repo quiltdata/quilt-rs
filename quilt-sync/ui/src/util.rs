@@ -10,6 +10,10 @@ use crate::components::layout::Notification;
 /// double-clicks, optionally locks the UI, runs the command, and shows
 /// a success/error notification. On success it calls `on_done` (e.g.
 /// to trigger a refetch or navigate).
+///
+/// `busy` is **not** reset on success — `on_done` is expected to trigger
+/// a re-render that destroys the component (and its signal). If `on_done`
+/// does not rebuild the component, the button will remain disabled.
 pub fn make_action<F, Fut>(
     command: F,
     notification: RwSignal<Option<Notification>>,
