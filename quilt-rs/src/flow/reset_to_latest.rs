@@ -53,7 +53,7 @@ pub async fn reset_to_latest(
     debug!("✔️ Updated lineage to latest hash: {}", latest.hash);
 
     debug!("⏳ Caching remote manifest");
-    flow::cache_remote_manifest(paths, storage, remote, &latest).await?;
+    *manifest = flow::cache_remote_manifest(paths, storage, remote, &latest).await?;
 
     // TODO: merge the following steps with `pull.rs`
 
