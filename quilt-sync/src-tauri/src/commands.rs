@@ -1243,10 +1243,9 @@ pub async fn reset_local(
     Notify::new(msg_init).map(reset_local_command(m, &namespace).await, msg_ok, msg_err)
 }
 
-async fn package_push_command(m: &model::Model, namespace: &str) -> Result<(), Error> {
+async fn package_push_command(m: &model::Model, namespace: &str) -> Result<quilt::PushOutcome, Error> {
     let namespace = quilt::uri::Namespace::try_from(namespace)?;
-    model::package_push(m, &namespace, None).await?;
-    Ok(())
+    model::package_push(m, &namespace, None).await
 }
 
 #[tauri::command]
@@ -1259,10 +1258,20 @@ pub async fn package_push(
     let m: &model::Model = &m;
 
     let msg_init = format!("Pushing package {namespace}");
-    let msg_ok = format!("Successfully pushed package {namespace}");
+
+    let result = package_push_command(m, &namespace).await;
+    let msg_ok = match &result {
+        Ok(outcome) if outcome.certified_latest => {
+            format!("Successfully pushed package {namespace}")
+        }
+        Ok(_) => format!(
+            "Pushed {namespace}, but could not update latest: remote has newer changes"
+        ),
+        _ => String::new(),
+    };
     let msg_err = |err: &Error| format!("Failed to push package: {err}");
 
-    Notify::new(msg_init).map(package_push_command(m, &namespace).await, msg_ok, msg_err)
+    Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
 }
 
 async fn package_pull_command(m: &model::Model, namespace: &str) -> Result<(), Error> {

@@ -22,6 +22,7 @@ pub use error::Error;
 pub use error::InstallPackageError;
 pub use error::InstallPathError;
 pub use installed_package::InstalledPackage;
+pub use installed_package::PushOutcome;
 pub use local_domain::LocalDomain;
 
 pub type Res<T = ()> = std::result::Result<T, Error>;

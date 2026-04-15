@@ -182,7 +182,7 @@ pub trait QuiltModel {
         &self,
         package: &quilt::InstalledPackage,
         host_config: Option<HostConfig>,
-    ) -> Result<quilt::uri::ManifestUri, Error> {
+    ) -> Result<quilt::PushOutcome, Error> {
         Ok(package.push(host_config).await?)
     }
 
@@ -513,13 +513,14 @@ pub async fn package_push(
     model: &impl QuiltModel,
     namespace: &quilt::uri::Namespace,
     host_config: Option<HostConfig>,
-) -> Result<(), Error> {
+) -> Result<quilt::PushOutcome, Error> {
     let installed_package = model
         .get_installed_package(namespace)
         .await?
         .unwrap_or_else(|| panic!("Package {namespace} not found"));
-    model.package_push(&installed_package, host_config).await?;
-    Ok(())
+    Ok(model
+        .package_push(&installed_package, host_config)
+        .await?)
 }
 
 pub async fn package_pull(

@@ -240,6 +240,8 @@ fn build_package_menu(
     let catalog_disabled = status == "local";
 
     // ── Sync button (Push/Pull) ──
+    // "local" + origin: safe to show Push because create_package always
+    // creates an initial commit, so push() won't fail with "No commits".
     let sync_action = match status.as_str() {
         "ahead" => Some(SyncAction::Push),
         "behind" => Some(SyncAction::Pull),

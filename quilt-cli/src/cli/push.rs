@@ -1,7 +1,7 @@
 use quilt_rs::io::remote::HostConfig;
 use quilt_rs::uri::Host;
-use quilt_rs::uri::ManifestUri;
 use quilt_rs::uri::Namespace;
+use quilt_rs::PushOutcome;
 
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
@@ -18,11 +18,19 @@ pub struct Input {
 #[derive(Debug)]
 pub struct Output {
     pub hash: String,
+    pub certified_latest: bool,
 }
 
 impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, r##"New revision "{}" pushed"##, self.hash)
+        write!(f, r##"New revision "{}" pushed"##, self.hash)?;
+        if !self.certified_latest {
+            write!(
+                f,
+                "\nWarning: could not update latest — remote has newer changes"
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -36,7 +44,7 @@ async fn push_package(
     host_config: Option<HostConfig>,
     bucket: Option<String>,
     origin: Option<Host>,
-) -> Result<ManifestUri, Error> {
+) -> Result<PushOutcome, Error> {
     match local_domain.get_installed_package(&namespace).await? {
         Some(installed_package) => {
             // If bucket/origin provided, set remote before pushing.
@@ -62,9 +70,10 @@ pub async fn model(
         origin,
     }: Input,
 ) -> Result<Output, Error> {
-    let manifest_uri = push_package(local_domain, namespace, host_config, bucket, origin).await?;
+    let outcome = push_package(local_domain, namespace, host_config, bucket, origin).await?;
     Ok(Output {
-        hash: manifest_uri.hash,
+        hash: outcome.manifest_uri.hash,
+        certified_latest: outcome.certified_latest,
     })
 }
 
