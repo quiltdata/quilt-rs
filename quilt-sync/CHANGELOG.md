@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.16.0-alpha3] - 2026-04-15
+
+### Fixed
+
+- Fix updater log spam by prioritizing HubSpot endpoint
+
 ## [v0.16.0-alpha2] - 2026-04-14
 
 ### Changed
