@@ -120,7 +120,7 @@ with checkboxes, status indicator, and a toolbar.
 +--[appbar]----------------------------------------------+
 | [logo]  user/package-a                 [refresh] [gear] |
 +--[toolbar]---------------------------------------------+
-| [< Packages]              [Uninstall] [Push] [Commit]  |
+| [< Packages]        [Uninstall] [Pull] [Push] [Commit] |
 +---------------------------------------------------------+
 | [status: 3 files modified]                              |
 |                                                         |
