@@ -166,6 +166,7 @@ fn PackageItem(
 ) -> impl IntoView {
     let status = RwSignal::new(data.status.clone());
     let has_changes = RwSignal::new(data.has_changes);
+    let refreshing = RwSignal::new(true);
 
     let ns = data.namespace.clone();
     leptos::task::spawn_local(async move {
@@ -173,6 +174,7 @@ fn PackageItem(
             status.set(fresh.status);
             has_changes.set(fresh.has_changes);
         }
+        refreshing.set(false);
     });
 
     let pkg_href = format!(
@@ -213,6 +215,11 @@ fn PackageItem(
             <div class="menu">
                 <ul class="menu-list">
                     {menu}
+                    <Show when=move || refreshing.get()>
+                        <li class="menu-item">
+                            <span class="q-spinner-inline"></span>
+                        </li>
+                    </Show>
                 </ul>
             </div>
         </li>
