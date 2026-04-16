@@ -717,7 +717,8 @@ async fn load_package_item(
     tracing.add_host(&origin_host);
     let uri = quilt::uri::S3PackageUri::from(remote_uri);
     let origin_url = uri.display_for_host(&origin_host)?;
-    let upstream_state: quilt::lineage::UpstreamState = lineage.clone().into();
+    let remote_display = remote_uri.to_string();
+    let upstream_state: quilt::lineage::UpstreamState = lineage.into();
     let has_changes = false; // Refined by refresh_package_status
 
     Ok(InstalledPackageListItem {
@@ -726,7 +727,7 @@ async fn load_package_item(
         has_changes,
         origin_url: Some(origin_url.to_string()),
         origin_host: Some(origin_host.to_string()),
-        remote_display: Some(remote_uri.to_string()),
+        remote_display: Some(remote_display),
     })
 }
 
