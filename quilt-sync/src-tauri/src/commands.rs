@@ -1973,8 +1973,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_installed_packages_list_data_with_origin_shows_cached_status() -> Result<(), String>
-    {
+    async fn test_installed_packages_list_data_with_origin_shows_cached_status(
+    ) -> Result<(), String> {
         let mut model = mocks::create();
 
         let pkgs = vec![make_installed_package(("test", "pkg"))];
@@ -2004,7 +2004,7 @@ mod tests {
         // Light phase derives status from lineage (up_to_date, not error)
         assert_eq!(pkg.status, "up_to_date");
         assert!(!pkg.has_changes); // Always false in light phase
-        // Should still have origin
+                                   // Should still have origin
         assert!(pkg.origin_url.is_some());
         assert_eq!(pkg.origin_host.as_deref(), Some("test.quilt.dev"));
 
@@ -2268,9 +2268,7 @@ mod tests {
             });
         model
             .expect_get_installed_package_status()
-            .returning(|_, _| {
-                Err(crate::error::Error::General("network error".to_string()))
-            });
+            .returning(|_, _| Err(crate::error::Error::General("network error".to_string())));
 
         let tracing = crate::telemetry::Telemetry::default();
         let ns = ("test", "broken").into();
