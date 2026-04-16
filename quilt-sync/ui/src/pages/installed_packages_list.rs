@@ -167,12 +167,16 @@ fn PackageItem(
     let status = RwSignal::new(data.status.clone());
     let has_changes = RwSignal::new(data.has_changes);
     let refreshing = RwSignal::new(true);
+    let refresh_error = RwSignal::new(None::<String>);
 
     let ns = data.namespace.clone();
     leptos::task::spawn_local(async move {
-        if let Ok(fresh) = commands::refresh_package_status(ns).await {
-            status.set(fresh.status);
-            has_changes.set(fresh.has_changes);
+        match commands::refresh_package_status(ns).await {
+            Ok(fresh) => {
+                status.set(fresh.status);
+                has_changes.set(fresh.has_changes);
+            }
+            Err(err) => refresh_error.set(Some(err)),
         }
         refreshing.set(false);
     });
@@ -215,6 +219,9 @@ fn PackageItem(
             <Show when=move || refreshing.get()>
                 <div class="q-spinner-inline" />
             </Show>
+            <Show when=move || refresh_error.get().is_some()>
+                <img class="refresh-warning-icon" src="/assets/img/icons/warning.svg" />
+            </Show>
             <div class=move || if refreshing.get() { "menu refreshing" } else { "menu" }>
                 <ul class="menu-list">
                     {menu}
@@ -224,6 +231,13 @@ fn PackageItem(
                 <div class="status-tooltip-wrapper">
                     <div class="status-tooltip">
                         "Syncing with remote and scanning local files for changes\u{2026}"
+                    </div>
+                </div>
+            </Show>
+            <Show when=move || refresh_error.get().is_some()>
+                <div class="status-tooltip-wrapper">
+                    <div class="status-tooltip error">
+                        {move || refresh_error.get().unwrap_or_default()}
                     </div>
                 </div>
             </Show>

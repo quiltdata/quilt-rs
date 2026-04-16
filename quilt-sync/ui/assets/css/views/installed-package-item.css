@@ -93,6 +93,13 @@
     display: none;
   }
 
+  .refresh-warning-icon {
+    flex-shrink: 0;
+    height: 16px;
+    margin-right: var(--q-ui-size-2);
+    width: 16px;
+  }
+
   .status-tooltip-wrapper {
     display: none;
     left: 25%;
@@ -115,6 +122,10 @@
     margin-top: calc(-1 * var(--q-ui-size-4));
     padding: var(--q-ui-size-1) var(--q-ui-size-4);
     width: 100%;
+  }
+
+  .status-tooltip.error {
+    color: var(--q-ui-palette-error);
   }
 }
 
