@@ -181,13 +181,11 @@ fn PackageItem(
 
     // TODO: N+1 problem — each PackageItem fires its own has_changes command.
     // Batch into the initial list response or add a bulk endpoint.
-    let has_changes = RwSignal::new(false);
+    let has_changes: RwSignal<Option<Result<bool, String>>> = RwSignal::new(None);
     if !is_error {
         let ns = data.namespace.clone();
         leptos::task::spawn_local(async move {
-            if let Ok(changed) = commands::package_has_changes(ns).await {
-                has_changes.set(changed);
-            }
+            has_changes.set(Some(commands::package_has_changes(ns).await));
         });
     }
 
@@ -217,6 +215,13 @@ fn PackageItem(
                 <ul class="menu-list">
                     {menu}
                 </ul>
+                {move || {
+                    if let Some(Err(err)) = has_changes.get() {
+                        Some(view! { <p class="menu-error">{err}</p> })
+                    } else {
+                        None
+                    }
+                }}
             </div>
         </li>
     }
@@ -224,7 +229,7 @@ fn PackageItem(
 
 fn build_package_menu(
     data: &PackageItemData,
-    has_changes: RwSignal<bool>,
+    has_changes: RwSignal<Option<Result<bool, String>>>,
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
     refetch: Trigger,
@@ -322,7 +327,7 @@ fn build_package_menu(
         // Commit (unless error)
         {(!is_error).then(|| view! {
             <li class="menu-item">
-                <buttons::Commit namespace=namespace.clone() small=true primary=has_changes />
+                <buttons::Commit namespace=namespace.clone() small=true primary=Signal::derive(move || has_changes.get() == Some(Ok(true))) />
             </li>
         })}
 
@@ -361,8 +366,8 @@ fn build_package_menu(
                     <li class="menu-item menu-divider"></li>
                     <li class="menu-item">
                         <div class="qui-popover">
-                            <buttons::Pull on_click=on_click small=true busy=busy disabled=has_changes />
-                            <Show when=move || has_changes.get()>
+                            <buttons::Pull on_click=on_click small=true busy=busy disabled=Signal::derive(move || has_changes.get() != Some(Ok(false))) />
+                            <Show when=move || has_changes.get() == Some(Ok(true))>
                                 <div class="popover-wrapper">
                                     <div class="popover">
                                         "Commit or discard local changes before pulling"
