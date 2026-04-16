@@ -9,40 +9,27 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.16.0-alpha5] - 2026-04-16
+## [v0.16.0] - 2026-04-16
 
 ### Changed
 
-- Render packages list instantly from cached lineage, then refresh status per-package in background (<https://github.com/quiltdata/quilt-rs/pull/622>)
-
-## [v0.16.0-alpha4] - 2026-04-15
-
-### Changed
-
+- Replace Askama templates, TypeScript, and npm with a Leptos WASM client-side rendered frontend (<https://github.com/quiltdata/quilt-rs/pull/606>)
+- Reorganize button components into a `buttons` submodule with `ButtonKind` enum, `IconButton` and `ButtonCta` base components, and specific button components for every UI button (<https://github.com/quiltdata/quilt-rs/pull/613>)
+- Update logo to Quilt.bio branding (<https://github.com/quiltdata/quilt-rs/pull/612>)
 - Disable Commit button on commit page when message is empty (<https://github.com/quiltdata/quilt-rs/pull/619>)
 - Highlight Commit link as primary on packages list when package has uncommitted changes (<https://github.com/quiltdata/quilt-rs/pull/619>)
 - Disable Pull button with popover when package has uncommitted local changes (<https://github.com/quiltdata/quilt-rs/pull/619>)
 - Extract popover CSS into shared `.qui-popover` component (<https://github.com/quiltdata/quilt-rs/pull/619>)
-
-## [v0.16.0-alpha3] - 2026-04-15
+- Render packages list instantly from cached lineage, then refresh status per-package in background (<https://github.com/quiltdata/quilt-rs/pull/622>)
 
 ### Fixed
 
 - Fix updater log spam by prioritizing HubSpot endpoint
 
-## [v0.16.0-alpha2] - 2026-04-14
+### quilt-rs
 
-### Changed
-
-- Reorganize button components into a `buttons` submodule with `ButtonKind` enum, `IconButton` and `ButtonCta` base components, and specific button components for every UI button
-  (<https://github.com/quiltdata/quilt-rs/pull/613>)
-- Update logo to Quilt.bio branding (<https://github.com/quiltdata/quilt-rs/pull/612>)
-
-## [v0.16.0-alpha1] - 2026-04-13
-
-### Changed
-
-- Replace Askama templates, TypeScript, and npm with a Leptos WASM client-side rendered frontend (<https://github.com/quiltdata/quilt-rs/pull/606>)
+- Updated [from v0.28.1 to v0.29.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.28.1...quilt-rs/v0.29.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+  - Always certify latest on first push, fixing incorrect "Behind" status after pushing a local package with the same name as an existing remote package
 
 ## [v0.15.1] - 2026-04-08
 
