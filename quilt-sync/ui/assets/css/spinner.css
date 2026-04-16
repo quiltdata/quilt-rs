@@ -47,11 +47,9 @@
   border: 2px solid var(--q-ui-palette-text-secondary);
   border-right-color: transparent;
   border-radius: 50%;
-  display: inline-block;
   flex-shrink: 0;
   height: 16px;
-  margin-right: var(--q-ui-size-1);
+  margin-right: var(--q-ui-size-2);
   width: 16px;
-  opacity: 0.5;
 }
 

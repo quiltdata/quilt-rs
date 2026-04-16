@@ -213,7 +213,7 @@ fn PackageItem(
                 })}
             </a>
             <Show when=move || refreshing.get()>
-                <span class="q-spinner-inline"></span>
+                <div class="q-spinner-inline" />
             </Show>
             <div class=move || if refreshing.get() { "menu refreshing" } else { "menu" }>
                 <ul class="menu-list">
