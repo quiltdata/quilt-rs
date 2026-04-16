@@ -1247,9 +1247,9 @@ pub async fn package_push(
         Ok(outcome) if outcome.certified_latest => {
             format!("Successfully pushed package {namespace}")
         }
-        Ok(_) => format!(
-            "Pushed {namespace}, but could not update latest: remote has newer changes"
-        ),
+        Ok(_) => {
+            format!("Pushed {namespace}, but could not update latest: remote has newer changes")
+        }
         _ => String::new(),
     };
     let msg_err = |err: &Error| format!("Failed to push package: {err}");
@@ -2537,5 +2537,4 @@ mod tests {
     }
 
     // ── has_changes tests ──
-
 }
