@@ -92,6 +92,30 @@
   .menu-divider + .menu-divider {
     display: none;
   }
+
+  .status-tooltip-wrapper {
+    display: none;
+    left: 25%;
+    width: 50%;
+    padding-top: var(--q-ui-size-1);
+    position: absolute;
+    top: 100%;
+    z-index: 1;
+  }
+
+  &:hover .status-tooltip-wrapper {
+    display: flex;
+  }
+
+  .status-tooltip {
+    background: var(--q-ui-palette-background-primary);
+    border-radius: var(--q-ui-border-radius);
+    box-shadow: var(--q-ui-shadows-popup);
+    font-size: 1rem;
+    margin-top: calc(-1 * var(--q-ui-size-4));
+    padding: var(--q-ui-size-1) var(--q-ui-size-4);
+    width: 100%;
+  }
 }
 
 @keyframes menu-pulse {

@@ -220,6 +220,13 @@ fn PackageItem(
                     {menu}
                 </ul>
             </div>
+            <Show when=move || refreshing.get()>
+                <div class="status-tooltip-wrapper">
+                    <div class="status-tooltip">
+                        "Syncing with remote and scanning local files for changes\u{2026}"
+                    </div>
+                </div>
+            </Show>
         </li>
     }
 }
