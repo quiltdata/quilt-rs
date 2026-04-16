@@ -204,6 +204,21 @@ pub async fn get_installed_packages_list_data() -> Result<InstalledPackagesListD
     tauri::invoke_unit("get_installed_packages_list_data").await
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RefreshedPackageStatus {
+    pub status: String,
+    pub has_changes: bool,
+}
+
+pub async fn refresh_package_status(namespace: String) -> Result<RefreshedPackageStatus, String> {
+    #[derive(Serialize)]
+    struct Args {
+        namespace: String,
+    }
+    tauri::invoke("refresh_package_status", &Args { namespace }).await
+}
+
 pub async fn handle_remote_package(uri: String) -> Result<RemotePackageResult, String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]

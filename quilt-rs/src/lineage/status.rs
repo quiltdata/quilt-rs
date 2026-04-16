@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fmt;
 use std::path::PathBuf;
 
 use serde::Serialize;
@@ -27,6 +28,20 @@ pub enum UpstreamState {
     /// Local-only package: either no remote configured, or remote set but never pushed
     Local,
     Error,
+}
+
+impl fmt::Display for UpstreamState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            UpstreamState::Ahead => "ahead",
+            UpstreamState::Behind => "behind",
+            UpstreamState::Diverged => "diverged",
+            UpstreamState::UpToDate => "up_to_date",
+            UpstreamState::Local => "local",
+            UpstreamState::Error => "error",
+        };
+        f.write_str(s)
+    }
 }
 
 /// Status of the package and working directory of the package

@@ -103,6 +103,47 @@ serde-wasm-bindgen deserializes response into Rust DTO
 Suspend::new resolves, Leptos renders the page reactively
 ```
 
+### Two-phase loading (Installed Packages List)
+
+The packages list page uses a two-phase approach so the list renders
+instantly instead of blocking behind network calls and file hashing:
+
+```text
+Phase 1 — Light (cached lineage)
+    get_installed_packages_list_data()
+        |
+        v
+    For each package, read lineage.json from disk
+        |
+        v
+    Derive upstream status from cached hashes
+    (From<PackageLineage> for UpstreamState — no network, no hashing)
+        |
+        v
+    Return list with has_changes = false for every package
+        |
+        v
+    Leptos renders the full list immediately
+
+Phase 2 — Heavy (per-package, async)
+    For each PackageItem, spawn_local calls refresh_package_status()
+        |
+        v
+    Tauri command fetches latest hash from S3 (network)
+    and walks local files to detect changes (hashing)
+        |
+        v
+    Returns fresh status + has_changes
+        |
+        v
+    RwSignal updates trigger reactive UI changes:
+    buttons appear/disappear, Commit highlights, Pull disables
+```
+
+While the heavy phase is in flight, each row shows a small spinner
+and the menu buttons pulse at reduced opacity. A hover tooltip
+reads "Syncing with remote and scanning local files for changes...".
+
 ### User action cycle
 
 When the user clicks a button (push, commit, pull, etc.):

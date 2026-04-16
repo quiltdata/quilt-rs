@@ -110,6 +110,7 @@ fn main() {
             commands::package_install_paths,
             commands::package_pull,
             commands::package_push,
+            commands::refresh_package_status,
             commands::package_uninstall,
             commands::reset_local,
             commands::reveal_in_file_browser,
