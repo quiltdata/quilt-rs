@@ -95,6 +95,10 @@ fn InstalledPackageContent(
     let ignored_count = data.ignored_count;
     let unmodified_count = data.unmodified_count;
 
+    let has_changes = entries
+        .iter()
+        .any(|e| matches!(e.status.as_str(), "added" | "modified" | "deleted"));
+
     // Track which remote entries are checked (by index) — all selected by default
     let initial_checked: Vec<usize> = entries
         .iter()
@@ -213,6 +217,7 @@ fn InstalledPackageContent(
                     namespace=ns_for_status
                     status=status_clone
                     origin_host=origin_host_for_status
+                    has_changes=has_changes
                     notification=notification
                     ui_locked=ui_locked
                     refetch=refetch
@@ -261,9 +266,6 @@ fn InstalledPackageContent(
         // ── Action bar: Commit ──
         <Show when=move || show_commit>
             {
-                let has_changes = entries.iter().any(|e| {
-                    matches!(e.status.as_str(), "added" | "modified" | "deleted")
-                });
                 let is_primary = Memo::new(move |_| {
                     has_changes && checked_count.get() == 0
                 });
@@ -396,6 +398,7 @@ fn StatusBanner(
     namespace: String,
     status: String,
     origin_host: Option<String>,
+    has_changes: bool,
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
     refetch: Trigger,
@@ -439,7 +442,16 @@ fn StatusBanner(
             Some(
                 view! {
                     <StatusBannerInner description="Your commits are behind the remote">
-                        <buttons::Pull on_click=on_pull busy=pull_busy />
+                        <div class="qui-popover">
+                            <buttons::Pull on_click=on_pull busy=pull_busy disabled=has_changes />
+                            {has_changes.then(|| view! {
+                                <div class="popover-wrapper">
+                                    <div class="popover">
+                                        "Commit or discard local changes before pulling"
+                                    </div>
+                                </div>
+                            })}
+                        </div>
                     </StatusBannerInner>
                 }
                 .into_any(),

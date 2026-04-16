@@ -96,33 +96,7 @@
     white-space: nowrap;
   }
 
-  .logout-popover {
-    position: relative;
-  }
-
-  .logout-popover .popover-wrapper {
-    bottom: 100%;
-    display: none;
-    left: 0;
-    padding-bottom: var(--q-ui-size-1);
-    position: absolute;
-  }
-
-  .logout-popover:hover .popover-wrapper {
-    display: flex;
-  }
-
   .release-notes pre {
     white-space: pre-wrap;
-  }
-
-  .logout-popover .popover {
-    background: var(--q-ui-palette-background-primary);
-    border-radius: var(--q-ui-border-radius);
-    box-shadow: var(--q-ui-shadows-popup);
-    font-size: var(--q-ui-font-size-small);
-    min-width: var(--q-ui-size-20);
-    max-width: 360px;
-    padding: var(--q-ui-size-1) var(--q-ui-size-2);
   }
 }

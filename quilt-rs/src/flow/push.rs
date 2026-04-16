@@ -78,6 +78,16 @@ async fn stream_uploaded_local_rows<'a>(
     })
 }
 
+/// Result of a successful push operation.
+#[derive(Debug)]
+pub struct PushResult {
+    pub lineage: PackageLineage,
+    /// Whether the pushed revision was certified as "latest".
+    /// `false` when the remote's latest tag has moved (someone else pushed)
+    /// since we last checked.
+    pub certified_latest: bool,
+}
+
 /// Push the new package revision to the remote and tags it as "latest".
 pub async fn push_package(
     mut lineage: PackageLineage,
@@ -87,14 +97,17 @@ pub async fn push_package(
     remote: &impl Remote,
     namespace: Option<Namespace>,
     host_config: HostConfig,
-) -> Res<PackageLineage> {
+) -> Res<PushResult> {
     // NB: `.take()` moves commit out of lineage before we validate remote.
     // Safe because the caller reads lineage from disk and discards this copy on error.
     // If reusing this function elsewhere, ensure the commit isn't lost on early return.
     let commit = match lineage.commit.take() {
         None => {
             info!("No changes to push");
-            return Ok(lineage); // nothing to commit
+            return Ok(PushResult {
+                lineage,
+                certified_latest: true,
+            });
         }
         Some(commit) => commit,
     };
@@ -209,13 +222,19 @@ pub async fn push_package(
     // - no existing latest: remote has never had a "latest" tag.
     if is_first_push || lineage.base_hash == lineage.latest_hash || lineage.latest_hash.is_empty() {
         debug!("⏳ Certifying new latest (first push, tracking, or no existing latest)");
-        return flow::certify_latest(lineage, remote, new_manifest_uri).await;
-    } else {
-        warn!(r#"⏳ We do not "track" the latest hash, so we will not certify it"#);
+        let lineage = flow::certify_latest(lineage, remote, new_manifest_uri).await?;
+        return Ok(PushResult {
+            lineage,
+            certified_latest: true,
+        });
     }
 
-    info!("✔️ Successfully pushed package");
-    Ok(lineage)
+    warn!("Pushed but did not certify latest: remote has newer changes");
+    info!("✔️ Successfully pushed package (without certifying latest)");
+    Ok(PushResult {
+        lineage,
+        certified_latest: false,
+    })
 }
 
 #[cfg(test)]
@@ -239,7 +258,7 @@ mod tests {
     async fn test_no_push_if_no_commit() -> Res {
         let storage = MockStorage::default();
         let remote = MockRemote::default();
-        let lineage = push_package(
+        let result = push_package(
             PackageLineage::default(),
             Manifest::default(),
             &paths::DomainPaths::default(),
@@ -249,7 +268,8 @@ mod tests {
             HostConfig::default(),
         )
         .await?;
-        assert_eq!(lineage, PackageLineage::default());
+        assert_eq!(result.lineage, PackageLineage::default());
+        assert!(result.certified_latest);
         Ok(())
     }
 
@@ -297,7 +317,7 @@ mod tests {
             .await?;
         let mut manifest = Manifest::default();
         manifest.header.user_meta = Some(serde_json::Value::Null);
-        let lineage = push_package(
+        let result = push_package(
             lineage,
             manifest,
             &paths::DomainPaths::default(),
@@ -315,8 +335,9 @@ mod tests {
         };
         // First push with an existing remote "latest": certify_latest is called,
         // so both base_hash and latest_hash point to the pushed hash.
+        assert!(result.certified_latest);
         assert_eq!(
-            lineage,
+            result.lineage,
             PackageLineage {
                 remote_uri: Some(manifest_uri.clone()),
                 base_hash: manifest_uri.hash.clone(),
@@ -389,7 +410,7 @@ mod tests {
                 .await?;
         }
 
-        let lineage = push_package(
+        let result = push_package(
             lineage,
             manifest,
             &paths::DomainPaths::default(),
@@ -407,8 +428,9 @@ mod tests {
         };
         // First push with an existing remote "latest": certify_latest is called,
         // so both base_hash and latest_hash point to the pushed hash.
+        assert!(result.certified_latest);
         assert_eq!(
-            lineage,
+            result.lineage,
             PackageLineage {
                 remote_uri: Some(manifest_uri.clone()),
                 base_hash: manifest_uri.hash.clone(),

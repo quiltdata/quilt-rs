@@ -284,7 +284,11 @@ fn CommitContent(
 
         // ── Action bar ──
         <div class="qui-actionbar">
-            <buttons::CommitRevision on_click=on_commit busy=committing />
+            <buttons::CommitRevision
+                on_click=on_commit
+                busy=committing
+                disabled=Signal::derive(move || message.get().trim().is_empty())
+            />
         </div>
 
         // ── Popups ──

@@ -179,9 +179,12 @@ fn PackageItem(
     let namespace_display = data.namespace.clone();
     let remote_display = data.remote_display.clone();
 
+    let has_changes = data.has_changes;
+
     // Build menu buttons
     let menu = build_package_menu(
         &data,
+        has_changes,
         notification,
         ui_locked,
         refetch,
@@ -211,6 +214,7 @@ fn PackageItem(
 
 fn build_package_menu(
     data: &PackageItemData,
+    has_changes: bool,
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
     refetch: Trigger,
@@ -228,6 +232,8 @@ fn build_package_menu(
     let catalog_disabled = status == "local";
 
     // ── Sync button (Push/Pull) ──
+    // "local" + origin: safe to show Push because create_package always
+    // creates an initial commit, so push() won't fail with "No commits".
     let sync_action = match status.as_str() {
         "ahead" => Some(SyncAction::Push),
         "behind" => Some(SyncAction::Pull),
@@ -306,7 +312,7 @@ fn build_package_menu(
         // Commit (unless error)
         {(!is_error).then(|| view! {
             <li class="menu-item">
-                <buttons::Commit namespace=namespace.clone() small=true />
+                <buttons::Commit namespace=namespace.clone() small=true primary=has_changes />
             </li>
         })}
 
@@ -344,7 +350,16 @@ fn build_package_menu(
                 view! {
                     <li class="menu-item menu-divider"></li>
                     <li class="menu-item">
-                        <buttons::Pull on_click=on_click small=true busy=busy />
+                        <div class="qui-popover">
+                            <buttons::Pull on_click=on_click small=true busy=busy disabled=has_changes />
+                            <Show when=move || has_changes>
+                                <div class="popover-wrapper">
+                                    <div class="popover">
+                                        "Commit or discard local changes before pulling"
+                                    </div>
+                                </div>
+                            </Show>
+                        </div>
                     </li>
                 }.into_any()
             }

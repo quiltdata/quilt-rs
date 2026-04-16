@@ -115,6 +115,7 @@ pub struct InstalledPackagesListData {
 pub struct PackageItemData {
     pub namespace: String,
     pub status: String,
+    pub has_changes: bool,
     pub origin_url: Option<String>,
     pub origin_host: Option<String>,
     pub remote_display: Option<String>,

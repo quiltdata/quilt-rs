@@ -655,6 +655,7 @@ pub struct InstalledPackagesListData {
 pub struct InstalledPackageListItem {
     pub namespace: String,
     pub status: String,
+    pub has_changes: bool,
     pub origin_url: Option<String>,
     pub origin_host: Option<String>,
     pub remote_display: Option<String>,
@@ -693,6 +694,7 @@ async fn load_package_item(
             return Ok(InstalledPackageListItem {
                 namespace: installed_package.namespace.to_string(),
                 status: "local".to_string(),
+                has_changes: false,
                 origin_url: None,
                 origin_host: None,
                 remote_display: None,
@@ -704,6 +706,7 @@ async fn load_package_item(
         return Ok(InstalledPackageListItem {
             namespace: installed_package.namespace.to_string(),
             status: "error".to_string(),
+            has_changes: false,
             origin_url: None,
             origin_host: None,
             remote_display: Some(remote_uri.to_string()),
@@ -714,21 +717,21 @@ async fn load_package_item(
     tracing.add_host(&origin_host);
     let uri = quilt::uri::S3PackageUri::from(remote_uri);
     let origin_url = uri.display_for_host(&origin_host)?;
-    let status = match m
+    let (upstream_state, has_changes) = match m
         .get_installed_package_status(installed_package, None)
         .await
     {
-        Ok(s) => s.upstream_state,
+        Ok(s) => (s.upstream_state, !s.changes.is_empty()),
         Err(err) => {
             tracing::warn!(
                 "Failed to get status for {}: {err}",
                 installed_package.namespace,
             );
-            quilt::lineage::UpstreamState::Error
+            (quilt::lineage::UpstreamState::Error, false)
         }
     };
 
-    let status_str = match status {
+    let status_str = match upstream_state {
         quilt::lineage::UpstreamState::Ahead => "ahead",
         quilt::lineage::UpstreamState::Behind => "behind",
         quilt::lineage::UpstreamState::Diverged => "diverged",
@@ -740,6 +743,7 @@ async fn load_package_item(
     Ok(InstalledPackageListItem {
         namespace: installed_package.namespace.to_string(),
         status: status_str.to_string(),
+        has_changes,
         origin_url: Some(origin_url.to_string()),
         origin_host: Some(origin_host.to_string()),
         remote_display: Some(remote_uri.to_string()),
@@ -1216,10 +1220,12 @@ pub async fn reset_local(
     Notify::new(msg_init).map(reset_local_command(m, &namespace).await, msg_ok, msg_err)
 }
 
-async fn package_push_command(m: &model::Model, namespace: &str) -> Result<(), Error> {
+async fn package_push_command(
+    m: &model::Model,
+    namespace: &str,
+) -> Result<quilt::PushOutcome, Error> {
     let namespace = quilt::uri::Namespace::try_from(namespace)?;
-    model::package_push(m, &namespace, None).await?;
-    Ok(())
+    model::package_push(m, &namespace, None).await
 }
 
 #[tauri::command]
@@ -1232,10 +1238,23 @@ pub async fn package_push(
     let m: &model::Model = &m;
 
     let msg_init = format!("Pushing package {namespace}");
-    let msg_ok = format!("Successfully pushed package {namespace}");
+
+    let result = package_push_command(m, &namespace).await;
+    // TODO: push-not-certified should be surfaced as a warning, not a success.
+    // Currently both outcomes go through the success path because converting to
+    // Err skips on_done()/refetch and leaves the UI stale.
+    let msg_ok = match &result {
+        Ok(outcome) if outcome.certified_latest => {
+            format!("Successfully pushed package {namespace}")
+        }
+        Ok(_) => {
+            format!("Pushed {namespace}, but could not update latest: remote has newer changes")
+        }
+        _ => String::new(),
+    };
     let msg_err = |err: &Error| format!("Failed to push package: {err}");
 
-    Notify::new(msg_init).map(package_push_command(m, &namespace).await, msg_ok, msg_err)
+    Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
 }
 
 async fn package_pull_command(m: &model::Model, namespace: &str) -> Result<(), Error> {
@@ -2516,4 +2535,6 @@ mod tests {
         assert!(data.workflow.is_none());
         Ok(())
     }
+
+    // ── has_changes tests ──
 }

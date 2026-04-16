@@ -5,11 +5,15 @@ use super::{ButtonKind, IconLink};
 const KIND: ButtonKind = ButtonKind::Commit;
 
 #[component]
-pub fn Commit(namespace: String, #[prop(optional)] small: bool) -> impl IntoView {
+pub fn Commit(
+    namespace: String,
+    #[prop(optional)] small: bool,
+    #[prop(optional, into)] primary: MaybeProp<bool>,
+) -> impl IntoView {
     let href = format!("/commit?namespace={}", namespace);
 
     view! {
-        <IconLink href=href icon=KIND.icon() small=small>
+        <IconLink href=href icon=KIND.icon() small=small primary=primary>
             {KIND.label()}
         </IconLink>
     }
@@ -56,5 +60,12 @@ mod tests {
         let el = mount(|| view! { <Commit namespace="a/b".to_string() /> });
         let link = el.query_selector("a").unwrap().unwrap();
         assert!(!link.class_list().contains("primary"));
+    }
+
+    #[wasm_bindgen_test]
+    fn is_primary_when_set() {
+        let el = mount(|| view! { <Commit namespace="a/b".to_string() primary=true /> });
+        let link = el.query_selector("a").unwrap().unwrap();
+        assert!(link.class_list().contains("primary"));
     }
 }

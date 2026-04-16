@@ -26,6 +26,15 @@ use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
 
+/// Result of a push operation visible to callers outside `quilt-rs`.
+pub struct PushOutcome {
+    pub manifest_uri: ManifestUri,
+    /// Whether the pushed revision was certified as "latest".
+    /// `false` when the remote's latest tag moved since we last checked
+    /// (i.e. someone else pushed in the meantime).
+    pub certified_latest: bool,
+}
+
 /// Similar to `LocalDomain` because it has access to the same lineage file and remote/storage
 /// traits.
 /// But it only manages one particular installed package.
@@ -235,7 +244,8 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         }
     }
 
-    pub async fn push(&self, host_config_opt: Option<HostConfig>) -> Res<ManifestUri> {
+    /// Push the local revision to the remote.
+    pub async fn push(&self, host_config_opt: Option<HostConfig>) -> Res<PushOutcome> {
         self.scaffold_paths().await?;
 
         let (_, lineage) = self.lineage.read(&self.storage).await?;
@@ -264,7 +274,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let host_config =
             host_config_opt.unwrap_or(self.remote.host_config(&remote_uri.origin).await?);
 
-        let lineage = flow::push(
+        let result = flow::push(
             lineage,
             manifest,
             &self.paths,
@@ -274,8 +284,12 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             host_config,
         )
         .await?;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
-        Ok(lineage.remote()?.clone())
+        let certified_latest = result.certified_latest;
+        let lineage = self.lineage.write(&self.storage, result.lineage).await?;
+        Ok(PushOutcome {
+            manifest_uri: lineage.remote()?.clone(),
+            certified_latest,
+        })
     }
 
     pub async fn pull(&self, host_config_opt: Option<HostConfig>) -> Res<ManifestUri> {

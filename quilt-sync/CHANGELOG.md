@@ -9,6 +9,15 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.16.0-alpha4] - 2026-04-15
+
+### Changed
+
+- Disable Commit button on commit page when message is empty (<https://github.com/quiltdata/quilt-rs/pull/619>)
+- Highlight Commit link as primary on packages list when package has uncommitted changes (<https://github.com/quiltdata/quilt-rs/pull/619>)
+- Disable Pull button with popover when package has uncommitted local changes (<https://github.com/quiltdata/quilt-rs/pull/619>)
+- Extract popover CSS into shared `.qui-popover` component (<https://github.com/quiltdata/quilt-rs/pull/619>)
+
 ## [v0.16.0-alpha3] - 2026-04-15
 
 ### Fixed
