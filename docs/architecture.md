@@ -354,7 +354,10 @@ Update lineage:
   - commit = None (changes now pushed)
   - latest_hash = updated if certified
     ↓
-Return: Updated PackageLineage
+Return: PushResult { lineage, certified_latest }
+  - certified_latest = true  → revision is the new "latest"
+  - certified_latest = false → push succeeded but someone else
+    pushed in the meantime, so the "latest" tag was not updated
 ```
 
 ### 9. Uninstall Phase

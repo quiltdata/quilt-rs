@@ -333,7 +333,8 @@ ui/assets/css/
 ├── components/             # Reusable component styles
 │   ├── button.css
 │   ├── entries-filter.css
-│   └── ignore-popup.css
+│   ├── ignore-popup.css
+│   └── popover.css
 ├── pages/                  # Per-page styles
 │   ├── commit.css
 │   ├── installed-package.css
