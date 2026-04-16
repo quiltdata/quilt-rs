@@ -717,19 +717,8 @@ async fn load_package_item(
     tracing.add_host(&origin_host);
     let uri = quilt::uri::S3PackageUri::from(remote_uri);
     let origin_url = uri.display_for_host(&origin_host)?;
-    let (upstream_state, has_changes) = match m
-        .get_installed_package_status(installed_package, None)
-        .await
-    {
-        Ok(s) => (s.upstream_state, !s.changes.is_empty()),
-        Err(err) => {
-            tracing::warn!(
-                "Failed to get status for {}: {err}",
-                installed_package.namespace,
-            );
-            (quilt::lineage::UpstreamState::Error, false)
-        }
-    };
+    let upstream_state: quilt::lineage::UpstreamState = lineage.clone().into();
+    let has_changes = false; // Refined by refresh_package_status
 
     let status_str = match upstream_state {
         quilt::lineage::UpstreamState::Ahead => "ahead",
@@ -756,6 +745,91 @@ pub async fn get_installed_packages_list_data(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<InstalledPackagesListData, String> {
     get_installed_packages_list_data_from_model(&*m, &tracing)
+        .await
+        .map_err(|e| e.to_frontend_string())
+}
+
+// ── Refresh package status (heavy phase) ──
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RefreshedPackageStatus {
+    pub status: String,
+    pub has_changes: bool,
+}
+
+async fn refresh_package_status_from_model(
+    m: &impl model::QuiltModel,
+    tracing: &crate::telemetry::Telemetry,
+    namespace: &quilt::uri::Namespace,
+) -> Result<RefreshedPackageStatus, Error> {
+    let installed_package = m.get_installed_package(namespace).await?.ok_or_else(|| {
+        Error::from(quilt::InstallPackageError::NotInstalled(
+            namespace.to_owned(),
+        ))
+    })?;
+
+    let lineage = m.get_installed_package_lineage(&installed_package).await?;
+
+    if lineage.remote_uri.is_none() {
+        return Ok(RefreshedPackageStatus {
+            status: "local".to_string(),
+            has_changes: false,
+        });
+    }
+
+    let remote_uri = lineage.remote_uri.as_ref().unwrap();
+    if remote_uri.origin.is_none() {
+        return Ok(RefreshedPackageStatus {
+            status: "error".to_string(),
+            has_changes: false,
+        });
+    }
+
+    if let Ok(host) = crate::debug_tools::try_remote_origin_host(remote_uri) {
+        tracing.add_host(&host);
+    }
+
+    let (upstream_state, has_changes) = match m
+        .get_installed_package_status(&installed_package, None)
+        .await
+    {
+        Ok(s) => (s.upstream_state, !s.changes.is_empty()),
+        Err(err) => {
+            tracing::warn!(
+                "Failed to get status for {}: {err}",
+                installed_package.namespace,
+            );
+            (quilt::lineage::UpstreamState::Error, false)
+        }
+    };
+
+    let status_str = match upstream_state {
+        quilt::lineage::UpstreamState::Ahead => "ahead",
+        quilt::lineage::UpstreamState::Behind => "behind",
+        quilt::lineage::UpstreamState::Diverged => "diverged",
+        quilt::lineage::UpstreamState::UpToDate => "up_to_date",
+        quilt::lineage::UpstreamState::Local => "local",
+        quilt::lineage::UpstreamState::Error => "error",
+    };
+
+    Ok(RefreshedPackageStatus {
+        status: status_str.to_string(),
+        has_changes,
+    })
+}
+
+#[tauri::command]
+pub async fn refresh_package_status(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    namespace: String,
+) -> Result<RefreshedPackageStatus, String> {
+    let namespace: quilt::uri::Namespace = namespace
+        .try_into()
+        .map_err(|e: quilt::Error| e.to_string())?;
+
+    refresh_package_status_from_model(&*m, &tracing, &namespace)
         .await
         .map_err(|e| e.to_frontend_string())
 }
@@ -1827,32 +1901,44 @@ mod tests {
             .expect_get_installed_packages_list()
             .return_once(move || Ok(pkgs));
 
-        // All four packages have a remote URI with origin
+        // Set up lineage so From<PackageLineage> produces the expected status.
+        // Status is derived from base_hash vs current_hash (ahead) and
+        // base_hash vs latest_hash (behind).
         model
             .expect_get_installed_package_lineage()
             .returning(|pkg| {
-                let uri = make_manifest_uri(&pkg.namespace.to_string());
-                Ok(quilt::lineage::PackageLineage::from_remote(
-                    uri,
-                    "abcdef".to_string(),
-                ))
-            });
-
-        // Return the status matching the namespace name
-        model
-            .expect_get_installed_package_status()
-            .returning(|pkg, _| {
-                let state = match pkg.namespace.to_string().as_str() {
-                    "test/ahead" => quilt::lineage::UpstreamState::Ahead,
-                    "test/behind" => quilt::lineage::UpstreamState::Behind,
-                    "test/diverged" => quilt::lineage::UpstreamState::Diverged,
-                    "test/uptodate" => quilt::lineage::UpstreamState::UpToDate,
-                    _ => quilt::lineage::UpstreamState::Error,
+                let ns = pkg.namespace.to_string();
+                let uri = make_manifest_uri(&ns);
+                // base_hash comes from uri.hash ("abcdef")
+                let lineage = match ns.as_str() {
+                    // Ahead: current_hash != base_hash, base_hash == latest_hash
+                    "test/ahead" => {
+                        let mut l =
+                            quilt::lineage::PackageLineage::from_remote(uri, "abcdef".into());
+                        l.commit = Some(quilt::lineage::CommitState {
+                            hash: "local1".into(),
+                            ..Default::default()
+                        });
+                        l
+                    }
+                    // Behind: base_hash != latest_hash, current_hash == base_hash
+                    "test/behind" => {
+                        quilt::lineage::PackageLineage::from_remote(uri, "remote1".into())
+                    }
+                    // Diverged: both ahead and behind
+                    "test/diverged" => {
+                        let mut l =
+                            quilt::lineage::PackageLineage::from_remote(uri, "remote2".into());
+                        l.commit = Some(quilt::lineage::CommitState {
+                            hash: "local2".into(),
+                            ..Default::default()
+                        });
+                        l
+                    }
+                    // UpToDate: all hashes match
+                    _ => quilt::lineage::PackageLineage::from_remote(uri, "abcdef".into()),
                 };
-                Ok(quilt::lineage::InstalledPackageStatus::new(
-                    state,
-                    Default::default(),
-                ))
+                Ok(lineage)
             });
 
         let tracing = crate::telemetry::Telemetry::default();
@@ -1866,6 +1952,7 @@ mod tests {
 
         let ahead = find("test/ahead");
         assert_eq!(ahead.status, "ahead");
+        assert!(!ahead.has_changes); // Light phase always returns false
         assert!(ahead.origin_url.is_some());
         assert_eq!(ahead.origin_host.as_deref(), Some("test.quilt.dev"));
         assert!(ahead.remote_display.is_some());
@@ -1886,14 +1973,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_installed_packages_list_data_error_with_origin() -> Result<(), String> {
+    async fn test_installed_packages_list_data_with_origin_shows_cached_status() -> Result<(), String>
+    {
         let mut model = mocks::create();
 
-        let pkgs = vec![make_installed_package(("test", "error"))];
+        let pkgs = vec![make_installed_package(("test", "pkg"))];
         model
             .expect_get_installed_packages_list()
             .return_once(move || Ok(pkgs));
 
+        // Lineage indicates up_to_date (base == latest == remote hash)
         model
             .expect_get_installed_package_lineage()
             .returning(|pkg| {
@@ -1904,10 +1993,6 @@ mod tests {
                 ))
             });
 
-        model
-            .expect_get_installed_package_status()
-            .returning(|_, _| Ok(quilt::lineage::InstalledPackageStatus::error()));
-
         let tracing = crate::telemetry::Telemetry::default();
         let data = get_installed_packages_list_data_from_model(&model, &tracing)
             .await
@@ -1915,9 +2000,11 @@ mod tests {
 
         assert_eq!(data.packages.len(), 1);
         let pkg = &data.packages[0];
-        assert_eq!(pkg.namespace, "test/error");
-        assert_eq!(pkg.status, "error");
-        // Should still have origin (for Login button in UI)
+        assert_eq!(pkg.namespace, "test/pkg");
+        // Light phase derives status from lineage (up_to_date, not error)
+        assert_eq!(pkg.status, "up_to_date");
+        assert!(!pkg.has_changes); // Always false in light phase
+        // Should still have origin
         assert!(pkg.origin_url.is_some());
         assert_eq!(pkg.origin_host.as_deref(), Some("test.quilt.dev"));
 
@@ -2001,7 +2088,7 @@ mod tests {
             .expect_get_installed_packages_list()
             .return_once(move || Ok(pkgs));
 
-        // Has remote URI with origin but status is Local
+        // Has remote URI with origin but never pushed (empty hash → Local)
         model
             .expect_get_installed_package_lineage()
             .returning(|pkg| {
@@ -2017,10 +2104,6 @@ mod tests {
                 ))
             });
 
-        model
-            .expect_get_installed_package_status()
-            .returning(|_, _| Ok(quilt::lineage::InstalledPackageStatus::local()));
-
         let tracing = crate::telemetry::Telemetry::default();
         let data = get_installed_packages_list_data_from_model(&model, &tracing)
             .await
@@ -2030,10 +2113,173 @@ mod tests {
         let pkg = &data.packages[0];
         assert_eq!(pkg.namespace, "test/localpush");
         assert_eq!(pkg.status, "local");
+        assert!(!pkg.has_changes);
         // Has origin (for Push button and disabled Catalog button in UI)
         assert!(pkg.origin_url.is_some());
         assert_eq!(pkg.origin_host.as_deref(), Some("test.quilt.dev"));
 
+        Ok(())
+    }
+
+    // ── refresh_package_status tests (heavy phase) ──
+
+    #[tokio::test]
+    async fn test_refresh_package_status_local_only() -> Result<(), String> {
+        let mut model = mocks::create();
+        let pkg = make_installed_package(("test", "local"));
+        model
+            .expect_get_installed_package()
+            .return_once(move |_| Ok(Some(pkg)));
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|_| Ok(quilt::lineage::PackageLineage::default()));
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let ns = ("test", "local").into();
+        let result = refresh_package_status_from_model(&model, &tracing, &ns)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        assert_eq!(result.status, "local");
+        assert!(!result.has_changes);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_refresh_package_status_no_origin() -> Result<(), String> {
+        let mut model = mocks::create();
+        let pkg = make_installed_package(("test", "noorigin"));
+        model
+            .expect_get_installed_package()
+            .return_once(move |_| Ok(Some(pkg)));
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|pkg| {
+                let uri = make_manifest_uri_no_origin(&pkg.namespace.to_string());
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    uri,
+                    "abcdef".to_string(),
+                ))
+            });
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let ns = ("test", "noorigin").into();
+        let result = refresh_package_status_from_model(&model, &tracing, &ns)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        assert_eq!(result.status, "error");
+        assert!(!result.has_changes);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_refresh_package_status_with_changes() -> Result<(), String> {
+        let mut model = mocks::create();
+        let pkg = make_installed_package(("test", "changed"));
+        model
+            .expect_get_installed_package()
+            .return_once(move |_| Ok(Some(pkg)));
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|pkg| {
+                let uri = make_manifest_uri(&pkg.namespace.to_string());
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    uri,
+                    "abcdef".to_string(),
+                ))
+            });
+        model
+            .expect_get_installed_package_status()
+            .returning(|_, _| {
+                let mut changes = quilt::lineage::ChangeSet::new();
+                changes.insert(
+                    std::path::PathBuf::from("file.txt"),
+                    quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+                );
+                Ok(quilt::lineage::InstalledPackageStatus::new(
+                    quilt::lineage::UpstreamState::UpToDate,
+                    changes,
+                ))
+            });
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let ns = ("test", "changed").into();
+        let result = refresh_package_status_from_model(&model, &tracing, &ns)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        assert_eq!(result.status, "up_to_date");
+        assert!(result.has_changes);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_refresh_package_status_without_changes() -> Result<(), String> {
+        let mut model = mocks::create();
+        let pkg = make_installed_package(("test", "clean"));
+        model
+            .expect_get_installed_package()
+            .return_once(move |_| Ok(Some(pkg)));
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|pkg| {
+                let uri = make_manifest_uri(&pkg.namespace.to_string());
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    uri,
+                    "remote1".to_string(),
+                ))
+            });
+        model
+            .expect_get_installed_package_status()
+            .returning(|_, _| {
+                Ok(quilt::lineage::InstalledPackageStatus::new(
+                    quilt::lineage::UpstreamState::Behind,
+                    Default::default(),
+                ))
+            });
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let ns = ("test", "clean").into();
+        let result = refresh_package_status_from_model(&model, &tracing, &ns)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        assert_eq!(result.status, "behind");
+        assert!(!result.has_changes);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_refresh_package_status_error_on_status_fetch() -> Result<(), String> {
+        let mut model = mocks::create();
+        let pkg = make_installed_package(("test", "broken"));
+        model
+            .expect_get_installed_package()
+            .return_once(move |_| Ok(Some(pkg)));
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|pkg| {
+                let uri = make_manifest_uri(&pkg.namespace.to_string());
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    uri,
+                    "abcdef".to_string(),
+                ))
+            });
+        model
+            .expect_get_installed_package_status()
+            .returning(|_, _| {
+                Err(crate::error::Error::General("network error".to_string()))
+            });
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let ns = ("test", "broken").into();
+        let result = refresh_package_status_from_model(&model, &tracing, &ns)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        assert_eq!(result.status, "error");
+        assert!(!result.has_changes);
         Ok(())
     }
 

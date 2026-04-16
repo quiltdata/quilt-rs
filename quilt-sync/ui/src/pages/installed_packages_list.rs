@@ -164,12 +164,16 @@ fn PackageItem(
     show_set_remote_popup: RwSignal<Option<String>>,
     show_set_origin_popup: RwSignal<Option<SetOriginPopupData>>,
 ) -> impl IntoView {
-    let is_error = data.status == "error";
-    let item_class = if is_error {
-        "qui-installed-package-item error"
-    } else {
-        "qui-installed-package-item"
-    };
+    let status = RwSignal::new(data.status.clone());
+    let has_changes = RwSignal::new(data.has_changes);
+
+    let ns = data.namespace.clone();
+    leptos::task::spawn_local(async move {
+        if let Ok(fresh) = commands::refresh_package_status(ns).await {
+            status.set(fresh.status);
+            has_changes.set(fresh.has_changes);
+        }
+    });
 
     let pkg_href = format!(
         "/installed-package?namespace={}&filter=unmodified",
@@ -179,11 +183,10 @@ fn PackageItem(
     let namespace_display = data.namespace.clone();
     let remote_display = data.remote_display.clone();
 
-    let has_changes = data.has_changes;
-
     // Build menu buttons
     let menu = build_package_menu(
         &data,
+        status,
         has_changes,
         notification,
         ui_locked,
@@ -193,7 +196,11 @@ fn PackageItem(
     );
 
     view! {
-        <li class=item_class>
+        <li class=move || if status.get() == "error" {
+            "qui-installed-package-item error"
+        } else {
+            "qui-installed-package-item"
+        }>
             <a class="link" href=pkg_href>
                 <span class="item-primary">{namespace_display}</span>
                 {remote_display.map(|uri| view! {
@@ -212,9 +219,11 @@ fn PackageItem(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_package_menu(
     data: &PackageItemData,
-    has_changes: bool,
+    status: RwSignal<String>,
+    has_changes: RwSignal<bool>,
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
     refetch: Trigger,
@@ -222,36 +231,9 @@ fn build_package_menu(
     show_set_origin_popup: RwSignal<Option<SetOriginPopupData>>,
 ) -> impl IntoView {
     let namespace = data.namespace.clone();
-    let status = data.status.clone();
     let origin_url = data.origin_url.clone();
     let origin_host = data.origin_host.clone();
     let has_origin = origin_url.is_some();
-    let is_error = status == "error";
-
-    // ── Open remote (catalog) ──
-    let catalog_disabled = status == "local";
-
-    // ── Sync button (Push/Pull) ──
-    // "local" + origin: safe to show Push because create_package always
-    // creates an initial commit, so push() won't fail with "No commits".
-    let sync_action = match status.as_str() {
-        "ahead" => Some(SyncAction::Push),
-        "behind" => Some(SyncAction::Pull),
-        "local" if has_origin => Some(SyncAction::Push),
-        _ => None,
-    };
-
-    // ── Merge button ──
-    let show_merge = status == "diverged";
-
-    // ── Error action button ──
-    let error_action = build_error_action(
-        &namespace,
-        &status,
-        origin_host.as_deref(),
-        show_set_remote_popup,
-        show_set_origin_popup,
-    );
 
     // ── Open in file browser ──
     let ns_for_open = namespace.clone();
@@ -295,6 +277,44 @@ fn build_package_menu(
         });
     };
 
+    // ── Sync actions (Push/Pull) ──
+    // Stored in StoredValue so they can be used inside Show children (which are Fn).
+    let ns_for_push = namespace.clone();
+    let (push_busy, on_push) = make_action(
+        move || {
+            let ns = ns_for_push.clone();
+            async move { commands::package_push(ns).await }
+        },
+        notification,
+        Some(ui_locked),
+        move || refetch.notify(),
+    );
+    let on_push = StoredValue::new(on_push);
+
+    let ns_for_pull = namespace.clone();
+    let (pull_busy, on_pull) = make_action(
+        move || {
+            let ns = ns_for_pull.clone();
+            async move { commands::package_pull(ns).await }
+        },
+        notification,
+        Some(ui_locked),
+        move || refetch.notify(),
+    );
+    let on_pull = StoredValue::new(on_pull);
+
+    let has_remote = data.remote_display.is_some();
+    let ns_for_commit = namespace.clone();
+    let ns_for_merge = namespace.clone();
+
+    // ── Error action (static views, shown/hidden reactively) ──
+    let ns_for_set_remote = namespace.clone();
+    let ns_for_set_origin = namespace.clone();
+    let login_href = origin_host.as_ref().map(|host| {
+        let back_encoded = urlencoding::encode("/installed-packages-list");
+        format!("/login?host={}&back={back_encoded}", host)
+    });
+
     view! {
         // Open local
         <li class="menu-item">
@@ -303,82 +323,93 @@ fn build_package_menu(
         // Open remote
         {has_origin.then(|| view! {
             <li class="menu-item">
-                <buttons::OpenInCatalog on_click=on_open_catalog small=true disabled=catalog_disabled />
+                <buttons::OpenInCatalog
+                    on_click=on_open_catalog
+                    small=true
+                    disabled=Signal::derive(move || status.get() == "local")
+                />
             </li>
         })}
 
         <li class="menu-item menu-divider"></li>
 
         // Commit (unless error)
-        {(!is_error).then(|| view! {
+        <Show when=move || status.get() != "error">
             <li class="menu-item">
-                <buttons::Commit namespace=namespace.clone() small=true primary=has_changes />
+                <buttons::Commit namespace=ns_for_commit.clone() small=true primary=has_changes />
             </li>
-        })}
+        </Show>
 
-        // Sync (Push/Pull)
-        {sync_action.map(|action| match action {
-            SyncAction::Push => {
-                let ns = namespace.clone();
-                let (busy, on_click) = make_action(
-                    move || {
-                        let ns = ns.clone();
-                        async move { commands::package_push(ns).await }
-                    },
-                    notification,
-                    Some(ui_locked),
-                    move || refetch.notify(),
-                );
-                view! {
-                    <li class="menu-item menu-divider"></li>
-                    <li class="menu-item">
-                        <buttons::Push on_click=on_click small=true busy=busy />
-                    </li>
-                }.into_any()
-            }
-            SyncAction::Pull => {
-                let ns = namespace.clone();
-                let (busy, on_click) = make_action(
-                    move || {
-                        let ns = ns.clone();
-                        async move { commands::package_pull(ns).await }
-                    },
-                    notification,
-                    Some(ui_locked),
-                    move || refetch.notify(),
-                );
-                view! {
-                    <li class="menu-item menu-divider"></li>
-                    <li class="menu-item">
-                        <div class="qui-popover">
-                            <buttons::Pull on_click=on_click small=true busy=busy disabled=has_changes />
-                            <Show when=move || has_changes>
-                                <div class="popover-wrapper">
-                                    <div class="popover">
-                                        "Commit or discard local changes before pulling"
-                                    </div>
-                                </div>
-                            </Show>
+        // Push (ahead or local+origin)
+        <Show when=move || {
+            let s = status.get();
+            s == "ahead" || (s == "local" && has_origin)
+        }>
+            <li class="menu-item menu-divider"></li>
+            <li class="menu-item">
+                <buttons::Push on_click=move |ev| on_push.with_value(|f| f(ev)) small=true busy=push_busy />
+            </li>
+        </Show>
+
+        // Pull (behind)
+        <Show when=move || status.get() == "behind">
+            <li class="menu-item menu-divider"></li>
+            <li class="menu-item">
+                <div class="qui-popover">
+                    <buttons::Pull on_click=move |ev| on_pull.with_value(|f| f(ev)) small=true busy=pull_busy disabled=has_changes />
+                    <Show when=move || has_changes.get()>
+                        <div class="popover-wrapper">
+                            <div class="popover">
+                                "Commit or discard local changes before pulling"
+                            </div>
                         </div>
-                    </li>
-                }.into_any()
-            }
-        })}
+                    </Show>
+                </div>
+            </li>
+        </Show>
 
-        // Merge
-        {show_merge.then(|| view! {
+        // Merge (diverged)
+        <Show when=move || status.get() == "diverged">
             <li class="menu-item menu-divider"></li>
             <li class="menu-item">
-                <buttons::Merge namespace=namespace.clone() small=true />
+                <buttons::Merge namespace=ns_for_merge.clone() small=true />
             </li>
-        })}
+        </Show>
 
-        // Error action
-        {error_action.map(|action| view! {
+        // Error actions
+        // Local without remote → Set Remote (always visible for this case)
+        {(!has_remote && origin_host.is_none()).then(|| view! {
             <li class="menu-item menu-divider"></li>
             <li class="menu-item">
-                {action}
+                <buttons::SetRemote
+                    on_click=move |_| show_set_remote_popup.set(Some(ns_for_set_remote.clone()))
+                    small=true
+                />
             </li>
+        })}
+        // Has remote but no origin → Set Origin (always visible for this case)
+        {(has_remote && origin_host.is_none()).then(|| view! {
+            <li class="menu-item menu-divider"></li>
+            <li class="menu-item">
+                <buttons::SetOrigin
+                    on_click=move |_| {
+                        show_set_origin_popup.set(Some(SetOriginPopupData {
+                            namespace: ns_for_set_origin.clone(),
+                            current_origin: String::new(),
+                        }))
+                    }
+                    small=true
+                />
+            </li>
+        })}
+        // Has origin but error → Login (reactive on status)
+        {login_href.map(|href| view! {
+            <Show when=move || status.get() == "error">
+                <li class="menu-item menu-divider"></li>
+                <li class="menu-item">
+                    <buttons::Login href=href.clone() small=true />
+                </li>
+            </Show>
         })}
 
         <li class="menu-item menu-divider"></li>
@@ -387,72 +418,6 @@ fn build_package_menu(
         <li class="menu-item">
             <buttons::Remove on_click=on_uninstall small=true />
         </li>
-    }
-}
-
-// ── Sync action ──
-
-enum SyncAction {
-    Push,
-    Pull,
-}
-
-// ── Error action button logic ──
-
-fn build_error_action(
-    namespace: &str,
-    status: &str,
-    origin_host: Option<&str>,
-    show_set_remote_popup: RwSignal<Option<String>>,
-    show_set_origin_popup: RwSignal<Option<SetOriginPopupData>>,
-) -> Option<AnyView> {
-    match status {
-        // Local without origin — offer to set remote
-        "local" if origin_host.is_none() => {
-            let ns = namespace.to_string();
-            Some(
-                view! {
-                    <buttons::SetRemote
-                        on_click=move |_| show_set_remote_popup.set(Some(ns.clone()))
-                        small=true
-                    />
-                }
-                .into_any(),
-            )
-        }
-        // Local with origin — no error action needed (Push is in sync)
-        "local" => None,
-        // Has origin_host but error — offer login
-        _ if origin_host.is_some() && status == "error" => {
-            let host = origin_host.unwrap().to_string();
-            let back_encoded = urlencoding::encode("/installed-packages-list");
-            let login_href = format!("/login?host={}&back={back_encoded}", host);
-            Some(
-                view! {
-                    <buttons::Login href=login_href small=true />
-                }
-                .into_any(),
-            )
-        }
-        // No origin_host — offer to set origin
-        _ if origin_host.is_none() => {
-            let ns = namespace.to_string();
-            Some(
-                view! {
-                    <buttons::SetOrigin
-                        on_click=move |_| {
-                            show_set_origin_popup.set(Some(SetOriginPopupData {
-                                namespace: ns.clone(),
-                                current_origin: String::new(),
-                            }))
-                        }
-                        small=true
-                    />
-                }
-                .into_any(),
-            )
-        }
-        _ => None,
     }
 }
 
