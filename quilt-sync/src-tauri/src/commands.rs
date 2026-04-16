@@ -764,9 +764,22 @@ async fn refresh_package_status_from_model(
     let lineage = m.get_installed_package_lineage(&installed_package).await?;
 
     let Some(remote_uri) = lineage.remote_uri.as_ref() else {
+        let has_changes = match m
+            .get_installed_package_status(&installed_package, None)
+            .await
+        {
+            Ok(s) => !s.changes.is_empty(),
+            Err(err) => {
+                tracing::warn!(
+                    "Failed to get status for {}: {err}",
+                    installed_package.namespace,
+                );
+                false
+            }
+        };
         return Ok(RefreshedPackageStatus {
             status: "local".to_string(),
-            has_changes: false,
+            has_changes,
         });
     };
     if remote_uri.origin.is_none() {
@@ -2105,7 +2118,7 @@ mod tests {
     // ── refresh_package_status tests (heavy phase) ──
 
     #[tokio::test]
-    async fn test_refresh_package_status_local_only() -> Result<(), String> {
+    async fn test_refresh_package_status_local_only_no_changes() -> Result<(), String> {
         let mut model = mocks::create();
         let pkg = make_installed_package(("test", "local"));
         model
@@ -2114,6 +2127,14 @@ mod tests {
         model
             .expect_get_installed_package_lineage()
             .returning(|_| Ok(quilt::lineage::PackageLineage::default()));
+        model
+            .expect_get_installed_package_status()
+            .returning(|_, _| {
+                Ok(quilt::lineage::InstalledPackageStatus::new(
+                    quilt::lineage::UpstreamState::Local,
+                    quilt::lineage::ChangeSet::new(),
+                ))
+            });
 
         let tracing = crate::telemetry::Telemetry::default();
         let ns = ("test", "local").into();
@@ -2123,6 +2144,41 @@ mod tests {
 
         assert_eq!(result.status, "local");
         assert!(!result.has_changes);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_refresh_package_status_local_only_with_changes() -> Result<(), String> {
+        let mut model = mocks::create();
+        let pkg = make_installed_package(("test", "local"));
+        model
+            .expect_get_installed_package()
+            .return_once(move |_| Ok(Some(pkg)));
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|_| Ok(quilt::lineage::PackageLineage::default()));
+        model
+            .expect_get_installed_package_status()
+            .returning(|_, _| {
+                let mut changes = quilt::lineage::ChangeSet::new();
+                changes.insert(
+                    std::path::PathBuf::from("file.txt"),
+                    quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+                );
+                Ok(quilt::lineage::InstalledPackageStatus::new(
+                    quilt::lineage::UpstreamState::Local,
+                    changes,
+                ))
+            });
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let ns = ("test", "local").into();
+        let result = refresh_package_status_from_model(&model, &tracing, &ns)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        assert_eq!(result.status, "local");
+        assert!(result.has_changes);
         Ok(())
     }
 
