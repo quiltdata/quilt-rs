@@ -8,7 +8,7 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.28.2-alpha1] - 2026-04-15
+## [v0.29.0] - 2026-04-16
 
 ### Fixed
 
