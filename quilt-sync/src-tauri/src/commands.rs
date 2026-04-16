@@ -720,18 +720,9 @@ async fn load_package_item(
     let upstream_state: quilt::lineage::UpstreamState = lineage.clone().into();
     let has_changes = false; // Refined by refresh_package_status
 
-    let status_str = match upstream_state {
-        quilt::lineage::UpstreamState::Ahead => "ahead",
-        quilt::lineage::UpstreamState::Behind => "behind",
-        quilt::lineage::UpstreamState::Diverged => "diverged",
-        quilt::lineage::UpstreamState::UpToDate => "up_to_date",
-        quilt::lineage::UpstreamState::Local => "local",
-        quilt::lineage::UpstreamState::Error => "error",
-    };
-
     Ok(InstalledPackageListItem {
         namespace: installed_package.namespace.to_string(),
-        status: status_str.to_string(),
+        status: upstream_state.to_string(),
         has_changes,
         origin_url: Some(origin_url.to_string()),
         origin_host: Some(origin_host.to_string()),
@@ -804,17 +795,8 @@ async fn refresh_package_status_from_model(
         }
     };
 
-    let status_str = match upstream_state {
-        quilt::lineage::UpstreamState::Ahead => "ahead",
-        quilt::lineage::UpstreamState::Behind => "behind",
-        quilt::lineage::UpstreamState::Diverged => "diverged",
-        quilt::lineage::UpstreamState::UpToDate => "up_to_date",
-        quilt::lineage::UpstreamState::Local => "local",
-        quilt::lineage::UpstreamState::Error => "error",
-    };
-
     Ok(RefreshedPackageStatus {
-        status: status_str.to_string(),
+        status: upstream_state.to_string(),
         has_changes,
     })
 }
