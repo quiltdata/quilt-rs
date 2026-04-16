@@ -102,8 +102,10 @@ Empty state:
 - Click [+ Create] -> opens **Create Package** popup
 - Click package row -> **Installed Package**
 - Click [Pull] -> runs pull flow, reloads
+  - Disabled with popover hint when package has uncommitted changes
 - Click [Push] -> runs push flow -> **Installed Package**
 - Click [Commit] -> **Commit**
+  - Highlighted as primary when package has uncommitted changes
 - Click [Set Remote] -> opens **Set Remote** popup
 - Click [gear] -> **Settings**
 
@@ -118,7 +120,7 @@ with checkboxes, status indicator, and a toolbar.
 +--[appbar]----------------------------------------------+
 | [logo]  user/package-a                 [refresh] [gear] |
 +--[toolbar]---------------------------------------------+
-| [< Packages]              [Uninstall] [Push] [Commit]  |
+| [< Packages]        [Uninstall] [Pull] [Push] [Commit] |
 +---------------------------------------------------------+
 | [status: 3 files modified]                              |
 |                                                         |
@@ -142,6 +144,7 @@ with checkboxes, status indicator, and a toolbar.
 - [< Packages] -> **Installed Packages List**
 - [Commit] -> **Commit**
 - [Push] -> runs push flow, reloads
+- [Pull] -> disabled with popover hint when package has uncommitted changes
 - [Uninstall] -> runs uninstall flow -> **Installed Packages List**
 - [Install Selected Paths] -> runs install_paths flow, reloads
 - [Ignore] -> opens **Ignore Popup** (for junk-detected files)
@@ -181,6 +184,8 @@ Two-column layout: form on the left, file list on the right.
 | [Commit]                                                |
 +---------------------------------------------------------+
 ```
+
+The [Commit] button is disabled when the message field is empty.
 
 After commit -> **Installed Package**
 
