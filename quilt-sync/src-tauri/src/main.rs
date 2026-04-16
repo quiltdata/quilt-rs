@@ -107,7 +107,6 @@ fn main() {
             commands::open_in_file_browser,
             commands::open_in_web_browser,
             commands::package_commit,
-            commands::package_has_changes,
             commands::package_install_paths,
             commands::package_pull,
             commands::package_push,

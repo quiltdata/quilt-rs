@@ -115,6 +115,7 @@ pub struct InstalledPackagesListData {
 pub struct PackageItemData {
     pub namespace: String,
     pub status: String,
+    pub has_changes: bool,
     pub origin_url: Option<String>,
     pub origin_host: Option<String>,
     pub remote_display: Option<String>,
@@ -248,14 +249,6 @@ pub async fn package_commit(
         },
     )
     .await
-}
-
-pub async fn package_has_changes(namespace: String) -> Result<bool, String> {
-    #[derive(Serialize)]
-    struct Args {
-        namespace: String,
-    }
-    tauri::invoke("package_has_changes", &Args { namespace }).await
 }
 
 pub async fn package_push(namespace: String) -> Result<String, String> {

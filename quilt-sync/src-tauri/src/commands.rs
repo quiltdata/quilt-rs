@@ -655,6 +655,7 @@ pub struct InstalledPackagesListData {
 pub struct InstalledPackageListItem {
     pub namespace: String,
     pub status: String,
+    pub has_changes: bool,
     pub origin_url: Option<String>,
     pub origin_host: Option<String>,
     pub remote_display: Option<String>,
@@ -693,6 +694,7 @@ async fn load_package_item(
             return Ok(InstalledPackageListItem {
                 namespace: installed_package.namespace.to_string(),
                 status: "local".to_string(),
+                has_changes: false,
                 origin_url: None,
                 origin_host: None,
                 remote_display: None,
@@ -704,6 +706,7 @@ async fn load_package_item(
         return Ok(InstalledPackageListItem {
             namespace: installed_package.namespace.to_string(),
             status: "error".to_string(),
+            has_changes: false,
             origin_url: None,
             origin_host: None,
             remote_display: Some(remote_uri.to_string()),
@@ -714,21 +717,21 @@ async fn load_package_item(
     tracing.add_host(&origin_host);
     let uri = quilt::uri::S3PackageUri::from(remote_uri);
     let origin_url = uri.display_for_host(&origin_host)?;
-    let status = match m
+    let (upstream_state, has_changes) = match m
         .get_installed_package_status(installed_package, None)
         .await
     {
-        Ok(s) => s.upstream_state,
+        Ok(s) => (s.upstream_state, !s.changes.is_empty()),
         Err(err) => {
             tracing::warn!(
                 "Failed to get status for {}: {err}",
                 installed_package.namespace,
             );
-            quilt::lineage::UpstreamState::Error
+            (quilt::lineage::UpstreamState::Error, false)
         }
     };
 
-    let status_str = match status {
+    let status_str = match upstream_state {
         quilt::lineage::UpstreamState::Ahead => "ahead",
         quilt::lineage::UpstreamState::Behind => "behind",
         quilt::lineage::UpstreamState::Diverged => "diverged",
@@ -740,6 +743,7 @@ async fn load_package_item(
     Ok(InstalledPackageListItem {
         namespace: installed_package.namespace.to_string(),
         status: status_str.to_string(),
+        has_changes,
         origin_url: Some(origin_url.to_string()),
         origin_host: Some(origin_host.to_string()),
         remote_display: Some(remote_uri.to_string()),
@@ -813,33 +817,6 @@ pub async fn package_commit(
         msg_ok,
         msg_err,
     )
-}
-
-async fn has_changes(
-    m: &impl model::QuiltModel,
-    namespace: &quilt::uri::Namespace,
-) -> Result<bool, Error> {
-    let installed_package = m
-        .get_installed_package(namespace)
-        .await?
-        .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone())))?;
-    let status = m
-        .get_installed_package_status(&installed_package, None)
-        .await?;
-    Ok(!status.changes.is_empty())
-}
-
-#[tauri::command]
-pub async fn package_has_changes(
-    m: tauri::State<'_, model::Model>,
-    namespace: String,
-) -> Result<bool, String> {
-    let namespace: quilt::uri::Namespace = namespace
-        .try_into()
-        .map_err(|e: quilt::Error| e.to_string())?;
-    has_changes(&*m, &namespace)
-        .await
-        .map_err(|e| e.to_string())
 }
 
 async fn open_directory_picker_command(app_handle: &tauri::AppHandle) -> Result<PathBuf, Error> {
@@ -2561,56 +2538,4 @@ mod tests {
 
     // ── has_changes tests ──
 
-    #[tokio::test]
-    async fn test_has_changes_true() {
-        let mut model = mocks::create();
-
-        model
-            .expect_get_installed_package()
-            .returning(|_| Ok(Some(make_installed_package(("foo", "bar")))));
-
-        let changes = std::collections::BTreeMap::from([(
-            std::path::PathBuf::from("file.txt"),
-            quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
-        )]);
-        model
-            .expect_get_installed_package_status()
-            .return_once(move |_, _| {
-                Ok(quilt::lineage::InstalledPackageStatus::new(
-                    quilt::lineage::UpstreamState::default(),
-                    changes,
-                ))
-            });
-
-        let namespace = ("foo", "bar").into();
-        let result = has_changes(&model, &namespace).await.unwrap();
-        assert!(result);
-    }
-
-    #[tokio::test]
-    async fn test_has_changes_false() {
-        let mut model = mocks::create();
-
-        model
-            .expect_get_installed_package()
-            .returning(|_| Ok(Some(make_installed_package(("foo", "bar")))));
-
-        model
-            .expect_get_installed_package_status()
-            .return_once(|_, _| Ok(quilt::lineage::InstalledPackageStatus::default()));
-
-        let namespace = ("foo", "bar").into();
-        let result = has_changes(&model, &namespace).await.unwrap();
-        assert!(!result);
-    }
-
-    #[tokio::test]
-    async fn test_has_changes_not_installed() {
-        let mut model = mocks::create();
-        model.expect_get_installed_package().returning(|_| Ok(None));
-
-        let namespace = ("missing", "package").into();
-        let result = has_changes(&model, &namespace).await;
-        assert!(result.is_err());
-    }
 }
