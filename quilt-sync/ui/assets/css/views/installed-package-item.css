@@ -64,12 +64,9 @@
     opacity: 1;
   }
 
-  .menu.refreshing {
-    animation: menu-pulse 1.5s ease-in-out infinite;
-  }
-
+  .menu.refreshing,
   &:hover .menu.refreshing {
-    animation: menu-pulse-hover 1.5s ease-in-out infinite;
+    animation: menu-pulse 1.5s ease-in-out infinite;
   }
 
   .menu-list {
@@ -105,11 +102,6 @@
 }
 
 @keyframes menu-pulse {
-  0%, 100% { opacity: 0.3; }
-  50% { opacity: 0.15; }
-}
-
-@keyframes menu-pulse-hover {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+  50% { opacity: 0.4; }
 }
