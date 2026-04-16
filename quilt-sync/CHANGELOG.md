@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.16.0-alpha5] - 2026-04-16
+
+### Changed
+
+- Render packages list instantly from cached lineage, then refresh status per-package in background (<https://github.com/quiltdata/quilt-rs/pull/622>)
+
 ## [v0.16.0-alpha4] - 2026-04-15
 
 ### Changed
