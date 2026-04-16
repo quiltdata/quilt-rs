@@ -26,6 +26,11 @@
 
 - Fix updater log spam by prioritizing HubSpot endpoint
 
+### quilt-rs
+
+- Updated [from v0.28.1 to v0.29.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.28.1...quilt-rs/v0.29.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+  - Always certify latest on first push, fixing incorrect "Behind" status after pushing a local package with the same name as an existing remote package
+
 ## [v0.15.1] - 2026-04-08
 
 ### Changed
