@@ -42,14 +42,3 @@
   animation-delay: -0.15s;
 }
 
-.q-spinner-inline {
-  animation: spin 0.8s linear infinite;
-  border: 2px solid var(--q-ui-palette-text-secondary);
-  border-right-color: transparent;
-  border-radius: 50%;
-  display: inline-block;
-  height: 16px;
-  width: 16px;
-  opacity: 0.5;
-}
-

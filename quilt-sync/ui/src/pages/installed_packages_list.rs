@@ -212,14 +212,9 @@ fn PackageItem(
                     </span>
                 })}
             </a>
-            <div class="menu">
+            <div class=move || if refreshing.get() { "menu refreshing" } else { "menu" }>
                 <ul class="menu-list">
                     {menu}
-                    <Show when=move || refreshing.get()>
-                        <li class="menu-item">
-                            <span class="q-spinner-inline"></span>
-                        </li>
-                    </Show>
                 </ul>
             </div>
         </li>

@@ -64,6 +64,14 @@
     opacity: 1;
   }
 
+  .menu.refreshing {
+    animation: menu-pulse 1.5s ease-in-out infinite;
+  }
+
+  &:hover .menu.refreshing {
+    animation: menu-pulse-hover 1.5s ease-in-out infinite;
+  }
+
   .menu-list {
     align-items: center;
     display: flex;
@@ -94,4 +102,14 @@
   .menu-divider + .menu-divider {
     display: none;
   }
+}
+
+@keyframes menu-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.15; }
+}
+
+@keyframes menu-pulse-hover {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
