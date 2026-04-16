@@ -50,6 +50,7 @@
   display: inline-block;
   flex-shrink: 0;
   height: 16px;
+  margin-right: var(--q-ui-size-1);
   width: 16px;
   opacity: 0.5;
 }
