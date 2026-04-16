@@ -762,14 +762,12 @@ async fn refresh_package_status_from_model(
 
     let lineage = m.get_installed_package_lineage(&installed_package).await?;
 
-    if lineage.remote_uri.is_none() {
+    let Some(remote_uri) = lineage.remote_uri.as_ref() else {
         return Ok(RefreshedPackageStatus {
             status: "local".to_string(),
             has_changes: false,
         });
-    }
-
-    let remote_uri = lineage.remote_uri.as_ref().unwrap();
+    };
     if remote_uri.origin.is_none() {
         return Ok(RefreshedPackageStatus {
             status: "error".to_string(),
