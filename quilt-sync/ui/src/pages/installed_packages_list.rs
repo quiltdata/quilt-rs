@@ -1,3 +1,6 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
@@ -169,9 +172,17 @@ fn PackageItem(
     let refreshing = RwSignal::new(true);
     let refresh_error = RwSignal::new(None::<String>);
 
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let cancelled_flag = cancelled.clone();
+    on_cleanup(move || cancelled.store(true, Ordering::Relaxed));
+
     let ns = data.namespace.clone();
     leptos::task::spawn_local(async move {
-        match commands::refresh_package_status(ns).await {
+        let result = commands::refresh_package_status(ns).await;
+        if cancelled_flag.load(Ordering::Relaxed) {
+            return;
+        }
+        match result {
             Ok(fresh) => {
                 status.set(fresh.status);
                 has_changes.set(fresh.has_changes);
