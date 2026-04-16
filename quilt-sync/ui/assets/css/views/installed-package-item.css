@@ -56,16 +56,9 @@
 
   .menu {
     flex-shrink: 0;
-    opacity: 0.3;
-    transition: opacity 0.15s ease;
   }
 
-  &:hover .menu {
-    opacity: 1;
-  }
-
-  .menu.refreshing,
-  &:hover .menu.refreshing {
+  .menu.refreshing {
     animation: menu-pulse 1.5s ease-in-out infinite;
   }
 
