@@ -38,7 +38,7 @@ async fn use_existing_row_or_upload(
         let row = row?;
         debug!("⏳ Processing row: {}", row.logical_key.display());
         if let Some(remote_row) = remote_manifest.get_record(&row.logical_key) {
-            if remote_row == &row {
+            if remote_row.matches_content(&row) {
                 debug!(
                     "✔️ Using existing remote row for: {}",
                     row.logical_key.display()

@@ -132,7 +132,7 @@ mod tests {
             hash: "deadbeef".to_string(), // We use it for path location, but it's not used for verification
             origin: None,
         };
-        let cache_path = paths.cached_manifest(&manifest_uri.bucket, &manifest_uri.hash);
+        let cache_path = paths.cached_manifest(&manifest_uri);
 
         // Prepare the reference manifest file.
         // It is copied into the cache path to simulate a cached manifest.
@@ -170,7 +170,7 @@ mod tests {
             hash: "invalid_hash".to_string(),
             origin: None,
         };
-        let cache_path = paths.cached_manifest(&manifest.bucket, &manifest.hash);
+        let cache_path = paths.cached_manifest(&manifest);
         let storage = MockStorage::default();
         storage
             .write_byte_stream(cache_path, ByteStream::default())
@@ -201,7 +201,7 @@ mod tests {
         };
 
         // Write invalid data to simulate a stale Parquet cache
-        let cache_path = paths.cached_manifest(&manifest_uri.bucket, &manifest_uri.hash);
+        let cache_path = paths.cached_manifest(&manifest_uri);
         paths
             .scaffold_for_caching(&storage, &manifest_uri.bucket)
             .await?;

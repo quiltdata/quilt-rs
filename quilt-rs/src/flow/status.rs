@@ -475,7 +475,7 @@ mod tests {
                 meta: None,
                 physical_key: format!("file://{}", physical_key.display()),
             };
-            assert_eq!(added_row, &reference_row);
+            assert!(added_row.matches_content(&reference_row));
             Ok(())
         } else {
             panic!("Expected Change::Added, got {:?}", added_file)
@@ -514,7 +514,7 @@ mod tests {
                 hash: Crc64Hash::try_from("CRSFynAYcw4=")?.into(),
                 ..ManifestRow::default()
             };
-            assert_eq!(added_row, &reference_row);
+            assert!(added_row.matches_content(&reference_row));
             Ok(())
         } else {
             panic!("Expected Change::Added, got {:?}", added_file)

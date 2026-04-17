@@ -176,7 +176,7 @@ impl From<ManifestRow> for Quilt3ManifestRow {
 }
 
 /// Represents the row in JSONL manifest
-#[derive(Clone, Debug, Deserialize, Serialize, Default)]
+#[derive(Clone, Debug, Deserialize, Serialize, Default, PartialEq)]
 pub struct ManifestRow {
     pub logical_key: PathBuf,
     // XXX: use Url to have validated string?
@@ -186,9 +186,14 @@ pub struct ManifestRow {
     pub meta: Option<serde_json::Value>,
 }
 
-impl std::cmp::PartialEq for ManifestRow {
-    // TODO: add note why we don't compare meta and physical_key
-    fn eq(&self, other: &Self) -> bool {
+impl ManifestRow {
+    /// Content-identity check: two rows describe the same logical file with
+    /// the same bytes. Ignores `physical_key` (same content is addressed as
+    /// `file:///.../objects/<hash>` locally and `s3://...` remotely, and the
+    /// push flow uses this to reuse the remote location instead of
+    /// re-uploading) and `meta` (user metadata that does not change the
+    /// stored bytes, so a metadata-only edit should not force a re-upload).
+    pub fn matches_content(&self, other: &Self) -> bool {
         self.logical_key == other.logical_key && self.hash == other.hash && self.size == other.size
     }
 }
@@ -400,7 +405,7 @@ mod tests {
     use crate::io::storage::Storage;
 
     #[test]
-    fn test_equality_of_strictly_equal() -> Res {
+    fn test_matches_content_identical_rows() -> Res {
         let left = ManifestRow {
             logical_key: PathBuf::from("A"),
             physical_key: "B".to_string(),
@@ -415,12 +420,12 @@ mod tests {
             size: 1,
             meta: None,
         };
-        assert!(left == right);
+        assert!(left.matches_content(&right));
         Ok(())
     }
 
     #[test]
-    fn test_equality_of_partialy_equal() -> Res {
+    fn test_matches_content_ignores_physical_key_and_meta() -> Res {
         let mut meta = serde_json::Map::new();
         meta.insert("foo".to_string(), serde_json::json!("bar"));
         let left = ManifestRow {
@@ -437,7 +442,7 @@ mod tests {
             size: 1,
             meta: None,
         };
-        assert!(left == right);
+        assert!(left.matches_content(&right));
         Ok(())
     }
 
@@ -577,7 +582,7 @@ mod tests {
                         physical_key: "s3://data-yaml-spec-tests/scale/10u/e0-0.txt?versionId=jHb6DGN43Ex7EhbxZc2G9JnAkWSeTfEY".to_string(),
                         size: 29,
                         hash: checksum::Sha256ChunkedHash::try_from("/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=")?.into(),
-                        meta: Some(serde_json::Value::Null),
+                        meta: Some(serde_json::json!({})),
                     }
         );
         assert_eq!(
@@ -587,7 +592,7 @@ mod tests {
                         physical_key: "s3://data-yaml-spec-tests/scale/10u/e0-9.txt?versionId=T5tkWkC.7PVcpiFYRoCQKhhKC249fdBC".to_string(),
                         size: 29,
                         hash: checksum::Sha256ChunkedHash::try_from("/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=")?.into(),
-                        meta: Some(serde_json::Value::Null),
+                        meta: Some(serde_json::json!({})),
                     }
         );
         Ok(())

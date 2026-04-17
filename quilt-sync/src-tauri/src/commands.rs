@@ -287,7 +287,6 @@ pub async fn get_settings_data(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<SettingsData, String> {
-    let m: &model::Model = &m;
     let app: &app::App = &app;
 
     let app_handle = app_handle.lock().await;
@@ -872,8 +871,6 @@ pub async fn package_commit(
     metadata: String,
     workflow: Option<String>,
 ) -> Result<String, String> {
-    let m: &model::Model = &m;
-
     tracing.track(MixpanelEvent::PackageCommitted).await;
 
     let msg_init = format!("Committing package {namespace}");
@@ -881,7 +878,7 @@ pub async fn package_commit(
     let msg_err = |err: &Error| format!("Failed to commit: {err}");
 
     Notify::new(msg_init).map(
-        package_commit_command(m, &namespace, &message, &metadata, workflow).await,
+        package_commit_command(&m, &namespace, &message, &metadata, workflow).await,
         msg_ok,
         msg_err,
     )
@@ -1052,13 +1049,12 @@ pub async fn open_home_dir(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
     tracing.track(MixpanelEvent::FileBrowserOpened).await;
-    let m: &model::Model = &m;
 
     let msg_init = "Opening home directory".to_string();
     let msg_ok = "Successfully opened home directory".to_string();
     let msg_err = |err: &Error| format!("Failed to open home directory: {err}");
 
-    Notify::new(msg_init).map(open_home_dir_command(m).await, msg_ok, msg_err)
+    Notify::new(msg_init).map(open_home_dir_command(&m).await, msg_ok, msg_err)
 }
 
 async fn open_data_dir_command(app_handle: &tauri::AppHandle) -> Result<(), Error> {
@@ -1102,10 +1098,9 @@ pub async fn collect_diagnostic_logs(
 ) -> Result<String, String> {
     tracing.track(MixpanelEvent::DiagnosticLogsSaved).await;
     let app_handle = app_handle.lock().await;
-    let m: &model::Model = &m;
     let app: &app::App = &app;
 
-    match collect_diagnostic_logs_command(&app_handle, m, app).await {
+    match collect_diagnostic_logs_command(&app_handle, &m, app).await {
         Ok(zip_path) => Ok(zip_path.display().to_string()),
         Err(err) => Err(err.to_string()),
     }
@@ -1155,14 +1150,13 @@ pub async fn reveal_in_file_browser(
     path: String,
 ) -> Result<String, String> {
     tracing.track(MixpanelEvent::FileRevealed).await;
-    let m: &model::Model = &m;
 
     let msg_init = format!("Revealing {path} in file browser for {namespace}");
     let msg_ok = format!("Successfully opened {path} in file browser");
     let msg_err = |err: &Error| format!("Failed to open directory: {err}");
 
     Notify::new(msg_init).map(
-        reveal_in_file_browser_command(m, &namespace, &path).await,
+        reveal_in_file_browser_command(&m, &namespace, &path).await,
         msg_ok,
         msg_err,
     )
@@ -1181,14 +1175,13 @@ pub async fn open_in_file_browser(
     namespace: String,
 ) -> Result<String, String> {
     tracing.track(MixpanelEvent::FileBrowserOpened).await;
-    let m: &model::Model = &m;
 
     let msg_init = format!("Opening file manager for {namespace}");
     let msg_ok = format!("Successfully opened file manager for {namespace}");
     let msg_err = |err: &Error| format!("Failed to open file manager: {err}");
 
     Notify::new(msg_init).map(
-        open_in_file_browser_command(m, &namespace).await,
+        open_in_file_browser_command(&m, &namespace).await,
         msg_ok,
         msg_err,
     )
@@ -1213,14 +1206,13 @@ pub async fn open_in_default_application(
     path: String,
 ) -> Result<String, String> {
     tracing.track(MixpanelEvent::DefaultApplicationOpened).await;
-    let m: &model::Model = &m;
 
     let msg_init = format!("Opening {path} with default application for {namespace}");
     let msg_ok = format!("Successfully opened {path} with default application");
     let msg_err = |err: &Error| format!("Failed to open application: {err}");
 
     Notify::new(msg_init).map(
-        open_in_default_application_command(m, &namespace, &path).await,
+        open_in_default_application_command(&m, &namespace, &path).await,
         msg_ok,
         msg_err,
     )
@@ -1257,13 +1249,16 @@ pub async fn certify_latest(
     namespace: String,
 ) -> Result<String, String> {
     tracing.track(MixpanelEvent::LatestCertified).await;
-    let m: &model::Model = &m;
 
     let msg_init = format!("Certifying latest for {namespace}");
     let msg_ok = format!("Successfully certified latest for {namespace}");
     let msg_err = |err: &Error| format!("Failed to certify latest: {err}");
 
-    Notify::new(msg_init).map(certify_latest_command(m, &namespace).await, msg_ok, msg_err)
+    Notify::new(msg_init).map(
+        certify_latest_command(&m, &namespace).await,
+        msg_ok,
+        msg_err,
+    )
 }
 
 async fn reset_local_command(m: &model::Model, namespace: &str) -> Result<(), Error> {
@@ -1279,13 +1274,12 @@ pub async fn reset_local(
     namespace: String,
 ) -> Result<String, String> {
     tracing.track(MixpanelEvent::LocalReset).await;
-    let m: &model::Model = &m;
 
     let msg_init = format!("Resetting local for {namespace}");
     let msg_ok = format!("Successfully reset local for {namespace}");
     let msg_err = |err: &Error| format!("Failed to reset local: {err}");
 
-    Notify::new(msg_init).map(reset_local_command(m, &namespace).await, msg_ok, msg_err)
+    Notify::new(msg_init).map(reset_local_command(&m, &namespace).await, msg_ok, msg_err)
 }
 
 async fn package_push_command(
@@ -1303,11 +1297,10 @@ pub async fn package_push(
     namespace: String,
 ) -> Result<String, String> {
     tracing.track(MixpanelEvent::PackagePushed).await;
-    let m: &model::Model = &m;
 
     let msg_init = format!("Pushing package {namespace}");
 
-    let result = package_push_command(m, &namespace).await;
+    let result = package_push_command(&m, &namespace).await;
     // TODO: push-not-certified should be surfaced as a warning, not a success.
     // Currently both outcomes go through the success path because converting to
     // Err skips on_done()/refetch and leaves the UI stale.
@@ -1338,13 +1331,12 @@ pub async fn package_pull(
     namespace: String,
 ) -> Result<String, String> {
     tracing.track(MixpanelEvent::PackagePulled).await;
-    let m: &model::Model = &m;
 
     let msg_init = format!("Pulling package {namespace}");
     let msg_ok = format!("Successfully pulled package {namespace}");
     let msg_err = |err: &Error| format!("Failed to pull package: {err}");
 
-    Notify::new(msg_init).map(package_pull_command(m, &namespace).await, msg_ok, msg_err)
+    Notify::new(msg_init).map(package_pull_command(&m, &namespace).await, msg_ok, msg_err)
 }
 
 async fn package_uninstall_command(m: &model::Model, namespace: &str) -> Result<(), Error> {
@@ -1360,14 +1352,13 @@ pub async fn package_uninstall(
     namespace: String,
 ) -> Result<String, String> {
     tracing.track(MixpanelEvent::PackageUninstalled).await;
-    let m: &model::Model = &m;
 
     let msg_init = format!("Uninstalling package {namespace}");
     let msg_ok = format!("Successfully uninstalled package {namespace}");
     let msg_err = |err: &Error| format!("Failed to uninstall package: {err}");
 
     Notify::new(msg_init).map(
-        package_uninstall_command(m, &namespace).await,
+        package_uninstall_command(&m, &namespace).await,
         msg_ok,
         msg_err,
     )
@@ -1388,14 +1379,13 @@ pub async fn set_origin(
     origin: String,
 ) -> Result<String, String> {
     tracing.track(MixpanelEvent::OriginSet).await;
-    let m: &model::Model = &m;
 
     let msg_init = format!("Setting origin for {namespace}");
     let msg_ok = format!("Successfully set origin for {namespace}");
     let msg_err = |err: &Error| format!("Failed to set origin: {err}");
 
     Notify::new(msg_init).map(
-        set_origin_command(m, &namespace, &origin).await,
+        set_origin_command(&m, &namespace, &origin).await,
         msg_ok,
         msg_err,
     )
@@ -1422,14 +1412,13 @@ pub async fn set_remote(
     bucket: String,
 ) -> Result<String, String> {
     tracing.track(MixpanelEvent::RemoteSet).await;
-    let m: &model::Model = &m;
 
     let msg_init = format!("Setting remote for {namespace}");
     let msg_ok = format!("Successfully set remote for {namespace}");
     let msg_err = |err: &Error| format!("Failed to set remote: {err}");
 
     Notify::new(msg_init).map(
-        set_remote_command(m, &namespace, &origin, &bucket).await,
+        set_remote_command(&m, &namespace, &origin, &bucket).await,
         msg_ok,
         msg_err,
     )
@@ -1456,14 +1445,13 @@ pub async fn package_create(
     message: Option<String>,
 ) -> Result<String, String> {
     tracing.track(MixpanelEvent::PackageCreated).await;
-    let m: &model::Model = &m;
 
     let msg_init = format!("Creating package {namespace}");
     let msg_ok = format!("Successfully created package {namespace}");
     let msg_err = |err: &Error| format!("Failed to create package: {err}");
 
     Notify::new(msg_init).map(
-        package_create_command(m, &namespace, source, message).await,
+        package_create_command(&m, &namespace, source, message).await,
         msg_ok,
         msg_err,
     )
@@ -1593,14 +1581,13 @@ pub async fn package_install_paths(
     paths: Vec<String>,
 ) -> Result<String, String> {
     tracing.track(MixpanelEvent::PackageInstalled).await;
-    let m: &model::Model = &m;
 
     let msg_init = format!("Installing paths from {uri}");
     let msg_ok = format!("Successfully installed {} paths", paths.len());
     let msg_err = |err: &Error| format!("Failed to install paths: {err}");
 
     Notify::new(msg_init).map(
-        package_install_paths_command(m, &uri, &paths).await,
+        package_install_paths_command(&m, &uri, &paths).await,
         msg_ok,
         msg_err,
     )
@@ -1645,14 +1632,13 @@ pub async fn add_to_quiltignore(
     pattern: String,
 ) -> Result<String, String> {
     tracing.track(MixpanelEvent::QuiltignorePatternAdded).await;
-    let m: &model::Model = &m;
 
     let msg_init = format!("Adding {pattern} to .quiltignore");
     let msg_ok = format!("Added {pattern} to .quiltignore");
     let msg_err = |err: &Error| format!("Failed to update .quiltignore: {err}");
 
     Notify::new(msg_init).map(
-        add_to_quiltignore_command(m, &namespace, &pattern).await,
+        add_to_quiltignore_command(&m, &namespace, &pattern).await,
         msg_ok,
         msg_err,
     )
@@ -1681,10 +1667,9 @@ pub async fn handle_remote_package(
     let s3_uri: quilt::uri::S3PackageUri = uri.parse().map_err(|e: quilt::Error| e.to_string())?;
     let namespace = s3_uri.namespace.to_string();
 
-    let m: &model::Model = &m;
     let _tracing: &crate::telemetry::Telemetry = &tracing;
 
-    match model::install_package_only(m, &s3_uri)
+    match model::install_package_only(&*m, &s3_uri)
         .await
         .map_err(|e| e.to_frontend_string())?
     {
