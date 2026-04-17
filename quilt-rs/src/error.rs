@@ -293,13 +293,13 @@ pub enum Error {
     Json(#[from] serde_json::Error),
 
     #[error(transparent)]
-    Lineage(LineageError),
+    Lineage(#[from] LineageError),
 
     #[error(transparent)]
-    Login(LoginError),
+    Login(#[from] LoginError),
 
     #[error(transparent)]
-    Manifest(ManifestError),
+    Manifest(#[from] ManifestError),
 
     #[error(transparent)]
     PackageOp(#[from] PackageOpError),
@@ -342,26 +342,9 @@ impl Error {
     }
 }
 
-// Manual From impls — either the focused enum cannot derive #[from]
-// (self-referential via Box<Error>) or `?` needs to compose through two hops.
-
-impl From<ManifestError> for Error {
-    fn from(err: ManifestError) -> Self {
-        Error::Manifest(err)
-    }
-}
-
-impl From<LineageError> for Error {
-    fn from(err: LineageError) -> Self {
-        Error::Lineage(err)
-    }
-}
-
-impl From<LoginError> for Error {
-    fn from(err: LoginError) -> Self {
-        Error::Login(err)
-    }
-}
+// Compose `?` across two From hops: external error → focused enum → Error.
+// Rust's `?` only runs one `From::from`, so these bridges make call sites
+// keep working without `.map_err(..)`.
 
 impl From<multihash::Error> for Error {
     fn from(err: multihash::Error) -> Self {
