@@ -8,6 +8,14 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.29.1-alpha1] - 2026-04-17
+
+### Changed
+
+- Replace `ManifestRow`'s custom `PartialEq` (which silently ignored `physical_key` and `meta`) with a derived structural `PartialEq` and a new `ManifestRow::matches_content` method for the content-identity check used by push dedup (<https://github.com/quiltdata/quilt-rs/pull/625>)
+- Change `DomainPaths::cached_manifest` signature from `(bucket: &str, hash: &str)` to `(uri: &ManifestUri)` to match how every caller already uses it (<https://github.com/quiltdata/quilt-rs/pull/625>)
+- Expand the `CommitState` multihash TODO into a doc comment spelling out the real scope — a `TopHash` newtype validating SHA-256 on construction, plus migrating the adjacent `String` hashes together (<https://github.com/quiltdata/quilt-rs/pull/625>)
+
 ## [v0.29.0] - 2026-04-16
 
 ### Fixed

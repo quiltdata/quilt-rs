@@ -84,8 +84,14 @@ impl DomainPaths {
             .join(PathBuf::from(host.to_string()))
     }
 
-    /// Path to the installed manifest
-    // TODO: pass `ManifestUri`
+    /// Path to the installed manifest.
+    ///
+    /// Takes `(namespace, hash)` rather than `&ManifestUri` because the
+    /// installed manifest may belong to either a remote-backed package
+    /// (where a `ManifestUri` is available) or a local-only package
+    /// (created via `flow::create`, where there is no bucket or origin).
+    /// A local commit also produces a hash that has no remote
+    /// counterpart yet.
     pub fn installed_manifest(&self, namespace: &Namespace, hash: &str) -> PathBuf {
         self.installed_manifests_dir(namespace).join(hash)
     }
@@ -103,9 +109,11 @@ impl DomainPaths {
     }
 
     /// Path to the manifest cached in semi-temporary directory
-    // TODO: pass `ManifestUri`
-    pub fn cached_manifest(&self, bucket: &str, hash: &str) -> PathBuf {
-        self.root_dir.join(MANIFEST_DIR).join(bucket).join(hash)
+    pub fn cached_manifest(&self, uri: &ManifestUri) -> PathBuf {
+        self.root_dir
+            .join(MANIFEST_DIR)
+            .join(&uri.bucket)
+            .join(&uri.hash)
     }
 
     /// Directory for storing cached manifests for a bucket
@@ -178,7 +186,7 @@ pub async fn copy_cached_to_installed(
 ) -> Res {
     match storage
         .copy(
-            paths.cached_manifest(&manifest_uri.bucket, &manifest_uri.hash),
+            paths.cached_manifest(manifest_uri),
             paths.installed_manifest(&manifest_uri.namespace, &manifest_uri.hash),
         )
         .await

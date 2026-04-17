@@ -50,15 +50,34 @@ pub struct PathState {
 pub type LineagePaths = BTreeMap<PathBuf, PathState>;
 
 /// What is the latest commit and what are previous commits if present
+///
+/// TODO: migrate `hash` and `prev_hashes` to a `TopHash` newtype around
+/// `Multihash<256>` that validates the SHA-256 multicodec on
+/// construction (pairing with the existing `TopHasher` builder in
+/// `manifest::top_hasher`). A bare `Multihash<256>` is not enough:
+///
+/// - The on-disk format in `data.json` is hex-of-digest only (no
+///   multicodec prefix), so the multicodec must be re-attached on
+///   deserialization.
+/// - The codebase also uses CRC64 and SHA-256-chunked multihashes
+///   elsewhere, so any helper that strips the multicodec for
+///   serialization must guarantee SHA-256 — otherwise a wrong-codec
+///   multihash passes through silently and writes a corrupt hash.
+///
+/// Best done together with the adjacent `String` hashes
+/// (`PackageLineage::base_hash`, `latest_hash`, `ManifestUri::hash`);
+/// migrating only `CommitState` turns every comparison with those
+/// fields into a conversion boundary and leaves the type-safety win
+/// partial.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct CommitState {
     /// When the last commit was done
     pub timestamp: chrono::DateTime<chrono::Utc>,
     /// What is the hash of the latest commit
-    pub hash: String, // TODO: use multihash?
-    /// What are the previous comit hashes
+    pub hash: String,
+    /// What are the previous commit hashes
     #[serde(default = "Vec::new")]
-    pub prev_hashes: Vec<String>, // TODO: use multihashes?
+    pub prev_hashes: Vec<String>,
 }
 
 /// Stores lineage (installation/modification history) of the package read from `data.json` file
