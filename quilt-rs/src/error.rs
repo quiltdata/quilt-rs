@@ -82,9 +82,6 @@ pub enum S3ErrorKind {
 
     #[error("Failed to read RwLock: {0}")]
     PoisonLock(String),
-
-    #[error("ByteStream error: {0}")]
-    ByteStream(String),
 }
 
 #[derive(Error, Debug, PartialEq)]
@@ -254,6 +251,9 @@ pub enum FsError {
 
     #[error("Path prefix not found: {0}")]
     PathPrefixNotFound(StripPrefixError),
+
+    #[error("ByteStream error: {0}")]
+    ByteStream(#[from] byte_stream::error::Error),
 }
 
 #[derive(Error, Debug, PartialEq)]
@@ -360,7 +360,7 @@ impl From<multibase::Error> for Error {
 
 impl From<byte_stream::error::Error> for Error {
     fn from(err: byte_stream::error::Error) -> Self {
-        Error::S3(S3Error::new(S3ErrorKind::ByteStream(err.to_string())))
+        FsError::ByteStream(err).into()
     }
 }
 
