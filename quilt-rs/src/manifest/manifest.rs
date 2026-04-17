@@ -401,7 +401,7 @@ mod tests {
     use crate::io::storage::Storage;
 
     #[test]
-    fn test_equality_of_strictly_equal() -> Res {
+    fn test_matches_content_identical_rows() -> Res {
         let left = ManifestRow {
             logical_key: PathBuf::from("A"),
             physical_key: "B".to_string(),
@@ -416,12 +416,12 @@ mod tests {
             size: 1,
             meta: None,
         };
-        assert!(left == right);
+        assert!(left.matches_content(&right));
         Ok(())
     }
 
     #[test]
-    fn test_equality_of_partialy_equal() -> Res {
+    fn test_matches_content_ignores_physical_key_and_meta() -> Res {
         let mut meta = serde_json::Map::new();
         meta.insert("foo".to_string(), serde_json::json!("bar"));
         let left = ManifestRow {
@@ -438,7 +438,7 @@ mod tests {
             size: 1,
             meta: None,
         };
-        assert!(left == right);
+        assert!(left.matches_content(&right));
         Ok(())
     }
 
@@ -578,7 +578,7 @@ mod tests {
                         physical_key: "s3://data-yaml-spec-tests/scale/10u/e0-0.txt?versionId=jHb6DGN43Ex7EhbxZc2G9JnAkWSeTfEY".to_string(),
                         size: 29,
                         hash: checksum::Sha256ChunkedHash::try_from("/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=")?.into(),
-                        meta: Some(serde_json::Value::Null),
+                        meta: Some(serde_json::json!({})),
                     }
         );
         assert_eq!(
@@ -588,7 +588,7 @@ mod tests {
                         physical_key: "s3://data-yaml-spec-tests/scale/10u/e0-9.txt?versionId=T5tkWkC.7PVcpiFYRoCQKhhKC249fdBC".to_string(),
                         size: 29,
                         hash: checksum::Sha256ChunkedHash::try_from("/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=")?.into(),
-                        meta: Some(serde_json::Value::Null),
+                        meta: Some(serde_json::json!({})),
                     }
         );
         Ok(())
