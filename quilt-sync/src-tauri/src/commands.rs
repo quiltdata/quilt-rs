@@ -1254,7 +1254,11 @@ pub async fn certify_latest(
     let msg_ok = format!("Successfully certified latest for {namespace}");
     let msg_err = |err: &Error| format!("Failed to certify latest: {err}");
 
-    Notify::new(msg_init).map(certify_latest_command(&m, &namespace).await, msg_ok, msg_err)
+    Notify::new(msg_init).map(
+        certify_latest_command(&m, &namespace).await,
+        msg_ok,
+        msg_err,
+    )
 }
 
 async fn reset_local_command(m: &model::Model, namespace: &str) -> Result<(), Error> {

@@ -192,9 +192,7 @@ impl ManifestRow {
     /// re-uploading) and `meta` (user metadata that does not change the
     /// stored bytes, so a metadata-only edit should not force a re-upload).
     pub fn matches_content(&self, other: &Self) -> bool {
-        self.logical_key == other.logical_key
-            && self.hash == other.hash
-            && self.size == other.size
+        self.logical_key == other.logical_key && self.hash == other.hash && self.size == other.size
     }
 }
 
