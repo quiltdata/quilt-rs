@@ -6,6 +6,7 @@ use url::Url;
 use crate::uri::Host;
 use crate::Error;
 use crate::Res;
+use crate::error::UriError;
 
 fn head_str(mut chars: Chars<'_>) -> (Option<char>, &str) {
     let leading_char = chars.next();
@@ -18,18 +19,18 @@ fn extract_path_relative_to_bucket(path: &str) -> Result<&str, Error> {
 
     match leading_char {
         None => {
-            return Err(Error::S3Uri("Path does not exist".to_string()));
+            return Err(Error::Uri(UriError::S3("Path does not exist".to_string())));
         }
         Some('/') => (),
         Some(_) => {
-            return Err(Error::S3Uri(
+            return Err(Error::Uri(UriError::S3(
                 "Expected path starting with slash".to_string(),
-            ));
+            )));
         }
     }
 
     if rest.is_empty() {
-        return Err(Error::S3Uri("Path does not exist".to_string()));
+        return Err(Error::Uri(UriError::S3("Path does not exist".to_string())));
     }
 
     Ok(rest)
@@ -63,17 +64,17 @@ impl TryFrom<&str> for S3Uri {
     fn try_from(input: &str) -> Result<Self, Self::Error> {
         let parsed_url = Url::parse(input)?;
         if parsed_url.scheme() != "s3" {
-            return Err(Error::InvalidScheme(format!(
+            return Err(Error::Uri(UriError::Scheme(format!(
                 "Expected s3:// scheme in {input}"
-            )));
+            ))));
         }
         let bucket = parsed_url
             .host_str()
-            .ok_or(Error::S3Uri(format!("Missing bucket in {input}")))?;
+            .ok_or(Error::Uri(UriError::S3(format!("Missing bucket in {input}"))))?;
 
         let path = extract_path_relative_to_bucket(parsed_url.path()).map_err(|err| {
-            if let Error::S3Uri(msg) = err {
-                Error::S3Uri(format!("{msg} in {input}"))
+            if let Error::Uri(UriError::S3(msg)) = err {
+                Error::Uri(UriError::S3(format!("{msg} in {input}")))
             } else {
                 err
             }
@@ -82,9 +83,9 @@ impl TryFrom<&str> for S3Uri {
         let key = percent_encoding::percent_decode_str(path).decode_utf8()?;
         let queries = parsed_url.query_pairs().into_owned().collect::<Vec<_>>();
         if queries.len() > 1 {
-            return Err(Error::S3Uri(format!(
+            return Err(Error::Uri(UriError::S3(format!(
                 "Too many query parameters in {input}. Only single versionId is allowed"
-            )));
+            ))));
         }
 
         let version = match queries.first() {
@@ -93,9 +94,9 @@ impl TryFrom<&str> for S3Uri {
                 if key == "versionId" {
                     Some(value.to_string())
                 } else {
-                    return Err(Error::S3Uri(format!(
+                    return Err(Error::Uri(UriError::S3(format!(
                         "Unknown query parameter in {input}. Only single versionId is allowed"
-                    )));
+                    ))));
                 }
             }
         };

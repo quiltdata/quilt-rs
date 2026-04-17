@@ -6,6 +6,7 @@ use multihash::Multihash;
 
 use crate::Error;
 use crate::Res;
+use crate::error::ChecksumError;
 
 pub mod top_hash;
 
@@ -32,7 +33,8 @@ pub mod manifest {
 pub fn create_multihash(b64_str: &str) -> Res<Multihash<256>> {
     Ok(Multihash::wrap(
         MULTIHASH_SHA256_CHUNKED,
-        &base64::decode(b64_str).map_err(|e| Error::Checksum(e.to_string()))?,
+        &base64::decode(b64_str)
+            .map_err(|e| Error::Checksum(ChecksumError::Mismatch(e.to_string())))?,
     )?)
 }
 

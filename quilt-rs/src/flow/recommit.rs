@@ -18,6 +18,7 @@ use crate::paths::DomainPaths;
 use crate::uri::Namespace;
 use crate::Error;
 use crate::Res;
+use crate::error::PackageOpError;
 
 /// Re-hash all rows from the manifest stream, converting any rows whose
 /// hash algorithm doesn't match `host_config` to the correct algorithm.
@@ -46,10 +47,15 @@ async fn rehash_rows<'a>(
                     "⏳ Re-hashing row with remote algorithm: {}",
                     row.logical_key.display()
                 );
-                let local_url = Url::parse(&row.physical_key)
-                    .map_err(|e| Error::Commit(format!("Invalid physical_key URL: {e}")))?;
+                let local_url = Url::parse(&row.physical_key).map_err(|e| {
+                    Error::PackageOp(PackageOpError::Commit(format!(
+                        "Invalid physical_key URL: {e}"
+                    )))
+                })?;
                 let file_path = local_url.to_file_path().map_err(|_| {
-                    Error::Commit(format!("Cannot convert to file path: {local_url}"))
+                    Error::PackageOp(PackageOpError::Commit(format!(
+                        "Cannot convert to file path: {local_url}"
+                    )))
                 })?;
                 let rehashed =
                     calculate_hash(storage, &file_path, &row.logical_key, host_config).await?;

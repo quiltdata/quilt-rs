@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.16.1-alpha1] - 2026-04-17
+
+### Changed
+
+- Split the monolithic `Error` enum into focused domain enums (`TauriUiError`, `RouteError`, `OAuthUiError`, `TelemetryError`, `FsOpenError`, `PackageUriError`); `RouteError` moves from `routes.rs` into `error.rs`
+
 ## [v0.16.0] - 2026-04-16
 
 ### Changed

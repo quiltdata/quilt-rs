@@ -19,6 +19,7 @@ use crate::uri::Namespace;
 use crate::Error;
 use crate::InstallPackageError;
 use crate::Res;
+use crate::error::LineageError;
 
 mod status;
 pub use status::Change;
@@ -80,13 +81,13 @@ impl DomainLineage {
         match result {
             Ok(lineage) => {
                 if lineage.as_ref().as_os_str().is_empty() {
-                    return Err(Error::LineageMissingHome);
+                    return Err(Error::Lineage(LineageError::MissingHome));
                 }
                 Ok(lineage)
             }
             Err(err) => {
                 log::error!("Failed to parse DomainLineage from `{input:?}`");
-                Err(Error::LineageParse(err))
+                Err(Error::Lineage(LineageError::Parse(err)))
             }
         }
     }
@@ -107,7 +108,7 @@ impl DomainLineageIo {
     pub async fn read(&self, storage: &(impl Storage + Sync)) -> Res<DomainLineage> {
         match storage.read_bytes(&self.path).await {
             Ok(bytes) => DomainLineage::from_slice(&bytes),
-            Err(_) if !storage.exists(&self.path).await => Err(Error::LineageMissing),
+            Err(_) if !storage.exists(&self.path).await => Err(Error::Lineage(LineageError::Missing)),
             Err(e) => Err(e),
         }
     }
@@ -359,7 +360,7 @@ mod tests {
             .read(&storage)
             .await
             .unwrap_err();
-        assert!(matches!(lineage, Error::LineageMissing));
+        assert!(matches!(lineage, Error::Lineage(LineageError::Missing)));
         Ok(())
     }
 

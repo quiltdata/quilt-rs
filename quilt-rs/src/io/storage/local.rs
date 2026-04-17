@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::Error;
 use crate::Res;
+use crate::error::FsError;
 
 use super::Storage;
 
@@ -51,28 +52,32 @@ impl Storage for LocalStorage {
     async fn copy(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Res<u64> {
         let from = from.as_ref();
         let to = to.as_ref();
-        fs::copy(from, to).await.map_err(|e| Error::FileCopy {
-            from: from.to_path_buf(),
-            to: to.to_path_buf(),
-            source: e,
+        fs::copy(from, to).await.map_err(|e| {
+            Error::Fs(FsError::Copy {
+                from: from.to_path_buf(),
+                to: to.to_path_buf(),
+                source: e,
+            })
         })
     }
 
     async fn create_dir_all(&self, path: impl AsRef<Path>) -> Res {
         let path = path.as_ref();
-        fs::create_dir_all(path)
-            .await
-            .map_err(|e| Error::DirectoryCreate {
+        fs::create_dir_all(path).await.map_err(|e| {
+            Error::Fs(FsError::DirectoryCreate {
                 path: path.to_path_buf(),
                 source: e,
             })
+        })
     }
 
     async fn create_file(&self, path: impl AsRef<Path>) -> Res<fs::File> {
         let path = path.as_ref();
-        fs::File::create(path).await.map_err(|e| Error::FileWrite {
-            path: path.to_path_buf(),
-            source: e,
+        fs::File::create(path).await.map_err(|e| {
+            Error::Fs(FsError::Write {
+                path: path.to_path_buf(),
+                source: e,
+            })
         })
     }
 
@@ -87,27 +92,31 @@ impl Storage for LocalStorage {
 
     async fn open_file(&self, path: impl AsRef<Path>) -> Res<fs::File> {
         let path = path.as_ref();
-        fs::File::open(path).await.map_err(|e| Error::FileRead {
-            path: path.to_path_buf(),
-            source: e,
+        fs::File::open(path).await.map_err(|e| {
+            Error::Fs(FsError::Read {
+                path: path.to_path_buf(),
+                source: e,
+            })
         })
     }
 
     async fn read_byte_stream(&self, path: impl AsRef<Path> + Send + Sync) -> Res<ByteStream> {
         let path = path.as_ref();
-        ByteStream::from_path(path)
-            .await
-            .map_err(|e| Error::FileRead {
+        ByteStream::from_path(path).await.map_err(|e| {
+            Error::Fs(FsError::Read {
                 path: path.to_path_buf(),
                 source: e.into(),
             })
+        })
     }
 
     async fn read_dir(&self, path: impl AsRef<Path>) -> Res<fs::ReadDir> {
         let path = path.as_ref();
-        fs::read_dir(path).await.map_err(|e| Error::FileRead {
-            path: path.to_path_buf(),
-            source: e,
+        fs::read_dir(path).await.map_err(|e| {
+            Error::Fs(FsError::Read {
+                path: path.to_path_buf(),
+                source: e,
+            })
         })
     }
 
@@ -129,12 +138,12 @@ impl Storage for LocalStorage {
         body: ByteStream,
     ) -> Res {
         let path = path.as_ref();
-        atomic_write(path, body)
-            .await
-            .map_err(|source| Error::FileWrite {
+        atomic_write(path, body).await.map_err(|source| {
+            Error::Fs(FsError::Write {
                 path: path.to_path_buf(),
                 source,
             })
+        })
     }
 }
 
@@ -273,7 +282,7 @@ mod tests {
         assert!(result.is_err());
         let error = result.unwrap_err();
 
-        assert!(matches!(error, Error::FileWrite { .. }));
+        assert!(matches!(error, Error::Fs(FsError::Write { .. })));
         let error_msg = error.to_string();
         assert!(error_msg.contains("Permission denied"));
 

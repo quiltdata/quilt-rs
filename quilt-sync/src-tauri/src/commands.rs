@@ -900,7 +900,7 @@ async fn open_directory_picker_command(app_handle: &tauri::AppHandle) -> Result<
         }
     }
 
-    let window = app_handle.get_webview_window("main").ok_or(Error::Window)?;
+    let window = app_handle.get_webview_window("main").ok_or(Error::TauriUi(crate::error::TauriUiError::Window))?;
 
     let result = match FileDialog::new()
         .set_directory(&canonical_home)
@@ -913,7 +913,7 @@ async fn open_directory_picker_command(app_handle: &tauri::AppHandle) -> Result<
         }
         None => {
             debug!("User cancelled directory selection");
-            Err(Error::UserCancelled)
+            Err(Error::TauriUi(crate::error::TauriUiError::UserCancelled))
         }
     };
 
@@ -1475,7 +1475,7 @@ pub(crate) fn navigate_after_login(
     path: routes::Paths,
 ) -> Result<(), Error> {
     debug!("Attempting to redirect after login to: {:?}", path);
-    let win = app_handle.get_webview_window("main").ok_or(Error::Window)?;
+    let win = app_handle.get_webview_window("main").ok_or(Error::TauriUi(crate::error::TauriUiError::Window))?;
     let win_url = win.url()?;
     let redirect_url = routes::from_url(path, win_url);
     debug!("Redirecting to: {}", redirect_url);

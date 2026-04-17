@@ -23,6 +23,7 @@ use crate::uri::S3Uri;
 use crate::Error;
 use crate::InstallPathError;
 use crate::Res;
+use crate::error::ManifestError;
 
 async fn cache_immutable_object(
     storage: &impl Storage,
@@ -124,7 +125,9 @@ pub async fn install_paths(
         // TODO: Consider using a hashmap or treemap for manifest.rows
         let row = manifest
             .get_record(path)
-            .ok_or(Error::Table(format!("path {path:?} not found")))?;
+            .ok_or(Error::Manifest(ManifestError::Table(format!(
+                "path {path:?} not found"
+            ))))?;
 
         let object_dest = paths.object(row.hash.digest());
 

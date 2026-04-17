@@ -10,6 +10,7 @@ use crate::io::remote::client::HttpClient;
 use crate::uri::Host;
 use crate::Error;
 use crate::Res;
+use crate::error::RemoteCatalogError;
 
 /// Supported checksum algorithms for a host
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -86,7 +87,7 @@ struct ConfigResponse {
 ///
 /// # Returns
 /// * `Ok(HostConfig)` - Successfully parsed host configuration
-/// * `Err(Error::HostConfig)` - Failed to fetch or parse configuration
+/// * `Err(Error::RemoteCatalog(RemoteCatalogError::HostConfig(..)))` - Failed to fetch or parse configuration
 /// * `Err(Error::Reqwest)` - HTTP request failed
 /// * `Err(Error::Json)` - JSON parsing failed
 pub async fn fetch_host_config(client: &impl HttpClient, host: &Option<Host>) -> Res<HostConfig> {
@@ -95,7 +96,10 @@ pub async fn fetch_host_config(client: &impl HttpClient, host: &Option<Host>) ->
             let url = format!("https://{}/config.json", host);
 
             let response: ConfigResponse = client.get(&url, None).await.map_err(|e| {
-                Error::HostConfig(format!("Failed to fetch config from {}: {}", host, e))
+                Error::RemoteCatalog(RemoteCatalogError::HostConfig(format!(
+                    "Failed to fetch config from {}: {}",
+                    host, e
+                )))
             })?;
 
             // Determine checksum algorithm based on crc64Checksums field
@@ -148,10 +152,11 @@ mod tests {
                     let response: T = serde_json::from_str(response_body)?;
                     Ok(response)
                 }
-                Some(Err(error)) => Err(Error::HostConfig(error.clone())),
-                None => Err(Error::HostConfig(format!(
-                    "No mock response for URL: {}",
-                    url
+                Some(Err(error)) => Err(Error::RemoteCatalog(RemoteCatalogError::HostConfig(
+                    error.clone(),
+                ))),
+                None => Err(Error::RemoteCatalog(RemoteCatalogError::HostConfig(
+                    format!("No mock response for URL: {}", url),
                 ))),
             }
         }
@@ -260,7 +265,7 @@ mod tests {
         // JSON parsing errors get wrapped in HostConfig error by map_err
         let error = result.unwrap_err();
         match error {
-            Error::HostConfig(msg) if msg.contains("JSON error") => {
+            Error::RemoteCatalog(RemoteCatalogError::HostConfig(msg)) if msg.contains("JSON error") => {
                 // This is expected - all client errors get wrapped
             }
             _ => panic!(

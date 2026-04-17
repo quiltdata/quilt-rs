@@ -12,6 +12,8 @@ use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::uri::Tag;
 use crate::Error;
+#[cfg(test)]
+use crate::error::FsError;
 use crate::InstallPackageError;
 use crate::Res;
 
@@ -240,7 +242,7 @@ mod tests {
         .await;
 
         let err = result.unwrap_err();
-        if let Error::DirectoryCreate { source, .. } = err {
+        if let Error::Fs(FsError::DirectoryCreate { source, .. }) = err {
             // macOS (SIP) returns ReadOnlyFilesystem; Linux returns PermissionDenied
             assert!(
                 matches!(

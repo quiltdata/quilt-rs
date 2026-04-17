@@ -14,6 +14,7 @@ use tokio::io::BufReader;
 
 use crate::checksum::hash::Hash;
 use crate::Error;
+use crate::error::ChecksumError;
 use crate::Res;
 
 /// Multihash code for CRC64-NVMe
@@ -77,11 +78,11 @@ impl TryFrom<Multihash<256>> for Crc64Hash {
         if hash.code() == MULTIHASH_CRC64_NVME {
             Ok(Self(hash))
         } else {
-            Err(Error::InvalidMultihash(format!(
+            Err(Error::Checksum(ChecksumError::InvalidMultihash(format!(
                 "Expected CRC64-NVMe hash (code {:#06x}), got code {:#06x}",
                 MULTIHASH_CRC64_NVME,
                 hash.code()
-            )))
+            ))))
         }
     }
 }

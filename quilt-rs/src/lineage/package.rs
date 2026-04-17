@@ -11,6 +11,7 @@ use crate::lineage::status::UpstreamState;
 use crate::uri::ManifestUri;
 use crate::Error;
 use crate::Res;
+use crate::error::LineageError;
 
 fn multihash_to_str<S: ser::Serializer>(
     hash: &Multihash<256>,
@@ -104,13 +105,13 @@ impl From<PackageLineage> for UpstreamState {
 impl PackageLineage {
     /// Returns the remote ManifestUri, or an error if this is a local-only package.
     pub fn remote(&self) -> Res<&ManifestUri> {
-        self.remote_uri.as_ref().ok_or(Error::NoRemote)
+        self.remote_uri.as_ref().ok_or(Error::Lineage(LineageError::NoRemote))
     }
 
     /// Returns a mutable reference to the remote ManifestUri,
     /// or an error if this is a local-only package.
     pub fn remote_mut(&mut self) -> Res<&mut ManifestUri> {
-        self.remote_uri.as_mut().ok_or(Error::NoRemote)
+        self.remote_uri.as_mut().ok_or(Error::Lineage(LineageError::NoRemote))
     }
 
     pub fn from_remote(remote: ManifestUri, latest_hash: String) -> Self {
@@ -183,7 +184,7 @@ mod tests {
     #[test]
     fn test_remote_returns_no_remote_error() {
         let lineage = PackageLineage::default();
-        assert!(matches!(lineage.remote(), Err(Error::NoRemote)));
+        assert!(matches!(lineage.remote(), Err(Error::Lineage(LineageError::NoRemote))));
     }
 
     #[test]

@@ -11,6 +11,7 @@ use crate::uri::ManifestUri;
 use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
+use crate::error::ManifestError;
 
 async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res<Manifest> {
     let s3_uri: S3Uri = manifest_uri.clone().into();
@@ -75,7 +76,7 @@ pub async fn cache_remote_manifest(
             info!("✔️ Successfully cached:\n{:?}", manifest.header);
             Ok(manifest)
         }
-        Err(Error::ManifestLoad { source, .. }) => {
+        Err(Error::Manifest(ManifestError::Load { source, .. })) => {
             // Cached file is unreadable (e.g. legacy Parquet format), re-fetch
             warn!(
                 "Cached manifest at {} is invalid, re-fetching: {}",

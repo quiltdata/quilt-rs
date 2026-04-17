@@ -5,6 +5,7 @@ use serde::Serialize;
 use std::str::FromStr;
 
 use crate::Error;
+use crate::error::UriError;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Host {
@@ -47,7 +48,7 @@ impl FromStr for Host {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         url::Host::parse(s)
-            .map_err(|e| Error::Host(e.to_string()))
+            .map_err(|e| Error::Uri(UriError::Host(e.to_string())))
             .map(Host::from)
     }
 }

@@ -3,6 +3,7 @@ use std::path::Path;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use tracing::debug;
 
+use crate::error::FsError;
 use crate::{Error, Res};
 
 const QUILTIGNORE: &str = ".quiltignore";
@@ -17,14 +18,16 @@ pub fn load(dir: &Path) -> Res<Option<Gitignore>> {
     debug!("Loading {}", path.display());
     let mut builder = GitignoreBuilder::new(dir);
     if let Some(err) = builder.add(&path) {
-        return Err(Error::FileRead {
+        return Err(Error::Fs(FsError::Read {
             path,
             source: std::io::Error::new(std::io::ErrorKind::InvalidData, err),
-        });
+        }));
     }
-    let gitignore = builder.build().map_err(|err| Error::FileRead {
-        path,
-        source: std::io::Error::new(std::io::ErrorKind::InvalidData, err),
+    let gitignore = builder.build().map_err(|err| {
+        Error::Fs(FsError::Read {
+            path,
+            source: std::io::Error::new(std::io::ErrorKind::InvalidData, err),
+        })
     })?;
     Ok(Some(gitignore))
 }

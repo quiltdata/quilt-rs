@@ -119,26 +119,26 @@ impl OAuthState {
             }
             Some(_) => {
                 warn!("Pending OAuth state for {host_key} has expired");
-                return Err(Error::OAuth(format!(
+                return Err(Error::OAuthUi(crate::error::OAuthUiError::OAuth(format!(
                     "OAuth state for {host_key} has expired; login again to restart the flow"
-                )));
+                ))));
             }
             None => {
                 let keys: Vec<String> = guard.keys().cloned().collect();
                 warn!("No pending OAuth state for {host_key}. Pending hosts: {keys:?}");
-                return Err(Error::OAuth(format!(
+                return Err(Error::OAuthUi(crate::error::OAuthUiError::OAuth(format!(
                     "No active OAuth flow for {host_key}; \
                      please start the login flow from within the app"
-                )));
+                ))));
             }
         };
         drop(guard);
 
         if pending.state != state {
             warn!("OAuth state mismatch for {host_key}: possible CSRF attack");
-            return Err(Error::OAuth(format!(
+            return Err(Error::OAuthUi(crate::error::OAuthUiError::OAuth(format!(
                 "State mismatch for {host_key}: possible CSRF attack"
-            )));
+            ))));
         }
 
         Ok((
@@ -213,7 +213,7 @@ mod tests {
             .take_params(&host, "auth-code".to_string(), "state")
             .await;
         assert!(
-            matches!(result, Err(Error::OAuth(_))),
+            matches!(result, Err(Error::OAuthUi(crate::error::OAuthUiError::OAuth(_)))),
             "expected Err(OAuth) for unsolicited callback"
         );
     }
@@ -230,7 +230,7 @@ mod tests {
             .take_params(&host, "auth-code".to_string(), &state)
             .await;
         assert!(
-            matches!(result, Err(Error::OAuth(_))),
+            matches!(result, Err(Error::OAuthUi(crate::error::OAuthUiError::OAuth(_)))),
             "expected Err(OAuth) for expired state"
         );
     }

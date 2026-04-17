@@ -8,6 +8,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.29.1-alpha1] - 2026-04-17
+
+### Changed
+
+- Split the monolithic `Error` enum into focused domain enums (`UriError`, `ChecksumError`, `ManifestError`, `LineageError`, `RemoteCatalogError`, `LoginError`, `FsError`, `PackageOpError`) and restructure `S3Error` to carry optional host context in a `{host, kind}` struct; all wrapped transparently by the top-level `Error`
+
 ## [v0.29.0] - 2026-04-16
 
 ### Fixed

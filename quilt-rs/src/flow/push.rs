@@ -24,6 +24,7 @@ use crate::uri::S3PackageHandle;
 use crate::uri::Tag;
 use crate::Error;
 use crate::Res;
+use crate::error::PackageOpError;
 
 async fn use_existing_row_or_upload(
     remote: &impl Remote,
@@ -210,9 +211,9 @@ pub async fn push_package(
         debug!("❌ Hash mismatch, copying cached to installed");
         // Otherwise, lineage will be pointing to the wrong/inexisting hash
         paths::copy_cached_to_installed(paths, storage, &new_manifest_uri).await?;
-        Err(Error::Push(
+        Err(Error::PackageOp(PackageOpError::Push(
             "Latest local hash is not equal to pushed manifest commit".to_string(),
-        ))?
+        )))?
     }
 
     // Certify latest when:

@@ -7,6 +7,7 @@ use crate::uri::Namespace;
 use crate::uri::S3PackageHandle;
 use crate::uri::S3Uri;
 use crate::Error;
+use crate::error::PackageOpError;
 
 /// In theory tag can be any string
 /// But in practice we only use timestamps and "latest"
@@ -34,7 +35,10 @@ impl FromStr for Tag {
         } else if let Ok(timestamp) = s.parse::<i64>() {
             Ok(Tag::Timestamp(timestamp))
         } else {
-            Err(Error::Package(format!("Unsupported tag format: {}", s)))
+            Err(Error::PackageOp(PackageOpError::Package(format!(
+                "Unsupported tag format: {}",
+                s
+            ))))
         }
     }
 }

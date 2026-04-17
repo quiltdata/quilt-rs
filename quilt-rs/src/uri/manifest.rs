@@ -10,6 +10,7 @@ use crate::uri::RevisionPointer;
 use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
 use crate::Error;
+use crate::error::UriError;
 
 /// URI for manifest.
 /// Manifests are stored in immutable files.
@@ -32,9 +33,9 @@ impl TryFrom<S3PackageUri> for ManifestUri {
             hash: match uri.revision {
                 RevisionPointer::Hash(top_hash) => top_hash,
                 RevisionPointer::Tag(_) => {
-                    return Err(Error::PackageURI(
+                    return Err(Error::Uri(UriError::Package(
                         "Hash is required for that conversion".to_string(),
-                    ))
+                    )))
                 }
             },
         })

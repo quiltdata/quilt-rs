@@ -25,6 +25,7 @@ use crate::quiltignore;
 use crate::uri::Tag;
 use crate::Error;
 use crate::Res;
+use crate::error::UriError;
 
 /// Refreshes the tracked `latest_hash` property in lineage.json
 pub async fn refresh_latest_hash(
@@ -208,10 +209,10 @@ pub async fn create_status(
                 );
             }
             None => {
-                return Err(Error::ManifestPath(format!(
+                return Err(Error::Uri(UriError::ManifestPath(format!(
                     "path {} not found in installed manifest",
                     path.display()
-                )));
+                ))));
             }
         }
     }

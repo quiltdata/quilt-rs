@@ -23,6 +23,7 @@ use crate::uri::Namespace;
 use crate::Error;
 use crate::InstallPackageError;
 use crate::Res;
+use crate::error::PackageOpError;
 
 /// Walk a source directory recursively, collecting `(relative_path, absolute_path)` pairs.
 /// Respects `.quiltignore` if present in the source directory.
@@ -128,7 +129,10 @@ pub async fn create_package(
             // Build manifest row with physical_key pointing to objects
             let physical_key = Url::from_file_path(&object_dest)
                 .map_err(|_| {
-                    Error::Commit(format!("Failed to create URL from {:?}", &object_dest))
+                    Error::PackageOp(PackageOpError::Commit(format!(
+                        "Failed to create URL from {:?}",
+                        &object_dest
+                    )))
                 })?
                 .to_string();
 

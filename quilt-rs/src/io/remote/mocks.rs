@@ -12,6 +12,8 @@ use crate::io::storage::Storage;
 use crate::uri::Host;
 use crate::uri::S3Uri;
 use crate::Error;
+use crate::error::S3Error;
+use crate::error::S3ErrorKind;
 
 use crate::Res;
 
@@ -43,10 +45,12 @@ impl Remote for MockRemote {
             .read_byte_stream(&key)
             .await
             .map_err(|err| match err {
-                Error::ByteStreamError(_) => Error::S3NotFound(key.clone()),
+                Error::S3(s3_err) if matches!(s3_err.kind, S3ErrorKind::ByteStream(_)) => {
+                    Error::S3(S3Error::new(S3ErrorKind::NotFound(key.clone())))
+                }
                 Error::Io(inner_err) => {
                     if inner_err.kind() == std::io::ErrorKind::NotFound {
-                        Error::S3NotFound(key.clone())
+                        Error::S3(S3Error::new(S3ErrorKind::NotFound(key.clone())))
                     } else {
                         Error::Io(inner_err)
                     }
@@ -76,7 +80,7 @@ impl Remote for MockRemote {
         if self.storage.exists(&key).await {
             Ok(s3_uri.clone())
         } else {
-            Err(Error::S3NotFound(key))
+            Err(Error::S3(S3Error::new(S3ErrorKind::NotFound(key))))
         }
     }
 

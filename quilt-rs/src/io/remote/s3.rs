@@ -34,6 +34,9 @@ use crate::uri::Host;
 use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
+use crate::error::LoginError;
+use crate::error::RemoteCatalogError;
+use crate::error::S3ErrorKind;
 
 use crate::io::remote::RemoteObjectStream;
 
@@ -45,7 +48,9 @@ async fn find_bucket_region(client: &impl HttpClient, bucket: &str) -> Res<Strin
     {
         Some(location) => Ok(location.to_str()?.into()),
         // TODO: make a better error for invalid `.head()`
-        None => Err(Error::MissingHTTPHeader("x-amz-bucket-region".to_string())),
+        None => Err(Error::RemoteCatalog(RemoteCatalogError::MissingHeader(
+            "x-amz-bucket-region".to_string(),
+        ))),
     }
 }
 
@@ -58,9 +63,11 @@ async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<R
 
     let result = result.send().await.map_err(|err| match &err {
         SdkError::ServiceError(svc) if svc.err().is_no_such_key() => {
-            Error::S3NotFound(s3_uri.to_string())
+            Error::S3(S3Error::new(S3ErrorKind::NotFound(s3_uri.to_string())))
         }
-        _ => Error::S3Raw(DisplayErrorContext(err).to_string()),
+        _ => Error::S3(S3Error::new(S3ErrorKind::Raw(
+            DisplayErrorContext(err).to_string(),
+        ))),
     })?;
     let uri_versioned = S3Uri {
         version: result.version_id,
@@ -100,11 +107,11 @@ impl RemoteS3 {
     pub fn try_clone(&self) -> Res<Self> {
         let s3 = match self.s3.read() {
             Ok(s3) => s3.clone(),
-            Err(_) => return Err(Error::RemoteInit),
+            Err(_) => return Err(Error::S3(S3Error::new(S3ErrorKind::RemoteInit))),
         };
         let regions = match self.regions.read() {
             Ok(regions) => regions.clone(),
-            Err(_) => return Err(Error::RemoteInit),
+            Err(_) => return Err(Error::S3(S3Error::new(S3ErrorKind::RemoteInit))),
         };
         Ok(RemoteS3 {
             http: self.http.clone(),
@@ -137,7 +144,7 @@ impl RemoteS3 {
             if let Some(region) = self
                 .regions
                 .read()
-                .map_err(|e| Error::PoisonLock(e.to_string()))?
+                .map_err(|e| Error::S3(S3Error::new(S3ErrorKind::PoisonLock(e.to_string()))))?
                 .get(bucket)
             {
                 return Ok(region.clone());
@@ -149,7 +156,7 @@ impl RemoteS3 {
         let mut map = self
             .regions
             .write()
-            .map_err(|e| Error::PoisonLock(e.to_string()))?;
+            .map_err(|e| Error::S3(S3Error::new(S3ErrorKind::PoisonLock(e.to_string()))))?;
         match map.entry(bucket.to_owned()) {
             Entry::Occupied(entry) => Ok(entry.get().clone()),
             Entry::Vacant(entry) => Ok(entry.insert(Region::new(region)).clone()),
@@ -173,7 +180,7 @@ impl RemoteS3 {
                 let map = self
                     .s3
                     .read()
-                    .map_err(|e| Error::PoisonLock(e.to_string()))?;
+                    .map_err(|e| Error::S3(S3Error::new(S3ErrorKind::PoisonLock(e.to_string()))))?;
                 map.get(&creds_ref).cloned()
             };
 
@@ -226,7 +233,7 @@ impl RemoteS3 {
 
                 // Check if we have valid credentials
                 if config.credentials_provider().is_none() {
-                    return Err(Error::LoginRequired(None));
+                    return Err(Error::Login(LoginError::Required(None)));
                 }
                 config
             }
@@ -256,7 +263,7 @@ impl RemoteS3 {
         let mut map = self
             .s3
             .write()
-            .map_err(|e| Error::PoisonLock(e.to_string()))?;
+            .map_err(|e| Error::S3(S3Error::new(S3ErrorKind::PoisonLock(e.to_string()))))?;
 
         match map.entry(creds_ref) {
             Entry::Occupied(mut entry) => {
@@ -277,11 +284,11 @@ impl RemoteS3 {
         self.get_client_for_region(host, region)
             .await
             .map_err(|e| match e {
-                Error::LoginRequired(_) | Error::S3(_, _) => e,
-                _ => Error::S3(
-                    host.to_owned(),
-                    S3Error::Client(DisplayErrorContext(e).to_string()),
-                ),
+                Error::Login(LoginError::Required(_)) | Error::S3(_) => e,
+                _ => Error::S3(S3Error {
+                    host: host.to_owned(),
+                    kind: S3ErrorKind::Client(DisplayErrorContext(e).to_string()),
+                }),
             })
     }
 }
@@ -309,10 +316,10 @@ impl Remote for RemoteS3 {
             }
             Err(err) => {
                 warn!("❌ Failed to check object existence at {}: {}", s3_uri, err);
-                Err(Error::S3(
-                    host.to_owned(),
-                    S3Error::Exists(DisplayErrorContext(err).to_string()),
-                ))
+                Err(Error::S3(S3Error {
+                    host: host.to_owned(),
+                    kind: S3ErrorKind::Exists(DisplayErrorContext(err).to_string()),
+                }))
             }
         }
     }
@@ -332,16 +339,16 @@ impl Remote for RemoteS3 {
                 info!("✔️ Created stream for object {}", s3_uri);
                 Ok(stream)
             }
-            Err(e @ Error::S3NotFound(_)) => {
+            Err(e) if e.is_not_found() => {
                 info!("ℹ️ Object not found: {}", s3_uri);
                 Err(e)
             }
             Err(e) => {
                 warn!("❌ Failed to create stream for {}: {}", s3_uri, e);
-                Err(Error::S3(
-                    host.to_owned(),
-                    S3Error::GetObjectStream(e.to_string()),
-                ))
+                Err(Error::S3(S3Error {
+                    host: host.to_owned(),
+                    kind: S3ErrorKind::GetObjectStream(e.to_string()),
+                }))
             }
         }
     }
@@ -361,10 +368,10 @@ impl Remote for RemoteS3 {
             .send()
             .await
             .map_err(|err| {
-                Error::S3(
-                    host.to_owned(),
-                    S3Error::PutObject(DisplayErrorContext(err).to_string()),
-                )
+                Error::S3(S3Error {
+                    host: host.to_owned(),
+                    kind: S3ErrorKind::PutObject(DisplayErrorContext(err).to_string()),
+                })
             })?;
 
         Ok(())
@@ -382,10 +389,10 @@ impl Remote for RemoteS3 {
                 version: head.version_id,
                 ..s3_uri.clone()
             }),
-            Err(err) => Err(Error::S3(
-                host.to_owned(),
-                S3Error::ResolveUrl(DisplayErrorContext(err).to_string()),
-            )),
+            Err(err) => Err(Error::S3(S3Error {
+                host: host.to_owned(),
+                kind: S3ErrorKind::ResolveUrl(DisplayErrorContext(err).to_string()),
+            })),
         }
     }
 

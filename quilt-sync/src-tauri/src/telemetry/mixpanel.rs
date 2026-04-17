@@ -57,8 +57,10 @@ impl TryFrom<MixpanelEvent> for (String, Option<HashMap<String, Value>>) {
             Value::Object(map) => {
                 // Adjacently tagged format: {"t": "event_name", "c": {...}} or {"t": "event_name"}
                 let Some(Value::String(event_name)) = map.get("t") else {
-                    return Err(crate::Error::MixpanelSer(
-                        "Failed to serialize event name".to_string(),
+                    return Err(crate::Error::Telemetry(
+                        crate::error::TelemetryError::Serialize(
+                            "Failed to serialize event name".to_string(),
+                        ),
                     ));
                 };
 
@@ -71,8 +73,10 @@ impl TryFrom<MixpanelEvent> for (String, Option<HashMap<String, Value>>) {
             }
             _ => {
                 // This should not happen with adjacently tagged serialization
-                Err(crate::Error::MixpanelSer(
-                    "Expected object from adjacently tagged serialization".to_string(),
+                Err(crate::Error::Telemetry(
+                    crate::error::TelemetryError::Serialize(
+                        "Expected object from adjacently tagged serialization".to_string(),
+                    ),
                 ))
             }
         }
@@ -242,7 +246,9 @@ mod tests {
                 assert_eq!(props.get("flow"), Some(&Value::String("oauth".to_string())));
                 Ok(())
             }
-            _ => Err(Error::MixpanelSer("UserLoggedIn".to_string())),
+            _ => Err(Error::Telemetry(crate::error::TelemetryError::Serialize(
+                "UserLoggedIn".to_string(),
+            ))),
         }
     }
 
@@ -260,7 +266,9 @@ mod tests {
                 );
                 Ok(())
             }
-            _ => Err(Error::MixpanelSer("ErrorOccurred".to_string())),
+            _ => Err(Error::Telemetry(crate::error::TelemetryError::Serialize(
+                "ErrorOccurred".to_string(),
+            ))),
         }
     }
 }

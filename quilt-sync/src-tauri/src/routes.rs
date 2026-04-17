@@ -4,6 +4,7 @@ use std::str;
 use url::Url;
 
 use crate::error::Error;
+use crate::error::RouteError;
 use crate::quilt;
 use crate::telemetry::prelude::*;
 
@@ -56,21 +57,6 @@ impl fmt::Display for EntriesFilter {
     }
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum RouteError {
-    #[error("URL has no path segments: {0}")]
-    NoPathSegments(Url),
-
-    #[error("No page found in URL path: {0}")]
-    NoPageInPath(Url),
-
-    #[error("Missing host fragment in URL: {0}")]
-    MissingHostFragment(Url),
-
-    #[error("Missing S3 URI query parameter: {0}")]
-    MissingS3UriQuery(Url),
-}
-
 /// Dummy base used to resolve relative URLs such as `"/settings"` that
 /// come from `Paths::Display` when used as the `back` parameter.
 const RELATIVE_URL_BASE: &str = "http://relative.invalid/";
@@ -86,11 +72,11 @@ fn parse_page(location: &str) -> Result<String, Error> {
     let uri = parse_url(location)?;
     let mut segments = match uri.path_segments() {
         Some(segments) => segments,
-        None => return Err(Error::PageUrl(RouteError::NoPathSegments(uri))),
+        None => return Err(Error::Route(RouteError::NoPathSegments(uri))),
     };
     let page = match segments.next_back() {
         Some(page) => page,
-        None => return Err(Error::PageUrl(RouteError::NoPageInPath(uri))),
+        None => return Err(Error::Route(RouteError::NoPageInPath(uri))),
     };
     Ok(page.to_string())
 }
@@ -140,7 +126,7 @@ fn parse_login(location: &str) -> Result<(quilt::uri::Host, String), Error> {
             let qs: QueryLoginParsed = serde_qs::from_str(q)?;
             Ok((qs.host, qs.back))
         }
-        None => Err(Error::PageUrl(RouteError::MissingHostFragment(uri))),
+        None => Err(Error::Route(RouteError::MissingHostFragment(uri))),
     }
 }
 
@@ -159,7 +145,7 @@ fn parse_login_error(location: &str) -> Result<(quilt::uri::Host, Option<String>
             let qs: QueryLoginErrorParsed = serde_qs::from_str(q)?;
             Ok((qs.host, qs.title, qs.error))
         }
-        None => Err(Error::PageUrl(RouteError::MissingHostFragment(uri))),
+        None => Err(Error::Route(RouteError::MissingHostFragment(uri))),
     }
 }
 
@@ -176,7 +162,7 @@ fn parse_s3_package_uri(location: &str) -> Result<quilt::uri::S3PackageUri, Erro
             debug!("Pre-parsed URI is {}", qs.uri);
             Ok(quilt::uri::S3PackageUri::try_from(qs.uri.as_str())?)
         }
-        None => Err(Error::PageUrl(RouteError::MissingS3UriQuery(uri))),
+        None => Err(Error::Route(RouteError::MissingS3UriQuery(uri))),
     }
 }
 
@@ -384,7 +370,7 @@ impl str::FromStr for Paths {
             }
             "settings" => Ok(Paths::Settings),
             "setup" => Ok(Paths::Setup),
-            _ => Err(Error::PageNotFound(page)),
+            _ => Err(Error::Route(RouteError::PageNotFound(page))),
         }
     }
 }

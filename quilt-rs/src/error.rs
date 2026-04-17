@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::path::StripPrefixError;
 use std::str::Utf8Error;
 
 use aws_smithy_types::byte_stream;
@@ -10,8 +11,33 @@ use crate::io::remote::HostChecksums;
 use crate::uri::Host;
 use crate::uri::Namespace;
 
+#[derive(Error, Debug)]
+#[error("S3 error{}: {kind}", .host.as_ref().map_or(String::new(), |h| format!(" for {h}")))]
+pub struct S3Error {
+    pub host: Option<Host>,
+    #[source]
+    pub kind: S3ErrorKind,
+}
+
+impl S3Error {
+    pub fn new(kind: S3ErrorKind) -> Self {
+        Self { host: None, kind }
+    }
+
+    pub fn with_host(host: Host, kind: S3ErrorKind) -> Self {
+        Self {
+            host: Some(host),
+            kind,
+        }
+    }
+
+    pub fn is_not_found(&self) -> bool {
+        matches!(self.kind, S3ErrorKind::NotFound(_))
+    }
+}
+
 #[derive(Error, Debug, PartialEq)]
-pub enum S3Error {
+pub enum S3ErrorKind {
     #[error("Failed to check object existence: {0}")]
     Exists(String),
 
@@ -27,10 +53,10 @@ pub enum S3Error {
     #[error("Failed to initialize S3 client: {0}")]
     Client(String),
 
-    #[error("Failed to list objects client: {0}")]
+    #[error("Failed to list objects: {0}")]
     ListObjects(String),
 
-    #[error("Failed to put object client: {0}")]
+    #[error("Failed to put object: {0}")]
     PutObject(String),
 
     #[error("Failed to resolve object URL: {0}")]
@@ -38,6 +64,27 @@ pub enum S3Error {
 
     #[error("Failed to upload object: {0}")]
     UploadFile(String),
+
+    #[error("S3 not found: {0}")]
+    NotFound(String),
+
+    #[error("S3 error: {0}")]
+    Raw(String),
+
+    #[error("Failed to initialize S3 Remote")]
+    RemoteInit,
+
+    #[error("Object key expected to be present")]
+    ObjectKey,
+
+    #[error("Error with upload id: {0}")]
+    UploadId(String),
+
+    #[error("Failed to read RwLock: {0}")]
+    PoisonLock(String),
+
+    #[error("ByteStream error: {0}")]
+    ByteStream(String),
 }
 
 #[derive(Error, Debug, PartialEq)]
@@ -79,62 +126,118 @@ pub enum InstallPathError {
     Uninstall(PathBuf),
 }
 
-/// The error type for this library
-#[derive(Error, Debug)]
-pub enum Error {
-    #[error("Authentication failed for {0}: {1}")]
-    Auth(Host, AuthError),
-
-    #[error("ByteStreamError: {0}")]
-    ByteStreamError(#[from] byte_stream::error::Error),
-
-    #[error("Checksum error: {0}")]
-    Checksum(String),
-
-    #[error("Missing checksum: {0:?}")]
-    ChecksumMissing(HostChecksums),
-
-    #[error("Commit error: {0}")]
-    Commit(String),
-
+#[derive(Error, Debug, PartialEq)]
+pub enum UriError {
     #[error("Invalid file:// URI: {0}")]
-    FileUri(Url),
+    FileScheme(Url),
 
     #[error("Invalid host: {0}")]
     Host(String),
 
-    #[error("Failed to fetch host config: {0}")]
-    HostConfig(String),
+    #[error("Invalid URI scheme: {0}")]
+    Scheme(String),
 
-    #[error(transparent)]
-    InstallPackage(InstallPackageError),
+    #[error("Invalid namespace: {0}")]
+    Namespace(String),
 
-    #[error(transparent)]
-    InstallPath(InstallPathError),
+    #[error("Invalid package URI: {0}")]
+    Package(String),
+
+    #[error("Invalid S3 URI: {0}")]
+    S3(String),
+
+    #[error("Manifest path error: {0}")]
+    ManifestPath(String),
+}
+
+#[derive(Error, Debug)]
+pub enum ChecksumError {
+    #[error("Checksum error: {0}")]
+    Mismatch(String),
+
+    #[error("Missing checksum: {0:?}")]
+    Missing(HostChecksums),
 
     #[error("Invalid multihash: {0}")]
     InvalidMultihash(String),
 
-    #[error("Invalid URI scheme: {0}")]
-    InvalidScheme(String),
+    #[error("Failed to get checksum from S3: {0}")]
+    NoS3Checksum(String),
 
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
+    #[error("Multihash error: {0}")]
+    Multihash(#[from] multihash::Error),
 
+    #[error("Multibase error: {0}")]
+    Multibase(#[from] multibase::Error),
+}
+
+#[derive(Error, Debug)]
+pub enum ManifestError {
+    #[error("Manifest header: {0}")]
+    Header(String),
+
+    #[error("Failed to load manifest from {path}: {source}")]
+    Load {
+        path: PathBuf,
+        source: Box<crate::Error>,
+    },
+
+    #[error("Table error: {0}")]
+    Table(String),
+}
+
+#[derive(Error, Debug)]
+pub enum LineageError {
+    #[error("Domain lineage missing, including missing Home directory")]
+    Missing,
+
+    #[error("Domain lineage missing Home directory")]
+    MissingHome,
+
+    #[error("Failed to parse lineage file: {0}")]
+    Parse(serde_json::Error),
+
+    #[error("Operation requires a remote origin, but this is a local-only package")]
+    NoRemote,
+}
+
+#[derive(Error, Debug, PartialEq)]
+pub enum RemoteCatalogError {
+    #[error("Workflow error: {0}")]
+    Workflow(String),
+
+    #[error("Failed to fetch host config: {0}")]
+    HostConfig(String),
+
+    #[error("Missing HTTP header: {0}")]
+    MissingHeader(String),
+}
+
+#[derive(Error, Debug, PartialEq)]
+pub enum LoginError {
+    #[error("Login required{}", .0.as_ref().map_or(String::new(), |h| format!(": {h}")))]
+    Required(Option<Host>),
+
+    #[error("Failed to get registry URL from {0}. Does {0}/config.json have it?")]
+    RequiredRegistryUrl(Host),
+}
+
+#[derive(Error, Debug)]
+pub enum FsError {
     #[error("Failed to read file {path}: {source}")]
-    FileRead {
+    Read {
         path: PathBuf,
         source: std::io::Error,
     },
 
     #[error("Failed to write file {path}: {source}")]
-    FileWrite {
+    Write {
         path: PathBuf,
         source: std::io::Error,
     },
 
     #[error("Failed to copy file from {from} to {to}: {source}")]
-    FileCopy {
+    Copy {
         from: PathBuf,
         to: PathBuf,
         source: std::io::Error,
@@ -147,95 +250,68 @@ pub enum Error {
     },
 
     #[error("File not found: {path}")]
-    FileNotFound { path: PathBuf },
-
-    #[error("JSON error: {0}")]
-    Json(#[from] serde_json::Error),
-
-    #[error("Domain lineage missing, including missing Home directory")]
-    LineageMissing,
-
-    #[error("Domain lineage missing Home directory")]
-    LineageMissingHome,
-
-    #[error("Login required{}", .0.as_ref().map_or(String::new(), |h| format!(": {h}")))]
-    LoginRequired(Option<Host>),
-
-    #[error("Failed to get registry URL from {0}. Does {0}/config.json have it?")]
-    LoginRequiredRegistryUrl(Host),
-
-    #[error("Failed to parse lineage file: {0}")]
-    LineageParse(serde_json::Error),
-
-    #[error("Manifest header: {0}")]
-    ManifestHeader(String),
-
-    #[error("Failed to load manifest from {path}: {source}")]
-    ManifestLoad { path: PathBuf, source: Box<Error> },
-
-    #[error("Manifest path error: {0}")]
-    ManifestPath(String),
-
-    #[error("Missing HTTP header: {0}")]
-    MissingHTTPHeader(String),
-
-    #[error("Multihash error: {0}")]
-    Multihash(#[from] multihash::Error),
-
-    #[error("Multibase error: {0}")]
-    Multibase(#[from] multibase::Error),
-
-    #[error("Invalid namespace: {0}")]
-    Namespace(String),
-
-    #[error("Operation requires a remote origin, but this is a local-only package")]
-    NoRemote,
-
-    #[error("Failed to get checksum from S3: {0}")]
-    NoS3Checksum(String),
-
-    #[error("Object key expected to be present")]
-    ObjectKey,
-
-    #[error("General error regarding package: {0}")]
-    Package(String),
-
-    #[error("Invalid package URI: {0}")]
-    PackageURI(String),
+    NotFound { path: PathBuf },
 
     #[error("Path prefix not found: {0}")]
-    PathPrefixNotFound(#[from] std::path::StripPrefixError),
+    PathPrefixNotFound(StripPrefixError),
+}
 
-    #[error("Failed to read RwLock: {0}")]
-    PoisonLock(String),
+#[derive(Error, Debug, PartialEq)]
+pub enum PackageOpError {
+    #[error("Commit error: {0}")]
+    Commit(String),
 
     #[error("Push error: {0}")]
     Push(String),
 
-    #[error("Failed to initialize S3 Remote")]
-    RemoteInit,
+    #[error("General error regarding package: {0}")]
+    Package(String),
+}
+
+/// The error type for this library
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("Authentication failed for {0}: {1}")]
+    Auth(Host, AuthError),
+
+    #[error(transparent)]
+    Checksum(#[from] ChecksumError),
+
+    #[error(transparent)]
+    Fs(#[from] FsError),
+
+    #[error(transparent)]
+    InstallPackage(InstallPackageError),
+
+    #[error(transparent)]
+    InstallPath(InstallPathError),
+
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("JSON error: {0}")]
+    Json(#[from] serde_json::Error),
+
+    #[error(transparent)]
+    Lineage(LineageError),
+
+    #[error(transparent)]
+    Login(LoginError),
+
+    #[error(transparent)]
+    Manifest(ManifestError),
+
+    #[error(transparent)]
+    PackageOp(#[from] PackageOpError),
 
     #[error("Reqwest error: {0}")]
     Reqwest(#[from] reqwest::Error),
 
-    /// An error from the AWS SDK
-    ///
-    /// Note that this uses a string for the underlying error type, because the AWS SDK
-    /// uses generic error types that are difficult to work with for downstream users.
-    #[error("S3 error: {0}")]
-    S3Raw(String),
+    #[error(transparent)]
+    RemoteCatalog(#[from] RemoteCatalogError),
 
-    #[error("S3 not found: {0}")]
-    S3NotFound(String),
-
-    #[error("S3 error for {0:?}: {1}")]
-    S3(Option<Host>, S3Error),
-
-    #[error("Invalid S3 URI: {0}")]
-    S3Uri(String),
-
-    #[error("Table error: {0}")]
-    Table(String),
+    #[error(transparent)]
+    S3(#[from] S3Error),
 
     #[error("Cannot convert to string: {0}")]
     ToString(#[from] ToStrError),
@@ -246,17 +322,14 @@ pub enum Error {
     #[error("Unimplemented")]
     Unimplemented,
 
-    #[error("Error with upload id: {0}")]
-    UploadId(String),
+    #[error(transparent)]
+    Uri(#[from] UriError),
 
     #[error("Error parsing URL: {0}")]
     UrlParse(#[from] url::ParseError),
 
     #[error("UTF-8 error: {0}")]
     Utf8(#[from] Utf8Error),
-
-    #[error("Workflow error: {0}")]
-    Workflow(String),
 
     #[error("YAML error: {0}")]
     Yaml(#[from] serde_yaml::Error),
@@ -265,6 +338,51 @@ pub enum Error {
 impl Error {
     /// Returns `true` if this error represents an S3 "not found" (NoSuchKey) response.
     pub fn is_not_found(&self) -> bool {
-        matches!(self, Error::S3NotFound(_))
+        matches!(self, Error::S3(s3) if s3.is_not_found())
+    }
+}
+
+// Manual From impls — either the focused enum cannot derive #[from]
+// (self-referential via Box<Error>) or `?` needs to compose through two hops.
+
+impl From<ManifestError> for Error {
+    fn from(err: ManifestError) -> Self {
+        Error::Manifest(err)
+    }
+}
+
+impl From<LineageError> for Error {
+    fn from(err: LineageError) -> Self {
+        Error::Lineage(err)
+    }
+}
+
+impl From<LoginError> for Error {
+    fn from(err: LoginError) -> Self {
+        Error::Login(err)
+    }
+}
+
+impl From<multihash::Error> for Error {
+    fn from(err: multihash::Error) -> Self {
+        Error::Checksum(ChecksumError::Multihash(err))
+    }
+}
+
+impl From<multibase::Error> for Error {
+    fn from(err: multibase::Error) -> Self {
+        Error::Checksum(ChecksumError::Multibase(err))
+    }
+}
+
+impl From<byte_stream::error::Error> for Error {
+    fn from(err: byte_stream::error::Error) -> Self {
+        Error::S3(S3Error::new(S3ErrorKind::ByteStream(err.to_string())))
+    }
+}
+
+impl From<StripPrefixError> for Error {
+    fn from(err: StripPrefixError) -> Self {
+        Error::Fs(FsError::PathPrefixNotFound(err))
     }
 }

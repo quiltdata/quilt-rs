@@ -33,6 +33,8 @@ use crate::uri::Tag;
 use crate::uri::TagUri;
 use crate::Error;
 use crate::Res;
+use crate::error::ManifestError;
+use crate::error::UriError;
 
 async fn bytestream_to_string(bytestream: ByteStream) -> Res<String> {
     let mut reader = bytestream.into_async_read();
@@ -180,11 +182,11 @@ pub async fn upload_row(
 ) -> Res<ManifestRow> {
     let local_url = Url::parse(&row.physical_key)?;
     if local_url.scheme() != "file" {
-        return Err(Error::FileUri(local_url));
+        return Err(Error::Uri(UriError::FileScheme(local_url)));
     }
     let file_path = local_url
         .to_file_path()
-        .map_err(|_| Error::FileUri(local_url))?;
+        .map_err(|_| Error::Uri(UriError::FileScheme(local_url)))?;
 
     let object_uri = ObjectUri::new(package_handle, row.logical_key.clone());
     log::info!("Uploading to S3: {object_uri}");
@@ -237,7 +239,7 @@ pub async fn build_manifest_from_rows_stream(
                     top_hasher.append(row)?;
                     rows.push(row.clone());
                 }
-                Err(err) => return Err(Error::Table(err.to_string())),
+                Err(err) => return Err(Error::Manifest(ManifestError::Table(err.to_string()))),
             }
         }
     }
