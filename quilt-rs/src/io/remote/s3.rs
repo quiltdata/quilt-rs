@@ -144,7 +144,7 @@ impl RemoteS3 {
             if let Some(region) = self
                 .regions
                 .read()
-                .map_err(|e| Error::S3(S3Error::new(S3ErrorKind::PoisonLock(e.to_string()))))?
+                .map_err(|e| S3Error::new(S3ErrorKind::PoisonLock(e.to_string())))?
                 .get(bucket)
             {
                 return Ok(region.clone());
@@ -156,7 +156,7 @@ impl RemoteS3 {
         let mut map = self
             .regions
             .write()
-            .map_err(|e| Error::S3(S3Error::new(S3ErrorKind::PoisonLock(e.to_string()))))?;
+            .map_err(|e| S3Error::new(S3ErrorKind::PoisonLock(e.to_string())))?;
         match map.entry(bucket.to_owned()) {
             Entry::Occupied(entry) => Ok(entry.get().clone()),
             Entry::Vacant(entry) => Ok(entry.insert(Region::new(region)).clone()),
@@ -180,7 +180,7 @@ impl RemoteS3 {
                 let map = self
                     .s3
                     .read()
-                    .map_err(|e| Error::S3(S3Error::new(S3ErrorKind::PoisonLock(e.to_string()))))?;
+                    .map_err(|e| S3Error::new(S3ErrorKind::PoisonLock(e.to_string())))?;
                 map.get(&creds_ref).cloned()
             };
 
@@ -263,7 +263,7 @@ impl RemoteS3 {
         let mut map = self
             .s3
             .write()
-            .map_err(|e| Error::S3(S3Error::new(S3ErrorKind::PoisonLock(e.to_string()))))?;
+            .map_err(|e| S3Error::new(S3ErrorKind::PoisonLock(e.to_string())))?;
 
         match map.entry(creds_ref) {
             Entry::Occupied(mut entry) => {

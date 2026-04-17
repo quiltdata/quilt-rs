@@ -186,7 +186,7 @@ pub async fn upload_row(
     }
     let file_path = local_url
         .to_file_path()
-        .map_err(|_| Error::Uri(UriError::FileScheme(local_url)))?;
+        .map_err(|_| UriError::FileScheme(local_url))?;
 
     let object_uri = ObjectUri::new(package_handle, row.logical_key.clone());
     log::info!("Uploading to S3: {object_uri}");

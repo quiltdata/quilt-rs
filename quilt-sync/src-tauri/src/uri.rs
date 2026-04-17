@@ -37,7 +37,9 @@ fn navigate_to_url(app_handle: &AppHandle, url: Url) -> Result {
 
 /// Navigate to a Quilt package URI by parsing it and redirecting to the package page
 fn navigate_to_package(app_handle: &AppHandle, uri_str: &str) -> Result {
-    let win = app_handle.get_webview_window("main").ok_or(Error::TauriUi(crate::error::TauriUiError::Window))?;
+    let win = app_handle
+        .get_webview_window("main")
+        .ok_or(crate::error::TauriUiError::Window)?;
     let current_url = win.url()?;
     let redirect_url = get_remote_package_url(&current_url, uri_str)?;
     navigate_to_url(app_handle, redirect_url)

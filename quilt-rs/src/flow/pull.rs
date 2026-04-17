@@ -17,7 +17,6 @@ use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::uri::Tag;
-use crate::Error;
 use crate::Res;
 use crate::error::PackageOpError;
 
@@ -39,34 +38,26 @@ pub async fn pull_package(
 
     if !status.changes.is_empty() {
         error!("❌ Found pending changes, cannot pull");
-        return Err(Error::PackageOp(PackageOpError::Package(
-            "package has pending changes".to_string(),
-        )));
+        return Err(PackageOpError::Package("package has pending changes".to_string()).into());
     }
 
     if lineage.commit.is_some() {
         error!("❌ Found pending commits, cannot pull");
-        return Err(Error::PackageOp(PackageOpError::Package(
-            "package has pending commits".to_string(),
-        )));
+        return Err(PackageOpError::Package("package has pending commits".to_string()).into());
     }
 
     let remote_uri = lineage.remote()?.clone();
 
     if remote_uri.hash != lineage.base_hash {
         error!("❌ Package has diverged from remote");
-        return Err(Error::PackageOp(PackageOpError::Package(
-            "package has diverged".to_string(),
-        )));
+        return Err(PackageOpError::Package("package has diverged".to_string()).into());
     }
 
     // TODO: do we need to explicitly update latest_hash?
     // status() tries to update, but may fail.
     if lineage.base_hash == lineage.latest_hash {
         error!("❌ Package is already up-to-date");
-        return Err(Error::PackageOp(PackageOpError::Package(
-            "package is already up-to-date".to_string(),
-        )));
+        return Err(PackageOpError::Package("package is already up-to-date".to_string()).into());
     }
 
     // TODO: What should we do about installed paths?

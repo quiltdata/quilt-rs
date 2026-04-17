@@ -125,9 +125,7 @@ pub async fn install_paths(
         // TODO: Consider using a hashmap or treemap for manifest.rows
         let row = manifest
             .get_record(path)
-            .ok_or(Error::Manifest(ManifestError::Table(format!(
-                "path {path:?} not found"
-            ))))?;
+            .ok_or(ManifestError::Table(format!("path {path:?} not found")))?;
 
         let object_dest = paths.object(row.hash.digest());
 

@@ -220,7 +220,6 @@ mod tests {
     use crate::io::storage::LocalStorage;
     use crate::io::storage::Storage;
     use crate::io::storage::StorageExt;
-    use crate::Error;
     use crate::Res;
 
     #[test]
@@ -414,7 +413,7 @@ mod tests {
         // Test that serialization produces the correct format
         let hex_bytes =
             hex::decode("7465737464617461000000000000000000000000000000000000000000000000")
-                .map_err(|e| Error::Checksum(ChecksumError::InvalidMultihash(e.to_string())))?;
+                .map_err(|e| ChecksumError::InvalidMultihash(e.to_string()))?;
         let sha256_hash =
             Sha256Hash::try_from(multihash::Multihash::wrap(MULTIHASH_SHA256, &hex_bytes)?)?;
         let object_hash = ObjectHash::Sha256(sha256_hash);

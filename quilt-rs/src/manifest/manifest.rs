@@ -203,9 +203,7 @@ impl TryFrom<Quilt3ManifestRow> for ManifestRow {
                 .physical_keys
                 .into_iter()
                 .next()
-                .ok_or(Error::Manifest(ManifestError::Header(
-                    "Physical key is missing".to_string(),
-                )))?,
+                .ok_or(ManifestError::Header("Physical key is missing".to_string()))?,
             hash: row.hash,
             size: row.size,
             meta: row.meta,

@@ -305,9 +305,7 @@ async fn get_registry_url(http_client: &impl HttpClient, host: &Host) -> Res<url
     Ok(url::Host::Domain(
         registry_url
             .domain()
-            .ok_or(crate::Error::Login(LoginError::RequiredRegistryUrl(
-                host.to_owned(),
-            )))?
+            .ok_or(LoginError::RequiredRegistryUrl(host.to_owned()))?
             .to_string(),
     ))
 }
@@ -590,7 +588,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
         let client = auth_io
             .read_client()
             .await?
-            .ok_or(crate::Error::Login(LoginError::Required(Some(host.to_owned()))))?;
+            .ok_or(LoginError::Required(Some(host.to_owned())))?;
 
         let new_tokens =
             refresh_oauth_tokens(http_client, host, &tokens.refresh_token, &client.client_id)
@@ -650,7 +648,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
             Ok(Some(tokens)) => tokens,
             Ok(None) => {
                 warn!("❌ No tokens found for {}, login required", host);
-                return Err(crate::Error::Login(LoginError::Required(Some(host.to_owned()))));
+                return Err(LoginError::Required(Some(host.to_owned())).into());
             }
             Err(e) => {
                 error!("❌ Failed to read tokens for {}: {}", host, e);
@@ -679,7 +677,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
                                 "❌ Auth error refreshing tokens for {}, login required: {}",
                                 host, e
                             );
-                            return Err(crate::Error::Login(LoginError::Required(Some(host.to_owned()))));
+                            return Err(LoginError::Required(Some(host.to_owned())).into());
                         } else if matches!(e, crate::Error::Login(LoginError::Required(_))) {
                             warn!("❌ No OAuth client registered for {}, login required", host);
                             return Err(e);
@@ -708,7 +706,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
                         "❌ Auth error refreshing credentials for {}, login required: {}",
                         host, e
                     );
-                    Err(crate::Error::Login(LoginError::Required(Some(host.to_owned()))))
+                    Err(LoginError::Required(Some(host.to_owned())).into())
                 } else {
                     warn!("❌ Failed to refresh credentials for {}: {}", host, e);
                     Err(e)

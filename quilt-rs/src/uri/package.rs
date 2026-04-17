@@ -208,20 +208,18 @@ impl TryFrom<&str> for S3PackageUri {
             ))));
         }
 
-        let fragment = parsed_url
-            .fragment()
-            .ok_or(Error::Uri(UriError::Package(format!(
-                "S3 package URI must contain a fragment: {input}"
-            ))))?;
+        let fragment = parsed_url.fragment().ok_or(UriError::Package(format!(
+            "S3 package URI must contain a fragment: {input}"
+        )))?;
         let mut params: HashMap<_, _> = form_urlencoded::parse(fragment.as_bytes())
             .into_owned()
             .collect();
 
         let pkg_spec = params
             .remove("package")
-            .ok_or(Error::Uri(UriError::Package(
+            .ok_or(UriError::Package(
                 "missing package in fragment".to_string(),
-            )))?;
+            ))?;
 
         let (namespace, revision) = if pkg_spec.contains(':') && pkg_spec.contains('@') {
             return Err(Error::Uri(UriError::Package(
@@ -268,12 +266,10 @@ impl TryFrom<&str> for S3PackageUri {
             ))));
         }
 
-        let bucket = parsed_url
-            .host_str()
-            .ok_or(Error::Uri(UriError::Package(format!(
-                "expected host in S3 package URI, got {}",
-                parsed_url.host_str().unwrap_or_default()
-            ))))?;
+        let bucket = parsed_url.host_str().ok_or(UriError::Package(format!(
+            "expected host in S3 package URI, got {}",
+            parsed_url.host_str().unwrap_or_default()
+        )))?;
 
         Ok(Self {
             bucket: bucket.to_string(),
@@ -339,9 +335,9 @@ impl S3PackageUri {
     }
 
     pub fn display_for_catalog(&self) -> Result<url::Url, Error> {
-        let host = self.catalog.as_ref().ok_or(Error::Uri(UriError::Package(
+        let host = self.catalog.as_ref().ok_or(UriError::Package(
             "Package URI has no catalog specified".to_string(),
-        )))?;
+        ))?;
         self.display_for_host(host)
     }
 }
