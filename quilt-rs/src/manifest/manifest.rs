@@ -174,7 +174,7 @@ impl From<ManifestRow> for Quilt3ManifestRow {
 }
 
 /// Represents the row in JSONL manifest
-#[derive(Clone, Debug, Deserialize, Serialize, Default)]
+#[derive(Clone, Debug, Deserialize, Serialize, Default, PartialEq)]
 pub struct ManifestRow {
     pub logical_key: PathBuf,
     // XXX: use Url to have validated string?
@@ -184,10 +184,17 @@ pub struct ManifestRow {
     pub meta: Option<serde_json::Value>,
 }
 
-impl std::cmp::PartialEq for ManifestRow {
-    // TODO: add note why we don't compare meta and physical_key
-    fn eq(&self, other: &Self) -> bool {
-        self.logical_key == other.logical_key && self.hash == other.hash && self.size == other.size
+impl ManifestRow {
+    /// Content-identity check: two rows describe the same logical file with
+    /// the same bytes. Ignores `physical_key` (same content is addressed as
+    /// `file:///.../objects/<hash>` locally and `s3://...` remotely, and the
+    /// push flow uses this to reuse the remote location instead of
+    /// re-uploading) and `meta` (user metadata that does not change the
+    /// stored bytes, so a metadata-only edit should not force a re-upload).
+    pub fn matches_content(&self, other: &Self) -> bool {
+        self.logical_key == other.logical_key
+            && self.hash == other.hash
+            && self.size == other.size
     }
 }
 
