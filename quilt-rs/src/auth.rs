@@ -425,6 +425,16 @@ fn is_credentials_auth_error(e: &Error) -> bool {
     )
 }
 
+/// Extracts the HTTP status code from an `Error::Reqwest`, if the wire-level
+/// error carried a response (network-level errors without a response return
+/// `None`). Used to include the status as a structured field in retry logs.
+fn http_status(e: &Error) -> Option<u16> {
+    match e {
+        Error::Reqwest(re) => re.status().map(|s| s.as_u16()),
+        _ => None,
+    }
+}
+
 /// Classifies the outcome of a retry attempt against an auth endpoint.
 ///
 /// - `Ok(_)` → transient error recovered, log at `info!`.
@@ -447,6 +457,7 @@ fn classify_retry_outcome<T>(
         }
         Err(e) if is_auth_error(&e) => {
             warn!(
+                status = ?http_status(&e),
                 "❌ Auth error on {} for {} persisted after retry, login required: {}",
                 endpoint, host, e
             );
@@ -454,6 +465,7 @@ fn classify_retry_outcome<T>(
         }
         Err(e) => {
             warn!(
+                status = ?http_status(&e),
                 "❌ Failed to refresh via {} for {} on retry: {}",
                 endpoint, host, e
             );
@@ -662,13 +674,16 @@ impl<S: Storage + Send + Sync> Auth<S> {
             return Err(first_err);
         }
         if !is_token_auth_error(&first_err) {
-            warn!("❌ Failed to refresh tokens for {}: {}", host, first_err);
+            warn!(
+                status = ?http_status(&first_err),
+                "❌ Failed to refresh tokens for {}: {}", host, first_err
+            );
             return Err(first_err);
         }
 
         info!(
-            "⚠️ Auth error refreshing tokens for {}, retrying once: {}",
-            host, first_err
+            status = ?http_status(&first_err),
+            "⚠️ Auth error refreshing tokens for {}, retrying once: {}", host, first_err
         );
         classify_retry_outcome(
             self.refresh_tokens(http_client, auth_io, host, tokens).await,
@@ -700,13 +715,14 @@ impl<S: Storage + Send + Sync> Auth<S> {
 
         if !is_credentials_auth_error(&first_err) {
             warn!(
-                "❌ Failed to refresh credentials for {}: {}",
-                host, first_err
+                status = ?http_status(&first_err),
+                "❌ Failed to refresh credentials for {}: {}", host, first_err
             );
             return Err(first_err);
         }
 
         info!(
+            status = ?http_status(&first_err),
             "⚠️ Auth error refreshing credentials for {}, \
              force-refreshing token and retrying: {}",
             host, first_err
