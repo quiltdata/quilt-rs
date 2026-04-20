@@ -12,7 +12,7 @@
 
 ### Changed
 
-- Split the monolithic `Error` enum into focused domain enums (`UriError`, `ChecksumError`, `ManifestError`, `LineageError`, `RemoteCatalogError`, `LoginError`, `FsError`, `PackageOpError`) and restructure `S3Error` to carry optional host context in a `{host, kind}` struct; all wrapped transparently by the top-level `Error` (<https://github.com/quiltdata/quilt-rs/pull/627>)
+- Split the monolithic `Error` enum into focused domain enums wrapped transparently by the top-level `Error` (<https://github.com/quiltdata/quilt-rs/pull/627>)
 - Replace `ManifestRow`'s custom `PartialEq` (which silently ignored `physical_key` and `meta`) with a derived structural `PartialEq` and a new `ManifestRow::matches_content` method for the content-identity check used by push dedup (<https://github.com/quiltdata/quilt-rs/pull/625>)
 - Change `DomainPaths::cached_manifest` signature from `(bucket: &str, hash: &str)` to `(uri: &ManifestUri)` to match how every caller already uses it (<https://github.com/quiltdata/quilt-rs/pull/625>)
 - Expand the `CommitState` multihash TODO into a doc comment spelling out the real scope — a `TopHash` newtype validating SHA-256 on construction, plus migrating the adjacent `String` hashes together (<https://github.com/quiltdata/quilt-rs/pull/625>)

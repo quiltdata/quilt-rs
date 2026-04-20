@@ -13,7 +13,7 @@
 
 ### Changed
 
-- Split the monolithic `Error` enum into focused domain enums (`TauriUiError`, `RouteError`, `OAuthUiError`, `TelemetryError`, `FsOpenError`, `PackageUriError`); `RouteError` moves from `routes.rs` into `error.rs` (<https://github.com/quiltdata/quilt-rs/pull/627>)
+- Split the monolithic `Error` enum into focused domain enums wrapped transparently by the top-level `Error` (<https://github.com/quiltdata/quilt-rs/pull/627>)
 - Remove the `let m: &model::Model = &m;` shadow line from 18 Tauri commands; pass `m` directly — `&m` via deref coercion for helpers taking concrete `&Model`, `&*m` for helpers bound by `&impl QuiltModel` where deref coercion does not apply (<https://github.com/quiltdata/quilt-rs/pull/625>)
 
 ## [v0.16.0] - 2026-04-16
