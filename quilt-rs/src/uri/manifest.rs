@@ -33,9 +33,10 @@ impl TryFrom<S3PackageUri> for ManifestUri {
             hash: match uri.revision {
                 RevisionPointer::Hash(top_hash) => top_hash,
                 RevisionPointer::Tag(_) => {
-                    return Err(Error::Uri(UriError::Package(
+                    return Err(UriError::Package(
                         "Hash is required for that conversion".to_string(),
-                    )))
+                    )
+                    .into())
                 }
             },
         })

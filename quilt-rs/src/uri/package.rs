@@ -202,10 +202,11 @@ impl TryFrom<&str> for S3PackageUri {
     fn try_from(input: &str) -> Result<Self, Self::Error> {
         let parsed_url = Url::parse(input)?;
         if parsed_url.scheme() != "quilt+s3" {
-            return Err(Error::Uri(UriError::Package(format!(
+            return Err(UriError::Package(format!(
                 "expected quilt+s3, got {}",
                 parsed_url.scheme()
-            ))));
+            ))
+            .into());
         }
 
         let fragment = parsed_url.fragment().ok_or(UriError::Package(format!(
@@ -220,31 +221,30 @@ impl TryFrom<&str> for S3PackageUri {
             .ok_or(UriError::Package("missing package in fragment".to_string()))?;
 
         let (namespace, revision) = if pkg_spec.contains(':') && pkg_spec.contains('@') {
-            return Err(Error::Uri(UriError::Package(
+            return Err(UriError::Package(
                 "package spec may either contain \":\" or \"@\"".to_string(),
-            )));
+            )
+            .into());
         } else if let Some((namespace, tag)) = pkg_spec.split_once(':') {
             if tag.is_empty() {
-                return Err(Error::Uri(UriError::Package(
-                    "tag must not be empty".to_string(),
-                )));
+                return Err(UriError::Package("tag must not be empty".to_string()).into());
             }
             if tag.contains(':') {
-                return Err(Error::Uri(UriError::Package(
+                return Err(UriError::Package(
                     "package spec may contain only one \":\"".to_string(),
-                )));
+                )
+                .into());
             }
             (namespace.into(), RevisionPointer::Tag(tag.into()))
         } else if let Some((namespace, top_hash)) = pkg_spec.split_once('@') {
             if top_hash.is_empty() {
-                return Err(Error::Uri(UriError::Package(
-                    "hash must not be empty".to_string(),
-                )));
+                return Err(UriError::Package("hash must not be empty".to_string()).into());
             }
             if top_hash.contains('@') {
-                return Err(Error::Uri(UriError::Package(
+                return Err(UriError::Package(
                     "package spec may contain only one \"@\"".to_string(),
-                )));
+                )
+                .into());
             }
             (namespace.into(), RevisionPointer::Hash(top_hash.into()))
         } else {
@@ -259,9 +259,10 @@ impl TryFrom<&str> for S3PackageUri {
         };
 
         if !params.is_empty() {
-            return Err(Error::Uri(UriError::Package(format!(
+            return Err(UriError::Package(format!(
                 "unexpected parameters in fragment: {params:?}"
-            ))));
+            ))
+            .into());
         }
 
         let bucket = parsed_url.host_str().ok_or(UriError::Package(format!(

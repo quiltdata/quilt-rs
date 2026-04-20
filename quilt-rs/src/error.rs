@@ -24,13 +24,6 @@ impl S3Error {
         Self { host: None, kind }
     }
 
-    pub fn with_host(host: Host, kind: S3ErrorKind) -> Self {
-        Self {
-            host: Some(host),
-            kind,
-        }
-    }
-
     pub fn is_not_found(&self) -> bool {
         matches!(self.kind, S3ErrorKind::NotFound(_))
     }
@@ -154,6 +147,9 @@ pub enum ChecksumError {
 
     #[error("Missing checksum: {0:?}")]
     Missing(HostChecksums),
+
+    #[error("Malformed checksum: {0}")]
+    Malformed(String),
 
     #[error("Invalid multihash: {0}")]
     InvalidMultihash(String),
