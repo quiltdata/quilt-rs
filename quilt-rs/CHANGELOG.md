@@ -12,7 +12,7 @@
 
 ### Added
 
-- Automatic retry with exponential backoff and request timeouts for HTTP calls, reducing spurious failures on flaky networks
+- Automatic retry with exponential backoff and request timeouts for HTTP calls, reducing spurious failures on flaky networks (<https://github.com/quiltdata/quilt-rs/pull/630>)
 
 ## [v0.29.1-alpha2] - 2026-04-20
 
