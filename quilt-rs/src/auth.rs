@@ -474,10 +474,18 @@ fn classify_retry_outcome<T>(
     }
 }
 
+/// Map of per-host refresh locks used to single-flight concurrent
+/// credential refreshes. The outer `std::sync::Mutex` is held only
+/// across the `entry(host).or_insert_with(...).clone()` and is never
+/// held across an `.await`. The inner `tokio::sync::Mutex` is held
+/// across the HTTP refresh, serializing refreshes for a single host.
+type RefreshLocks = Arc<std::sync::Mutex<HashMap<Host, Arc<tokio::sync::Mutex<()>>>>>;
+
 #[derive(Debug)]
 pub struct Auth<S: Storage = LocalStorage> {
     pub paths: DomainPaths,
     pub storage: Arc<S>,
+    refresh_locks: RefreshLocks,
 }
 
 impl<S: Storage> Clone for Auth<S> {
@@ -485,13 +493,32 @@ impl<S: Storage> Clone for Auth<S> {
         Self {
             paths: self.paths.clone(),
             storage: Arc::clone(&self.storage),
+            refresh_locks: Arc::clone(&self.refresh_locks),
         }
     }
 }
 
 impl<S: Storage + Send + Sync> Auth<S> {
     pub fn new(paths: DomainPaths, storage: Arc<S>) -> Self {
-        Self { paths, storage }
+        Self {
+            paths,
+            storage,
+            refresh_locks: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Get the `Arc<Mutex>` for this host's refresh lock, creating it
+    /// on first use. The outer lock is only held for the brief map
+    /// lookup — never across `.await`.
+    fn refresh_lock_for(&self, host: &Host) -> Arc<tokio::sync::Mutex<()>> {
+        let mut locks = self
+            .refresh_locks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        locks
+            .entry(host.clone())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
     }
 
     pub async fn login<T: HttpClient>(
@@ -790,6 +817,28 @@ impl<S: Storage + Send + Sync> Auth<S> {
             }
             Err(e) => {
                 error!("❌ Failed to read credentials for {}: {}", host, e);
+                return Err(Error::Auth(
+                    host.to_owned(),
+                    AuthError::CredentialsRead(e.to_string()),
+                ));
+            }
+        }
+
+        // Serialize refreshes for this host so N concurrent callers
+        // fire one HTTP `/get_credentials` call instead of N. The
+        // loser of the race re-reads the credentials the winner
+        // wrote to disk and returns them without hitting the network.
+        let lock = self.refresh_lock_for(host);
+        let _guard = lock.lock().await;
+
+        match auth_io.read_credentials().await {
+            Ok(Some(creds)) => {
+                debug!("✔️ Another task refreshed credentials for {}", host);
+                return Ok(creds);
+            }
+            Ok(None) => {}
+            Err(e) => {
+                error!("❌ Failed to re-read credentials for {}: {}", host, e);
                 return Err(Error::Auth(
                     host.to_owned(),
                     AuthError::CredentialsRead(e.to_string()),
@@ -1713,6 +1762,186 @@ mod tests {
             1,
             "credentials endpoint should only be called once after successful retry"
         );
+        Ok(())
+    }
+
+    /// HTTP client that counts calls to `/api/auth/get_credentials`
+    /// and optionally sleeps inside the handler to widen the race
+    /// window. Tokens are fresh so no OAuth leg fires.
+    #[derive(Clone)]
+    struct CountingCredsClient {
+        cred_calls: Arc<std::sync::atomic::AtomicUsize>,
+        sleep_ms: u64,
+    }
+
+    #[async_trait]
+    impl HttpClient for CountingCredsClient {
+        async fn get<T: serde::de::DeserializeOwned>(
+            &self,
+            url: &str,
+            _auth_token: Option<&str>,
+        ) -> Res<T> {
+            if url.ends_with("/config.json") {
+                let body = serde_json::json!({
+                    "registryUrl": format!("https://{}", get_registry()),
+                });
+                return Ok(serde_json::from_value(body)?);
+            }
+            if url.contains("/api/auth/get_credentials") {
+                self.cred_calls
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if self.sleep_ms > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(self.sleep_ms)).await;
+                }
+                let body = serde_json::json!({
+                    "AccessKeyId": "refreshed-key",
+                    "SecretAccessKey": "refreshed-secret",
+                    "SessionToken": "refreshed-session",
+                    "Expiration": (chrono::Utc::now() + chrono::Duration::hours(1))
+                        .to_rfc3339(),
+                });
+                return Ok(serde_json::from_value(body)?);
+            }
+            panic!("Unexpected GET: {url}");
+        }
+        async fn head(&self, _: &str) -> Res<HeaderMap> {
+            unimplemented!()
+        }
+        async fn post<T: serde::de::DeserializeOwned>(
+            &self,
+            _: &str,
+            _: &HashMap<String, String>,
+        ) -> Res<T> {
+            unimplemented!("fresh tokens → no OAuth leg fires")
+        }
+        async fn post_json<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
+            &self,
+            _: &str,
+            _: &B,
+        ) -> Res<T> {
+            unimplemented!()
+        }
+    }
+
+    async fn seed_expired_creds_fresh_tokens(
+        auth_io: &AuthIo<Arc<MockStorage>>,
+    ) -> Res {
+        auth_io
+            .write_credentials(&Credentials {
+                access_key: "stale".to_string(),
+                secret_key: "stale-secret".to_string(),
+                token: "stale-session".to_string(),
+                expires_at: chrono::Utc::now() - chrono::Duration::hours(1),
+            })
+            .await?;
+        auth_io
+            .write_tokens(&Tokens {
+                access_token: ACCESS_TOKEN.to_string(),
+                refresh_token: REFRESH_TOKEN.to_string(),
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            })
+            .await?;
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_auth_refresh_is_single_flight_across_concurrent_callers() -> Res {
+        let storage = Arc::new(MockStorage::default());
+        let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
+        let auth = Auth::new(paths.clone(), storage.clone());
+        let host = get_host();
+
+        let auth_io = AuthIo::new(storage, paths.auth_host(&host));
+        seed_expired_creds_fresh_tokens(&auth_io).await?;
+
+        let client = CountingCredsClient {
+            cred_calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            sleep_ms: 50,
+        };
+
+        let mut handles = Vec::new();
+        for _ in 0..10 {
+            let auth = auth.clone();
+            let client = client.clone();
+            let host = host.clone();
+            handles.push(tokio::spawn(async move {
+                auth.get_credentials_or_refresh(&client, &host).await
+            }));
+        }
+
+        let mut creds_seen = Vec::new();
+        for h in handles {
+            creds_seen.push(h.await.unwrap()?);
+        }
+
+        assert_eq!(
+            client
+                .cred_calls
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "single-flight: 10 concurrent callers must produce exactly one refresh",
+        );
+        let first = &creds_seen[0];
+        for creds in &creds_seen {
+            assert_eq!(creds.access_key, first.access_key);
+            assert_eq!(creds.expires_at, first.expires_at);
+        }
+        assert_eq!(first.access_key, "refreshed-key");
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_auth_refresh_lock_is_per_host() -> Res {
+        let storage = Arc::new(MockStorage::default());
+        let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
+        let auth = Auth::new(paths.clone(), storage.clone());
+
+        let host_a: Host = "a.quilt.dev".parse().unwrap();
+        let host_b: Host = "b.quilt.dev".parse().unwrap();
+
+        // Seed each host separately; they live under distinct paths.
+        seed_expired_creds_fresh_tokens(&AuthIo::new(
+            storage.clone(),
+            paths.auth_host(&host_a),
+        ))
+        .await?;
+        seed_expired_creds_fresh_tokens(&AuthIo::new(
+            storage.clone(),
+            paths.auth_host(&host_b),
+        ))
+        .await?;
+
+        let slow_client = CountingCredsClient {
+            cred_calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            sleep_ms: 300,
+        };
+        let fast_client = CountingCredsClient {
+            cred_calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            sleep_ms: 0,
+        };
+
+        let auth_clone = auth.clone();
+        let slow = slow_client.clone();
+        let host_a_clone = host_a.clone();
+        let a_task = tokio::spawn(async move {
+            auth_clone
+                .get_credentials_or_refresh(&slow, &host_a_clone)
+                .await
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        let b_start = std::time::Instant::now();
+        auth.get_credentials_or_refresh(&fast_client, &host_b)
+            .await?;
+        let b_elapsed = b_start.elapsed();
+
+        assert!(
+            b_elapsed < std::time::Duration::from_millis(250),
+            "host_b refresh must not wait behind host_a's lock (took {b_elapsed:?})",
+        );
+
+        a_task.await.unwrap()?;
         Ok(())
     }
 }
