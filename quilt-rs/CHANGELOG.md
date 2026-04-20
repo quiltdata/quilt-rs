@@ -12,11 +12,11 @@
 
 ### Fixed
 
-- Retry a transient 4xx from the token or credentials endpoint once before mapping it to `Login required`, so a brief server-side auth hiccup no longer surfaces as a spurious logout in the UI
+- Retry a transient 4xx from the token or credentials endpoint once before concluding `Login required` (<https://github.com/quiltdata/quilt-rs/pull/629>)
 
 ### Changed
 
-- Log the HTTP status, URL, and (truncated) response body on every non-2xx response from the shared reqwest client, and include the status as a structured field in auth-retry log lines, so the next occurrence of a transient auth failure yields actionable forensics
+- Log status/URL/body on every non-2xx HTTP response and include status as a structured field in auth-retry logs (<https://github.com/quiltdata/quilt-rs/pull/629>)
 
 ## [v0.29.1-alpha1] - 2026-04-17
 
