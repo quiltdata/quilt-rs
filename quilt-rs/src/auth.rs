@@ -425,6 +425,43 @@ fn is_credentials_auth_error(e: &Error) -> bool {
     )
 }
 
+/// Classifies the outcome of a retry attempt against an auth endpoint.
+///
+/// - `Ok(_)` → transient error recovered, log at `info!`.
+/// - `Err(e)` classified as auth → retry didn't help, upgrade to `LoginRequired`.
+/// - `Err(e)` otherwise → propagate as-is (includes nested `LoginRequired`
+///   from missing OAuth client state, IO errors, etc.).
+fn classify_retry_outcome<T>(
+    result: Res<T>,
+    is_auth_error: fn(&Error) -> bool,
+    endpoint: &str,
+    host: &Host,
+) -> Res<T> {
+    match result {
+        Ok(v) => {
+            info!(
+                "✔️ Recovered from transient auth error on {} for {}",
+                endpoint, host
+            );
+            Ok(v)
+        }
+        Err(e) if is_auth_error(&e) => {
+            warn!(
+                "❌ Auth error on {} for {} persisted after retry, login required: {}",
+                endpoint, host, e
+            );
+            Err(LoginError::Required(Some(host.to_owned())).into())
+        }
+        Err(e) => {
+            warn!(
+                "❌ Failed to refresh via {} for {} on retry: {}",
+                endpoint, host, e
+            );
+            Err(e)
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Auth<S: Storage = LocalStorage> {
     pub paths: DomainPaths,
@@ -600,6 +637,99 @@ impl<S: Storage + Send + Sync> Auth<S> {
         Ok(new_tokens)
     }
 
+    /// `refresh_tokens` with a single transparent retry on auth-classified
+    /// errors (HTTP 400/401/403 from the token endpoint).
+    ///
+    /// A single 4xx is not necessarily a revoked refresh token — it can also
+    /// be a brief server-side token-validation hiccup (deploy, replica with
+    /// stale state, JWKS rotation). Only when two consecutive attempts return
+    /// a 4xx do we conclude the refresh token is actually bad and map to
+    /// `LoginError::Required`.
+    async fn refresh_tokens_with_retry<T: HttpClient>(
+        &self,
+        http_client: &T,
+        auth_io: &AuthIo<Arc<S>>,
+        host: &Host,
+        tokens: &Tokens,
+    ) -> Res<Tokens> {
+        let first_err = match self.refresh_tokens(http_client, auth_io, host, tokens).await {
+            Ok(t) => return Ok(t),
+            Err(e) => e,
+        };
+
+        if matches!(first_err, Error::Login(LoginError::Required(_))) {
+            warn!("❌ No OAuth client registered for {}, login required", host);
+            return Err(first_err);
+        }
+        if !is_token_auth_error(&first_err) {
+            warn!("❌ Failed to refresh tokens for {}: {}", host, first_err);
+            return Err(first_err);
+        }
+
+        info!(
+            "⚠️ Auth error refreshing tokens for {}, retrying once: {}",
+            host, first_err
+        );
+        classify_retry_outcome(
+            self.refresh_tokens(http_client, auth_io, host, tokens).await,
+            is_token_auth_error,
+            "token endpoint",
+            host,
+        )
+    }
+
+    /// `refresh_credentials` with a single transparent retry on auth-classified
+    /// errors (HTTP 401/403 from the credentials endpoint).
+    ///
+    /// A 4xx here usually means the server's view of the access token's
+    /// validity has shifted (clock skew, session-store replication lag, etc.).
+    /// Unlike the token-endpoint retry, this path **forces** a fresh access
+    /// token between the two attempts — retrying with the same stale token
+    /// would just reproduce the failure.
+    async fn refresh_credentials_with_retry<T: HttpClient>(
+        &self,
+        http_client: &T,
+        auth_io: &AuthIo<Arc<S>>,
+        host: &Host,
+        access_token: &str,
+    ) -> Res<Credentials> {
+        let first_err = match self.refresh_credentials(http_client, host, access_token).await {
+            Ok(c) => return Ok(c),
+            Err(e) => e,
+        };
+
+        if !is_credentials_auth_error(&first_err) {
+            warn!(
+                "❌ Failed to refresh credentials for {}: {}",
+                host, first_err
+            );
+            return Err(first_err);
+        }
+
+        info!(
+            "⚠️ Auth error refreshing credentials for {}, \
+             force-refreshing token and retrying: {}",
+            host, first_err
+        );
+
+        // Force-refresh the access token, bypassing the 60s proactive check.
+        let tokens = auth_io
+            .read_tokens()
+            .await?
+            .ok_or_else(|| LoginError::Required(Some(host.to_owned())))?;
+        let new_tokens = self
+            .refresh_tokens_with_retry(http_client, auth_io, host, &tokens)
+            .await?;
+
+        classify_retry_outcome(
+            self.refresh_credentials(http_client, host, &new_tokens.access_token)
+                .await,
+            is_credentials_auth_error,
+            "credentials endpoint",
+            host,
+        )
+    }
+
     async fn refresh_credentials<T: HttpClient>(
         &self,
         http_client: &T,
@@ -666,53 +796,19 @@ impl<S: Storage + Send + Sync> Auth<S> {
                     "⏳ Access token expired for {}, refreshing via refresh token",
                     host
                 );
-                match self
-                    .refresh_tokens(http_client, &auth_io, host, &tokens)
-                    .await
-                {
-                    Ok(new_tokens) => new_tokens.access_token,
-                    Err(e) => {
-                        if is_token_auth_error(&e) {
-                            warn!(
-                                "❌ Auth error refreshing tokens for {}, login required: {}",
-                                host, e
-                            );
-                            return Err(LoginError::Required(Some(host.to_owned())).into());
-                        } else if matches!(e, crate::Error::Login(LoginError::Required(_))) {
-                            warn!("❌ No OAuth client registered for {}, login required", host);
-                            return Err(e);
-                        } else {
-                            warn!("❌ Failed to refresh tokens for {}: {}", host, e);
-                            return Err(e);
-                        }
-                    }
-                }
+                self.refresh_tokens_with_retry(http_client, &auth_io, host, &tokens)
+                    .await?
+                    .access_token
             } else {
                 tokens.access_token
             };
 
         info!("⏳ Refreshing credentials using access token for {}", host);
-        match self
-            .refresh_credentials(http_client, host, &access_token)
-            .await
-        {
-            Ok(creds) => {
-                info!("✔️ Successfully refreshed credentials for {}", host);
-                Ok(creds)
-            }
-            Err(e) => {
-                if is_credentials_auth_error(&e) {
-                    warn!(
-                        "❌ Auth error refreshing credentials for {}, login required: {}",
-                        host, e
-                    );
-                    Err(LoginError::Required(Some(host.to_owned())).into())
-                } else {
-                    warn!("❌ Failed to refresh credentials for {}: {}", host, e);
-                    Err(e)
-                }
-            }
-        }
+        let creds = self
+            .refresh_credentials_with_retry(http_client, &auth_io, host, &access_token)
+            .await?;
+        info!("✔️ Successfully refreshed credentials for {}", host);
+        Ok(creds)
     }
 }
 
@@ -1351,5 +1447,249 @@ mod tests {
         assert!(!output.contains("secret-key-id"));
         assert!(!output.contains("secret-access-key"));
         assert!(!output.contains("secret-session-token"));
+    }
+
+    // ── Retry-on-transient-4xx tests ──────────────────────────────────────
+
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+    use tokio::io::AsyncReadExt;
+    use tokio::io::AsyncWriteExt;
+
+    /// Spawns a one-connection TCP responder that replies with `response` bytes.
+    /// Used to produce real `reqwest::Error` values with a chosen HTTP status.
+    async fn spawn_one_shot(response: Vec<u8>) -> std::net::SocketAddr {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf).await;
+                let _ = stream.write_all(&response).await;
+                let _ = stream.shutdown().await;
+            }
+        });
+        addr
+    }
+
+    /// Produce an `Error::Reqwest` whose `.status()` is the given code. There
+    /// is no public constructor for `reqwest::Error`, so we round-trip through
+    /// a real HTTP request against a canned local responder.
+    async fn reqwest_error_with_status(status: u16) -> Error {
+        let body = format!(
+            "HTTP/1.1 {} X\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            status
+        )
+        .into_bytes();
+        let addr = spawn_one_shot(body).await;
+        reqwest::Client::new()
+            .get(format!("http://{}/", addr))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap_err()
+            .into()
+    }
+
+    /// Mock that fails the first N calls against each endpoint with a real
+    /// `Error::Reqwest` carrying HTTP 401, then starts succeeding.
+    struct RetryMockClient {
+        cred_fail_first_n: usize,
+        token_fail_first_n: usize,
+        cred_calls: AtomicUsize,
+        token_calls: AtomicUsize,
+    }
+
+    impl RetryMockClient {
+        fn new(cred_fail: usize, token_fail: usize) -> Self {
+            Self {
+                cred_fail_first_n: cred_fail,
+                token_fail_first_n: token_fail,
+                cred_calls: AtomicUsize::new(0),
+                token_calls: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl HttpClient for RetryMockClient {
+        async fn get<T: serde::de::DeserializeOwned>(
+            &self,
+            url: &str,
+            _auth_token: Option<&str>,
+        ) -> Res<T> {
+            let registry = get_registry();
+            if url == format!("https://{}/config.json", get_host()) {
+                let config = QuiltStackConfig {
+                    registry_url: format!("https://{registry}").parse()?,
+                };
+                return Ok(serde_json::from_value(serde_json::to_value(config)?)?);
+            }
+            if url == format!("https://{registry}/api/auth/get_credentials") {
+                let n = self.cred_calls.fetch_add(1, Ordering::SeqCst);
+                if n < self.cred_fail_first_n {
+                    return Err(reqwest_error_with_status(401).await);
+                }
+                let creds = RemoteCredentials {
+                    access_key_id: "oauth-access-key".to_string(),
+                    secret_access_key: "oauth-secret-key".to_string(),
+                    session_token: "oauth-session-token".to_string(),
+                    expiration: chrono::DateTime::from_timestamp(TIMESTAMP, 0).unwrap(),
+                };
+                return Ok(serde_json::from_value(serde_json::to_value(creds)?)?);
+            }
+            panic!("Unexpected GET URL: {url}")
+        }
+
+        async fn head(&self, _url: &str) -> Res<HeaderMap> {
+            unimplemented!()
+        }
+
+        async fn post<T: serde::de::DeserializeOwned>(
+            &self,
+            url: &str,
+            form_data: &HashMap<String, String>,
+        ) -> Res<T> {
+            assert_eq!(url, connect_token_url(&get_host()));
+            let n = self.token_calls.fetch_add(1, Ordering::SeqCst);
+            if n < self.token_fail_first_n {
+                return Err(reqwest_error_with_status(401).await);
+            }
+            assert_eq!(
+                form_data.get("grant_type").map(String::as_str),
+                Some("refresh_token")
+            );
+            let tokens = OAuthTokenResponse {
+                access_token: REFRESHED_ACCESS_TOKEN.to_string(),
+                refresh_token: Some("new-refresh-token".to_string()),
+                expires_in: 3600,
+            };
+            Ok(serde_json::from_value(serde_json::to_value(&tokens)?)?)
+        }
+
+        async fn post_json<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
+            &self,
+            _url: &str,
+            _body: &B,
+        ) -> Res<T> {
+            unimplemented!()
+        }
+    }
+
+    async fn seed_fresh_tokens(storage: &Arc<MockStorage>, paths: &DomainPaths, host: &Host) {
+        let auth_io = AuthIo::new(storage.clone(), paths.auth_host(host));
+        auth_io
+            .write_tokens(&Tokens {
+                access_token: ACCESS_TOKEN.to_string(),
+                refresh_token: REFRESH_TOKEN.to_string(),
+                // Well inside the 60-second buffer → proactive refresh skipped.
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            })
+            .await
+            .unwrap();
+        auth_io
+            .write_client(&OAuthClient {
+                client_id: CLIENT_ID.to_string(),
+                redirect_uri: REDIRECT_URI.to_string(),
+            })
+            .await
+            .unwrap();
+    }
+
+    /// Credentials endpoint flaps 401 once, then succeeds. The retry path
+    /// force-refreshes the access token and re-hits the credentials endpoint;
+    /// user must not see `LoginRequired`.
+    #[test(tokio::test)]
+    async fn test_credentials_transient_401_recovers_via_force_token_refresh() -> Res {
+        let storage = Arc::new(MockStorage::default());
+        let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
+        let auth = Auth::new(paths.clone(), storage.clone());
+        let host = get_host();
+        seed_fresh_tokens(&storage, &paths, &host).await;
+
+        let client = RetryMockClient::new(/*cred_fail=*/ 1, /*token_fail=*/ 0);
+        let creds = auth.get_credentials_or_refresh(&client, &host).await?;
+
+        assert_eq!(creds.access_key, "oauth-access-key");
+        assert_eq!(
+            client.cred_calls.load(Ordering::SeqCst),
+            2,
+            "credentials endpoint should be called twice: initial + retry"
+        );
+        assert_eq!(
+            client.token_calls.load(Ordering::SeqCst),
+            1,
+            "token endpoint should be called once to force-refresh"
+        );
+        Ok(())
+    }
+
+    /// Credentials endpoint fails 401 twice in a row. After the bounded retry
+    /// the client must conclude login is really required.
+    #[test(tokio::test)]
+    async fn test_credentials_persistent_401_maps_to_login_required() -> Res {
+        let storage = Arc::new(MockStorage::default());
+        let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
+        let auth = Auth::new(paths.clone(), storage.clone());
+        let host = get_host();
+        seed_fresh_tokens(&storage, &paths, &host).await;
+
+        let client = RetryMockClient::new(/*cred_fail=*/ usize::MAX, /*token_fail=*/ 0);
+        let result = auth.get_credentials_or_refresh(&client, &host).await;
+
+        assert!(
+            matches!(result, Err(Error::Login(LoginError::Required(_)))),
+            "expected LoginRequired after persistent 4xx, got: {result:?}"
+        );
+        assert_eq!(
+            client.cred_calls.load(Ordering::SeqCst),
+            2,
+            "retry must be bounded to one extra attempt"
+        );
+        Ok(())
+    }
+
+    /// Token endpoint flaps 401 once during the proactive refresh path, then
+    /// succeeds. The retry must kick in and `get_credentials_or_refresh` must
+    /// return credentials without surfacing `LoginRequired`.
+    #[test(tokio::test)]
+    async fn test_token_refresh_transient_401_recovers() -> Res {
+        let storage = Arc::new(MockStorage::default());
+        let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
+        let auth = Auth::new(paths.clone(), storage.clone());
+        let host = get_host();
+
+        // Seed *expired* tokens so the proactive refresh path is taken.
+        let auth_io = AuthIo::new(storage.clone(), paths.auth_host(&host));
+        auth_io
+            .write_tokens(&Tokens {
+                access_token: "expired-access-token".to_string(),
+                refresh_token: REFRESH_TOKEN.to_string(),
+                expires_at: chrono::Utc::now() - chrono::Duration::seconds(300),
+            })
+            .await?;
+        auth_io
+            .write_client(&OAuthClient {
+                client_id: CLIENT_ID.to_string(),
+                redirect_uri: REDIRECT_URI.to_string(),
+            })
+            .await?;
+
+        let client = RetryMockClient::new(/*cred_fail=*/ 0, /*token_fail=*/ 1);
+        let creds = auth.get_credentials_or_refresh(&client, &host).await?;
+
+        assert_eq!(creds.access_key, "oauth-access-key");
+        assert_eq!(
+            client.token_calls.load(Ordering::SeqCst),
+            2,
+            "token endpoint should be called twice: initial + retry"
+        );
+        assert_eq!(
+            client.cred_calls.load(Ordering::SeqCst),
+            1,
+            "credentials endpoint should only be called once after successful retry"
+        );
+        Ok(())
     }
 }

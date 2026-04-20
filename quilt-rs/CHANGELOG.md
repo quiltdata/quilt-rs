@@ -8,6 +8,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.29.1-alpha2] - 2026-04-20
+
+### Fixed
+
+- Retry a transient 4xx from the token or credentials endpoint once before mapping it to `Login required`, so a brief server-side auth hiccup no longer surfaces as a spurious logout in the UI
+
 ## [v0.29.1-alpha1] - 2026-04-17
 
 ### Changed
