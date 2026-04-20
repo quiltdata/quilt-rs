@@ -163,6 +163,9 @@ impl RemoteS3 {
         }
     }
 
+    /// `aws_config::defaults` already applies 3-attempt standard retry
+    /// (exponential backoff + jitter) and a 3.1 s connect timeout; no
+    /// read/operation timeout so slow multipart uploads aren't cut off.
     async fn get_client_for_region(
         &self,
         host: &Option<Host>,
