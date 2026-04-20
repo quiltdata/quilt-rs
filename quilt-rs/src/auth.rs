@@ -664,7 +664,10 @@ impl<S: Storage + Send + Sync> Auth<S> {
         host: &Host,
         tokens: &Tokens,
     ) -> Res<Tokens> {
-        let first_err = match self.refresh_tokens(http_client, auth_io, host, tokens).await {
+        let first_err = match self
+            .refresh_tokens(http_client, auth_io, host, tokens)
+            .await
+        {
             Ok(t) => return Ok(t),
             Err(e) => e,
         };
@@ -686,7 +689,8 @@ impl<S: Storage + Send + Sync> Auth<S> {
             "⚠️ Auth error refreshing tokens for {}, retrying once: {}", host, first_err
         );
         classify_retry_outcome(
-            self.refresh_tokens(http_client, auth_io, host, tokens).await,
+            self.refresh_tokens(http_client, auth_io, host, tokens)
+                .await,
             is_token_auth_error,
             "token endpoint",
             host,
@@ -708,7 +712,10 @@ impl<S: Storage + Send + Sync> Auth<S> {
         host: &Host,
         access_token: &str,
     ) -> Res<Credentials> {
-        let first_err = match self.refresh_credentials(http_client, host, access_token).await {
+        let first_err = match self
+            .refresh_credentials(http_client, host, access_token)
+            .await
+        {
             Ok(c) => return Ok(c),
             Err(e) => e,
         };
