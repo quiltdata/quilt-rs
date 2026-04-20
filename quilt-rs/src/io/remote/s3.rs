@@ -5,8 +5,10 @@ use std::sync::Arc;
 use std::sync::RwLock;
 
 use aws_config::BehaviorVersion;
+use aws_credential_types::provider::error::CredentialsError;
+use aws_credential_types::provider::future;
+use aws_credential_types::provider::ProvideCredentials;
 use aws_credential_types::Credentials;
-use aws_sdk_s3::error::DisplayErrorContext;
 use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_types::region::Region;
@@ -17,11 +19,11 @@ use tracing::warn;
 use crate::auth;
 use crate::auth::OAuthParams;
 use crate::checksum::ObjectHash;
-use crate::error::AuthError;
 use crate::error::LoginError;
 use crate::error::RemoteCatalogError;
 use crate::error::S3Error;
 use crate::error::S3ErrorKind;
+use crate::io::remote::describe_sdk_error;
 use crate::io::remote::host::fetch_host_config;
 use crate::io::remote::object::multipart_upload_and_sha256_chunksum;
 use crate::io::remote::object::put_and_request_checksum;
@@ -29,7 +31,6 @@ use crate::io::remote::HostChecksums;
 use crate::io::remote::HostConfig;
 use crate::io::remote::HttpClient;
 use crate::io::remote::Remote;
-use crate::io::storage::auth::AuthIo;
 use crate::io::storage::auth::OAuthClient;
 use crate::io::storage::LocalStorage;
 use crate::paths::DomainPaths;
@@ -65,9 +66,7 @@ async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<R
         SdkError::ServiceError(svc) if svc.err().is_no_such_key() => {
             Error::S3(S3Error::new(S3ErrorKind::NotFound(s3_uri.to_string())))
         }
-        _ => Error::S3(S3Error::new(S3ErrorKind::Raw(
-            DisplayErrorContext(err).to_string(),
-        ))),
+        _ => Error::S3(S3Error::new(S3ErrorKind::Raw(describe_sdk_error(err)))),
     })?;
     let uri_versioned = S3Uri {
         version: result.version_id,
@@ -83,6 +82,43 @@ async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<R
 struct CredsRef {
     region: Region,
     host: Option<Host>,
+}
+
+/// Adapter that lets the AWS SDK pull fresh credentials from our `Auth`
+/// layer on every request, instead of holding a static
+/// `aws_credential_types::Credentials` that ages out.
+///
+/// The SDK wraps this in its own caching layer with TTL and async
+/// prefetch, so we just need to return the *current* credentials on
+/// each call — `get_credentials_or_refresh` already handles the
+/// "token expired → refresh → new STS creds" flow.
+#[derive(Clone, Debug)]
+struct QuiltCredentialsProvider {
+    auth: auth::Auth,
+    http: crate::io::remote::client::ReqwestClient,
+    host: Host,
+}
+
+impl ProvideCredentials for QuiltCredentialsProvider {
+    fn provide_credentials<'a>(&'a self) -> future::ProvideCredentials<'a>
+    where
+        Self: 'a,
+    {
+        future::ProvideCredentials::new(async move {
+            let c = self
+                .auth
+                .get_credentials_or_refresh(&self.http, &self.host)
+                .await
+                .map_err(|e| CredentialsError::provider_error(e.to_string()))?;
+            Ok(Credentials::new(
+                c.access_key,
+                c.secret_key,
+                Some(c.token),
+                Some(c.expires_at.into()),
+                "quilt-registry",
+            ))
+        })
+    }
 }
 
 /// Implementation of the `Remote` trait for S3
@@ -166,6 +202,11 @@ impl RemoteS3 {
     /// `aws_config::defaults` already applies 3-attempt standard retry
     /// (exponential backoff + jitter) and a 3.1 s connect timeout; no
     /// read/operation timeout so slow multipart uploads aren't cut off.
+    ///
+    /// For the `Some(host)` branch, credential freshness is handled by
+    /// [`QuiltCredentialsProvider`] on every S3 request — the cached
+    /// client itself holds the provider, not a frozen access key, so
+    /// it stays usable across STS rotations.
     async fn get_client_for_region(
         &self,
         host: &Option<Host>,
@@ -176,56 +217,19 @@ impl RemoteS3 {
             host: host.clone(),
         };
 
-        // Try to get existing client from cache and check if credentials are valid
-        {
-            // Check if we have a valid cached client
-            let cached_client = {
-                let map = self
-                    .s3
-                    .read()
-                    .map_err(|e| S3Error::new(S3ErrorKind::PoisonLock(e.to_string())))?;
-                map.get(&creds_ref).cloned()
-            };
-
-            if let Some(client) = cached_client {
-                if let Some(host) = &host {
-                    // If credentials saved, check if they are valid
-                    let auth_io =
-                        AuthIo::new(self.auth.storage.clone(), self.auth.paths.auth_host(host));
-                    match auth_io.read_credentials().await {
-                        // We ensured credentials are not expired inside `read_credentials`
-                        Ok(Some(_)) => {
-                            info!(
-                                "✔️ Using cached S3 client with valid credentials for {}",
-                                host
-                            );
-                            return Ok(client);
-                        }
-                        Ok(None) => {
-                            info!(
-                                "❌ No credentials found for {}, will create new client",
-                                host
-                            );
-                        }
-                        Err(e) => {
-                            warn!("❌ Failed to read credentials for {}: {}", host, e);
-                            return Err(Error::Auth(
-                                host.to_owned(),
-                                AuthError::CredentialsRead(e.to_string()),
-                            ));
-                        }
-                    }
-                    // Credentials expired or missing, will create new client with refreshed credentials
-                } else {
-                    // For clients with inferred credentials from ~/.aws, reuse existing client
-                    info!("✔️ Using cached S3 client with AWS credentials");
-                    return Ok(client);
-                }
-            }
+        let cached_client = {
+            let map = self
+                .s3
+                .read()
+                .map_err(|e| S3Error::new(S3ErrorKind::PoisonLock(e.to_string())))?;
+            map.get(&creds_ref).cloned()
+        };
+        if let Some(client) = cached_client {
+            info!("✔️ Using cached S3 client for region {:?}", region);
+            return Ok(client);
         }
 
         info!("⏳ Creating new S3 client for region {:?}", region);
-        // Create new client
         let config = match host {
             None => {
                 info!("⏳ No `&catalog=`, so we use credentials in ~/.aws");
@@ -241,20 +245,20 @@ impl RemoteS3 {
                 config
             }
             Some(ref host) => {
-                let creds = self
-                    .auth
+                // Smoke-test eagerly so `Login required` surfaces now rather
+                // than inside a later S3 call. The provider below handles
+                // subsequent refreshes per-request.
+                self.auth
                     .get_credentials_or_refresh(&self.http, host)
                     .await?;
                 debug!("✔️ Got credentials for host {:?}", host);
                 aws_config::defaults(BehaviorVersion::latest())
                     .region(region.clone())
-                    .credentials_provider(Credentials::new(
-                        creds.access_key,
-                        &creds.secret_key,
-                        Some(creds.token),
-                        Some(creds.expires_at.into()),
-                        "quilt-registry",
-                    ))
+                    .credentials_provider(QuiltCredentialsProvider {
+                        auth: self.auth.clone(),
+                        http: self.http.clone(),
+                        host: host.clone(),
+                    })
                     .load()
                     .await
             }
@@ -290,7 +294,7 @@ impl RemoteS3 {
                 Error::Login(LoginError::Required(_)) | Error::S3(_) => e,
                 _ => Error::S3(S3Error {
                     host: host.to_owned(),
-                    kind: S3ErrorKind::Client(DisplayErrorContext(e).to_string()),
+                    kind: S3ErrorKind::Client(e.to_string()),
                 }),
             })
     }
@@ -321,7 +325,7 @@ impl Remote for RemoteS3 {
                 warn!("❌ Failed to check object existence at {}: {}", s3_uri, err);
                 Err(Error::S3(S3Error {
                     host: host.to_owned(),
-                    kind: S3ErrorKind::Exists(DisplayErrorContext(err).to_string()),
+                    kind: S3ErrorKind::Exists(describe_sdk_error(err)),
                 }))
             }
         }
@@ -373,7 +377,7 @@ impl Remote for RemoteS3 {
             .map_err(|err| {
                 Error::S3(S3Error {
                     host: host.to_owned(),
-                    kind: S3ErrorKind::PutObject(DisplayErrorContext(err).to_string()),
+                    kind: S3ErrorKind::PutObject(describe_sdk_error(err)),
                 })
             })?;
 
@@ -394,7 +398,7 @@ impl Remote for RemoteS3 {
             }),
             Err(err) => Err(Error::S3(S3Error {
                 host: host.to_owned(),
-                kind: S3ErrorKind::ResolveUrl(DisplayErrorContext(err).to_string()),
+                kind: S3ErrorKind::ResolveUrl(describe_sdk_error(err)),
             })),
         }
     }
@@ -569,6 +573,46 @@ mod tests {
         // Verify we got the correct CRC64 hash
         assert_eq!(object_hash.to_string(), "LZmmpqbBItw=");
 
+        Ok(())
+    }
+
+    /// When storage holds valid credentials, the provider must surface them
+    /// as `aws_credential_types::Credentials` on every call. This proves
+    /// the async plumbing compiles and runs, and that the quilt-side
+    /// credential fields map correctly to the SDK ones.
+    #[test(tokio::test)]
+    async fn test_quilt_credentials_provider_returns_stored_creds() -> Res<()> {
+        use std::str::FromStr;
+
+        use tempfile::TempDir;
+
+        use crate::io::storage::auth::AuthIo;
+        use crate::io::storage::auth::Credentials as QuiltCreds;
+
+        let temp = TempDir::new()?;
+        let paths = DomainPaths::new(temp.path().to_path_buf());
+        let storage = Arc::new(LocalStorage::new());
+        let host = Host::from_str("catalog.example.com").unwrap();
+
+        let stored = QuiltCreds {
+            access_key: "AKIAEXAMPLE".to_string(),
+            secret_key: "secret".to_string(),
+            token: "session-token".to_string(),
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+        };
+        let auth_io = AuthIo::new(Arc::clone(&storage), paths.auth_host(&host));
+        auth_io.write_credentials(&stored).await?;
+
+        let provider = QuiltCredentialsProvider {
+            auth: auth::Auth::new(paths, storage),
+            http: crate::io::remote::client::ReqwestClient::new(),
+            host,
+        };
+
+        let sdk_creds = provider.provide_credentials().await.unwrap();
+        assert_eq!(sdk_creds.access_key_id(), stored.access_key);
+        assert_eq!(sdk_creds.secret_access_key(), stored.secret_key);
+        assert_eq!(sdk_creds.session_token(), Some(stored.token.as_str()));
         Ok(())
     }
 }
