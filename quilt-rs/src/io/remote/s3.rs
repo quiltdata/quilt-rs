@@ -92,14 +92,20 @@ struct CredsRef {
 /// prefetch, so we just need to return the *current* credentials on
 /// each call — `get_credentials_or_refresh` already handles the
 /// "token expired → refresh → new STS creds" flow.
+///
+/// Generic over `HttpClient` so tests can inject a mock; production
+/// code instantiates it with [`ReqwestClient`].
 #[derive(Clone, Debug)]
-struct QuiltCredentialsProvider {
+struct QuiltCredentialsProvider<H> {
     auth: auth::Auth,
-    http: crate::io::remote::client::ReqwestClient,
+    http: H,
     host: Host,
 }
 
-impl ProvideCredentials for QuiltCredentialsProvider {
+impl<H> ProvideCredentials for QuiltCredentialsProvider<H>
+where
+    H: HttpClient + Clone + std::fmt::Debug + Send + Sync + 'static,
+{
     fn provide_credentials<'a>(&'a self) -> future::ProvideCredentials<'a>
     where
         Self: 'a,
@@ -613,6 +619,116 @@ mod tests {
         assert_eq!(sdk_creds.access_key_id(), stored.access_key);
         assert_eq!(sdk_creds.secret_access_key(), stored.secret_key);
         assert_eq!(sdk_creds.session_token(), Some(stored.token.as_str()));
+        Ok(())
+    }
+
+    /// The core of the `ExpiredToken` fix: when on-disk credentials are
+    /// expired but the access token is still fresh, `provide_credentials`
+    /// must call the registry to mint new STS creds and return *those*,
+    /// not the stale on-disk ones.
+    #[test(tokio::test)]
+    async fn test_quilt_credentials_provider_refreshes_when_expired() -> Res<()> {
+        use std::collections::HashMap;
+        use std::str::FromStr;
+
+        use async_trait::async_trait;
+        use reqwest::header::HeaderMap;
+        use tempfile::TempDir;
+
+        use crate::io::remote::HttpClient;
+        use crate::io::storage::auth::AuthIo;
+        use crate::io::storage::auth::Credentials as QuiltCreds;
+        use crate::io::storage::auth::Tokens;
+
+        #[derive(Clone, Debug)]
+        struct RefreshMock {
+            refreshed_access_key: String,
+        }
+
+        #[async_trait]
+        impl HttpClient for RefreshMock {
+            async fn get<T: serde::de::DeserializeOwned>(
+                &self,
+                url: &str,
+                auth_token: Option<&str>,
+            ) -> Res<T> {
+                if url.ends_with("/config.json") {
+                    let body = serde_json::json!({
+                        "registryUrl": "https://registry.example.com",
+                    });
+                    return Ok(serde_json::from_value(body)?);
+                }
+                if url.contains("/api/auth/get_credentials") {
+                    assert_eq!(auth_token, Some("fresh-access-token"));
+                    let body = serde_json::json!({
+                        "AccessKeyId": self.refreshed_access_key,
+                        "SecretAccessKey": "refreshed-secret",
+                        "SessionToken": "refreshed-session",
+                        "Expiration": (chrono::Utc::now() + chrono::Duration::hours(1))
+                            .to_rfc3339(),
+                    });
+                    return Ok(serde_json::from_value(body)?);
+                }
+                panic!("unexpected GET: {url}");
+            }
+            async fn head(&self, _url: &str) -> Res<HeaderMap> {
+                unimplemented!("head not used")
+            }
+            async fn post<T: serde::de::DeserializeOwned>(
+                &self,
+                _url: &str,
+                _form_data: &HashMap<String, String>,
+            ) -> Res<T> {
+                unimplemented!("fresh tokens → no token refresh")
+            }
+            async fn post_json<
+                T: serde::de::DeserializeOwned,
+                B: serde::Serialize + Send + Sync,
+            >(
+                &self,
+                _url: &str,
+                _body: &B,
+            ) -> Res<T> {
+                unimplemented!("post_json not used")
+            }
+        }
+
+        let temp = TempDir::new()?;
+        let paths = DomainPaths::new(temp.path().to_path_buf());
+        let storage = Arc::new(LocalStorage::new());
+        let host = Host::from_str("catalog.example.com").unwrap();
+
+        let auth_io = AuthIo::new(Arc::clone(&storage), paths.auth_host(&host));
+        // Expired credentials — force the refresh path.
+        auth_io
+            .write_credentials(&QuiltCreds {
+                access_key: "STALE".to_string(),
+                secret_key: "stale-secret".to_string(),
+                token: "stale-session".to_string(),
+                expires_at: chrono::Utc::now() - chrono::Duration::hours(1),
+            })
+            .await?;
+        // Fresh access token — skip the OAuth refresh leg.
+        auth_io
+            .write_tokens(&Tokens {
+                access_token: "fresh-access-token".to_string(),
+                refresh_token: "refresh-token".to_string(),
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            })
+            .await?;
+
+        let provider = QuiltCredentialsProvider {
+            auth: auth::Auth::new(paths, storage),
+            http: RefreshMock {
+                refreshed_access_key: "REFRESHED".to_string(),
+            },
+            host,
+        };
+
+        let sdk_creds = provider.provide_credentials().await.unwrap();
+        assert_eq!(sdk_creds.access_key_id(), "REFRESHED");
+        assert_eq!(sdk_creds.secret_access_key(), "refreshed-secret");
+        assert_eq!(sdk_creds.session_token(), Some("refreshed-session"));
         Ok(())
     }
 }
