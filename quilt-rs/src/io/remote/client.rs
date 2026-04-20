@@ -170,6 +170,8 @@ impl HttpClient for ReqwestClient {
         Ok(response.json().await?)
     }
 
+    // TODO: wire through `ensure_success` so non-2xx HEAD responses surface as
+    // errors instead of empty-header `Ok`.
     async fn head(&self, url: &str) -> Res<HeaderMap> {
         let response = self
             .client
