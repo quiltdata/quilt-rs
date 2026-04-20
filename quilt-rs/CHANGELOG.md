@@ -12,11 +12,11 @@
 
 ### Fixed
 
-- Fix `ExpiredToken` 400s on S3 by refreshing credentials per request via a `ProvideCredentials` adapter over `Auth`.
+- Fix `ExpiredToken` 400s on S3 by refreshing credentials per request via a `ProvideCredentials` adapter over `Auth` (<https://github.com/quiltdata/quilt-rs/pull/631>)
 
 ### Changed
 
-- Surface the AWS error code and `x-amz-request-id` in wrapped S3 error messages.
+- Surface the AWS error code and `x-amz-request-id` in wrapped S3 error messages (<https://github.com/quiltdata/quilt-rs/pull/631>)
 
 ## [v0.29.1-alpha3] - 2026-04-20
 
