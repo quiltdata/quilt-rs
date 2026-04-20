@@ -109,7 +109,7 @@ impl ProvideCredentials for QuiltCredentialsProvider {
                 .auth
                 .get_credentials_or_refresh(&self.http, &self.host)
                 .await
-                .map_err(|e| CredentialsError::provider_error(e.to_string()))?;
+                .map_err(CredentialsError::provider_error)?;
             Ok(Credentials::new(
                 c.access_key,
                 c.secret_key,

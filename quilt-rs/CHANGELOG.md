@@ -12,11 +12,11 @@
 
 ### Fixed
 
-- Eliminate `ExpiredToken` 400 errors on S3 calls by letting the AWS SDK refresh credentials on each request (via a `ProvideCredentials` adapter over `Auth`) instead of baking a static, ageing-out copy into the cached client
+- Fix `ExpiredToken` 400s on S3 by refreshing credentials per request via a `ProvideCredentials` adapter over `Auth`.
 
 ### Changed
 
-- Surface the S3 error code (e.g. `ExpiredToken`, `RequestTimeTooSkewed`) in wrapped error messages instead of `service error: unhandled error ... status code NNN`, so failures are diagnosable from bug reports alone
+- Surface the AWS error code and `x-amz-request-id` in wrapped S3 error messages.
 
 ## [v0.29.1-alpha3] - 2026-04-20
 
