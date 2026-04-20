@@ -511,10 +511,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
     /// on first use. The outer lock is only held for the brief map
     /// lookup — never across `.await`.
     fn refresh_lock_for(&self, host: &Host) -> Arc<tokio::sync::Mutex<()>> {
-        let mut locks = self
-            .refresh_locks
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut locks = self.refresh_locks.lock().unwrap_or_else(|e| e.into_inner());
         locks
             .entry(host.clone())
             .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
@@ -1823,9 +1820,7 @@ mod tests {
         }
     }
 
-    async fn seed_expired_creds_fresh_tokens(
-        auth_io: &AuthIo<Arc<MockStorage>>,
-    ) -> Res {
+    async fn seed_expired_creds_fresh_tokens(auth_io: &AuthIo<Arc<MockStorage>>) -> Res {
         auth_io
             .write_credentials(&Credentials {
                 access_key: "stale".to_string(),
@@ -1875,9 +1870,7 @@ mod tests {
         }
 
         assert_eq!(
-            client
-                .cred_calls
-                .load(std::sync::atomic::Ordering::SeqCst),
+            client.cred_calls.load(std::sync::atomic::Ordering::SeqCst),
             1,
             "single-flight: 10 concurrent callers must produce exactly one refresh",
         );
@@ -1900,16 +1893,10 @@ mod tests {
         let host_b: Host = "b.quilt.dev".parse().unwrap();
 
         // Seed each host separately; they live under distinct paths.
-        seed_expired_creds_fresh_tokens(&AuthIo::new(
-            storage.clone(),
-            paths.auth_host(&host_a),
-        ))
-        .await?;
-        seed_expired_creds_fresh_tokens(&AuthIo::new(
-            storage.clone(),
-            paths.auth_host(&host_b),
-        ))
-        .await?;
+        seed_expired_creds_fresh_tokens(&AuthIo::new(storage.clone(), paths.auth_host(&host_a)))
+            .await?;
+        seed_expired_creds_fresh_tokens(&AuthIo::new(storage.clone(), paths.auth_host(&host_b)))
+            .await?;
 
         let slow_client = CountingCredsClient {
             cred_calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
