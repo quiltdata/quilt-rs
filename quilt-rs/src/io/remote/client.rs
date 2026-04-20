@@ -71,9 +71,9 @@ impl ReqwestClient {
 /// middleware classifies as transient. Gives us a flakiness signal in logs
 /// without standing up dedicated telemetry.
 ///
-/// Also fires on the *final* attempt when the retry budget is exhausted —
-/// reqwest-retry asks the strategy before checking the budget. Acceptable as a
-/// rough signal; revisit if the spurious line becomes noisy.
+/// Fires on the *final* attempt too — reqwest-retry asks the strategy before
+/// checking whether any attempts remain, so "may retry" is honest: retry
+/// happens only if the attempt count hasn't been exhausted.
 struct LoggingStrategy;
 
 impl RetryableStrategy for LoggingStrategy {
@@ -87,11 +87,11 @@ impl RetryableStrategy for LoggingStrategy {
                 Ok(resp) => warn!(
                     status = resp.status().as_u16(),
                     url = %resp.url(),
-                    "🔁 transient HTTP response — will retry if budget remains"
+                    "🔁 transient HTTP response — may retry"
                 ),
                 Err(e) => warn!(
                     error = %e,
-                    "🔁 transient HTTP error — will retry if budget remains"
+                    "🔁 transient HTTP error — may retry"
                 ),
             }
         }
