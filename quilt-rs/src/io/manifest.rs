@@ -10,6 +10,8 @@ use tokio_stream::StreamExt;
 use tracing::log;
 use url::Url;
 
+use crate::error::ManifestError;
+use crate::error::UriError;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
@@ -33,8 +35,6 @@ use crate::uri::Tag;
 use crate::uri::TagUri;
 use crate::Error;
 use crate::Res;
-use crate::error::ManifestError;
-use crate::error::UriError;
 
 async fn bytestream_to_string(bytestream: ByteStream) -> Res<String> {
     let mut reader = bytestream.into_async_read();

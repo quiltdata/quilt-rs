@@ -4,8 +4,8 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::str::FromStr;
 
-use crate::Error;
 use crate::error::UriError;
+use crate::Error;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Host {

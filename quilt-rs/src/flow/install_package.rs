@@ -1,6 +1,8 @@
 use tracing::debug;
 use tracing::info;
 
+#[cfg(test)]
+use crate::error::FsError;
 use crate::flow;
 use crate::io::manifest::resolve_tag;
 use crate::io::remote::Remote;
@@ -12,8 +14,6 @@ use crate::paths::DomainPaths;
 use crate::uri::ManifestUri;
 use crate::uri::Tag;
 use crate::Error;
-#[cfg(test)]
-use crate::error::FsError;
 use crate::InstallPackageError;
 use crate::Res;
 

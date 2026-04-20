@@ -213,7 +213,10 @@ mod tests {
             .take_params(&host, "auth-code".to_string(), "state")
             .await;
         assert!(
-            matches!(result, Err(Error::OAuthUi(crate::error::OAuthUiError::OAuth(_)))),
+            matches!(
+                result,
+                Err(Error::OAuthUi(crate::error::OAuthUiError::OAuth(_)))
+            ),
             "expected Err(OAuth) for unsolicited callback"
         );
     }
@@ -230,7 +233,10 @@ mod tests {
             .take_params(&host, "auth-code".to_string(), &state)
             .await;
         assert!(
-            matches!(result, Err(Error::OAuthUi(crate::error::OAuthUiError::OAuth(_)))),
+            matches!(
+                result,
+                Err(Error::OAuthUi(crate::error::OAuthUiError::OAuth(_)))
+            ),
             "expected Err(OAuth) for expired state"
         );
     }

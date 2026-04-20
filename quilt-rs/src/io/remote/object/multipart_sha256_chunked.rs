@@ -10,11 +10,11 @@ use aws_smithy_types::byte_stream::Length;
 use crate::checksum::chunksize_and_parts;
 use crate::checksum::ObjectHash;
 use crate::checksum::Sha256ChunkedHash;
-use crate::uri::S3Uri;
-use crate::Res;
 use crate::error::ChecksumError;
 use crate::error::S3Error;
 use crate::error::S3ErrorKind;
+use crate::uri::S3Uri;
+use crate::Res;
 
 pub async fn multipart_upload_and_sha256_chunksum(
     client: aws_sdk_s3::Client,

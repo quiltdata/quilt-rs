@@ -4,8 +4,8 @@ use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use aws_smithy_types::base64;
 use multihash::Multihash;
 
-use crate::Res;
 use crate::error::ChecksumError;
+use crate::Res;
 
 pub mod top_hash;
 

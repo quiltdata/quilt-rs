@@ -13,8 +13,8 @@ use tokio::io::AsyncReadExt;
 use tokio::io::BufReader;
 
 use crate::checksum::hash::Hash;
-use crate::Error;
 use crate::error::ChecksumError;
+use crate::Error;
 use crate::Res;
 
 /// Multihash code for legacy or single-chunked checksums

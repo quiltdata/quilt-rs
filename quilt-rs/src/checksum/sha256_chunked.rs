@@ -13,8 +13,8 @@ use tokio::io::AsyncReadExt;
 
 use crate::checksum::hash::Hash;
 use crate::checksum::Sha256Hash;
-use crate::Error;
 use crate::error::ChecksumError;
+use crate::Error;
 use crate::Res;
 
 /// Multihash code for chunksums

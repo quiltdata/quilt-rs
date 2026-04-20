@@ -12,6 +12,7 @@ use tracing::log;
 #[cfg(test)]
 use tempfile::TempDir;
 
+use crate::error::LineageError;
 use crate::io::storage::Storage;
 use crate::io::storage::StorageExt;
 use crate::paths;
@@ -19,7 +20,6 @@ use crate::uri::Namespace;
 use crate::Error;
 use crate::InstallPackageError;
 use crate::Res;
-use crate::error::LineageError;
 
 mod status;
 pub use status::Change;
@@ -108,7 +108,9 @@ impl DomainLineageIo {
     pub async fn read(&self, storage: &(impl Storage + Sync)) -> Res<DomainLineage> {
         match storage.read_bytes(&self.path).await {
             Ok(bytes) => DomainLineage::from_slice(&bytes),
-            Err(_) if !storage.exists(&self.path).await => Err(Error::Lineage(LineageError::Missing)),
+            Err(_) if !storage.exists(&self.path).await => {
+                Err(Error::Lineage(LineageError::Missing))
+            }
             Err(e) => Err(e),
         }
     }

@@ -8,9 +8,9 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
+use crate::error::FsError;
 use crate::Error;
 use crate::Res;
-use crate::error::FsError;
 
 use super::Storage;
 

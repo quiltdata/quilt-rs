@@ -3,10 +3,10 @@ use std::str::Chars;
 
 use url::Url;
 
+use crate::error::UriError;
 use crate::uri::Host;
 use crate::Error;
 use crate::Res;
-use crate::error::UriError;
 
 fn head_str(mut chars: Chars<'_>) -> (Option<char>, &str) {
     let leading_char = chars.next();

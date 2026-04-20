@@ -3,6 +3,9 @@ use std::path::PathBuf;
 
 use tracing::log;
 
+use crate::error::LoginError;
+use crate::error::PackageOpError;
+use crate::error::UriError;
 use crate::flow;
 use crate::flow::cache_remote_manifest;
 use crate::io::remote::resolve_workflow;
@@ -25,9 +28,6 @@ use crate::uri::Namespace;
 use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
-use crate::error::LoginError;
-use crate::error::PackageOpError;
-use crate::error::UriError;
 
 /// Result of a push operation visible to callers outside `quilt-rs`.
 pub struct PushOutcome {

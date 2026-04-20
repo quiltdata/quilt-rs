@@ -9,14 +9,14 @@ use tokio::io::AsyncRead;
 use tokio::io::BufReader;
 
 use crate::checksum;
+use crate::error::ManifestError;
+use crate::error::UriError;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamRowsChunk;
 use crate::io::storage::ByteStream;
 use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
-use crate::error::ManifestError;
-use crate::error::UriError;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MetadataSchema {
@@ -236,7 +236,9 @@ impl Manifest {
         })?;
 
         let Some(header_str) = header else {
-            return Err(Error::Manifest(ManifestError::Header("Empty manifest".into())));
+            return Err(Error::Manifest(ManifestError::Header(
+                "Empty manifest".into(),
+            )));
         };
 
         // Parse the raw JSON to check if user_meta is explicitly null
@@ -327,14 +329,12 @@ impl Manifest {
         path: &std::path::Path,
     ) -> Res<Self> {
         let file = storage.open_file(path).await?;
-        Self::from_reader(file)
-            .await
-            .map_err(|e| {
-                crate::Error::Manifest(ManifestError::Load {
-                    path: path.to_path_buf(),
-                    source: Box::new(e),
-                })
+        Self::from_reader(file).await.map_err(|e| {
+            crate::Error::Manifest(ManifestError::Load {
+                path: path.to_path_buf(),
+                source: Box::new(e),
             })
+        })
     }
 
     /// Find a record by path (for compatibility with Table API)

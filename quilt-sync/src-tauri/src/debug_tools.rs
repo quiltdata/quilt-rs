@@ -2,7 +2,9 @@ use crate::quilt;
 use crate::Error;
 
 pub fn try_remote_origin_host(uri: &quilt::uri::ManifestUri) -> Result<quilt::uri::Host, Error> {
-    uri.origin.clone().ok_or(Error::PackageUri(crate::error::PackageUriError::MissingOrigin))
+    uri.origin.clone().ok_or(Error::PackageUri(
+        crate::error::PackageUriError::MissingOrigin,
+    ))
 }
 
 /// Resolve the package URI and origin host from lineage.
@@ -86,7 +88,9 @@ mod tests {
         };
         assert!(matches!(
             try_remote_origin_host(&manifest_without_origin),
-            Err(Error::PackageUri(crate::error::PackageUriError::MissingOrigin))
+            Err(Error::PackageUri(
+                crate::error::PackageUriError::MissingOrigin
+            ))
         ));
 
         Ok(())

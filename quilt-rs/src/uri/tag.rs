@@ -1,13 +1,13 @@
 use std::fmt;
 use std::str::FromStr;
 
+use crate::error::PackageOpError;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::uri::S3PackageHandle;
 use crate::uri::S3Uri;
 use crate::Error;
-use crate::error::PackageOpError;
 
 /// In theory tag can be any string
 /// But in practice we only use timestamps and "latest"

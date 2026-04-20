@@ -8,6 +8,7 @@ use tracing::debug;
 use tracing::info;
 use url::Url;
 
+use crate::error::ManifestError;
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::RowsStream;
 use crate::io::remote::Remote;
@@ -23,7 +24,6 @@ use crate::uri::S3Uri;
 use crate::Error;
 use crate::InstallPathError;
 use crate::Res;
-use crate::error::ManifestError;
 
 async fn cache_immutable_object(
     storage: &impl Storage,

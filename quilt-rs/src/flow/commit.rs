@@ -9,6 +9,8 @@ use tracing::info;
 use tracing::warn;
 use url::Url;
 
+use crate::error::ManifestError;
+use crate::error::PackageOpError;
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamRowsChunk;
@@ -26,8 +28,6 @@ use crate::paths::DomainPaths;
 use crate::uri::Namespace;
 use crate::Error;
 use crate::Res;
-use crate::error::ManifestError;
-use crate::error::PackageOpError;
 
 async fn stream_local_with_changes(
     local_manifest: &Manifest,

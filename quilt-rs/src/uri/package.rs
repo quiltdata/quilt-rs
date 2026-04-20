@@ -14,10 +14,10 @@ use serde::Serializer;
 use url::form_urlencoded;
 use url::Url;
 
+use crate::error::UriError;
 use crate::uri::Host;
 use crate::uri::ManifestUri;
 use crate::Error;
-use crate::error::UriError;
 use crate::Res;
 
 pub const LATEST_TAG: &str = "latest";
@@ -217,9 +217,7 @@ impl TryFrom<&str> for S3PackageUri {
 
         let pkg_spec = params
             .remove("package")
-            .ok_or(UriError::Package(
-                "missing package in fragment".to_string(),
-            ))?;
+            .ok_or(UriError::Package("missing package in fragment".to_string()))?;
 
         let (namespace, revision) = if pkg_spec.contains(':') && pkg_spec.contains('@') {
             return Err(Error::Uri(UriError::Package(

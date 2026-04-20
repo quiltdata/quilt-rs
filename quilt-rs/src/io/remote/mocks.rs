@@ -5,6 +5,9 @@ use tracing::log;
 
 use crate::checksum::ObjectHash;
 use crate::checksum::Sha256ChunkedHash;
+use crate::error::FsError;
+use crate::error::S3Error;
+use crate::error::S3ErrorKind;
 use crate::io::remote::HostConfig;
 use crate::io::remote::RemoteObjectStream;
 use crate::io::storage::mocks::MockStorage;
@@ -12,9 +15,6 @@ use crate::io::storage::Storage;
 use crate::uri::Host;
 use crate::uri::S3Uri;
 use crate::Error;
-use crate::error::FsError;
-use crate::error::S3Error;
-use crate::error::S3ErrorKind;
 
 use crate::Res;
 

@@ -6,11 +6,11 @@ use serde::Deserialize;
 
 use crate::checksum::MULTIHASH_CRC64_NVME;
 use crate::checksum::MULTIHASH_SHA256_CHUNKED;
+use crate::error::RemoteCatalogError;
 use crate::io::remote::client::HttpClient;
 use crate::uri::Host;
 use crate::Error;
 use crate::Res;
-use crate::error::RemoteCatalogError;
 
 /// Supported checksum algorithms for a host
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -265,7 +265,9 @@ mod tests {
         // JSON parsing errors get wrapped in HostConfig error by map_err
         let error = result.unwrap_err();
         match error {
-            Error::RemoteCatalog(RemoteCatalogError::HostConfig(msg)) if msg.contains("JSON error") => {
+            Error::RemoteCatalog(RemoteCatalogError::HostConfig(msg))
+                if msg.contains("JSON error") =>
+            {
                 // This is expected - all client errors get wrapped
             }
             _ => panic!(

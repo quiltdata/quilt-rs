@@ -8,6 +8,7 @@ use tracing::info;
 use url::Url;
 
 use crate::checksum::calculate_hash;
+use crate::error::PackageOpError;
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::remote::HostConfig;
 use crate::io::storage::Storage;
@@ -23,7 +24,6 @@ use crate::uri::Namespace;
 use crate::Error;
 use crate::InstallPackageError;
 use crate::Res;
-use crate::error::PackageOpError;
 
 /// Walk a source directory recursively, collecting `(relative_path, absolute_path)` pairs.
 /// Respects `.quiltignore` if present in the source directory.

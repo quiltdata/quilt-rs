@@ -18,7 +18,10 @@ use crate::auth;
 use crate::auth::OAuthParams;
 use crate::checksum::ObjectHash;
 use crate::error::AuthError;
+use crate::error::LoginError;
+use crate::error::RemoteCatalogError;
 use crate::error::S3Error;
+use crate::error::S3ErrorKind;
 use crate::io::remote::host::fetch_host_config;
 use crate::io::remote::object::multipart_upload_and_sha256_chunksum;
 use crate::io::remote::object::put_and_request_checksum;
@@ -34,9 +37,6 @@ use crate::uri::Host;
 use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
-use crate::error::LoginError;
-use crate::error::RemoteCatalogError;
-use crate::error::S3ErrorKind;
 
 use crate::io::remote::RemoteObjectStream;
 

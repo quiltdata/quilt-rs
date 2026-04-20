@@ -4,6 +4,7 @@ use tracing::info;
 use url::Url;
 
 use crate::checksum::calculate_hash;
+use crate::error::PackageOpError;
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::RowsStream;
 use crate::io::remote::HostConfig;
@@ -18,7 +19,6 @@ use crate::paths::DomainPaths;
 use crate::uri::Namespace;
 use crate::Error;
 use crate::Res;
-use crate::error::PackageOpError;
 
 /// Re-hash all rows from the manifest stream, converting any rows whose
 /// hash algorithm doesn't match `host_config` to the correct algorithm.

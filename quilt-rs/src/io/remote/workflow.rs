@@ -1,6 +1,7 @@
 use serde_yaml::Value as YamlValue;
 use tokio::io::AsyncReadExt;
 
+use crate::error::RemoteCatalogError;
 use crate::io::remote::Remote;
 use crate::manifest::MetadataSchema;
 use crate::manifest::Workflow;
@@ -9,7 +10,6 @@ use crate::uri::Host;
 use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
-use crate::error::RemoteCatalogError;
 
 fn get_schema_id(yaml: &YamlValue, workflow_id: &str) -> Res<Option<String>> {
     match &yaml.get("workflows") {
@@ -167,7 +167,10 @@ workflows:
             .await
             .unwrap_err();
 
-        assert!(matches!(err, Error::RemoteCatalog(RemoteCatalogError::Workflow(_))));
+        assert!(matches!(
+            err,
+            Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
+        ));
         assert!(err.to_string().contains("Schemas not found"));
 
         Ok(())
@@ -187,7 +190,10 @@ workflows:
         let err = resolve_workflow(&remote, &host, Some("test-workflow".to_string()), &uri)
             .await
             .unwrap_err();
-        assert!(matches!(err, Error::RemoteCatalog(RemoteCatalogError::Workflow(_))));
+        assert!(matches!(
+            err,
+            Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
+        ));
         assert!(err.to_string().contains("There is no workflows config"));
 
         Ok(())
@@ -242,14 +248,20 @@ schemas:
         let err = resolve_workflow(&remote, &host, Some("non-existent".to_string()), &uri)
             .await
             .unwrap_err();
-        assert!(matches!(err, Error::RemoteCatalog(RemoteCatalogError::Workflow(_))));
+        assert!(matches!(
+            err,
+            Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
+        ));
         assert!(err.to_string().contains("Workflow non-existent not found"));
 
         // Case 2.d: Config exists but workflow_id is empty
         let err = resolve_workflow(&remote, &host, Some("".to_string()), &uri)
             .await
             .unwrap_err();
-        assert!(matches!(err, Error::RemoteCatalog(RemoteCatalogError::Workflow(_))));
+        assert!(matches!(
+            err,
+            Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
+        ));
         assert!(err.to_string().contains("Workflow  not found"));
 
         Ok(())

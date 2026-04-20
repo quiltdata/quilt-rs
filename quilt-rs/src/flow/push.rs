@@ -3,6 +3,7 @@ use tracing::debug;
 use tracing::info;
 use tracing::warn;
 
+use crate::error::PackageOpError;
 use crate::flow;
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::resolve_tag;
@@ -24,7 +25,6 @@ use crate::uri::S3PackageHandle;
 use crate::uri::Tag;
 use crate::Error;
 use crate::Res;
-use crate::error::PackageOpError;
 
 async fn use_existing_row_or_upload(
     remote: &impl Remote,

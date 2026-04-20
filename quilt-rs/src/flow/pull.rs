@@ -5,6 +5,7 @@ use tracing::error;
 use tracing::info;
 use tracing::warn;
 
+use crate::error::PackageOpError;
 use crate::flow;
 use crate::io::manifest::resolve_tag;
 use crate::io::remote::Remote;
@@ -18,7 +19,6 @@ use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::uri::Tag;
 use crate::Res;
-use crate::error::PackageOpError;
 
 /// Pulls the latest package from remote.
 /// It also remove every local file in working directory and then re-installs it.

@@ -3,6 +3,7 @@ use std::fmt;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::error::UriError;
 use crate::paths;
 use crate::uri::Host;
 use crate::uri::Namespace;
@@ -10,7 +11,6 @@ use crate::uri::RevisionPointer;
 use crate::uri::S3PackageUri;
 use crate::uri::S3Uri;
 use crate::Error;
-use crate::error::UriError;
 
 /// URI for manifest.
 /// Manifests are stored in immutable files.

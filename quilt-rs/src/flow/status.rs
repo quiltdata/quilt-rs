@@ -10,6 +10,7 @@ use tracing::warn;
 
 use crate::checksum::calculate_hash;
 use crate::checksum::verify_hash;
+use crate::error::UriError;
 use crate::io::manifest::resolve_tag;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
@@ -25,7 +26,6 @@ use crate::quiltignore;
 use crate::uri::Tag;
 use crate::Error;
 use crate::Res;
-use crate::error::UriError;
 
 /// Refreshes the tracked `latest_hash` property in lineage.json
 pub async fn refresh_latest_hash(
