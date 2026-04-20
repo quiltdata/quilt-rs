@@ -1,11 +1,25 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use reqwest::header::HeaderMap;
+use reqwest_middleware::ClientBuilder;
+use reqwest_middleware::ClientWithMiddleware;
+use reqwest_retry::policies::ExponentialBackoff;
+use reqwest_retry::DefaultRetryableStrategy;
+use reqwest_retry::RetryTransientMiddleware;
+use reqwest_retry::Retryable;
+use reqwest_retry::RetryableStrategy;
 use serde::de::DeserializeOwned;
 use tracing::warn;
 
+use crate::Error;
 use crate::Res;
+
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
+const MAX_RETRIES: u32 = 2;
 
 #[async_trait]
 pub trait HttpClient: Send + Sync {
@@ -25,7 +39,7 @@ pub trait HttpClient: Send + Sync {
 
 #[derive(Clone, Debug)]
 pub struct ReqwestClient {
-    client: reqwest::Client,
+    client: ClientWithMiddleware,
 }
 
 impl Default for ReqwestClient {
@@ -36,8 +50,66 @@ impl Default for ReqwestClient {
 
 impl ReqwestClient {
     pub fn new() -> Self {
-        Self {
-            client: reqwest::Client::new(),
+        let inner = reqwest::Client::builder()
+            .timeout(REQUEST_TIMEOUT)
+            .connect_timeout(CONNECT_TIMEOUT)
+            .pool_idle_timeout(POOL_IDLE_TIMEOUT)
+            .build()
+            .expect("reqwest client build should not fail with default TLS config");
+
+        let retry_policy = ExponentialBackoff::builder().build_with_max_retries(MAX_RETRIES);
+        let retry_middleware =
+            RetryTransientMiddleware::new_with_policy_and_strategy(retry_policy, LoggingStrategy);
+
+        let client = ClientBuilder::new(inner).with(retry_middleware).build();
+
+        Self { client }
+    }
+}
+
+/// Wraps [`DefaultRetryableStrategy`] with a `warn!` on every attempt the retry
+/// middleware classifies as transient. Gives us a flakiness signal in logs
+/// without standing up dedicated telemetry.
+///
+/// Fires on the *final* attempt too — reqwest-retry asks the strategy before
+/// checking whether any attempts remain, so "may retry" is honest: retry
+/// happens only if the attempt count hasn't been exhausted.
+struct LoggingStrategy;
+
+impl RetryableStrategy for LoggingStrategy {
+    fn handle(
+        &self,
+        res: &Result<reqwest::Response, reqwest_middleware::Error>,
+    ) -> Option<Retryable> {
+        let decision = DefaultRetryableStrategy.handle(res);
+        if matches!(decision, Some(Retryable::Transient)) {
+            match res {
+                Ok(resp) => warn!(
+                    status = resp.status().as_u16(),
+                    url = %resp.url(),
+                    "🔁 transient HTTP response — may retry"
+                ),
+                Err(e) => warn!(
+                    error = %e,
+                    "🔁 transient HTTP error — may retry"
+                ),
+            }
+        }
+        decision
+    }
+}
+
+impl From<reqwest_middleware::Error> for Error {
+    fn from(err: reqwest_middleware::Error) -> Self {
+        match err {
+            reqwest_middleware::Error::Reqwest(e) => Error::Reqwest(e),
+            // `Middleware(anyhow::Error)` is only produced if a middleware
+            // layer itself fails (not the HTTP exchange). Our only middleware
+            // is the retry layer, which doesn't surface errors this way; fold
+            // into `Error::Io` so callers don't need a new match arm.
+            reqwest_middleware::Error::Middleware(e) => {
+                Error::Io(std::io::Error::other(e.to_string()))
+            }
         }
     }
 }
@@ -98,6 +170,8 @@ impl HttpClient for ReqwestClient {
         Ok(response.json().await?)
     }
 
+    // TODO: wire through `ensure_success` so non-2xx HEAD responses surface as
+    // errors instead of empty-header `Ok`.
     async fn head(&self, url: &str) -> Res<HeaderMap> {
         let response = self
             .client
