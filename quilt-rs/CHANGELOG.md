@@ -8,6 +8,16 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.29.1-alpha2] - 2026-04-20
+
+### Fixed
+
+- Retry a transient 4xx from the token or credentials endpoint once before concluding `Login required` (<https://github.com/quiltdata/quilt-rs/pull/629>)
+
+### Changed
+
+- Log status/URL/body on every non-2xx HTTP response and include status as a structured field in auth-retry logs (<https://github.com/quiltdata/quilt-rs/pull/629>)
+
 ## [v0.29.1-alpha1] - 2026-04-17
 
 ### Changed
