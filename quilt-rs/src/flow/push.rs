@@ -3,6 +3,7 @@ use tracing::debug;
 use tracing::info;
 use tracing::warn;
 
+use crate::error::PackageOpError;
 use crate::flow;
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::resolve_tag;
@@ -210,9 +211,9 @@ pub async fn push_package(
         debug!("❌ Hash mismatch, copying cached to installed");
         // Otherwise, lineage will be pointing to the wrong/inexisting hash
         paths::copy_cached_to_installed(paths, storage, &new_manifest_uri).await?;
-        Err(Error::Push(
+        Err(Error::PackageOp(PackageOpError::Push(
             "Latest local hash is not equal to pushed manifest commit".to_string(),
-        ))?
+        )))?
     }
 
     // Certify latest when:

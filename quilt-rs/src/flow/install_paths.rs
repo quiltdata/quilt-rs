@@ -8,6 +8,7 @@ use tracing::debug;
 use tracing::info;
 use url::Url;
 
+use crate::error::ManifestError;
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::RowsStream;
 use crate::io::remote::Remote;
@@ -124,7 +125,7 @@ pub async fn install_paths(
         // TODO: Consider using a hashmap or treemap for manifest.rows
         let row = manifest
             .get_record(path)
-            .ok_or(Error::Table(format!("path {path:?} not found")))?;
+            .ok_or(ManifestError::Table(format!("path {path:?} not found")))?;
 
         let object_dest = paths.object(row.hash.digest());
 

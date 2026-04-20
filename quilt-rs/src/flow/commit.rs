@@ -9,6 +9,8 @@ use tracing::info;
 use tracing::warn;
 use url::Url;
 
+use crate::error::ManifestError;
+use crate::error::PackageOpError;
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamRowsChunk;
@@ -58,7 +60,9 @@ async fn stream_local_with_changes(
                             all_rows.push(Ok(row));
                         }
                     }
-                    Err(err) => all_rows.push(Err(Error::Table(err.to_string()))),
+                    Err(err) => {
+                        all_rows.push(Err(Error::Manifest(ManifestError::Table(err.to_string()))))
+                    }
                 }
             }
         }
@@ -91,7 +95,12 @@ async fn create_immutable_object_copy(
     let objects_dir = paths.objects_dir();
     let object_dest = objects_dir.join(hex::encode(current.hash.digest()));
     let new_physical_key = Url::from_file_path(&object_dest)
-        .map_err(|_| Error::Commit(format!("Failed to create URL from {:?}", &object_dest)))?
+        .map_err(|_| {
+            Error::PackageOp(PackageOpError::Commit(format!(
+                "Failed to create URL from {:?}",
+                &object_dest
+            )))
+        })?
         .to_string();
 
     let current_hash = current.hash.clone();
@@ -203,10 +212,10 @@ pub async fn commit_package(
             }
             Change::Added(current) => {
                 if manifest.contains_record(&current.logical_key) {
-                    return Err(Error::Commit(format!(
+                    return Err(Error::PackageOp(PackageOpError::Commit(format!(
                         "Trying to add a file that is already in the manifest: \"{}\"",
                         current.logical_key.display()
-                    )));
+                    ))));
                 }
                 let added = create_immutable_object_copy(
                     storage,

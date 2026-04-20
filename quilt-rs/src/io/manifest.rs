@@ -10,6 +10,8 @@ use tokio_stream::StreamExt;
 use tracing::log;
 use url::Url;
 
+use crate::error::ManifestError;
+use crate::error::UriError;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
@@ -180,11 +182,11 @@ pub async fn upload_row(
 ) -> Res<ManifestRow> {
     let local_url = Url::parse(&row.physical_key)?;
     if local_url.scheme() != "file" {
-        return Err(Error::FileUri(local_url));
+        return Err(Error::Uri(UriError::FileScheme(local_url)));
     }
     let file_path = local_url
         .to_file_path()
-        .map_err(|_| Error::FileUri(local_url))?;
+        .map_err(|_| UriError::FileScheme(local_url))?;
 
     let object_uri = ObjectUri::new(package_handle, row.logical_key.clone());
     log::info!("Uploading to S3: {object_uri}");
@@ -237,7 +239,7 @@ pub async fn build_manifest_from_rows_stream(
                     top_hasher.append(row)?;
                     rows.push(row.clone());
                 }
-                Err(err) => return Err(Error::Table(err.to_string())),
+                Err(err) => return Err(Error::Manifest(ManifestError::Table(err.to_string()))),
             }
         }
     }

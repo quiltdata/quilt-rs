@@ -10,6 +10,7 @@ use tracing::warn;
 
 use crate::checksum::calculate_hash;
 use crate::checksum::verify_hash;
+use crate::error::UriError;
 use crate::io::manifest::resolve_tag;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
@@ -208,10 +209,10 @@ pub async fn create_status(
                 );
             }
             None => {
-                return Err(Error::ManifestPath(format!(
+                return Err(Error::Uri(UriError::ManifestPath(format!(
                     "path {} not found in installed manifest",
                     path.display()
-                )));
+                ))));
             }
         }
     }

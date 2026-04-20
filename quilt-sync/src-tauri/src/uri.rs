@@ -31,13 +31,15 @@ fn navigate_to_url(app_handle: &AppHandle, url: Url) -> Result {
             win.set_focus()?;
             Ok(())
         }
-        None => Err(Error::Window),
+        None => Err(Error::TauriUi(crate::error::TauriUiError::Window)),
     }
 }
 
 /// Navigate to a Quilt package URI by parsing it and redirecting to the package page
 fn navigate_to_package(app_handle: &AppHandle, uri_str: &str) -> Result {
-    let win = app_handle.get_webview_window("main").ok_or(Error::Window)?;
+    let win = app_handle
+        .get_webview_window("main")
+        .ok_or(crate::error::TauriUiError::Window)?;
     let current_url = win.url()?;
     let redirect_url = get_remote_package_url(&current_url, uri_str)?;
     navigate_to_url(app_handle, redirect_url)
@@ -259,7 +261,7 @@ async fn wait_for_main_window(app_handle: &AppHandle) -> Result<()> {
         tokio::time::sleep(tokio::time::Duration::from_millis(RETRY_DELAY_MS)).await;
     }
 
-    Err(Error::Window)
+    Err(Error::TauriUi(crate::error::TauriUiError::Window))
 }
 
 fn handle_deep_link_navigation(app_handle: &AppHandle, urls: Vec<Url>) {

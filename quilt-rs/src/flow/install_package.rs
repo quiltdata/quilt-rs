@@ -1,6 +1,8 @@
 use tracing::debug;
 use tracing::info;
 
+#[cfg(test)]
+use crate::error::FsError;
 use crate::flow;
 use crate::io::manifest::resolve_tag;
 use crate::io::remote::Remote;
@@ -240,7 +242,7 @@ mod tests {
         .await;
 
         let err = result.unwrap_err();
-        if let Error::DirectoryCreate { source, .. } = err {
+        if let Error::Fs(FsError::DirectoryCreate { source, .. }) = err {
             // macOS (SIP) returns ReadOnlyFilesystem; Linux returns PermissionDenied
             assert!(
                 matches!(

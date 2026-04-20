@@ -8,6 +8,7 @@ use tracing::info;
 use url::Url;
 
 use crate::checksum::calculate_hash;
+use crate::error::PackageOpError;
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::remote::HostConfig;
 use crate::io::storage::Storage;
@@ -128,7 +129,10 @@ pub async fn create_package(
             // Build manifest row with physical_key pointing to objects
             let physical_key = Url::from_file_path(&object_dest)
                 .map_err(|_| {
-                    Error::Commit(format!("Failed to create URL from {:?}", &object_dest))
+                    Error::PackageOp(PackageOpError::Commit(format!(
+                        "Failed to create URL from {:?}",
+                        &object_dest
+                    )))
                 })?
                 .to_string();
 

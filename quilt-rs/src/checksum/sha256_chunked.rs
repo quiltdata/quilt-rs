@@ -13,6 +13,7 @@ use tokio::io::AsyncReadExt;
 
 use crate::checksum::hash::Hash;
 use crate::checksum::Sha256Hash;
+use crate::error::ChecksumError;
 use crate::Error;
 use crate::Res;
 
@@ -95,11 +96,11 @@ impl TryFrom<Multihash<256>> for Sha256ChunkedHash {
         if hash.code() == MULTIHASH_SHA256_CHUNKED {
             Ok(Self(hash))
         } else {
-            Err(Error::InvalidMultihash(format!(
+            Err(Error::Checksum(ChecksumError::InvalidMultihash(format!(
                 "Expected SHA256 chunked hash (code {:#06x}), got code {:#06x}",
                 MULTIHASH_SHA256_CHUNKED,
                 hash.code()
-            )))
+            ))))
         }
     }
 }

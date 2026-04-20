@@ -5,6 +5,9 @@ use tracing::log;
 
 use crate::checksum::ObjectHash;
 use crate::checksum::Sha256ChunkedHash;
+use crate::error::FsError;
+use crate::error::S3Error;
+use crate::error::S3ErrorKind;
 use crate::io::remote::HostConfig;
 use crate::io::remote::RemoteObjectStream;
 use crate::io::storage::mocks::MockStorage;
@@ -43,13 +46,11 @@ impl Remote for MockRemote {
             .read_byte_stream(&key)
             .await
             .map_err(|err| match err {
-                Error::ByteStreamError(_) => Error::S3NotFound(key.clone()),
-                Error::Io(inner_err) => {
-                    if inner_err.kind() == std::io::ErrorKind::NotFound {
-                        Error::S3NotFound(key.clone())
-                    } else {
-                        Error::Io(inner_err)
-                    }
+                Error::Fs(FsError::ByteStream(_)) => {
+                    S3Error::new(S3ErrorKind::NotFound(key.clone())).into()
+                }
+                Error::Io(inner_err) if inner_err.kind() == std::io::ErrorKind::NotFound => {
+                    S3Error::new(S3ErrorKind::NotFound(key.clone())).into()
                 }
                 other => other,
             });
@@ -76,7 +77,7 @@ impl Remote for MockRemote {
         if self.storage.exists(&key).await {
             Ok(s3_uri.clone())
         } else {
-            Err(Error::S3NotFound(key))
+            Err(Error::S3(S3Error::new(S3ErrorKind::NotFound(key))))
         }
     }
 

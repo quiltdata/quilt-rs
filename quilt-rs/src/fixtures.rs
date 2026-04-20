@@ -4,7 +4,7 @@ use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use aws_smithy_types::base64;
 use multihash::Multihash;
 
-use crate::Error;
+use crate::error::ChecksumError;
 use crate::Res;
 
 pub mod top_hash;
@@ -32,7 +32,7 @@ pub mod manifest {
 pub fn create_multihash(b64_str: &str) -> Res<Multihash<256>> {
     Ok(Multihash::wrap(
         MULTIHASH_SHA256_CHUNKED,
-        &base64::decode(b64_str).map_err(|e| Error::Checksum(e.to_string()))?,
+        &base64::decode(b64_str).map_err(|e| ChecksumError::Mismatch(e.to_string()))?,
     )?)
 }
 

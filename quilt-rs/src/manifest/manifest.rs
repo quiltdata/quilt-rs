@@ -9,6 +9,8 @@ use tokio::io::AsyncRead;
 use tokio::io::BufReader;
 
 use crate::checksum;
+use crate::error::ManifestError;
+use crate::error::UriError;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamRowsChunk;
 use crate::io::storage::ByteStream;
@@ -77,9 +79,9 @@ impl<'de> Deserialize<'de> for Workflow {
                         }),
                     }),
                     Err(_) => {
-                        return Err(serde::de::Error::custom(Error::S3Uri(
+                        return Err(serde::de::Error::custom(Error::Uri(UriError::S3(
                             schema_url.to_string(),
-                        )))
+                        ))))
                     }
                 },
                 None => None,
@@ -206,7 +208,7 @@ impl TryFrom<Quilt3ManifestRow> for ManifestRow {
                 .physical_keys
                 .into_iter()
                 .next()
-                .ok_or(Error::ManifestHeader("Physical key is missing".to_string()))?,
+                .ok_or(ManifestError::Header("Physical key is missing".to_string()))?,
             hash: row.hash,
             size: row.size,
             meta: row.meta,
@@ -228,11 +230,15 @@ impl Manifest {
         let mut lines = reader.lines();
 
         let header = lines.next_line().await.map_err(|err| {
-            Error::ManifestHeader(format!("Failed to read the manifest header: {err}"))
+            Error::Manifest(ManifestError::Header(format!(
+                "Failed to read the manifest header: {err}"
+            )))
         })?;
 
         let Some(header_str) = header else {
-            return Err(Error::ManifestHeader("Empty manifest".into()));
+            return Err(Error::Manifest(ManifestError::Header(
+                "Empty manifest".into(),
+            )));
         };
 
         // Parse the raw JSON to check if user_meta is explicitly null
@@ -249,10 +255,10 @@ impl Manifest {
         }
 
         if header.version != "v0" {
-            return Err(Error::ManifestHeader(format!(
+            return Err(Error::Manifest(ManifestError::Header(format!(
                 "Unsupported manifest version: {}",
                 header.version
-            )));
+            ))));
         }
 
         let mut rows = Vec::new();
@@ -323,12 +329,12 @@ impl Manifest {
         path: &std::path::Path,
     ) -> Res<Self> {
         let file = storage.open_file(path).await?;
-        Self::from_reader(file)
-            .await
-            .map_err(|e| crate::Error::ManifestLoad {
+        Self::from_reader(file).await.map_err(|e| {
+            crate::Error::Manifest(ManifestError::Load {
                 path: path.to_path_buf(),
                 source: Box::new(e),
             })
+        })
     }
 
     /// Find a record by path (for compatibility with Table API)
@@ -507,7 +513,7 @@ mod tests {
         let file = storage.open_file(&path).await?;
 
         let result = Manifest::from_reader(file).await;
-        if let Err(Error::ManifestHeader(error_string)) = result {
+        if let Err(Error::Manifest(ManifestError::Header(error_string))) = result {
             assert_eq!(error_string, "Unsupported manifest version: v1");
         } else {
             panic!("Expected ManifestHeader error, got: {result:?}");

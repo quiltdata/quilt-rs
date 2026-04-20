@@ -3,6 +3,7 @@ use tracing::debug;
 use tracing::info;
 use tracing::warn;
 
+use crate::error::ManifestError;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::manifest::Manifest;
@@ -75,7 +76,7 @@ pub async fn cache_remote_manifest(
             info!("✔️ Successfully cached:\n{:?}", manifest.header);
             Ok(manifest)
         }
-        Err(Error::ManifestLoad { source, .. }) => {
+        Err(Error::Manifest(ManifestError::Load { source, .. })) => {
             // Cached file is unreadable (e.g. legacy Parquet format), re-fetch
             warn!(
                 "Cached manifest at {} is invalid, re-fetching: {}",

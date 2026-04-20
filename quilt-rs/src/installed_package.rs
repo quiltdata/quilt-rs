@@ -3,6 +3,9 @@ use std::path::PathBuf;
 
 use tracing::log;
 
+use crate::error::LoginError;
+use crate::error::PackageOpError;
+use crate::error::UriError;
 use crate::flow;
 use crate::flow::cache_remote_manifest;
 use crate::io::remote::resolve_workflow;
@@ -95,9 +98,9 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                 copy_cached_to_installed(&self.paths, &self.storage, remote_uri).await?;
                 Ok(cached_manifest)
             }
-            None => Err(Error::ManifestPath(
+            None => Err(Error::Uri(UriError::ManifestPath(
                 "No installed manifest and no remote to recover from".to_string(),
-            )),
+            ))),
         }
     }
 
@@ -117,10 +120,10 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let lineage = match lineage.remote_uri.as_ref() {
             Some(_) => match flow::refresh_latest_hash(lineage.clone(), &self.remote).await {
                 Ok(lineage) => lineage,
-                Err(Error::LoginRequired(_)) => {
-                    return Err(Error::LoginRequired(
+                Err(Error::Login(LoginError::Required(_))) => {
+                    return Err(Error::Login(LoginError::Required(
                         lineage.remote_uri.as_ref().and_then(|r| r.origin.clone()),
-                    ))
+                    )))
                 }
                 Err(err) => {
                     log::warn!("Failed to refresh latest hash: {err}");
@@ -240,7 +243,9 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let lineage = self.lineage.write(&self.storage, lineage).await?;
         match lineage.commit {
             Some(commit) => Ok(commit),
-            None => Err(Error::Commit("Nothing committed".to_string())),
+            None => Err(Error::PackageOp(PackageOpError::Commit(
+                "Nothing committed".to_string(),
+            ))),
         }
     }
 
@@ -252,19 +257,21 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let remote_uri = match lineage.remote_uri.as_ref() {
             Some(uri) if !uri.bucket.is_empty() => uri.clone(),
             Some(_) => {
-                return Err(Error::Push(
+                return Err(Error::PackageOp(PackageOpError::Push(
                     "Remote bucket not set. Use set_remote first.".to_string(),
-                ))
+                )))
             }
             None => {
-                return Err(Error::Push(
+                return Err(Error::PackageOp(PackageOpError::Push(
                     "No remote configured. Use set_remote first.".to_string(),
-                ))
+                )))
             }
         };
 
         if lineage.commit.is_none() {
-            return Err(Error::Push("No commits to push".to_string()));
+            return Err(Error::PackageOp(PackageOpError::Push(
+                "No commits to push".to_string(),
+            )));
         }
 
         self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
@@ -361,7 +368,9 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
     pub async fn set_remote(&self, bucket: String, origin: Option<Host>) -> Res {
         if bucket.is_empty() {
-            return Err(Error::Push("Bucket cannot be empty".to_string()));
+            return Err(Error::PackageOp(PackageOpError::Push(
+                "Bucket cannot be empty".to_string(),
+            )));
         }
         let (_, mut lineage) = self.lineage.read(&self.storage).await?;
         if let Some(existing) = &lineage.remote_uri {
@@ -370,9 +379,9 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                 if same_remote {
                     return Ok(());
                 }
-                return Err(Error::Push(
+                return Err(Error::PackageOp(PackageOpError::Push(
                     "Cannot change remote on a package that has already been pushed".to_string(),
-                ));
+                )));
             }
         }
         lineage.remote_uri = Some(ManifestUri {
@@ -434,10 +443,10 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         match lineage.remote_uri.as_mut() {
             Some(remote_uri) => remote_uri.origin = Some(origin),
             None => {
-                return Err(Error::Push(
+                return Err(Error::PackageOp(PackageOpError::Push(
                     "No remote configured. Use set_remote to configure both origin and bucket."
                         .to_string(),
-                ));
+                )));
             }
         }
         self.lineage.write(&self.storage, lineage).await?;
@@ -1054,17 +1063,17 @@ mod tests {
 
     impl crate::io::remote::Remote for LoggedOutRemote {
         async fn exists(&self, _host: &Option<Host>, _s3_uri: &S3Uri) -> Res<bool> {
-            Err(Error::LoginRequired(None))
+            Err(Error::Login(LoginError::Required(None)))
         }
         async fn get_object_stream(
             &self,
             _host: &Option<Host>,
             _s3_uri: &S3Uri,
         ) -> Res<crate::io::remote::RemoteObjectStream> {
-            Err(Error::LoginRequired(None))
+            Err(Error::Login(LoginError::Required(None)))
         }
         async fn resolve_url(&self, _host: &Option<Host>, _s3_uri: &S3Uri) -> Res<S3Uri> {
-            Err(Error::LoginRequired(None))
+            Err(Error::Login(LoginError::Required(None)))
         }
         async fn put_object(
             &self,
@@ -1072,7 +1081,7 @@ mod tests {
             _s3_uri: &S3Uri,
             _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
         ) -> Res {
-            Err(Error::LoginRequired(None))
+            Err(Error::Login(LoginError::Required(None)))
         }
         async fn upload_file(
             &self,
@@ -1081,7 +1090,7 @@ mod tests {
             _dest_uri: &S3Uri,
             _size: u64,
         ) -> Res<(S3Uri, crate::checksum::ObjectHash)> {
-            Err(Error::LoginRequired(None))
+            Err(Error::Login(LoginError::Required(None)))
         }
         async fn host_config(&self, _host: &Option<Host>) -> Res<crate::io::remote::HostConfig> {
             Ok(crate::io::remote::HostConfig::default())
@@ -1134,7 +1143,7 @@ mod tests {
         // status() should propagate LoginRequired so the UI can show a Login button
         let result = package.status(None).await;
         assert!(
-            matches!(result, Err(Error::LoginRequired(_))),
+            matches!(result, Err(Error::Login(LoginError::Required(_)))),
             "Expected LoginRequired error, got: {result:?}"
         );
 

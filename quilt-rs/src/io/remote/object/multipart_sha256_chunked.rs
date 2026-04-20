@@ -10,8 +10,10 @@ use aws_smithy_types::byte_stream::Length;
 use crate::checksum::chunksize_and_parts;
 use crate::checksum::ObjectHash;
 use crate::checksum::Sha256ChunkedHash;
+use crate::error::ChecksumError;
+use crate::error::S3Error;
+use crate::error::S3ErrorKind;
 use crate::uri::S3Uri;
-use crate::Error;
 use crate::Res;
 
 pub async fn multipart_upload_and_sha256_chunksum(
@@ -28,9 +30,11 @@ pub async fn multipart_upload_and_sha256_chunksum(
         .checksum_algorithm(ChecksumAlgorithm::Sha256)
         .send()
         .await
-        .map_err(|err| Error::S3Raw(DisplayErrorContext(err).to_string()))?
+        .map_err(|err| S3Error::new(S3ErrorKind::Raw(DisplayErrorContext(err).to_string())))?
         .upload_id
-        .ok_or(Error::UploadId("failed to get an UploadId".to_string()))?;
+        .ok_or(S3Error::new(S3ErrorKind::UploadId(
+            "failed to get an UploadId".to_string(),
+        )))?;
 
     let mut parts: Vec<CompletedPart> = Vec::new();
     for chunk_idx in 0..num_chunks {
@@ -53,7 +57,7 @@ pub async fn multipart_upload_and_sha256_chunksum(
             .body(chunk_body)
             .send()
             .await
-            .map_err(|err| Error::S3Raw(DisplayErrorContext(err).to_string()))?;
+            .map_err(|err| S3Error::new(S3ErrorKind::Raw(DisplayErrorContext(err).to_string())))?;
         parts.push(
             CompletedPart::builder()
                 .part_number(part_number)
@@ -75,14 +79,17 @@ pub async fn multipart_upload_and_sha256_chunksum(
         )
         .send()
         .await
-        .map_err(|err| Error::S3Raw(DisplayErrorContext(err).to_string()))?;
+        .map_err(|err| S3Error::new(S3ErrorKind::Raw(DisplayErrorContext(err).to_string())))?;
 
     let s3_checksum = response
         .checksum_sha256
-        .ok_or(Error::Checksum("missing checksum".to_string()))?;
-    let (checksum_b64, _) = s3_checksum
-        .split_once('-')
-        .ok_or(Error::Checksum("unexpected checksum".to_string()))?;
+        .ok_or(ChecksumError::NoS3Checksum("missing checksum".to_string()))?;
+    let (checksum_b64, _) =
+        s3_checksum
+            .split_once('-')
+            .ok_or(ChecksumError::Malformed(format!(
+                "expected 'sha256-parts' format, got: {s3_checksum}"
+            )))?;
 
     Ok((
         S3Uri {

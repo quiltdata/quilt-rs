@@ -1,6 +1,7 @@
 use std::fmt;
 use std::str::FromStr;
 
+use crate::error::PackageOpError;
 use crate::paths;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
@@ -34,7 +35,10 @@ impl FromStr for Tag {
         } else if let Ok(timestamp) = s.parse::<i64>() {
             Ok(Tag::Timestamp(timestamp))
         } else {
-            Err(Error::Package(format!("Unsupported tag format: {}", s)))
+            Err(Error::PackageOp(PackageOpError::Package(format!(
+                "Unsupported tag format: {}",
+                s
+            ))))
         }
     }
 }

@@ -897,7 +897,9 @@ async fn open_directory_picker_command(app_handle: &tauri::AppHandle) -> Result<
         }
     }
 
-    let window = app_handle.get_webview_window("main").ok_or(Error::Window)?;
+    let window = app_handle
+        .get_webview_window("main")
+        .ok_or(crate::error::TauriUiError::Window)?;
 
     let result = match FileDialog::new()
         .set_directory(&canonical_home)
@@ -910,7 +912,7 @@ async fn open_directory_picker_command(app_handle: &tauri::AppHandle) -> Result<
         }
         None => {
             debug!("User cancelled directory selection");
-            Err(Error::UserCancelled)
+            Err(Error::TauriUi(crate::error::TauriUiError::UserCancelled))
         }
     };
 
@@ -1086,7 +1088,7 @@ async fn collect_diagnostic_logs_command(
     let info = diagnostics::collect(app_handle, m, app).await?;
     tokio::task::spawn_blocking(move || diagnostics::save_diagnostic_zip(info))
         .await
-        .map_err(|e| Error::General(e.to_string()))?
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -1463,7 +1465,9 @@ pub(crate) fn navigate_after_login(
     path: routes::Paths,
 ) -> Result<(), Error> {
     debug!("Attempting to redirect after login to: {:?}", path);
-    let win = app_handle.get_webview_window("main").ok_or(Error::Window)?;
+    let win = app_handle
+        .get_webview_window("main")
+        .ok_or(crate::error::TauriUiError::Window)?;
     let win_url = win.url()?;
     let redirect_url = routes::from_url(path, win_url);
     debug!("Redirecting to: {}", redirect_url);
@@ -1614,12 +1618,12 @@ async fn add_to_quiltignore_command(
         .create(true)
         .append(true)
         .open(&quiltignore_path)
-        .map_err(|e| Error::General(format!("Failed to open .quiltignore: {e}")))?;
+        .map_err(|e| format!("Failed to open .quiltignore: {e}"))?;
 
     if needs_newline {
-        writeln!(file).map_err(|e| Error::General(e.to_string()))?;
+        writeln!(file).map_err(|e| e.to_string())?;
     }
-    writeln!(file, "{pattern}").map_err(|e| Error::General(e.to_string()))?;
+    writeln!(file, "{pattern}").map_err(|e| e.to_string())?;
 
     Ok(())
 }

@@ -7,6 +7,7 @@ use std::fmt;
 use std::path::Path;
 use std::path::PathBuf;
 
+use crate::error::ChecksumError;
 use crate::io::remote::HostChecksums;
 use crate::io::remote::HostConfig;
 use crate::io::storage::Storage;
@@ -131,9 +132,8 @@ impl TryFrom<Multihash<256>> for ObjectHash {
                 multihash,
             )?)),
             MULTIHASH_CRC64_NVME => Ok(ObjectHash::Crc64(Crc64Hash::try_from(multihash)?)),
-            _ => Err(crate::Error::InvalidMultihash(format!(
-                "Unsupported multihash code: {:#06x}",
-                multihash.code()
+            _ => Err(crate::Error::Checksum(ChecksumError::InvalidMultihash(
+                format!("Unsupported multihash code: {:#06x}", multihash.code()),
             ))),
         }
     }
@@ -220,7 +220,6 @@ mod tests {
     use crate::io::storage::LocalStorage;
     use crate::io::storage::Storage;
     use crate::io::storage::StorageExt;
-    use crate::Error;
     use crate::Res;
 
     #[test]
@@ -368,9 +367,9 @@ mod tests {
                 );
             }
             _ => {
-                return Err(crate::Error::InvalidMultihash(
+                return Err(crate::Error::Checksum(ChecksumError::InvalidMultihash(
                     "Expected ObjectHash::Sha256 variant".to_string(),
-                ))
+                )))
             }
         }
 
@@ -387,9 +386,9 @@ mod tests {
                 );
             }
             _ => {
-                return Err(crate::Error::InvalidMultihash(
+                return Err(crate::Error::Checksum(ChecksumError::InvalidMultihash(
                     "Expected ObjectHash::Sha256Chunked variant".to_string(),
-                ))
+                )))
             }
         }
 
@@ -405,16 +404,16 @@ mod tests {
                 );
             }
             _ => {
-                return Err(crate::Error::InvalidMultihash(
+                return Err(crate::Error::Checksum(ChecksumError::InvalidMultihash(
                     "Expected ObjectHash::Crc64 variant".to_string(),
-                ))
+                )))
             }
         }
 
         // Test that serialization produces the correct format
         let hex_bytes =
             hex::decode("7465737464617461000000000000000000000000000000000000000000000000")
-                .map_err(|e| Error::InvalidMultihash(e.to_string()))?;
+                .map_err(|e| ChecksumError::InvalidMultihash(e.to_string()))?;
         let sha256_hash =
             Sha256Hash::try_from(multihash::Multihash::wrap(MULTIHASH_SHA256, &hex_bytes)?)?;
         let object_hash = ObjectHash::Sha256(sha256_hash);

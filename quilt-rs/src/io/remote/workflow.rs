@@ -1,6 +1,7 @@
 use serde_yaml::Value as YamlValue;
 use tokio::io::AsyncReadExt;
 
+use crate::error::RemoteCatalogError;
 use crate::io::remote::Remote;
 use crate::manifest::MetadataSchema;
 use crate::manifest::Workflow;
@@ -16,17 +17,17 @@ fn get_schema_id(yaml: &YamlValue, workflow_id: &str) -> Res<Option<String>> {
             Some(YamlValue::Mapping(workflow)) => match &workflow.get("metadata_schema") {
                 Some(YamlValue::String(schema_id)) => Ok(Some(schema_id.clone())),
                 None => Ok(None),
-                _ => Err(Error::Workflow(format!(
+                _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
                     "`metadata_schema` not found for workflow ID: {workflow_id}"
-                ))),
+                )))),
             },
-            _ => Err(Error::Workflow(format!(
+            _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
                 "Workflow {workflow_id} not found in workflows/config.yaml"
-            ))),
+            )))),
         },
-        _ => Err(Error::Workflow(
+        _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(
             "Workflows not found in workflows/config.yaml".to_string(),
-        )),
+        ))),
     }
 }
 
@@ -44,17 +45,17 @@ async fn get_schema_url<R: Remote>(
                         schema_id,
                         remote.resolve_url(host, &url.parse()?).await?,
                     ))),
-                    _ => Err(Error::Workflow(format!(
+                    _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
                         "Schema {schema_id} doesn't have URL"
-                    ))),
+                    )))),
                 },
-                _ => Err(Error::Workflow(format!(
+                _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
                     "Schema {schema_id}, referenced by workflow {workflow_id} not found in workflows/config.yaml",
-                ))),
+                )))),
             },
-            _ => Err(Error::Workflow(
+            _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(
                 "Schemas not found in workflows/config.yaml".to_string(),
-            )),
+            ))),
         },
         None => Ok(None),
     }
@@ -131,9 +132,9 @@ pub async fn resolve_workflow<R: Remote>(
             None => Ok(Some(Workflow { config, id: None })),
         },
         None => match workflow_id {
-            Some(workflow_id) => Err(Error::Workflow(format!(
+            Some(workflow_id) => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
                 "There is no workflows config, but the workflow \"{workflow_id}\" is set"
-            ))),
+            )))),
             None => Ok(None),
         },
     }
@@ -166,7 +167,10 @@ workflows:
             .await
             .unwrap_err();
 
-        assert!(matches!(err, Error::Workflow(_)));
+        assert!(matches!(
+            err,
+            Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
+        ));
         assert!(err.to_string().contains("Schemas not found"));
 
         Ok(())
@@ -186,7 +190,10 @@ workflows:
         let err = resolve_workflow(&remote, &host, Some("test-workflow".to_string()), &uri)
             .await
             .unwrap_err();
-        assert!(matches!(err, Error::Workflow(_)));
+        assert!(matches!(
+            err,
+            Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
+        ));
         assert!(err.to_string().contains("There is no workflows config"));
 
         Ok(())
@@ -241,14 +248,20 @@ schemas:
         let err = resolve_workflow(&remote, &host, Some("non-existent".to_string()), &uri)
             .await
             .unwrap_err();
-        assert!(matches!(err, Error::Workflow(_)));
+        assert!(matches!(
+            err,
+            Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
+        ));
         assert!(err.to_string().contains("Workflow non-existent not found"));
 
         // Case 2.d: Config exists but workflow_id is empty
         let err = resolve_workflow(&remote, &host, Some("".to_string()), &uri)
             .await
             .unwrap_err();
-        assert!(matches!(err, Error::Workflow(_)));
+        assert!(matches!(
+            err,
+            Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
+        ));
         assert!(err.to_string().contains("Workflow  not found"));
 
         Ok(())

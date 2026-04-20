@@ -3,6 +3,7 @@ use std::fmt;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::error::UriError;
 use crate::paths;
 use crate::uri::Host;
 use crate::uri::Namespace;
@@ -32,9 +33,10 @@ impl TryFrom<S3PackageUri> for ManifestUri {
             hash: match uri.revision {
                 RevisionPointer::Hash(top_hash) => top_hash,
                 RevisionPointer::Tag(_) => {
-                    return Err(Error::PackageURI(
+                    return Err(UriError::Package(
                         "Hash is required for that conversion".to_string(),
-                    ))
+                    )
+                    .into())
                 }
             },
         })

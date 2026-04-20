@@ -13,13 +13,8 @@
 
 ### Changed
 
+- Split the monolithic `Error` enum into focused domain enums wrapped transparently by the top-level `Error` (<https://github.com/quiltdata/quilt-rs/pull/627>)
 - Remove the `let m: &model::Model = &m;` shadow line from 18 Tauri commands; pass `m` directly — `&m` via deref coercion for helpers taking concrete `&Model`, `&*m` for helpers bound by `&impl QuiltModel` where deref coercion does not apply (<https://github.com/quiltdata/quilt-rs/pull/625>)
-
-### quilt-rs
-
-- Replace `ManifestRow`'s custom `PartialEq` (which silently ignored `physical_key` and `meta`) with a derived structural `PartialEq` and a new `ManifestRow::matches_content` method for the content-identity check used by push dedup (<https://github.com/quiltdata/quilt-rs/pull/625>)
-- Change `DomainPaths::cached_manifest` signature from `(bucket: &str, hash: &str)` to `(uri: &ManifestUri)` to match how every caller already uses it (<https://github.com/quiltdata/quilt-rs/pull/625>)
-- Expand the `CommitState` multihash TODO into a doc comment spelling out the real scope (<https://github.com/quiltdata/quilt-rs/pull/625>)
 
 ## [v0.16.0] - 2026-04-16
 
