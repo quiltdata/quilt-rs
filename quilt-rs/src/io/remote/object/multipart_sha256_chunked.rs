@@ -84,11 +84,12 @@ pub async fn multipart_upload_and_sha256_chunksum(
     let s3_checksum = response
         .checksum_sha256
         .ok_or(ChecksumError::NoS3Checksum("missing checksum".to_string()))?;
-    let (checksum_b64, _) = s3_checksum
-        .split_once('-')
-        .ok_or(ChecksumError::Malformed(format!(
-            "expected 'sha256-parts' format, got: {s3_checksum}"
-        )))?;
+    let (checksum_b64, _) =
+        s3_checksum
+            .split_once('-')
+            .ok_or(ChecksumError::Malformed(format!(
+                "expected 'sha256-parts' format, got: {s3_checksum}"
+            )))?;
 
     Ok((
         S3Uri {
