@@ -8,6 +8,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.29.1-alpha3] - 2026-04-20
+
+### Added
+
+- Automatic retry with exponential backoff and request timeouts for HTTP calls, reducing spurious failures on flaky networks
+
 ## [v0.29.1-alpha2] - 2026-04-20
 
 ### Fixed
