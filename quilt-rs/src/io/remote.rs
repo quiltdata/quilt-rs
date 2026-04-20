@@ -61,7 +61,7 @@ where
             (Some(c), Some(m)) if !m.is_empty() => Some(format!("{c}: {m}")),
             (Some(c), _) => Some(c.to_string()),
             (None, Some(m)) if !m.is_empty() => Some(m.to_string()),
-            (None, None) | (None, Some(_)) => None,
+            (None, _) => None,
         }
     });
     if let Some(head) = service_head {
