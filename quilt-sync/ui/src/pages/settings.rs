@@ -67,7 +67,7 @@ fn SettingsContent(
                 changelog=data.changelog
                 notification=notification
             />
-            <PublishSection publish=data.publish notification=notification />
+            <PublishSection publish=data.publish notification=notification refetch=refetch />
             <AccountSection auth_hosts=data.auth_hosts notification=notification refetch=refetch />
             <DiagnosticsSection
                 version=data.version
@@ -175,17 +175,96 @@ fn render_publish_preview(template: &str) -> String {
 fn PublishSection(
     publish: PublishSettingsData,
     notification: RwSignal<Option<Notification>>,
+    refetch: Trigger,
 ) -> impl IntoView {
-    let message_template = RwSignal::new(publish.message_template.clone());
-    let workflow_override = RwSignal::new(publish.default_workflow.clone());
-    let metadata = RwSignal::new(publish.default_metadata.clone());
-    // `true` = use the bucket's default; `false` = override with the workflow ID field.
-    let use_bucket_default =
-        RwSignal::new(publish.default_workflow.trim().is_empty());
+    let show_popup = RwSignal::new(false);
+
+    let template_display = match publish.message_template.trim() {
+        "" => "Default — auto-generated summary of changes".to_string(),
+        t => t.to_string(),
+    };
+    let template_is_default = publish.message_template.trim().is_empty();
+
+    let workflow_display = match publish.default_workflow.trim() {
+        "" => "Default — bucket's workflow".to_string(),
+        w => w.to_string(),
+    };
+    let workflow_is_default = publish.default_workflow.trim().is_empty();
+
+    let metadata_display = match publish.default_metadata.trim() {
+        "" => "Default — none".to_string(),
+        m => m.to_string(),
+    };
+    let metadata_is_default = publish.default_metadata.trim().is_empty();
+
+    let current = publish.clone();
+
+    view! {
+        <section class="settings-section qui-publish-settings">
+            <h2 class="section-title">"Publish"</h2>
+            <dl class="settings-list">
+                <dt>"Message template"</dt>
+                <dd>
+                    <span
+                        class="value"
+                        class:default=template_is_default
+                    >{template_display}</span>
+                </dd>
+
+                <dt>"Default workflow"</dt>
+                <dd>
+                    <span
+                        class="value"
+                        class:default=workflow_is_default
+                    >{workflow_display}</span>
+                </dd>
+
+                <dt>"Default metadata"</dt>
+                <dd>
+                    <span
+                        class="value"
+                        class:default=metadata_is_default
+                    >{metadata_display}</span>
+                </dd>
+            </dl>
+            <div class="settings-actions">
+                <button
+                    type="button"
+                    class="qui-button"
+                    on:click=move |_| show_popup.set(true)
+                >
+                    <span>"Edit"</span>
+                </button>
+            </div>
+        </section>
+
+        <Show when=move || show_popup.get()>
+            <PublishSettingsPopup
+                current=current.clone()
+                notification=notification
+                refetch=refetch
+                on_close=move || show_popup.set(false)
+            />
+        </Show>
+    }
+}
+
+#[component]
+fn PublishSettingsPopup(
+    current: PublishSettingsData,
+    notification: RwSignal<Option<Notification>>,
+    refetch: Trigger,
+    on_close: impl Fn() + Clone + 'static,
+) -> impl IntoView {
+    let message_template = RwSignal::new(current.message_template.clone());
+    let workflow_override = RwSignal::new(current.default_workflow.clone());
+    let metadata = RwSignal::new(current.default_metadata.clone());
+    let use_bucket_default = RwSignal::new(current.default_workflow.trim().is_empty());
     let metadata_error = RwSignal::new(None::<String>);
     let saving = RwSignal::new(false);
 
-    let on_save = move |_| {
+    let on_close_save = on_close.clone();
+    let on_save = move |_: leptos::ev::MouseEvent| {
         if saving.get_untracked() {
             return;
         }
@@ -204,17 +283,23 @@ fn PublishSection(
         }
         metadata_error.set(None);
         saving.set(true);
+        let on_close = on_close_save.clone();
         leptos::task::spawn_local(async move {
             match commands::update_publish_settings(template, wf, meta).await {
-                Ok(()) => notification
-                    .set(Some(Notification::Success("Publish settings saved".into()))),
+                Ok(()) => {
+                    notification.set(Some(Notification::Success(
+                        "Publish settings saved".into(),
+                    )));
+                    on_close();
+                    refetch.notify();
+                }
                 Err(e) => notification.set(Some(Notification::Error(e))),
             }
             saving.set(false);
         });
     };
 
-    let on_reset = move |_| {
+    let on_reset = move |_: leptos::ev::MouseEvent| {
         message_template.set(String::new());
         workflow_override.set(String::new());
         use_bucket_default.set(true);
@@ -222,14 +307,19 @@ fn PublishSection(
         metadata_error.set(None);
     };
 
+    let on_close_cancel = on_close.clone();
+    let on_cancel = move |_: leptos::ev::MouseEvent| on_close_cancel();
+
     view! {
-        <section class="settings-section qui-publish-settings">
-            <h2 class="section-title">"Publish"</h2>
-            <dl class="settings-list">
-                <dt>
+        <div class="popup-overlay" on:click={
+            let on_close = on_close.clone();
+            move |_| on_close()
+        }>
+            <div class="popup-content publish-settings-form" on:click=|ev| ev.stop_propagation()>
+                <h2 class="section-title">"Edit publish defaults"</h2>
+
+                <div class="field">
                     <label for="publish-message-template">"Message template"</label>
-                </dt>
-                <dd>
                     <input
                         class="input"
                         id="publish-message-template"
@@ -249,10 +339,10 @@ fn PublishSection(
                         "Preview: "
                         <em>{move || render_publish_preview(&message_template.get())}</em>
                     </p>
-                </dd>
+                </div>
 
-                <dt>"Default workflow"</dt>
-                <dd>
+                <div class="field">
+                    <label>"Default workflow"</label>
                     <label class="radio-option">
                         <input
                             type="radio"
@@ -280,12 +370,10 @@ fn PublishSection(
                             on:input=move |ev| workflow_override.set(event_target_value(&ev))
                         />
                     </Show>
-                </dd>
+                </div>
 
-                <dt>
+                <div class="field">
                     <label for="publish-default-metadata">"Default metadata"</label>
-                </dt>
-                <dd>
                     <textarea
                         class="textarea"
                         id="publish-default-metadata"
@@ -298,15 +386,19 @@ fn PublishSection(
                             {move || metadata_error.get().unwrap_or_default()}
                         </span>
                     </Show>
-                </dd>
-            </dl>
-            <div class="settings-actions">
-                <buttons::Save on_click=on_save busy=saving />
-                <button type="button" class="qui-button link" on:click=on_reset>
-                    <span>"Reset to defaults"</span>
-                </button>
+                </div>
+
+                <div class="popup-actions">
+                    <buttons::FormPrimary on_click=on_save disabled=saving>
+                        "Save"
+                    </buttons::FormPrimary>
+                    <buttons::FormSecondary on_click=on_cancel />
+                    <button type="button" class="qui-button link" on:click=on_reset>
+                        <span>"Reset to defaults"</span>
+                    </button>
+                </div>
             </div>
-        </section>
+        </div>
     }
 }
 

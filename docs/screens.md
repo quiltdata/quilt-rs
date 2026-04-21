@@ -341,6 +341,49 @@ Configures the remote origin and bucket so the package can be pushed.
 
 ---
 
+### Edit Publish Defaults Popup
+
+Shown when clicking `[Edit]` in Settings → Publish. Form for the
+global defaults the one-click `[Publish]` action uses for every
+package (no per-package overrides).
+
+```text
++---------------------------------------------------------+
+|  Edit publish defaults                                  |
+|                                                         |
+|  Message template                                       |
+|  [ Auto-publish {date} ({changes})_________________ ]   |
+|  Placeholders: {date} {time} {datetime}                 |
+|                {namespace} {changes}                    |
+|  Preview: Auto-publish 2026-04-21 (3 files modified)    |
+|                                                         |
+|  Default workflow                                       |
+|   (*) Use the bucket's default workflow                 |
+|   ( ) Override:  [ __________________________ ]         |
+|                                                         |
+|  Default metadata                                       |
+|  [ { "source": "desktop" }_________________________ ]   |
+|                                                         |
+|  [Save]  [Cancel]   Reset to defaults                   |
+|                                                         |
++---------------------------------------------------------+
+```
+
+- Preview re-renders live as the user types (client-side, no round
+  trip); unknown placeholders like `{dat}` pass through so typos stay
+  visible.
+- Workflow radio: "Use bucket's default workflow" sends no workflow
+  id at publish time; "Override" saves the typed id, validated
+  against the bucket on the first Publish (same as today's Commit
+  form).
+- Metadata is JSON-validated on Save; empty = no metadata.
+- `Reset to defaults` clears all three fields but does not save —
+  user still has to click `[Save]`.
+- After save -> popup closes, Settings page reloads showing the new
+  values.
+
+---
+
 ### Settings
 
 Application settings and diagnostics.
@@ -358,21 +401,11 @@ Application settings and diagnostics.
 |                                                         |
 |  Publish                                                |
 |  -------                                                |
-|  Message template                                       |
-|  [ Auto-publish {date} ({changes})_________________ ]   |
-|  Placeholders: {date} {time} {datetime}                 |
-|                {namespace} {changes}                    |
-|  Preview: Auto-publish 2026-04-21 (3 files modified)    |
+|  Message template   Default — auto-generated summary    |
+|  Default workflow   Default — bucket's workflow         |
+|  Default metadata   Default — none                      |
 |                                                         |
-|  Default workflow                                       |
-|   (*) Use the bucket's default workflow                 |
-|   ( ) Override:  [ __________________________ ]         |
-|                                                         |
-|  Default metadata                                       |
-|  [ { "source": "desktop" }_________________________ ]   |
-|  (JSON; empty = none)                                   |
-|                                                         |
-|  [Save]   [Reset to defaults]                           |
+|  [Edit]                                                 |
 |                                                         |
 |  Account                                                |
 |  -------                                                |
