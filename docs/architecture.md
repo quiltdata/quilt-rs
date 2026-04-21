@@ -408,6 +408,26 @@ Return: Updated DomainLineage
 - Algorithm selection based on file size and performance requirements
 - `ObjectHash` enum provides unified interface
 
+### Network Resilience
+
+Remote I/O is treated as a cross-cutting concern rather than inlined per call
+site:
+
+- **Shared HTTP client** (`io::remote::client::ReqwestClient`): one reqwest
+  client with per-request and connect timeouts, plus exponential-backoff
+  middleware that retries transient failures (up to 2 attempts). Non-2xx
+  responses are logged with status, URL, and a truncated body before the
+  error is surfaced, so diagnostics survive what `error_for_status` would
+  otherwise discard.
+- **Refreshing S3 credentials** (`QuiltCredentialsProvider`): adapts `Auth`
+  into the AWS SDK's `ProvideCredentials` trait, so every signed request
+  pulls fresh credentials from the registry instead of a cached snapshot —
+  preventing `ExpiredToken` errors during long-running sessions.
+- **Single-flight refresh per host**: concurrent callers racing past token
+  expiry coalesce onto one registry mint call via a per-host async mutex.
+  The lock map stores `Weak` references, so it stays bounded by in-flight
+  refreshes rather than the set of hosts seen over the process lifetime.
+
 ## State Management
 
 ### Storage: Versioned vs Flat
