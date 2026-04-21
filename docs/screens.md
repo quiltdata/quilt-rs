@@ -8,7 +8,7 @@ ASCII wireframes for Quilt Sync's UI pages and user journeys.
 
 First-run screen. User picks the home directory for Quilt data.
 
-```
+```text
 +--[appbar]----------------------------------------------+
 | [logo]                                 [refresh] [gear] |
 +---------------------------------------------------------+
@@ -33,7 +33,7 @@ After submit -> **Installed Packages List**
 Shown when authentication is required. Redirects back to the
 page that triggered it via `back` parameter.
 
-```
+```text
 +--[appbar]----------------------------------------------+
 | [logo]                                 [refresh] [gear] |
 +---------------------------------------------------------+
@@ -59,7 +59,7 @@ After login -> redirect to `back` URL (the page user came from)
 
 Main screen. Lists all locally installed packages.
 
-```
+```text
 +--[appbar]----------------------------------------------+
 | [logo]                                 [refresh] [gear] |
 +--[toolbar]---------------------------------------------+
@@ -86,7 +86,7 @@ available immediately (no re-commit needed).
 
 Empty state:
 
-```
+```text
 +--[toolbar]---------------------------------------------+
 | [< Packages]                  [+ Create local package]  |
 +---------------------------------------------------------+
@@ -116,7 +116,7 @@ Empty state:
 Shows contents of a single installed package: file entries
 with checkboxes, status indicator, and a toolbar.
 
-```
+```text
 +--[appbar]----------------------------------------------+
 | [logo]  user/package-a                 [refresh] [gear] |
 +--[toolbar]---------------------------------------------+
@@ -159,7 +159,7 @@ For local-only packages the toolbar shows [Commit] but no [Push].
 Form for committing local changes to a package.
 Two-column layout: form on the left, file list on the right.
 
-```
+```text
 +--[appbar]----------------------------------------------+
 | [logo]  user/package-a                 [refresh] [gear] |
 +--[toolbar]---------------------------------------------+
@@ -196,7 +196,7 @@ After commit -> **Installed Package**
 Shown when local and remote versions have diverged.
 Offers two resolution options.
 
-```
+```text
 +--[appbar]----------------------------------------------+
 | [logo]  user/package-a                 [refresh] [gear] |
 +--[toolbar]---------------------------------------------+
@@ -222,7 +222,7 @@ Offers two resolution options.
 Shown when clicking [Ignore] on a junk-detected file entry.
 Lets the user add a pattern to `.quiltignore`.
 
-```
+```text
 +---------------------------------------------------------+
 |                                                         |
 |   Pattern                                               |
@@ -246,7 +246,7 @@ Lets the user add a pattern to `.quiltignore`.
 Shown when clicking [Ignored] on a `.quiltignore`-matched file.
 Shows which pattern is ignoring the file.
 
-```
+```text
 +---------------------------------------------------------+
 |                                                         |
 |   Ignored by pattern: *.pyc                             |
@@ -265,7 +265,7 @@ Shows which pattern is ignoring the file.
 Shown when clicking [+ Create] on the Installed Packages List page.
 Creates a new local-only package.
 
-```
+```text
 +---------------------------------------------------------+
 |                                                         |
 |   Namespace *                                           |
@@ -287,7 +287,7 @@ Creates a new local-only package.
 Shown when clicking [Set Remote] on a local-only package.
 Configures the remote origin and bucket so the package can be pushed.
 
-```
+```text
 +---------------------------------------------------------+
 |                                                         |
 |   Host *                                                |
@@ -310,7 +310,7 @@ Configures the remote origin and bucket so the package can be pushed.
 
 Application settings and diagnostics.
 
-```
+```text
 +--[appbar]----------------------------------------------+
 | [logo]                                 [refresh] [gear] |
 +---------------------------------------------------------+
@@ -343,7 +343,7 @@ Application settings and diagnostics.
 
 Generic error page with recovery options.
 
-```
+```text
 +--[appbar]----------------------------------------------+
 | [logo]                                 [refresh] [gear] |
 +---------------------------------------------------------+
@@ -364,7 +364,7 @@ auth-related).
 
 ## Flow Diagram
 
-```
+```text
                         +-------+
                         | Setup |  (first run only)
                         +---+---+
@@ -406,4 +406,3 @@ auth-related).
 
   Any page ----[needs auth]----> Login ----[back]----> original page
 ```
-
