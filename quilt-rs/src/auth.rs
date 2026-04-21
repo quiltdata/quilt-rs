@@ -1762,13 +1762,25 @@ mod tests {
         Ok(())
     }
 
-    /// HTTP client that counts calls to `/api/auth/get_credentials`
-    /// and optionally sleeps inside the handler to widen the race
-    /// window. Tokens are fresh so no OAuth leg fires.
+    /// Synchronization gate used by `CountingCredsClient` to park the
+    /// `/api/auth/get_credentials` handler mid-call. `entered` signals
+    /// the test that the handler has been reached; `release` holds the
+    /// handler until the test lets it return.
+    #[derive(Default)]
+    struct Gate {
+        entered: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+    }
+
+    /// HTTP client that counts calls to `/api/auth/get_credentials`.
+    /// Optionally sleeps inside the handler to widen the race window,
+    /// or parks the handler on a `Gate` for deterministic coordination.
+    /// Tokens are fresh so no OAuth leg fires.
     #[derive(Clone)]
     struct CountingCredsClient {
         cred_calls: Arc<std::sync::atomic::AtomicUsize>,
         sleep_ms: u64,
+        gate: Option<Arc<Gate>>,
     }
 
     #[async_trait]
@@ -1787,7 +1799,10 @@ mod tests {
             if url.contains("/api/auth/get_credentials") {
                 self.cred_calls
                     .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                if self.sleep_ms > 0 {
+                if let Some(gate) = &self.gate {
+                    gate.entered.notify_one();
+                    gate.release.notified().await;
+                } else if self.sleep_ms > 0 {
                     tokio::time::sleep(std::time::Duration::from_millis(self.sleep_ms)).await;
                 }
                 let body = serde_json::json!({
@@ -1852,6 +1867,7 @@ mod tests {
         let client = CountingCredsClient {
             cred_calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             sleep_ms: 50,
+            gate: None,
         };
 
         let mut handles = Vec::new();
@@ -1898,36 +1914,53 @@ mod tests {
         seed_expired_creds_fresh_tokens(&AuthIo::new(storage.clone(), paths.auth_host(&host_b)))
             .await?;
 
-        let slow_client = CountingCredsClient {
+        // Park host_a's refresh inside the HTTP handler using a gate so
+        // it deterministically holds host_a's lock while we exercise
+        // host_b. No wall-clock budget — robust under CI load.
+        let gate = Arc::new(Gate::default());
+        let gated_client = CountingCredsClient {
             cred_calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            sleep_ms: 300,
+            sleep_ms: 0,
+            gate: Some(gate.clone()),
         };
         let fast_client = CountingCredsClient {
             cred_calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             sleep_ms: 0,
+            gate: None,
         };
 
         let auth_clone = auth.clone();
-        let slow = slow_client.clone();
+        let client_a = gated_client.clone();
         let host_a_clone = host_a.clone();
         let a_task = tokio::spawn(async move {
             auth_clone
-                .get_credentials_or_refresh(&slow, &host_a_clone)
+                .get_credentials_or_refresh(&client_a, &host_a_clone)
                 .await
         });
 
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        // Wait until host_a is confirmed inside the handler, holding
+        // host_a's refresh lock.
+        gate.entered.notified().await;
 
-        let b_start = std::time::Instant::now();
-        auth.get_credentials_or_refresh(&fast_client, &host_b)
-            .await?;
-        let b_elapsed = b_start.elapsed();
+        // Run host_b. If per-host locking works, this completes;
+        // otherwise it would block forever on host_a's lock. The
+        // timeout is a safety net to fail fast instead of hanging CI.
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            auth.get_credentials_or_refresh(&fast_client, &host_b),
+        )
+        .await
+        .expect("host_b refresh must not wait behind host_a's lock")?;
 
+        // Positive assertion: host_a is still parked in its handler,
+        // proving host_b completed without host_a making progress.
         assert!(
-            b_elapsed < std::time::Duration::from_millis(250),
-            "host_b refresh must not wait behind host_a's lock (took {b_elapsed:?})",
+            !a_task.is_finished(),
+            "host_a must still be blocked in its handler while host_b completes",
         );
 
+        // Release host_a so the spawned task can finish cleanly.
+        gate.release.notify_one();
         a_task.await.unwrap()?;
         Ok(())
     }
