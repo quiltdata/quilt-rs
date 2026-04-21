@@ -310,7 +310,10 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         .await?;
 
         let certified_latest = outcome.push.certified_latest;
-        let lineage = self.lineage.write(&self.storage, outcome.push.lineage).await?;
+        let lineage = self
+            .lineage
+            .write(&self.storage, outcome.push.lineage)
+            .await?;
         Ok(PushOutcome {
             manifest_uri: lineage.remote()?.clone(),
             certified_latest,

@@ -287,9 +287,7 @@ fn PublishSettingsPopup(
         leptos::task::spawn_local(async move {
             match commands::update_publish_settings(template, wf, meta).await {
                 Ok(()) => {
-                    notification.set(Some(Notification::Success(
-                        "Publish settings saved".into(),
-                    )));
+                    notification.set(Some(Notification::Success("Publish settings saved".into())));
                     on_close();
                     refetch.notify();
                 }

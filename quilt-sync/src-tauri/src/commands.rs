@@ -1454,9 +1454,10 @@ async fn get_status_for_publish(
     m: &model::Model,
     namespace: &quilt::uri::Namespace,
 ) -> Result<quilt::lineage::InstalledPackageStatus, Error> {
-    let installed = m.get_installed_package(namespace).await?.ok_or_else(|| {
-        Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone()))
-    })?;
+    let installed = m
+        .get_installed_package(namespace)
+        .await?
+        .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone())))?;
     m.get_installed_package_status(&installed, None).await
 }
 

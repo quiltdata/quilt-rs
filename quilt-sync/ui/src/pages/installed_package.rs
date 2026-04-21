@@ -203,9 +203,7 @@ fn InstalledPackageContent(
     // Mirror the Publish gating from the Installed Packages List: Commit and
     // Push is offered only when there's a remote and something to ship.
     let is_publishable = has_origin
-        && (status == "ahead"
-            || (status == "up_to_date" && has_changes)
-            || status == "local");
+        && (status == "ahead" || (status == "up_to_date" && has_changes) || status == "local");
 
     view! {
         <div class="qui-page-installed-package">
