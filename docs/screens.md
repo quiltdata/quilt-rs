@@ -120,9 +120,14 @@ with checkboxes, status indicator, and a toolbar.
 +--[appbar]----------------------------------------------+
 | [logo]  user/package-a                 [refresh] [gear] |
 +--[toolbar]---------------------------------------------+
-| [< Packages]        [Uninstall] [Pull] [Push] [Commit] |
+| [< Packages]   [Open in File Browser] [Open in Catalog?] [Uninstall] |
 +---------------------------------------------------------+
-| [status: 3 files modified]                              |
+| [status banner: status-dependent action ────────────]   |
+|   ahead        -> [Push]                                |
+|   behind       -> [Pull]   (disabled if local changes)  |
+|   diverged     -> [Merge]                               |
+|   local+origin -> [Push]                                |
+|   error        -> [Login] / [Set Origin] / [Change…]    |
 |                                                         |
 | Show [x] unmodified [x] ignored (2)                    |
 | [toolbar: Select All / Deselect All]                    |
@@ -142,15 +147,21 @@ with checkboxes, status indicator, and a toolbar.
 ```
 
 - [< Packages] -> **Installed Packages List**
-- [Commit] -> **Commit**
+- Top toolbar hosts package-agnostic actions only: file browser, catalog,
+  and Uninstall. Package sync actions (Push / Pull / Merge / Login) live
+  in the status banner below it.
 - [Push] -> runs push flow, reloads
 - [Pull] -> disabled with popover hint when package has uncommitted changes
 - [Uninstall] -> runs uninstall flow -> **Installed Packages List**
 - [Install Selected Paths] -> runs install_paths flow, reloads
 - [Ignore] -> opens **Ignore Popup** (for junk-detected files)
 - [Ignored] -> opens **Un-ignore Popup** (for `.quiltignore`-matched files)
+- Commit is reached from the list-view menu or the `/commit?namespace=…`
+  route; the Commit form's `[Commit]` CTA lives in its own bottom
+  actionbar (see **Commit** below), not in this page's top toolbar.
 
-For local-only packages the toolbar shows [Commit] but no [Push].
+For local-only packages without an origin, the status banner shows
+[Set Origin] instead of Push.
 
 ---
 
