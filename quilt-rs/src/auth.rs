@@ -2000,15 +2000,14 @@ mod tests {
 
         // Dropping all strong refs leaves a dead Weak behind.
         drop(arc1);
-        assert!(
-            auth.refresh_locks
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .get(&host)
-                .expect("entry still present before sweep")
-                .upgrade()
-                .is_none(),
-        );
+        assert!(auth
+            .refresh_locks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&host)
+            .expect("entry still present before sweep")
+            .upgrade()
+            .is_none(),);
 
         // Next lookup sweeps the dead entry and inserts a fresh one;
         // map size stays at 1 instead of accumulating per refresh.
