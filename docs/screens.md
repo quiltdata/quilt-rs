@@ -69,20 +69,27 @@ Main screen. Lists all locally installed packages.
 |  +---------------------------------------------------+  |
 |  | user/package-a                        [Pull] [>]  |  |
 |  +---------------------------------------------------+  |
-|  | user/package-b            [Push] [Commit] [Pull]  |  |
+|  | user/package-b                     [Publish] [>]  |  |
 |  +---------------------------------------------------+  |
 |  | org/dataset-c                         [Pull] [>]  |  |
 |  +---------------------------------------------------+  |
-|  | local/my-data        [Set Remote] [Commit] [>]    |  |
+|  | local/my-data               [Set Remote] [>]      |  |
 |  +---------------------------------------------------+  |
 |                                                         |
 +---------------------------------------------------------+
 ```
 
-Local-only packages (no remote `manifest_uri`) show Commit and
-[Set Remote] but no Pull/Push buttons and no "Open Remote" action.
-After setting a remote, the status changes to Ahead and push becomes
+Local-only packages (no remote `manifest_uri`) show `[Set Remote]`
+but no Publish/Pull buttons and no "Open Remote" action. After
+setting a remote, the status changes to Ahead and Publish becomes
 available immediately (no re-commit needed).
+
+`[Publish]` is the one-click "commit changes (if any) then push"
+action. It is shown when the package has a remote and something to
+ship — uncommitted changes, a pending commit that was not yet
+pushed, or both. Publish uses per-user defaults from Settings for
+message, workflow, and metadata; users who need a bespoke message
+enter the full form via the package page's `[Commit…]` link.
 
 Empty state:
 
@@ -103,9 +110,11 @@ Empty state:
 - Click package row -> **Installed Package**
 - Click [Pull] -> runs pull flow, reloads
   - Disabled with popover hint when package has uncommitted changes
-- Click [Push] -> runs push flow -> **Installed Package**
-- Click [Commit] -> **Commit**
-  - Highlighted as primary when package has uncommitted changes
+- Click [Publish] -> runs publish flow (commit if needed, then push),
+  reloads
+  - Disabled while the package's status is still refreshing in the
+    background
+  - Never shown without a remote; `[Set Remote]` appears instead
 - Click [Set Remote] -> opens **Set Remote** popup
 - Click [gear] -> **Settings**
 
@@ -123,10 +132,10 @@ with checkboxes, status indicator, and a toolbar.
 | [< Packages]   [Open in File Browser] [Open in Catalog?] [Uninstall] |
 +---------------------------------------------------------+
 | [status banner: status-dependent action ────────────]   |
-|   ahead        -> [Push]                                |
-|   behind       -> [Pull]   (disabled if local changes)  |
+|   ahead        -> [Publish]  [Commit…]                  |
+|   behind       -> [Pull]     (disabled if local changes)|
 |   diverged     -> [Merge]                               |
-|   local+origin -> [Push]                                |
+|   local+origin -> [Publish]  [Commit…]                  |
 |   error        -> [Login] / [Set Origin] / [Change…]    |
 |                                                         |
 | Show [x] unmodified [x] ignored (2)                    |
@@ -148,20 +157,20 @@ with checkboxes, status indicator, and a toolbar.
 
 - [< Packages] -> **Installed Packages List**
 - Top toolbar hosts package-agnostic actions only: file browser, catalog,
-  and Uninstall. Package sync actions (Push / Pull / Merge / Login) live
-  in the status banner below it.
-- [Push] -> runs push flow, reloads
+  and Uninstall. Package sync actions (Publish / Pull / Merge / Login)
+  live in the status banner below it.
+- [Publish] -> runs publish flow (commit if needed, then push), reloads
+- [Commit…] -> opens the **Commit** form at `/commit?namespace=…`; shown
+  as a secondary link next to `[Publish]` as an escape hatch for users
+  who need a custom message, workflow, or metadata per commit
 - [Pull] -> disabled with popover hint when package has uncommitted changes
 - [Uninstall] -> runs uninstall flow -> **Installed Packages List**
 - [Install Selected Paths] -> runs install_paths flow, reloads
 - [Ignore] -> opens **Ignore Popup** (for junk-detected files)
 - [Ignored] -> opens **Un-ignore Popup** (for `.quiltignore`-matched files)
-- Commit is reached from the list-view menu or the `/commit?namespace=…`
-  route; the Commit form's `[Commit]` CTA lives in its own bottom
-  actionbar (see **Commit** below), not in this page's top toolbar.
 
 For local-only packages without an origin, the status banner shows
-[Set Origin] instead of Push.
+[Set Origin] instead of Publish.
 
 ---
 
@@ -192,13 +201,21 @@ Two-column layout: form on the left, file list on the right.
 |                        |                                |
 +---------------------------------------------------------+
 +--[actionbar]-------------------------------------------+
-| [Commit]                                                |
+|                     [Commit]  or  [Commit and Push]     |
 +---------------------------------------------------------+
 ```
 
-The [Commit] button is disabled when the message field is empty.
+Both buttons are disabled when the message field is empty.
 
-After commit -> **Installed Package**
+- `[Commit and Push]` is the primary action — it commits the form
+  values and immediately pushes the new revision.
+- `[Commit]` stays available as a secondary action for users who want
+  to save a local revision without pushing (e.g. to squash with a
+  later commit before publishing).
+- For local-only packages (no remote configured) only `[Commit]` is
+  shown, because there is nothing to push to.
+
+After either action -> **Installed Package**
 
 ---
 
@@ -332,6 +349,24 @@ Application settings and diagnostics.
 |  Home directory   /home/user/quilt  [Open]              |
 |  Data directory   /home/user/.quilt [Open]              |
 |                                                         |
+|  Publish                                                |
+|  -------                                                |
+|  Message template                                       |
+|  [ Auto-publish {date} ({changes})_________________ ]   |
+|  Placeholders: {date} {time} {datetime}                 |
+|                {namespace} {changes}                    |
+|  Preview: Auto-publish 2026-04-21 (3 files modified)    |
+|                                                         |
+|  Default workflow                                       |
+|   (*) Use the bucket's default workflow                 |
+|   ( ) Override:  [ __________________________ ]         |
+|                                                         |
+|  Default metadata                                       |
+|  [ { "source": "desktop" }_________________________ ]   |
+|  (JSON; empty = none)                                   |
+|                                                         |
+|  [Save]   [Reset to defaults]                           |
+|                                                         |
 |  Account                                                |
 |  -------                                                |
 |  open.quiltdata.com       [Re-login] [Logout]           |
@@ -383,27 +418,38 @@ auth-related).
                             v
   +---------------------------------------------------+
   |          Installed Packages List (Home)            |<---------+
-  +---+-------+----------+-------------------+--------+           |
-      |       |          |                   |                    |
-      |       | [Create] | [Commit]          | [gear]            |
-      |       v          v                   v                    |
-      |  [popup]    +----+----+        +-----+----+               |
-      |  namespace  |         |        |          |               |
-      |  -> reload  | Commit  |        | Settings |               |
-      |             |         |        |          |               |
-      | click pkg   +----+----+        +----------+               |
-      v                  |                                        |
-+-----+-------+         |                                        |
-|  Installed   |         | submit                                 |
-|  Package     +--->-----+--------->------------------------------+
-|              |                                                  |
-+--+-+--+------+    [Set Remote]                                  |
-   | |  |           -> popup (host + bucket)                      |
-   | |  |           -> status: Ahead -> push                      |
+  +---+-------+------------+---------------+----------+           |
+      |       |            |               |                      |
+      |       | [Create]   | [Publish]     | [gear]               |
+      |       v            v               v                      |
+      |  [popup]      (commit if           +----------+           |
+      |  namespace    needed, then         | Settings |           |
+      |  -> reload    push) -> reload      +----------+           |
+      |                                                           |
+      | click pkg                                                 |
+      v                                                           |
++-----+-------+      [Publish]                                    |
+|  Installed   |----> (same as from list) -----------------------+|
+|  Package     |                                                 ||
+|              |      [Commit…] secondary link                   ||
++--+-+--+------+----> +----+----+                                ||
+   | |  |             |         |                                ||
+   | |  |             | Commit  |                                ||
+   | |  |             |         |                                ||
+   | |  |             +----+----+                                ||
+   | |  |                  |                                     ||
+   | |  |                  | [Commit and Push]  (primary)        ||
+   | |  |                  | [Commit]          (secondary)       ||
+   | |  |                  v                                     ||
+   | |  |             --->--+-------------------------->---------+|
+   | |  |                                                         |
+   | |  |   [Set Remote]                                          |
+   | |  |     -> popup (host + bucket)                            |
+   | |  |     -> status: Ahead -> Publish                         |
    | |  | [Uninstall]                                             |
    | |  +---->----------------------------------------------------+
    | |
-   | | [Push] when diverged
+   | | when diverged
    | v
    | +---------+
    +>|  Merge  |
