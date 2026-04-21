@@ -9,22 +9,21 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.16.1-alpha2] - 2026-04-21
+## [v0.16.1-alpha3] - 2026-04-21
 
 ### Added
 
-- One-click `[Publish]` action on the Installed Packages List and Installed Package pages that commits local changes (if any) and pushes in a single step, using per-user defaults configured in Settings
-- `Publish` section in Settings with a message template (supports `{date}`/`{time}`/`{datetime}`/`{namespace}`/`{changes}` placeholders and a live preview), a default-workflow picker, and default metadata
-- `[Commit and Push]` primary action on the Commit form, sitting next to the existing `[Commit]` secondary action
+- One-click `[Publish]` action on the Installed Packages List that commits local changes (if any) and pushes in a single step, using per-user defaults configured in Settings (<https://github.com/quiltdata/quilt-rs/pull/634>)
+- `[Commit and Push]` primary CTA on the Commit form next to the existing `[Commit]` secondary action, and on the Installed Package page's bottom action bar next to `[Create new revision]` (<https://github.com/quiltdata/quilt-rs/pull/634>)
+- Publish defaults under Settings → Publish: message template (supports `{date}`/`{time}`/`{datetime}`/`{namespace}`/`{changes}` placeholders with a live preview), default workflow picker, and default metadata; the Settings page shows a read-only summary with an `[Edit]` button that opens a popup form (<https://github.com/quiltdata/quilt-rs/pull/634>)
 
 ### Changed
 
-- Replace the `[Commit]` menu button on the Installed Packages List with `[Publish]` when a remote is configured
-- Swap the status banner's `[Push]` action for `[Publish]` on the Installed Package page, with a secondary `Commit…` link for custom messages
+- Replace the Commit menu button on the Installed Packages List with `[Publish]` when a remote is configured; the button stays disabled while the package's status is still refreshing in the background (<https://github.com/quiltdata/quilt-rs/pull/634>)
 
 ### quilt-rs
 
-- Added `flow::publish_package` that composes `commit_package` + `push_package` into a single call
+- Added `flow::publish_package` that composes `commit_package` + `push_package` into a single call (<https://github.com/quiltdata/quilt-rs/pull/634>)
 
 ## [v0.16.1-alpha1] - 2026-04-17
 
