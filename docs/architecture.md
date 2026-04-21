@@ -1,10 +1,16 @@
 # Quilt Architecture Specification
 
+> **Prerequisite reading**: This document assumes familiarity with Quilt's
+> [Mental Model](https://docs.quilt.bio/mentalmodel) — packages, manifests,
+> logical/physical keys, registries, and the bucket-as-branch workflow are
+> introduced there and used here without re-definition.
+>
 > **Audience**: Contributors seeking a system overview without reading the code,
 > and technical stakeholders who need to understand exact workflow behavior.
-> Quilt identifies every file and manifest by its cryptographic hash — a small
-> change in any step can break the computed hash, so precise knowledge of what
-> happens at each phase matters.
+> Because every file and manifest is identified by its cryptographic hash,
+> subtle pipeline differences (byte ordering, JSON canonicalization, line
+> endings) produce a different hash and break compatibility — so precise
+> knowledge of what happens at each phase matters.
 
 ## Overview
 
@@ -78,7 +84,7 @@ pub struct ManifestRow {
 ```rust
 pub struct PackageLineage {
     pub commit: Option<CommitState>,          // Current local commit
-    pub remote_uri: Option<ManifestUri>,      // Remote package reference; None for local-only
+    pub remote_uri: Option<ManifestUri>,      // Remote URI; None = local-only
     pub base_hash: String,                    // Hash when package was installed
     pub latest_hash: String,                  // Latest known remote hash
     pub paths: LineagePaths,                  // Tracking of installed files
@@ -90,20 +96,29 @@ pub struct PackageLineage {
 A manifest is a collection of ManifestRows that describes a complete package
 state. Each row represents a file with:
 
-- **logical_key**: Virtual path inside the package (user-visible file path)
-- **physical_key**: Actual storage location URL — a URI that can be
-  dereferenced to get a bag of bytes. Physical keys are intended to be
-  read-only and immutable (though not enforced). On local filesystems there
-  is no versioning; immutability is enforced by content-addressing only.
+- **logical_key**: Virtual path inside the package
+- **physical_key**: Actual storage location — a URI that can be dereferenced
+  to fetch the file's bytes. The URI is treated as read-only: on S3, object
+  versioning makes accidental overwrites recoverable; on local filesystems,
+  immutability is only a convention enforced by content-addressed naming.
   - `s3://bucket/path` for remote storage (after push)
   - `file:///path/to/local/objects/hash` for local storage (before push)
 
 **Format Notes**:
 
 - Manifests are stored in JSONL format
-- All manifests are content-addressed by their top-level hash
+- All manifests are content-addressed by their top-level hash (`top_hash`)
 
-## Complete Workflow
+### Workflow
+
+A **workflow** is a package-level configuration stored as a YAML file in the
+remote registry and referenced from the package's manifest header. It defines
+how the package must be validated on push (required metadata fields, file
+constraints) and supplies default property values when the user does not
+specify them. The push and recommit flows resolve the active workflow from
+the remote and apply it to the manifest before upload.
+
+## Operational Phases
 
 ### 1. Browse Phase
 
@@ -404,9 +419,36 @@ Return: Updated DomainLineage
 
 ### Hash Algorithm Flexibility
 
-- Supports multiple hash algorithms: SHA256, CRC64, SHA256-Chunked
-- Algorithm selection based on file size and performance requirements
-- `ObjectHash` enum provides unified interface
+Three checksum algorithms are supported, reflecting the historical evolution
+of the format:
+
+1. **SHA256** — the original algorithm: a single digest over the entire file.
+2. **SHA256-Chunked** — added to speed up large-file uploads. The file is
+   split into fixed-size chunks, each chunk is hashed, and the chunk hashes
+   are combined into a top digest (aligning with S3 multipart-upload
+   boundaries so chunks can be hashed in parallel with the upload).
+3. **CRC64** — the current default. AWS computes CRC64 server-side on every
+   object, so we can trust S3's checksum rather than re-hashing the file
+   client-side.
+
+Each new algorithm became the default for freshly created packages, but all
+three remain fully supported for reading existing packages. The `ObjectHash`
+enum provides a unified interface across them.
+
+### Network Resilience
+
+Remote I/O goes through a shared layer rather than being inlined per call site:
+
+- **Shared HTTP client**: a single reqwest client with connect and per-request
+  timeouts, plus exponential-backoff retries for transient failures. Non-2xx
+  responses are logged with status, URL, and a truncated body so failures
+  remain diagnosable.
+- **Fresh S3 credentials**: every signed request fetches current credentials
+  from the Quilt auth backend instead of a cached snapshot, avoiding
+  `ExpiredToken` errors in long sessions.
+- **Single-flight refresh per host**: when many requests hit expired
+  credentials at once, they coalesce onto one refresh per host rather than
+  stampeding the auth backend.
 
 ## State Management
 
@@ -442,19 +484,12 @@ enum UpstreamState {
 
 ## Error Handling
 
-Custom error types are scattered across the monorepo but concentrated in two
-locations:
+Custom error types are defined in two locations:
 
 - **`quilt-rs/src/error.rs`** — core library errors, grouped by concern:
-  - S3 and remote storage (`S3`, `S3Raw`, `RemoteInit`)
-  - Authentication (`Auth`, `LoginRequired`)
-  - Filesystem I/O (`Io`, `FileRead`, `FileWrite`, `FileCopy`, `FileNotFound`)
-  - Manifest and package management (`ManifestHeader`, `ManifestLoad`, `Table`,
-    `PackageAlreadyInstalled`, `PackageNotInstalled`)
-  - Serialization and parsing (`Json`, `Yaml`, `Utf8`, `UrlParse`)
-  - Workflow operations (`Commit`, `Push`, `Uninstall`)
-  - Lineage and domain state (`LineageMissing`, `LineageParse`)
-  - Integrity (`Checksum`, `ChecksumMissing`)
+  S3 and remote storage, authentication, filesystem I/O, manifest and package
+  management, serialization and parsing, workflow operations, lineage and
+  domain state, and integrity checking.
 
 - **`quilt-sync/src-tauri/src/error.rs`** — Tauri application errors, including
   UI routing, OAuth, and a `Quilt` variant that wraps the core library errors.
