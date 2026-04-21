@@ -132,10 +132,10 @@ with checkboxes, status indicator, and a toolbar.
 | [< Packages]   [Open in File Browser] [Open in Catalog?] [Uninstall] |
 +---------------------------------------------------------+
 | [status banner: status-dependent action ────────────]   |
-|   ahead        -> [Publish]  [Commit…]                  |
-|   behind       -> [Pull]     (disabled if local changes)|
+|   ahead        -> [Push]                                |
+|   behind       -> [Pull]   (disabled if local changes)  |
 |   diverged     -> [Merge]                               |
-|   local+origin -> [Publish]  [Commit…]                  |
+|   local+origin -> [Push]                                |
 |   error        -> [Login] / [Set Origin] / [Change…]    |
 |                                                         |
 | Show [x] unmodified [x] ignored (2)                    |
@@ -151,26 +151,33 @@ with checkboxes, status indicator, and a toolbar.
 | +-----------------------------------------------------+ |
 |                                                         |
 +--[actionbar]-------------------------------------------+
-| [Install Selected Paths]                                |
+|        [Create new revision]  or  [Commit and Push]     |
 +---------------------------------------------------------+
 ```
 
 - [< Packages] -> **Installed Packages List**
 - Top toolbar hosts package-agnostic actions only: file browser, catalog,
-  and Uninstall. Package sync actions (Publish / Pull / Merge / Login)
+  and Uninstall. Package sync actions (Push / Pull / Merge / Login)
   live in the status banner below it.
-- [Publish] -> runs publish flow (commit if needed, then push), reloads
-- [Commit…] -> opens the **Commit** form at `/commit?namespace=…`; shown
-  as a secondary link next to `[Publish]` as an escape hatch for users
-  who need a custom message, workflow, or metadata per commit
+- [Push] -> runs push flow, reloads
 - [Pull] -> disabled with popover hint when package has uncommitted changes
 - [Uninstall] -> runs uninstall flow -> **Installed Packages List**
 - [Install Selected Paths] -> runs install_paths flow, reloads
 - [Ignore] -> opens **Ignore Popup** (for junk-detected files)
 - [Ignored] -> opens **Un-ignore Popup** (for `.quiltignore`-matched files)
+- [Create new revision] -> opens the **Commit** form at
+  `/commit?namespace=…`; the form is where the user picks message,
+  workflow, and metadata before either saving locally (`[Commit]`) or
+  committing-and-pushing (`[Commit and Push]`)
+- [Commit and Push] -> one-click commit-and-push using the Publish
+  defaults from Settings. Shown in the actionbar only when the package
+  has a remote and something to ship (uncommitted changes or a pending
+  commit that has not been pushed). Equivalent to `[Publish]` on the
+  Installed Packages List — surfaced here as a CTA labeled to match the
+  Commit form.
 
 For local-only packages without an origin, the status banner shows
-[Set Origin] instead of Publish.
+[Set Origin] instead of Push.
 
 ---
 
@@ -428,10 +435,13 @@ auth-related).
       |                                                           |
       | click pkg                                                 |
       v                                                           |
-+-----+-------+      [Publish]                                    |
-|  Installed   |----> (same as from list) -----------------------+|
++-----+-------+      [Push]        (status banner: ahead / local) |
+|  Installed   |----> push only -----------------------> reload --+|
 |  Package     |                                                 ||
-|              |      [Commit…] secondary link                   ||
+|              |      [Commit and Push]   (bottom actionbar)     ||
+|              |----> commit+push (uses Settings defaults) ----->+|
+|              |                                                 ||
+|              |      [Create new revision]  (bottom actionbar)  ||
 +--+-+--+------+----> +----+----+                                ||
    | |  |             |         |                                ||
    | |  |             | Commit  |                                ||
@@ -439,7 +449,7 @@ auth-related).
    | |  |             +----+----+                                ||
    | |  |                  |                                     ||
    | |  |                  | [Commit and Push]  (primary)        ||
-   | |  |                  | [Commit]          (secondary)       ||
+   | |  |                  | [Commit]           (secondary)      ||
    | |  |                  v                                     ||
    | |  |             --->--+-------------------------->---------+|
    | |  |                                                         |

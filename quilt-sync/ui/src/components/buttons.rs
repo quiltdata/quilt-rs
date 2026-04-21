@@ -4,7 +4,6 @@ pub mod certify_latest;
 pub mod change_origin;
 pub mod collect_logs;
 pub mod commit_and_push;
-pub mod commit_link;
 pub mod commit_revision;
 pub mod create_local_package;
 pub mod create_new_revision;
@@ -26,6 +25,7 @@ pub mod open_in_file_browser;
 pub mod open_logs_dir;
 pub mod publish;
 pub mod pull;
+pub mod push;
 pub mod re_login;
 pub mod refresh;
 pub mod release_notes;
@@ -46,7 +46,6 @@ pub use certify_latest::CertifyLatest;
 pub use change_origin::ChangeOrigin;
 pub use collect_logs::CollectLogs;
 pub use commit_and_push::CommitAndPush;
-pub use commit_link::CommitLink;
 pub use commit_revision::CommitRevision;
 pub use create_local_package::CreateLocalPackage;
 pub use create_new_revision::CreateNewRevision;
@@ -68,6 +67,7 @@ pub use open_in_file_browser::OpenInFileBrowser;
 pub use open_logs_dir::OpenLogsDir;
 pub use publish::Publish;
 pub use pull::Pull;
+pub use push::Push;
 pub use re_login::ReLogin;
 pub use refresh::Refresh;
 pub use release_notes::ReleaseNotes;
@@ -105,6 +105,7 @@ pub enum ButtonKind {
     OpenInFileBrowser,
     Publish,
     Pull,
+    Push,
     Refresh,
     Remove,
     Reveal,
@@ -134,6 +135,7 @@ impl ButtonKind {
             Self::OpenInFileBrowser => "/assets/img/icons/folder_open.svg",
             Self::Publish => "/assets/img/icons/cloud_upload.svg",
             Self::Pull => "/assets/img/icons/cloud_download.svg",
+            Self::Push => "/assets/img/icons/cloud_upload.svg",
             Self::Refresh => "/assets/img/icons/refresh.svg",
             Self::Remove => "/assets/img/icons/block.svg",
             Self::Reveal => "/assets/img/icons/folder_open.svg",
@@ -163,6 +165,7 @@ impl ButtonKind {
             Self::OpenInFileBrowser => "Open",
             Self::Publish => "Publish",
             Self::Pull => "Pull",
+            Self::Push => "Push",
             Self::Refresh => "Refresh",
             Self::Remove => "Remove",
             Self::Reveal => "Reveal",

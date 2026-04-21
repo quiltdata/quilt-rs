@@ -275,6 +275,14 @@ pub async fn package_commit(
     .await
 }
 
+pub async fn package_push(namespace: String) -> Result<String, String> {
+    #[derive(Serialize)]
+    struct Args {
+        namespace: String,
+    }
+    tauri::invoke("package_push", &Args { namespace }).await
+}
+
 pub async fn package_publish(namespace: String) -> Result<String, String> {
     #[derive(Serialize)]
     struct Args {
