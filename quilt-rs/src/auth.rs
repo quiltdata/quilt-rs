@@ -18,11 +18,14 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
+use std::sync::Weak;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use sha2::Digest;
 use sha2::Sha256;
+use tokio::sync::Mutex as AsyncMutex;
 
 use crate::error::AuthError;
 use crate::error::LoginError;
@@ -475,11 +478,18 @@ fn classify_retry_outcome<T>(
 }
 
 /// Map of per-host refresh locks used to single-flight concurrent
-/// credential refreshes. The outer `std::sync::Mutex` is held only
-/// across the `entry(host).or_insert_with(...).clone()` and is never
-/// held across an `.await`. The inner `tokio::sync::Mutex` is held
-/// across the HTTP refresh, serializing refreshes for a single host.
-type RefreshLocks = Arc<std::sync::Mutex<HashMap<Host, Arc<tokio::sync::Mutex<()>>>>>;
+/// credential refreshes. The outer `StdMutex` is held only across the
+/// brief map lookup and is never held across an `.await`. The inner
+/// `AsyncMutex` is held across the HTTP refresh, serializing refreshes
+/// for a single host.
+///
+/// Entries are `Weak`, so the map size tracks *in-flight* refreshes
+/// rather than distinct hosts seen over the process lifetime. Racing
+/// callers upgrade the same `Weak` and share the mutex; once everyone
+/// drops their `Arc`, the entry becomes a dead `Weak` and is pruned
+/// on the next lookup. This matters for long-running server contexts
+/// that may authenticate against many distinct hosts.
+type RefreshLocks = Arc<StdMutex<HashMap<Host, Weak<AsyncMutex<()>>>>>;
 
 #[derive(Debug)]
 pub struct Auth<S: Storage = LocalStorage> {
@@ -503,19 +513,24 @@ impl<S: Storage + Send + Sync> Auth<S> {
         Self {
             paths,
             storage,
-            refresh_locks: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            refresh_locks: Arc::new(StdMutex::new(HashMap::new())),
         }
     }
 
     /// Get the `Arc<Mutex>` for this host's refresh lock, creating it
     /// on first use. The outer lock is only held for the brief map
-    /// lookup — never across `.await`.
-    fn refresh_lock_for(&self, host: &Host) -> Arc<tokio::sync::Mutex<()>> {
+    /// lookup — never across `.await`. Dead `Weak` entries (mutex no
+    /// longer referenced by any in-flight refresh) are swept before
+    /// the lookup so the map stays bounded by active refreshes.
+    fn refresh_lock_for(&self, host: &Host) -> Arc<AsyncMutex<()>> {
         let mut locks = self.refresh_locks.lock().unwrap_or_else(|e| e.into_inner());
-        locks
-            .entry(host.clone())
-            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-            .clone()
+        locks.retain(|_, weak| weak.strong_count() > 0);
+        if let Some(arc) = locks.get(host).and_then(Weak::upgrade) {
+            return arc;
+        }
+        let arc = Arc::new(AsyncMutex::new(()));
+        locks.insert(host.clone(), Arc::downgrade(&arc));
+        arc
     }
 
     pub async fn login<T: HttpClient>(
@@ -1962,6 +1977,49 @@ mod tests {
         // Release host_a so the spawned task can finish cleanly.
         gate.release.notify_one();
         a_task.await.unwrap()?;
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_refresh_lock_map_sweeps_dead_entries() -> Res {
+        let storage = Arc::new(MockStorage::default());
+        let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
+        let auth = Auth::new(paths, storage);
+
+        let host: Host = "x.quilt.dev".parse().unwrap();
+
+        // First lookup inserts a live Weak.
+        let arc1 = auth.refresh_lock_for(&host);
+        assert_eq!(
+            auth.refresh_locks
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .len(),
+            1,
+        );
+
+        // Dropping all strong refs leaves a dead Weak behind.
+        drop(arc1);
+        assert!(
+            auth.refresh_locks
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&host)
+                .expect("entry still present before sweep")
+                .upgrade()
+                .is_none(),
+        );
+
+        // Next lookup sweeps the dead entry and inserts a fresh one;
+        // map size stays at 1 instead of accumulating per refresh.
+        let _arc2 = auth.refresh_lock_for(&host);
+        assert_eq!(
+            auth.refresh_locks
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .len(),
+            1,
+        );
         Ok(())
     }
 }
