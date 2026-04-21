@@ -126,9 +126,9 @@ fn CommitContent(
     let show_filter = ignored_count > 0 || unmodified_count > 0;
 
     // Whether this package has a remote we can publish to. When there is no
-    // remote, the `[Commit and Push]` primary is hidden and only `[Commit]`
-    // is shown.
-    let has_remote = data.origin_url.is_some() || data.status.as_str() != "local";
+    // resolvable origin, the `[Commit and Push]` primary is hidden and only
+    // `[Commit]` is shown.
+    let has_remote = data.origin_url.is_some();
 
     let ns_for_action = namespace.clone();
     let committing = RwSignal::new(false);
