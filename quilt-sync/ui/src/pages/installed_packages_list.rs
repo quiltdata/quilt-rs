@@ -205,6 +205,7 @@ fn PackageItem(
         &data,
         status,
         has_changes,
+        refreshing,
         notification,
         ui_locked,
         refetch,
@@ -261,6 +262,7 @@ fn build_package_menu(
     data: &PackageItemData,
     status: RwSignal<String>,
     has_changes: RwSignal<bool>,
+    refreshing: RwSignal<bool>,
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
     refetch: Trigger,
@@ -383,6 +385,7 @@ fn build_package_menu(
                     on_click=move |ev| on_publish.with_value(|f| f(ev))
                     small=true
                     busy=publish_busy
+                    disabled=refreshing
                 />
             </li>
         </Show>
