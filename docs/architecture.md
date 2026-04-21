@@ -4,7 +4,7 @@
 > [Mental Model](https://docs.quilt.bio/mentalmodel) — packages, manifests,
 > logical/physical keys, registries, and the bucket-as-branch workflow are
 > introduced there and used here without re-definition.
-
+>
 > **Audience**: Contributors seeking a system overview without reading the code,
 > and technical stakeholders who need to understand exact workflow behavior.
 > Because every file and manifest is identified by its cryptographic hash,
@@ -84,7 +84,7 @@ pub struct ManifestRow {
 ```rust
 pub struct PackageLineage {
     pub commit: Option<CommitState>,          // Current local commit
-    pub remote_uri: Option<ManifestUri>,      // Remote package reference; None for local-only
+    pub remote_uri: Option<ManifestUri>,      // Remote URI; None = local-only
     pub base_hash: String,                    // Hash when package was installed
     pub latest_hash: String,                  // Latest known remote hash
     pub paths: LineagePaths,                  // Tracking of installed files
