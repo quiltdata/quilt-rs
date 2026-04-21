@@ -8,6 +8,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.29.1-alpha5] - 2026-04-20
+
+### Changed
+
+- Single-flight S3 credential refreshes per host so concurrent S3 operations racing past token expiry trigger only one registry mint call (<https://github.com/quiltdata/quilt-rs/pull/632>)
+
 ## [v0.29.1-alpha4] - 2026-04-20
 
 ### Fixed
