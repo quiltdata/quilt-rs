@@ -10,8 +10,11 @@ use tauri_plugin_updater::UpdaterExt;
 use tokio::sync;
 
 use crate::app;
+use crate::commit_message;
 use crate::model;
 use crate::oauth::OAuthState;
+use crate::publish_settings::PublishSettings;
+use crate::publish_settings::SharedPublishSettings;
 use crate::quilt;
 use crate::routes;
 use crate::Error;
@@ -268,6 +271,24 @@ pub async fn get_installed_package_data(
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PublishSettingsData {
+    pub message_template: String,
+    pub default_workflow: String,
+    pub default_metadata: String,
+}
+
+impl From<PublishSettings> for PublishSettingsData {
+    fn from(s: PublishSettings) -> Self {
+        Self {
+            message_template: s.message_template.unwrap_or_default(),
+            default_workflow: s.default_workflow.unwrap_or_default(),
+            default_metadata: s.default_metadata.unwrap_or_default(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SettingsData {
     pub version: String,
     pub home_dir: Option<String>,
@@ -278,6 +299,7 @@ pub struct SettingsData {
     pub logs_dir_is_temporary: bool,
     pub os: String,
     pub changelog: Vec<changelog::ChangelogEntry>,
+    pub publish: PublishSettingsData,
 }
 
 #[tauri::command]
@@ -286,6 +308,7 @@ pub async fn get_settings_data(
     app: tauri::State<'_, app::App>,
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    publish: tauri::State<'_, SharedPublishSettings>,
 ) -> Result<SettingsData, String> {
     let app: &app::App = &app;
 
@@ -306,6 +329,7 @@ pub async fn get_settings_data(
 
     let auth_hosts = quilt::paths::list_auth_hosts(&data_dir);
     let log_level = tracing.log_level();
+    let publish_data = PublishSettingsData::from(publish.read().await.clone());
 
     Ok(SettingsData {
         version: app.version.to_string(),
@@ -317,7 +341,47 @@ pub async fn get_settings_data(
         logs_dir_is_temporary: matches!(app.logs_dir, crate::telemetry::LogsDir::Temporary(_)),
         os: std::env::consts::OS.to_string(),
         changelog: changelog::latest_entries(),
+        publish: publish_data,
     })
+}
+
+#[tauri::command]
+pub async fn update_publish_settings(
+    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
+    publish: tauri::State<'_, SharedPublishSettings>,
+    message_template: String,
+    default_workflow: String,
+    default_metadata: String,
+) -> Result<(), String> {
+    // Validate metadata is parseable JSON (or empty = no metadata).
+    if !default_metadata.is_empty() {
+        serde_json::from_str::<serde_json::Value>(&default_metadata)
+            .map_err(|e| format!("Invalid metadata JSON: {e}"))?;
+    }
+
+    let new = PublishSettings {
+        message_template: opt_from_string(message_template),
+        default_workflow: opt_from_string(default_workflow),
+        default_metadata: opt_from_string(default_metadata),
+    };
+
+    let app_handle = app_handle.lock().await;
+    let data_dir = app_handle
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| e.to_string())?;
+
+    new.save(&data_dir).await.map_err(|e| e.to_string())?;
+    *publish.write().await = new;
+    Ok(())
+}
+
+fn opt_from_string(s: String) -> Option<String> {
+    if s.trim().is_empty() {
+        None
+    } else {
+        Some(s)
+    }
 }
 
 // ── Login data for Leptos UI ──
@@ -1316,6 +1380,130 @@ pub async fn package_push(
         _ => String::new(),
     };
     let msg_err = |err: &Error| format!("Failed to push package: {err}");
+
+    Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
+}
+
+async fn package_publish_command(
+    m: &model::Model,
+    settings: &SharedPublishSettings,
+    namespace: &str,
+    status: &quilt::lineage::InstalledPackageStatus,
+) -> Result<quilt::PushOutcome, Error> {
+    let namespace = quilt::uri::Namespace::try_from(namespace)?;
+    let settings = settings.read().await.clone();
+
+    let changes_summary = commit_message::generate(&status.changes);
+    let message = commit_message::render_publish_message(
+        settings.message_template.as_deref().unwrap_or_default(),
+        &commit_message::PublishMessageContext {
+            namespace: &namespace,
+            changes_summary,
+        },
+    );
+    let metadata = settings.default_metadata.clone().unwrap_or_default();
+    let workflow = settings.default_workflow.clone();
+
+    model::package_publish(m, namespace, &message, &metadata, workflow, None).await
+}
+
+#[tauri::command]
+pub async fn package_publish(
+    m: tauri::State<'_, model::Model>,
+    settings: tauri::State<'_, SharedPublishSettings>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    namespace: String,
+) -> Result<String, String> {
+    tracing.track(MixpanelEvent::PackagePublished).await;
+
+    let namespace_parsed: quilt::uri::Namespace = match namespace.as_str().try_into() {
+        Ok(n) => n,
+        Err(e) => return Err(Error::from(e).to_frontend_string()),
+    };
+    let status = match get_status_for_publish(&m, &namespace_parsed).await {
+        Ok(s) => s,
+        Err(e) => return Err(e.to_frontend_string()),
+    };
+    let committed = !status.changes.is_empty();
+
+    let msg_init = format!("Publishing package {namespace}");
+    let result = package_publish_command(&m, &settings, &namespace, &status).await;
+
+    if committed {
+        tracing.track(MixpanelEvent::PackageCommitted).await;
+    }
+    if result.is_ok() {
+        tracing.track(MixpanelEvent::PackagePushed).await;
+    }
+
+    let msg_ok = match &result {
+        Ok(outcome) if outcome.certified_latest => {
+            format!("Successfully published package {namespace}")
+        }
+        Ok(_) => {
+            format!("Published {namespace}, but could not update latest: remote has newer changes")
+        }
+        _ => String::new(),
+    };
+    let msg_err = |err: &Error| format!("Failed to publish package: {err}");
+
+    Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
+}
+
+async fn get_status_for_publish(
+    m: &model::Model,
+    namespace: &quilt::uri::Namespace,
+) -> Result<quilt::lineage::InstalledPackageStatus, Error> {
+    let installed = m.get_installed_package(namespace).await?.ok_or_else(|| {
+        Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone()))
+    })?;
+    m.get_installed_package_status(&installed, None).await
+}
+
+async fn package_commit_and_push_command(
+    m: &model::Model,
+    namespace: &str,
+    message: &str,
+    metadata: &str,
+    workflow: Option<String>,
+) -> Result<quilt::PushOutcome, Error> {
+    let namespace = quilt::uri::Namespace::try_from(namespace)?;
+    if message.is_empty() {
+        return Err(Error::Commit("Message is required".to_string()));
+    }
+    model::package_publish(m, namespace, message, metadata, workflow, None).await
+}
+
+#[tauri::command]
+pub async fn package_commit_and_push(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    namespace: String,
+    message: String,
+    metadata: String,
+    workflow: Option<String>,
+) -> Result<String, String> {
+    tracing.track(MixpanelEvent::PackagePublished).await;
+    tracing.track(MixpanelEvent::PackageCommitted).await;
+
+    let msg_init = format!("Publishing package {namespace}");
+    let result =
+        package_commit_and_push_command(&m, &namespace, &message, &metadata, workflow).await;
+
+    if result.is_ok() {
+        tracing.track(MixpanelEvent::PackagePushed).await;
+    }
+
+    let msg_ok = match &result {
+        Ok(outcome) if outcome.certified_latest => {
+            format!("Successfully published package {namespace}")
+        }
+        Ok(_) => {
+            format!("Published {namespace}, but could not update latest: remote has newer changes")
+        }
+        _ => String::new(),
+    };
+    let msg_err = |err: &Error| format!("Failed to publish package: {err}");
 
     Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
 }

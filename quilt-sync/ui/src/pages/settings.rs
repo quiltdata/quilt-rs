@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 
-use crate::commands::{self, ChangelogEntry, SettingsData};
+use crate::commands::{self, ChangelogEntry, PublishSettingsData, SettingsData};
 use crate::components::buttons;
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{Layout, Notification, Spinner};
@@ -67,6 +67,7 @@ fn SettingsContent(
                 changelog=data.changelog
                 notification=notification
             />
+            <PublishSection publish=data.publish notification=notification />
             <AccountSection auth_hosts=data.auth_hosts notification=notification refetch=refetch />
             <DiagnosticsSection
                 version=data.version
@@ -144,6 +145,172 @@ fn GeneralSection(
                 on_close=move || show_release_notes.set(false)
             />
         </Show>
+    }
+}
+
+// ── Publish section ──
+
+fn render_publish_preview(template: &str) -> String {
+    if template.trim().is_empty() {
+        return "Auto-generated summary of changes".to_string();
+    }
+    let now = js_sys::Date::new_0();
+    let date = format!(
+        "{:04}-{:02}-{:02}",
+        now.get_full_year(),
+        now.get_month() + 1,
+        now.get_date()
+    );
+    let time = format!("{:02}:{:02}", now.get_hours(), now.get_minutes());
+    let datetime = format!("{date} {time}");
+    template
+        .replace("{date}", &date)
+        .replace("{time}", &time)
+        .replace("{datetime}", &datetime)
+        .replace("{namespace}", "example/package")
+        .replace("{changes}", "3 files modified")
+}
+
+#[component]
+fn PublishSection(
+    publish: PublishSettingsData,
+    notification: RwSignal<Option<Notification>>,
+) -> impl IntoView {
+    let message_template = RwSignal::new(publish.message_template.clone());
+    let workflow_override = RwSignal::new(publish.default_workflow.clone());
+    let metadata = RwSignal::new(publish.default_metadata.clone());
+    // `true` = use the bucket's default; `false` = override with the workflow ID field.
+    let use_bucket_default =
+        RwSignal::new(publish.default_workflow.trim().is_empty());
+    let metadata_error = RwSignal::new(None::<String>);
+    let saving = RwSignal::new(false);
+
+    let on_save = move |_| {
+        if saving.get_untracked() {
+            return;
+        }
+        let template = message_template.get_untracked();
+        let wf = if use_bucket_default.get_untracked() {
+            String::new()
+        } else {
+            workflow_override.get_untracked()
+        };
+        let meta = metadata.get_untracked();
+        if !meta.trim().is_empty() {
+            if let Err(err) = serde_json::from_str::<serde_json::Value>(&meta) {
+                metadata_error.set(Some(format!("Invalid JSON: {err}")));
+                return;
+            }
+        }
+        metadata_error.set(None);
+        saving.set(true);
+        leptos::task::spawn_local(async move {
+            match commands::update_publish_settings(template, wf, meta).await {
+                Ok(()) => notification
+                    .set(Some(Notification::Success("Publish settings saved".into()))),
+                Err(e) => notification.set(Some(Notification::Error(e))),
+            }
+            saving.set(false);
+        });
+    };
+
+    let on_reset = move |_| {
+        message_template.set(String::new());
+        workflow_override.set(String::new());
+        use_bucket_default.set(true);
+        metadata.set(String::new());
+        metadata_error.set(None);
+    };
+
+    view! {
+        <section class="settings-section qui-publish-settings">
+            <h2 class="section-title">"Publish"</h2>
+            <dl class="settings-list">
+                <dt>
+                    <label for="publish-message-template">"Message template"</label>
+                </dt>
+                <dd>
+                    <input
+                        class="input"
+                        id="publish-message-template"
+                        placeholder="Auto-publish {date} ({changes})"
+                        prop:value=move || message_template.get()
+                        on:input=move |ev| message_template.set(event_target_value(&ev))
+                    />
+                    <p class="field-description">
+                        "Placeholders: "
+                        <code>"{date}"</code>" "
+                        <code>"{time}"</code>" "
+                        <code>"{datetime}"</code>" "
+                        <code>"{namespace}"</code>" "
+                        <code>"{changes}"</code>
+                    </p>
+                    <p class="field-description">
+                        "Preview: "
+                        <em>{move || render_publish_preview(&message_template.get())}</em>
+                    </p>
+                </dd>
+
+                <dt>"Default workflow"</dt>
+                <dd>
+                    <label class="radio-option">
+                        <input
+                            type="radio"
+                            name="publish-workflow-mode"
+                            prop:checked=move || use_bucket_default.get()
+                            on:change=move |_| use_bucket_default.set(true)
+                        />
+                        "Use the bucket's default workflow"
+                    </label>
+                    <label class="radio-option">
+                        <input
+                            type="radio"
+                            name="publish-workflow-mode"
+                            prop:checked=move || !use_bucket_default.get()
+                            on:change=move |_| use_bucket_default.set(false)
+                        />
+                        "Override"
+                    </label>
+                    <Show when=move || !use_bucket_default.get()>
+                        <input
+                            class="input"
+                            id="publish-workflow-override"
+                            placeholder="workflow-id"
+                            prop:value=move || workflow_override.get()
+                            on:input=move |ev| workflow_override.set(event_target_value(&ev))
+                        />
+                    </Show>
+                </dd>
+
+                <dt>
+                    <label for="publish-default-metadata">"Default metadata"</label>
+                </dt>
+                <dd>
+                    <textarea
+                        class="textarea"
+                        id="publish-default-metadata"
+                        placeholder="{ \"source\": \"desktop\" }"
+                        prop:value=move || metadata.get()
+                        on:input=move |ev| metadata.set(event_target_value(&ev))
+                    ></textarea>
+                    <Show when=move || metadata_error.get().is_some()>
+                        <span class="error">
+                            {move || metadata_error.get().unwrap_or_default()}
+                        </span>
+                    </Show>
+                </dd>
+            </dl>
+            <div class="settings-actions">
+                <buttons::Save on_click=on_save busy=saving />
+                <button
+                    type="button"
+                    class="qui-link secondary"
+                    on:click=on_reset
+                >
+                    "Reset to defaults"
+                </button>
+            </div>
+        </section>
     }
 }
 

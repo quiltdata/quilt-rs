@@ -8,6 +8,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.29.1-alpha6] - 2026-04-21
+
+### Added
+
+- New `flow::publish_package` that composes `commit_package` + `push_package` into a single call, skipping the commit step when there are no working-directory changes
+
 ## [v0.29.1-alpha5] - 2026-04-20
 
 ### Changed

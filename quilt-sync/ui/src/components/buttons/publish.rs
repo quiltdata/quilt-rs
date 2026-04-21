@@ -4,17 +4,17 @@ use leptos::callback::UnsyncCallback;
 
 use super::{ButtonKind, IconButton};
 
-const KIND: ButtonKind = ButtonKind::Push;
+const KIND: ButtonKind = ButtonKind::Publish;
 
 #[component]
-pub fn Push(
+pub fn Publish(
     on_click: impl Fn(leptos::ev::MouseEvent) + 'static,
     #[prop(optional)] small: bool,
     #[prop(optional, into)] busy: MaybeProp<bool>,
 ) -> impl IntoView {
     view! {
         <IconButton icon=KIND.icon() on_click=UnsyncCallback::new(on_click) small=small primary=true disabled=busy>
-            {move || if busy.get().unwrap_or(false) { "Pushing\u{2026}" } else { KIND.label() }}
+            {move || if busy.get().unwrap_or(false) { "Publishing\u{2026}" } else { KIND.label() }}
         </IconButton>
     }
 }

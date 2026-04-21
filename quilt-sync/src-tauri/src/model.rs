@@ -186,6 +186,19 @@ pub trait QuiltModel {
         Ok(package.push(host_config).await?)
     }
 
+    async fn package_publish(
+        &self,
+        package: &quilt::InstalledPackage,
+        message: String,
+        metadata: Option<serde_json::Value>,
+        workflow: Option<quilt::manifest::Workflow>,
+        host_config: Option<HostConfig>,
+    ) -> Result<quilt::PushOutcome, Error> {
+        Ok(package
+            .publish(message, metadata, workflow, host_config)
+            .await?)
+    }
+
     async fn package_revision_certify_latest(
         &self,
         package: &quilt::InstalledPackage,
@@ -523,6 +536,37 @@ pub async fn package_push(
         .await?
         .unwrap_or_else(|| panic!("Package {namespace} not found"));
     model.package_push(&installed_package, host_config).await
+}
+
+pub async fn package_publish(
+    model: &impl QuiltModel,
+    namespace: quilt::uri::Namespace,
+    message: &str,
+    metadata: &str,
+    workflow: Option<String>,
+    host_config: Option<HostConfig>,
+) -> Result<quilt::PushOutcome, Error> {
+    debug!(
+        "Publishing the package.\nNamespace: {},\nmessage: {},\nuser_meta: {},\nworkflow: {:?}",
+        namespace, message, metadata, workflow
+    );
+    let metadata = parse_metadata(metadata)?;
+
+    let installed_package = model
+        .get_installed_package(&namespace)
+        .await?
+        .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace)))?;
+
+    let workflow = installed_package.resolve_workflow(workflow).await?;
+    model
+        .package_publish(
+            &installed_package,
+            message.to_string(),
+            metadata,
+            workflow,
+            host_config,
+        )
+        .await
 }
 
 pub async fn package_pull(

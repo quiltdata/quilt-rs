@@ -77,6 +77,14 @@ pub struct LoginErrorData {
     pub login_host: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishSettingsData {
+    pub message_template: String,
+    pub default_workflow: String,
+    pub default_metadata: String,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsData {
@@ -89,6 +97,7 @@ pub struct SettingsData {
     pub logs_dir_is_temporary: bool,
     pub os: String,
     pub changelog: Vec<ChangelogEntry>,
+    pub publish: PublishSettingsData,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -266,12 +275,61 @@ pub async fn package_commit(
     .await
 }
 
-pub async fn package_push(namespace: String) -> Result<String, String> {
+pub async fn package_publish(namespace: String) -> Result<String, String> {
     #[derive(Serialize)]
     struct Args {
         namespace: String,
     }
-    tauri::invoke("package_push", &Args { namespace }).await
+    tauri::invoke("package_publish", &Args { namespace }).await
+}
+
+pub async fn package_commit_and_push(
+    namespace: String,
+    message: String,
+    metadata: String,
+    workflow: Option<String>,
+) -> Result<String, String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        namespace: String,
+        message: String,
+        metadata: String,
+        workflow: Option<String>,
+    }
+    tauri::invoke(
+        "package_commit_and_push",
+        &Args {
+            namespace,
+            message,
+            metadata,
+            workflow,
+        },
+    )
+    .await
+}
+
+pub async fn update_publish_settings(
+    message_template: String,
+    default_workflow: String,
+    default_metadata: String,
+) -> Result<(), String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        message_template: String,
+        default_workflow: String,
+        default_metadata: String,
+    }
+    tauri::invoke(
+        "update_publish_settings",
+        &Args {
+            message_template,
+            default_workflow,
+            default_metadata,
+        },
+    )
+    .await
 }
 
 pub async fn package_pull(namespace: String) -> Result<String, String> {

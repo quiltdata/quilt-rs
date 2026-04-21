@@ -17,6 +17,7 @@ mod error;
 mod model;
 mod notify;
 mod oauth;
+mod publish_settings;
 mod quilt;
 mod routes;
 mod telemetry;
@@ -73,11 +74,22 @@ fn main() {
 
             telemetry.init();
 
+            let publish_settings = tauri::async_runtime::block_on(publish_settings::init(
+                &data_dir,
+            ))
+            .unwrap_or_else(|err| {
+                error!("Failed to load publish settings, using defaults: {err}");
+                std::sync::Arc::new(tokio::sync::RwLock::new(
+                    publish_settings::PublishSettings::default(),
+                ))
+            });
+
             app.manage(Model::create(data_dir));
             app.manage(sync::Mutex::new(app.handle().clone()));
             app.manage(App::new(package_info, logs_dir));
             app.manage(telemetry);
             app.manage(oauth::OAuthState::default());
+            app.manage(publish_settings);
 
             uri::setup_deep_link_handler(app.handle());
 
@@ -107,9 +119,12 @@ fn main() {
             commands::open_in_file_browser,
             commands::open_in_web_browser,
             commands::package_commit,
+            commands::package_commit_and_push,
             commands::package_install_paths,
+            commands::package_publish,
             commands::package_pull,
             commands::package_push,
+            commands::update_publish_settings,
             commands::refresh_package_status,
             commands::package_uninstall,
             commands::reset_local,

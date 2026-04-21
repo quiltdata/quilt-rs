@@ -249,6 +249,74 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         }
     }
 
+    /// Commit any working-directory changes (if any) and push the revision to
+    /// the remote in one step. Errors if the package has no remote or nothing
+    /// to publish.
+    pub async fn publish(
+        &self,
+        message: String,
+        user_meta: Option<serde_json::Value>,
+        workflow: Option<Workflow>,
+        host_config_opt: Option<HostConfig>,
+    ) -> Res<PushOutcome> {
+        self.scaffold_paths().await?;
+
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        let remote_uri = match lineage.remote_uri.as_ref() {
+            Some(uri) if !uri.bucket.is_empty() => uri.clone(),
+            Some(_) => {
+                return Err(Error::PackageOp(PackageOpError::Publish(
+                    "Remote bucket not set. Use set_remote first.".to_string(),
+                )))
+            }
+            None => {
+                return Err(Error::PackageOp(PackageOpError::Publish(
+                    "No remote configured. Use set_remote first.".to_string(),
+                )))
+            }
+        };
+
+        self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
+
+        let mut manifest = self.manifest().await?;
+        let host_config =
+            host_config_opt.unwrap_or(self.remote.host_config(&remote_uri.origin).await?);
+
+        let (lineage, status) = flow::status(
+            lineage,
+            &self.storage,
+            &manifest,
+            &package_home,
+            host_config.clone(),
+        )
+        .await?;
+
+        let outcome = flow::publish(
+            lineage,
+            &mut manifest,
+            &self.paths,
+            &self.storage,
+            &self.remote,
+            package_home,
+            status,
+            self.namespace.clone(),
+            host_config,
+            flow::CommitOptions {
+                message,
+                user_meta,
+                workflow,
+            },
+        )
+        .await?;
+
+        let certified_latest = outcome.push.certified_latest;
+        let lineage = self.lineage.write(&self.storage, outcome.push.lineage).await?;
+        Ok(PushOutcome {
+            manifest_uri: lineage.remote()?.clone(),
+            certified_latest,
+        })
+    }
+
     /// Push the local revision to the remote.
     pub async fn push(&self, host_config_opt: Option<HostConfig>) -> Res<PushOutcome> {
         self.scaffold_paths().await?;

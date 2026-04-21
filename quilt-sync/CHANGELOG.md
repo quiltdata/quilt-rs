@@ -9,6 +9,23 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.16.1-alpha2] - 2026-04-21
+
+### Added
+
+- One-click `[Publish]` action on the Installed Packages List and Installed Package pages that commits local changes (if any) and pushes in a single step, using per-user defaults configured in Settings
+- `Publish` section in Settings with a message template (supports `{date}`/`{time}`/`{datetime}`/`{namespace}`/`{changes}` placeholders and a live preview), a default-workflow picker, and default metadata
+- `[Commit and Push]` primary action on the Commit form, sitting next to the existing `[Commit]` secondary action
+
+### Changed
+
+- Replace the `[Commit]` menu button on the Installed Packages List with `[Publish]` when a remote is configured
+- Swap the status banner's `[Push]` action for `[Publish]` on the Installed Package page, with a secondary `Commit…` link for custom messages
+
+### quilt-rs
+
+- Added `flow::publish_package` that composes `commit_package` + `push_package` into a single call
+
 ## [v0.16.1-alpha1] - 2026-04-17
 
 ### Changed

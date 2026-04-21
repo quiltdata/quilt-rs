@@ -409,11 +409,11 @@ fn StatusBanner(
 
     let content = match status.as_str() {
         "ahead" => {
-            let ns_for_push = ns.clone();
-            let (push_busy, on_push) = make_action(
+            let ns_for_publish = ns.clone();
+            let (publish_busy, on_publish) = make_action(
                 move || {
-                    let ns = ns_for_push.clone();
-                    async move { commands::package_push(ns).await }
+                    let ns = ns_for_publish.clone();
+                    async move { commands::package_publish(ns).await }
                 },
                 notification,
                 Some(ui_locked),
@@ -422,7 +422,8 @@ fn StatusBanner(
             Some(
                 view! {
                     <StatusBannerInner description="Your commits are ahead of the remote">
-                        <buttons::Push on_click=on_push busy=push_busy />
+                        <buttons::Publish on_click=on_publish busy=publish_busy />
+                        <buttons::CommitLink namespace=ns.clone() />
                     </StatusBannerInner>
                 }
                 .into_any(),
@@ -496,11 +497,11 @@ fn StatusBanner(
             ),
         },
         "local" if origin_host.is_some() => {
-            let ns_for_push = ns.clone();
-            let (push_busy, on_push) = make_action(
+            let ns_for_publish = ns.clone();
+            let (publish_busy, on_publish) = make_action(
                 move || {
-                    let ns = ns_for_push.clone();
-                    async move { commands::package_push(ns).await }
+                    let ns = ns_for_publish.clone();
+                    async move { commands::package_publish(ns).await }
                 },
                 notification,
                 Some(ui_locked),
@@ -508,8 +509,9 @@ fn StatusBanner(
             );
             Some(
                 view! {
-                    <StatusBannerInner description="Push to remote">
-                        <buttons::Push on_click=on_push busy=push_busy />
+                    <StatusBannerInner description="Publish to remote">
+                        <buttons::Publish on_click=on_publish busy=publish_busy />
+                        <buttons::CommitLink namespace=ns.clone() />
                     </StatusBannerInner>
                 }
                 .into_any(),

@@ -3,7 +3,8 @@ pub mod browse;
 pub mod certify_latest;
 pub mod change_origin;
 pub mod collect_logs;
-pub mod commit;
+pub mod commit_and_push;
+pub mod commit_link;
 pub mod commit_revision;
 pub mod create_local_package;
 pub mod create_new_revision;
@@ -23,8 +24,8 @@ pub mod open_dot_quilt;
 pub mod open_in_catalog;
 pub mod open_in_file_browser;
 pub mod open_logs_dir;
+pub mod publish;
 pub mod pull;
-pub mod push;
 pub mod re_login;
 pub mod refresh;
 pub mod release_notes;
@@ -44,7 +45,8 @@ pub use browse::Browse;
 pub use certify_latest::CertifyLatest;
 pub use change_origin::ChangeOrigin;
 pub use collect_logs::CollectLogs;
-pub use commit::Commit;
+pub use commit_and_push::CommitAndPush;
+pub use commit_link::CommitLink;
 pub use commit_revision::CommitRevision;
 pub use create_local_package::CreateLocalPackage;
 pub use create_new_revision::CreateNewRevision;
@@ -64,8 +66,8 @@ pub use open_dot_quilt::OpenDotQuilt;
 pub use open_in_catalog::OpenInCatalog;
 pub use open_in_file_browser::OpenInFileBrowser;
 pub use open_logs_dir::OpenLogsDir;
+pub use publish::Publish;
 pub use pull::Pull;
-pub use push::Push;
 pub use re_login::ReLogin;
 pub use refresh::Refresh;
 pub use release_notes::ReleaseNotes;
@@ -88,7 +90,6 @@ use base::icon::IconLink;
 /// need a variant here; text-only buttons don't use `ButtonKind`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ButtonKind {
-    Commit,
     CommitRevision,
     CreateLocalPackage,
     CreateNewRevision,
@@ -102,8 +103,8 @@ pub enum ButtonKind {
     OpenBrowser,
     OpenInCatalog,
     OpenInFileBrowser,
+    Publish,
     Pull,
-    Push,
     Refresh,
     Remove,
     Reveal,
@@ -118,7 +119,6 @@ pub enum ButtonKind {
 impl ButtonKind {
     pub const fn icon(self) -> &'static str {
         match self {
-            Self::Commit => "/assets/img/icons/commit.svg",
             Self::CommitRevision => "/assets/img/icons/done.svg",
             Self::CreateLocalPackage => "/assets/img/icons/add.svg",
             Self::CreateNewRevision => "/assets/img/icons/arrow_forward.svg",
@@ -132,8 +132,8 @@ impl ButtonKind {
             Self::OpenBrowser => "/assets/img/icons/open_in_browser.svg",
             Self::OpenInCatalog => "/assets/img/icons/open_in_browser.svg",
             Self::OpenInFileBrowser => "/assets/img/icons/folder_open.svg",
+            Self::Publish => "/assets/img/icons/cloud_upload.svg",
             Self::Pull => "/assets/img/icons/cloud_download.svg",
-            Self::Push => "/assets/img/icons/cloud_upload.svg",
             Self::Refresh => "/assets/img/icons/refresh.svg",
             Self::Remove => "/assets/img/icons/block.svg",
             Self::Reveal => "/assets/img/icons/folder_open.svg",
@@ -148,7 +148,6 @@ impl ButtonKind {
 
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Commit => "Commit",
             Self::CommitRevision => "Commit",
             Self::CreateLocalPackage => "Create local package",
             Self::CreateNewRevision => "Create new revision",
@@ -162,8 +161,8 @@ impl ButtonKind {
             Self::OpenBrowser => "Open browser",
             Self::OpenInCatalog => "Open in Catalog",
             Self::OpenInFileBrowser => "Open",
+            Self::Publish => "Publish",
             Self::Pull => "Pull",
-            Self::Push => "Push",
             Self::Refresh => "Refresh",
             Self::Remove => "Remove",
             Self::Reveal => "Reveal",
