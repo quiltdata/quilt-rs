@@ -302,12 +302,8 @@ fn PublishSection(
             </dl>
             <div class="settings-actions">
                 <buttons::Save on_click=on_save busy=saving />
-                <button
-                    type="button"
-                    class="qui-link secondary"
-                    on:click=on_reset
-                >
-                    "Reset to defaults"
+                <button type="button" class="qui-button link" on:click=on_reset>
+                    <span>"Reset to defaults"</span>
                 </button>
             </div>
         </section>
