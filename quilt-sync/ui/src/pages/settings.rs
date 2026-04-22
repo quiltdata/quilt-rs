@@ -200,23 +200,26 @@ fn PublishSection(
 ) -> impl IntoView {
     let show_popup = RwSignal::new(false);
 
-    let template_display = match publish.message_template.trim() {
-        "" => "Default — auto-generated summary of changes".to_string(),
-        t => t.to_string(),
+    let template_is_default = publish.message_template.is_empty();
+    let template_display = if template_is_default {
+        "Default — auto-generated summary of changes".to_string()
+    } else {
+        publish.message_template.clone()
     };
-    let template_is_default = publish.message_template.trim().is_empty();
 
-    let workflow_display = match publish.default_workflow.trim() {
-        "" => "Default — bucket's workflow".to_string(),
-        w => w.to_string(),
+    let workflow_is_default = publish.default_workflow.is_empty();
+    let workflow_display = if workflow_is_default {
+        "Default — bucket's workflow".to_string()
+    } else {
+        publish.default_workflow.clone()
     };
-    let workflow_is_default = publish.default_workflow.trim().is_empty();
 
-    let metadata_display = match publish.default_metadata.trim() {
-        "" => "Default — none".to_string(),
-        m => m.to_string(),
+    let metadata_is_default = publish.default_metadata.is_empty();
+    let metadata_display = if metadata_is_default {
+        "Default — none".to_string()
+    } else {
+        publish.default_metadata.clone()
     };
-    let metadata_is_default = publish.default_metadata.trim().is_empty();
 
     let current = publish.clone();
 
@@ -280,7 +283,7 @@ fn PublishSettingsPopup(
     let message_template = RwSignal::new(current.message_template.clone());
     let workflow_override = RwSignal::new(current.default_workflow.clone());
     let metadata = RwSignal::new(current.default_metadata.clone());
-    let use_bucket_default = RwSignal::new(current.default_workflow.trim().is_empty());
+    let use_bucket_default = RwSignal::new(current.default_workflow.is_empty());
     let metadata_error = RwSignal::new(None::<String>);
     let saving = RwSignal::new(false);
 

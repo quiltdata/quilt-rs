@@ -377,11 +377,8 @@ pub async fn update_publish_settings(
 }
 
 fn opt_from_string(s: String) -> Option<String> {
-    if s.trim().is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    let trimmed = s.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
 // ── Login data for Leptos UI ──

@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.16.1-alpha8] - 2026-04-22
+
+### Fixed
+
+- Publish-settings inputs now trim leading/trailing whitespace on save, so the Settings summary, popup editor, and rendered commit message all agree on the stored value
+
 ## [v0.16.1-alpha7] - 2026-04-22
 
 ### Fixed
