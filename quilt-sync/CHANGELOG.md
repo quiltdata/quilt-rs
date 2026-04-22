@@ -9,6 +9,13 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.16.1-alpha11] - 2026-04-22
+
+### Changed
+
+- Settings page: renamed the "Publish" section to "Commit and Push", the "Edit publish defaults" popup heading to "Edit commit defaults", and the save-confirmation toast to "Commit and Push settings saved"
+- Commit page's Commit-and-Push button now shows "Committing and pushing…" while busy (previously "Publishing…"), matching its idle label
+
 ## [v0.16.1-alpha10] - 2026-04-22
 
 ### Changed

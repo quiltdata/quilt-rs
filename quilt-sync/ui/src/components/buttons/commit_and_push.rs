@@ -15,7 +15,7 @@ pub fn CommitAndPush(
         Signal::derive(move || busy.get().unwrap_or(false) || disabled.get().unwrap_or(false));
     view! {
         <ButtonCta icon=KIND.icon() on_click=UnsyncCallback::new(on_click) primary=true disabled=is_disabled>
-            {move || if busy.get().unwrap_or(false) { "Publishing\u{2026}" } else { "Commit and Push" }}
+            {move || if busy.get().unwrap_or(false) { "Committing and pushing\u{2026}" } else { "Commit and Push" }}
         </ButtonCta>
     }
 }

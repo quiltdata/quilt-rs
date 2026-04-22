@@ -225,7 +225,7 @@ fn PublishSection(
 
     view! {
         <section class="settings-section qui-publish-settings">
-            <h2 class="section-title">"Publish"</h2>
+            <h2 class="section-title">"Commit and Push"</h2>
             <dl class="settings-list">
                 <dt>"Message template"</dt>
                 <dd>
@@ -311,7 +311,7 @@ fn PublishSettingsPopup(
         leptos::task::spawn_local(async move {
             match commands::update_publish_settings(template, wf, meta).await {
                 Ok(()) => {
-                    notification.set(Some(Notification::Success("Publish settings saved".into())));
+                    notification.set(Some(Notification::Success("Commit and Push settings saved".into())));
                     on_close();
                     refetch.notify();
                 }
@@ -338,7 +338,7 @@ fn PublishSettingsPopup(
             move |_| on_close()
         }>
             <div class="popup-content publish-settings-form" on:click=|ev| ev.stop_propagation()>
-                <h2 class="section-title">"Edit publish defaults"</h2>
+                <h2 class="section-title">"Edit commit defaults"</h2>
 
                 <div class="field">
                     <label for="publish-message-template">"Message template"</label>
