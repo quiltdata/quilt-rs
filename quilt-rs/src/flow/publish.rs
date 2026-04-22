@@ -262,7 +262,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_publish_push_fails_without_remote() -> Res {
+    async fn test_publish_push_fails_after_successful_commit() -> Res {
         // Commit succeeds, but lineage has no remote — push bails out.
         let manifest_src = fixtures::manifest_with_objects_all_sizes::manifest().await?;
         let base_record = manifest_src.get_record(&PathBuf::from("0mb.bin")).unwrap();
@@ -315,6 +315,83 @@ mod tests {
             err.to_string().contains("remote"),
             "expected remote-missing error, got: {err}"
         );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_publish_commits_and_pushes_happy_path() -> Res {
+        // Full happy path: working-dir changes → commit succeeds → push succeeds.
+        // Mirrors the setup of `test_publish_push_fails_after_successful_commit`,
+        // but gives the lineage a first-push `remote_uri` and seeds the remote
+        // so `upload_row` / `tag_latest` can complete.
+        let manifest_src = fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let base_record = manifest_src.get_record(&PathBuf::from("0mb.bin")).unwrap();
+        let added = ManifestRow {
+            logical_key: PathBuf::from("foo"),
+            hash: base_record.hash.clone(),
+            size: base_record.size,
+            physical_key: base_record.physical_key.clone(),
+            ..ManifestRow::default()
+        };
+
+        let storage = MockStorage::default();
+        storage
+            .write_byte_stream(PathBuf::from("/working-dir/foo"), ByteStream::default())
+            .await?;
+
+        let remote = MockRemote::default();
+        // The committed "foo" row points at /.quilt/objects/{zero_hash_hex}
+        // via a `file://` URL. Push reads it through the MockRemote's own
+        // storage (see MockRemote::upload_file), so seed the same empty file
+        // there too.
+        let object_path =
+            PathBuf::from(format!("/.quilt/objects/{}", fixtures::objects::ZERO_HASH_HEX));
+        remote
+            .storage
+            .write_byte_stream(object_path, ByteStream::default())
+            .await?;
+
+        let status = InstalledPackageStatus {
+            changes: BTreeMap::from([(PathBuf::from("foo"), Change::Added(added))]),
+            ..InstalledPackageStatus::default()
+        };
+
+        let lineage = PackageLineage {
+            paths: BTreeMap::from([(PathBuf::from("foo"), PathState::default())]),
+            remote_uri: Some(first_push_uri()),
+            ..PackageLineage::default()
+        };
+
+        let mut manifest = Manifest::default();
+
+        let outcome = publish_package(
+            lineage,
+            &mut manifest,
+            &DomainPaths::new(PathBuf::from("/")),
+            &storage,
+            &remote,
+            PathBuf::from("/working-dir"),
+            status,
+            ("foo", "bar").into(),
+            HostConfig::default(),
+            CommitOptions {
+                message: "published".to_string(),
+                user_meta: None,
+                workflow: None,
+            },
+        )
+        .await?;
+
+        let push = match &outcome {
+            PublishOutcome::CommittedAndPushed(p) => p,
+            PublishOutcome::PushedOnly(_) => {
+                panic!("expected CommittedAndPushed, got PushedOnly");
+            }
+        };
+        assert!(push.certified_latest);
+        let pushed = push.lineage.remote()?;
+        assert!(!pushed.hash.is_empty(), "pushed manifest should have a hash");
+        assert_eq!(pushed.namespace, ("foo", "bar").into());
         Ok(())
     }
 }
