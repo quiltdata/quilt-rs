@@ -76,6 +76,35 @@ fn change_count(n: usize, verb: &str) -> String {
     }
 }
 
+/// Placeholders supported by Publish message templates.
+///
+/// Kept in lockstep with the UI preview's list in
+/// `quilt-sync/ui/src/pages/settings.rs` (both the preview renderer and the
+/// popup's "Placeholders:" label derive from that const). When adding or
+/// renaming a placeholder, update both sides and the positional values passed
+/// to [`apply_placeholders`] below.
+pub const PUBLISH_PLACEHOLDERS: &[&str] = &[
+    "{date}",
+    "{time}",
+    "{datetime}",
+    "{namespace}",
+    "{changes}",
+];
+
+/// Substitute `PUBLISH_PLACEHOLDERS` into `template` positionally.
+///
+/// `values` must be the same length as `PUBLISH_PLACEHOLDERS`; each value
+/// replaces the placeholder at the same index. Unknown placeholders in the
+/// template pass through verbatim so typos are visible in the preview.
+fn apply_placeholders(template: &str, values: &[&str]) -> String {
+    debug_assert_eq!(PUBLISH_PLACEHOLDERS.len(), values.len());
+    let mut rendered = template.to_string();
+    for (placeholder, value) in PUBLISH_PLACEHOLDERS.iter().zip(values) {
+        rendered = rendered.replace(placeholder, value);
+    }
+    rendered
+}
+
 /// Context available to a Publish message template.
 ///
 /// Keeps the `render_publish_message` helper UI-agnostic: the caller supplies
@@ -89,11 +118,9 @@ pub struct PublishMessageContext<'a> {
 
 /// Render a user-configured message template for Publish.
 ///
-/// Supported placeholders: `{date}` (`YYYY-MM-DD`), `{time}` (`HH:MM`),
-/// `{datetime}` (`YYYY-MM-DD HH:MM`), `{namespace}`, `{changes}`. Unknown
-/// placeholders pass through verbatim so typos are visible in the preview.
-/// An empty (or whitespace-only) template falls back to the auto-generated
-/// summary from [`generate`].
+/// See [`PUBLISH_PLACEHOLDERS`] for the supported placeholders. An empty (or
+/// whitespace-only) template falls back to the auto-generated summary from
+/// [`generate`].
 pub fn render_publish_message(template: &str, ctx: &PublishMessageContext<'_>) -> String {
     let trimmed = template.trim();
     if trimmed.is_empty() {
@@ -103,12 +130,11 @@ pub fn render_publish_message(template: &str, ctx: &PublishMessageContext<'_>) -
     let date = now.format("%Y-%m-%d").to_string();
     let time = now.format("%H:%M").to_string();
     let datetime = format!("{date} {time}");
-    template
-        .replace("{date}", &date)
-        .replace("{time}", &time)
-        .replace("{datetime}", &datetime)
-        .replace("{namespace}", &ctx.namespace.to_string())
-        .replace("{changes}", &ctx.changes_summary)
+    let namespace = ctx.namespace.to_string();
+    apply_placeholders(
+        template,
+        &[&date, &time, &datetime, &namespace, &ctx.changes_summary],
+    )
 }
 
 #[cfg(test)]

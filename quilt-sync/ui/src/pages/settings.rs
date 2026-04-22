@@ -150,6 +150,29 @@ fn GeneralSection(
 
 // ── Publish section ──
 
+/// Placeholders supported by the Publish message preview.
+///
+/// Kept in lockstep with `PUBLISH_PLACEHOLDERS` in
+/// `quilt-sync/src-tauri/src/commit_message.rs`. When adding or renaming a
+/// placeholder, update both sides and the positional values passed to
+/// [`apply_placeholders`] below.
+const PUBLISH_PLACEHOLDERS: &[&str] = &[
+    "{date}",
+    "{time}",
+    "{datetime}",
+    "{namespace}",
+    "{changes}",
+];
+
+fn apply_placeholders(template: &str, values: &[&str]) -> String {
+    debug_assert_eq!(PUBLISH_PLACEHOLDERS.len(), values.len());
+    let mut rendered = template.to_string();
+    for (placeholder, value) in PUBLISH_PLACEHOLDERS.iter().zip(values) {
+        rendered = rendered.replace(placeholder, value);
+    }
+    rendered
+}
+
 fn render_publish_preview(template: &str) -> String {
     if template.trim().is_empty() {
         return "Auto-generated summary of changes".to_string();
@@ -163,12 +186,10 @@ fn render_publish_preview(template: &str) -> String {
     );
     let time = format!("{:02}:{:02}", now.get_hours(), now.get_minutes());
     let datetime = format!("{date} {time}");
-    template
-        .replace("{date}", &date)
-        .replace("{time}", &time)
-        .replace("{datetime}", &datetime)
-        .replace("{namespace}", "example/package")
-        .replace("{changes}", "3 files modified")
+    apply_placeholders(
+        template,
+        &[&date, &time, &datetime, "example/package", "3 files modified"],
+    )
 }
 
 #[component]
@@ -327,11 +348,10 @@ fn PublishSettingsPopup(
                     />
                     <p class="field-description">
                         "Placeholders: "
-                        <code>"{date}"</code>" "
-                        <code>"{time}"</code>" "
-                        <code>"{datetime}"</code>" "
-                        <code>"{namespace}"</code>" "
-                        <code>"{changes}"</code>
+                        {PUBLISH_PLACEHOLDERS
+                            .iter()
+                            .map(|p| view! { <code>{*p}</code>" " })
+                            .collect_view()}
                     </p>
                     <p class="field-description">
                         "Preview: "
