@@ -163,7 +163,7 @@ impl ButtonKind {
             Self::OpenBrowser => "Open browser",
             Self::OpenInCatalog => "Open in Catalog",
             Self::OpenInFileBrowser => "Open",
-            Self::Publish => "Publish",
+            Self::Publish => "Commit and Push",
             Self::Pull => "Pull",
             Self::Push => "Push",
             Self::Refresh => "Refresh",

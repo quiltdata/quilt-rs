@@ -17,7 +17,7 @@ pub fn Publish(
         Signal::derive(move || busy.get().unwrap_or(false) || disabled.get().unwrap_or(false));
     view! {
         <IconButton icon=KIND.icon() on_click=UnsyncCallback::new(on_click) small=small primary=true disabled=is_disabled>
-            {move || if busy.get().unwrap_or(false) { "Publishing\u{2026}" } else { KIND.label() }}
+            {move || if busy.get().unwrap_or(false) { "Committing and pushing\u{2026}" } else { KIND.label() }}
         </IconButton>
     }
 }

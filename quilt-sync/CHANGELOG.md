@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.16.1-alpha10] - 2026-04-22
+
+### Changed
+
+- Installed-packages-list button formerly labeled "Publish" now reads "Commit and Push" (and "Committing and pushing…" while busy), matching the wording already used on the commit and installed-package pages
+
 ## [v0.16.1-alpha9] - 2026-04-22
 
 ### Changed
