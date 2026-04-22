@@ -8,6 +8,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.29.1-alpha9] - 2026-04-22
+
+### Changed
+
+- `flow::commit` now returns `(PackageLineage, CommitState)` instead of `PackageLineage`, so callers that need the new top hash read it from the tuple directly and no longer have to unwrap `lineage.commit` behind a defensive error
+
 ## [v0.29.1-alpha8] - 2026-04-22
 
 ### Changed

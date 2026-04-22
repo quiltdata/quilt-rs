@@ -232,7 +232,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         )
         .await?;
 
-        let lineage = flow::commit(
+        let (lineage, commit) = flow::commit(
             lineage,
             &mut manifest,
             &self.paths,
@@ -245,13 +245,8 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             workflow,
         )
         .await?;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
-        match lineage.commit {
-            Some(commit) => Ok(commit),
-            None => Err(Error::PackageOp(PackageOpError::Commit(
-                "Nothing committed".to_string(),
-            ))),
-        }
+        self.lineage.write(&self.storage, lineage).await?;
+        Ok(commit)
     }
 
     /// Commit any working-directory changes (if any) and push the revision to

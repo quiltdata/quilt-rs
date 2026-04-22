@@ -5361,7 +5361,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-rs"
-version = "0.29.1-alpha8"
+version = "0.29.1-alpha9"
 dependencies = [
  "async-trait",
  "aws-config",

@@ -85,7 +85,7 @@ pub async fn publish_package(
 
     let (lineage, push_manifest, committed) = if has_changes {
         debug!("⏳ Publish: committing local changes");
-        let lineage = flow::commit(
+        let (lineage, new_commit) = flow::commit(
             lineage,
             manifest,
             paths,
@@ -100,12 +100,7 @@ pub async fn publish_package(
         .await?;
         // commit wrote a new manifest to disk; reload it so push uploads
         // the new rows, not the pre-commit manifest we were handed.
-        let new_hash = lineage.commit.as_ref().ok_or_else(|| {
-            Error::PackageOp(PackageOpError::Publish(
-                "commit succeeded but lineage has no commit".to_string(),
-            ))
-        })?;
-        let committed_path = paths.installed_manifest(&namespace, &new_hash.hash);
+        let committed_path = paths.installed_manifest(&namespace, &new_commit.hash);
         let committed_manifest = Manifest::from_path(storage, &committed_path).await?;
         debug!("✔️ Publish: commit done");
         (lineage, committed_manifest, true)
