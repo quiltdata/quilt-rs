@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use tracing::debug;
 use tracing::info;
 
-use crate::error::PackageOpError;
 use crate::flow;
 use crate::flow::push::PushResult;
 use crate::io::remote::HostConfig;
@@ -15,7 +14,6 @@ use crate::manifest::Manifest;
 use crate::manifest::Workflow;
 use crate::paths::DomainPaths;
 use crate::uri::Namespace;
-use crate::Error;
 use crate::Res;
 
 /// Options passed to the commit half of [`publish_package`].
@@ -30,7 +28,7 @@ pub struct CommitOptions {
 }
 
 /// Result of a successful publish — one variant per branch of the
-/// three-state decision tree (the "nothing to do" branch returns `Err`).
+/// two-state decision in [`publish_package`].
 ///
 /// Generic over the push payload: the flow layer returns
 /// `PublishOutcome<PushResult>`; the public API (`InstalledPackage::publish`)
@@ -56,13 +54,18 @@ impl<P> PublishOutcome<P> {
 /// Commit any pending working-directory changes and then push the resulting
 /// revision to the remote in one step.
 ///
-/// Behavior matches the three-state decision in the plan:
+/// Branches on the pre-publish state:
 ///
-/// - `status.changes` non-empty → commit + push
-/// - `status.changes` empty but `lineage.commit` is `Some` → push only
-///   (by invariant, a set `commit` is always unpushed — [`flow::push`]
-///   clears it on success)
-/// - neither changes nor a pending commit → focused error (nothing to do)
+/// - `status.changes` empty and `lineage.commit` is `Some` → push only
+///   (reuse the unpushed prior commit; by invariant, a set `commit` is
+///   always unpushed — [`flow::push`] clears it on success)
+/// - otherwise → commit (with the caller's message/metadata/workflow),
+///   then push. `status.changes` may be empty: a message- or
+///   metadata-only revision is a legitimate user intent, and if the
+///   resulting manifest header and rows happen to match the last-pushed
+///   state the content-addressed top hash will match and push is a
+///   no-op — so repeat clicks with identical input don't produce
+///   divergent commits on the remote.
 #[allow(clippy::too_many_arguments)]
 pub async fn publish_package(
     lineage: PackageLineage,
@@ -79,13 +82,10 @@ pub async fn publish_package(
     let has_changes = !status.changes.is_empty();
     let has_pending_commit = lineage.commit.is_some();
 
-    if !has_changes && !has_pending_commit {
-        return Err(Error::PackageOp(PackageOpError::Publish(
-            "Nothing to publish".to_string(),
-        )));
-    }
-
-    let (lineage, push_manifest, committed) = if has_changes {
+    let (lineage, push_manifest, committed) = if has_pending_commit && !has_changes {
+        debug!("✔️ Publish: reusing pending commit, skipping commit");
+        (lineage, manifest.clone(), false)
+    } else {
         debug!("⏳ Publish: committing local changes");
         let (lineage, new_commit) = flow::commit(
             lineage,
@@ -106,9 +106,6 @@ pub async fn publish_package(
         let committed_manifest = Manifest::from_path(storage, &committed_path).await?;
         debug!("✔️ Publish: commit done");
         (lineage, committed_manifest, true)
-    } else {
-        debug!("✔️ Publish: no changes, skipping commit");
-        (lineage, manifest.clone(), false)
     };
 
     info!("⏳ Publish: pushing revision");
@@ -177,12 +174,22 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_publish_nothing_to_do() -> Res {
+    async fn test_publish_commits_message_only_and_pushes() -> Res {
+        // No working-dir changes and no pending commit, but the caller
+        // supplied a message. Publish still commits (recording a
+        // message-only revision) and pushes it.
         let storage = MockStorage::default();
         let remote = MockRemote::default();
-        let err = publish_package(
-            PackageLineage::default(),
-            &mut Manifest::default(),
+
+        let lineage = PackageLineage {
+            remote_uri: Some(first_push_uri()),
+            ..PackageLineage::default()
+        };
+        let mut manifest = Manifest::default();
+
+        let outcome = publish_package(
+            lineage,
+            &mut manifest,
             &DomainPaths::default(),
             &storage,
             &remote,
@@ -191,17 +198,21 @@ mod tests {
             ("foo", "bar").into(),
             HostConfig::default(),
             CommitOptions {
-                message: String::new(),
+                message: "Custom message".to_string(),
                 user_meta: None,
                 workflow: None,
             },
         )
-        .await
-        .unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "Publish error: Nothing to publish".to_string()
-        );
+        .await?;
+
+        let push = match &outcome {
+            PublishOutcome::CommittedAndPushed(p) => p,
+            PublishOutcome::PushedOnly(_) => {
+                panic!("expected CommittedAndPushed even without file changes");
+            }
+        };
+        assert!(push.certified_latest);
+        assert!(push.lineage.commit.is_none());
         Ok(())
     }
 

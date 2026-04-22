@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.16.1-alpha12] - 2026-04-22
+
+### Fixed
+
+- Commit page's "Commit and Push" button no longer fails with "Nothing to publish" when the working tree is clean and no prior commit is pending — the user-typed message now produces a new revision that is committed and pushed
+
 ## [v0.16.1-alpha11] - 2026-04-22
 
 ### Changed

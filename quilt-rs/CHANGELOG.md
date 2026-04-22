@@ -8,6 +8,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.29.1-alpha10] - 2026-04-22
+
+### Fixed
+
+- `flow::publish_package` no longer rejects with "Nothing to publish" when the working tree is clean and there is no pending commit — it now commits the caller-supplied message/metadata/workflow and pushes, so UI "Commit and Push" clicks with a custom message against an unchanged package go through instead of erroring
+
 ## [v0.29.1-alpha9] - 2026-04-22
 
 ### Changed
