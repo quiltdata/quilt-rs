@@ -156,13 +156,8 @@ fn GeneralSection(
 /// `quilt-sync/src-tauri/src/commit_message.rs`. When adding or renaming a
 /// placeholder, update both sides and the positional values passed to
 /// [`apply_placeholders`] below.
-const PUBLISH_PLACEHOLDERS: &[&str] = &[
-    "{date}",
-    "{time}",
-    "{datetime}",
-    "{namespace}",
-    "{changes}",
-];
+const PUBLISH_PLACEHOLDERS: &[&str] =
+    &["{date}", "{time}", "{datetime}", "{namespace}", "{changes}"];
 
 fn apply_placeholders(template: &str, values: &[&str]) -> String {
     debug_assert_eq!(PUBLISH_PLACEHOLDERS.len(), values.len());
@@ -188,7 +183,13 @@ fn render_publish_preview(template: &str) -> String {
     let datetime = format!("{date} {time}");
     apply_placeholders(
         template,
-        &[&date, &time, &datetime, "example/package", "3 files modified"],
+        &[
+            &date,
+            &time,
+            &datetime,
+            "example/package",
+            "3 files modified",
+        ],
     )
 }
 
@@ -311,7 +312,9 @@ fn PublishSettingsPopup(
         leptos::task::spawn_local(async move {
             match commands::update_publish_settings(template, wf, meta).await {
                 Ok(()) => {
-                    notification.set(Some(Notification::Success("Commit and Push settings saved".into())));
+                    notification.set(Some(Notification::Success(
+                        "Commit and Push settings saved".into(),
+                    )));
                     on_close();
                     refetch.notify();
                 }

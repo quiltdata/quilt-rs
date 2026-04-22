@@ -372,7 +372,10 @@ mod tests {
     fn assert_first_push_of_foo_bar(push: &PushResult) -> Res {
         assert!(push.certified_latest);
         let pushed = push.lineage.remote()?;
-        assert!(!pushed.hash.is_empty(), "pushed manifest should have a hash");
+        assert!(
+            !pushed.hash.is_empty(),
+            "pushed manifest should have a hash"
+        );
         assert_eq!(pushed.namespace, ("foo", "bar").into());
         assert!(
             push.lineage.commit.is_none(),

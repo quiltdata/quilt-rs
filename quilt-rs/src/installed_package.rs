@@ -328,7 +328,10 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             flow::PublishOutcome::PushedOnly(p) => (false, p),
         };
         let certified_latest = push_result.certified_latest;
-        let lineage = self.lineage.write(&self.storage, push_result.lineage).await?;
+        let lineage = self
+            .lineage
+            .write(&self.storage, push_result.lineage)
+            .await?;
         let push = PushOutcome {
             manifest_uri: lineage.remote()?.clone(),
             certified_latest,

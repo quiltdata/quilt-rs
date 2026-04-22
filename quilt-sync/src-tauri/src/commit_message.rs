@@ -83,13 +83,8 @@ fn change_count(n: usize, verb: &str) -> String {
 /// popup's "Placeholders:" label derive from that const). When adding or
 /// renaming a placeholder, update both sides and the positional values passed
 /// to [`apply_placeholders`] below.
-pub const PUBLISH_PLACEHOLDERS: &[&str] = &[
-    "{date}",
-    "{time}",
-    "{datetime}",
-    "{namespace}",
-    "{changes}",
-];
+pub const PUBLISH_PLACEHOLDERS: &[&str] =
+    &["{date}", "{time}", "{datetime}", "{namespace}", "{changes}"];
 
 /// Substitute `PUBLISH_PLACEHOLDERS` into `template` positionally.
 ///
