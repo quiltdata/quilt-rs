@@ -8,76 +8,21 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.29.1-alpha10] - 2026-04-22
-
-### Fixed
-
-- `flow::publish_package` no longer rejects with "Nothing to publish" when the working tree is clean and there is no pending commit — it now commits the caller-supplied message/metadata/workflow and pushes, so UI "Commit and Push" clicks with a custom message against an unchanged package go through instead of erroring
-
-## [v0.29.1-alpha9] - 2026-04-22
-
-### Changed
-
-- `flow::commit` now returns `(PackageLineage, CommitState)` instead of `PackageLineage`, so callers that need the new top hash read it from the tuple directly and no longer have to unwrap `lineage.commit` behind a defensive error
-
-## [v0.29.1-alpha8] - 2026-04-22
-
-### Changed
-
-- `InstalledPackage::publish` accepts an optional pre-computed `InstalledPackageStatus` so callers that already scanned the working tree (e.g. to render a commit message) can skip the duplicate `flow::status` call inside publish
-
-## [v0.29.1-alpha7] - 2026-04-21
-
-### Changed
-
-- `InstalledPackage::publish` now returns the new `PublishOutcome` enum (`CommittedAndPushed(PushOutcome)` / `PushedOnly(PushOutcome)`) instead of `PushOutcome`, so callers can distinguish publishes that committed pending changes from push-only publishes
-
-## [v0.29.1-alpha6] - 2026-04-21
+## [v0.30.0] - 2026-04-22
 
 ### Added
 
-- New `flow::publish_package` that composes `commit_package` + `push_package` into a single call, skipping the commit step when there are no working-directory changes
-
-## [v0.29.1-alpha5] - 2026-04-20
-
-### Changed
-
-- Single-flight S3 credential refreshes per host so concurrent S3 operations racing past token expiry trigger only one registry mint call (<https://github.com/quiltdata/quilt-rs/pull/632>)
-
-## [v0.29.1-alpha4] - 2026-04-20
-
-### Fixed
-
-- Fix `ExpiredToken` 400s on S3 by refreshing credentials per request via a `ProvideCredentials` adapter over `Auth` (<https://github.com/quiltdata/quilt-rs/pull/631>)
-
-### Changed
-
-- Surface the AWS error code and `x-amz-request-id` in wrapped S3 error messages (<https://github.com/quiltdata/quilt-rs/pull/631>)
-
-## [v0.29.1-alpha3] - 2026-04-20
-
-### Added
-
+- New `flow::publish_package` that composes `commit_package` + `push_package` into a single call, returning a `PublishOutcome` enum (`CommittedAndPushed` / `PushedOnly`) so callers know whether pending changes were committed as part of the publish (<https://github.com/quiltdata/quilt-rs/pull/634>)
 - Automatic retry with exponential backoff and request timeouts for HTTP calls, reducing spurious failures on flaky networks (<https://github.com/quiltdata/quilt-rs/pull/630>)
-
-## [v0.29.1-alpha2] - 2026-04-20
-
-### Fixed
-
-- Retry a transient 4xx from the token or credentials endpoint once before concluding `Login required` (<https://github.com/quiltdata/quilt-rs/pull/629>)
-
-### Changed
-
-- Log status/URL/body on every non-2xx HTTP response and include status as a structured field in auth-retry logs (<https://github.com/quiltdata/quilt-rs/pull/629>)
-
-## [v0.29.1-alpha1] - 2026-04-17
 
 ### Changed
 
 - Split the monolithic `Error` enum into focused domain enums wrapped transparently by the top-level `Error` (<https://github.com/quiltdata/quilt-rs/pull/627>)
-- Replace `ManifestRow`'s custom `PartialEq` (which silently ignored `physical_key` and `meta`) with a derived structural `PartialEq` and a new `ManifestRow::matches_content` method for the content-identity check used by push dedup (<https://github.com/quiltdata/quilt-rs/pull/625>)
-- Change `DomainPaths::cached_manifest` signature from `(bucket: &str, hash: &str)` to `(uri: &ManifestUri)` to match how every caller already uses it (<https://github.com/quiltdata/quilt-rs/pull/625>)
-- Expand the `CommitState` multihash TODO into a doc comment spelling out the real scope — a `TopHash` newtype validating SHA-256 on construction, plus migrating the adjacent `String` hashes together (<https://github.com/quiltdata/quilt-rs/pull/625>)
+
+### Fixed
+
+- Fix `ExpiredToken` 400s on S3 by refreshing credentials per request via a `ProvideCredentials` adapter over `Auth`, with single-flight per-host refreshes so concurrent S3 operations racing past token expiry trigger only one registry mint call (<https://github.com/quiltdata/quilt-rs/pull/631>, <https://github.com/quiltdata/quilt-rs/pull/632>)
+- Retry a transient 4xx from the token or credentials endpoint once before concluding `Login required`, and surface the AWS error code, `x-amz-request-id`, and HTTP status in wrapped error messages and logs (<https://github.com/quiltdata/quilt-rs/pull/629>, <https://github.com/quiltdata/quilt-rs/pull/631>)
 
 ## [v0.29.0] - 2026-04-16
 
