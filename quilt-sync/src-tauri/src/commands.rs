@@ -1387,11 +1387,16 @@ pub async fn package_push(
 async fn package_publish_command(
     m: &model::Model,
     settings: &SharedPublishSettings,
-    namespace: quilt::uri::Namespace,
-    status: quilt::lineage::InstalledPackageStatus,
+    namespace: &str,
 ) -> Result<quilt::PublishOutcome, Error> {
-    let settings = settings.read().await.clone();
+    let namespace = quilt::uri::Namespace::try_from(namespace)?;
+    let installed = m
+        .get_installed_package(&namespace)
+        .await?
+        .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone())))?;
+    let status = m.get_installed_package_status(&installed, None).await?;
 
+    let settings = settings.read().await.clone();
     let changes_summary = commit_message::generate(&status.changes);
     let message = commit_message::render_publish_message(
         settings.message_template.as_deref().unwrap_or_default(),
@@ -1422,17 +1427,8 @@ pub async fn package_publish(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     namespace: String,
 ) -> Result<String, String> {
-    let namespace_parsed: quilt::uri::Namespace = match namespace.as_str().try_into() {
-        Ok(n) => n,
-        Err(e) => return Err(Error::from(e).to_frontend_string()),
-    };
-    let status = match get_status_for_publish(&m, &namespace_parsed).await {
-        Ok(s) => s,
-        Err(e) => return Err(e.to_frontend_string()),
-    };
-
     let msg_init = format!("Publishing package {namespace}");
-    let result = package_publish_command(&m, &settings, namespace_parsed, status).await;
+    let result = package_publish_command(&m, &settings, &namespace).await;
 
     if let Ok(outcome) = &result {
         tracing.track(MixpanelEvent::PackagePublished).await;
@@ -1454,17 +1450,6 @@ pub async fn package_publish(
     let msg_err = |err: &Error| format!("Failed to publish package: {err}");
 
     Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
-}
-
-async fn get_status_for_publish(
-    m: &model::Model,
-    namespace: &quilt::uri::Namespace,
-) -> Result<quilt::lineage::InstalledPackageStatus, Error> {
-    let installed = m
-        .get_installed_package(namespace)
-        .await?
-        .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone())))?;
-    m.get_installed_package_status(&installed, None).await
 }
 
 async fn package_commit_and_push_command(

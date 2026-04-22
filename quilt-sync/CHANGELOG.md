@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.16.1-alpha7] - 2026-04-22
+
+### Fixed
+
+- Publish-command errors now always render as plain text in the notification toast: `setup_required` / `login_required` errors surfaced by the Publish command's pre-flight checks previously leaked through as raw JSON blobs
+
 ## [v0.16.1-alpha6] - 2026-04-22
 
 ### Fixed
