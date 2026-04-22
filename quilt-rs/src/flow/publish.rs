@@ -59,7 +59,9 @@ impl<P> PublishOutcome<P> {
 /// Behavior matches the three-state decision in the plan:
 ///
 /// - `status.changes` non-empty → commit + push
-/// - `status.changes` empty but `lineage.commit` exists → push only
+/// - `status.changes` empty but `lineage.commit` is `Some` → push only
+///   (by invariant, a set `commit` is always unpushed — [`flow::push`]
+///   clears it on success)
 /// - neither changes nor a pending commit → focused error (nothing to do)
 #[allow(clippy::too_many_arguments)]
 pub async fn publish_package(
