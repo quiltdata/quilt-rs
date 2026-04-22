@@ -9,91 +9,19 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.16.1-alpha12] - 2026-04-22
-
-### Fixed
-
-- Commit page's "Commit and Push" button no longer fails with "Nothing to publish" when the working tree is clean and no prior commit is pending — the user-typed message now produces a new revision that is committed and pushed
-
-## [v0.16.1-alpha11] - 2026-04-22
-
-### Changed
-
-- Settings page: renamed the "Publish" section to "Commit and Push", the "Edit publish defaults" popup heading to "Edit commit defaults", and the save-confirmation toast to "Commit and Push settings saved"
-- Commit page's Commit-and-Push button now shows "Committing and pushing…" while busy (previously "Publishing…"), matching its idle label
-
-## [v0.16.1-alpha10] - 2026-04-22
-
-### Changed
-
-- Installed-packages-list button formerly labeled "Publish" now reads "Commit and Push" (and "Committing and pushing…" while busy), matching the wording already used on the commit and installed-package pages
-
-## [v0.16.1-alpha9] - 2026-04-22
-
-### Changed
-
-- Publish button uses a distinct rocket-launch icon instead of the cloud-upload glyph shared with Push, so "commit + push" reads visually different from a plain push
-
-## [v0.16.1-alpha8] - 2026-04-22
-
-### Fixed
-
-- Publish-settings inputs now trim leading/trailing whitespace on save, so the Settings summary, popup editor, and rendered commit message all agree on the stored value
-
-## [v0.16.1-alpha7] - 2026-04-22
-
-### Fixed
-
-- Publish-command errors now always render as plain text in the notification toast: `setup_required` / `login_required` errors surfaced by the Publish command's pre-flight checks previously leaked through as raw JSON blobs
-
-## [v0.16.1-alpha6] - 2026-04-22
-
-### Fixed
-
-- Publish Tauri command no longer parses the namespace twice: the pre-parsed `Namespace` used for status lookup is now threaded through to the command helper instead of re-parsing the raw string
-
-## [v0.16.1-alpha5] - 2026-04-22
-
-### Fixed
-
-- The Publish Tauri command no longer scans the working tree twice: the status computed for the commit message is now reused by `InstalledPackage::publish` instead of being recomputed
-
-### quilt-rs
-
-- Bumped to v0.29.1-alpha8 for the new optional pre-computed status parameter on `InstalledPackage::publish`
-
-## [v0.16.1-alpha4] - 2026-04-21
-
-### Fixed
-
-- Publish telemetry now fires only after the operation succeeds: `package_published`, `package_committed`, and `package_pushed` are emitted together on success, and `package_committed` is gated on the actual publish variant instead of a pre-check on changes
-
-### quilt-rs
-
-- Bumped to v0.29.1-alpha7 for the new `PublishOutcome` enum returned by `InstalledPackage::publish`
-
-## [v0.16.1-alpha3] - 2026-04-21
+## [v0.17.0] - 2026-04-22
 
 ### Added
 
-- One-click `[Publish]` action on the Installed Packages List that commits local changes (if any) and pushes in a single step, using per-user defaults configured in Settings (<https://github.com/quiltdata/quilt-rs/pull/634>)
-- `[Commit and Push]` primary CTA on the Commit form next to the existing `[Commit]` secondary action, and on the Installed Package page's bottom action bar next to `[Create new revision]` (<https://github.com/quiltdata/quilt-rs/pull/634>)
-- Publish defaults under Settings → Publish: message template (supports `{date}`/`{time}`/`{datetime}`/`{namespace}`/`{changes}` placeholders with a live preview), default workflow picker, and default metadata; the Settings page shows a read-only summary with an `[Edit]` button that opens a popup form (<https://github.com/quiltdata/quilt-rs/pull/634>)
-
-### Changed
-
-- Replace the Commit menu button on the Installed Packages List with `[Publish]` when a remote is configured; the button stays disabled while the package's status is still refreshing in the background (<https://github.com/quiltdata/quilt-rs/pull/634>)
+- New `[Commit and Push]` action that commits local changes (if any) and pushes in a single step — available as a one-click button on the Installed Packages List, as a primary CTA on the Commit form alongside the existing `[Commit]`, and on the Installed Package page's bottom action bar alongside `[Create new revision]` (<https://github.com/quiltdata/quilt-rs/pull/634>)
+- Commit and Push defaults under Settings: message template (supports `{date}`/`{time}`/`{datetime}`/`{namespace}`/`{changes}` placeholders with a live preview), default workflow picker, and default metadata (<https://github.com/quiltdata/quilt-rs/pull/634>)
 
 ### quilt-rs
 
-- Added `flow::publish_package` that composes `commit_package` + `push_package` into a single call (<https://github.com/quiltdata/quilt-rs/pull/634>)
-
-## [v0.16.1-alpha1] - 2026-04-17
-
-### Changed
-
-- Split the monolithic `Error` enum into focused domain enums wrapped transparently by the top-level `Error` (<https://github.com/quiltdata/quilt-rs/pull/627>)
-- Remove the `let m: &model::Model = &m;` shadow line from 18 Tauri commands; pass `m` directly — `&m` via deref coercion for helpers taking concrete `&Model`, `&*m` for helpers bound by `&impl QuiltModel` where deref coercion does not apply (<https://github.com/quiltdata/quilt-rs/pull/625>)
+- Updated [from v0.29.0 to v0.30.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.29.0...quilt-rs/v0.30.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+  - New `flow::publish_package` that composes commit + push in a single call
+  - Error enum split into focused domain enums
+  - Automatic retry with exponential backoff and request timeouts for HTTP calls; `ExpiredToken` S3 errors fixed via per-request credential refresh with single-flight per-host deduplication
 
 ## [v0.16.0] - 2026-04-16
 
