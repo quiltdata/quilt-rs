@@ -99,4 +99,98 @@
   .release-notes pre {
     white-space: pre-wrap;
   }
+
+  .qui-publish-settings .value {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 520px;
+  }
+
+  .qui-publish-settings .value.default {
+    color: var(--q-ui-palette-text-secondary);
+    font-style: italic;
+  }
+}
+
+/* Publish settings popup form (opened from Settings → Publish → Edit) */
+.publish-settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 560px;
+  width: 100%;
+
+  .section-title {
+    border-bottom: 1px solid var(--q-ui-palette-border);
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0;
+    padding-bottom: 8px;
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .field > label {
+    font-size: 0.875rem;
+    color: var(--q-ui-palette-text-secondary);
+  }
+
+  .input,
+  .textarea {
+    background: transparent;
+    border: 1px solid var(--q-ui-palette-border);
+    border-radius: 4px;
+    box-sizing: border-box;
+    font-family: inherit;
+    font-size: 1rem;
+    padding: 8px 12px;
+    width: 100%;
+  }
+
+  .textarea {
+    min-height: 96px;
+    resize: vertical;
+  }
+
+  .radio-option {
+    align-items: center;
+    cursor: pointer;
+    display: flex;
+    font-size: 0.875rem;
+    gap: 6px;
+  }
+
+  .radio-option input {
+    cursor: pointer;
+  }
+
+  .field-description {
+    color: var(--q-ui-palette-text-secondary);
+    font-size: 0.875rem;
+    margin: 2px 0 0;
+  }
+
+  .field-description code {
+    background: var(--q-ui-palette-action-hover);
+    border-radius: 3px;
+    padding: 0 4px;
+  }
+
+  .error {
+    color: var(--q-ui-palette-error);
+    font-size: 0.875rem;
+  }
+
+  .popup-actions {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+  }
 }

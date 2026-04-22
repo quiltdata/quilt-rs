@@ -1,6 +1,6 @@
 [package]
 name = "quilt-sync"
-version = "0.16.1-alpha1"
+version = "0.16.1-alpha12"
 authors = ["Quilt Data, Inc."]
 description = "Cross-platform desktop application for editing Quilt data packages"
 documentation = "https://docs.quiltdata.com"
@@ -15,6 +15,7 @@ license = "UNLICENSED"
 tauri-build = { version = "2.5.6", features = [] }
 
 [dependencies]
+chrono.workspace = true
 dotenv = "0.15"
 mockall = "0.14.0"
 opener = { version = "0.8.4", features = ["reveal"] }

@@ -125,12 +125,17 @@ fn CommitContent(
 
     let show_filter = ignored_count > 0 || unmodified_count > 0;
 
-    // Commit action
-    let ns_for_commit = namespace.clone();
+    // Whether this package has a remote we can publish to. When there is no
+    // resolvable origin, the `[Commit and Push]` primary is hidden and only
+    // `[Commit]` is shown.
+    let has_remote = data.origin_url.is_some();
+
+    let ns_for_action = namespace.clone();
     let committing = RwSignal::new(false);
-    let navigate_for_commit = navigate.clone();
-    let on_commit = move |_| {
-        let navigate = navigate_for_commit.clone();
+    let navigate_for_action = navigate.clone();
+    // `action` decides whether we do a plain commit or a commit-and-push.
+    let run_action = std::rc::Rc::new(move |push: bool| {
+        let navigate = navigate_for_action.clone();
         if committing.get_untracked() {
             return;
         }
@@ -140,7 +145,7 @@ fn CommitContent(
         }
         committing.set(true);
         ui_locked.set(true);
-        let ns = ns_for_commit.clone();
+        let ns = ns_for_action.clone();
         let meta = get_json_editor_value("metadata-editor");
         let wf = if has_workflow && !workflow_null.get_untracked() {
             Some(workflow_id.get_untracked())
@@ -148,7 +153,12 @@ fn CommitContent(
             None
         };
         leptos::task::spawn_local(async move {
-            match commands::package_commit(ns.clone(), msg, meta, wf).await {
+            let result = if push {
+                commands::package_commit_and_push(ns.clone(), msg, meta, wf).await
+            } else {
+                commands::package_commit(ns.clone(), msg, meta, wf).await
+            };
+            match result {
                 Ok(msg) => {
                     notification.set(Some(Notification::Success(msg)));
                     navigate(
@@ -163,6 +173,15 @@ fn CommitContent(
                 }
             }
         });
+    });
+
+    let run_commit_only = {
+        let run = run_action.clone();
+        move |_| run(false)
+    };
+    let run_commit_and_push = {
+        let run = run_action.clone();
+        move |_| run(true)
     };
 
     view! {
@@ -285,10 +304,19 @@ fn CommitContent(
         // ── Action bar ──
         <div class="qui-actionbar">
             <buttons::CommitRevision
-                on_click=on_commit
+                on_click=run_commit_only
                 busy=committing
                 disabled=Signal::derive(move || message.get().trim().is_empty())
+                primary=!has_remote
             />
+            {has_remote.then(|| view! {
+                <span class="actions-divider">"or"</span>
+                <buttons::CommitAndPush
+                    on_click=run_commit_and_push
+                    busy=committing
+                    disabled=Signal::derive(move || message.get().trim().is_empty())
+                />
+            })}
         </div>
 
         // ── Popups ──

@@ -38,6 +38,11 @@ pub struct PushOutcome {
     pub certified_latest: bool,
 }
 
+/// Result of a publish operation visible to callers outside `quilt-rs`.
+/// Alias of [`flow::PublishOutcome`] parameterized over the public
+/// [`PushOutcome`], so external callers see a non-generic type name.
+pub type PublishOutcome = flow::PublishOutcome<PushOutcome>;
+
 /// Similar to `LocalDomain` because it has access to the same lineage file and remote/storage
 /// traits.
 /// But it only manages one particular installed package.
@@ -227,7 +232,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         )
         .await?;
 
-        let lineage = flow::commit(
+        let (lineage, commit) = flow::commit(
             lineage,
             &mut manifest,
             &self.paths,
@@ -240,13 +245,102 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             workflow,
         )
         .await?;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
-        match lineage.commit {
-            Some(commit) => Ok(commit),
-            None => Err(Error::PackageOp(PackageOpError::Commit(
-                "Nothing committed".to_string(),
-            ))),
-        }
+        self.lineage.write(&self.storage, lineage).await?;
+        Ok(commit)
+    }
+
+    /// Commit any working-directory changes (if any) and push the revision to
+    /// the remote in one step. Errors if the package has no remote or nothing
+    /// to publish.
+    ///
+    /// `status_opt` is a caller-provided cache of `flow::status`: when
+    /// `Some`, this method reuses it verbatim instead of re-scanning the
+    /// working tree. The caller must ensure the status was computed from the
+    /// same on-disk lineage and manifest that `publish` will re-read — i.e.
+    /// nothing else should have mutated this package between the two calls.
+    /// Passing `None` is always safe and falls back to an internal
+    /// `flow::status` call.
+    pub async fn publish(
+        &self,
+        message: String,
+        user_meta: Option<serde_json::Value>,
+        workflow: Option<Workflow>,
+        host_config_opt: Option<HostConfig>,
+        status_opt: Option<InstalledPackageStatus>,
+    ) -> Res<PublishOutcome> {
+        self.scaffold_paths().await?;
+
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        let remote_uri = match lineage.remote_uri.as_ref() {
+            Some(uri) if !uri.bucket.is_empty() => uri.clone(),
+            Some(_) => {
+                return Err(Error::PackageOp(PackageOpError::Publish(
+                    "Remote bucket not set. Use set_remote first.".to_string(),
+                )))
+            }
+            None => {
+                return Err(Error::PackageOp(PackageOpError::Publish(
+                    "No remote configured. Use set_remote first.".to_string(),
+                )))
+            }
+        };
+
+        self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
+
+        let mut manifest = self.manifest().await?;
+        let host_config =
+            host_config_opt.unwrap_or(self.remote.host_config(&remote_uri.origin).await?);
+
+        let (lineage, status) = match status_opt {
+            Some(status) => (lineage, status),
+            None => {
+                flow::status(
+                    lineage,
+                    &self.storage,
+                    &manifest,
+                    &package_home,
+                    host_config.clone(),
+                )
+                .await?
+            }
+        };
+
+        let outcome = flow::publish(
+            lineage,
+            &mut manifest,
+            &self.paths,
+            &self.storage,
+            &self.remote,
+            package_home,
+            status,
+            self.namespace.clone(),
+            host_config,
+            flow::CommitOptions {
+                message,
+                user_meta,
+                workflow,
+            },
+        )
+        .await?;
+
+        let (committed, push_result) = match outcome {
+            flow::PublishOutcome::CommittedAndPushed(p) => (true, p),
+            flow::PublishOutcome::PushedOnly(p) => (false, p),
+        };
+        let certified_latest = push_result.certified_latest;
+        let lineage = self
+            .lineage
+            .write(&self.storage, push_result.lineage)
+            .await?;
+        let push = PushOutcome {
+            manifest_uri: lineage.remote()?.clone(),
+            certified_latest,
+        };
+        Ok(if committed {
+            PublishOutcome::CommittedAndPushed(push)
+        } else {
+            PublishOutcome::PushedOnly(push)
+        })
     }
 
     /// Push the local revision to the remote.

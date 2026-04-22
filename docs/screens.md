@@ -69,20 +69,29 @@ Main screen. Lists all locally installed packages.
 |  +---------------------------------------------------+  |
 |  | user/package-a                        [Pull] [>]  |  |
 |  +---------------------------------------------------+  |
-|  | user/package-b            [Push] [Commit] [Pull]  |  |
+|  | user/package-b              [Commit and Push] [>] |  |
 |  +---------------------------------------------------+  |
 |  | org/dataset-c                         [Pull] [>]  |  |
 |  +---------------------------------------------------+  |
-|  | local/my-data        [Set Remote] [Commit] [>]    |  |
+|  | local/my-data               [Set Remote] [>]      |  |
 |  +---------------------------------------------------+  |
 |                                                         |
 +---------------------------------------------------------+
 ```
 
-Local-only packages (no remote `manifest_uri`) show Commit and
-[Set Remote] but no Pull/Push buttons and no "Open Remote" action.
-After setting a remote, the status changes to Ahead and push becomes
-available immediately (no re-commit needed).
+Local-only packages (no remote `manifest_uri`) show `[Set Remote]`
+but no Commit-and-Push / Pull buttons and no "Open Remote" action.
+After setting a remote, the status changes to Ahead and
+`[Commit and Push]` becomes available immediately (no re-commit
+needed).
+
+`[Commit and Push]` is the one-click "commit changes (if any) then
+push" action. It is shown when the package has a remote and
+something to ship — uncommitted changes, a pending commit that was
+not yet pushed, or both. It uses per-user defaults from Settings
+for message, workflow, and metadata; users who need a bespoke
+message enter the full form via the package page's `[Commit…]`
+link.
 
 Empty state:
 
@@ -103,9 +112,11 @@ Empty state:
 - Click package row -> **Installed Package**
 - Click [Pull] -> runs pull flow, reloads
   - Disabled with popover hint when package has uncommitted changes
-- Click [Push] -> runs push flow -> **Installed Package**
-- Click [Commit] -> **Commit**
-  - Highlighted as primary when package has uncommitted changes
+- Click [Commit and Push] -> commits if needed, then pushes;
+  reloads
+  - Disabled while the package's status is still refreshing in the
+    background
+  - Never shown without a remote; `[Set Remote]` appears instead
 - Click [Set Remote] -> opens **Set Remote** popup
 - Click [gear] -> **Settings**
 
@@ -120,9 +131,14 @@ with checkboxes, status indicator, and a toolbar.
 +--[appbar]----------------------------------------------+
 | [logo]  user/package-a                 [refresh] [gear] |
 +--[toolbar]---------------------------------------------+
-| [< Packages]        [Uninstall] [Pull] [Push] [Commit] |
+| [< Packages]   [Open in File Browser] [Open in Catalog?] [Uninstall] |
 +---------------------------------------------------------+
-| [status: 3 files modified]                              |
+| [status banner: status-dependent action ────────────]   |
+|   ahead        -> [Push]                                |
+|   behind       -> [Pull]   (disabled if local changes)  |
+|   diverged     -> [Merge]                               |
+|   local+origin -> [Push]                                |
+|   error        -> [Login] / [Set Origin] / [Change…]    |
 |                                                         |
 | Show [x] unmodified [x] ignored (2)                    |
 | [toolbar: Select All / Deselect All]                    |
@@ -137,20 +153,33 @@ with checkboxes, status indicator, and a toolbar.
 | +-----------------------------------------------------+ |
 |                                                         |
 +--[actionbar]-------------------------------------------+
-| [Install Selected Paths]                                |
+|        [Create new revision]  or  [Commit and Push]     |
 +---------------------------------------------------------+
 ```
 
 - [< Packages] -> **Installed Packages List**
-- [Commit] -> **Commit**
+- Top toolbar hosts package-agnostic actions only: file browser, catalog,
+  and Uninstall. Package sync actions (Push / Pull / Merge / Login)
+  live in the status banner below it.
 - [Push] -> runs push flow, reloads
 - [Pull] -> disabled with popover hint when package has uncommitted changes
 - [Uninstall] -> runs uninstall flow -> **Installed Packages List**
 - [Install Selected Paths] -> runs install_paths flow, reloads
 - [Ignore] -> opens **Ignore Popup** (for junk-detected files)
 - [Ignored] -> opens **Un-ignore Popup** (for `.quiltignore`-matched files)
+- [Create new revision] -> opens the **Commit** form at
+  `/commit?namespace=…`; the form is where the user picks message,
+  workflow, and metadata before either saving locally (`[Commit]`) or
+  committing-and-pushing (`[Commit and Push]`)
+- [Commit and Push] -> one-click commit-and-push using the
+  Commit-and-Push defaults from Settings. Shown in the actionbar
+  only when the package has a remote and something to ship
+  (uncommitted changes or a pending commit that has not been pushed).
+  Equivalent to the `[Commit and Push]` button on the Installed
+  Packages List.
 
-For local-only packages the toolbar shows [Commit] but no [Push].
+For local-only packages without an origin, the status banner shows
+[Set Origin] instead of Push.
 
 ---
 
@@ -181,13 +210,21 @@ Two-column layout: form on the left, file list on the right.
 |                        |                                |
 +---------------------------------------------------------+
 +--[actionbar]-------------------------------------------+
-| [Commit]                                                |
+|                     [Commit]  or  [Commit and Push]     |
 +---------------------------------------------------------+
 ```
 
-The [Commit] button is disabled when the message field is empty.
+Both buttons are disabled when the message field is empty.
 
-After commit -> **Installed Package**
+- `[Commit and Push]` is the primary action — it commits the form
+  values and immediately pushes the new revision.
+- `[Commit]` stays available as a secondary action for users who want
+  to save a local revision without pushing (e.g. to squash with a
+  later commit before pushing).
+- For local-only packages (no remote configured) only `[Commit]` is
+  shown, because there is nothing to push to.
+
+After either action -> **Installed Package**
 
 ---
 
@@ -306,6 +343,49 @@ Configures the remote origin and bucket so the package can be pushed.
 
 ---
 
+### Edit Commit and Push Defaults Popup
+
+Shown when clicking `[Edit]` in Settings → Commit and Push. Form
+for the global defaults the one-click `[Commit and Push]` action
+uses for every package (no per-package overrides).
+
+```text
++---------------------------------------------------------+
+|  Edit Commit and Push defaults                          |
+|                                                         |
+|  Message template                                       |
+|  [ Auto-publish {date} ({changes})_________________ ]   |
+|  Placeholders: {date} {time} {datetime}                 |
+|                {namespace} {changes}                    |
+|  Preview: Auto-publish 2026-04-21 (3 files modified)    |
+|                                                         |
+|  Default workflow                                       |
+|   (*) Use the bucket's default workflow                 |
+|   ( ) Override:  [ __________________________ ]         |
+|                                                         |
+|  Default metadata                                       |
+|  [ { "source": "desktop" }_________________________ ]   |
+|                                                         |
+|  [Save]  [Cancel]   Reset to defaults                   |
+|                                                         |
++---------------------------------------------------------+
+```
+
+- Preview re-renders live as the user types (client-side, no round
+  trip); unknown placeholders like `{dat}` pass through so typos stay
+  visible.
+- Workflow radio: "Use bucket's default workflow" sends no workflow
+  id at Commit-and-Push time; "Override" saves the typed id,
+  validated against the bucket on the first run (same as today's
+  Commit form).
+- Metadata is JSON-validated on Save; empty = no metadata.
+- `Reset to defaults` clears all three fields but does not save —
+  user still has to click `[Save]`.
+- After save -> popup closes, Settings page reloads showing the new
+  values.
+
+---
+
 ### Settings
 
 Application settings and diagnostics.
@@ -320,6 +400,14 @@ Application settings and diagnostics.
 |  Version          0.27.0  [Release Notes]               |
 |  Home directory   /home/user/quilt  [Open]              |
 |  Data directory   /home/user/.quilt [Open]              |
+|                                                         |
+|  Commit and Push                                        |
+|  ---------------                                        |
+|  Message template   Default — auto-generated summary    |
+|  Default workflow   Default — bucket's workflow         |
+|  Default metadata   Default — none                      |
+|                                                         |
+|  [Edit]                                                 |
 |                                                         |
 |  Account                                                |
 |  -------                                                |
@@ -372,27 +460,42 @@ auth-related).
                             v
   +---------------------------------------------------+
   |          Installed Packages List (Home)            |<---------+
-  +---+-------+----------+-------------------+--------+           |
-      |       |          |                   |                    |
-      |       | [Create] | [Commit]          | [gear]            |
-      |       v          v                   v                    |
-      |  [popup]    +----+----+        +-----+----+               |
-      |  namespace  |         |        |          |               |
-      |  -> reload  | Commit  |        | Settings |               |
-      |             |         |        |          |               |
-      | click pkg   +----+----+        +----------+               |
-      v                  |                                        |
-+-----+-------+         |                                        |
-|  Installed   |         | submit                                 |
-|  Package     +--->-----+--------->------------------------------+
-|              |                                                  |
-+--+-+--+------+    [Set Remote]                                  |
-   | |  |           -> popup (host + bucket)                      |
-   | |  |           -> status: Ahead -> push                      |
+  +---+-------+------------+---------------+----------+           |
+      |       |            |               |                      |
+      |       | [Create]   | [Commit and   | [gear]               |
+      |       v            |     Push]     v                      |
+      |  [popup]           v          +----------+                |
+      |  namespace    (commit if      | Settings |                |
+      |  -> reload    needed, then    +----------+                |
+      |               push) -> reload                             |
+      |                                                           |
+      | click pkg                                                 |
+      v                                                           |
++-----+-------+      [Push]        (status banner: ahead / local) |
+|  Installed   |----> push only -----------------------> reload --+|
+|  Package     |                                                 ||
+|              |      [Commit and Push]   (bottom actionbar)     ||
+|              |----> commit+push (uses Settings defaults) ----->+|
+|              |                                                 ||
+|              |      [Create new revision]  (bottom actionbar)  ||
++--+-+--+------+----> +----+----+                                ||
+   | |  |             |         |                                ||
+   | |  |             | Commit  |                                ||
+   | |  |             |         |                                ||
+   | |  |             +----+----+                                ||
+   | |  |                  |                                     ||
+   | |  |                  | [Commit and Push]  (primary)        ||
+   | |  |                  | [Commit]           (secondary)      ||
+   | |  |                  v                                     ||
+   | |  |             --->--+-------------------------->---------+|
+   | |  |                                                         |
+   | |  |   [Set Remote]                                          |
+   | |  |     -> popup (host + bucket)                            |
+   | |  |     -> status: Ahead -> Commit and Push                 |
    | |  | [Uninstall]                                             |
    | |  +---->----------------------------------------------------+
    | |
-   | | [Push] when diverged
+   | | when diverged
    | v
    | +---------+
    +>|  Merge  |

@@ -22,6 +22,7 @@ pub enum MixpanelEvent {
     PackagePulled,
     PackagePushed,
     PackageCommitted,
+    PackagePublished,
     PackageUninstalled,
     PackageInstalled,
     PackageCreated,

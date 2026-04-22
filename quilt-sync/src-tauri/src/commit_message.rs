@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 
+use chrono::Local;
+
 use crate::quilt::lineage::{Change, ChangeSet};
+use crate::quilt::uri::Namespace;
 
 /// Generates a concise, human-readable commit message string from the set of changed files.
 ///
@@ -71,6 +74,62 @@ fn change_count(n: usize, verb: &str) -> String {
     } else {
         format!("{verb} {n} files")
     }
+}
+
+/// Placeholders supported by Publish message templates.
+///
+/// Kept in lockstep with the UI preview's list in
+/// `quilt-sync/ui/src/pages/settings.rs` (both the preview renderer and the
+/// popup's "Placeholders:" label derive from that const). When adding or
+/// renaming a placeholder, update both sides and the positional values passed
+/// to [`apply_placeholders`] below.
+pub const PUBLISH_PLACEHOLDERS: &[&str] =
+    &["{date}", "{time}", "{datetime}", "{namespace}", "{changes}"];
+
+/// Substitute `PUBLISH_PLACEHOLDERS` into `template` positionally.
+///
+/// `values` must be the same length as `PUBLISH_PLACEHOLDERS`; each value
+/// replaces the placeholder at the same index. Unknown placeholders in the
+/// template pass through verbatim so typos are visible in the preview.
+fn apply_placeholders(template: &str, values: &[&str]) -> String {
+    debug_assert_eq!(PUBLISH_PLACEHOLDERS.len(), values.len());
+    let mut rendered = template.to_string();
+    for (placeholder, value) in PUBLISH_PLACEHOLDERS.iter().zip(values) {
+        rendered = rendered.replace(placeholder, value);
+    }
+    rendered
+}
+
+/// Context available to a Publish message template.
+///
+/// Keeps the `render_publish_message` helper UI-agnostic: the caller supplies
+/// the already-computed `changes` summary and the target `namespace`, and
+/// `{date}`/`{time}`/`{datetime}` are filled from the local clock at render
+/// time.
+pub struct PublishMessageContext<'a> {
+    pub namespace: &'a Namespace,
+    pub changes_summary: String,
+}
+
+/// Render a user-configured message template for Publish.
+///
+/// See [`PUBLISH_PLACEHOLDERS`] for the supported placeholders. An empty (or
+/// whitespace-only) template falls back to the auto-generated summary from
+/// [`generate`].
+pub fn render_publish_message(template: &str, ctx: &PublishMessageContext<'_>) -> String {
+    let trimmed = template.trim();
+    if trimmed.is_empty() {
+        return ctx.changes_summary.clone();
+    }
+    let now = Local::now();
+    let date = now.format("%Y-%m-%d").to_string();
+    let time = now.format("%H:%M").to_string();
+    let datetime = format!("{date} {time}");
+    let namespace = ctx.namespace.to_string();
+    apply_placeholders(
+        template,
+        &[&date, &time, &datetime, &namespace, &ctx.changes_summary],
+    )
 }
 
 #[cfg(test)]
@@ -160,5 +219,80 @@ mod tests {
     fn test_uses_filename_not_full_path() {
         let changes = make_changes(&["subdir/data/results.csv"], &[], &[]);
         assert_eq!(generate(&changes), "Add results.csv");
+    }
+
+    fn ctx(summary: &str) -> (Namespace, String) {
+        (Namespace::from(("user", "pkg")), summary.to_string())
+    }
+
+    #[test]
+    fn render_empty_template_falls_back_to_summary() {
+        let (ns, summary) = ctx("Add a, b");
+        let rendered = render_publish_message(
+            "",
+            &PublishMessageContext {
+                namespace: &ns,
+                changes_summary: summary,
+            },
+        );
+        assert_eq!(rendered, "Add a, b");
+    }
+
+    #[test]
+    fn render_whitespace_template_falls_back_to_summary() {
+        let (ns, summary) = ctx("Add a");
+        let rendered = render_publish_message(
+            "   \t\n",
+            &PublishMessageContext {
+                namespace: &ns,
+                changes_summary: summary,
+            },
+        );
+        assert_eq!(rendered, "Add a");
+    }
+
+    #[test]
+    fn render_substitutes_namespace_and_changes() {
+        let (ns, summary) = ctx("Add data.csv");
+        let rendered = render_publish_message(
+            "Publish {namespace}: {changes}",
+            &PublishMessageContext {
+                namespace: &ns,
+                changes_summary: summary,
+            },
+        );
+        assert_eq!(rendered, "Publish user/pkg: Add data.csv");
+    }
+
+    #[test]
+    fn render_leaves_unknown_placeholders_intact() {
+        let (ns, summary) = ctx("Update c.csv");
+        let rendered = render_publish_message(
+            "Release {dat} {changes} by {user}",
+            &PublishMessageContext {
+                namespace: &ns,
+                changes_summary: summary,
+            },
+        );
+        assert_eq!(rendered, "Release {dat} Update c.csv by {user}");
+    }
+
+    #[test]
+    fn render_fills_date_time_datetime() {
+        let (ns, summary) = ctx("Add f.txt");
+        let rendered = render_publish_message(
+            "{date} {time} -> {datetime}",
+            &PublishMessageContext {
+                namespace: &ns,
+                changes_summary: summary,
+            },
+        );
+        let parts: Vec<&str> = rendered.split(" -> ").collect();
+        assert_eq!(parts.len(), 2);
+        // Shape only; values depend on clock.
+        let date_time = parts[0];
+        let dt = parts[1];
+        assert_eq!(date_time.len(), "2026-04-21 12:34".len());
+        assert_eq!(dt.len(), "2026-04-21 12:34".len());
     }
 }

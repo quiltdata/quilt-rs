@@ -8,6 +8,36 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.29.1-alpha10] - 2026-04-22
+
+### Fixed
+
+- `flow::publish_package` no longer rejects with "Nothing to publish" when the working tree is clean and there is no pending commit — it now commits the caller-supplied message/metadata/workflow and pushes, so UI "Commit and Push" clicks with a custom message against an unchanged package go through instead of erroring
+
+## [v0.29.1-alpha9] - 2026-04-22
+
+### Changed
+
+- `flow::commit` now returns `(PackageLineage, CommitState)` instead of `PackageLineage`, so callers that need the new top hash read it from the tuple directly and no longer have to unwrap `lineage.commit` behind a defensive error
+
+## [v0.29.1-alpha8] - 2026-04-22
+
+### Changed
+
+- `InstalledPackage::publish` accepts an optional pre-computed `InstalledPackageStatus` so callers that already scanned the working tree (e.g. to render a commit message) can skip the duplicate `flow::status` call inside publish
+
+## [v0.29.1-alpha7] - 2026-04-21
+
+### Changed
+
+- `InstalledPackage::publish` now returns the new `PublishOutcome` enum (`CommittedAndPushed(PushOutcome)` / `PushedOnly(PushOutcome)`) instead of `PushOutcome`, so callers can distinguish publishes that committed pending changes from push-only publishes
+
+## [v0.29.1-alpha6] - 2026-04-21
+
+### Added
+
+- New `flow::publish_package` that composes `commit_package` + `push_package` into a single call, skipping the commit step when there are no working-directory changes
+
 ## [v0.29.1-alpha5] - 2026-04-20
 
 ### Changed
