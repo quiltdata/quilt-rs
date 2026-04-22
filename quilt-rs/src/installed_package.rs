@@ -38,6 +38,11 @@ pub struct PushOutcome {
     pub certified_latest: bool,
 }
 
+/// Result of a publish operation visible to callers outside `quilt-rs`.
+/// Alias of [`flow::PublishOutcome`] parameterized over the public
+/// [`PushOutcome`], so external callers see a non-generic type name.
+pub type PublishOutcome = flow::PublishOutcome<PushOutcome>;
+
 /// Similar to `LocalDomain` because it has access to the same lineage file and remote/storage
 /// traits.
 /// But it only manages one particular installed package.
@@ -258,7 +263,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         user_meta: Option<serde_json::Value>,
         workflow: Option<Workflow>,
         host_config_opt: Option<HostConfig>,
-    ) -> Res<PushOutcome> {
+    ) -> Res<PublishOutcome> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
@@ -309,14 +314,20 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         )
         .await?;
 
-        let certified_latest = outcome.push.certified_latest;
-        let lineage = self
-            .lineage
-            .write(&self.storage, outcome.push.lineage)
-            .await?;
-        Ok(PushOutcome {
+        let (committed, push_result) = match outcome {
+            flow::PublishOutcome::CommittedAndPushed(p) => (true, p),
+            flow::PublishOutcome::PushedOnly(p) => (false, p),
+        };
+        let certified_latest = push_result.certified_latest;
+        let lineage = self.lineage.write(&self.storage, push_result.lineage).await?;
+        let push = PushOutcome {
             manifest_uri: lineage.remote()?.clone(),
             certified_latest,
+        };
+        Ok(if committed {
+            PublishOutcome::CommittedAndPushed(push)
+        } else {
+            PublishOutcome::PushedOnly(push)
         })
     }
 

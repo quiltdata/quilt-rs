@@ -8,6 +8,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.29.1-alpha7] - 2026-04-21
+
+### Changed
+
+- `InstalledPackage::publish` now returns the new `PublishOutcome` enum (`CommittedAndPushed(PushOutcome)` / `PushedOnly(PushOutcome)`) instead of `PushOutcome`, so callers can distinguish publishes that committed pending changes from push-only publishes
+
 ## [v0.29.1-alpha6] - 2026-04-21
 
 ### Added

@@ -9,6 +9,16 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.16.1-alpha4] - 2026-04-21
+
+### Fixed
+
+- Publish telemetry now fires only after the operation succeeds: `package_published`, `package_committed`, and `package_pushed` are emitted together on success, and `package_committed` is gated on the actual publish variant instead of a pre-check on changes
+
+### quilt-rs
+
+- Bumped to v0.29.1-alpha7 for the new `PublishOutcome` enum returned by `InstalledPackage::publish`
+
 ## [v0.16.1-alpha3] - 2026-04-21
 
 ### Added

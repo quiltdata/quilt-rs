@@ -33,6 +33,7 @@ pub use error::S3Error;
 pub use error::S3ErrorKind;
 pub use error::UriError;
 pub use installed_package::InstalledPackage;
+pub use installed_package::PublishOutcome;
 pub use installed_package::PushOutcome;
 pub use local_domain::LocalDomain;
 

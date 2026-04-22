@@ -29,14 +29,28 @@ pub struct CommitOptions {
     pub workflow: Option<Workflow>,
 }
 
-/// Result of a successful publish.
+/// Result of a successful publish — one variant per branch of the
+/// three-state decision tree (the "nothing to do" branch returns `Err`).
+///
+/// Generic over the push payload: the flow layer returns
+/// `PublishOutcome<PushResult>`; the public API (`InstalledPackage::publish`)
+/// maps it to `PublishOutcome<PushOutcome>` via the
+/// `quilt::PublishOutcome` type alias.
 #[derive(Debug)]
-pub struct PublishOutcome {
-    /// `false` when there were no changes and we went straight to push
-    /// (previously-committed-but-unpushed case).
-    pub committed: bool,
-    /// Whatever [`flow::push_package`] returned.
-    pub push: PushResult,
+pub enum PublishOutcome<P> {
+    /// Committed pending changes, then pushed the new revision.
+    CommittedAndPushed(P),
+    /// Pushed a previously-committed revision without a new commit
+    /// (working directory had no changes).
+    PushedOnly(P),
+}
+
+impl<P> PublishOutcome<P> {
+    pub fn push(&self) -> &P {
+        match self {
+            Self::CommittedAndPushed(p) | Self::PushedOnly(p) => p,
+        }
+    }
 }
 
 /// Commit any pending working-directory changes and then push the resulting
@@ -59,7 +73,7 @@ pub async fn publish_package(
     namespace: Namespace,
     host_config: HostConfig,
     commit_opts: CommitOptions,
-) -> Res<PublishOutcome> {
+) -> Res<PublishOutcome<PushResult>> {
     let has_changes = !status.changes.is_empty();
     let has_pending_commit = lineage.commit.is_some();
 
@@ -113,7 +127,11 @@ pub async fn publish_package(
     .await?;
     info!("✔️ Publish: push done");
 
-    Ok(PublishOutcome { committed, push })
+    Ok(if committed {
+        PublishOutcome::CommittedAndPushed(push)
+    } else {
+        PublishOutcome::PushedOnly(push)
+    })
 }
 
 #[cfg(test)]
@@ -237,9 +255,14 @@ mod tests {
         )
         .await?;
 
-        assert!(!outcome.committed, "should skip commit when no changes");
-        assert!(outcome.push.certified_latest);
-        assert_eq!(outcome.push.lineage.remote()?.hash, hash);
+        let push = match &outcome {
+            PublishOutcome::PushedOnly(p) => p,
+            PublishOutcome::CommittedAndPushed(_) => {
+                panic!("should skip commit when no changes");
+            }
+        };
+        assert!(push.certified_latest);
+        assert_eq!(push.lineage.remote()?.hash, hash);
         Ok(())
     }
 

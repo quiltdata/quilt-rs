@@ -1389,7 +1389,7 @@ async fn package_publish_command(
     settings: &SharedPublishSettings,
     namespace: &str,
     status: &quilt::lineage::InstalledPackageStatus,
-) -> Result<quilt::PushOutcome, Error> {
+) -> Result<quilt::PublishOutcome, Error> {
     let namespace = quilt::uri::Namespace::try_from(namespace)?;
     let settings = settings.read().await.clone();
 
@@ -1414,8 +1414,6 @@ pub async fn package_publish(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     namespace: String,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::PackagePublished).await;
-
     let namespace_parsed: quilt::uri::Namespace = match namespace.as_str().try_into() {
         Ok(n) => n,
         Err(e) => return Err(Error::from(e).to_frontend_string()),
@@ -1424,20 +1422,20 @@ pub async fn package_publish(
         Ok(s) => s,
         Err(e) => return Err(e.to_frontend_string()),
     };
-    let committed = !status.changes.is_empty();
 
     let msg_init = format!("Publishing package {namespace}");
     let result = package_publish_command(&m, &settings, &namespace, &status).await;
 
-    if committed {
-        tracing.track(MixpanelEvent::PackageCommitted).await;
-    }
-    if result.is_ok() {
+    if let Ok(outcome) = &result {
+        tracing.track(MixpanelEvent::PackagePublished).await;
+        if matches!(outcome, quilt::PublishOutcome::CommittedAndPushed(_)) {
+            tracing.track(MixpanelEvent::PackageCommitted).await;
+        }
         tracing.track(MixpanelEvent::PackagePushed).await;
     }
 
     let msg_ok = match &result {
-        Ok(outcome) if outcome.certified_latest => {
+        Ok(outcome) if outcome.push().certified_latest => {
             format!("Successfully published package {namespace}")
         }
         Ok(_) => {
@@ -1467,7 +1465,7 @@ async fn package_commit_and_push_command(
     message: &str,
     metadata: &str,
     workflow: Option<String>,
-) -> Result<quilt::PushOutcome, Error> {
+) -> Result<quilt::PublishOutcome, Error> {
     let namespace = quilt::uri::Namespace::try_from(namespace)?;
     if message.is_empty() {
         return Err(Error::Commit("Message is required".to_string()));
@@ -1484,19 +1482,20 @@ pub async fn package_commit_and_push(
     metadata: String,
     workflow: Option<String>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::PackagePublished).await;
-    tracing.track(MixpanelEvent::PackageCommitted).await;
-
     let msg_init = format!("Publishing package {namespace}");
     let result =
         package_commit_and_push_command(&m, &namespace, &message, &metadata, workflow).await;
 
-    if result.is_ok() {
+    if let Ok(outcome) = &result {
+        tracing.track(MixpanelEvent::PackagePublished).await;
+        if matches!(outcome, quilt::PublishOutcome::CommittedAndPushed(_)) {
+            tracing.track(MixpanelEvent::PackageCommitted).await;
+        }
         tracing.track(MixpanelEvent::PackagePushed).await;
     }
 
     let msg_ok = match &result {
-        Ok(outcome) if outcome.certified_latest => {
+        Ok(outcome) if outcome.push().certified_latest => {
             format!("Successfully published package {namespace}")
         }
         Ok(_) => {
