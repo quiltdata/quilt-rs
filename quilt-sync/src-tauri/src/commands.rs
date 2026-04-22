@@ -1387,10 +1387,9 @@ pub async fn package_push(
 async fn package_publish_command(
     m: &model::Model,
     settings: &SharedPublishSettings,
-    namespace: &str,
+    namespace: quilt::uri::Namespace,
     status: quilt::lineage::InstalledPackageStatus,
 ) -> Result<quilt::PublishOutcome, Error> {
-    let namespace = quilt::uri::Namespace::try_from(namespace)?;
     let settings = settings.read().await.clone();
 
     let changes_summary = commit_message::generate(&status.changes);
@@ -1433,7 +1432,7 @@ pub async fn package_publish(
     };
 
     let msg_init = format!("Publishing package {namespace}");
-    let result = package_publish_command(&m, &settings, &namespace, status).await;
+    let result = package_publish_command(&m, &settings, namespace_parsed, status).await;
 
     if let Ok(outcome) = &result {
         tracing.track(MixpanelEvent::PackagePublished).await;

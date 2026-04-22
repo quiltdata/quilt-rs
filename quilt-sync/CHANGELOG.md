@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.16.1-alpha6] - 2026-04-22
+
+### Fixed
+
+- Publish Tauri command no longer parses the namespace twice: the pre-parsed `Namespace` used for status lookup is now threaded through to the command helper instead of re-parsing the raw string
+
 ## [v0.16.1-alpha5] - 2026-04-22
 
 ### Fixed
