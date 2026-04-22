@@ -11,6 +11,10 @@
 
 ## [v0.16.1-alpha1] - 2026-04-17
 
+### Fixed
+
+- Let clicks on the empty area around the notification fall through to the dismiss overlay so notifications can be closed by clicking outside them
+
 ### Changed
 
 - Split the monolithic `Error` enum into focused domain enums wrapped transparently by the top-level `Error` (<https://github.com/quiltdata/quilt-rs/pull/627>)
