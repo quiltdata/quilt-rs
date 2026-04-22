@@ -69,7 +69,7 @@ Main screen. Lists all locally installed packages.
 |  +---------------------------------------------------+  |
 |  | user/package-a                        [Pull] [>]  |  |
 |  +---------------------------------------------------+  |
-|  | user/package-b                     [Publish] [>]  |  |
+|  | user/package-b              [Commit and Push] [>] |  |
 |  +---------------------------------------------------+  |
 |  | org/dataset-c                         [Pull] [>]  |  |
 |  +---------------------------------------------------+  |
@@ -80,16 +80,18 @@ Main screen. Lists all locally installed packages.
 ```
 
 Local-only packages (no remote `manifest_uri`) show `[Set Remote]`
-but no Publish/Pull buttons and no "Open Remote" action. After
-setting a remote, the status changes to Ahead and Publish becomes
-available immediately (no re-commit needed).
+but no Commit-and-Push / Pull buttons and no "Open Remote" action.
+After setting a remote, the status changes to Ahead and
+`[Commit and Push]` becomes available immediately (no re-commit
+needed).
 
-`[Publish]` is the one-click "commit changes (if any) then push"
-action. It is shown when the package has a remote and something to
-ship — uncommitted changes, a pending commit that was not yet
-pushed, or both. Publish uses per-user defaults from Settings for
-message, workflow, and metadata; users who need a bespoke message
-enter the full form via the package page's `[Commit…]` link.
+`[Commit and Push]` is the one-click "commit changes (if any) then
+push" action. It is shown when the package has a remote and
+something to ship — uncommitted changes, a pending commit that was
+not yet pushed, or both. It uses per-user defaults from Settings
+for message, workflow, and metadata; users who need a bespoke
+message enter the full form via the package page's `[Commit…]`
+link.
 
 Empty state:
 
@@ -110,7 +112,7 @@ Empty state:
 - Click package row -> **Installed Package**
 - Click [Pull] -> runs pull flow, reloads
   - Disabled with popover hint when package has uncommitted changes
-- Click [Publish] -> runs publish flow (commit if needed, then push),
+- Click [Commit and Push] -> commits if needed, then pushes;
   reloads
   - Disabled while the package's status is still refreshing in the
     background
@@ -169,12 +171,12 @@ with checkboxes, status indicator, and a toolbar.
   `/commit?namespace=…`; the form is where the user picks message,
   workflow, and metadata before either saving locally (`[Commit]`) or
   committing-and-pushing (`[Commit and Push]`)
-- [Commit and Push] -> one-click commit-and-push using the Publish
-  defaults from Settings. Shown in the actionbar only when the package
-  has a remote and something to ship (uncommitted changes or a pending
-  commit that has not been pushed). Equivalent to `[Publish]` on the
-  Installed Packages List — surfaced here as a CTA labeled to match the
-  Commit form.
+- [Commit and Push] -> one-click commit-and-push using the
+  Commit-and-Push defaults from Settings. Shown in the actionbar
+  only when the package has a remote and something to ship
+  (uncommitted changes or a pending commit that has not been pushed).
+  Equivalent to the `[Commit and Push]` button on the Installed
+  Packages List.
 
 For local-only packages without an origin, the status banner shows
 [Set Origin] instead of Push.
@@ -218,7 +220,7 @@ Both buttons are disabled when the message field is empty.
   values and immediately pushes the new revision.
 - `[Commit]` stays available as a secondary action for users who want
   to save a local revision without pushing (e.g. to squash with a
-  later commit before publishing).
+  later commit before pushing).
 - For local-only packages (no remote configured) only `[Commit]` is
   shown, because there is nothing to push to.
 
@@ -341,15 +343,15 @@ Configures the remote origin and bucket so the package can be pushed.
 
 ---
 
-### Edit Publish Defaults Popup
+### Edit Commit and Push Defaults Popup
 
-Shown when clicking `[Edit]` in Settings → Publish. Form for the
-global defaults the one-click `[Publish]` action uses for every
-package (no per-package overrides).
+Shown when clicking `[Edit]` in Settings → Commit and Push. Form
+for the global defaults the one-click `[Commit and Push]` action
+uses for every package (no per-package overrides).
 
 ```text
 +---------------------------------------------------------+
-|  Edit publish defaults                                  |
+|  Edit Commit and Push defaults                          |
 |                                                         |
 |  Message template                                       |
 |  [ Auto-publish {date} ({changes})_________________ ]   |
@@ -373,9 +375,9 @@ package (no per-package overrides).
   trip); unknown placeholders like `{dat}` pass through so typos stay
   visible.
 - Workflow radio: "Use bucket's default workflow" sends no workflow
-  id at publish time; "Override" saves the typed id, validated
-  against the bucket on the first Publish (same as today's Commit
-  form).
+  id at Commit-and-Push time; "Override" saves the typed id,
+  validated against the bucket on the first run (same as today's
+  Commit form).
 - Metadata is JSON-validated on Save; empty = no metadata.
 - `Reset to defaults` clears all three fields but does not save —
   user still has to click `[Save]`.
@@ -399,8 +401,8 @@ Application settings and diagnostics.
 |  Home directory   /home/user/quilt  [Open]              |
 |  Data directory   /home/user/.quilt [Open]              |
 |                                                         |
-|  Publish                                                |
-|  -------                                                |
+|  Commit and Push                                        |
+|  ---------------                                        |
 |  Message template   Default — auto-generated summary    |
 |  Default workflow   Default — bucket's workflow         |
 |  Default metadata   Default — none                      |
@@ -460,11 +462,12 @@ auth-related).
   |          Installed Packages List (Home)            |<---------+
   +---+-------+------------+---------------+----------+           |
       |       |            |               |                      |
-      |       | [Create]   | [Publish]     | [gear]               |
-      |       v            v               v                      |
-      |  [popup]      (commit if           +----------+           |
-      |  namespace    needed, then         | Settings |           |
-      |  -> reload    push) -> reload      +----------+           |
+      |       | [Create]   | [Commit and   | [gear]               |
+      |       v            |     Push]     v                      |
+      |  [popup]           v          +----------+                |
+      |  namespace    (commit if      | Settings |                |
+      |  -> reload    needed, then    +----------+                |
+      |               push) -> reload                             |
       |                                                           |
       | click pkg                                                 |
       v                                                           |
@@ -488,7 +491,7 @@ auth-related).
    | |  |                                                         |
    | |  |   [Set Remote]                                          |
    | |  |     -> popup (host + bucket)                            |
-   | |  |     -> status: Ahead -> Publish                         |
+   | |  |     -> status: Ahead -> Commit and Push                 |
    | |  | [Uninstall]                                             |
    | |  +---->----------------------------------------------------+
    | |
