@@ -263,6 +263,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         user_meta: Option<serde_json::Value>,
         workflow: Option<Workflow>,
         host_config_opt: Option<HostConfig>,
+        status_opt: Option<InstalledPackageStatus>,
     ) -> Res<PublishOutcome> {
         self.scaffold_paths().await?;
 
@@ -287,14 +288,19 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let host_config =
             host_config_opt.unwrap_or(self.remote.host_config(&remote_uri.origin).await?);
 
-        let (lineage, status) = flow::status(
-            lineage,
-            &self.storage,
-            &manifest,
-            &package_home,
-            host_config.clone(),
-        )
-        .await?;
+        let (lineage, status) = match status_opt {
+            Some(status) => (lineage, status),
+            None => {
+                flow::status(
+                    lineage,
+                    &self.storage,
+                    &manifest,
+                    &package_home,
+                    host_config.clone(),
+                )
+                .await?
+            }
+        };
 
         let outcome = flow::publish(
             lineage,

@@ -193,9 +193,10 @@ pub trait QuiltModel {
         metadata: Option<serde_json::Value>,
         workflow: Option<quilt::manifest::Workflow>,
         host_config: Option<HostConfig>,
+        status: Option<quilt::lineage::InstalledPackageStatus>,
     ) -> Result<quilt::PublishOutcome, Error> {
         Ok(package
-            .publish(message, metadata, workflow, host_config)
+            .publish(message, metadata, workflow, host_config, status)
             .await?)
     }
 
@@ -545,6 +546,7 @@ pub async fn package_publish(
     metadata: &str,
     workflow: Option<String>,
     host_config: Option<HostConfig>,
+    status: Option<quilt::lineage::InstalledPackageStatus>,
 ) -> Result<quilt::PublishOutcome, Error> {
     debug!(
         "Publishing the package.\nNamespace: {},\nmessage: {},\nuser_meta: {},\nworkflow: {:?}",
@@ -565,6 +567,7 @@ pub async fn package_publish(
             metadata,
             workflow,
             host_config,
+            status,
         )
         .await
 }

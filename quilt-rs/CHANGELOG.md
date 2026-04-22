@@ -8,6 +8,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.29.1-alpha8] - 2026-04-22
+
+### Changed
+
+- `InstalledPackage::publish` accepts an optional pre-computed `InstalledPackageStatus` so callers that already scanned the working tree (e.g. to render a commit message) can skip the duplicate `flow::status` call inside publish
+
 ## [v0.29.1-alpha7] - 2026-04-21
 
 ### Changed

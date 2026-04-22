@@ -9,6 +9,16 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.16.1-alpha5] - 2026-04-22
+
+### Fixed
+
+- The Publish Tauri command no longer scans the working tree twice: the status computed for the commit message is now reused by `InstalledPackage::publish` instead of being recomputed
+
+### quilt-rs
+
+- Bumped to v0.29.1-alpha8 for the new optional pre-computed status parameter on `InstalledPackage::publish`
+
 ## [v0.16.1-alpha4] - 2026-04-21
 
 ### Fixed

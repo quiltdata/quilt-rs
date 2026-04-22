@@ -1388,7 +1388,7 @@ async fn package_publish_command(
     m: &model::Model,
     settings: &SharedPublishSettings,
     namespace: &str,
-    status: &quilt::lineage::InstalledPackageStatus,
+    status: quilt::lineage::InstalledPackageStatus,
 ) -> Result<quilt::PublishOutcome, Error> {
     let namespace = quilt::uri::Namespace::try_from(namespace)?;
     let settings = settings.read().await.clone();
@@ -1404,7 +1404,16 @@ async fn package_publish_command(
     let metadata = settings.default_metadata.clone().unwrap_or_default();
     let workflow = settings.default_workflow.clone();
 
-    model::package_publish(m, namespace, &message, &metadata, workflow, None).await
+    model::package_publish(
+        m,
+        namespace,
+        &message,
+        &metadata,
+        workflow,
+        None,
+        Some(status),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -1424,7 +1433,7 @@ pub async fn package_publish(
     };
 
     let msg_init = format!("Publishing package {namespace}");
-    let result = package_publish_command(&m, &settings, &namespace, &status).await;
+    let result = package_publish_command(&m, &settings, &namespace, status).await;
 
     if let Ok(outcome) = &result {
         tracing.track(MixpanelEvent::PackagePublished).await;
@@ -1470,7 +1479,7 @@ async fn package_commit_and_push_command(
     if message.is_empty() {
         return Err(Error::Commit("Message is required".to_string()));
     }
-    model::package_publish(m, namespace, message, metadata, workflow, None).await
+    model::package_publish(m, namespace, message, metadata, workflow, None, None).await
 }
 
 #[tauri::command]
