@@ -252,6 +252,14 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     /// Commit any working-directory changes (if any) and push the revision to
     /// the remote in one step. Errors if the package has no remote or nothing
     /// to publish.
+    ///
+    /// `status_opt` is a caller-provided cache of `flow::status`: when
+    /// `Some`, this method reuses it verbatim instead of re-scanning the
+    /// working tree. The caller must ensure the status was computed from the
+    /// same on-disk lineage and manifest that `publish` will re-read — i.e.
+    /// nothing else should have mutated this package between the two calls.
+    /// Passing `None` is always safe and falls back to an internal
+    /// `flow::status` call.
     pub async fn publish(
         &self,
         message: String,
