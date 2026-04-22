@@ -1466,7 +1466,7 @@ async fn package_commit_and_push_command(
     workflow: Option<String>,
 ) -> Result<quilt::PublishOutcome, Error> {
     let namespace = quilt::uri::Namespace::try_from(namespace)?;
-    if message.is_empty() {
+    if message.trim().is_empty() {
         return Err(Error::Commit("Message is required".to_string()));
     }
     model::package_publish(m, namespace, message, metadata, workflow, None, None).await
