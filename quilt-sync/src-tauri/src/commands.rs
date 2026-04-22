@@ -1447,6 +1447,12 @@ pub async fn package_publish(
         }
         _ => String::new(),
     };
+    // TODO: route `Error` through `to_frontend_string()` so that
+    // `login_required` / `setup_required` publish-time errors can trigger the
+    // `/login` and `/setup` redirects in `ui::error_handler::handle_or_display`
+    // instead of surfacing as a plain toast. This requires `make_action` to
+    // parse the JSON envelope (or the Tauri command to bypass `Notify` for
+    // these variants); both are out of scope here.
     let msg_err = |err: &Error| format!("Failed to publish package: {err}");
 
     Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
