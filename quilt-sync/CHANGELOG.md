@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.16.1-alpha9] - 2026-04-22
+
+### Changed
+
+- Publish button uses a distinct rocket-launch icon instead of the cloud-upload glyph shared with Push, so "commit + push" reads visually different from a plain push
+
 ## [v0.16.1-alpha8] - 2026-04-22
 
 ### Fixed

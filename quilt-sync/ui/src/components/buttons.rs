@@ -133,7 +133,7 @@ impl ButtonKind {
             Self::OpenBrowser => "/assets/img/icons/open_in_browser.svg",
             Self::OpenInCatalog => "/assets/img/icons/open_in_browser.svg",
             Self::OpenInFileBrowser => "/assets/img/icons/folder_open.svg",
-            Self::Publish => "/assets/img/icons/cloud_upload.svg",
+            Self::Publish => "/assets/img/icons/rocket_launch.svg",
             Self::Pull => "/assets/img/icons/cloud_download.svg",
             Self::Push => "/assets/img/icons/cloud_upload.svg",
             Self::Refresh => "/assets/img/icons/refresh.svg",

@@ -1,6 +1,6 @@
 [package]
 name = "quilt-sync"
-version = "0.16.1-alpha8"
+version = "0.16.1-alpha9"
 authors = ["Quilt Data, Inc."]
 description = "Cross-platform desktop application for editing Quilt data packages"
 documentation = "https://docs.quiltdata.com"
