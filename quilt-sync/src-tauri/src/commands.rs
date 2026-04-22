@@ -353,8 +353,11 @@ pub async fn update_publish_settings(
     default_workflow: String,
     default_metadata: String,
 ) -> Result<(), String> {
-    // Validate metadata is parseable JSON (or empty = no metadata).
-    if !default_metadata.is_empty() {
+    // Validate metadata is parseable JSON (or empty/whitespace = no metadata).
+    // `opt_from_string` below trims whitespace-only input down to `None`, so
+    // we mirror that here: a whitespace-only blob is treated as "no metadata"
+    // rather than being handed to `serde_json::from_str` (which rejects it).
+    if !default_metadata.trim().is_empty() {
         serde_json::from_str::<serde_json::Value>(&default_metadata)
             .map_err(|e| format!("Invalid metadata JSON: {e}"))?;
     }
