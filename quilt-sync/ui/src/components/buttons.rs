@@ -136,7 +136,7 @@ impl ButtonKind {
             Self::Reveal => "/assets/img/icons/folder_open.svg",
             Self::Save => "/assets/img/icons/done.svg",
             Self::Settings => "/assets/img/icons/gear.svg",
-            Self::SetRemote => "/assets/img/icons/cloud_upload.svg",
+            Self::SetRemote => "/assets/img/icons/link.svg",
             Self::SubmitLogin => "/assets/img/icons/done.svg",
             Self::Unignore => "/assets/img/icons/visibility.svg",
         }
