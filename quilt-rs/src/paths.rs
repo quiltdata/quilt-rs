@@ -48,17 +48,8 @@ const INSTALLED_DIR: &str = ".quilt/installed";
 const MANIFEST_DIR: &str = ".quilt/packages";
 const OBJECTS_DIR: &str = ".quilt/objects";
 
-const TAGS_DIR: &str = ".quilt/named_packages";
-
-/// Where do we store tagged "packages". Files that contain packages' hashes.
-pub fn tag_key(namespace: &Namespace, tag: &str) -> String {
-    format!("{TAGS_DIR}/{namespace}/{tag}")
-}
-
-/// What is the path to the JSONL manifest based on its `hash`
-pub fn get_manifest_key_legacy(hash: &str) -> String {
-    format!("{MANIFEST_DIR}/{hash}")
-}
+pub use crate::uri::paths::get_manifest_key_legacy;
+pub use crate::uri::paths::tag_key;
 
 /// Path to the package home directory within the home directory
 pub fn package_home(home: &Home, namespace: &Namespace) -> PathBuf {

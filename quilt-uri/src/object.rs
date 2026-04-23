@@ -1,9 +1,9 @@
 use std::fmt;
 use std::path::PathBuf;
 
-use crate::uri::Namespace;
-use crate::uri::S3PackageHandle;
-use crate::uri::S3Uri;
+use crate::Namespace;
+use crate::S3PackageHandle;
+use crate::S3Uri;
 
 /// Object URI is an URI for objects in packages.
 /// In packages they are stored as logical keys.

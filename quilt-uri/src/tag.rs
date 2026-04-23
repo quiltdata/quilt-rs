@@ -1,13 +1,12 @@
 use std::fmt;
 use std::str::FromStr;
 
-use crate::error::PackageOpError;
 use crate::paths;
-use crate::uri::ManifestUri;
-use crate::uri::Namespace;
-use crate::uri::S3PackageHandle;
-use crate::uri::S3Uri;
-use crate::Error;
+use crate::ManifestUri;
+use crate::Namespace;
+use crate::S3PackageHandle;
+use crate::S3Uri;
+use crate::UriError;
 
 /// In theory tag can be any string
 /// But in practice we only use timestamps and "latest"
@@ -27,7 +26,7 @@ impl fmt::Display for Tag {
 }
 
 impl FromStr for Tag {
-    type Err = Error;
+    type Err = UriError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s == "latest" {
@@ -35,10 +34,7 @@ impl FromStr for Tag {
         } else if let Ok(timestamp) = s.parse::<i64>() {
             Ok(Tag::Timestamp(timestamp))
         } else {
-            Err(Error::PackageOp(PackageOpError::Package(format!(
-                "Unsupported tag format: {}",
-                s
-            ))))
+            Err(UriError::Tag(format!("Unsupported tag format: {s}")))
         }
     }
 }
@@ -70,12 +66,13 @@ impl TagUri {
         TagUri::new(uri.bucket, uri.namespace, Tag::Latest)
     }
 
-    /// Creates TagURI for the revision of the package
-    pub fn timestamp(manifest_uri: ManifestUri, datetime: chrono::DateTime<chrono::Utc>) -> Self {
+    /// Creates TagURI for the revision of the package.
+    /// `seconds` is a Unix timestamp (seconds since the epoch).
+    pub fn timestamp(manifest_uri: ManifestUri, seconds: i64) -> Self {
         TagUri {
             bucket: manifest_uri.bucket,
             namespace: manifest_uri.namespace,
-            tag: Tag::Timestamp(datetime.timestamp()),
+            tag: Tag::Timestamp(seconds),
         }
     }
 }

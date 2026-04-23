@@ -11,7 +11,6 @@ use tracing::log;
 use url::Url;
 
 use crate::error::ManifestError;
-use crate::error::UriError;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
@@ -33,6 +32,7 @@ use crate::uri::S3PackageHandle;
 use crate::uri::S3PackageUri;
 use crate::uri::Tag;
 use crate::uri::TagUri;
+use crate::uri::UriError;
 use crate::Error;
 use crate::Res;
 
@@ -88,7 +88,7 @@ pub async fn tag_timestamp(
     // create it with the value of {self.commit.hash}
     // TODO: Otherwise try again with the current timestamp as the tag
     // (e.g., try five times with exponential backoff, then Error)
-    let tag_timestamp = TagUri::timestamp(manifest_uri.clone(), timestamp);
+    let tag_timestamp = TagUri::timestamp(manifest_uri.clone(), timestamp.timestamp());
     upload_tag(remote, manifest_uri, tag_timestamp).await
 }
 

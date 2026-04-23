@@ -31,7 +31,7 @@ pub use error::PackageOpError;
 pub use error::RemoteCatalogError;
 pub use error::S3Error;
 pub use error::S3ErrorKind;
-pub use error::UriError;
+pub use uri::UriError;
 pub use installed_package::InstalledPackage;
 pub use installed_package::PublishOutcome;
 pub use installed_package::PushOutcome;

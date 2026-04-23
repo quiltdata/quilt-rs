@@ -348,6 +348,12 @@ impl From<quilt_rs::Error> for Error {
     }
 }
 
+impl From<quilt_rs::UriError> for Error {
+    fn from(err: quilt_rs::UriError) -> Error {
+        Error::Quilt(quilt_rs::Error::Uri(err))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

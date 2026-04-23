@@ -14,11 +14,9 @@ use serde::Serializer;
 use url::form_urlencoded;
 use url::Url;
 
-use crate::error::UriError;
-use crate::uri::Host;
-use crate::uri::ManifestUri;
-use crate::Error;
-use crate::Res;
+use crate::Host;
+use crate::ManifestUri;
+use crate::UriError;
 
 pub const LATEST_TAG: &str = "latest";
 
@@ -81,20 +79,20 @@ impl From<(&str, &str)> for Namespace {
 }
 
 impl TryFrom<&str> for Namespace {
-    type Error = Error;
+    type Error = UriError;
 
     fn try_from(input: &str) -> Result<Self, Self::Error> {
         input
             .split_once('/')
-            .ok_or(Error::Uri(UriError::Namespace(
+            .ok_or(UriError::Namespace(
                 "Failed to parse namespace".to_string(),
-            )))
+            ))
             .map(|x| x.into())
     }
 }
 
 impl TryFrom<String> for Namespace {
-    type Error = Error;
+    type Error = UriError;
 
     fn try_from(input: String) -> Result<Self, Self::Error> {
         input.as_str().try_into()
@@ -197,7 +195,7 @@ pub struct S3PackageUri {
 
 // TODO: consider using S3Uri
 impl TryFrom<&str> for S3PackageUri {
-    type Error = Error;
+    type Error = UriError;
 
     fn try_from(input: &str) -> Result<Self, Self::Error> {
         let parsed_url = Url::parse(input)?;
@@ -205,8 +203,7 @@ impl TryFrom<&str> for S3PackageUri {
             return Err(UriError::Package(format!(
                 "expected quilt+s3, got {}",
                 parsed_url.scheme()
-            ))
-            .into());
+            )));
         }
 
         let fragment = parsed_url.fragment().ok_or(UriError::Package(format!(
@@ -223,28 +220,25 @@ impl TryFrom<&str> for S3PackageUri {
         let (namespace, revision) = if pkg_spec.contains(':') && pkg_spec.contains('@') {
             return Err(UriError::Package(
                 "package spec may either contain \":\" or \"@\"".to_string(),
-            )
-            .into());
+            ));
         } else if let Some((namespace, tag)) = pkg_spec.split_once(':') {
             if tag.is_empty() {
-                return Err(UriError::Package("tag must not be empty".to_string()).into());
+                return Err(UriError::Package("tag must not be empty".to_string()));
             }
             if tag.contains(':') {
                 return Err(UriError::Package(
                     "package spec may contain only one \":\"".to_string(),
-                )
-                .into());
+                ));
             }
             (namespace.into(), RevisionPointer::Tag(tag.into()))
         } else if let Some((namespace, top_hash)) = pkg_spec.split_once('@') {
             if top_hash.is_empty() {
-                return Err(UriError::Package("hash must not be empty".to_string()).into());
+                return Err(UriError::Package("hash must not be empty".to_string()));
             }
             if top_hash.contains('@') {
                 return Err(UriError::Package(
                     "package spec may contain only one \"@\"".to_string(),
-                )
-                .into());
+                ));
             }
             (namespace.into(), RevisionPointer::Hash(top_hash.into()))
         } else {
@@ -261,8 +255,7 @@ impl TryFrom<&str> for S3PackageUri {
         if !params.is_empty() {
             return Err(UriError::Package(format!(
                 "unexpected parameters in fragment: {params:?}"
-            ))
-            .into());
+            )));
         }
 
         let bucket = parsed_url.host_str().ok_or(UriError::Package(format!(
@@ -314,7 +307,7 @@ impl S3PackageUri {
         )
     }
 
-    pub fn display_for_host(&self, host: &Host) -> Res<url::Url> {
+    pub fn display_for_host(&self, host: &Host) -> Result<url::Url, UriError> {
         let version = match &self.revision {
             RevisionPointer::Tag(tag) => tag,
             RevisionPointer::Hash(hash) => hash,
@@ -333,7 +326,7 @@ impl S3PackageUri {
         Ok(url)
     }
 
-    pub fn display_for_catalog(&self) -> Result<url::Url, Error> {
+    pub fn display_for_catalog(&self) -> Result<url::Url, UriError> {
         let host = self.catalog.as_ref().ok_or(UriError::Package(
             "Package URI has no catalog specified".to_string(),
         ))?;
@@ -370,7 +363,7 @@ impl fmt::Display for S3PackageUri {
 }
 
 impl std::str::FromStr for S3PackageUri {
-    type Err = Error;
+    type Err = UriError;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
         S3PackageUri::try_from(input)
@@ -399,7 +392,7 @@ impl From<&ManifestUri> for S3PackageUri {
 mod tests {
     use super::*;
 
-    use crate::Res;
+    type Res<T = ()> = Result<T, UriError>;
 
     #[test]
     fn test_implicit_str_parsing() -> Res {

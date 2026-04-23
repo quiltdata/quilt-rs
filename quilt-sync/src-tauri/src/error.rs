@@ -130,6 +130,12 @@ impl From<quilt::InstallPackageError> for Error {
     }
 }
 
+impl From<quilt::UriError> for Error {
+    fn from(err: quilt::UriError) -> Error {
+        Error::Quilt(quilt::Error::Uri(err))
+    }
+}
+
 impl From<String> for Error {
     fn from(s: String) -> Error {
         Error::General(s)
