@@ -10,8 +10,13 @@ pub struct InstalledPackageData {
     pub namespace: String,
     pub uri: String,
     pub status: String,
+    // TODO(view-model-cleanup): collapse origin_host/origin_url/current_host/
+    // current_bucket into one RemoteInfo once URI helpers live in a
+    // WASM-friendly crate.
     pub origin_url: Option<String>,
     pub origin_host: Option<String>,
+    pub current_host: Option<String>,
+    pub current_bucket: Option<String>,
     pub entries: Vec<EntryData>,
     pub has_remote_entries: bool,
     pub ignored_count: usize,
@@ -128,6 +133,8 @@ pub struct PackageItemData {
     pub origin_url: Option<String>,
     pub origin_host: Option<String>,
     pub remote_display: Option<String>,
+    pub current_host: Option<String>,
+    pub current_bucket: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -405,16 +412,7 @@ pub async fn reset_local(namespace: String) -> Result<String, String> {
     tauri::invoke("reset_local", &Args { namespace }).await
 }
 
-// ── Origin/remote ───────────────────────────────────────────
-
-pub async fn set_origin(namespace: String, origin: String) -> Result<String, String> {
-    #[derive(Serialize)]
-    struct Args {
-        namespace: String,
-        origin: String,
-    }
-    tauri::invoke("set_origin", &Args { namespace, origin }).await
-}
+// ── Remote ──────────────────────────────────────────────────
 
 pub async fn set_remote(
     namespace: String,

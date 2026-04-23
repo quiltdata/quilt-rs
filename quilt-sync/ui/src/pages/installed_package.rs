@@ -5,7 +5,7 @@ use crate::commands::{self, EntryData, InstalledPackageData};
 use crate::components::buttons;
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{
-    IgnorePopup, IgnorePopupData, Layout, Notification, SetOriginPopup, Spinner, ToolbarActions,
+    IgnorePopup, IgnorePopupData, Layout, Notification, SetRemotePopup, Spinner, ToolbarActions,
     UnignorePopup, UnignorePopupData,
 };
 use crate::util::{format_size, make_action};
@@ -23,6 +23,7 @@ pub fn InstalledPackage() -> impl IntoView {
     let notification = RwSignal::new(None);
     let ui_locked = RwSignal::new(false);
     let refetch = Trigger::new();
+    let show_set_remote_popup = RwSignal::new(false);
 
     let data = LocalResource::new(move || {
         refetch.track();
@@ -52,10 +53,22 @@ pub fn InstalledPackage() -> impl IntoView {
                                 }),
                                 BreadcrumbItem::Current(ns),
                             ];
-                            let actions = build_toolbar_actions(&d, notification, ui_locked);
+                            let actions = build_toolbar_actions(
+                                &d,
+                                notification,
+                                ui_locked,
+                                show_set_remote_popup,
+                            );
                             view! {
                                 <Layout breadcrumbs=breadcrumbs notification=notification actions=actions ui_locked=ui_locked>
-                                    <InstalledPackageContent data=d notification=notification ui_locked=ui_locked refetch=refetch page_warning />
+                                    <InstalledPackageContent
+                                        data=d
+                                        notification=notification
+                                        ui_locked=ui_locked
+                                        refetch=refetch
+                                        page_warning
+                                        show_set_remote_popup=show_set_remote_popup
+                                    />
                                 </Layout>
                             }
                                 .into_any()
@@ -79,17 +92,19 @@ fn InstalledPackageContent(
     ui_locked: RwSignal<bool>,
     refetch: Trigger,
     page_warning: Option<String>,
+    show_set_remote_popup: RwSignal<bool>,
 ) -> impl IntoView {
     let filter_unmodified = RwSignal::new(data.filter_unmodified);
     let filter_ignored = RwSignal::new(data.filter_ignored);
     let show_ignore_popup = RwSignal::new(None::<IgnorePopupData>);
     let show_unignore_popup = RwSignal::new(None::<UnignorePopupData>);
-    let show_origin_popup = RwSignal::new(false);
 
     let namespace = data.namespace.clone();
     let uri = data.uri.clone();
     let status = data.status.clone();
     let origin_host = data.origin_host.clone();
+    let current_host = data.current_host.clone();
+    let current_bucket = data.current_bucket.clone();
     let entries = data.entries;
     let has_remote_entries = data.has_remote_entries;
     let ignored_count = data.ignored_count;
@@ -226,7 +241,6 @@ fn InstalledPackageContent(
                     notification=notification
                     ui_locked=ui_locked
                     refetch=refetch
-                    show_origin_popup=show_origin_popup
                 />
 
                 // ── Entries form ──
@@ -329,13 +343,14 @@ fn InstalledPackageContent(
             })}
         </Show>
 
-        <Show when=move || show_origin_popup.get()>
-            <SetOriginPopup
+        <Show when=move || show_set_remote_popup.get()>
+            <SetRemotePopup
                 namespace=data.namespace.clone()
-                current_origin=data.origin_host.clone().unwrap_or_default()
+                current_host=current_host.clone()
+                current_bucket=current_bucket.clone()
                 notification=notification
                 refetch=refetch
-                on_close=move || show_origin_popup.set(false)
+                on_close=move || show_set_remote_popup.set(false)
             />
         </Show>
     }
@@ -347,11 +362,22 @@ fn build_toolbar_actions(
     data: &InstalledPackageData,
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
+    show_set_remote_popup: RwSignal<bool>,
 ) -> ToolbarActions {
     let namespace = data.namespace.clone();
     let origin_url = data.origin_url.clone();
     let has_catalog = origin_url.is_some();
     let catalog_disabled = data.status == "local";
+
+    let remote_configured = data.current_host.is_some() && data.current_bucket.is_some();
+    let is_error = data.status == "error";
+    let (remote_label, remote_warning) = if !remote_configured {
+        ("Set remote", true)
+    } else if is_error {
+        ("Change remote", true)
+    } else {
+        ("Change remote", false)
+    };
 
     ToolbarActions::new(move || {
         let navigate = use_navigate();
@@ -395,6 +421,8 @@ fn build_toolbar_actions(
             });
         };
 
+        let on_set_remote = move |_| show_set_remote_popup.set(true);
+
         view! {
             <li>
                 <buttons::OpenInFileBrowser on_click=on_open_file_browser />
@@ -408,6 +436,13 @@ fn build_toolbar_actions(
             } else {
                 ().into_any()
             }}
+            <li>
+                <buttons::SetRemote
+                    on_click=on_set_remote
+                    warning=remote_warning
+                    label=remote_label
+                />
+            </li>
             <li>
                 <buttons::Remove on_click=on_uninstall />
             </li>
@@ -427,7 +462,6 @@ fn StatusBanner(
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
     refetch: Trigger,
-    show_origin_popup: RwSignal<bool>,
 ) -> impl IntoView {
     let ns = namespace.clone();
     let host = origin_host.clone();
@@ -501,9 +535,6 @@ fn StatusBanner(
                     view! {
                         <StatusBannerInner description="Unable to check remote status">
                             <buttons::Login href=login_href />
-                            <buttons::ChangeOrigin
-                                on_click=move |_| show_origin_popup.set(true)
-                            />
                         </StatusBannerInner>
                     }
                     .into_any(),
@@ -511,10 +542,8 @@ fn StatusBanner(
             }
             None => Some(
                 view! {
-                    <StatusBannerInner description="No catalog origin configured">
-                        <buttons::SetOrigin
-                            on_click=move |_| show_origin_popup.set(true)
-                        />
+                    <StatusBannerInner description="Unable to check remote status">
+                        <span></span>
                     </StatusBannerInner>
                 }
                 .into_any(),

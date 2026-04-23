@@ -1,7 +1,6 @@
 mod base;
 pub mod browse;
 pub mod certify_latest;
-pub mod change_origin;
 pub mod collect_logs;
 pub mod commit_and_push;
 pub mod commit_revision;
@@ -35,7 +34,6 @@ pub mod reset_local;
 pub mod reveal;
 pub mod save;
 pub mod send_to_sentry;
-pub mod set_origin;
 pub mod set_remote;
 pub mod settings;
 pub mod submit_login;
@@ -43,7 +41,6 @@ pub mod unignore;
 
 pub use browse::Browse;
 pub use certify_latest::CertifyLatest;
-pub use change_origin::ChangeOrigin;
 pub use collect_logs::CollectLogs;
 pub use commit_and_push::CommitAndPush;
 pub use commit_revision::CommitRevision;
@@ -77,7 +74,6 @@ pub use reset_local::ResetLocal;
 pub use reveal::Reveal;
 pub use save::Save;
 pub use send_to_sentry::SendToSentry;
-pub use set_origin::SetOrigin;
 pub use set_remote::SetRemote;
 pub use settings::Settings;
 pub use submit_login::SubmitLogin;
@@ -111,7 +107,6 @@ pub enum ButtonKind {
     Reveal,
     Save,
     Settings,
-    SetOrigin,
     SetRemote,
     SubmitLogin,
     Unignore,
@@ -141,7 +136,6 @@ impl ButtonKind {
             Self::Reveal => "/assets/img/icons/folder_open.svg",
             Self::Save => "/assets/img/icons/done.svg",
             Self::Settings => "/assets/img/icons/gear.svg",
-            Self::SetOrigin => "/assets/img/icons/warning.svg",
             Self::SetRemote => "/assets/img/icons/cloud_upload.svg",
             Self::SubmitLogin => "/assets/img/icons/done.svg",
             Self::Unignore => "/assets/img/icons/visibility.svg",
@@ -171,7 +165,6 @@ impl ButtonKind {
             Self::Reveal => "Reveal",
             Self::Save => "Save",
             Self::Settings => "Settings",
-            Self::SetOrigin => "Set origin",
             Self::SetRemote => "Set remote",
             Self::SubmitLogin => "Submit code and Log in",
             Self::Unignore => "Unignore",

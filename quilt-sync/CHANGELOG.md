@@ -9,6 +9,22 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.17.1-alpha2] - 2026-04-23
+
+### Changed
+
+- Unify the "set remote" / "set origin" / "change origin" surface into a single popup and a single `SetRemote` button with `Set remote` / `Change remote` labels; drop "origin" from user-visible copy; remove the `set_origin` Tauri command and its UI counterpart
+- Expose `currentHost` and `currentBucket` on package view models so the unified popup can pre-fill its inputs for partially-configured or healthy remotes
+
+### Added
+
+- Persistent `Set remote` / `Change remote` action on the Installed Package toolbar so users can edit the remote from any status, including healthy packages where no error banner is shown
+
+### quilt-rs
+
+- Updated [from v0.30.0 to v0.30.1-alpha1](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.30.0...quilt-rs/v0.30.1-alpha1) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+  - Removed `InstalledPackage::set_origin` in favor of the unified `InstalledPackage::set_remote`
+
 ## [v0.17.1-alpha1] - 2026-04-23
 
 ### Fixed

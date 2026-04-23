@@ -51,8 +51,13 @@ pub struct InstalledPackageData {
     pub namespace: String,
     pub uri: String,
     pub status: String,
+    // TODO(view-model-cleanup): collapse origin_host/origin_url/current_host/
+    // current_bucket into one RemoteInfo once URI helpers live in a
+    // WASM-friendly crate.
     pub origin_url: Option<String>,
     pub origin_host: Option<String>,
+    pub current_host: Option<String>,
+    pub current_bucket: Option<String>,
     pub entries: Vec<InstalledPackageEntryData>,
     pub has_remote_entries: bool,
     pub ignored_count: usize,
@@ -233,12 +238,24 @@ async fn get_installed_package_data_from_model(
         quilt::lineage::UpstreamState::Error => "error",
     };
 
+    let current_host = lineage
+        .remote_uri
+        .as_ref()
+        .and_then(|r| r.origin.as_ref().map(|h| h.to_string()));
+    let current_bucket = lineage
+        .remote_uri
+        .as_ref()
+        .map(|r| r.bucket.clone())
+        .filter(|b| !b.is_empty());
+
     Ok(InstalledPackageData {
         namespace: namespace.to_string(),
         uri: uri.to_string(),
         status: status_str.to_string(),
         origin_url,
         origin_host: origin_host.map(|h| h.to_string()),
+        current_host,
+        current_bucket,
         entries: entries_list,
         has_remote_entries,
         ignored_count,
@@ -722,6 +739,8 @@ pub struct InstalledPackageListItem {
     pub origin_url: Option<String>,
     pub origin_host: Option<String>,
     pub remote_display: Option<String>,
+    pub current_host: Option<String>,
+    pub current_bucket: Option<String>,
 }
 
 async fn get_installed_packages_list_data_from_model(
@@ -761,9 +780,14 @@ async fn load_package_item(
                 origin_url: None,
                 origin_host: None,
                 remote_display: None,
+                current_host: None,
+                current_bucket: None,
             });
         }
     };
+
+    let current_host = remote_uri.origin.as_ref().map(|h| h.to_string());
+    let current_bucket = Some(remote_uri.bucket.clone()).filter(|b| !b.is_empty());
 
     if remote_uri.origin.is_none() {
         return Ok(InstalledPackageListItem {
@@ -773,6 +797,8 @@ async fn load_package_item(
             origin_url: None,
             origin_host: None,
             remote_display: Some(remote_uri.to_string()),
+            current_host,
+            current_bucket,
         });
     }
 
@@ -791,6 +817,8 @@ async fn load_package_item(
         origin_url: Some(origin_url.to_string()),
         origin_host: Some(origin_host.to_string()),
         remote_display: Some(remote_display),
+        current_host,
+        current_bucket,
     })
 }
 
@@ -1553,33 +1581,6 @@ pub async fn package_uninstall(
     )
 }
 
-async fn set_origin_command(m: &model::Model, namespace: &str, origin: &str) -> Result<(), Error> {
-    let namespace = quilt::uri::Namespace::try_from(namespace)?;
-    let origin = quilt::uri::Host::from_str(origin)?;
-    model::set_origin(m, &namespace, origin).await?;
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn set_origin(
-    m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
-    namespace: String,
-    origin: String,
-) -> Result<String, String> {
-    tracing.track(MixpanelEvent::OriginSet).await;
-
-    let msg_init = format!("Setting origin for {namespace}");
-    let msg_ok = format!("Successfully set origin for {namespace}");
-    let msg_err = |err: &Error| format!("Failed to set origin: {err}");
-
-    Notify::new(msg_init).map(
-        set_origin_command(&m, &namespace, &origin).await,
-        msg_ok,
-        msg_err,
-    )
-}
-
 async fn set_remote_command(
     m: &model::Model,
     namespace: &str,
@@ -2126,6 +2127,8 @@ mod tests {
         assert!(ahead.origin_url.is_some());
         assert_eq!(ahead.origin_host.as_deref(), Some("test.quilt.dev"));
         assert!(ahead.remote_display.is_some());
+        assert_eq!(ahead.current_host.as_deref(), Some("test.quilt.dev"));
+        assert_eq!(ahead.current_bucket.as_deref(), Some("test"));
 
         let behind = find("test/behind");
         assert_eq!(behind.status, "behind");
@@ -2210,9 +2213,12 @@ mod tests {
         let pkg = &data.packages[0];
         assert_eq!(pkg.namespace, "test/noorigin");
         assert_eq!(pkg.status, "error");
-        // No origin_url or origin_host (for Set Origin button in UI)
+        // No origin_url or origin_host when the catalog host is missing;
+        // current_bucket is still exposed so the "Set remote" popup can pre-fill.
         assert!(pkg.origin_url.is_none());
         assert!(pkg.origin_host.is_none());
+        assert!(pkg.current_host.is_none());
+        assert_eq!(pkg.current_bucket.as_deref(), Some("test"));
         // remote_display should still be present
         assert!(pkg.remote_display.is_some());
 
@@ -2245,6 +2251,8 @@ mod tests {
         assert!(pkg.origin_url.is_none());
         assert!(pkg.origin_host.is_none());
         assert!(pkg.remote_display.is_none());
+        assert!(pkg.current_host.is_none());
+        assert!(pkg.current_bucket.is_none());
 
         Ok(())
     }
@@ -2515,6 +2523,8 @@ mod tests {
         assert!(data.origin_url.is_some());
         assert!(data.origin_url.unwrap().contains("test.quilt.dev"));
         assert_eq!(data.origin_host, Some("test.quilt.dev".to_string()));
+        assert_eq!(data.current_host.as_deref(), Some("test.quilt.dev"));
+        assert_eq!(data.current_bucket.as_deref(), Some("quilt-example"));
         // Mock has one record "NAME" — should appear as an entry
         assert!(!data.entries.is_empty());
         let entry = data.entries.iter().find(|e| e.filename == "NAME");
@@ -2566,6 +2576,8 @@ mod tests {
         assert_eq!(data.status, "error");
         assert!(data.origin_url.is_none());
         assert!(data.origin_host.is_none());
+        assert!(data.current_host.is_none());
+        assert_eq!(data.current_bucket.as_deref(), Some("test"));
         Ok(())
     }
 
@@ -2635,6 +2647,8 @@ mod tests {
         assert_eq!(data.status, "local");
         assert!(data.origin_url.is_none());
         assert!(data.origin_host.is_none());
+        assert!(data.current_host.is_none());
+        assert!(data.current_bucket.is_none());
         Ok(())
     }
 

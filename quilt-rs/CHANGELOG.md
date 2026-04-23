@@ -8,6 +8,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.30.1-alpha1] - 2026-04-23
+
+### Removed
+
+- `InstalledPackage::set_origin` — callers should use `InstalledPackage::set_remote`, which already writes both the catalog host and the bucket in one step
+
 ## [v0.30.0] - 2026-04-22
 
 ### Added

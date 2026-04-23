@@ -80,9 +80,7 @@ pull_package = 'Pull'
 push_package = 'Push'
 merge_package = 'Merge'
 install_selected_paths = 'Download selected paths'
-set_origin = 'Set origin'
 set_remote = 'Set remote'
-change_origin = 'Change origin'
 create_package = 'Create local package'
 
 [settings]

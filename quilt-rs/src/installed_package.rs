@@ -532,21 +532,6 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         Ok(())
     }
 
-    pub async fn set_origin(&self, origin: Host) -> Res {
-        let (_, mut lineage) = self.lineage.read(&self.storage).await?;
-        match lineage.remote_uri.as_mut() {
-            Some(remote_uri) => remote_uri.origin = Some(origin),
-            None => {
-                return Err(Error::PackageOp(PackageOpError::Push(
-                    "No remote configured. Use set_remote to configure both origin and bucket."
-                        .to_string(),
-                )));
-            }
-        }
-        self.lineage.write(&self.storage, lineage).await?;
-        Ok(())
-    }
-
     pub async fn resolve_workflow(&self, workflow_id: Option<String>) -> Res<Option<Workflow>> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
         let remote_uri = match lineage.remote_uri.as_ref() {
