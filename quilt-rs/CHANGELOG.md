@@ -12,7 +12,7 @@
 
 ### Removed
 
-- `InstalledPackage::set_origin` — callers should use `InstalledPackage::set_remote`, which already writes both the catalog host and the bucket in one step
+- `InstalledPackage::set_origin` — use `InstalledPackage::set_remote`, which writes host and bucket in one call (<https://github.com/quiltdata/quilt-rs/pull/640>)
 
 ## [v0.30.0] - 2026-04-22
 
