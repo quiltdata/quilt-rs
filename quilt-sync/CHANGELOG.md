@@ -13,7 +13,7 @@
 
 ### Fixed
 
-- Let clicks on the empty area around the notification fall through to the dismiss overlay so notifications can be closed by clicking outside them
+- Let clicks on the empty area around the notification fall through to the dismiss overlay so notifications can be closed by clicking outside them (<https://github.com/quiltdata/quilt-rs/pull/636>)
 
 ### Changed
 
