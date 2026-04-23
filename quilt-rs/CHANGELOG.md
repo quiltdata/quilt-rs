@@ -12,7 +12,7 @@
 
 ### Changed
 
-- Extract URI types (`Host`, `S3Uri`, `S3PackageUri`, `ManifestUri`, `ObjectUri`, `TagUri`, `Namespace`, `RevisionPointer`, `UriError`) into a new WASM-safe `quilt-uri` crate; `quilt_rs::uri::*` now re-exports them, so call sites keep compiling unchanged.
+- Extract URI types (`Host`, `S3Uri`, `S3PackageUri`, `ManifestUri`, `ObjectUri`, `TagUri`, `Namespace`, `RevisionPointer`, `UriError`) into a new WASM-safe `quilt-uri` crate; `quilt_rs::uri::*` now re-exports them, so call sites keep compiling unchanged (<https://github.com/quiltdata/quilt-rs/pull/641>)
 
 ## [v0.30.0] - 2026-04-22
 

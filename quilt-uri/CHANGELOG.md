@@ -8,4 +8,4 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-- [Added] Initial release. String-only, WASM-safe URI types extracted from `quilt-rs` so both the Rust backend and the Leptos UI can share the same parser.
+- [Added] Initial release. String-only, WASM-safe URI types extracted from `quilt-rs` so both the Rust backend and the Leptos UI can share the same parser (<https://github.com/quiltdata/quilt-rs/pull/641>)
