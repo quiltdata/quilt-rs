@@ -21,7 +21,9 @@ fn extract_path_relative_to_bucket(path: &str) -> Result<&str, UriError> {
         }
         Some('/') => (),
         Some(_) => {
-            return Err(UriError::S3("Expected path starting with slash".to_string()));
+            return Err(UriError::S3(
+                "Expected path starting with slash".to_string(),
+            ));
         }
     }
 
@@ -60,7 +62,9 @@ impl TryFrom<&str> for S3Uri {
     fn try_from(input: &str) -> Result<Self, Self::Error> {
         let parsed_url = Url::parse(input)?;
         if parsed_url.scheme() != "s3" {
-            return Err(UriError::Scheme(format!("Expected s3:// scheme in {input}")));
+            return Err(UriError::Scheme(format!(
+                "Expected s3:// scheme in {input}"
+            )));
         }
         let bucket = parsed_url
             .host_str()

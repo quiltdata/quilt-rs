@@ -1855,7 +1855,8 @@ pub async fn handle_remote_package(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     uri: String,
 ) -> Result<RemotePackageResult, String> {
-    let s3_uri: quilt::uri::S3PackageUri = uri.parse().map_err(|e: quilt::UriError| e.to_string())?;
+    let s3_uri: quilt::uri::S3PackageUri =
+        uri.parse().map_err(|e: quilt::UriError| e.to_string())?;
     let namespace = s3_uri.namespace.to_string();
 
     let _tracing: &crate::telemetry::Telemetry = &tracing;

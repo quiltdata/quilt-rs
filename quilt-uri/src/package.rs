@@ -84,9 +84,7 @@ impl TryFrom<&str> for Namespace {
     fn try_from(input: &str) -> Result<Self, Self::Error> {
         input
             .split_once('/')
-            .ok_or(UriError::Namespace(
-                "Failed to parse namespace".to_string(),
-            ))
+            .ok_or(UriError::Namespace("Failed to parse namespace".to_string()))
             .map(|x| x.into())
     }
 }

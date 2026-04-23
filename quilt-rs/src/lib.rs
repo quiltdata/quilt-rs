@@ -31,10 +31,10 @@ pub use error::PackageOpError;
 pub use error::RemoteCatalogError;
 pub use error::S3Error;
 pub use error::S3ErrorKind;
-pub use uri::UriError;
 pub use installed_package::InstalledPackage;
 pub use installed_package::PublishOutcome;
 pub use installed_package::PushOutcome;
 pub use local_domain::LocalDomain;
+pub use uri::UriError;
 
 pub type Res<T = ()> = std::result::Result<T, Error>;
