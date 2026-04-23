@@ -2,11 +2,9 @@
 
 This repository contains multiple projects in a unified workspace:
 
-- **[quilt-rs](quilt-rs/)** - Rust library for accessing Quilt data packages
-  (built on [aws-sdk-rust](https://github.com/awslabs/aws-sdk-rust) and
-  [Tokio](https://tokio.rs/))
-- **[quilt-cli](quilt-cli/)** - Command-line interface for Quilt data packages
-  (built with [clap](https://github.com/clap-rs/clap))
+- **[quilt-rs](quilt-rs/)** - Rust library and `quilt` CLI for accessing Quilt
+  data packages (built on [aws-sdk-rust](https://github.com/awslabs/aws-sdk-rust),
+  [Tokio](https://tokio.rs/), and [clap](https://github.com/clap-rs/clap))
 - **[quilt-sync](quilt-sync/)** - Cross-platform desktop GUI application built
   with [Tauri](https://tauri.app/) and vanilla JavaScript (no frontend framework)
   (QuiltSync)
@@ -48,15 +46,14 @@ cargo clippy [-- --deny warnings] [-p package-name]
 
 Each project has different release approaches:
 
-- **quilt-rs**: Library published to crates.io via GitHub Actions
-- **quilt-cli**: No separate releases - users compile from source
+- **quilt-rs**: Library published to crates.io via GitHub Actions; the bundled
+  `quilt` CLI binary is not separately released — users compile from source
 - **QuiltSync**: Desktop app releases with cross-platform builds via GitHub Actions
 
 ### Version Management
 
-- **Library (`quilt-rs`)**: Versioned and published to crates.io
-- **CLI (`quilt-cli`)**: Not published, inherits version from workspace but not
-  released
+- **Library (`quilt-rs`)**: Versioned and published to crates.io; includes the
+  `quilt` CLI bin target, which is built from source and not separately released
 - **QuiltSync (`quilt-sync`)**: Uses workspace version for Tauri app releases
 
 ### Pre-release Versioning

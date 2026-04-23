@@ -54,8 +54,7 @@ async fn install_package(
         // TODO: check the actual remote_manifest
         return Ok(installed_package);
     }
-    let manifest_uri =
-        crate::io::manifest::resolve_manifest_uri(remote, &uri.catalog, uri).await?;
+    let manifest_uri = crate::io::manifest::resolve_manifest_uri(remote, &uri.catalog, uri).await?;
     Ok(local_domain.install_package(&manifest_uri).await?)
 }
 
