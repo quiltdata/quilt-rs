@@ -373,10 +373,8 @@ fn build_toolbar_actions(
     let is_error = data.status == "error";
     let (remote_label, remote_warning) = if !remote_configured {
         ("Set remote", true)
-    } else if is_error {
-        ("Change remote", true)
     } else {
-        ("Change remote", false)
+        ("Change remote", is_error)
     };
 
     ToolbarActions::new(move || {
@@ -542,7 +540,7 @@ fn StatusBanner(
             }
             None => Some(
                 view! {
-                    <StatusBannerInner description="Unable to check remote status">
+                    <StatusBannerInner description="No remote configured">
                         <span></span>
                     </StatusBannerInner>
                 }
