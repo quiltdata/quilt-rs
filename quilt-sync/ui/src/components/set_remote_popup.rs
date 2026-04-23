@@ -110,50 +110,56 @@ pub fn SetRemotePopup(
         }>
             <div class="popup-content" on:click=|ev| ev.stop_propagation()>
                 <div class="set-remote-form">
-                    <h2 class="set-remote-title">"Set remote"</h2>
-                    <label>"Host"</label>
-                    <div class="set-remote-input-group">
-                        <input
-                            class="set-remote-input"
-                            class:error=move || host_error.get()
-                            type="text"
-                            placeholder="open.quiltdata.com"
-                            prop:value=move || origin.get()
-                            on:input=move |ev| {
-                                origin.set(event_target_value(&ev));
-                                host_error.set(false);
-                            }
-                            on:keydown=on_host_keydown
-                        />
-                        <span
-                            class="set-remote-hint"
-                            class:visible=move || host_error.get()
-                        >
-                            "Enter a valid hostname"
-                        </span>
-                    </div>
+                    <h2 class="section-title">"Set remote"</h2>
+                    <div class="set-remote-fields">
+                        <div class="set-remote-field">
+                            <label>"Host"</label>
+                            <div class="set-remote-input-group">
+                                <input
+                                    class="set-remote-input"
+                                    class:error=move || host_error.get()
+                                    type="text"
+                                    placeholder="open.quiltdata.com"
+                                    prop:value=move || origin.get()
+                                    on:input=move |ev| {
+                                        origin.set(event_target_value(&ev));
+                                        host_error.set(false);
+                                    }
+                                    on:keydown=on_host_keydown
+                                />
+                                <span
+                                    class="set-remote-hint"
+                                    class:visible=move || host_error.get()
+                                >
+                                    "Enter a valid hostname"
+                                </span>
+                            </div>
+                        </div>
 
-                    <label>"Bucket"</label>
-                    <div class="set-remote-input-group">
-                        <input
-                            id="set-remote-bucket"
-                            class="set-remote-input"
-                            class:error=move || bucket_error.get()
-                            type="text"
-                            placeholder="my-s3-bucket"
-                            prop:value=move || bucket.get()
-                            on:input=move |ev| {
-                                bucket.set(event_target_value(&ev));
-                                bucket_error.set(false);
-                            }
-                            on:keydown=on_bucket_keydown
-                        />
-                        <span
-                            class="set-remote-hint"
-                            class:visible=move || bucket_error.get()
-                        >
-                            "Enter an S3 bucket name"
-                        </span>
+                        <div class="set-remote-field">
+                            <label>"Bucket"</label>
+                            <div class="set-remote-input-group">
+                                <input
+                                    id="set-remote-bucket"
+                                    class="set-remote-input"
+                                    class:error=move || bucket_error.get()
+                                    type="text"
+                                    placeholder="my-s3-bucket"
+                                    prop:value=move || bucket.get()
+                                    on:input=move |ev| {
+                                        bucket.set(event_target_value(&ev));
+                                        bucket_error.set(false);
+                                    }
+                                    on:keydown=on_bucket_keydown
+                                />
+                                <span
+                                    class="set-remote-hint"
+                                    class:visible=move || bucket_error.get()
+                                >
+                                    "Enter an S3 bucket name"
+                                </span>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="set-remote-actions">
