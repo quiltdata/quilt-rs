@@ -5399,7 +5399,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-sync"
-version = "0.16.1-alpha1"
+version = "0.17.1-alpha1"
 dependencies = [
  "dotenv",
  "mixpanel-rs",
