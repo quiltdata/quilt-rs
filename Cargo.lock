@@ -5343,23 +5343,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "quilt-cli"
-version = "0.25.0"
-dependencies = [
- "clap",
- "dirs",
- "quilt-rs",
- "serde_json",
- "tabled",
- "tempfile",
- "test-log",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "quilt-rs"
 version = "0.30.1-alpha1"
 dependencies = [
@@ -5372,6 +5355,8 @@ dependencies = [
  "aws-types",
  "base64 0.22.1",
  "chrono",
+ "clap",
+ "dirs",
  "getrandom 0.4.2",
  "gitignores",
  "hex",
@@ -5387,12 +5372,14 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2",
+ "tabled",
  "tempfile",
  "test-log",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
  "tracing",
+ "tracing-subscriber",
  "url",
  "uuid",
 ]

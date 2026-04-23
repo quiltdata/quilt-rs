@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use quilt_rs::uri::Namespace;
+use crate::uri::Namespace;
 
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
@@ -15,7 +15,7 @@ pub struct Input {
 
 #[derive(Debug)]
 pub struct Output {
-    pub installed_package: quilt_rs::InstalledPackage,
+    pub installed_package: crate::InstalledPackage,
 }
 
 impl std::fmt::Display for Output {
@@ -33,7 +33,7 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 }
 
 pub async fn model(
-    local_domain: &quilt_rs::LocalDomain,
+    local_domain: &crate::LocalDomain,
     Input {
         namespace,
         source,

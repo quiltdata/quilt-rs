@@ -2,9 +2,8 @@ use clap::Parser;
 use std::io;
 use tracing::log;
 
-mod cli;
-
-use cli::print;
+use quilt_rs::cli;
+use quilt_rs::cli::print;
 
 #[tokio::main]
 async fn main() {

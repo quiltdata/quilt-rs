@@ -1,7 +1,7 @@
-use quilt_rs::io::remote::HostConfig;
-use quilt_rs::uri::Host;
-use quilt_rs::uri::Namespace;
-use quilt_rs::PushOutcome;
+use crate::io::remote::HostConfig;
+use crate::uri::Host;
+use crate::uri::Namespace;
+use crate::PushOutcome;
 
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
@@ -39,7 +39,7 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 }
 
 async fn push_package(
-    local_domain: &quilt_rs::LocalDomain,
+    local_domain: &crate::LocalDomain,
     namespace: Namespace,
     host_config: Option<HostConfig>,
     bucket: Option<String>,
@@ -62,7 +62,7 @@ async fn push_package(
 }
 
 pub async fn model(
-    local_domain: &quilt_rs::LocalDomain,
+    local_domain: &crate::LocalDomain,
     Input {
         namespace,
         host_config,
@@ -83,10 +83,10 @@ mod tests {
 
     use test_log::test;
 
-    use quilt_rs::io::storage::ByteStream;
+    use crate::io::storage::ByteStream;
 
-    use quilt_rs::io::storage::LocalStorage;
-    use quilt_rs::io::storage::Storage;
+    use crate::io::storage::LocalStorage;
+    use crate::io::storage::Storage;
     use std::path::PathBuf;
 
     use crate::cli::commit;
@@ -251,7 +251,7 @@ mod tests {
     async fn test_push_local_package_bucket_only() -> Result<(), Error> {
         use crate::cli::create;
         use crate::cli::status;
-        use quilt_rs::lineage::UpstreamState;
+        use crate::lineage::UpstreamState;
 
         let namespace: Namespace = ("cli_test", "local_push").into();
         let host_config = Some(HostConfig::default_sha256_chunked());

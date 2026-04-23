@@ -7,8 +7,8 @@ use clap::Parser;
 use clap::Subcommand;
 use tracing::log;
 
-use quilt_rs::uri::Host;
-use quilt_rs::uri::Namespace;
+use crate::uri::Host;
+use crate::uri::Namespace;
 
 mod browse;
 mod commit;
@@ -315,7 +315,7 @@ pub enum Error {
     Domain,
 
     #[error("quilt_rs error: {0}")]
-    Quilt(quilt_rs::Error),
+    Quilt(crate::Error),
 
     #[error(
         r#"
@@ -342,8 +342,8 @@ Then run:
     Io(#[from] std::io::Error),
 }
 
-impl From<quilt_rs::Error> for Error {
-    fn from(err: quilt_rs::Error) -> Error {
+impl From<crate::Error> for Error {
+    fn from(err: crate::Error) -> Error {
         Error::Quilt(err)
     }
 }

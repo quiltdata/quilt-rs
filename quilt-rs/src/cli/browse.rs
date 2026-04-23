@@ -1,11 +1,11 @@
-use quilt_rs::manifest::ManifestRow;
+use crate::manifest::ManifestRow;
 
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
 use crate::cli::Error;
 
 pub struct Output {
-    manifest: quilt_rs::manifest::Manifest,
+    manifest: crate::manifest::Manifest,
 }
 
 #[derive(Debug)]
@@ -89,14 +89,14 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 }
 
 pub async fn model(
-    local_domain: &quilt_rs::LocalDomain,
+    local_domain: &crate::LocalDomain,
     Input { uri }: Input,
 ) -> Result<Output, Error> {
     let remote = local_domain.get_remote();
-    let uri: quilt_rs::uri::S3PackageUri = uri.parse()?;
+    let uri: crate::uri::S3PackageUri = uri.parse()?;
 
     let manifest_uri =
-        quilt_rs::io::manifest::resolve_manifest_uri(remote, &uri.catalog, &uri).await?;
+        crate::io::manifest::resolve_manifest_uri(remote, &uri.catalog, &uri).await?;
 
     let manifest = local_domain.browse_remote_manifest(&manifest_uri).await?;
 

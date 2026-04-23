@@ -4,7 +4,7 @@ use std::path::PathBuf;
 #[cfg(test)]
 use tempfile::TempDir;
 
-use quilt_rs::lineage::Home;
+use crate::lineage::Home;
 
 use crate::cli::browse;
 use crate::cli::commit;
@@ -19,11 +19,11 @@ use crate::cli::uninstall;
 use crate::cli::Error;
 
 pub struct Model {
-    local_domain: quilt_rs::LocalDomain,
+    local_domain: crate::LocalDomain,
 }
 
 pub trait Commands {
-    fn get_local_domain(&self) -> &quilt_rs::LocalDomain;
+    fn get_local_domain(&self) -> &crate::LocalDomain;
 
     async fn browse(&self, args: browse::Input) -> Result<browse::Output, Error> {
         let local_domain = self.get_local_domain();
@@ -77,13 +77,13 @@ pub trait Commands {
 }
 
 impl Commands for Model {
-    fn get_local_domain(&self) -> &quilt_rs::LocalDomain {
+    fn get_local_domain(&self) -> &crate::LocalDomain {
         &self.local_domain
     }
 }
 
 impl Model {
-    fn new(local_domain: quilt_rs::LocalDomain) -> Self {
+    fn new(local_domain: crate::LocalDomain) -> Self {
         Model { local_domain }
     }
 
@@ -104,7 +104,7 @@ impl Model {
 
 impl From<PathBuf> for Model {
     fn from(root: PathBuf) -> Self {
-        let local_domain = quilt_rs::LocalDomain::new(root);
+        let local_domain = crate::LocalDomain::new(root);
         Model::new(local_domain)
     }
 }
@@ -119,7 +119,7 @@ impl From<&TempDir> for Model {
 #[cfg(test)]
 pub async fn install_package_into_temp_dir(
     uri_str: &str,
-) -> Result<(Model, quilt_rs::InstalledPackage, TempDir), Error> {
+) -> Result<(Model, crate::InstalledPackage, TempDir), Error> {
     let (model, temp_dir) = Model::from_temp_dir()?;
 
     model.set_home(temp_dir.path()).await?;
