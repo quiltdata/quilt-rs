@@ -199,6 +199,11 @@ fn InstalledPackageContent(
     let origin_host_for_status = origin_host.clone();
     let status_clone = status.clone();
     let show_commit = status != "error";
+    let has_origin = origin_host.is_some();
+    // Mirror the Publish gating from the Installed Packages List: Commit and
+    // Push is offered only when there's a remote and something to ship.
+    let is_publishable = has_origin
+        && (status == "ahead" || (status == "up_to_date" && has_changes) || status == "local");
 
     view! {
         <div class="qui-page-installed-package">
@@ -263,16 +268,36 @@ fn InstalledPackageContent(
             </div>
         </div>
 
-        // ── Action bar: Commit ──
+        // ── Action bar: Commit (and optionally Commit and Push) ──
         <Show when=move || show_commit>
             {
-                let is_primary = Memo::new(move |_| {
-                    has_changes && checked_count.get() == 0
-                });
                 let href = commit_href_clone.clone();
+                // When Commit and Push is present it takes the primary slot.
+                // Otherwise fall back to the original heuristic: primary when
+                // there are changes and no remote entries are queued for install.
+                let revision_primary = Memo::new(move |_| {
+                    !is_publishable && has_changes && checked_count.get() == 0
+                });
+                let ns_for_publish = namespace.clone();
+                let (publish_busy, on_publish) = make_action(
+                    move || {
+                        let ns = ns_for_publish.clone();
+                        async move { commands::package_publish(ns).await }
+                    },
+                    notification,
+                    Some(ui_locked),
+                    move || refetch.notify(),
+                );
                 view! {
                     <div class="qui-actionbar">
-                        <buttons::CreateNewRevision href=href primary=is_primary />
+                        <buttons::CreateNewRevision href=href primary=revision_primary />
+                        {is_publishable.then(|| view! {
+                            <span class="actions-divider">"or"</span>
+                            <buttons::CommitAndPush
+                                on_click=on_publish
+                                busy=publish_busy
+                            />
+                        })}
                     </div>
                 }
             }

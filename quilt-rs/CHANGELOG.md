@@ -8,46 +8,21 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.29.1-alpha5] - 2026-04-20
-
-### Changed
-
-- Single-flight S3 credential refreshes per host so concurrent S3 operations racing past token expiry trigger only one registry mint call (<https://github.com/quiltdata/quilt-rs/pull/632>)
-
-## [v0.29.1-alpha4] - 2026-04-20
-
-### Fixed
-
-- Fix `ExpiredToken` 400s on S3 by refreshing credentials per request via a `ProvideCredentials` adapter over `Auth` (<https://github.com/quiltdata/quilt-rs/pull/631>)
-
-### Changed
-
-- Surface the AWS error code and `x-amz-request-id` in wrapped S3 error messages (<https://github.com/quiltdata/quilt-rs/pull/631>)
-
-## [v0.29.1-alpha3] - 2026-04-20
+## [v0.30.0] - 2026-04-22
 
 ### Added
 
+- New `flow::publish_package` that composes `commit_package` + `push_package` into a single call, returning a `PublishOutcome` enum (`CommittedAndPushed` / `PushedOnly`) so callers know whether pending changes were committed as part of the publish (<https://github.com/quiltdata/quilt-rs/pull/634>)
 - Automatic retry with exponential backoff and request timeouts for HTTP calls, reducing spurious failures on flaky networks (<https://github.com/quiltdata/quilt-rs/pull/630>)
-
-## [v0.29.1-alpha2] - 2026-04-20
-
-### Fixed
-
-- Retry a transient 4xx from the token or credentials endpoint once before concluding `Login required` (<https://github.com/quiltdata/quilt-rs/pull/629>)
-
-### Changed
-
-- Log status/URL/body on every non-2xx HTTP response and include status as a structured field in auth-retry logs (<https://github.com/quiltdata/quilt-rs/pull/629>)
-
-## [v0.29.1-alpha1] - 2026-04-17
 
 ### Changed
 
 - Split the monolithic `Error` enum into focused domain enums wrapped transparently by the top-level `Error` (<https://github.com/quiltdata/quilt-rs/pull/627>)
-- Replace `ManifestRow`'s custom `PartialEq` (which silently ignored `physical_key` and `meta`) with a derived structural `PartialEq` and a new `ManifestRow::matches_content` method for the content-identity check used by push dedup (<https://github.com/quiltdata/quilt-rs/pull/625>)
-- Change `DomainPaths::cached_manifest` signature from `(bucket: &str, hash: &str)` to `(uri: &ManifestUri)` to match how every caller already uses it (<https://github.com/quiltdata/quilt-rs/pull/625>)
-- Expand the `CommitState` multihash TODO into a doc comment spelling out the real scope — a `TopHash` newtype validating SHA-256 on construction, plus migrating the adjacent `String` hashes together (<https://github.com/quiltdata/quilt-rs/pull/625>)
+
+### Fixed
+
+- Fix `ExpiredToken` 400s on S3 by refreshing credentials per request via a `ProvideCredentials` adapter over `Auth`, with single-flight per-host refreshes so concurrent S3 operations racing past token expiry trigger only one registry mint call (<https://github.com/quiltdata/quilt-rs/pull/631>, <https://github.com/quiltdata/quilt-rs/pull/632>)
+- Retry a transient 4xx from the token or credentials endpoint once before concluding `Login required`, and surface the AWS error code, `x-amz-request-id`, and HTTP status in wrapped error messages and logs (<https://github.com/quiltdata/quilt-rs/pull/629>, <https://github.com/quiltdata/quilt-rs/pull/631>)
 
 ## [v0.29.0] - 2026-04-16
 

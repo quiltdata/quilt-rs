@@ -6,7 +6,6 @@ use std::path::PathBuf;
 use tokio_stream::StreamExt;
 use tracing::debug;
 use tracing::info;
-use tracing::warn;
 use url::Url;
 
 use crate::error::ManifestError;
@@ -143,6 +142,10 @@ async fn create_immutable_object_copy(
 // }
 
 /// Commit new commit with new `message`, `user_meta` and all changes got from calling `flow::status`
+///
+/// On `Ok`, the returned `CommitState` is also stored in `lineage.commit` —
+/// callers that need the new top hash should read it from the tuple rather
+/// than unwrapping `lineage.commit`.
 // TODO: move `working_dir` to `paths`, and `paths` to `storage`
 #[allow(clippy::too_many_arguments)]
 pub async fn commit_package(
@@ -156,7 +159,7 @@ pub async fn commit_package(
     message: String,
     user_meta: Option<serde_json::Value>,
     workflow: Option<Workflow>,
-) -> Res<PackageLineage> {
+) -> Res<(PackageLineage, CommitState)> {
     info!(
         r#"⏳ Starting commit with message "{}" and user_meta `{:?}`"#,
         message, user_meta
@@ -283,17 +286,13 @@ pub async fn commit_package(
         timestamp: chrono::Utc::now(),
         prev_hashes,
     };
-    lineage.commit = Some(commit);
+    lineage.commit = Some(commit.clone());
 
-    if let Some(ref commit) = lineage.commit {
-        info!(
-            "✔️ Successfully committed changes with hash: {}",
-            commit.hash
-        );
-    } else {
-        warn!("❌ Failed writing the commit to the lineage",);
-    }
-    Ok(lineage)
+    info!(
+        "✔️ Successfully committed changes with hash: {}",
+        commit.hash
+    );
+    Ok((lineage, commit))
 }
 
 #[cfg(test)]
@@ -316,7 +315,7 @@ mod tests {
         let storage = MockStorage::default();
         let lineage = PackageLineage::default();
         assert!(lineage.commit.is_none());
-        let lineage = commit_package(
+        let (_lineage, commit) = commit_package(
             lineage,
             &mut Manifest::default(),
             &DomainPaths::default(),
@@ -335,7 +334,7 @@ mod tests {
                 .exists(&PathBuf::from(format!(".quilt/installed/foo/bar/{hash}")))
                 .await
         );
-        assert_eq!(lineage.commit.unwrap().hash, hash.to_string());
+        assert_eq!(commit.hash, hash);
         Ok(())
     }
 
@@ -352,7 +351,7 @@ mod tests {
 
         let lineage = PackageLineage::default();
         assert!(lineage.commit.is_none());
-        let lineage = commit_package(
+        let (_lineage, commit) = commit_package(
             lineage,
             &mut Manifest::default(),
             &DomainPaths::default(),
@@ -371,7 +370,7 @@ mod tests {
                 .exists(&PathBuf::from(format!(".quilt/installed/foo/bar/{hash}")))
                 .await
         );
-        assert_eq!(lineage.commit.unwrap().hash, hash.to_string());
+        assert_eq!(commit.hash, hash);
         Ok(())
     }
 
@@ -410,7 +409,7 @@ mod tests {
             "Initial lineage doesn't have testing path"
         );
 
-        let lineage = commit_package(
+        let (lineage, commit) = commit_package(
             lineage,
             &mut manifest,
             &DomainPaths::default(),
@@ -437,7 +436,7 @@ mod tests {
                 .await,
             "Registry doesn't have installed package with a new hash"
         );
-        assert_eq!(lineage.commit.unwrap().hash, hash.to_string());
+        assert_eq!(commit.hash, hash);
 
         Ok(())
     }
@@ -476,7 +475,7 @@ mod tests {
             "Initial lineage has path, but shouldn't because we test _new_ file"
         );
 
-        let lineage = commit_package(
+        let (lineage, commit) = commit_package(
             lineage,
             &mut manifest,
             &DomainPaths::new(PathBuf::from("/")),
@@ -502,7 +501,7 @@ mod tests {
             "Registry doesn't have installed path"
         );
         assert_eq!(
-            lineage.commit.unwrap().hash,
+            commit.hash,
             "e8fc7ccb96e87acd4ca02123e0c658ad92cdb2cc2822103d4f5bac79254cca08"
         );
 
@@ -628,7 +627,7 @@ mod tests {
             "Initial lineage doesn't have path, but should because we test installed and modified file"
         );
 
-        let lineage = commit_package(
+        let (lineage, commit) = commit_package(
             lineage,
             &mut manifest,
             &DomainPaths::new(PathBuf::from("/")),
@@ -656,7 +655,7 @@ mod tests {
             "Registry doesn't have installed path"
         );
         assert_eq!(
-            lineage.commit.unwrap().hash,
+            commit.hash,
             "39bbc9a95f787cd938fb5830abe5e25408f0aac4000528b8717130be5f7bc2b3"
         );
 

@@ -5361,7 +5361,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-rs"
-version = "0.29.1-alpha5"
+version = "0.30.0"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -5401,6 +5401,7 @@ dependencies = [
 name = "quilt-sync"
 version = "0.17.1-alpha1"
 dependencies = [
+ "chrono",
  "dotenv",
  "mixpanel-rs",
  "mockall",

@@ -4,6 +4,7 @@
   bottom: 0;
   box-shadow: var(--q-ui-shadows-actionbar);
   display: flex;
+  gap: var(--q-ui-size-3);
   justify-content: center;
   left: 0;
   opacity: 0.9;
@@ -20,5 +21,10 @@
   &:hover {
     padding: var(--q-ui-size-4) 0;
     opacity: 1;
+  }
+
+  .actions-divider {
+    color: var(--q-ui-palette-text-secondary);
+    font-size: var(--q-ui-font-size-small);
   }
 }

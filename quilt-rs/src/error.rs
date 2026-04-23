@@ -260,6 +260,9 @@ pub enum PackageOpError {
     #[error("Push error: {0}")]
     Push(String),
 
+    #[error("Publish error: {0}")]
+    Publish(String),
+
     #[error("General error regarding package: {0}")]
     Package(String),
 }

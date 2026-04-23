@@ -375,7 +375,52 @@ Return: PushResult { lineage, certified_latest }
     pushed in the meantime, so the "latest" tag was not updated
 ```
 
-### 9. Uninstall Phase
+### 9. Publish Phase
+
+**Entry Point**: `flow::publish_package`
+**Purpose**: Commit any pending working-directory changes and push the
+resulting revision to the remote in a single call
+
+```text
+flow::publish_package(lineage, manifest, …, status, namespace, host_config, commit_opts)
+    ↓
+Classify state:
+    (A) status.changes non-empty           → commit + push
+    (B) status.changes empty, lineage.commit present
+                                            → push only
+    (C) no changes and no pending commit   → Err(PackageOpError::Publish)
+    ↓
+(A) flow::commit_package(…, commit_opts.message, user_meta, workflow)
+    ↓
+   reload manifest from disk at the new commit hash so push uploads
+   the post-commit rows, not the stale pre-commit manifest
+    ↓
+(A)/(B) flow::push_package(…, host_config)
+    ↓
+Return: PublishOutcome {
+          committed,   // true in state (A), false in state (B)
+          push,        // PushResult from flow::push_package
+        }
+```
+
+The library function is the authoritative place for the combined
+behavior. Both desktop (`quilt-sync`) and future consumers (web, CLI)
+share this code path instead of re-sequencing commit + push at the
+call site.
+
+Error semantics:
+
+- **Commit failure** aborts before any upload is attempted; the caller's
+  on-disk lineage is unchanged from the remote's perspective.
+- **Push failure** leaves the local commit in place (it was already
+  persisted by `commit_package`), so re-running Publish with no further
+  changes reaches state (B) and succeeds.
+
+`InstalledPackage::publish` is the method wrapper used by the desktop
+layer; it resolves `host_config` from the remote when the caller does
+not supply one, mirroring `InstalledPackage::{commit, push}`.
+
+### 10. Uninstall Phase
 
 **Entry Point**: `flow::uninstall_package`
 **Purpose**: Remove package from local tracking and delete working directory files

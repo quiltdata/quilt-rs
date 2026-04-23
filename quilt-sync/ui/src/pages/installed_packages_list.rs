@@ -205,6 +205,7 @@ fn PackageItem(
         &data,
         status,
         has_changes,
+        refreshing,
         notification,
         ui_locked,
         refetch,
@@ -261,6 +262,7 @@ fn build_package_menu(
     data: &PackageItemData,
     status: RwSignal<String>,
     has_changes: RwSignal<bool>,
+    refreshing: RwSignal<bool>,
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
     refetch: Trigger,
@@ -314,19 +316,19 @@ fn build_package_menu(
         });
     };
 
-    // ── Sync actions (Push/Pull) ──
+    // ── Sync actions (Publish/Pull) ──
     // Stored in StoredValue so they can be used inside Show children (which are Fn).
-    let ns_for_push = namespace.clone();
-    let (push_busy, on_push) = make_action(
+    let ns_for_publish = namespace.clone();
+    let (publish_busy, on_publish) = make_action(
         move || {
-            let ns = ns_for_push.clone();
-            async move { commands::package_push(ns).await }
+            let ns = ns_for_publish.clone();
+            async move { commands::package_publish(ns).await }
         },
         notification,
         Some(ui_locked),
         move || refetch.notify(),
     );
-    let on_push = StoredValue::new(on_push);
+    let on_publish = StoredValue::new(on_publish);
 
     let ns_for_pull = namespace.clone();
     let (pull_busy, on_pull) = make_action(
@@ -341,7 +343,6 @@ fn build_package_menu(
     let on_pull = StoredValue::new(on_pull);
 
     let has_remote = data.remote_display.is_some();
-    let ns_for_commit = namespace.clone();
     let ns_for_merge = namespace.clone();
 
     // ── Error action (static views, shown/hidden reactively) ──
@@ -370,21 +371,22 @@ fn build_package_menu(
 
         <li class="menu-item menu-divider"></li>
 
-        // Commit (unless error)
-        <Show when=move || status.get() != "error">
-            <li class="menu-item">
-                <buttons::Commit namespace=ns_for_commit.clone() small=true primary=has_changes />
-            </li>
-        </Show>
-
-        // Push (ahead or local+origin)
+        // Publish: commit (if needed) + push in one click.
+        // Gated on having a remote origin, and on there being something to ship
+        // (either uncommitted changes or a pending commit).
         <Show when=move || {
             let s = status.get();
-            s == "ahead" || (s == "local" && has_origin)
+            let publishable_status = s == "ahead" || (s == "local" && has_origin);
+            let up_to_date_with_changes = s == "up_to_date" && has_changes.get() && has_origin;
+            publishable_status || up_to_date_with_changes
         }>
-            <li class="menu-item menu-divider"></li>
             <li class="menu-item">
-                <buttons::Push on_click=move |ev| on_push.with_value(|f| f(ev)) small=true busy=push_busy />
+                <buttons::Publish
+                    on_click=move |ev| on_publish.with_value(|f| f(ev))
+                    small=true
+                    busy=publish_busy
+                    disabled=refreshing
+                />
             </li>
         </Show>
 

@@ -15,6 +15,7 @@ license = "UNLICENSED"
 tauri-build = { version = "2.5.6", features = [] }
 
 [dependencies]
+chrono.workspace = true
 dotenv = "0.15"
 mockall = "0.14.0"
 opener = { version = "0.8.4", features = ["reveal"] }

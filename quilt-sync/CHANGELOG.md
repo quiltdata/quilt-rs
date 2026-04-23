@@ -15,10 +15,19 @@
 
 - Let clicks on the empty area around the notification fall through to the dismiss overlay so notifications can be closed by clicking outside them (<https://github.com/quiltdata/quilt-rs/pull/636>)
 
-### Changed
+## [v0.17.0] - 2026-04-22
 
-- Split the monolithic `Error` enum into focused domain enums wrapped transparently by the top-level `Error` (<https://github.com/quiltdata/quilt-rs/pull/627>)
-- Remove the `let m: &model::Model = &m;` shadow line from 18 Tauri commands; pass `m` directly — `&m` via deref coercion for helpers taking concrete `&Model`, `&*m` for helpers bound by `&impl QuiltModel` where deref coercion does not apply (<https://github.com/quiltdata/quilt-rs/pull/625>)
+### Added
+
+- New `[Commit and Push]` action that commits local changes (if any) and pushes in a single step — available as a one-click button on the Installed Packages List, as a primary CTA on the Commit form alongside the existing `[Commit]`, and on the Installed Package page's bottom action bar alongside `[Create new revision]` (<https://github.com/quiltdata/quilt-rs/pull/634>)
+- Commit and Push defaults under Settings: message template (supports `{date}`/`{time}`/`{datetime}`/`{namespace}`/`{changes}` placeholders with a live preview), default workflow picker, and default metadata (<https://github.com/quiltdata/quilt-rs/pull/634>)
+
+### quilt-rs
+
+- Updated [from v0.29.0 to v0.30.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.29.0...quilt-rs/v0.30.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+  - New `flow::publish_package` that composes commit + push in a single call
+  - Error enum split into focused domain enums
+  - Automatic retry with exponential backoff and request timeouts for HTTP calls; `ExpiredToken` S3 errors fixed via per-request credential refresh with single-flight per-host deduplication
 
 ## [v0.16.0] - 2026-04-16
 
