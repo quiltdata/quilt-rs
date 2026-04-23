@@ -15,6 +15,7 @@
   margin: auto;
   max-width: var(--q-ui-container-size);
   padding: 0 var(--q-ui-size-2);
+  pointer-events: none;
   position: fixed;
   left: 0;
   top: var(--q-ui-size-10);
@@ -26,6 +27,7 @@
     background: #fff;
     box-shadow: var(--q-ui-shadows-popup);
     margin: auto;
+    pointer-events: auto;
     width: fit-content;
     min-width: 30%;
     max-width: 50%;
