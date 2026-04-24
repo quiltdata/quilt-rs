@@ -214,14 +214,6 @@ pub trait QuiltModel {
         Ok(package.reset_to_latest().await?)
     }
 
-    async fn set_origin(
-        &self,
-        package: &quilt::InstalledPackage,
-        origin: quilt::uri::Host,
-    ) -> Result<(), Error> {
-        Ok(package.set_origin(origin).await?)
-    }
-
     async fn set_remote(
         &self,
         package: &quilt::InstalledPackage,
@@ -585,19 +577,6 @@ pub async fn package_pull(
     Ok(())
 }
 
-pub async fn set_origin(
-    model: &impl QuiltModel,
-    namespace: &quilt::uri::Namespace,
-    origin: quilt::uri::Host,
-) -> Result<(), Error> {
-    let installed_package = model
-        .get_installed_package(namespace)
-        .await?
-        .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone())))?;
-    model.set_origin(&installed_package, origin).await?;
-    Ok(())
-}
-
 pub async fn set_remote(
     model: &impl QuiltModel,
     namespace: &quilt::uri::Namespace,
@@ -914,11 +893,11 @@ pub mod mocks {
 
         let result = install_package_only(&model, &uri).await;
         assert!(result.is_err());
-        // This error description doesn't make sense, but it is correct so far
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Missing HTTP header: x-amz-bucket-region"));
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("nonexisting-bucket") && msg.contains("not reachable"),
+            "error should name the bucket and say it's unreachable, got: {msg}"
+        );
 
         Ok(())
     }

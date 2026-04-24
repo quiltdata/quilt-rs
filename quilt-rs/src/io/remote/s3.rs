@@ -41,18 +41,20 @@ use crate::Res;
 
 use crate::io::remote::RemoteObjectStream;
 
+/// S3's HEAD-bucket endpoint returns `x-amz-bucket-region` for any bucket
+/// that exists and is addressable, regardless of permissions. A missing
+/// header means the bucket name didn't resolve — typo, malformed name,
+/// or the bucket genuinely doesn't exist. We surface a single domain
+/// error instead of the raw HTTP artifact, since from the caller's
+/// perspective the distinction doesn't matter: the bucket is unusable.
 async fn find_bucket_region(client: &impl HttpClient, bucket: &str) -> Res<String> {
-    match client
+    let headers = client
         .head(&format!("https://s3.amazonaws.com/{bucket}"))
-        .await?
+        .await?;
+    let region = headers
         .get("x-amz-bucket-region")
-    {
-        Some(location) => Ok(location.to_str()?.into()),
-        // TODO: make a better error for invalid `.head()`
-        None => Err(Error::RemoteCatalog(RemoteCatalogError::MissingHeader(
-            "x-amz-bucket-region".to_string(),
-        ))),
-    }
+        .ok_or_else(|| RemoteCatalogError::BucketUnreachable(bucket.to_string()))?;
+    Ok(region.to_str()?.into())
 }
 
 async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<RemoteObjectStream> {
@@ -431,6 +433,11 @@ impl Remote for RemoteS3 {
 
     async fn host_config(&self, host: &Option<Host>) -> Res<HostConfig> {
         fetch_host_config(&self.http, host).await
+    }
+
+    async fn verify_bucket(&self, bucket: &str) -> Res {
+        self.get_region_for_bucket(bucket).await?;
+        Ok(())
     }
 }
 

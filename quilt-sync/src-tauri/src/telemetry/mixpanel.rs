@@ -36,7 +36,6 @@ pub enum MixpanelEvent {
     WebBrowserOpened,
     LatestCertified,
     LocalReset,
-    OriginSet,
     RemoteSet,
     OAuthLoginInitiated { host: String },
     UserLoggedIn { host: String, flow: LoginFlow },
@@ -206,10 +205,6 @@ mod tests {
 
         let (name, p) = MixpanelEvent::LocalReset.try_into()?;
         assert_eq!(name, "local_reset");
-        assert!(p.is_none());
-
-        let (name, p) = MixpanelEvent::OriginSet.try_into()?;
-        assert_eq!(name, "origin_set");
         assert!(p.is_none());
 
         let (name, p) = MixpanelEvent::RemoteSet.try_into()?;

@@ -85,16 +85,33 @@
 .set-remote-form {
   display: flex;
   flex-direction: column;
-  gap: var(--q-ui-size-2);
   min-width: 320px;
 }
 
-.set-remote-form label {
-  font-weight: 500;
-  font-size: 0.9rem;
+.set-remote-form .section-title {
+  font-size: var(--q-ui-font-size-normal);
+  font-weight: 600;
+  margin: 0 0 var(--q-ui-size-2);
 }
 
-.set-remote-form .set-remote-input-group {
+.set-remote-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-ui-size-2);
+}
+
+.set-remote-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-ui-size-0-5);
+}
+
+.set-remote-field label {
+  font-weight: 500;
+  font-size: var(--q-ui-font-size-small);
+}
+
+.set-remote-field .set-remote-input-group {
   display: flex;
   flex-direction: column;
 }
@@ -130,7 +147,7 @@
 .set-remote-form .set-remote-actions {
   display: flex;
   gap: var(--q-ui-size-2);
-  margin-top: var(--q-ui-size-1);
+  margin-top: var(--q-ui-size-3);
 }
 
 /* ── Set Origin popup (top-level, outside .qui-popup) ── */

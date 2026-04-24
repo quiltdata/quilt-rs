@@ -79,11 +79,14 @@ Main screen. Lists all locally installed packages.
 +---------------------------------------------------------+
 ```
 
-Local-only packages (no remote `manifest_uri`) show `[Set Remote]`
-but no Commit-and-Push / Pull buttons and no "Open Remote" action.
-After setting a remote, the status changes to Ahead and
-`[Commit and Push]` becomes available immediately (no re-commit
-needed).
+Packages where the host or bucket is missing (local-only with no
+`manifest_uri`, or a partial remote) show `[Set Remote]` in the
+context menu but no Commit-and-Push / Pull buttons and no "Open
+Remote" action. The context menu never shows a `Change remote`
+entry — editing a fully-configured remote is a detail-page concern,
+handled by the toolbar button on the Installed Package page. After
+setting a remote, the status changes to Ahead and `[Commit and Push]`
+becomes available immediately (no re-commit needed).
 
 `[Commit and Push]` is the one-click "commit changes (if any) then
 push" action. It is shown when the package has a remote and
@@ -131,14 +134,14 @@ with checkboxes, status indicator, and a toolbar.
 +--[appbar]----------------------------------------------+
 | [logo]  user/package-a                 [refresh] [gear] |
 +--[toolbar]---------------------------------------------+
-| [< Packages]   [Open in File Browser] [Open in Catalog?] [Uninstall] |
+| [< Packages]   [Open in File Browser] [Open in Catalog?] [Set Remote / Change Remote] [Uninstall] |
 +---------------------------------------------------------+
 | [status banner: status-dependent action ────────────]   |
 |   ahead        -> [Push]                                |
 |   behind       -> [Pull]   (disabled if local changes)  |
 |   diverged     -> [Merge]                               |
 |   local+origin -> [Push]                                |
-|   error        -> [Login] / [Set Origin] / [Change…]    |
+|   error        -> [Login]                               |
 |                                                         |
 | Show [x] unmodified [x] ignored (2)                    |
 | [toolbar: Select All / Deselect All]                    |
@@ -158,9 +161,11 @@ with checkboxes, status indicator, and a toolbar.
 ```
 
 - [< Packages] -> **Installed Packages List**
-- Top toolbar hosts package-agnostic actions only: file browser, catalog,
-  and Uninstall. Package sync actions (Push / Pull / Merge / Login)
-  live in the status banner below it.
+- Top toolbar hosts package-agnostic actions: file browser, catalog,
+  the remote-editing action (`Set remote` when host or bucket is missing,
+  `Change remote` otherwise — both open the same popup), and Uninstall.
+  Package sync actions (Push / Pull / Merge / Login) live in the status
+  banner below it.
 - [Push] -> runs push flow, reloads
 - [Pull] -> disabled with popover hint when package has uncommitted changes
 - [Uninstall] -> runs uninstall flow -> **Installed Packages List**
@@ -177,9 +182,6 @@ with checkboxes, status indicator, and a toolbar.
   (uncommitted changes or a pending commit that has not been pushed).
   Equivalent to the `[Commit and Push]` button on the Installed
   Packages List.
-
-For local-only packages without an origin, the status banner shows
-[Set Origin] instead of Push.
 
 ---
 
@@ -321,11 +323,17 @@ Creates a new local-only package.
 
 ### Set Remote Popup
 
-Shown when clicking [Set Remote] on a local-only package.
-Configures the remote origin and bucket so the package can be pushed.
+Shown from the Installed Package toolbar on any package, and from the
+Installed Packages List context menu when host or bucket is missing.
+Both `[Set remote]` and `[Change remote]` labels open the same popup.
+Host and bucket are pre-filled from the current remote state (empty
+strings when unset) so editing a partial or mistyped remote is just
+correcting the input. Title is always "Set remote".
 
 ```text
 +---------------------------------------------------------+
+|                                                         |
+|   Set remote                                            |
 |                                                         |
 |   Host *                                                |
 |   [ open.quiltdata.com________________ ]                |
@@ -489,9 +497,10 @@ auth-related).
    | |  |                  v                                     ||
    | |  |             --->--+-------------------------->---------+|
    | |  |                                                         |
-   | |  |   [Set Remote]                                          |
-   | |  |     -> popup (host + bucket)                            |
-   | |  |     -> status: Ahead -> Commit and Push                 |
+   | |  |   [Set remote] / [Change remote]  (toolbar and list    |
+   | |  |                                    context menu)        |
+   | |  |     -> popup (host + bucket, pre-filled from state)     |
+   | |  |     -> status updates on save -> reload                 |
    | |  | [Uninstall]                                             |
    | |  +---->----------------------------------------------------+
    | |

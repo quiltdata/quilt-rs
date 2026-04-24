@@ -478,6 +478,11 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                 )));
             }
         }
+        // Validate the bucket up front so a typo surfaces here instead of
+        // later at push time as an opaque S3 routing error. This is an
+        // unauthenticated HEAD against s3.amazonaws.com — works even when
+        // the user hasn't logged into the catalog yet.
+        self.remote.verify_bucket(&bucket).await?;
         lineage.remote_uri = Some(ManifestUri {
             origin: origin.clone(),
             bucket: bucket.clone(),
@@ -528,21 +533,6 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             workflow,
         )
         .await?;
-        self.lineage.write(&self.storage, lineage).await?;
-        Ok(())
-    }
-
-    pub async fn set_origin(&self, origin: Host) -> Res {
-        let (_, mut lineage) = self.lineage.read(&self.storage).await?;
-        match lineage.remote_uri.as_mut() {
-            Some(remote_uri) => remote_uri.origin = Some(origin),
-            None => {
-                return Err(Error::PackageOp(PackageOpError::Push(
-                    "No remote configured. Use set_remote to configure both origin and bucket."
-                        .to_string(),
-                )));
-            }
-        }
         self.lineage.write(&self.storage, lineage).await?;
         Ok(())
     }
@@ -774,6 +764,113 @@ mod tests {
                 .to_string()
                 .contains("Bucket cannot be empty"),
             "Error should mention empty bucket"
+        );
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_set_remote_rejects_unreachable_bucket() -> Res {
+        use crate::error::RemoteCatalogError;
+
+        /// Remote that rejects any verify_bucket call — models the case
+        /// where the user typed a bucket that doesn't resolve on S3.
+        struct BadBucketRemote;
+
+        impl Remote for BadBucketRemote {
+            async fn exists(&self, _host: &Option<Host>, _s3_uri: &S3Uri) -> Res<bool> {
+                unreachable!("test only exercises verify_bucket")
+            }
+            async fn get_object_stream(
+                &self,
+                _host: &Option<Host>,
+                _s3_uri: &S3Uri,
+            ) -> Res<crate::io::remote::RemoteObjectStream> {
+                unreachable!("test only exercises verify_bucket")
+            }
+            async fn resolve_url(&self, _host: &Option<Host>, _s3_uri: &S3Uri) -> Res<S3Uri> {
+                unreachable!("test only exercises verify_bucket")
+            }
+            async fn put_object(
+                &self,
+                _host: &Option<Host>,
+                _s3_uri: &S3Uri,
+                _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
+            ) -> Res {
+                unreachable!("test only exercises verify_bucket")
+            }
+            async fn upload_file(
+                &self,
+                _host_config: &crate::io::remote::HostConfig,
+                _source_path: impl AsRef<std::path::Path>,
+                _dest_uri: &S3Uri,
+                _size: u64,
+            ) -> Res<(S3Uri, crate::checksum::ObjectHash)> {
+                unreachable!("test only exercises verify_bucket")
+            }
+            async fn host_config(
+                &self,
+                _host: &Option<Host>,
+            ) -> Res<crate::io::remote::HostConfig> {
+                Ok(crate::io::remote::HostConfig::default())
+            }
+            async fn verify_bucket(&self, bucket: &str) -> Res {
+                Err(RemoteCatalogError::BucketUnreachable(bucket.to_string()).into())
+            }
+        }
+
+        let (home, _temp_dir1) = Home::from_temp_dir()?;
+        let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+
+        let storage = LocalStorage::new();
+        let namespace: Namespace = ("test", "badbucket").into();
+
+        paths
+            .scaffold_for_installing(&storage, &home, &namespace)
+            .await?;
+
+        let lineage_json = r#"{
+            "packages": {
+                "test/badbucket": {
+                    "commit": null,
+                    "remote": null,
+                    "base_hash": "",
+                    "latest_hash": "",
+                    "paths": {}
+                }
+            },
+            "home": "/tmp/working_dir"
+        }"#;
+        storage
+            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+            .await?;
+
+        let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+        let package = InstalledPackage {
+            lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+            paths,
+            remote: BadBucketRemote,
+            storage,
+            namespace,
+        };
+
+        let result = package
+            .set_remote("typo-bucket".to_string(), Some("example.com".parse()?))
+            .await;
+
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("typo-bucket") && msg.contains("not reachable"),
+            "error should name the bucket and say it's unreachable, got: {msg}"
+        );
+
+        // The remote must NOT have been persisted — pre-flight should fail
+        // before any lineage write.
+        let lineage = package.lineage().await?;
+        assert!(
+            lineage.remote_uri.is_none(),
+            "remote_uri should not be persisted when verify_bucket fails",
         );
 
         Ok(())
@@ -1188,6 +1285,9 @@ mod tests {
         }
         async fn host_config(&self, _host: &Option<Host>) -> Res<crate::io::remote::HostConfig> {
             Ok(crate::io::remote::HostConfig::default())
+        }
+        async fn verify_bucket(&self, _bucket: &str) -> Res {
+            Ok(())
         }
     }
 
