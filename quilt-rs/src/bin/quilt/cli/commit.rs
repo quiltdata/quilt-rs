@@ -1,6 +1,6 @@
-use crate::io::remote::HostConfig;
-use crate::lineage::CommitState;
-use crate::uri::Namespace;
+use quilt_rs::io::remote::HostConfig;
+use quilt_rs::lineage::CommitState;
+use quilt_rs::uri::Namespace;
 
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
@@ -31,7 +31,7 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 }
 
 async fn commit_package(
-    local_domain: &crate::LocalDomain,
+    local_domain: &quilt_rs::LocalDomain,
     namespace: Namespace,
     message: String,
     user_meta: Option<serde_json::Value>,
@@ -50,7 +50,7 @@ async fn commit_package(
 }
 
 pub async fn model(
-    local_domain: &crate::LocalDomain,
+    local_domain: &quilt_rs::LocalDomain,
     Input {
         message,
         namespace,
@@ -81,10 +81,10 @@ mod tests {
 
     use crate::cli::model::install_package_into_temp_dir;
 
-    use crate::io::storage::ByteStream;
+    use quilt_rs::io::storage::ByteStream;
 
-    use crate::io::storage::LocalStorage;
-    use crate::io::storage::Storage;
+    use quilt_rs::io::storage::LocalStorage;
+    use quilt_rs::io::storage::Storage;
 
     /// Verify the commit of that package:
     ///  * workflow/config.yml exists

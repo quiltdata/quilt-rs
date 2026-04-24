@@ -3,7 +3,7 @@ use crate::cli::output::Std;
 use crate::cli::Error;
 
 pub struct Output {
-    installed_packages_list: Vec<crate::InstalledPackage>,
+    installed_packages_list: Vec<quilt_rs::InstalledPackage>,
 }
 
 impl std::fmt::Display for Output {
@@ -23,7 +23,7 @@ pub async fn command(m: impl Commands) -> Std {
     Std::from_result(m.list().await)
 }
 
-pub async fn model(local_domain: &crate::LocalDomain) -> Result<Output, Error> {
+pub async fn model(local_domain: &quilt_rs::LocalDomain) -> Result<Output, Error> {
     let installed_packages_list = local_domain.list_installed_packages().await?;
     Ok(Output {
         installed_packages_list,

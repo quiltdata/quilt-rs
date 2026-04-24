@@ -1,4 +1,4 @@
-use crate::uri::Host;
+use quilt_rs::uri::Host;
 
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
@@ -27,7 +27,7 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 }
 
 pub async fn model(
-    local_domain: &crate::LocalDomain,
+    local_domain: &quilt_rs::LocalDomain,
     Input { code, host }: Input,
 ) -> Result<Output, Error> {
     let remote = local_domain.get_remote();

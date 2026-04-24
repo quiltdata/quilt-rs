@@ -1,5 +1,5 @@
-//! Not a part of the library and meant to be an independent project.
-//! This is a CLI frontend for `quilt_rs`.
+//! CLI frontend for `quilt_rs`. Lives under `src/bin/quilt/` so no
+//! CLI types leak into the library's public API.
 
 use std::path::PathBuf;
 
@@ -7,8 +7,8 @@ use clap::Parser;
 use clap::Subcommand;
 use tracing::log;
 
-use crate::uri::Host;
-use crate::uri::Namespace;
+use quilt_rs::uri::Host;
+use quilt_rs::uri::Namespace;
 
 mod browse;
 mod commit;
@@ -315,7 +315,7 @@ pub enum Error {
     Domain,
 
     #[error("quilt_rs error: {0}")]
-    Quilt(crate::Error),
+    Quilt(quilt_rs::Error),
 
     #[error(
         r#"
@@ -342,8 +342,8 @@ Then run:
     Io(#[from] std::io::Error),
 }
 
-impl From<crate::Error> for Error {
-    fn from(err: crate::Error) -> Error {
+impl From<quilt_rs::Error> for Error {
+    fn from(err: quilt_rs::Error) -> Error {
         Error::Quilt(err)
     }
 }

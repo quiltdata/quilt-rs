@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::uri::Namespace;
+use quilt_rs::uri::Namespace;
 
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
@@ -15,13 +15,13 @@ pub struct Input {
 
 #[derive(Debug)]
 pub struct Output {
-    installed_package: crate::InstalledPackage,
+    installed_package: quilt_rs::InstalledPackage,
     paths: Vec<std::path::PathBuf>,
 }
 
 #[cfg(test)]
 impl Output {
-    pub fn get_installed_package(self) -> crate::InstalledPackage {
+    pub fn get_installed_package(self) -> quilt_rs::InstalledPackage {
         self.installed_package
     }
 }
@@ -45,21 +45,22 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 }
 
 async fn install_package(
-    local_domain: &crate::LocalDomain,
-    uri: &crate::uri::S3PackageUri,
+    local_domain: &quilt_rs::LocalDomain,
+    uri: &quilt_rs::uri::S3PackageUri,
     namespace: Namespace,
-) -> Result<crate::InstalledPackage, Error> {
+) -> Result<quilt_rs::InstalledPackage, Error> {
     let remote = local_domain.get_remote();
     if let Some(installed_package) = local_domain.get_installed_package(&namespace).await? {
         // TODO: check the actual remote_manifest
         return Ok(installed_package);
     }
-    let manifest_uri = crate::io::manifest::resolve_manifest_uri(remote, &uri.catalog, uri).await?;
+    let manifest_uri =
+        quilt_rs::io::manifest::resolve_manifest_uri(remote, &uri.catalog, uri).await?;
     Ok(local_domain.install_package(&manifest_uri).await?)
 }
 
 async fn install_paths(
-    installed_package: &crate::InstalledPackage,
+    installed_package: &quilt_rs::InstalledPackage,
     paths: &[PathBuf],
 ) -> Result<(), Error> {
     installed_package.install_paths(paths).await?;
@@ -83,14 +84,14 @@ fn get_entries(
 }
 
 pub async fn model(
-    local_domain: &crate::LocalDomain,
+    local_domain: &quilt_rs::LocalDomain,
     Input {
         namespace,
         paths,
         uri,
     }: Input,
 ) -> Result<Output, Error> {
-    let uri: crate::uri::S3PackageUri = uri.parse()?;
+    let uri: quilt_rs::uri::S3PackageUri = uri.parse()?;
     let path = uri.path.clone();
 
     let namespace = namespace.unwrap_or(uri.namespace.clone());
@@ -115,8 +116,8 @@ mod tests {
 
     use test_log::test;
 
-    use crate::io::storage::LocalStorage;
-    use crate::io::storage::Storage;
+    use quilt_rs::io::storage::LocalStorage;
+    use quilt_rs::io::storage::Storage;
 
     use crate::cli::fixtures::packages::default as pkg;
     use crate::cli::model::create_model_in_temp_dir;

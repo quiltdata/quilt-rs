@@ -4,8 +4,6 @@ pub mod flow;
 
 pub mod auth;
 pub mod checksum;
-#[cfg(feature = "cli")]
-pub mod cli;
 pub mod error;
 mod installed_package;
 pub mod io;

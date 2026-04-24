@@ -6,6 +6,17 @@ Quilt provides Git-like version control semantics for data files through
 content-addressed storage with immutable objects and distributed collaboration
 via remote storage backends.
 
+## Installing the CLI
+
+The `quilt` binary ships as an opt-in `cli` feature of this crate:
+
+```sh
+cargo install quilt-rs --features cli
+```
+
+Without `--features cli`, the library is installed but no binary is produced —
+Cargo prints a warning pointing at the missing feature.
+
 ## Quick Start
 
 For all operations, instantiate `LocalDomain` and then call some of its methods.

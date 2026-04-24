@@ -1,6 +1,6 @@
-use crate::io::remote::HostConfig;
-use crate::uri::ManifestUri;
-use crate::uri::Namespace;
+use quilt_rs::io::remote::HostConfig;
+use quilt_rs::uri::ManifestUri;
+use quilt_rs::uri::Namespace;
 
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
@@ -28,7 +28,7 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 }
 
 async fn pull_package(
-    local_domain: &crate::LocalDomain,
+    local_domain: &quilt_rs::LocalDomain,
     namespace: Namespace,
     host_config: Option<HostConfig>,
 ) -> Result<ManifestUri, Error> {
@@ -39,7 +39,7 @@ async fn pull_package(
 }
 
 pub async fn model(
-    local_domain: &crate::LocalDomain,
+    local_domain: &quilt_rs::LocalDomain,
     Input {
         namespace,
         host_config,

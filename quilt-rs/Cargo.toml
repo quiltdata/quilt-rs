@@ -11,12 +11,12 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["cli"]
+default = []
 cli = ["dep:clap", "dep:dirs", "dep:tabled", "dep:tracing-subscriber"]
 
 [[bin]]
 name = "quilt"
-path = "src/bin/quilt.rs"
+path = "src/bin/quilt/main.rs"
 required-features = ["cli"]
 
 [dependencies]

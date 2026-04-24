@@ -30,8 +30,18 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check -p quilt-rs
 
-      - name: Lint
+      - name: Lint (lib only, no default features)
+        run: cargo clippy -p quilt-rs --no-default-features --lib -- --deny warnings
+
+      - name: Lint (all features)
         run: cargo clippy -p quilt-rs --all-features -- --deny warnings
+
+      - name: Test library (no default features)
+        run: cargo nextest run -p quilt-rs --no-default-features --lib
+        env:
+          RUST_BACKTRACE: 1
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
       - name: Test library + CLI
         run: cargo nextest run -p quilt-rs --all-features
@@ -46,9 +56,6 @@ jobs:
           RUST_BACKTRACE: 1
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-
-      - name: Build lib-only (no default features)
-        run: cargo build -p quilt-rs --no-default-features --lib
 
       - name: Build with CLI bin
         run: cargo build -p quilt-rs --bin quilt

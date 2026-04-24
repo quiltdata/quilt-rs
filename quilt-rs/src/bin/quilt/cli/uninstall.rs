@@ -2,7 +2,7 @@ use crate::cli::model::Commands;
 use crate::cli::output::Std;
 use crate::cli::Error;
 
-use crate::uri::Namespace;
+use quilt_rs::uri::Namespace;
 
 #[derive(Debug)]
 pub struct Input {
@@ -24,7 +24,7 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 }
 
 pub async fn model(
-    local_domain: &crate::LocalDomain,
+    local_domain: &quilt_rs::LocalDomain,
     Input { namespace }: Input,
 ) -> Result<Output, Error> {
     local_domain.uninstall_package(namespace.clone()).await?;

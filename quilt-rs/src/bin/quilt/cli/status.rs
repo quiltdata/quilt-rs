@@ -1,8 +1,8 @@
-use crate::io::remote::HostConfig;
-use crate::lineage::Change;
-use crate::lineage::InstalledPackageStatus;
-use crate::lineage::UpstreamState;
-use crate::uri::Namespace;
+use quilt_rs::io::remote::HostConfig;
+use quilt_rs::lineage::Change;
+use quilt_rs::lineage::InstalledPackageStatus;
+use quilt_rs::lineage::UpstreamState;
+use quilt_rs::uri::Namespace;
 
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
@@ -69,7 +69,7 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 }
 
 async fn get_status(
-    local_domain: &crate::LocalDomain,
+    local_domain: &quilt_rs::LocalDomain,
     namespace: Namespace,
     host_config: Option<HostConfig>,
 ) -> Result<InstalledPackageStatus, Error> {
@@ -80,7 +80,7 @@ async fn get_status(
 }
 
 pub async fn model(
-    local_domain: &crate::LocalDomain,
+    local_domain: &quilt_rs::LocalDomain,
     Input {
         namespace,
         host_config,
@@ -100,10 +100,10 @@ mod tests {
 
     use crate::cli::model::install_package_into_temp_dir;
 
-    use crate::io::storage::ByteStream;
+    use quilt_rs::io::storage::ByteStream;
 
-    use crate::io::storage::LocalStorage;
-    use crate::io::storage::Storage;
+    use quilt_rs::io::storage::LocalStorage;
+    use quilt_rs::io::storage::Storage;
 
     #[test(tokio::test)]
     async fn test_model() -> Result<(), Error> {
