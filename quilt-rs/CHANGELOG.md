@@ -8,6 +8,16 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.30.1-alpha2] - 2026-04-24
+
+### Added
+
+- `Remote::verify_bucket` pre-flight validates an S3 bucket is reachable without auth; `InstalledPackage::set_remote` now calls it so a typo in the bucket fails at save time rather than surfacing later as an opaque error during push (<https://github.com/quiltdata/quilt-rs/pull/640>)
+
+### Changed
+
+- Bucket-region lookup now returns a user-facing "bucket not reachable" error instead of leaking the underlying HTTP protocol artifact (<https://github.com/quiltdata/quilt-rs/pull/640>)
+
 ## [v0.30.1-alpha1] - 2026-04-23
 
 ### Removed

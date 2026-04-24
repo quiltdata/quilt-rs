@@ -893,11 +893,11 @@ pub mod mocks {
 
         let result = install_package_only(&model, &uri).await;
         assert!(result.is_err());
-        // This error description doesn't make sense, but it is correct so far
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Missing HTTP header: x-amz-bucket-region"));
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("nonexisting-bucket") && msg.contains("not reachable"),
+            "error should name the bucket and say it's unreachable, got: {msg}"
+        );
 
         Ok(())
     }

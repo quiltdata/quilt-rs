@@ -202,8 +202,8 @@ pub enum RemoteCatalogError {
     #[error("Failed to fetch host config: {0}")]
     HostConfig(String),
 
-    #[error("Missing HTTP header: {0}")]
-    MissingHeader(String),
+    #[error("S3 bucket '{0}' is not reachable — verify the bucket name")]
+    BucketUnreachable(String),
 }
 
 #[derive(Error, Debug, PartialEq)]
