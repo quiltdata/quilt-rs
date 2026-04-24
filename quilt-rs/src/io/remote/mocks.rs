@@ -102,6 +102,10 @@ impl Remote for MockRemote {
     async fn host_config(&self, _host: &Option<Host>) -> Res<HostConfig> {
         Ok(HostConfig::default())
     }
+
+    async fn verify_bucket(&self, _bucket: &str) -> Res {
+        Ok(())
+    }
 }
 
 #[cfg(test)]

@@ -138,4 +138,12 @@ pub trait Remote {
 
     /// Fetch host configuration from the given host
     fn host_config(&self, host: &Option<Host>) -> impl Future<Output = Res<HostConfig>> + Send;
+
+    /// Verify that a bucket exists and is addressable on S3. Used for
+    /// pre-flight validation when a user sets a remote, so a typo in
+    /// the bucket name fails at save time rather than surfacing later
+    /// as an opaque error during push. Does not require auth — AWS's
+    /// HEAD-bucket endpoint returns the region for any existing bucket
+    /// regardless of permissions.
+    fn verify_bucket(&self, bucket: &str) -> impl Future<Output = Res> + Send;
 }

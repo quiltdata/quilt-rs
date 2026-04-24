@@ -9,6 +9,21 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.17.1-alpha2] - 2026-04-23
+
+### Added
+
+- Edit a package's remote from the Installed Package toolbar before push (with current host and bucket pre-filled for in-place correction), or view it read-only as "Show remote" once pushed, since the remote is pinned to the package's lineage after that point (<https://github.com/quiltdata/quilt-rs/pull/640>)
+
+### Changed
+
+- Standardize on "remote" in UI copy — drop "origin" from button labels and status banners (<https://github.com/quiltdata/quilt-rs/pull/640>)
+- The "Set remote" popup now validates that the bucket exists on S3 before saving, so a typo fails at save time with a clear "bucket not reachable" message instead of surfacing later as an opaque error during push (<https://github.com/quiltdata/quilt-rs/pull/640>)
+
+### quilt-rs
+
+- Updated [from v0.30.0 to v0.30.1-alpha1](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.30.0...quilt-rs/v0.30.1-alpha1) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.17.1-alpha1] - 2026-04-23
 
 ### Fixed
