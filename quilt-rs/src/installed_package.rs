@@ -808,7 +808,10 @@ mod tests {
             ) -> Res<(S3Uri, crate::checksum::ObjectHash)> {
                 unreachable!("test only exercises verify_bucket")
             }
-            async fn host_config(&self, _host: &Option<Host>) -> Res<crate::io::remote::HostConfig> {
+            async fn host_config(
+                &self,
+                _host: &Option<Host>,
+            ) -> Res<crate::io::remote::HostConfig> {
                 Ok(crate::io::remote::HostConfig::default())
             }
             async fn verify_bucket(&self, bucket: &str) -> Res {
