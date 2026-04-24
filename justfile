@@ -4,9 +4,13 @@
 start:
     cd quilt-sync && cargo tauri dev
 
+# Run all tests (includes CLI bin target)
+test:
+    cargo test --all-features
+
 # Run test coverage for all packages
 coverage:
-    cargo tarpaulin --out html
+    cargo tarpaulin --all-features --out html
 
 # Lint all packages with all features
 lint:
