@@ -58,4 +58,4 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
       - name: Build with CLI bin
-        run: cargo build -p quilt-rs --bin quilt
+        run: cargo build -p quilt-rs --bin quilt --features cli
