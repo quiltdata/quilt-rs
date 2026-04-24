@@ -105,6 +105,7 @@ fn InstalledPackageContent(
     let origin_host = data.origin_host.clone();
     let current_host = data.current_host.clone();
     let current_bucket = data.current_bucket.clone();
+    let remote_locked = data.remote_locked;
     let entries = data.entries;
     let has_remote_entries = data.has_remote_entries;
     let ignored_count = data.ignored_count;
@@ -348,6 +349,7 @@ fn InstalledPackageContent(
                 namespace=data.namespace.clone()
                 current_host=current_host.clone()
                 current_bucket=current_bucket.clone()
+                locked=remote_locked
                 notification=notification
                 refetch=refetch
                 on_close=move || show_set_remote_popup.set(false)
@@ -373,6 +375,8 @@ fn build_toolbar_actions(
     let is_error = data.status == "error";
     let (remote_label, remote_warning) = if !remote_configured {
         ("Set remote", true)
+    } else if data.remote_locked {
+        ("Show remote", false)
     } else {
         ("Change remote", is_error)
     };

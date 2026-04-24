@@ -13,7 +13,7 @@
 
 ### Added
 
-- Edit a package's remote from the Installed Package toolbar at any time; the popup pre-fills the current host and bucket, so a mistyped bucket can be corrected in place (<https://github.com/quiltdata/quilt-rs/pull/640>)
+- Edit a package's remote from the Installed Package toolbar before push (with current host and bucket pre-filled for in-place correction), or view it read-only as "Show remote" once pushed, since the remote is pinned to the package's lineage after that point (<https://github.com/quiltdata/quilt-rs/pull/640>)
 
 ### Changed
 

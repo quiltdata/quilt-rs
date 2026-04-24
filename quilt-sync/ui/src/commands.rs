@@ -17,6 +17,10 @@ pub struct InstalledPackageData {
     pub origin_host: Option<String>,
     pub current_host: Option<String>,
     pub current_bucket: Option<String>,
+    /// Package has been pushed — the remote is pinned to its push history
+    /// and can't be edited. The toolbar's remote button becomes a read-only
+    /// "Show remote" view.
+    pub remote_locked: bool,
     pub entries: Vec<EntryData>,
     pub has_remote_entries: bool,
     pub ignored_count: usize,

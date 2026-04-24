@@ -18,6 +18,12 @@ pub fn SetRemotePopup(
     namespace: String,
     current_host: Option<String>,
     current_bucket: Option<String>,
+    /// When true, renders the popup as a read-only "Show remote" view:
+    /// disabled inputs, no Save button, secondary button becomes "Close".
+    /// Used for pushed packages where the remote is pinned to lineage
+    /// (see `InstalledPackage::set_remote` in quilt-rs).
+    #[prop(optional)]
+    locked: bool,
     notification: RwSignal<Option<Notification>>,
     refetch: Trigger,
     on_close: impl Fn() + Clone + 'static,
@@ -110,7 +116,9 @@ pub fn SetRemotePopup(
         }>
             <div class="popup-content" on:click=|ev| ev.stop_propagation()>
                 <div class="set-remote-form">
-                    <h2 class="section-title">"Set remote"</h2>
+                    <h2 class="section-title">
+                        {if locked { "Show remote" } else { "Set remote" }}
+                    </h2>
                     <div class="set-remote-fields">
                         <div class="set-remote-field">
                             <label>"Host"</label>
@@ -120,6 +128,7 @@ pub fn SetRemotePopup(
                                     class:error=move || host_error.get()
                                     type="text"
                                     placeholder="open.quiltdata.com"
+                                    prop:disabled=locked
                                     prop:value=move || origin.get()
                                     on:input=move |ev| {
                                         origin.set(event_target_value(&ev));
@@ -145,6 +154,7 @@ pub fn SetRemotePopup(
                                     class:error=move || bucket_error.get()
                                     type="text"
                                     placeholder="my-s3-bucket"
+                                    prop:disabled=locked
                                     prop:value=move || bucket.get()
                                     on:input=move |ev| {
                                         bucket.set(event_target_value(&ev));
@@ -163,10 +173,14 @@ pub fn SetRemotePopup(
                     </div>
 
                     <div class="set-remote-actions">
-                        <buttons::FormPrimary on_click=on_submit_click disabled=submitting>
-                            "Save"
-                        </buttons::FormPrimary>
-                        <buttons::FormSecondary on_click=on_cancel />
+                        {(!locked).then(|| view! {
+                            <buttons::FormPrimary on_click=on_submit_click disabled=submitting>
+                                "Save"
+                            </buttons::FormPrimary>
+                        })}
+                        <buttons::FormSecondary on_click=on_cancel>
+                            {if locked { "Close" } else { "Cancel" }}
+                        </buttons::FormSecondary>
                     </div>
                 </div>
             </div>
