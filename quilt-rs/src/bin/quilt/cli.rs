@@ -115,7 +115,7 @@ enum Commands {
         #[arg(short, long)]
         path: Option<Vec<PathBuf>>,
     },
-    /// List installed packages
+    /// Authenticate with a Quilt stack
     Login {
         /// Code from the https://QUILT_STACK/code page
         #[arg(short, long)]
