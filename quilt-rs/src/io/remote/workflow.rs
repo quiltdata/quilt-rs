@@ -6,10 +6,10 @@ use crate::io::remote::Remote;
 use crate::manifest::MetadataSchema;
 use crate::manifest::Workflow;
 use crate::manifest::WorkflowId;
-use crate::uri::Host;
-use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
+use quilt_uri::Host;
+use quilt_uri::S3Uri;
 
 fn get_schema_id(yaml: &YamlValue, workflow_id: &str) -> Res<Option<String>> {
     match &yaml.get("workflows") {

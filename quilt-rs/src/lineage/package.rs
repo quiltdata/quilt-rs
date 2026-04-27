@@ -9,9 +9,9 @@ use serde::Serialize;
 
 use crate::error::LineageError;
 use crate::lineage::status::UpstreamState;
-use crate::uri::ManifestUri;
 use crate::Error;
 use crate::Res;
+use quilt_uri::ManifestUri;
 
 fn multihash_to_str<S: ser::Serializer>(
     hash: &Multihash<256>,

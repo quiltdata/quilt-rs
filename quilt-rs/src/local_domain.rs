@@ -18,9 +18,9 @@ use crate::lineage::Home;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestHeader;
 use crate::paths;
-use crate::uri::ManifestUri;
-use crate::uri::Namespace;
 use crate::Res;
+use quilt_uri::ManifestUri;
+use quilt_uri::Namespace;
 
 /// This is the entrypoint for the lib.
 /// All the work you can do with packages is done through calling `LocalDomain` methods.

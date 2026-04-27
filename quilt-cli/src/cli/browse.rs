@@ -93,7 +93,7 @@ pub async fn model(
     Input { uri }: Input,
 ) -> Result<Output, Error> {
     let remote = local_domain.get_remote();
-    let uri: quilt_rs::uri::S3PackageUri = uri.parse()?;
+    let uri: quilt_uri::S3PackageUri = uri.parse()?;
 
     let manifest_uri =
         quilt_rs::io::manifest::resolve_manifest_uri(remote, &uri.catalog, &uri).await?;

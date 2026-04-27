@@ -5,7 +5,6 @@ use ::sentry as Sentry;
 use mixpanel_rs::Mixpanel;
 use semver::Version;
 
-use crate::quilt;
 use crate::Result;
 
 pub mod diagnostics;
@@ -43,7 +42,7 @@ impl Telemetry {
         tracing::init_file_logging(base_path)
     }
 
-    pub fn add_host(&self, host: &quilt::uri::Host) {
+    pub fn add_host(&self, host: &quilt_uri::Host) {
         if let Ok(mut hosts) = self.hosts.lock() {
             if hosts.insert(host.to_string()) {
                 Sentry::configure_scope(|scope| {

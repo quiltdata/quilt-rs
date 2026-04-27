@@ -19,12 +19,12 @@ use crate::lineage::PackageLineage;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
 use crate::paths;
-use crate::uri::ManifestUri;
-use crate::uri::Namespace;
-use crate::uri::S3PackageHandle;
-use crate::uri::Tag;
 use crate::Error;
 use crate::Res;
+use quilt_uri::ManifestUri;
+use quilt_uri::Namespace;
+use quilt_uri::S3PackageHandle;
+use quilt_uri::Tag;
 
 async fn use_existing_row_or_upload(
     remote: &impl Remote,
@@ -253,7 +253,7 @@ mod tests {
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::CommitState;
     use crate::lineage::PackageLineage;
-    use crate::uri::S3Uri;
+    use quilt_uri::S3Uri;
 
     #[test(tokio::test)]
     async fn test_no_push_if_no_commit() -> Res {

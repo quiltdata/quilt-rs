@@ -24,18 +24,18 @@ use crate::manifest::TopHasher;
 use crate::manifest::Workflow;
 #[cfg(test)]
 use crate::manifest::WorkflowId;
-use crate::uri::Host;
-use crate::uri::ManifestUri;
-use crate::uri::ObjectUri;
-use crate::uri::RevisionPointer;
-use crate::uri::S3PackageHandle;
-use crate::uri::S3PackageUri;
-use crate::uri::Seconds;
-use crate::uri::Tag;
-use crate::uri::TagUri;
-use crate::uri::UriError;
 use crate::Error;
 use crate::Res;
+use quilt_uri::Host;
+use quilt_uri::ManifestUri;
+use quilt_uri::ObjectUri;
+use quilt_uri::RevisionPointer;
+use quilt_uri::S3PackageHandle;
+use quilt_uri::S3PackageUri;
+use quilt_uri::Seconds;
+use quilt_uri::Tag;
+use quilt_uri::TagUri;
+use quilt_uri::UriError;
 
 async fn bytestream_to_string(bytestream: ByteStream) -> Res<String> {
     let mut reader = bytestream.into_async_read();
@@ -277,7 +277,7 @@ mod tests {
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::io::storage::LocalStorage;
-    use crate::uri::S3Uri;
+    use quilt_uri::S3Uri;
 
     #[test(tokio::test)]
     async fn test_resolve_existing_hash() -> Res {

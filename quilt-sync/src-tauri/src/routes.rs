@@ -5,7 +5,6 @@ use url::Url;
 
 use crate::error::Error;
 use crate::error::RouteError;
-use crate::quilt;
 use crate::telemetry::prelude::*;
 
 /// Which entry categories are visible (checked) in the filter toolbar.
@@ -115,11 +114,11 @@ fn parse_filter(location: &str) -> Result<EntriesFilter, Error> {
 
 #[derive(Debug, serde::Deserialize)]
 struct QueryLoginParsed {
-    pub host: quilt::uri::Host,
+    pub host: quilt_uri::Host,
     pub back: String,
 }
 
-fn parse_login(location: &str) -> Result<(quilt::uri::Host, String), Error> {
+fn parse_login(location: &str) -> Result<(quilt_uri::Host, String), Error> {
     let uri = parse_url(location)?;
     match uri.query() {
         Some(q) => {
@@ -132,13 +131,13 @@ fn parse_login(location: &str) -> Result<(quilt::uri::Host, String), Error> {
 
 #[derive(Debug, serde::Deserialize)]
 struct QueryLoginErrorParsed {
-    pub host: quilt::uri::Host,
+    pub host: quilt_uri::Host,
     #[serde(default)]
     pub title: Option<String>,
     pub error: String,
 }
 
-fn parse_login_error(location: &str) -> Result<(quilt::uri::Host, Option<String>, String), Error> {
+fn parse_login_error(location: &str) -> Result<(quilt_uri::Host, Option<String>, String), Error> {
     let uri = parse_url(location)?;
     match uri.query() {
         Some(q) => {
@@ -154,13 +153,13 @@ struct QueryRemotePackage {
     pub uri: String,
 }
 
-fn parse_s3_package_uri(location: &str) -> Result<quilt::uri::S3PackageUri, Error> {
+fn parse_s3_package_uri(location: &str) -> Result<quilt_uri::S3PackageUri, Error> {
     let uri = parse_url(location)?;
     match uri.query() {
         Some(q) => {
             let qs: QueryRemotePackage = serde_qs::from_str(q)?;
             debug!("Pre-parsed URI is {}", qs.uri);
-            Ok(quilt::uri::S3PackageUri::try_from(qs.uri.as_str())?)
+            Ok(quilt_uri::S3PackageUri::try_from(qs.uri.as_str())?)
         }
         None => Err(Error::Route(RouteError::MissingS3UriQuery(uri))),
     }
@@ -170,19 +169,19 @@ fn parse_s3_package_uri(location: &str) -> Result<quilt::uri::S3PackageUri, Erro
 #[serde(tag = "t", content = "c")]
 pub enum Paths {
     #[serde(rename = "commit")]
-    Commit(quilt::uri::Namespace, EntriesFilter),
+    Commit(quilt_uri::Namespace, EntriesFilter),
     #[serde(rename = "installed_package")]
-    InstalledPackage(quilt::uri::Namespace, EntriesFilter),
+    InstalledPackage(quilt_uri::Namespace, EntriesFilter),
     #[serde(rename = "installed_packages_list")]
     InstalledPackagesList,
     #[serde(rename = "login")]
-    Login(quilt::uri::Host, String),
+    Login(quilt_uri::Host, String),
     #[serde(rename = "login_error")]
-    LoginError(quilt::uri::Host, String, String),
+    LoginError(quilt_uri::Host, String, String),
     #[serde(rename = "merge")]
-    Merge(quilt::uri::Namespace),
+    Merge(quilt_uri::Namespace),
     #[serde(rename = "remote_package")]
-    RemotePackage(quilt::uri::S3PackageUri),
+    RemotePackage(quilt_uri::S3PackageUri),
     #[serde(rename = "settings")]
     Settings,
     #[serde(rename = "setup")]
@@ -265,7 +264,7 @@ impl Paths {
 }
 
 fn format_namespace_filter_query(
-    namespace: &quilt::uri::Namespace,
+    namespace: &quilt_uri::Namespace,
     filter: &EntriesFilter,
 ) -> String {
     let filter_str = filter.to_string();
@@ -379,7 +378,7 @@ impl str::FromStr for Paths {
 mod tests {
     use super::*;
 
-    use quilt::uri::Host;
+    use quilt_uri::Host;
 
     use crate::Result;
 
@@ -568,7 +567,7 @@ mod tests {
 
     #[test]
     fn test_remote_package() -> Result<()> {
-        let uri = quilt::uri::S3PackageUri::try_from("quilt+s3://test#package=foo/bar")?;
+        let uri = quilt_uri::S3PackageUri::try_from("quilt+s3://test#package=foo/bar")?;
         let page_url = from_url(
             Paths::RemotePackage(uri.clone()),
             Url::parse("http://test:1234/")?,

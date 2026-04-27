@@ -16,10 +16,10 @@ use crate::error::LineageError;
 use crate::io::storage::Storage;
 use crate::io::storage::StorageExt;
 use crate::paths;
-use crate::uri::Namespace;
 use crate::Error;
 use crate::InstallPackageError;
 use crate::Res;
+use quilt_uri::Namespace;
 
 mod status;
 pub use status::Change;
@@ -240,7 +240,7 @@ mod tests {
 
     use crate::checksum::Sha256ChunkedHash;
     use crate::io::storage::mocks::MockStorage;
-    use crate::uri::ManifestUri;
+    use quilt_uri::ManifestUri;
 
     #[test]
     fn test_syntax_error() {

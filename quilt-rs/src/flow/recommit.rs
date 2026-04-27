@@ -16,9 +16,9 @@ use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
 use crate::manifest::Workflow;
 use crate::paths::DomainPaths;
-use crate::uri::Namespace;
 use crate::Error;
 use crate::Res;
+use quilt_uri::Namespace;
 
 /// Re-hash all rows from the manifest stream, converting any rows whose
 /// hash algorithm doesn't match `host_config` to the correct algorithm.

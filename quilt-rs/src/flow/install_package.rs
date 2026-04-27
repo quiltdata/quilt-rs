@@ -11,11 +11,11 @@ use crate::lineage::DomainLineage;
 use crate::lineage::PackageLineage;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
-use crate::uri::ManifestUri;
-use crate::uri::Tag;
 use crate::Error;
 use crate::InstallPackageError;
 use crate::Res;
+use quilt_uri::ManifestUri;
+use quilt_uri::Tag;
 
 /// Installs the package.
 /// It fetches manifest and puts it into `installed_packages`.
@@ -92,7 +92,7 @@ mod tests {
     use crate::io::storage::mocks::MockStorage;
     use crate::io::storage::LocalStorage;
     use crate::lineage::Home;
-    use crate::uri::S3Uri;
+    use quilt_uri::S3Uri;
 
     /// Verify that attempting to install a package that is already installed results in an error.
     /// A package is considered installed if it is present in the lineage.

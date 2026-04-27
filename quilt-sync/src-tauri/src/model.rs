@@ -52,7 +52,7 @@ pub trait QuiltModel {
 
     async fn browse_remote_manifest(
         &self,
-        remote_manifest: &quilt::uri::ManifestUri,
+        remote_manifest: &quilt_uri::ManifestUri,
     ) -> Result<quilt::manifest::Manifest, Error> {
         Ok(self
             .get_quilt()
@@ -73,7 +73,7 @@ pub trait QuiltModel {
 
     async fn get_installed_package(
         &self,
-        namespace: &quilt::uri::Namespace,
+        namespace: &quilt_uri::Namespace,
     ) -> Result<Option<quilt::InstalledPackage>, Error> {
         Ok(self
             .get_quilt()
@@ -140,13 +140,13 @@ pub trait QuiltModel {
         &self,
         package: &quilt::InstalledPackage,
         host_config: Option<HostConfig>,
-    ) -> Result<quilt::uri::ManifestUri, Error> {
+    ) -> Result<quilt_uri::ManifestUri, Error> {
         Ok(package.pull(host_config).await?)
     }
 
     async fn is_package_installed(
         &self,
-        manifest_uri: &quilt::uri::ManifestUri,
+        manifest_uri: &quilt_uri::ManifestUri,
     ) -> Result<InstallCheck, Error> {
         match self.get_installed_package(&manifest_uri.namespace).await? {
             Some(installed_package) => {
@@ -203,21 +203,21 @@ pub trait QuiltModel {
     async fn package_revision_certify_latest(
         &self,
         package: &quilt::InstalledPackage,
-    ) -> Result<quilt::uri::ManifestUri, Error> {
+    ) -> Result<quilt_uri::ManifestUri, Error> {
         Ok(package.certify_latest().await?)
     }
 
     async fn package_revision_reset_local(
         &self,
         package: &quilt::InstalledPackage,
-    ) -> Result<quilt::uri::ManifestUri, Error> {
+    ) -> Result<quilt_uri::ManifestUri, Error> {
         Ok(package.reset_to_latest().await?)
     }
 
     async fn set_remote(
         &self,
         package: &quilt::InstalledPackage,
-        origin: quilt::uri::Host,
+        origin: quilt_uri::Host,
         bucket: String,
     ) -> Result<(), Error> {
         Ok(package.set_remote(bucket, Some(origin)).await?)
@@ -225,7 +225,7 @@ pub trait QuiltModel {
 
     async fn package_create(
         &self,
-        namespace: quilt::uri::Namespace,
+        namespace: quilt_uri::Namespace,
         source: Option<PathBuf>,
         message: Option<String>,
     ) -> Result<quilt::InstalledPackage, Error> {
@@ -239,7 +239,7 @@ pub trait QuiltModel {
 
     async fn package_install(
         &self,
-        remote_manifest: &quilt::uri::ManifestUri,
+        remote_manifest: &quilt_uri::ManifestUri,
     ) -> Result<quilt::InstalledPackage, Error> {
         Ok(self
             .get_quilt()
@@ -249,7 +249,7 @@ pub trait QuiltModel {
             .await?)
     }
 
-    async fn package_uninstall(&self, namespace: quilt::uri::Namespace) -> Result<(), Error> {
+    async fn package_uninstall(&self, namespace: quilt_uri::Namespace) -> Result<(), Error> {
         Ok(self
             .get_quilt()
             .lock()
@@ -258,7 +258,7 @@ pub trait QuiltModel {
             .await?)
     }
 
-    async fn package_home(&self, namespace: &quilt::uri::Namespace) -> Result<PathBuf, Error> {
+    async fn package_home(&self, namespace: &quilt_uri::Namespace) -> Result<PathBuf, Error> {
         let installed_package = self
             .get_installed_package(namespace)
             .await?
@@ -277,7 +277,7 @@ pub trait QuiltModel {
 
     async fn file_path(
         &self,
-        namespace: &quilt::uri::Namespace,
+        namespace: &quilt_uri::Namespace,
         relative_path: &PathBuf,
     ) -> Result<PathBuf, Error> {
         let package_home = self.package_home(namespace).await?;
@@ -292,7 +292,7 @@ pub trait QuiltModel {
 
     async fn open_in_file_browser(
         &self,
-        namespace: &quilt::uri::Namespace,
+        namespace: &quilt_uri::Namespace,
     ) -> Result<PathBuf, Error> {
         let dir_path = self.package_home(namespace).await?;
         opener::open_browser(&dir_path)?;
@@ -301,7 +301,7 @@ pub trait QuiltModel {
 
     async fn reveal_in_file_browser(
         &self,
-        namespace: &quilt::uri::Namespace,
+        namespace: &quilt_uri::Namespace,
         path: &PathBuf,
     ) -> Result<PathBuf, Error> {
         let file_path = self.file_path(namespace, path).await?;
@@ -311,7 +311,7 @@ pub trait QuiltModel {
 
     async fn open_in_default_application(
         &self,
-        namespace: &quilt::uri::Namespace,
+        namespace: &quilt_uri::Namespace,
         path: &PathBuf,
     ) -> Result<PathBuf, Error> {
         let file_path = self.file_path(namespace, path).await?;
@@ -321,8 +321,8 @@ pub trait QuiltModel {
 
     async fn resolve_manifest_uri(
         &self,
-        uri: &quilt::uri::S3PackageUri,
-    ) -> Result<quilt::uri::ManifestUri, Error> {
+        uri: &quilt_uri::S3PackageUri,
+    ) -> Result<quilt_uri::ManifestUri, Error> {
         Ok(quilt::io::manifest::resolve_manifest_uri(
             self.get_quilt().lock().await.get_remote(),
             &uri.catalog,
@@ -368,7 +368,7 @@ fn parse_metadata(input: &str) -> Result<Option<serde_json::Value>, Error> {
 
 pub async fn package_commit(
     model: &impl QuiltModel,
-    namespace: quilt::uri::Namespace,
+    namespace: quilt_uri::Namespace,
     message: &str,
     metadata: &str,
     workflow: Option<String>,
@@ -431,7 +431,7 @@ pub async fn install_paths(
 
 pub async fn install_package_only(
     model: &impl QuiltModel,
-    uri: &quilt::uri::S3PackageUri,
+    uri: &quilt_uri::S3PackageUri,
 ) -> Result<InstallOutcome, Error> {
     let manifest_uri = model.resolve_manifest_uri(uri).await?;
 
@@ -467,7 +467,7 @@ pub async fn install_package_only(
 
 pub async fn install_paths_only(
     model: &impl QuiltModel,
-    namespace: &quilt::uri::Namespace,
+    namespace: &quilt_uri::Namespace,
     paths: Vec<PathBuf>,
 ) -> Result<PathBuf, Error> {
     let installed_package = model
@@ -480,7 +480,7 @@ pub async fn install_paths_only(
 
 pub async fn package_uninstall(
     model: &impl QuiltModel,
-    namespace: quilt::uri::Namespace,
+    namespace: quilt_uri::Namespace,
 ) -> Result<(), Error> {
     debug!("Uninstall package for {} namespace", &namespace);
     model.package_uninstall(namespace).await?;
@@ -493,7 +493,7 @@ pub fn open_in_web_browser(url: &str) -> Result<(), Error> {
 
 pub async fn package_revision_certify_latest(
     model: &impl QuiltModel,
-    namespace: quilt::uri::Namespace,
+    namespace: quilt_uri::Namespace,
 ) -> Result<(), Error> {
     let installed_package = model
         .get_installed_package(&namespace)
@@ -507,7 +507,7 @@ pub async fn package_revision_certify_latest(
 
 pub async fn package_revision_reset_local(
     model: &impl QuiltModel,
-    namespace: quilt::uri::Namespace,
+    namespace: quilt_uri::Namespace,
 ) -> Result<(), Error> {
     let installed_package = model
         .get_installed_package(&namespace)
@@ -521,7 +521,7 @@ pub async fn package_revision_reset_local(
 
 pub async fn package_push(
     model: &impl QuiltModel,
-    namespace: &quilt::uri::Namespace,
+    namespace: &quilt_uri::Namespace,
     host_config: Option<HostConfig>,
 ) -> Result<quilt::PushOutcome, Error> {
     let installed_package = model
@@ -533,7 +533,7 @@ pub async fn package_push(
 
 pub async fn package_publish(
     model: &impl QuiltModel,
-    namespace: quilt::uri::Namespace,
+    namespace: quilt_uri::Namespace,
     message: &str,
     metadata: &str,
     workflow: Option<String>,
@@ -566,7 +566,7 @@ pub async fn package_publish(
 
 pub async fn package_pull(
     model: &impl QuiltModel,
-    namespace: &quilt::uri::Namespace,
+    namespace: &quilt_uri::Namespace,
     host_config: Option<HostConfig>,
 ) -> Result<(), Error> {
     let installed_package = model
@@ -579,8 +579,8 @@ pub async fn package_pull(
 
 pub async fn set_remote(
     model: &impl QuiltModel,
-    namespace: &quilt::uri::Namespace,
-    origin: quilt::uri::Host,
+    namespace: &quilt_uri::Namespace,
+    origin: quilt_uri::Host,
     bucket: String,
 ) -> Result<(), Error> {
     let installed_package = model
@@ -593,7 +593,7 @@ pub async fn set_remote(
 
 pub async fn package_create(
     model: &impl QuiltModel,
-    namespace: quilt::uri::Namespace,
+    namespace: quilt_uri::Namespace,
     source: Option<PathBuf>,
     message: Option<String>,
 ) -> Result<quilt::InstalledPackage, Error> {
@@ -602,7 +602,7 @@ pub async fn package_create(
 
 pub async fn login(
     model: &impl QuiltModel,
-    host: &quilt::uri::Host,
+    host: &quilt_uri::Host,
     code: String,
 ) -> Result<(), Error> {
     model
@@ -617,7 +617,7 @@ pub async fn login(
 
 pub async fn login_oauth(
     model: &impl QuiltModel,
-    host: &quilt::uri::Host,
+    host: &quilt_uri::Host,
     params: quilt::auth::OAuthParams,
 ) -> Result<(), Error> {
     model
@@ -632,7 +632,7 @@ pub async fn login_oauth(
 
 pub async fn get_or_register_client(
     model: &impl QuiltModel,
-    host: &quilt::uri::Host,
+    host: &quilt_uri::Host,
     redirect_uri: &str,
 ) -> Result<String, Error> {
     let client = model
@@ -674,7 +674,7 @@ pub mod mocks {
     }
 
     pub fn mock_installed_package(model: &mut MockQuiltModel) -> &MockQuiltModel {
-        let remote_manifest = quilt::uri::ManifestUri {
+        let remote_manifest = quilt_uri::ManifestUri {
             bucket: "quilt-example".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "6c3758a4d2bf8fe730be5d12f5e095950dc123c373f55f66ca4b3ced74772b22".to_string(),
@@ -715,7 +715,7 @@ pub mod mocks {
     pub fn mock_remote_package_different_version(model: &mut MockQuiltModel) -> &MockQuiltModel {
         model
             .expect_resolve_manifest_uri()
-            .returning(|uri| Ok(quilt::uri::ManifestUri::try_from(uri.clone()).unwrap()));
+            .returning(|uri| Ok(quilt_uri::ManifestUri::try_from(uri.clone()).unwrap()));
         model
             .expect_is_package_installed()
             .returning(|_| Ok(InstallCheck::DifferentVersion("aaaa1111".to_string())));
@@ -729,7 +729,7 @@ pub mod mocks {
             ))
         });
 
-        let remote_manifest = quilt::uri::ManifestUri {
+        let remote_manifest = quilt_uri::ManifestUri {
             bucket: "quilt-example".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "aaaa1111".to_string(),
@@ -761,7 +761,7 @@ pub mod mocks {
     pub fn mock_remote_package_local_only(model: &mut MockQuiltModel) -> &MockQuiltModel {
         model
             .expect_resolve_manifest_uri()
-            .returning(|uri| Ok(quilt::uri::ManifestUri::try_from(uri.clone()).unwrap()));
+            .returning(|uri| Ok(quilt_uri::ManifestUri::try_from(uri.clone()).unwrap()));
         model
             .expect_is_package_installed()
             .returning(|_| Ok(InstallCheck::LocalOnly));
@@ -807,7 +807,7 @@ pub mod mocks {
 
         // Use timestamp tag instead of "latest" for stable testing
         // Timestamp 1740761585 represents a specific tagged revision
-        let uri = quilt::uri::S3PackageUri::try_from(
+        let uri = quilt_uri::S3PackageUri::try_from(
             "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs:1740761585",
         )?;
 
@@ -816,7 +816,7 @@ pub mod mocks {
             InstallOutcome::Installed,
         );
 
-        let namespace: quilt::uri::Namespace = ("reference", "quilt-rs").into();
+        let namespace: quilt_uri::Namespace = ("reference", "quilt-rs").into();
         let installed_package = model
             .get_installed_package(&namespace)
             .await?
@@ -840,14 +840,14 @@ pub mod mocks {
         let model = super::Model::create(temp_dir.path());
         model.set_home(temp_dir.path()).await?;
 
-        let uri = quilt::uri::S3PackageUri::try_from("quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7")?;
+        let uri = quilt_uri::S3PackageUri::try_from("quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7")?;
 
         assert_eq!(
             install_package_only(&model, &uri).await?,
             InstallOutcome::Installed,
         );
 
-        let namespace: quilt::uri::Namespace = ("reference", "quilt-rs").into();
+        let namespace: quilt_uri::Namespace = ("reference", "quilt-rs").into();
         let installed_package = model
             .get_installed_package(&namespace)
             .await?
@@ -887,7 +887,7 @@ pub mod mocks {
         // Set up home directory (required for Model to work properly)
         model.set_home(temp_dir.path()).await?;
 
-        let uri = quilt::uri::S3PackageUri::try_from(
+        let uri = quilt_uri::S3PackageUri::try_from(
             "quilt+s3://nonexisting-bucket#package=two/files:latest",
         )?;
 
@@ -907,7 +907,7 @@ pub mod mocks {
         let mut model = create();
         mock_remote_package_local_only(&mut model);
 
-        let uri = quilt::uri::S3PackageUri::try_from(
+        let uri = quilt_uri::S3PackageUri::try_from(
             "quilt+s3://quilt-example#package=foo/bar@some_hash",
         )?;
 
@@ -925,9 +925,8 @@ pub mod mocks {
         let mut model = create();
         mock_remote_package_different_version(&mut model);
 
-        let uri = quilt::uri::S3PackageUri::try_from(
-            "quilt+s3://quilt-example#package=foo/bar@bbbb2222",
-        )?;
+        let uri =
+            quilt_uri::S3PackageUri::try_from("quilt+s3://quilt-example#package=foo/bar@bbbb2222")?;
 
         let result = install_package_only(&model, &uri).await?;
         match result {

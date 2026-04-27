@@ -2,7 +2,7 @@ use quilt_rs::io::remote::HostConfig;
 use quilt_rs::lineage::Change;
 use quilt_rs::lineage::InstalledPackageStatus;
 use quilt_rs::lineage::UpstreamState;
-use quilt_rs::uri::Namespace;
+use quilt_uri::Namespace;
 
 use crate::cli::model::Commands;
 use crate::cli::output::Std;

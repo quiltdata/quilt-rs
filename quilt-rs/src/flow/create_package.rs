@@ -20,10 +20,10 @@ use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
 use crate::paths::DomainPaths;
 use crate::quiltignore;
-use crate::uri::Namespace;
 use crate::Error;
 use crate::InstallPackageError;
 use crate::Res;
+use quilt_uri::Namespace;
 
 /// Walk a source directory recursively, collecting `(relative_path, absolute_path)` pairs.
 /// Respects `.quiltignore` if present in the source directory.

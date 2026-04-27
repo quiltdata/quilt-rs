@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use quilt_rs::uri::Namespace;
+use quilt_uri::Namespace;
 
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
@@ -46,7 +46,7 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 
 async fn install_package(
     local_domain: &quilt_rs::LocalDomain,
-    uri: &quilt_rs::uri::S3PackageUri,
+    uri: &quilt_uri::S3PackageUri,
     namespace: Namespace,
 ) -> Result<quilt_rs::InstalledPackage, Error> {
     let remote = local_domain.get_remote();
@@ -91,7 +91,7 @@ pub async fn model(
         uri,
     }: Input,
 ) -> Result<Output, Error> {
-    let uri: quilt_rs::uri::S3PackageUri = uri.parse()?;
+    let uri: quilt_uri::S3PackageUri = uri.parse()?;
     let path = uri.path.clone();
 
     let namespace = namespace.unwrap_or(uri.namespace.clone());

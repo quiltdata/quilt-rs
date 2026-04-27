@@ -7,8 +7,8 @@ use clap::Parser;
 use clap::Subcommand;
 use tracing::log;
 
-use quilt_rs::uri::Host;
-use quilt_rs::uri::Namespace;
+use quilt_uri::Host;
+use quilt_uri::Namespace;
 
 mod browse;
 mod commit;
@@ -348,8 +348,8 @@ impl From<quilt_rs::Error> for Error {
     }
 }
 
-impl From<quilt_rs::UriError> for Error {
-    fn from(err: quilt_rs::UriError) -> Error {
+impl From<quilt_uri::UriError> for Error {
+    fn from(err: quilt_uri::UriError) -> Error {
         Error::Quilt(quilt_rs::Error::Uri(err))
     }
 }

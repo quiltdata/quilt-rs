@@ -13,7 +13,6 @@ mod local_domain;
 pub mod manifest;
 pub mod paths;
 pub mod quiltignore;
-pub mod uri;
 
 #[cfg(test)]
 pub mod fixtures;
@@ -35,6 +34,5 @@ pub use installed_package::InstalledPackage;
 pub use installed_package::PublishOutcome;
 pub use installed_package::PushOutcome;
 pub use local_domain::LocalDomain;
-pub use uri::UriError;
 
 pub type Res<T = ()> = std::result::Result<T, Error>;

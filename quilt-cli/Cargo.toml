@@ -13,8 +13,9 @@ name = "quilt"
 path = "src/main.rs"
 
 [dependencies]
-# Library dependency
+# Library dependencies
 quilt-rs = { path = "../quilt-rs" }
+quilt-uri = { path = "../quilt-uri" }
 
 # CLI-specific dependencies
 clap.workspace = true

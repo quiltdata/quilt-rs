@@ -15,10 +15,10 @@ use crate::lineage::PackageLineage;
 use crate::manifest::Manifest;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
-use crate::uri::ManifestUri;
-use crate::uri::Namespace;
-use crate::uri::Tag;
 use crate::Res;
+use quilt_uri::ManifestUri;
+use quilt_uri::Namespace;
+use quilt_uri::Tag;
 
 /// Pulls the latest package from remote.
 /// It also remove every local file in working directory and then re-installs it.

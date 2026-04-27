@@ -1,8 +1,8 @@
 use crate::io::manifest::tag_latest;
 use crate::io::remote::Remote;
 use crate::lineage::PackageLineage;
-use crate::uri::ManifestUri;
 use crate::Res;
+use quilt_uri::ManifestUri;
 use tracing::info;
 
 /// Tags the `manifest_uri` as "latest" remotely.
@@ -31,7 +31,7 @@ mod tests {
     use test_log::test;
 
     use crate::io::remote::mocks::MockRemote;
-    use crate::uri::S3Uri;
+    use quilt_uri::S3Uri;
 
     #[test(tokio::test)]
     async fn test_certifying_latest() -> Res {
