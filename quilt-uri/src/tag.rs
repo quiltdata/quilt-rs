@@ -137,6 +137,9 @@ mod tests {
     #[test]
     fn test_tag_display() {
         assert_eq!(Tag::Latest.to_string(), "latest");
-        assert_eq!(Tag::Timestamp(Seconds(1697916638)).to_string(), "1697916638");
+        assert_eq!(
+            Tag::Timestamp(Seconds(1697916638)).to_string(),
+            "1697916638"
+        );
     }
 }
