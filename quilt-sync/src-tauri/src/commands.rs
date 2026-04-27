@@ -77,10 +77,7 @@ async fn get_installed_package_data_from_model(
 
     let lineage = m.get_installed_package_lineage(&installed_package).await?;
 
-    let origin_host = lineage
-        .remote_uri
-        .as_ref()
-        .and_then(|r| r.origin.clone());
+    let origin_host = lineage.remote_uri.as_ref().and_then(|r| r.origin.clone());
     if let Some(host) = &origin_host {
         tracing.add_host(host);
     }
@@ -508,10 +505,7 @@ async fn get_commit_data_from_model(
 
     let lineage = m.get_installed_package_lineage(&installed_package).await?;
 
-    let origin_host = lineage
-        .remote_uri
-        .as_ref()
-        .and_then(|r| r.origin.clone());
+    let origin_host = lineage.remote_uri.as_ref().and_then(|r| r.origin.clone());
     if let Some(host) = &origin_host {
         tracing.add_host(host);
     }

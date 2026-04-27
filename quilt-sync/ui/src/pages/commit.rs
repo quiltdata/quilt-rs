@@ -131,10 +131,7 @@ fn CommitContent(
     // Whether this package has a remote we can publish to. When there is no
     // resolvable origin, the `[Commit and Push]` primary is hidden and only
     // `[Commit]` is shown.
-    let has_remote = data
-        .uri
-        .as_ref()
-        .is_some_and(|u| u.catalog.is_some());
+    let has_remote = data.uri.as_ref().is_some_and(|u| u.catalog.is_some());
 
     let ns_for_action = namespace.clone();
     let committing = RwSignal::new(false);
