@@ -1,6 +1,8 @@
 use leptos::prelude::*;
 use leptos_router::hooks::{use_navigate, use_query_map};
 
+use quilt_uri::S3PackageUri;
+
 use crate::commands::{self, CommitData, EntryData, WorkflowData};
 use crate::components::buttons;
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
@@ -8,6 +10,7 @@ use crate::components::{
     IgnorePopup, IgnorePopupData, Layout, Notification, Spinner, ToolbarActions, UnignorePopup,
     UnignorePopupData,
 };
+use crate::util;
 use crate::util::format_size;
 
 // ── Commit page ──
@@ -128,7 +131,7 @@ fn CommitContent(
     // Whether this package has a remote we can publish to. When there is no
     // resolvable origin, the `[Commit and Push]` primary is hidden and only
     // `[Commit]` is shown.
-    let has_remote = data.origin_url.is_some();
+    let has_remote = data.uri.as_ref().is_some_and(|u| u.catalog.is_some());
 
     let ns_for_action = namespace.clone();
     let committing = RwSignal::new(false);
@@ -291,6 +294,7 @@ fn CommitContent(
                         >
                             <CommitEntryRow
                                 entry=item.1
+                                pkg_uri=data.uri.clone()
                                 notification=notification
                                 show_ignore_popup=show_ignore_popup
                                 show_unignore_popup=show_unignore_popup
@@ -435,7 +439,7 @@ fn build_toolbar_actions(
     ui_locked: RwSignal<bool>,
 ) -> ToolbarActions {
     let namespace = data.namespace.clone();
-    let origin_url = data.origin_url.clone();
+    let origin_url = data.uri.as_ref().and_then(util::catalog_url);
     let has_catalog = origin_url.is_some();
     let catalog_disabled = data.status == "local";
 
@@ -508,6 +512,7 @@ fn build_toolbar_actions(
 #[component]
 fn CommitEntryRow(
     entry: EntryData,
+    pkg_uri: Option<S3PackageUri>,
     notification: RwSignal<Option<Notification>>,
     show_ignore_popup: RwSignal<Option<IgnorePopupData>>,
     show_unignore_popup: RwSignal<Option<UnignorePopupData>>,
@@ -544,8 +549,8 @@ fn CommitEntryRow(
 
     // Action buttons
     let show_open_reveal = !is_deleted && !is_ignored && entry.status != "remote";
-    let show_catalog =
-        (entry.status == "remote" || entry.status == "pristine") && entry.origin_url.is_some();
+    let show_catalog = (entry.status == "remote" || entry.status == "pristine")
+        && pkg_uri.as_ref().is_some_and(|u| u.catalog.is_some());
 
     let ns_for_open = entry.namespace.clone();
     let path_for_open = entry.filename.clone();
@@ -573,13 +578,17 @@ fn CommitEntryRow(
         });
     };
 
-    let catalog_url = entry.origin_url.clone();
+    let path_for_catalog = entry.filename.clone();
     let on_open_catalog = move |_| {
-        if let Some(url) = catalog_url.clone() {
-            leptos::task::spawn_local(async move {
-                let _ = commands::open_in_web_browser(url).await;
-            });
-        }
+        let Some(url) = pkg_uri
+            .as_ref()
+            .and_then(|u| util::entry_catalog_url(u, &path_for_catalog))
+        else {
+            return;
+        };
+        leptos::task::spawn_local(async move {
+            let _ = commands::open_in_web_browser(url).await;
+        });
     };
 
     let junky_pattern = entry.junky_pattern.clone();

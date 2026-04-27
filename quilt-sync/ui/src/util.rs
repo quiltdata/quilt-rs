@@ -1,8 +1,42 @@
 use std::future::Future;
 
 use leptos::prelude::*;
+use quilt_uri::S3PackageUri;
 
 use crate::components::layout::Notification;
+
+/// Format the catalog HTTPS URL for a package URI, if its `catalog`
+/// host is set. Used to power "Open in catalog" buttons.
+pub fn catalog_url(uri: &S3PackageUri) -> Option<String> {
+    uri.display_for_catalog().ok().map(|u| u.to_string())
+}
+
+/// Format the catalog HTTPS URL for an individual entry inside a package.
+/// Returns `None` if the parent URI has no catalog host. Call from the
+/// "Open in catalog" click handler so we only build the URL on click,
+/// not for every row at render time.
+pub fn entry_catalog_url(pkg_uri: &S3PackageUri, filename: &str) -> Option<String> {
+    // Existence check: skip the clone when there's no catalog, since
+    // the downstream `display_for_catalog()` would return None anyway.
+    // `?` propagates the None; the bound `&Host` is discarded.
+    pkg_uri.catalog.as_ref()?;
+    let entry_uri = S3PackageUri {
+        path: Some(std::path::PathBuf::from(filename)),
+        ..pkg_uri.clone()
+    };
+    catalog_url(&entry_uri)
+}
+
+/// Stringified catalog host, if set.
+pub fn host_str(uri: &S3PackageUri) -> Option<String> {
+    uri.catalog.as_ref().map(|h| h.to_string())
+}
+
+/// Bucket name, treating an empty string as "unset" — matches the
+/// historical `current_bucket` field semantics.
+pub fn bucket_str(uri: &S3PackageUri) -> Option<String> {
+    Some(uri.bucket.clone()).filter(|b| !b.is_empty())
+}
 
 /// Create a busy-guarded async action handler.
 ///

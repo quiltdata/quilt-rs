@@ -9,6 +9,18 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.17.1-alpha4] - 2026-04-27
+
+### Changed
+
+- Per-entry catalog HTTPS URLs are now built on the UI side when the user clicks "Open in catalog" instead of being pre-formatted by the backend for every entry on every package render (<https://github.com/quiltdata/quilt-rs/pull/642>)
+
+## [v0.17.1-alpha3] - 2026-04-27
+
+### Changed
+
+- Tauri view-models now ship a single typed `S3PackageUri` per package instead of separate `originUrl`/`originHost`/`currentHost`/`currentBucket` strings; the UI formats catalog HTTPS links on demand via the WASM-friendly `quilt-uri` crate (<https://github.com/quiltdata/quilt-rs/pull/642>)
+
 ## [v0.17.1-alpha2] - 2026-04-23
 
 ### Added

@@ -5,6 +5,7 @@ use crate::commands::{self, MergeData};
 use crate::components::buttons;
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{Layout, Notification, Spinner, ToolbarActions};
+use crate::util;
 
 // ── Merge page ──
 
@@ -152,7 +153,7 @@ fn build_toolbar_actions(
     ui_locked: RwSignal<bool>,
 ) -> ToolbarActions {
     let namespace = data.namespace.clone();
-    let origin_url = data.origin_url.clone();
+    let origin_url = data.uri.as_ref().and_then(util::catalog_url);
 
     ToolbarActions::new(move || {
         let navigate = use_navigate();
