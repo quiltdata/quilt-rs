@@ -1,19 +1,39 @@
 use std::fmt;
 use std::str::FromStr;
 
-use crate::error::PackageOpError;
 use crate::paths;
-use crate::uri::ManifestUri;
-use crate::uri::Namespace;
-use crate::uri::S3PackageHandle;
-use crate::uri::S3Uri;
-use crate::Error;
+use crate::ManifestUri;
+use crate::Namespace;
+use crate::S3PackageHandle;
+use crate::S3Uri;
+use crate::UriError;
+
+/// Unix timestamp in seconds since the epoch.
+///
+/// Wrapping the raw `i64` prevents unit confusion at API boundaries
+/// (e.g. accidentally passing milliseconds from `SystemTime::elapsed`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Seconds(pub i64);
+
+impl fmt::Display for Seconds {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl FromStr for Seconds {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.parse::<i64>().map(Seconds)
+    }
+}
 
 /// In theory tag can be any string
 /// But in practice we only use timestamps and "latest"
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Tag {
-    Timestamp(i64),
+    Timestamp(Seconds),
     Latest,
 }
 
@@ -27,18 +47,15 @@ impl fmt::Display for Tag {
 }
 
 impl FromStr for Tag {
-    type Err = Error;
+    type Err = UriError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s == "latest" {
             Ok(Tag::Latest)
-        } else if let Ok(timestamp) = s.parse::<i64>() {
-            Ok(Tag::Timestamp(timestamp))
+        } else if let Ok(seconds) = s.parse::<Seconds>() {
+            Ok(Tag::Timestamp(seconds))
         } else {
-            Err(Error::PackageOp(PackageOpError::Package(format!(
-                "Unsupported tag format: {}",
-                s
-            ))))
+            Err(UriError::Tag(format!("Unsupported tag format: {s}")))
         }
     }
 }
@@ -70,12 +87,12 @@ impl TagUri {
         TagUri::new(uri.bucket, uri.namespace, Tag::Latest)
     }
 
-    /// Creates TagURI for the revision of the package
-    pub fn timestamp(manifest_uri: ManifestUri, datetime: chrono::DateTime<chrono::Utc>) -> Self {
+    /// Creates TagURI for the revision of the package.
+    pub fn timestamp(manifest_uri: ManifestUri, seconds: Seconds) -> Self {
         TagUri {
             bucket: manifest_uri.bucket,
             namespace: manifest_uri.namespace,
-            tag: Tag::Timestamp(datetime.timestamp()),
+            tag: Tag::Timestamp(seconds),
         }
     }
 }
@@ -104,7 +121,7 @@ mod tests {
     #[test]
     fn test_tag_from_str_timestamp() {
         let tag: Tag = "1697916638".parse().unwrap();
-        assert_eq!(tag, Tag::Timestamp(1697916638));
+        assert_eq!(tag, Tag::Timestamp(Seconds(1697916638)));
     }
 
     #[test]
@@ -120,6 +137,9 @@ mod tests {
     #[test]
     fn test_tag_display() {
         assert_eq!(Tag::Latest.to_string(), "latest");
-        assert_eq!(Tag::Timestamp(1697916638).to_string(), "1697916638");
+        assert_eq!(
+            Tag::Timestamp(Seconds(1697916638)).to_string(),
+            "1697916638"
+        );
     }
 }

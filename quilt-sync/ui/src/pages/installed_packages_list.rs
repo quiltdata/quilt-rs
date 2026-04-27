@@ -9,6 +9,7 @@ use crate::components::layout::BreadcrumbItem;
 use crate::components::{
     Layout, Notification, SetRemotePopup, SetRemotePopupData, Spinner, ToolbarActions,
 };
+use crate::util;
 use crate::util::make_action;
 
 // ── Installed Packages List page ──
@@ -252,10 +253,10 @@ fn build_package_menu(
     show_set_remote_popup: RwSignal<Option<SetRemotePopupData>>,
 ) -> impl IntoView {
     let namespace = data.namespace.clone();
-    let origin_url = data.origin_url.clone();
-    let origin_host = data.origin_host.clone();
-    let current_host = data.current_host.clone();
-    let current_bucket = data.current_bucket.clone();
+    let origin_url = data.uri.as_ref().and_then(util::catalog_url);
+    let origin_host = data.uri.as_ref().and_then(util::host_str);
+    let current_host = origin_host.clone();
+    let current_bucket = data.uri.as_ref().and_then(util::bucket_str);
     let has_origin = origin_url.is_some();
     let remote_configured = current_host.is_some() && current_bucket.is_some();
 

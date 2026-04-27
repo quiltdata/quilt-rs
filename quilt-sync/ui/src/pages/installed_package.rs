@@ -1,6 +1,8 @@
 use leptos::prelude::*;
 use leptos_router::hooks::{use_navigate, use_query_map};
 
+use quilt_uri::S3PackageUri;
+
 use crate::commands::{self, EntryData, InstalledPackageData};
 use crate::components::buttons;
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
@@ -8,6 +10,7 @@ use crate::components::{
     IgnorePopup, IgnorePopupData, Layout, Notification, SetRemotePopup, Spinner, ToolbarActions,
     UnignorePopup, UnignorePopupData,
 };
+use crate::util;
 use crate::util::{format_size, make_action};
 
 // ── Installed Package page ──
@@ -102,9 +105,9 @@ fn InstalledPackageContent(
     let namespace = data.namespace.clone();
     let uri = data.uri.clone();
     let status = data.status.clone();
-    let origin_host = data.origin_host.clone();
-    let current_host = data.current_host.clone();
-    let current_bucket = data.current_bucket.clone();
+    let origin_host = uri.as_ref().and_then(util::host_str);
+    let current_host = origin_host.clone();
+    let current_bucket = uri.as_ref().and_then(util::bucket_str);
     let remote_locked = data.remote_locked;
     let entries = data.entries;
     let has_remote_entries = data.has_remote_entries;
@@ -152,7 +155,9 @@ fn InstalledPackageContent(
     let uri_for_install = uri.clone();
     let entries_for_install = entries.clone();
     let on_install_paths = move |_| {
-        let uri = uri_for_install.clone();
+        let Some(uri) = uri_for_install.as_ref().map(|u| u.to_string()) else {
+            return;
+        };
         let indices = checked_indices.get_untracked();
         let paths: Vec<String> = indices
             .iter()
@@ -272,6 +277,7 @@ fn InstalledPackageContent(
                             <EntryRow
                                 index=item.0
                                 entry=item.1
+                                pkg_uri=uri.clone()
                                 checked_indices=checked_indices
                                 notification=notification
                                 show_ignore_popup=show_ignore_popup
@@ -367,11 +373,14 @@ fn build_toolbar_actions(
     show_set_remote_popup: RwSignal<bool>,
 ) -> ToolbarActions {
     let namespace = data.namespace.clone();
-    let origin_url = data.origin_url.clone();
+    let origin_url = data.uri.as_ref().and_then(util::catalog_url);
     let has_catalog = origin_url.is_some();
     let catalog_disabled = data.status == "local";
 
-    let remote_configured = data.current_host.is_some() && data.current_bucket.is_some();
+    let remote_configured = data
+        .uri
+        .as_ref()
+        .is_some_and(|u| u.catalog.is_some() && !u.bucket.is_empty());
     let is_error = data.status == "error";
     let (remote_label, remote_warning) = if !remote_configured {
         ("Set remote", true)
@@ -717,6 +726,7 @@ fn EntriesFilter(
 fn EntryRow(
     index: usize,
     entry: EntryData,
+    pkg_uri: Option<S3PackageUri>,
     checked_indices: RwSignal<Vec<usize>>,
     notification: RwSignal<Option<Notification>>,
     show_ignore_popup: RwSignal<Option<IgnorePopupData>>,
@@ -776,7 +786,8 @@ fn EntryRow(
 
     // Action buttons
     let show_open_reveal = !is_remote && !is_deleted && !is_ignored;
-    let show_catalog = (is_remote || entry.status == "pristine") && entry.origin_url.is_some();
+    let show_catalog = (is_remote || entry.status == "pristine")
+        && pkg_uri.as_ref().is_some_and(|u| u.catalog.is_some());
 
     let ns_for_open = entry.namespace.clone();
     let path_for_open = entry.filename.clone();
@@ -806,13 +817,17 @@ fn EntryRow(
         });
     };
 
-    let catalog_url = entry.origin_url.clone();
+    let path_for_catalog = entry.filename.clone();
     let on_open_catalog = move |_| {
-        if let Some(url) = catalog_url.clone() {
-            leptos::task::spawn_local(async move {
-                let _ = commands::open_in_web_browser(url).await;
-            });
-        }
+        let Some(url) = pkg_uri
+            .as_ref()
+            .and_then(|u| util::entry_catalog_url(u, &path_for_catalog))
+        else {
+            return;
+        };
+        leptos::task::spawn_local(async move {
+            let _ = commands::open_in_web_browser(url).await;
+        });
     };
 
     let junky_pattern = entry.junky_pattern.clone();

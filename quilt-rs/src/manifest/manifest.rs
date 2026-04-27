@@ -10,11 +10,11 @@ use tokio::io::BufReader;
 
 use crate::checksum;
 use crate::error::ManifestError;
-use crate::error::UriError;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamRowsChunk;
 use crate::io::storage::ByteStream;
 use crate::uri::S3Uri;
+use crate::uri::UriError;
 use crate::Error;
 use crate::Res;
 

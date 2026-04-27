@@ -5344,7 +5344,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-rs"
-version = "0.30.1-alpha1"
+version = "0.30.1-alpha2"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -5364,6 +5364,7 @@ dependencies = [
  "multibase",
  "multihash",
  "percent-encoding",
+ "quilt-uri",
  "reqwest 0.13.2",
  "reqwest-middleware",
  "reqwest-retry",
@@ -5386,7 +5387,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-sync"
-version = "0.17.1-alpha2"
+version = "0.17.1-alpha4"
 dependencies = [
  "chrono",
  "dotenv",
@@ -5429,6 +5430,7 @@ dependencies = [
  "js-sys",
  "leptos",
  "leptos_router",
+ "quilt-uri",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
@@ -5437,6 +5439,17 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-bindgen-test",
  "web-sys",
+]
+
+[[package]]
+name = "quilt-uri"
+version = "0.25.0"
+dependencies = [
+ "percent-encoding",
+ "serde",
+ "test-log",
+ "thiserror 2.0.18",
+ "url",
 ]
 
 [[package]]

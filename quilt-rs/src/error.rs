@@ -5,11 +5,11 @@ use std::str::Utf8Error;
 use aws_smithy_types::byte_stream;
 use reqwest::header::ToStrError;
 use thiserror::Error;
-use url::Url;
 
 use crate::io::remote::HostChecksums;
 use crate::uri::Host;
 use crate::uri::Namespace;
+use crate::uri::UriError;
 
 #[derive(Error, Debug)]
 #[error("S3 error{}: {kind}", .host.as_ref().map_or(String::new(), |h| format!(" for {h}")))]
@@ -114,30 +114,6 @@ pub enum InstallPathError {
 
     #[error("Failed to uninstall path: {}", .0.display())]
     Uninstall(PathBuf),
-}
-
-#[derive(Error, Debug, PartialEq)]
-pub enum UriError {
-    #[error("Invalid file:// URI: {0}")]
-    FileScheme(Url),
-
-    #[error("Invalid host: {0}")]
-    Host(String),
-
-    #[error("Invalid URI scheme: {0}")]
-    Scheme(String),
-
-    #[error("Invalid namespace: {0}")]
-    Namespace(String),
-
-    #[error("Invalid package URI: {0}")]
-    Package(String),
-
-    #[error("Invalid S3 URI: {0}")]
-    S3(String),
-
-    #[error("Manifest path error: {0}")]
-    ManifestPath(String),
 }
 
 #[derive(Error, Debug)]

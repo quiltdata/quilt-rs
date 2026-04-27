@@ -1,22 +1,16 @@
-//!
-//! Namespace containing various URIs.
-//! Most of them you can convert one to another.
+//! Re-exports the `quilt-uri` crate so existing `quilt_rs::uri::...`
+//! call sites keep compiling unchanged.
 
-mod host;
-mod manifest;
-mod object;
-mod package;
-mod s3;
-mod tag;
-
-pub use host::Host;
-pub use manifest::ManifestUri;
-pub use object::ObjectUri;
-pub use package::Namespace;
-pub use package::RevisionPointer;
-pub use package::S3PackageHandle;
-pub use package::S3PackageUri;
-pub use package::LATEST_TAG;
-pub use s3::S3Uri;
-pub use tag::Tag;
-pub use tag::TagUri;
+pub use quilt_uri::Host;
+pub use quilt_uri::ManifestUri;
+pub use quilt_uri::Namespace;
+pub use quilt_uri::ObjectUri;
+pub use quilt_uri::RevisionPointer;
+pub use quilt_uri::S3PackageHandle;
+pub use quilt_uri::S3PackageUri;
+pub use quilt_uri::S3Uri;
+pub use quilt_uri::Seconds;
+pub use quilt_uri::Tag;
+pub use quilt_uri::TagUri;
+pub use quilt_uri::UriError;
+pub use quilt_uri::LATEST_TAG;

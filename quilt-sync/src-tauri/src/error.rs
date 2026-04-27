@@ -69,9 +69,6 @@ pub enum PackageUriError {
     #[error("Failed using Quilt+S3 URI: {0}")]
     Invalid(String),
 
-    #[error("Package has no catalog origin")]
-    MissingOrigin,
-
     #[error("Failed to parse {0}")]
     Qs(#[from] serde_qs::Error),
 }
@@ -127,6 +124,12 @@ impl From<quilt::Error> for Error {
 impl From<quilt::InstallPackageError> for Error {
     fn from(err: quilt::InstallPackageError) -> Error {
         Error::Quilt(quilt::Error::InstallPackage(err))
+    }
+}
+
+impl From<quilt::UriError> for Error {
+    fn from(err: quilt::UriError) -> Error {
+        Error::Quilt(quilt::Error::Uri(err))
     }
 }
 

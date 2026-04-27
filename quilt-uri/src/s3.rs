@@ -3,10 +3,8 @@ use std::str::Chars;
 
 use url::Url;
 
-use crate::error::UriError;
-use crate::uri::Host;
-use crate::Error;
-use crate::Res;
+use crate::Host;
+use crate::UriError;
 
 fn head_str(mut chars: Chars<'_>) -> (Option<char>, &str) {
     let leading_char = chars.next();
@@ -14,21 +12,23 @@ fn head_str(mut chars: Chars<'_>) -> (Option<char>, &str) {
     (leading_char, rest)
 }
 
-fn extract_path_relative_to_bucket(path: &str) -> Result<&str, Error> {
+fn extract_path_relative_to_bucket(path: &str) -> Result<&str, UriError> {
     let (leading_char, rest) = head_str(path.chars());
 
     match leading_char {
         None => {
-            return Err(UriError::S3("Path does not exist".to_string()).into());
+            return Err(UriError::S3("Path does not exist".to_string()));
         }
         Some('/') => (),
         Some(_) => {
-            return Err(UriError::S3("Expected path starting with slash".to_string()).into());
+            return Err(UriError::S3(
+                "Expected path starting with slash".to_string(),
+            ));
         }
     }
 
     if rest.is_empty() {
-        return Err(UriError::S3("Path does not exist".to_string()).into());
+        return Err(UriError::S3("Path does not exist".to_string()));
     }
 
     Ok(rest)
@@ -43,7 +43,7 @@ pub struct S3Uri {
 }
 
 impl S3Uri {
-    pub fn display_for_host(&self, host: &Host) -> Res<url::Url> {
+    pub fn display_for_host(&self, host: &Host) -> Result<url::Url, UriError> {
         let mut url = url::Url::parse(&format!(
             "https://{}/b/{}/tree/{}",
             host, self.bucket, self.key
@@ -57,20 +57,22 @@ impl S3Uri {
 }
 
 impl TryFrom<&str> for S3Uri {
-    type Error = Error;
+    type Error = UriError;
 
     fn try_from(input: &str) -> Result<Self, Self::Error> {
         let parsed_url = Url::parse(input)?;
         if parsed_url.scheme() != "s3" {
-            return Err(UriError::Scheme(format!("Expected s3:// scheme in {input}")).into());
+            return Err(UriError::Scheme(format!(
+                "Expected s3:// scheme in {input}"
+            )));
         }
         let bucket = parsed_url
             .host_str()
             .ok_or(UriError::S3(format!("Missing bucket in {input}")))?;
 
         let path = extract_path_relative_to_bucket(parsed_url.path()).map_err(|err| {
-            if let Error::Uri(UriError::S3(msg)) = err {
-                UriError::S3(format!("{msg} in {input}")).into()
+            if let UriError::S3(msg) = err {
+                UriError::S3(format!("{msg} in {input}"))
             } else {
                 err
             }
@@ -81,8 +83,7 @@ impl TryFrom<&str> for S3Uri {
         if queries.len() > 1 {
             return Err(UriError::S3(format!(
                 "Too many query parameters in {input}. Only single versionId is allowed"
-            ))
-            .into());
+            )));
         }
 
         let version = match queries.first() {
@@ -93,8 +94,7 @@ impl TryFrom<&str> for S3Uri {
                 } else {
                     return Err(UriError::S3(format!(
                         "Unknown query parameter in {input}. Only single versionId is allowed"
-                    ))
-                    .into());
+                    )));
                 }
             }
         };
@@ -124,7 +124,7 @@ impl fmt::Display for S3Uri {
 }
 
 impl std::str::FromStr for S3Uri {
-    type Err = Error;
+    type Err = UriError;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
         S3Uri::try_from(input)
@@ -137,7 +137,7 @@ mod tests {
 
     use test_log::test;
 
-    use crate::Res;
+    type Res<T = ()> = Result<T, UriError>;
 
     #[test]
     fn test_incorrect_scheme() -> Res {
