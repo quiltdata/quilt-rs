@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use chrono::Local;
 
 use crate::quilt::lineage::{Change, ChangeSet};
-use crate::quilt::uri::Namespace;
+use quilt_uri::Namespace;
 
 /// Generates a concise, human-readable commit message string from the set of changed files.
 ///

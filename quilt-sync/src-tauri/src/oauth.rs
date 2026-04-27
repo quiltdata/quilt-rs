@@ -41,7 +41,7 @@ pub struct AuthorizeRequest {
 /// The Connect server redirects here after the user authorizes.
 /// The `quilt://` scheme is registered as a deep link, so the OS
 /// routes the callback to QuiltSync where `uri::login_with_code` handles it.
-pub fn redirect_uri(host: &quilt::uri::Host) -> String {
+pub fn redirect_uri(host: &quilt_uri::Host) -> String {
     format!(
         "quilt://auth/callback?host={}",
         urlencoding::encode(&host.to_string())
@@ -55,7 +55,7 @@ impl OAuthState {
     /// pending auth, and returns the authorization URL to open in the browser.
     pub async fn start_login(
         &self,
-        host: &quilt::uri::Host,
+        host: &quilt_uri::Host,
         client_id: &str,
         back: Option<String>,
     ) -> AuthorizeRequest {
@@ -106,7 +106,7 @@ impl OAuthState {
     ///   mismatched; abort, do not fall back
     pub async fn take_params(
         &self,
-        host: &quilt::uri::Host,
+        host: &quilt_uri::Host,
         code: String,
         state: &str,
     ) -> Result<(quilt::auth::OAuthParams, Option<String>), Error> {
@@ -157,7 +157,7 @@ impl OAuthState {
 mod tests {
     use super::*;
 
-    fn test_host() -> quilt::uri::Host {
+    fn test_host() -> quilt_uri::Host {
         "test.quilt.dev".parse().unwrap()
     }
 
@@ -172,7 +172,7 @@ mod tests {
 
     #[test]
     fn redirect_uri_encodes_ipv6_host() {
-        let host: quilt::uri::Host = "[::1]".parse().unwrap();
+        let host: quilt_uri::Host = "[::1]".parse().unwrap();
         assert_eq!(
             redirect_uri(&host),
             "quilt://auth/callback?host=%5B%3A%3A1%5D"
@@ -245,8 +245,8 @@ mod tests {
     async fn start_login_evicts_expired_entries() {
         tokio::time::pause();
         let oauth = OAuthState::default();
-        let host_a: quilt::uri::Host = "host-a.quilt.dev".parse().unwrap();
-        let host_b: quilt::uri::Host = "host-b.quilt.dev".parse().unwrap();
+        let host_a: quilt_uri::Host = "host-a.quilt.dev".parse().unwrap();
+        let host_b: quilt_uri::Host = "host-b.quilt.dev".parse().unwrap();
 
         // Login for host A — will expire.
         oauth.start_login(&host_a, "client-id", None).await;

@@ -21,13 +21,13 @@ use crate::manifest::Manifest;
 use crate::manifest::Workflow;
 use crate::paths;
 use crate::paths::copy_cached_to_installed;
-use crate::uri::Host;
-use crate::uri::ManifestUri;
-use crate::uri::Namespace;
-use crate::uri::S3Uri;
-use crate::uri::UriError;
 use crate::Error;
 use crate::Res;
+use quilt_uri::Host;
+use quilt_uri::ManifestUri;
+use quilt_uri::Namespace;
+use quilt_uri::S3Uri;
+use quilt_uri::UriError;
 
 /// Result of a push operation visible to callers outside `quilt-rs`.
 pub struct PushOutcome {

@@ -8,9 +8,9 @@ use crate::checksum::MULTIHASH_CRC64_NVME;
 use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use crate::error::RemoteCatalogError;
 use crate::io::remote::client::HttpClient;
-use crate::uri::Host;
 use crate::Error;
 use crate::Res;
+use quilt_uri::Host;
 
 /// Supported checksum algorithms for a host
 #[derive(Clone, Debug, PartialEq, Eq)]

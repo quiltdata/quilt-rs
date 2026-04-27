@@ -1,4 +1,4 @@
-use quilt_rs::uri::Host;
+use quilt_uri::Host;
 
 use crate::cli::model::Commands;
 use crate::cli::output::Std;

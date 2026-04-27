@@ -10,10 +10,10 @@ use tracing::error;
 
 use crate::io::storage::Storage;
 use crate::lineage::Home;
-use crate::uri::Host;
-use crate::uri::ManifestUri;
-use crate::uri::Namespace;
 use crate::Res;
+use quilt_uri::Host;
+use quilt_uri::ManifestUri;
+use quilt_uri::Namespace;
 
 pub const AUTH_CLIENT: &str = "client.json";
 pub const AUTH_CREDENTIALS: &str = "credentials.json";

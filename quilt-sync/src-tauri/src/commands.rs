@@ -48,7 +48,7 @@ pub struct InstalledPackageEntryData {
 #[serde(rename_all = "camelCase")]
 pub struct InstalledPackageData {
     pub namespace: String,
-    pub uri: Option<quilt::uri::S3PackageUri>,
+    pub uri: Option<quilt_uri::S3PackageUri>,
     pub status: String,
     /// True when the package has been pushed — `lineage.remote_uri.hash` is
     /// non-empty and the remote is now pinned to that push history. The UI
@@ -66,7 +66,7 @@ pub struct InstalledPackageData {
 async fn get_installed_package_data_from_model(
     m: &impl model::QuiltModel,
     tracing: &crate::telemetry::Telemetry,
-    namespace: &quilt::uri::Namespace,
+    namespace: &quilt_uri::Namespace,
     filter: routes::EntriesFilter,
 ) -> Result<InstalledPackageData, Error> {
     let installed_package = m.get_installed_package(namespace).await?.ok_or_else(|| {
@@ -80,7 +80,7 @@ async fn get_installed_package_data_from_model(
     let typed_uri = lineage
         .remote_uri
         .as_ref()
-        .map(quilt::uri::S3PackageUri::from);
+        .map(quilt_uri::S3PackageUri::from);
     let origin_host = typed_uri.as_ref().and_then(|u| u.catalog.as_ref());
     if let Some(host) = origin_host {
         tracing.add_host(host);
@@ -231,9 +231,9 @@ pub async fn get_installed_package_data(
     namespace: String,
     filter: Option<String>,
 ) -> Result<InstalledPackageData, String> {
-    let namespace: quilt::uri::Namespace = namespace
+    let namespace: quilt_uri::Namespace = namespace
         .try_into()
-        .map_err(|e: quilt::UriError| e.to_string())?;
+        .map_err(|e: quilt_uri::UriError| e.to_string())?;
     let filter = filter
         .map(|f| routes::EntriesFilter::from_filter_str(&f))
         .unwrap_or_default();
@@ -409,13 +409,13 @@ pub async fn get_login_error_data(
 #[serde(rename_all = "camelCase")]
 pub struct MergeData {
     pub namespace: String,
-    pub uri: Option<quilt::uri::S3PackageUri>,
+    pub uri: Option<quilt_uri::S3PackageUri>,
 }
 
 async fn get_merge_data_from_model(
     m: &impl model::QuiltModel,
     tracing: &crate::telemetry::Telemetry,
-    namespace: &quilt::uri::Namespace,
+    namespace: &quilt_uri::Namespace,
 ) -> Result<MergeData, Error> {
     let installed_package = m.get_installed_package(namespace).await?.ok_or_else(|| {
         Error::from(quilt::InstallPackageError::NotInstalled(
@@ -428,7 +428,7 @@ async fn get_merge_data_from_model(
     let uri = lineage
         .remote_uri
         .as_ref()
-        .map(quilt::uri::S3PackageUri::from);
+        .map(quilt_uri::S3PackageUri::from);
     if let Some(host) = uri.as_ref().and_then(|u| u.catalog.as_ref()) {
         tracing.add_host(host);
     }
@@ -445,9 +445,9 @@ pub async fn get_merge_data(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     namespace: String,
 ) -> Result<MergeData, String> {
-    let namespace: quilt::uri::Namespace = namespace
+    let namespace: quilt_uri::Namespace = namespace
         .try_into()
-        .map_err(|e: quilt::UriError| e.to_string())?;
+        .map_err(|e: quilt_uri::UriError| e.to_string())?;
 
     get_merge_data_from_model(&*m, &tracing, &namespace)
         .await
@@ -460,7 +460,7 @@ pub async fn get_merge_data(
 #[serde(rename_all = "camelCase")]
 pub struct CommitData {
     pub namespace: String,
-    pub uri: Option<quilt::uri::S3PackageUri>,
+    pub uri: Option<quilt_uri::S3PackageUri>,
     pub status: String,
     pub message: String,
     pub user_meta: String,
@@ -482,7 +482,7 @@ pub struct CommitWorkflowData {
 async fn get_commit_data_from_model(
     m: &impl model::QuiltModel,
     tracing: &crate::telemetry::Telemetry,
-    namespace: &quilt::uri::Namespace,
+    namespace: &quilt_uri::Namespace,
 ) -> Result<CommitData, Error> {
     let installed_package = m.get_installed_package(namespace).await?.ok_or_else(|| {
         Error::from(quilt::InstallPackageError::NotInstalled(
@@ -508,7 +508,7 @@ async fn get_commit_data_from_model(
     let typed_uri = lineage
         .remote_uri
         .as_ref()
-        .map(quilt::uri::S3PackageUri::from);
+        .map(quilt_uri::S3PackageUri::from);
     let origin_host = typed_uri.as_ref().and_then(|u| u.catalog.as_ref());
     if let Some(host) = origin_host {
         tracing.add_host(host);
@@ -642,9 +642,9 @@ pub async fn get_commit_data(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     namespace: String,
 ) -> Result<CommitData, String> {
-    let namespace: quilt::uri::Namespace = namespace
+    let namespace: quilt_uri::Namespace = namespace
         .try_into()
-        .map_err(|e: quilt::UriError| e.to_string())?;
+        .map_err(|e: quilt_uri::UriError| e.to_string())?;
 
     get_commit_data_from_model(&*m, &tracing, &namespace)
         .await
@@ -665,7 +665,7 @@ pub struct InstalledPackageListItem {
     pub namespace: String,
     pub status: String,
     pub has_changes: bool,
-    pub uri: Option<quilt::uri::S3PackageUri>,
+    pub uri: Option<quilt_uri::S3PackageUri>,
     /// Raw `lineage.remote_uri` rendering, kept separate from `uri` so
     /// the UI can still surface a misconfigured remote when origin
     /// resolution fails (status: "error" branch).
@@ -712,7 +712,7 @@ async fn load_package_item(
         }
     };
 
-    let typed_uri = quilt::uri::S3PackageUri::from(remote_uri);
+    let typed_uri = quilt_uri::S3PackageUri::from(remote_uri);
 
     if remote_uri.origin.is_none() {
         return Ok(InstalledPackageListItem {
@@ -762,7 +762,7 @@ pub struct RefreshedPackageStatus {
 async fn refresh_package_status_from_model(
     m: &impl model::QuiltModel,
     tracing: &crate::telemetry::Telemetry,
-    namespace: &quilt::uri::Namespace,
+    namespace: &quilt_uri::Namespace,
 ) -> Result<RefreshedPackageStatus, Error> {
     let installed_package = m.get_installed_package(namespace).await?.ok_or_else(|| {
         Error::from(quilt::InstallPackageError::NotInstalled(
@@ -828,9 +828,9 @@ pub async fn refresh_package_status(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     namespace: String,
 ) -> Result<RefreshedPackageStatus, String> {
-    let namespace: quilt::uri::Namespace = namespace
+    let namespace: quilt_uri::Namespace = namespace
         .try_into()
-        .map_err(|e: quilt::UriError| e.to_string())?;
+        .map_err(|e: quilt_uri::UriError| e.to_string())?;
 
     refresh_package_status_from_model(&*m, &tracing, &namespace)
         .await
@@ -863,7 +863,7 @@ async fn package_commit_command(
     metadata: &str,
     workflow: Option<String>,
 ) -> Result<(), Error> {
-    let namespace = quilt::uri::Namespace::try_from(namespace)?;
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
     if message.is_empty() {
         return Err(Error::Commit("Message is required".to_string()));
     }
@@ -1148,7 +1148,7 @@ async fn reveal_in_file_browser_command(
     namespace: &str,
     path: &str,
 ) -> Result<(), Error> {
-    let namespace = quilt::uri::Namespace::try_from(namespace)?;
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
     m.reveal_in_file_browser(&namespace, &PathBuf::from(path))
         .await?;
     Ok(())
@@ -1175,7 +1175,7 @@ pub async fn reveal_in_file_browser(
 }
 
 async fn open_in_file_browser_command(m: &model::Model, namespace: &str) -> Result<(), Error> {
-    let namespace = quilt::uri::Namespace::try_from(namespace)?;
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
     m.open_in_file_browser(&namespace).await?;
     Ok(())
 }
@@ -1204,7 +1204,7 @@ async fn open_in_default_application_command(
     namespace: &str,
     path: &str,
 ) -> Result<(), Error> {
-    let namespace = quilt::uri::Namespace::try_from(namespace)?;
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
     m.open_in_default_application(&namespace, &PathBuf::from(path))
         .await?;
     Ok(())
@@ -1249,7 +1249,7 @@ pub async fn open_in_web_browser(
 }
 
 async fn certify_latest_command(m: &model::Model, namespace: &str) -> Result<(), Error> {
-    let namespace = quilt::uri::Namespace::try_from(namespace)?;
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
     model::package_revision_certify_latest(m, namespace.clone()).await?;
     Ok(())
 }
@@ -1274,7 +1274,7 @@ pub async fn certify_latest(
 }
 
 async fn reset_local_command(m: &model::Model, namespace: &str) -> Result<(), Error> {
-    let namespace = quilt::uri::Namespace::try_from(namespace)?;
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
     model::package_revision_reset_local(m, namespace.clone()).await?;
     Ok(())
 }
@@ -1298,7 +1298,7 @@ async fn package_push_command(
     m: &model::Model,
     namespace: &str,
 ) -> Result<quilt::PushOutcome, Error> {
-    let namespace = quilt::uri::Namespace::try_from(namespace)?;
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
     model::package_push(m, &namespace, None).await
 }
 
@@ -1335,7 +1335,7 @@ async fn package_publish_command(
     settings: &SharedPublishSettings,
     namespace: &str,
 ) -> Result<quilt::PublishOutcome, Error> {
-    let namespace = quilt::uri::Namespace::try_from(namespace)?;
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
     let installed = m
         .get_installed_package(&namespace)
         .await?
@@ -1411,7 +1411,7 @@ async fn package_commit_and_push_command(
     metadata: &str,
     workflow: Option<String>,
 ) -> Result<quilt::PublishOutcome, Error> {
-    let namespace = quilt::uri::Namespace::try_from(namespace)?;
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
     if message.trim().is_empty() {
         return Err(Error::Commit("Message is required".to_string()));
     }
@@ -1454,7 +1454,7 @@ pub async fn package_commit_and_push(
 }
 
 async fn package_pull_command(m: &model::Model, namespace: &str) -> Result<(), Error> {
-    let namespace = quilt::uri::Namespace::try_from(namespace)?;
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
     model::package_pull(m, &namespace, None).await?;
     Ok(())
 }
@@ -1475,7 +1475,7 @@ pub async fn package_pull(
 }
 
 async fn package_uninstall_command(m: &model::Model, namespace: &str) -> Result<(), Error> {
-    let namespace = quilt::uri::Namespace::try_from(namespace)?;
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
     model::package_uninstall(m, namespace.clone()).await?;
     Ok(())
 }
@@ -1505,8 +1505,8 @@ async fn set_remote_command(
     origin: &str,
     bucket: &str,
 ) -> Result<(), Error> {
-    let namespace = quilt::uri::Namespace::try_from(namespace)?;
-    let origin = quilt::uri::Host::from_str(origin)?;
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
+    let origin = quilt_uri::Host::from_str(origin)?;
     model::set_remote(m, &namespace, origin, bucket.to_string()).await?;
     Ok(())
 }
@@ -1538,7 +1538,7 @@ async fn package_create_command(
     source: Option<String>,
     message: Option<String>,
 ) -> Result<(), Error> {
-    let namespace = quilt::uri::Namespace::try_from(namespace)?;
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
     let source = source.map(PathBuf::from);
     model::package_create(m, namespace, source, message).await?;
     Ok(())
@@ -1588,7 +1588,7 @@ async fn login_command(
     host: &str,
     code: String,
 ) -> Result<(), Error> {
-    let host = quilt::uri::Host::from_str(host)?;
+    let host = quilt_uri::Host::from_str(host)?;
     model::login(m, &host, code).await?;
 
     tracing
@@ -1629,7 +1629,7 @@ pub async fn login_oauth(
     host: String,
     back: Option<String>,
 ) -> Result<String, String> {
-    let host_parsed = quilt::uri::Host::from_str(&host).map_err(|e| e.to_string())?;
+    let host_parsed = quilt_uri::Host::from_str(&host).map_err(|e| e.to_string())?;
 
     let redirect_uri = crate::oauth::redirect_uri(&host_parsed);
     let client_id = model::get_or_register_client(&*m, &host_parsed, &redirect_uri)
@@ -1677,7 +1677,7 @@ async fn package_install_paths_command(
     uri: &str,
     paths: &[String],
 ) -> Result<(), Error> {
-    let uri = quilt::uri::S3PackageUri::try_from(uri)?;
+    let uri = quilt_uri::S3PackageUri::try_from(uri)?;
     let paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
     model::install_paths_only(m, &uri.namespace, paths).await?;
     Ok(())
@@ -1708,7 +1708,7 @@ async fn add_to_quiltignore_command(
     namespace: &str,
     pattern: &str,
 ) -> Result<(), Error> {
-    let namespace = quilt::uri::Namespace::try_from(namespace)?;
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
     let package_home = m.package_home(&namespace).await?;
     let quiltignore_path = package_home.join(".quiltignore");
 
@@ -1774,8 +1774,9 @@ pub async fn handle_remote_package(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     uri: String,
 ) -> Result<RemotePackageResult, String> {
-    let s3_uri: quilt::uri::S3PackageUri =
-        uri.parse().map_err(|e: quilt::UriError| e.to_string())?;
+    let s3_uri: quilt_uri::S3PackageUri = uri
+        .parse()
+        .map_err(|e: quilt_uri::UriError| e.to_string())?;
     let namespace = s3_uri.namespace.to_string();
 
     let _tracing: &crate::telemetry::Telemetry = &tracing;
@@ -1881,7 +1882,7 @@ mod tests {
     /// Stringify the catalog host of a typed package URI, if set.
     /// Used by tests to verify host propagation without poking at
     /// `Option<&Host>` chains inline.
-    fn catalog_host(uri: &Option<quilt::uri::S3PackageUri>) -> Option<String> {
+    fn catalog_host(uri: &Option<quilt_uri::S3PackageUri>) -> Option<String> {
         uri.as_ref()
             .and_then(|u| u.catalog.as_ref())
             .map(|h| h.to_string())
@@ -1959,7 +1960,7 @@ mod tests {
 
     /// Helper: create a quilt::InstalledPackage with a given namespace.
     fn make_installed_package(
-        namespace: impl Into<quilt::uri::Namespace>,
+        namespace: impl Into<quilt_uri::Namespace>,
     ) -> quilt::InstalledPackage {
         quilt::LocalDomain::new(std::path::PathBuf::new())
             .create_installed_package(namespace.into())
@@ -1967,8 +1968,8 @@ mod tests {
     }
 
     /// Helper: create a ManifestUri with origin for a given namespace.
-    fn make_manifest_uri(namespace: &str) -> quilt::uri::ManifestUri {
-        quilt::uri::ManifestUri {
+    fn make_manifest_uri(namespace: &str) -> quilt_uri::ManifestUri {
+        quilt_uri::ManifestUri {
             origin: Some("test.quilt.dev".parse().unwrap()),
             bucket: "test".to_string(),
             namespace: namespace.try_into().unwrap(),
@@ -1977,8 +1978,8 @@ mod tests {
     }
 
     /// Helper: create a ManifestUri **without** origin (triggers error state).
-    fn make_manifest_uri_no_origin(namespace: &str) -> quilt::uri::ManifestUri {
-        quilt::uri::ManifestUri {
+    fn make_manifest_uri_no_origin(namespace: &str) -> quilt_uri::ManifestUri {
+        quilt_uri::ManifestUri {
             origin: None,
             bucket: "test".to_string(),
             namespace: namespace.try_into().unwrap(),
@@ -2188,7 +2189,7 @@ mod tests {
         model
             .expect_get_installed_package_lineage()
             .returning(|pkg| {
-                let uri = quilt::uri::ManifestUri {
+                let uri = quilt_uri::ManifestUri {
                     origin: Some("test.quilt.dev".parse().unwrap()),
                     bucket: "test".to_string(),
                     namespace: pkg.namespace.clone(),
@@ -2574,7 +2575,7 @@ mod tests {
         model
             .expect_get_installed_package_lineage()
             .returning(|pkg| {
-                let uri = quilt::uri::ManifestUri {
+                let uri = quilt_uri::ManifestUri {
                     origin: Some("test.quilt.dev".parse().unwrap()),
                     bucket: "test".to_string(),
                     namespace: pkg.namespace.clone(),
@@ -2737,7 +2738,7 @@ mod tests {
     async fn test_get_commit_data_with_workflow() -> Result<(), String> {
         let mut model = mocks::create();
 
-        let remote_manifest = quilt::uri::ManifestUri {
+        let remote_manifest = quilt_uri::ManifestUri {
             bucket: "quilt-example".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "abcdef".to_string(),
@@ -2763,7 +2764,7 @@ mod tests {
             .returning(|_| Ok(std::collections::BTreeMap::new()));
         // Return a manifest with workflow data
         model.expect_browse_remote_manifest().returning(|_| {
-            let config_uri = quilt::uri::S3Uri {
+            let config_uri = quilt_uri::S3Uri {
                 bucket: "quilt-example".to_string(),
                 key: ".quilt/workflows/config.yaml".to_string(),
                 version: None,
@@ -2805,7 +2806,7 @@ mod tests {
     async fn test_get_commit_data_workflow_null_id() -> Result<(), String> {
         let mut model = mocks::create();
 
-        let remote_manifest = quilt::uri::ManifestUri {
+        let remote_manifest = quilt_uri::ManifestUri {
             bucket: "quilt-example".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "abcdef".to_string(),
@@ -2831,7 +2832,7 @@ mod tests {
             .returning(|_| Ok(std::collections::BTreeMap::new()));
         // Workflow exists but has no ID (null/checked state)
         model.expect_browse_remote_manifest().returning(|_| {
-            let config_uri = quilt::uri::S3Uri {
+            let config_uri = quilt_uri::S3Uri {
                 bucket: "quilt-example".to_string(),
                 key: ".quilt/workflows/config.yaml".to_string(),
                 version: None,
@@ -2870,7 +2871,7 @@ mod tests {
     async fn test_get_commit_data_no_workflow() -> Result<(), String> {
         let mut model = mocks::create();
 
-        let remote_manifest = quilt::uri::ManifestUri {
+        let remote_manifest = quilt_uri::ManifestUri {
             bucket: "quilt-example".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "abcdef".to_string(),

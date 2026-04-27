@@ -13,8 +13,8 @@ use crate::lineage::PackageLineage;
 use crate::manifest::Manifest;
 use crate::manifest::Workflow;
 use crate::paths::DomainPaths;
-use crate::uri::Namespace;
 use crate::Res;
+use quilt_uri::Namespace;
 
 /// Options passed to the commit half of [`publish_package`].
 ///
@@ -144,8 +144,8 @@ mod tests {
     use crate::lineage::CommitState;
     use crate::lineage::PathState;
     use crate::manifest::ManifestRow;
-    use crate::uri::ManifestUri;
-    use crate::uri::S3Uri;
+    use quilt_uri::ManifestUri;
+    use quilt_uri::S3Uri;
 
     fn manifest_uri(hash: &str) -> ManifestUri {
         ManifestUri {

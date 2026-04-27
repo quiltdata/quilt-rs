@@ -34,10 +34,10 @@ use crate::io::remote::Remote;
 use crate::io::storage::auth::OAuthClient;
 use crate::io::storage::LocalStorage;
 use crate::paths::DomainPaths;
-use crate::uri::Host;
-use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
+use quilt_uri::Host;
+use quilt_uri::S3Uri;
 
 use crate::io::remote::RemoteObjectStream;
 

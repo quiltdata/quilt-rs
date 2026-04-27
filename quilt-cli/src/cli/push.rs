@@ -1,7 +1,7 @@
 use quilt_rs::io::remote::HostConfig;
-use quilt_rs::uri::Host;
-use quilt_rs::uri::Namespace;
 use quilt_rs::PushOutcome;
+use quilt_uri::Host;
+use quilt_uri::Namespace;
 
 use crate::cli::model::Commands;
 use crate::cli::output::Std;

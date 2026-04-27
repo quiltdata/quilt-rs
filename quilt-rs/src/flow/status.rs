@@ -22,10 +22,10 @@ use crate::lineage::PackageLineage;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
 use crate::quiltignore;
-use crate::uri::Tag;
-use crate::uri::UriError;
 use crate::Error;
 use crate::Res;
+use quilt_uri::Tag;
+use quilt_uri::UriError;
 
 /// Refreshes the tracked `latest_hash` property in lineage.json
 pub async fn refresh_latest_hash(
@@ -277,7 +277,7 @@ mod tests {
     use crate::lineage::CommitState;
     use crate::lineage::PathState;
     use crate::lineage::UpstreamState;
-    use crate::uri::ManifestUri;
+    use quilt_uri::ManifestUri;
 
     /// Helper to create a PackageLineage with a dummy remote (avoids Local state).
     /// Uses a non-empty hash so the lineage isn't treated as "never pushed".

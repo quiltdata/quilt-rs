@@ -12,9 +12,9 @@ use crate::io::remote::HostConfig;
 use crate::io::remote::RemoteObjectStream;
 use crate::io::storage::mocks::MockStorage;
 use crate::io::storage::Storage;
-use crate::uri::Host;
-use crate::uri::S3Uri;
 use crate::Error;
+use quilt_uri::Host;
+use quilt_uri::S3Uri;
 
 use crate::Res;
 

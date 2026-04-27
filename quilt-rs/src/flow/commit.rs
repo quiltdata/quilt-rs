@@ -24,9 +24,9 @@ use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
 use crate::manifest::Workflow;
 use crate::paths::DomainPaths;
-use crate::uri::Namespace;
 use crate::Error;
 use crate::Res;
+use quilt_uri::Namespace;
 
 async fn stream_local_with_changes(
     local_manifest: &Manifest,

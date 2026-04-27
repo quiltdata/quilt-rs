@@ -12,8 +12,8 @@
 
 ### Changed
 
-- Extract URI types (`Host`, `S3Uri`, `S3PackageUri`, `ManifestUri`, `ObjectUri`, `TagUri`, `Namespace`, `RevisionPointer`, `UriError`) into a new WASM-safe `quilt-uri` crate; `quilt_rs::uri::*` now re-exports them, so call sites keep compiling unchanged (<https://github.com/quiltdata/quilt-rs/pull/641>)
-- `Tag::Timestamp` now wraps a `Seconds(i64)` newtype (also re-exported from `quilt_rs::uri`) instead of a raw `i64`, so the unit is enforced at the type level (<https://github.com/quiltdata/quilt-rs/pull/641>)
+- Extract URI types (`Host`, `S3Uri`, `S3PackageUri`, `ManifestUri`, `ObjectUri`, `TagUri`, `Namespace`, `RevisionPointer`, `UriError`) into a new WASM-safe `quilt-uri` crate; `quilt_rs::uri` and `quilt_rs::UriError` are gone — depend on `quilt-uri` directly (<https://github.com/quiltdata/quilt-rs/pull/641>)
+- `Tag::Timestamp` now wraps a `Seconds(i64)` newtype (in `quilt-uri`) instead of a raw `i64`, so the unit is enforced at the type level (<https://github.com/quiltdata/quilt-rs/pull/641>)
 
 ## [v0.30.1-alpha1] - 2026-04-23
 

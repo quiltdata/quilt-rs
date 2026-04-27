@@ -20,6 +20,7 @@ dotenv = "0.15"
 mockall = "0.14.0"
 opener = { version = "0.8.4", features = ["reveal"] }
 quilt-rs = { path = "../../quilt-rs" }
+quilt-uri = { path = "../../quilt-uri" }
 rfd = { version = "0.17.2", default-features = false, features = ["gtk3"] }
 rust-i18n = "4.0.0"
 semver = "1.0.27"

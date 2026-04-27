@@ -9,7 +9,6 @@ use url::Url;
 use crate::commands;
 use crate::model;
 use crate::oauth::OAuthState;
-use crate::quilt;
 use crate::routes;
 use crate::telemetry::mixpanel::LoginFlow;
 use crate::telemetry::prelude::*;
@@ -17,7 +16,7 @@ use crate::Error;
 use crate::Result;
 
 fn get_remote_package_url(current_url: &Url, uri_str: &str) -> Result<Url> {
-    let uri: quilt::uri::S3PackageUri = uri_str.parse()?;
+    let uri: quilt_uri::S3PackageUri = uri_str.parse()?;
     Ok(routes::from_url(
         routes::Paths::RemotePackage(uri.clone()),
         current_url.to_owned(),
@@ -50,7 +49,7 @@ fn navigate_to_package(app_handle: &AppHandle, uri_str: &str) -> Result {
 struct AuthParams {
     code: String,
     state: String,
-    host: quilt::uri::Host,
+    host: quilt_uri::Host,
     redirect: Option<String>,
 }
 
@@ -91,7 +90,7 @@ fn parse_auth_params(url: &Url) -> Result<AuthParams> {
 
     let redirect = params.get("redirect").map(|v| v.to_string());
 
-    let host = quilt::uri::Host::from_str(&host_str)?;
+    let host = quilt_uri::Host::from_str(&host_str)?;
     Ok(AuthParams {
         code,
         state,

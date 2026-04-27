@@ -7,9 +7,9 @@ use reqwest::header::ToStrError;
 use thiserror::Error;
 
 use crate::io::remote::HostChecksums;
-use crate::uri::Host;
-use crate::uri::Namespace;
-use crate::uri::UriError;
+use quilt_uri::Host;
+use quilt_uri::Namespace;
+use quilt_uri::UriError;
 
 #[derive(Error, Debug)]
 #[error("S3 error{}: {kind}", .host.as_ref().map_or(String::new(), |h| format!(" for {h}")))]
