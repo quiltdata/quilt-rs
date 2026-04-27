@@ -284,7 +284,7 @@ pub async fn get_installed_package_data(
 ) -> Result<InstalledPackageData, String> {
     let namespace: quilt::uri::Namespace = namespace
         .try_into()
-        .map_err(|e: quilt::Error| e.to_string())?;
+        .map_err(|e: quilt::UriError| e.to_string())?;
     let filter = filter
         .map(|f| routes::EntriesFilter::from_filter_str(&f))
         .unwrap_or_default();
@@ -503,7 +503,7 @@ pub async fn get_merge_data(
 ) -> Result<MergeData, String> {
     let namespace: quilt::uri::Namespace = namespace
         .try_into()
-        .map_err(|e: quilt::Error| e.to_string())?;
+        .map_err(|e: quilt::UriError| e.to_string())?;
 
     get_merge_data_from_model(&*m, &tracing, &namespace)
         .await
@@ -725,7 +725,7 @@ pub async fn get_commit_data(
 ) -> Result<CommitData, String> {
     let namespace: quilt::uri::Namespace = namespace
         .try_into()
-        .map_err(|e: quilt::Error| e.to_string())?;
+        .map_err(|e: quilt::UriError| e.to_string())?;
 
     get_commit_data_from_model(&*m, &tracing, &namespace)
         .await
@@ -922,7 +922,7 @@ pub async fn refresh_package_status(
 ) -> Result<RefreshedPackageStatus, String> {
     let namespace: quilt::uri::Namespace = namespace
         .try_into()
-        .map_err(|e: quilt::Error| e.to_string())?;
+        .map_err(|e: quilt::UriError| e.to_string())?;
 
     refresh_package_status_from_model(&*m, &tracing, &namespace)
         .await
@@ -1866,7 +1866,8 @@ pub async fn handle_remote_package(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     uri: String,
 ) -> Result<RemotePackageResult, String> {
-    let s3_uri: quilt::uri::S3PackageUri = uri.parse().map_err(|e: quilt::Error| e.to_string())?;
+    let s3_uri: quilt::uri::S3PackageUri =
+        uri.parse().map_err(|e: quilt::UriError| e.to_string())?;
     let namespace = s3_uri.namespace.to_string();
 
     let _tracing: &crate::telemetry::Telemetry = &tracing;

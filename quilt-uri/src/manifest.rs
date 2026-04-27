@@ -3,14 +3,13 @@ use std::fmt;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::error::UriError;
 use crate::paths;
-use crate::uri::Host;
-use crate::uri::Namespace;
-use crate::uri::RevisionPointer;
-use crate::uri::S3PackageUri;
-use crate::uri::S3Uri;
-use crate::Error;
+use crate::Host;
+use crate::Namespace;
+use crate::RevisionPointer;
+use crate::S3PackageUri;
+use crate::S3Uri;
+use crate::UriError;
 
 /// URI for manifest.
 /// Manifests are stored in immutable files.
@@ -24,7 +23,7 @@ pub struct ManifestUri {
 }
 
 impl TryFrom<S3PackageUri> for ManifestUri {
-    type Error = Error;
+    type Error = UriError;
     fn try_from(uri: S3PackageUri) -> Result<Self, Self::Error> {
         Ok(ManifestUri {
             bucket: uri.bucket,
@@ -35,8 +34,7 @@ impl TryFrom<S3PackageUri> for ManifestUri {
                 RevisionPointer::Tag(_) => {
                     return Err(UriError::Package(
                         "Hash is required for that conversion".to_string(),
-                    )
-                    .into())
+                    ))
                 }
             },
         })
@@ -70,7 +68,7 @@ impl ManifestUri {
 mod tests {
     use super::*;
 
-    use crate::Res;
+    type Res<T = ()> = Result<T, UriError>;
 
     #[test]
     fn test_manifest_uri_try_from_package_uri_with_tag() -> Res {

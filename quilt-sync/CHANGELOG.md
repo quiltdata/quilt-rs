@@ -22,7 +22,7 @@
 
 ### quilt-rs
 
-- Updated [from v0.30.0 to v0.30.1-alpha1](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.30.0...quilt-rs/v0.30.1-alpha1) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+- Updated [from v0.30.0 to v0.30.1-alpha2](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.30.0...quilt-rs/v0.30.1-alpha2) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.17.1-alpha1] - 2026-04-23
 

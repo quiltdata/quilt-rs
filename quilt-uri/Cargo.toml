@@ -1,0 +1,24 @@
+[package]
+name = "quilt-uri"
+description = "URI types for Quilt packages (WASM-safe, no I/O)."
+
+# Inherit from workspace
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+# Enables test-only helpers (e.g. `Default` impls) so downstream crates
+# can share the same fixtures in their own tests.
+test-support = []
+
+[dependencies]
+percent-encoding.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+test-log.workspace = true

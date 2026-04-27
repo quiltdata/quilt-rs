@@ -5,7 +5,6 @@ use tracing::log;
 
 use crate::error::LoginError;
 use crate::error::PackageOpError;
-use crate::error::UriError;
 use crate::flow;
 use crate::flow::cache_remote_manifest;
 use crate::io::remote::resolve_workflow;
@@ -26,6 +25,7 @@ use crate::uri::Host;
 use crate::uri::ManifestUri;
 use crate::uri::Namespace;
 use crate::uri::S3Uri;
+use crate::uri::UriError;
 use crate::Error;
 use crate::Res;
 

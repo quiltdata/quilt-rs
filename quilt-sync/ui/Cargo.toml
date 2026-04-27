@@ -15,6 +15,7 @@ serde-wasm-bindgen = "0.6"
 console_error_panic_hook = "0.1"
 serde_json = "1"
 urlencoding = "2"
+quilt-uri = { path = "../../quilt-uri" }
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
