@@ -8,6 +8,7 @@ use crate::components::{
     IgnorePopup, IgnorePopupData, Layout, Notification, SetRemotePopup, Spinner, ToolbarActions,
     UnignorePopup, UnignorePopupData,
 };
+use crate::util;
 use crate::util::{format_size, make_action};
 
 // ── Installed Package page ──
@@ -102,9 +103,9 @@ fn InstalledPackageContent(
     let namespace = data.namespace.clone();
     let uri = data.uri.clone();
     let status = data.status.clone();
-    let origin_host = data.origin_host.clone();
-    let current_host = data.current_host.clone();
-    let current_bucket = data.current_bucket.clone();
+    let origin_host = uri.as_ref().and_then(util::host_str);
+    let current_host = origin_host.clone();
+    let current_bucket = uri.as_ref().and_then(util::bucket_str);
     let remote_locked = data.remote_locked;
     let entries = data.entries;
     let has_remote_entries = data.has_remote_entries;
@@ -152,7 +153,9 @@ fn InstalledPackageContent(
     let uri_for_install = uri.clone();
     let entries_for_install = entries.clone();
     let on_install_paths = move |_| {
-        let uri = uri_for_install.clone();
+        let Some(uri) = uri_for_install.as_ref().map(|u| u.to_string()) else {
+            return;
+        };
         let indices = checked_indices.get_untracked();
         let paths: Vec<String> = indices
             .iter()
@@ -367,11 +370,14 @@ fn build_toolbar_actions(
     show_set_remote_popup: RwSignal<bool>,
 ) -> ToolbarActions {
     let namespace = data.namespace.clone();
-    let origin_url = data.origin_url.clone();
+    let origin_url = data.uri.as_ref().and_then(util::catalog_url);
     let has_catalog = origin_url.is_some();
     let catalog_disabled = data.status == "local";
 
-    let remote_configured = data.current_host.is_some() && data.current_bucket.is_some();
+    let remote_configured = data
+        .uri
+        .as_ref()
+        .is_some_and(|u| u.catalog.is_some() && !u.bucket.is_empty());
     let is_error = data.status == "error";
     let (remote_label, remote_warning) = if !remote_configured {
         ("Set remote", true)

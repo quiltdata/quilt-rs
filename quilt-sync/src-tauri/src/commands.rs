@@ -49,15 +49,8 @@ pub struct InstalledPackageEntryData {
 #[serde(rename_all = "camelCase")]
 pub struct InstalledPackageData {
     pub namespace: String,
-    pub uri: String,
+    pub uri: Option<quilt::uri::S3PackageUri>,
     pub status: String,
-    // TODO(view-model-cleanup): collapse origin_host/origin_url/current_host/
-    // current_bucket into one RemoteInfo once URI helpers live in a
-    // WASM-friendly crate.
-    pub origin_url: Option<String>,
-    pub origin_host: Option<String>,
-    pub current_host: Option<String>,
-    pub current_bucket: Option<String>,
     /// True when the package has been pushed — `lineage.remote_uri.hash` is
     /// non-empty and the remote is now pinned to that push history. The UI
     /// uses this to switch the remote button from "Change remote" to a
@@ -213,11 +206,6 @@ async fn get_installed_package_data_from_model(
 
     entries_list.sort_by(|a, b| a.filename.cmp(&b.filename));
 
-    let origin_url = match &origin_host {
-        Some(host) => uri.display_for_host(host).ok().map(|u| u.to_string()),
-        None => None,
-    };
-
     // Compute counts from the full source data, not the capped entries_list,
     // so the filter toolbar is shown even when the list is truncated.
     let ignored_count = pkg_status.ignored_files.len();
@@ -243,15 +231,10 @@ async fn get_installed_package_data_from_model(
         quilt::lineage::UpstreamState::Error => "error",
     };
 
-    let current_host = lineage
+    let typed_uri = lineage
         .remote_uri
         .as_ref()
-        .and_then(|r| r.origin.as_ref().map(|h| h.to_string()));
-    let current_bucket = lineage
-        .remote_uri
-        .as_ref()
-        .map(|r| r.bucket.clone())
-        .filter(|b| !b.is_empty());
+        .map(quilt::uri::S3PackageUri::from);
     let remote_locked = lineage
         .remote_uri
         .as_ref()
@@ -259,12 +242,8 @@ async fn get_installed_package_data_from_model(
 
     Ok(InstalledPackageData {
         namespace: namespace.to_string(),
-        uri: uri.to_string(),
+        uri: typed_uri,
         status: status_str.to_string(),
-        origin_url,
-        origin_host: origin_host.map(|h| h.to_string()),
-        current_host,
-        current_bucket,
         remote_locked,
         entries: entries_list,
         has_remote_entries,
@@ -460,8 +439,7 @@ pub async fn get_login_error_data(
 #[serde(rename_all = "camelCase")]
 pub struct MergeData {
     pub namespace: String,
-    pub origin_url: Option<String>,
-    pub origin_host: Option<String>,
+    pub uri: Option<quilt::uri::S3PackageUri>,
 }
 
 async fn get_merge_data_from_model(
@@ -477,21 +455,17 @@ async fn get_merge_data_from_model(
 
     let lineage = m.get_installed_package_lineage(&installed_package).await?;
 
-    let (uri, origin_host) =
-        crate::debug_tools::resolve_uri_and_host(lineage.remote_uri.as_ref(), namespace);
-    if let Some(host) = &origin_host {
+    let uri = lineage
+        .remote_uri
+        .as_ref()
+        .map(quilt::uri::S3PackageUri::from);
+    if let Some(host) = uri.as_ref().and_then(|u| u.catalog.as_ref()) {
         tracing.add_host(host);
     }
 
-    let origin_url = origin_host
-        .as_ref()
-        .and_then(|host| uri.display_for_host(host).ok())
-        .map(|u| u.to_string());
-
     Ok(MergeData {
         namespace: namespace.to_string(),
-        origin_url,
-        origin_host: origin_host.map(|h| h.to_string()),
+        uri,
     })
 }
 
@@ -516,10 +490,8 @@ pub async fn get_merge_data(
 #[serde(rename_all = "camelCase")]
 pub struct CommitData {
     pub namespace: String,
-    pub uri: String,
+    pub uri: Option<quilt::uri::S3PackageUri>,
     pub status: String,
-    pub origin_url: Option<String>,
-    pub origin_host: Option<String>,
     pub message: String,
     pub user_meta: String,
     pub user_meta_error: Option<String>,
@@ -665,10 +637,10 @@ async fn get_commit_data_from_model(
         .filter(|f| !status.changes.contains_key(*f))
         .count();
 
-    let origin_url = origin_host
+    let typed_uri = lineage
+        .remote_uri
         .as_ref()
-        .and_then(|host| uri.display_for_host(host).ok())
-        .map(|u| u.to_string());
+        .map(quilt::uri::S3PackageUri::from);
 
     // Generate commit message from changes
     let message = crate::commit_message::generate(&status.changes);
@@ -703,10 +675,8 @@ async fn get_commit_data_from_model(
 
     Ok(CommitData {
         namespace: namespace.to_string(),
-        uri: uri.to_string(),
+        uri: typed_uri,
         status: pkg_status_str.to_string(),
-        origin_url,
-        origin_host: origin_host.map(|h| h.to_string()),
         message,
         user_meta,
         user_meta_error,
@@ -746,11 +716,11 @@ pub struct InstalledPackageListItem {
     pub namespace: String,
     pub status: String,
     pub has_changes: bool,
-    pub origin_url: Option<String>,
-    pub origin_host: Option<String>,
+    pub uri: Option<quilt::uri::S3PackageUri>,
+    /// Raw `lineage.remote_uri` rendering, kept separate from `uri` so
+    /// the UI can still surface a misconfigured remote when origin
+    /// resolution fails (status: "error" branch).
     pub remote_display: Option<String>,
-    pub current_host: Option<String>,
-    pub current_bucket: Option<String>,
 }
 
 async fn get_installed_packages_list_data_from_model(
@@ -787,35 +757,27 @@ async fn load_package_item(
                 namespace: installed_package.namespace.to_string(),
                 status: "local".to_string(),
                 has_changes: false,
-                origin_url: None,
-                origin_host: None,
+                uri: None,
                 remote_display: None,
-                current_host: None,
-                current_bucket: None,
             });
         }
     };
 
-    let current_host = remote_uri.origin.as_ref().map(|h| h.to_string());
-    let current_bucket = Some(remote_uri.bucket.clone()).filter(|b| !b.is_empty());
+    let typed_uri = quilt::uri::S3PackageUri::from(remote_uri);
 
     if remote_uri.origin.is_none() {
         return Ok(InstalledPackageListItem {
             namespace: installed_package.namespace.to_string(),
             status: "error".to_string(),
             has_changes: false,
-            origin_url: None,
-            origin_host: None,
+            uri: Some(typed_uri),
             remote_display: Some(remote_uri.to_string()),
-            current_host,
-            current_bucket,
         });
     }
 
-    let origin_host = crate::debug_tools::try_remote_origin_host(remote_uri)?;
-    tracing.add_host(&origin_host);
-    let uri = quilt::uri::S3PackageUri::from(remote_uri);
-    let origin_url = uri.display_for_host(&origin_host)?;
+    if let Some(host) = typed_uri.catalog.as_ref() {
+        tracing.add_host(host);
+    }
     let remote_display = remote_uri.to_string();
     let upstream_state: quilt::lineage::UpstreamState = lineage.into();
     let has_changes = false; // Refined by refresh_package_status
@@ -824,11 +786,8 @@ async fn load_package_item(
         namespace: installed_package.namespace.to_string(),
         status: upstream_state.to_string(),
         has_changes,
-        origin_url: Some(origin_url.to_string()),
-        origin_host: Some(origin_host.to_string()),
+        uri: Some(typed_uri),
         remote_display: Some(remote_display),
-        current_host,
-        current_bucket,
     })
 }
 
@@ -1970,6 +1929,29 @@ mod tests {
     use super::*;
     use crate::model::mocks;
 
+    // ── Test helpers projecting the typed URI back into the field-shaped
+    //    assertions the original tests were written against. They translate
+    //    historical `origin_url` / `origin_host` / `current_host` /
+    //    `current_bucket` checks into queries on the new `uri` field.
+
+    fn host_of(uri: &Option<quilt::uri::S3PackageUri>) -> Option<String> {
+        uri.as_ref()
+            .and_then(|u| u.catalog.as_ref())
+            .map(|h| h.to_string())
+    }
+
+    fn bucket_of(uri: &Option<quilt::uri::S3PackageUri>) -> Option<&str> {
+        uri.as_ref()
+            .map(|u| u.bucket.as_str())
+            .filter(|b| !b.is_empty())
+    }
+
+    fn catalog_url_of(uri: &Option<quilt::uri::S3PackageUri>) -> Option<String> {
+        uri.as_ref()
+            .and_then(|u| u.display_for_catalog().ok())
+            .map(|u| u.to_string())
+    }
+
     #[tokio::test]
     async fn test_get_login_error_data() -> Result<(), String> {
         let data = get_login_error_data(
@@ -2009,9 +1991,8 @@ mod tests {
             .map_err(|e| e.to_string())?;
 
         assert_eq!(data.namespace, "foo/bar");
-        assert!(data.origin_url.is_some());
-        assert!(data.origin_url.unwrap().contains("test.quilt.dev"));
-        assert_eq!(data.origin_host, Some("test.quilt.dev".to_string()));
+        assert!(catalog_url_of(&data.uri).unwrap().contains("test.quilt.dev"));
+        assert_eq!(host_of(&data.uri).as_deref(), Some("test.quilt.dev"));
         Ok(())
     }
 
@@ -2135,23 +2116,22 @@ mod tests {
         let ahead = find("test/ahead");
         assert_eq!(ahead.status, "ahead");
         assert!(!ahead.has_changes); // Light phase always returns false
-        assert!(ahead.origin_url.is_some());
-        assert_eq!(ahead.origin_host.as_deref(), Some("test.quilt.dev"));
+        assert!(catalog_url_of(&ahead.uri).is_some());
+        assert_eq!(host_of(&ahead.uri).as_deref(), Some("test.quilt.dev"));
         assert!(ahead.remote_display.is_some());
-        assert_eq!(ahead.current_host.as_deref(), Some("test.quilt.dev"));
-        assert_eq!(ahead.current_bucket.as_deref(), Some("test"));
+        assert_eq!(bucket_of(&ahead.uri), Some("test"));
 
         let behind = find("test/behind");
         assert_eq!(behind.status, "behind");
-        assert!(behind.origin_url.is_some());
+        assert!(catalog_url_of(&behind.uri).is_some());
 
         let diverged = find("test/diverged");
         assert_eq!(diverged.status, "diverged");
-        assert!(diverged.origin_url.is_some());
+        assert!(catalog_url_of(&diverged.uri).is_some());
 
         let uptodate = find("test/uptodate");
         assert_eq!(uptodate.status, "up_to_date");
-        assert!(uptodate.origin_url.is_some());
+        assert!(catalog_url_of(&uptodate.uri).is_some());
 
         Ok(())
     }
@@ -2189,8 +2169,8 @@ mod tests {
         assert_eq!(pkg.status, "up_to_date");
         assert!(!pkg.has_changes); // Always false in light phase
                                    // Should still have origin
-        assert!(pkg.origin_url.is_some());
-        assert_eq!(pkg.origin_host.as_deref(), Some("test.quilt.dev"));
+        assert!(catalog_url_of(&pkg.uri).is_some());
+        assert_eq!(host_of(&pkg.uri).as_deref(), Some("test.quilt.dev"));
 
         Ok(())
     }
@@ -2224,12 +2204,11 @@ mod tests {
         let pkg = &data.packages[0];
         assert_eq!(pkg.namespace, "test/noorigin");
         assert_eq!(pkg.status, "error");
-        // No origin_url or origin_host when the catalog host is missing;
-        // current_bucket is still exposed so the "Set remote" popup can pre-fill.
-        assert!(pkg.origin_url.is_none());
-        assert!(pkg.origin_host.is_none());
-        assert!(pkg.current_host.is_none());
-        assert_eq!(pkg.current_bucket.as_deref(), Some("test"));
+        // No catalog URL or host when the catalog host is missing;
+        // bucket is still exposed so the "Set remote" popup can pre-fill.
+        assert!(catalog_url_of(&pkg.uri).is_none());
+        assert!(host_of(&pkg.uri).is_none());
+        assert_eq!(bucket_of(&pkg.uri), Some("test"));
         // remote_display should still be present
         assert!(pkg.remote_display.is_some());
 
@@ -2259,11 +2238,8 @@ mod tests {
         let pkg = &data.packages[0];
         assert_eq!(pkg.namespace, "test/local");
         assert_eq!(pkg.status, "local");
-        assert!(pkg.origin_url.is_none());
-        assert!(pkg.origin_host.is_none());
+        assert!(pkg.uri.is_none());
         assert!(pkg.remote_display.is_none());
-        assert!(pkg.current_host.is_none());
-        assert!(pkg.current_bucket.is_none());
 
         Ok(())
     }
@@ -2304,8 +2280,8 @@ mod tests {
         assert_eq!(pkg.status, "local");
         assert!(!pkg.has_changes);
         // Has origin (for Push button and disabled Catalog button in UI)
-        assert!(pkg.origin_url.is_some());
-        assert_eq!(pkg.origin_host.as_deref(), Some("test.quilt.dev"));
+        assert!(catalog_url_of(&pkg.uri).is_some());
+        assert_eq!(host_of(&pkg.uri).as_deref(), Some("test.quilt.dev"));
 
         Ok(())
     }
@@ -2531,11 +2507,9 @@ mod tests {
                 .map_err(|e| e.to_string())?;
 
         assert_eq!(data.namespace, "foo/bar");
-        assert!(data.origin_url.is_some());
-        assert!(data.origin_url.unwrap().contains("test.quilt.dev"));
-        assert_eq!(data.origin_host, Some("test.quilt.dev".to_string()));
-        assert_eq!(data.current_host.as_deref(), Some("test.quilt.dev"));
-        assert_eq!(data.current_bucket.as_deref(), Some("quilt-example"));
+        assert!(catalog_url_of(&data.uri).unwrap().contains("test.quilt.dev"));
+        assert_eq!(host_of(&data.uri).as_deref(), Some("test.quilt.dev"));
+        assert_eq!(bucket_of(&data.uri), Some("quilt-example"));
         // Mock has one record "NAME" — should appear as an entry
         assert!(!data.entries.is_empty());
         let entry = data.entries.iter().find(|e| e.filename == "NAME");
@@ -2585,10 +2559,9 @@ mod tests {
                 .map_err(|e| e.to_string())?;
 
         assert_eq!(data.status, "error");
-        assert!(data.origin_url.is_none());
-        assert!(data.origin_host.is_none());
-        assert!(data.current_host.is_none());
-        assert_eq!(data.current_bucket.as_deref(), Some("test"));
+        assert!(catalog_url_of(&data.uri).is_none());
+        assert!(host_of(&data.uri).is_none());
+        assert_eq!(bucket_of(&data.uri), Some("test"));
         Ok(())
     }
 
@@ -2624,8 +2597,8 @@ mod tests {
                 .map_err(|e| e.to_string())?;
 
         assert_eq!(data.status, "error");
-        assert!(data.origin_url.is_some());
-        assert_eq!(data.origin_host.as_deref(), Some("test.quilt.dev"));
+        assert!(catalog_url_of(&data.uri).is_some());
+        assert_eq!(host_of(&data.uri).as_deref(), Some("test.quilt.dev"));
         Ok(())
     }
 
@@ -2656,10 +2629,7 @@ mod tests {
                 .map_err(|e| e.to_string())?;
 
         assert_eq!(data.status, "local");
-        assert!(data.origin_url.is_none());
-        assert!(data.origin_host.is_none());
-        assert!(data.current_host.is_none());
-        assert!(data.current_bucket.is_none());
+        assert!(data.uri.is_none());
         Ok(())
     }
 
@@ -2701,8 +2671,8 @@ mod tests {
 
         assert_eq!(data.status, "local");
         // Has origin for Push button and disabled Catalog button
-        assert!(data.origin_url.is_some());
-        assert_eq!(data.origin_host.as_deref(), Some("test.quilt.dev"));
+        assert!(catalog_url_of(&data.uri).is_some());
+        assert_eq!(host_of(&data.uri).as_deref(), Some("test.quilt.dev"));
         Ok(())
     }
 
@@ -2814,9 +2784,8 @@ mod tests {
             .map_err(|e| e.to_string())?;
 
         assert_eq!(data.namespace, "foo/bar");
-        assert!(data.origin_url.is_some());
-        assert!(data.origin_url.unwrap().contains("test.quilt.dev"));
-        assert_eq!(data.origin_host, Some("test.quilt.dev".to_string()));
+        assert!(catalog_url_of(&data.uri).unwrap().contains("test.quilt.dev"));
+        assert_eq!(host_of(&data.uri).as_deref(), Some("test.quilt.dev"));
         Ok(())
     }
 

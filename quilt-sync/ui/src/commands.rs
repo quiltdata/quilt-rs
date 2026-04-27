@@ -1,3 +1,4 @@
+use quilt_uri::S3PackageUri;
 use serde::{Deserialize, Serialize};
 
 use crate::tauri;
@@ -8,15 +9,8 @@ use crate::tauri;
 #[serde(rename_all = "camelCase")]
 pub struct InstalledPackageData {
     pub namespace: String,
-    pub uri: String,
+    pub uri: Option<S3PackageUri>,
     pub status: String,
-    // TODO(view-model-cleanup): collapse origin_host/origin_url/current_host/
-    // current_bucket into one RemoteInfo once URI helpers live in a
-    // WASM-friendly crate.
-    pub origin_url: Option<String>,
-    pub origin_host: Option<String>,
-    pub current_host: Option<String>,
-    pub current_bucket: Option<String>,
     /// Package has been pushed — the remote is pinned to its push history
     /// and can't be edited. The toolbar's remote button becomes a read-only
     /// "Show remote" view.
@@ -45,8 +39,8 @@ pub struct EntryData {
 #[serde(rename_all = "camelCase")]
 pub struct CommitData {
     pub namespace: String,
+    pub uri: Option<S3PackageUri>,
     pub status: String,
-    pub origin_url: Option<String>,
     pub message: String,
     pub user_meta: String,
     pub user_meta_error: Option<String>,
@@ -67,7 +61,7 @@ pub struct WorkflowData {
 #[serde(rename_all = "camelCase")]
 pub struct MergeData {
     pub namespace: String,
-    pub origin_url: Option<String>,
+    pub uri: Option<S3PackageUri>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -134,11 +128,8 @@ pub struct PackageItemData {
     pub namespace: String,
     pub status: String,
     pub has_changes: bool,
-    pub origin_url: Option<String>,
-    pub origin_host: Option<String>,
+    pub uri: Option<S3PackageUri>,
     pub remote_display: Option<String>,
-    pub current_host: Option<String>,
-    pub current_bucket: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

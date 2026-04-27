@@ -8,6 +8,7 @@ use crate::components::{
     IgnorePopup, IgnorePopupData, Layout, Notification, Spinner, ToolbarActions, UnignorePopup,
     UnignorePopupData,
 };
+use crate::util;
 use crate::util::format_size;
 
 // ── Commit page ──
@@ -128,7 +129,10 @@ fn CommitContent(
     // Whether this package has a remote we can publish to. When there is no
     // resolvable origin, the `[Commit and Push]` primary is hidden and only
     // `[Commit]` is shown.
-    let has_remote = data.origin_url.is_some();
+    let has_remote = data
+        .uri
+        .as_ref()
+        .is_some_and(|u| u.catalog.is_some());
 
     let ns_for_action = namespace.clone();
     let committing = RwSignal::new(false);
@@ -435,7 +439,7 @@ fn build_toolbar_actions(
     ui_locked: RwSignal<bool>,
 ) -> ToolbarActions {
     let namespace = data.namespace.clone();
-    let origin_url = data.origin_url.clone();
+    let origin_url = data.uri.as_ref().and_then(util::catalog_url);
     let has_catalog = origin_url.is_some();
     let catalog_disabled = data.status == "local";
 
