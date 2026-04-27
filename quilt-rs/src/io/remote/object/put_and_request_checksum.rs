@@ -13,9 +13,9 @@ use crate::error::S3ErrorKind;
 use crate::io::remote::describe_sdk_error;
 use crate::io::remote::HostChecksums;
 use crate::io::remote::HostConfig;
-use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
+use quilt_uri::S3Uri;
 
 fn extract_sha256_checksum(output: &PutObjectOutput) -> Res<Option<ObjectHash>> {
     match &output.checksum_sha256 {

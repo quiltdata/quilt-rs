@@ -5395,6 +5395,7 @@ dependencies = [
  "mockall",
  "opener",
  "quilt-rs",
+ "quilt-uri",
  "rfd",
  "rust-i18n",
  "semver",

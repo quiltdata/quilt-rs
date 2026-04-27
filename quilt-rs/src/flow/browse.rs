@@ -8,10 +8,10 @@ use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::manifest::Manifest;
 use crate::paths::DomainPaths;
-use crate::uri::ManifestUri;
-use crate::uri::S3Uri;
 use crate::Error;
 use crate::Res;
+use quilt_uri::ManifestUri;
+use quilt_uri::S3Uri;
 
 async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res<Manifest> {
     let s3_uri: S3Uri = manifest_uri.clone().into();

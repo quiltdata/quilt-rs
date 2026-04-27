@@ -8,10 +8,10 @@ use crate::lineage::PackageLineage;
 use crate::manifest::Manifest;
 use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
-use crate::uri::ManifestUri;
-use crate::uri::Namespace;
-use crate::uri::Tag;
 use crate::Res;
+use quilt_uri::ManifestUri;
+use quilt_uri::Namespace;
+use quilt_uri::Tag;
 use tracing::debug;
 use tracing::info;
 
@@ -107,7 +107,7 @@ mod tests {
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::PackageLineage;
-    use crate::uri::S3Uri;
+    use quilt_uri::S3Uri;
 
     use test_log::test;
 

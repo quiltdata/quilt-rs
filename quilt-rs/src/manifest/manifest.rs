@@ -13,10 +13,10 @@ use crate::error::ManifestError;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamRowsChunk;
 use crate::io::storage::ByteStream;
-use crate::uri::S3Uri;
-use crate::uri::UriError;
 use crate::Error;
 use crate::Res;
+use quilt_uri::S3Uri;
+use quilt_uri::UriError;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MetadataSchema {

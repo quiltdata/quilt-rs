@@ -18,12 +18,12 @@ use crate::lineage::PathState;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
 use crate::paths::DomainPaths;
-use crate::uri::Host;
-use crate::uri::Namespace;
-use crate::uri::S3Uri;
 use crate::Error;
 use crate::InstallPathError;
 use crate::Res;
+use quilt_uri::Host;
+use quilt_uri::Namespace;
+use quilt_uri::S3Uri;
 
 async fn cache_immutable_object(
     storage: &impl Storage,
@@ -194,7 +194,7 @@ mod tests {
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::Home;
     use crate::paths;
-    use crate::uri::ManifestUri;
+    use quilt_uri::ManifestUri;
 
     // Verify installing the path that is already fetched to the `.quilt/objects`
     // Practically it is useful when we try to install identical files. Then we can re-use cache (because files are located by hash).

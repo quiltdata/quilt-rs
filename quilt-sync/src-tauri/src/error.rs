@@ -127,8 +127,8 @@ impl From<quilt::InstallPackageError> for Error {
     }
 }
 
-impl From<quilt::UriError> for Error {
-    fn from(err: quilt::UriError) -> Error {
+impl From<quilt_uri::UriError> for Error {
+    fn from(err: quilt_uri::UriError) -> Error {
         Error::Quilt(quilt::Error::Uri(err))
     }
 }
@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn to_frontend_string_login_required_with_host() {
-        let host = quilt::uri::Host::from_str("catalog.dev").unwrap();
+        let host = quilt_uri::Host::from_str("catalog.dev").unwrap();
         let err = Error::Quilt(quilt::Error::Login(quilt::LoginError::Required(Some(host))));
         let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
         assert_eq!(json["kind"], "login_required");
@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn to_frontend_string_login_required_registry_url() {
-        let host = quilt::uri::Host::from_str("catalog.dev").unwrap();
+        let host = quilt_uri::Host::from_str("catalog.dev").unwrap();
         let err = Error::Quilt(quilt::Error::Login(quilt::LoginError::RequiredRegistryUrl(
             host,
         )));

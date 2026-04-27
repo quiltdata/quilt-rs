@@ -23,7 +23,8 @@ For all operations, instantiate `LocalDomain` and then call some of its methods.
 
 ```rust
 use std::path::PathBuf;
-use quilt_rs::{LocalDomain, uri::{S3PackageUri, ManifestUri}};
+use quilt_rs::LocalDomain;
+use quilt_uri::{S3PackageUri, ManifestUri};
 
 # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 // Create a local domain for package management
