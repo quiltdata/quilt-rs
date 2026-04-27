@@ -77,8 +77,12 @@ async fn get_installed_package_data_from_model(
 
     let lineage = m.get_installed_package_lineage(&installed_package).await?;
 
-    let origin_host = lineage.remote_uri.as_ref().and_then(|r| r.origin.clone());
-    if let Some(host) = &origin_host {
+    let typed_uri = lineage
+        .remote_uri
+        .as_ref()
+        .map(quilt::uri::S3PackageUri::from);
+    let origin_host = typed_uri.as_ref().and_then(|u| u.catalog.as_ref());
+    if let Some(host) = origin_host {
         tracing.add_host(host);
     }
 
@@ -201,10 +205,6 @@ async fn get_installed_package_data_from_model(
         quilt::lineage::UpstreamState::Error => "error",
     };
 
-    let typed_uri = lineage
-        .remote_uri
-        .as_ref()
-        .map(quilt::uri::S3PackageUri::from);
     let remote_locked = lineage
         .remote_uri
         .as_ref()
@@ -505,8 +505,12 @@ async fn get_commit_data_from_model(
 
     let lineage = m.get_installed_package_lineage(&installed_package).await?;
 
-    let origin_host = lineage.remote_uri.as_ref().and_then(|r| r.origin.clone());
-    if let Some(host) = &origin_host {
+    let typed_uri = lineage
+        .remote_uri
+        .as_ref()
+        .map(quilt::uri::S3PackageUri::from);
+    let origin_host = typed_uri.as_ref().and_then(|u| u.catalog.as_ref());
+    if let Some(host) = origin_host {
         tracing.add_host(host);
     }
 
@@ -587,11 +591,6 @@ async fn get_commit_data_from_model(
         .filter(|f| !status.changes.contains_key(*f))
         .count();
 
-    let typed_uri = lineage
-        .remote_uri
-        .as_ref()
-        .map(quilt::uri::S3PackageUri::from);
-
     // Generate commit message from changes
     let message = crate::commit_message::generate(&status.changes);
 
@@ -607,7 +606,7 @@ async fn get_commit_data_from_model(
                     },
                     None => (String::new(), None),
                 };
-                let workflow = origin_host.as_ref().and_then(|host| {
+                let workflow = origin_host.and_then(|host| {
                     remote_manifest
                         .header
                         .workflow
