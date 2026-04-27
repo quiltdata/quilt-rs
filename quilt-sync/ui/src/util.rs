@@ -16,9 +16,10 @@ pub fn catalog_url(uri: &S3PackageUri) -> Option<String> {
 /// "Open in catalog" click handler so we only build the URL on click,
 /// not for every row at render time.
 pub fn entry_catalog_url(pkg_uri: &S3PackageUri, filename: &str) -> Option<String> {
-    if pkg_uri.catalog.is_none() {
-        return None;
-    }
+    // Existence check: skip the clone when there's no catalog, since
+    // the downstream `display_for_catalog()` would return None anyway.
+    // `?` propagates the None; the bound `&Host` is discarded.
+    pkg_uri.catalog.as_ref()?;
     let entry_uri = S3PackageUri {
         path: Some(std::path::PathBuf::from(filename)),
         ..pkg_uri.clone()
