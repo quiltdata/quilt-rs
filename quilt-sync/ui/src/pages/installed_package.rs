@@ -817,15 +817,17 @@ fn EntryRow(
         });
     };
 
-    let catalog_url = pkg_uri
-        .as_ref()
-        .and_then(|u| util::entry_catalog_url(u, &entry.filename));
+    let path_for_catalog = entry.filename.clone();
     let on_open_catalog = move |_| {
-        if let Some(url) = catalog_url.clone() {
-            leptos::task::spawn_local(async move {
-                let _ = commands::open_in_web_browser(url).await;
-            });
-        }
+        let Some(url) = pkg_uri
+            .as_ref()
+            .and_then(|u| util::entry_catalog_url(u, &path_for_catalog))
+        else {
+            return;
+        };
+        leptos::task::spawn_local(async move {
+            let _ = commands::open_in_web_browser(url).await;
+        });
     };
 
     let junky_pattern = entry.junky_pattern.clone();

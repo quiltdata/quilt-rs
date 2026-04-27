@@ -12,9 +12,13 @@ pub fn catalog_url(uri: &S3PackageUri) -> Option<String> {
 }
 
 /// Format the catalog HTTPS URL for an individual entry inside a package.
-/// Returns `None` if the parent URI has no catalog host. Built lazily on
-/// click instead of pre-formatted on the backend per entry.
+/// Returns `None` if the parent URI has no catalog host. Call from the
+/// "Open in catalog" click handler so we only build the URL on click,
+/// not for every row at render time.
 pub fn entry_catalog_url(pkg_uri: &S3PackageUri, filename: &str) -> Option<String> {
+    if pkg_uri.catalog.is_none() {
+        return None;
+    }
     let entry_uri = S3PackageUri {
         path: Some(std::path::PathBuf::from(filename)),
         ..pkg_uri.clone()
