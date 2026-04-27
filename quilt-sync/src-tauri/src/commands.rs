@@ -1929,27 +1929,13 @@ mod tests {
     use super::*;
     use crate::model::mocks;
 
-    // ── Test helpers projecting the typed URI back into the field-shaped
-    //    assertions the original tests were written against. They translate
-    //    historical `origin_url` / `origin_host` / `current_host` /
-    //    `current_bucket` checks into queries on the new `uri` field.
-
-    fn host_of(uri: &Option<quilt::uri::S3PackageUri>) -> Option<String> {
+    /// Stringify the catalog host of a typed package URI, if set.
+    /// Used by tests to verify host propagation without poking at
+    /// `Option<&Host>` chains inline.
+    fn catalog_host(uri: &Option<quilt::uri::S3PackageUri>) -> Option<String> {
         uri.as_ref()
             .and_then(|u| u.catalog.as_ref())
             .map(|h| h.to_string())
-    }
-
-    fn bucket_of(uri: &Option<quilt::uri::S3PackageUri>) -> Option<&str> {
-        uri.as_ref()
-            .map(|u| u.bucket.as_str())
-            .filter(|b| !b.is_empty())
-    }
-
-    fn catalog_url_of(uri: &Option<quilt::uri::S3PackageUri>) -> Option<String> {
-        uri.as_ref()
-            .and_then(|u| u.display_for_catalog().ok())
-            .map(|u| u.to_string())
     }
 
     #[tokio::test]
@@ -1991,8 +1977,9 @@ mod tests {
             .map_err(|e| e.to_string())?;
 
         assert_eq!(data.namespace, "foo/bar");
-        assert!(catalog_url_of(&data.uri).unwrap().contains("test.quilt.dev"));
-        assert_eq!(host_of(&data.uri).as_deref(), Some("test.quilt.dev"));
+        let uri = data.uri.as_ref().expect("URI present");
+        assert_eq!(uri.bucket, "quilt-example");
+        assert_eq!(catalog_host(&data.uri).as_deref(), Some("test.quilt.dev"));
         Ok(())
     }
 
@@ -2113,25 +2100,22 @@ mod tests {
 
         let find = |ns: &str| data.packages.iter().find(|p| p.namespace == ns).unwrap();
 
+        // Spot-check URI propagation on one package; the other packages
+        // share the same fixture shape, and `S3PackageUri::from(&ManifestUri)`
+        // is exercised by quilt-uri's own tests.
         let ahead = find("test/ahead");
         assert_eq!(ahead.status, "ahead");
         assert!(!ahead.has_changes); // Light phase always returns false
-        assert!(catalog_url_of(&ahead.uri).is_some());
-        assert_eq!(host_of(&ahead.uri).as_deref(), Some("test.quilt.dev"));
+        let ahead_uri = ahead.uri.as_ref().expect("URI present");
+        assert_eq!(ahead_uri.bucket, "test");
+        assert_eq!(ahead_uri.namespace.to_string(), "test/ahead");
+        assert_eq!(catalog_host(&ahead.uri).as_deref(), Some("test.quilt.dev"));
         assert!(ahead.remote_display.is_some());
-        assert_eq!(bucket_of(&ahead.uri), Some("test"));
 
-        let behind = find("test/behind");
-        assert_eq!(behind.status, "behind");
-        assert!(catalog_url_of(&behind.uri).is_some());
-
-        let diverged = find("test/diverged");
-        assert_eq!(diverged.status, "diverged");
-        assert!(catalog_url_of(&diverged.uri).is_some());
-
-        let uptodate = find("test/uptodate");
-        assert_eq!(uptodate.status, "up_to_date");
-        assert!(catalog_url_of(&uptodate.uri).is_some());
+        // For the rest, only the status mapping is the point of this test.
+        assert_eq!(find("test/behind").status, "behind");
+        assert_eq!(find("test/diverged").status, "diverged");
+        assert_eq!(find("test/uptodate").status, "up_to_date");
 
         Ok(())
     }
@@ -2168,9 +2152,7 @@ mod tests {
         // Light phase derives status from lineage (up_to_date, not error)
         assert_eq!(pkg.status, "up_to_date");
         assert!(!pkg.has_changes); // Always false in light phase
-                                   // Should still have origin
-        assert!(catalog_url_of(&pkg.uri).is_some());
-        assert_eq!(host_of(&pkg.uri).as_deref(), Some("test.quilt.dev"));
+        assert_eq!(catalog_host(&pkg.uri).as_deref(), Some("test.quilt.dev"));
 
         Ok(())
     }
@@ -2204,11 +2186,11 @@ mod tests {
         let pkg = &data.packages[0];
         assert_eq!(pkg.namespace, "test/noorigin");
         assert_eq!(pkg.status, "error");
-        // No catalog URL or host when the catalog host is missing;
-        // bucket is still exposed so the "Set remote" popup can pre-fill.
-        assert!(catalog_url_of(&pkg.uri).is_none());
-        assert!(host_of(&pkg.uri).is_none());
-        assert_eq!(bucket_of(&pkg.uri), Some("test"));
+        // URI is exposed (so the "Set remote" popup can pre-fill bucket)
+        // but its catalog is unset.
+        let pkg_uri = pkg.uri.as_ref().expect("URI present");
+        assert_eq!(pkg_uri.bucket, "test");
+        assert!(pkg_uri.catalog.is_none());
         // remote_display should still be present
         assert!(pkg.remote_display.is_some());
 
@@ -2279,9 +2261,8 @@ mod tests {
         assert_eq!(pkg.namespace, "test/localpush");
         assert_eq!(pkg.status, "local");
         assert!(!pkg.has_changes);
-        // Has origin (for Push button and disabled Catalog button in UI)
-        assert!(catalog_url_of(&pkg.uri).is_some());
-        assert_eq!(host_of(&pkg.uri).as_deref(), Some("test.quilt.dev"));
+        // Has origin (for Push button and disabled Catalog button in UI).
+        assert_eq!(catalog_host(&pkg.uri).as_deref(), Some("test.quilt.dev"));
 
         Ok(())
     }
@@ -2507,9 +2488,9 @@ mod tests {
                 .map_err(|e| e.to_string())?;
 
         assert_eq!(data.namespace, "foo/bar");
-        assert!(catalog_url_of(&data.uri).unwrap().contains("test.quilt.dev"));
-        assert_eq!(host_of(&data.uri).as_deref(), Some("test.quilt.dev"));
-        assert_eq!(bucket_of(&data.uri), Some("quilt-example"));
+        let uri = data.uri.as_ref().expect("URI present");
+        assert_eq!(uri.bucket, "quilt-example");
+        assert_eq!(catalog_host(&data.uri).as_deref(), Some("test.quilt.dev"));
         // Mock has one record "NAME" — should appear as an entry
         assert!(!data.entries.is_empty());
         let entry = data.entries.iter().find(|e| e.filename == "NAME");
@@ -2559,9 +2540,11 @@ mod tests {
                 .map_err(|e| e.to_string())?;
 
         assert_eq!(data.status, "error");
-        assert!(catalog_url_of(&data.uri).is_none());
-        assert!(host_of(&data.uri).is_none());
-        assert_eq!(bucket_of(&data.uri), Some("test"));
+        // URI is exposed (so the Set Remote popup can pre-fill bucket)
+        // but its catalog is unset.
+        let uri = data.uri.as_ref().expect("URI present");
+        assert_eq!(uri.bucket, "test");
+        assert!(uri.catalog.is_none());
         Ok(())
     }
 
@@ -2597,8 +2580,7 @@ mod tests {
                 .map_err(|e| e.to_string())?;
 
         assert_eq!(data.status, "error");
-        assert!(catalog_url_of(&data.uri).is_some());
-        assert_eq!(host_of(&data.uri).as_deref(), Some("test.quilt.dev"));
+        assert_eq!(catalog_host(&data.uri).as_deref(), Some("test.quilt.dev"));
         Ok(())
     }
 
@@ -2670,9 +2652,8 @@ mod tests {
                 .map_err(|e| e.to_string())?;
 
         assert_eq!(data.status, "local");
-        // Has origin for Push button and disabled Catalog button
-        assert!(catalog_url_of(&data.uri).is_some());
-        assert_eq!(host_of(&data.uri).as_deref(), Some("test.quilt.dev"));
+        // Has origin for Push button and disabled Catalog button.
+        assert_eq!(catalog_host(&data.uri).as_deref(), Some("test.quilt.dev"));
         Ok(())
     }
 
@@ -2784,8 +2765,9 @@ mod tests {
             .map_err(|e| e.to_string())?;
 
         assert_eq!(data.namespace, "foo/bar");
-        assert!(catalog_url_of(&data.uri).unwrap().contains("test.quilt.dev"));
-        assert_eq!(host_of(&data.uri).as_deref(), Some("test.quilt.dev"));
+        let uri = data.uri.as_ref().expect("URI present");
+        assert_eq!(uri.bucket, "quilt-example");
+        assert_eq!(catalog_host(&data.uri).as_deref(), Some("test.quilt.dev"));
         Ok(())
     }
 
