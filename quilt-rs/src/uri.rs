@@ -9,6 +9,7 @@ pub use quilt_uri::RevisionPointer;
 pub use quilt_uri::S3PackageHandle;
 pub use quilt_uri::S3PackageUri;
 pub use quilt_uri::S3Uri;
+pub use quilt_uri::Seconds;
 pub use quilt_uri::Tag;
 pub use quilt_uri::TagUri;
 pub use quilt_uri::UriError;

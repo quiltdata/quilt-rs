@@ -30,6 +30,7 @@ use crate::uri::ObjectUri;
 use crate::uri::RevisionPointer;
 use crate::uri::S3PackageHandle;
 use crate::uri::S3PackageUri;
+use crate::uri::Seconds;
 use crate::uri::Tag;
 use crate::uri::TagUri;
 use crate::uri::UriError;
@@ -88,7 +89,7 @@ pub async fn tag_timestamp(
     // create it with the value of {self.commit.hash}
     // TODO: Otherwise try again with the current timestamp as the tag
     // (e.g., try five times with exponential backoff, then Error)
-    let tag_timestamp = TagUri::timestamp(manifest_uri.clone(), timestamp.timestamp());
+    let tag_timestamp = TagUri::timestamp(manifest_uri.clone(), Seconds(timestamp.timestamp()));
     upload_tag(remote, manifest_uri, tag_timestamp).await
 }
 
