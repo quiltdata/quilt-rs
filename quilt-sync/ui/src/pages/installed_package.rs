@@ -1,6 +1,8 @@
 use leptos::prelude::*;
 use leptos_router::hooks::{use_navigate, use_query_map};
 
+use quilt_uri::S3PackageUri;
+
 use crate::commands::{self, EntryData, InstalledPackageData};
 use crate::components::buttons;
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
@@ -275,6 +277,7 @@ fn InstalledPackageContent(
                             <EntryRow
                                 index=item.0
                                 entry=item.1
+                                pkg_uri=uri.clone()
                                 checked_indices=checked_indices
                                 notification=notification
                                 show_ignore_popup=show_ignore_popup
@@ -723,6 +726,7 @@ fn EntriesFilter(
 fn EntryRow(
     index: usize,
     entry: EntryData,
+    pkg_uri: Option<S3PackageUri>,
     checked_indices: RwSignal<Vec<usize>>,
     notification: RwSignal<Option<Notification>>,
     show_ignore_popup: RwSignal<Option<IgnorePopupData>>,
@@ -782,7 +786,8 @@ fn EntryRow(
 
     // Action buttons
     let show_open_reveal = !is_remote && !is_deleted && !is_ignored;
-    let show_catalog = (is_remote || entry.status == "pristine") && entry.origin_url.is_some();
+    let show_catalog = (is_remote || entry.status == "pristine")
+        && pkg_uri.as_ref().is_some_and(|u| u.catalog.is_some());
 
     let ns_for_open = entry.namespace.clone();
     let path_for_open = entry.filename.clone();
@@ -812,7 +817,9 @@ fn EntryRow(
         });
     };
 
-    let catalog_url = entry.origin_url.clone();
+    let catalog_url = pkg_uri
+        .as_ref()
+        .and_then(|u| util::entry_catalog_url(u, &entry.filename));
     let on_open_catalog = move |_| {
         if let Some(url) = catalog_url.clone() {
             leptos::task::spawn_local(async move {

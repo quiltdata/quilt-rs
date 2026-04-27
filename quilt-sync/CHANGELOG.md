@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.17.1-alpha4] - 2026-04-27
+
+### Changed
+
+- Per-entry catalog HTTPS URLs are now built on the UI side when the user clicks "Open in catalog" instead of being pre-formatted by the backend for every entry on every package render (<https://github.com/quiltdata/quilt-rs/pull/NNN>)
+
 ## [v0.17.1-alpha3] - 2026-04-27
 
 ### Changed

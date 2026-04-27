@@ -1,6 +1,8 @@
 use leptos::prelude::*;
 use leptos_router::hooks::{use_navigate, use_query_map};
 
+use quilt_uri::S3PackageUri;
+
 use crate::commands::{self, CommitData, EntryData, WorkflowData};
 use crate::components::buttons;
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
@@ -295,6 +297,7 @@ fn CommitContent(
                         >
                             <CommitEntryRow
                                 entry=item.1
+                                pkg_uri=data.uri.clone()
                                 notification=notification
                                 show_ignore_popup=show_ignore_popup
                                 show_unignore_popup=show_unignore_popup
@@ -512,6 +515,7 @@ fn build_toolbar_actions(
 #[component]
 fn CommitEntryRow(
     entry: EntryData,
+    pkg_uri: Option<S3PackageUri>,
     notification: RwSignal<Option<Notification>>,
     show_ignore_popup: RwSignal<Option<IgnorePopupData>>,
     show_unignore_popup: RwSignal<Option<UnignorePopupData>>,
@@ -548,8 +552,8 @@ fn CommitEntryRow(
 
     // Action buttons
     let show_open_reveal = !is_deleted && !is_ignored && entry.status != "remote";
-    let show_catalog =
-        (entry.status == "remote" || entry.status == "pristine") && entry.origin_url.is_some();
+    let show_catalog = (entry.status == "remote" || entry.status == "pristine")
+        && pkg_uri.as_ref().is_some_and(|u| u.catalog.is_some());
 
     let ns_for_open = entry.namespace.clone();
     let path_for_open = entry.filename.clone();
@@ -577,7 +581,9 @@ fn CommitEntryRow(
         });
     };
 
-    let catalog_url = entry.origin_url.clone();
+    let catalog_url = pkg_uri
+        .as_ref()
+        .and_then(|u| util::entry_catalog_url(u, &entry.filename));
     let on_open_catalog = move |_| {
         if let Some(url) = catalog_url.clone() {
             leptos::task::spawn_local(async move {

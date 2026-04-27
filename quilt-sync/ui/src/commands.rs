@@ -29,7 +29,6 @@ pub struct EntryData {
     pub filename: String,
     pub size: u64,
     pub status: String,
-    pub origin_url: Option<String>,
     pub junky_pattern: Option<String>,
     pub ignored_by: Option<String>,
     pub namespace: String,

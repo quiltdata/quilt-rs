@@ -69,9 +69,6 @@ pub enum PackageUriError {
     #[error("Failed using Quilt+S3 URI: {0}")]
     Invalid(String),
 
-    #[error("Package has no catalog origin")]
-    MissingOrigin,
-
     #[error("Failed to parse {0}")]
     Qs(#[from] serde_qs::Error),
 }

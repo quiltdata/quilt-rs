@@ -39,7 +39,6 @@ pub struct InstalledPackageEntryData {
     pub filename: String,
     pub size: u64,
     pub status: String,
-    pub origin_url: Option<String>,
     pub junky_pattern: Option<String>,
     pub ignored_by: Option<String>,
     pub namespace: String,
@@ -78,8 +77,10 @@ async fn get_installed_package_data_from_model(
 
     let lineage = m.get_installed_package_lineage(&installed_package).await?;
 
-    let (uri, origin_host) =
-        crate::debug_tools::resolve_uri_and_host(lineage.remote_uri.as_ref(), namespace);
+    let origin_host = lineage
+        .remote_uri
+        .as_ref()
+        .and_then(|r| r.origin.clone());
     if let Some(host) = &origin_host {
         tracing.add_host(host);
     }
@@ -111,14 +112,6 @@ async fn get_installed_package_data_from_model(
 
     let mut entries_list = Vec::new();
     for (filename, change) in modified_entries {
-        let entry_uri = quilt::uri::S3PackageUri {
-            path: Some(filename.to_owned()),
-            ..uri.clone()
-        };
-        let origin = match &origin_host {
-            Some(host) => entry_uri.display_for_host(host).ok().map(|u| u.to_string()),
-            None => None,
-        };
         let (status_str, size) = match change {
             quilt::lineage::Change::Added(r) => ("added", r.size),
             quilt::lineage::Change::Modified(r) => ("modified", r.size),
@@ -128,7 +121,6 @@ async fn get_installed_package_data_from_model(
             filename: filename.display().to_string(),
             size,
             status: status_str.to_string(),
-            origin_url: origin,
             junky_pattern: junky_map.get(filename).cloned(),
             ignored_by: None,
             namespace: namespace.to_string(),
@@ -142,19 +134,10 @@ async fn get_installed_package_data_from_model(
             continue;
         }
         if let Some(row) = manifest_entries.get(filename) {
-            let entry_uri = quilt::uri::S3PackageUri {
-                path: Some(filename.to_owned()),
-                ..uri.clone()
-            };
-            let origin = match &origin_host {
-                Some(host) => entry_uri.display_for_host(host).ok().map(|u| u.to_string()),
-                None => None,
-            };
             entries_list.push(InstalledPackageEntryData {
                 filename: filename.display().to_string(),
                 size: row.size,
                 status: "pristine".to_string(),
-                origin_url: origin,
                 junky_pattern: None,
                 ignored_by: None,
                 namespace: namespace.to_string(),
@@ -168,19 +151,10 @@ async fn get_installed_package_data_from_model(
         if installed_paths.contains_key(filename) || modified_entries.contains_key(filename) {
             continue;
         }
-        let entry_uri = quilt::uri::S3PackageUri {
-            path: Some(filename.clone()),
-            ..uri.clone()
-        };
-        let origin = match &origin_host {
-            Some(host) => entry_uri.display_for_host(host).ok().map(|u| u.to_string()),
-            None => None,
-        };
         entries_list.push(InstalledPackageEntryData {
             filename: filename.display().to_string(),
             size: row.size,
             status: "remote".to_string(),
-            origin_url: origin,
             junky_pattern: None,
             ignored_by: None,
             namespace: namespace.to_string(),
@@ -194,7 +168,6 @@ async fn get_installed_package_data_from_model(
             filename: filename.display().to_string(),
             size: *size,
             status: "pristine".to_string(),
-            origin_url: None,
             junky_pattern: None,
             ignored_by: Some(pattern.clone()),
             namespace: namespace.to_string(),
@@ -535,8 +508,10 @@ async fn get_commit_data_from_model(
 
     let lineage = m.get_installed_package_lineage(&installed_package).await?;
 
-    let (uri, origin_host) =
-        crate::debug_tools::resolve_uri_and_host(lineage.remote_uri.as_ref(), namespace);
+    let origin_host = lineage
+        .remote_uri
+        .as_ref()
+        .and_then(|r| r.origin.clone());
     if let Some(host) = &origin_host {
         tracing.add_host(host);
     }
@@ -551,14 +526,6 @@ async fn get_commit_data_from_model(
     // Modified entries
     let mut entries_list = Vec::new();
     for (filename, change) in &status.changes {
-        let entry_uri = quilt::uri::S3PackageUri {
-            path: Some(filename.clone()),
-            ..uri.clone()
-        };
-        let origin = match &origin_host {
-            Some(host) => entry_uri.display_for_host(host).ok().map(|u| u.to_string()),
-            None => None,
-        };
         let (status_str, size) = match change {
             quilt::lineage::Change::Added(r) => ("added", r.size),
             quilt::lineage::Change::Modified(r) => ("modified", r.size),
@@ -568,7 +535,6 @@ async fn get_commit_data_from_model(
             filename: filename.display().to_string(),
             size,
             status: status_str.to_string(),
-            origin_url: origin,
             junky_pattern: junky_map.get(filename).cloned(),
             ignored_by: None,
             namespace: namespace.to_string(),
@@ -584,14 +550,6 @@ async fn get_commit_data_from_model(
         if status.changes.contains_key(filename) {
             continue;
         }
-        let entry_uri = quilt::uri::S3PackageUri {
-            path: Some(filename.clone()),
-            ..uri.clone()
-        };
-        let origin = match &origin_host {
-            Some(host) => entry_uri.display_for_host(host).ok().map(|u| u.to_string()),
-            None => None,
-        };
         entries_list.push(InstalledPackageEntryData {
             filename: filename.display().to_string(),
             size: row.size,
@@ -601,7 +559,6 @@ async fn get_commit_data_from_model(
                 "remote"
             }
             .to_string(),
-            origin_url: origin,
             junky_pattern: None,
             ignored_by: None,
             namespace: namespace.to_string(),
@@ -617,7 +574,6 @@ async fn get_commit_data_from_model(
             filename: filename.display().to_string(),
             size: *size,
             status: "pristine".to_string(),
-            origin_url: None,
             junky_pattern: None,
             ignored_by: Some(pattern.clone()),
             namespace: namespace.to_string(),
@@ -849,8 +805,8 @@ async fn refresh_package_status_from_model(
         });
     }
 
-    if let Ok(host) = crate::debug_tools::try_remote_origin_host(remote_uri) {
-        tracing.add_host(&host);
+    if let Some(host) = remote_uri.origin.as_ref() {
+        tracing.add_host(host);
     }
 
     let (upstream_state, has_changes) = match m

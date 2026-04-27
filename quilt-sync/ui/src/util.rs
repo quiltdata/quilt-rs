@@ -11,6 +11,17 @@ pub fn catalog_url(uri: &S3PackageUri) -> Option<String> {
     uri.display_for_catalog().ok().map(|u| u.to_string())
 }
 
+/// Format the catalog HTTPS URL for an individual entry inside a package.
+/// Returns `None` if the parent URI has no catalog host. Built lazily on
+/// click instead of pre-formatted on the backend per entry.
+pub fn entry_catalog_url(pkg_uri: &S3PackageUri, filename: &str) -> Option<String> {
+    let entry_uri = S3PackageUri {
+        path: Some(std::path::PathBuf::from(filename)),
+        ..pkg_uri.clone()
+    };
+    catalog_url(&entry_uri)
+}
+
 /// Stringified catalog host, if set.
 pub fn host_str(uri: &S3PackageUri) -> Option<String> {
     uri.catalog.as_ref().map(|h| h.to_string())

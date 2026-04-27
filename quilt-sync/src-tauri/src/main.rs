@@ -11,7 +11,6 @@ mod app;
 mod changelog;
 mod commands;
 mod commit_message;
-mod debug_tools;
 mod env;
 mod error;
 mod model;
