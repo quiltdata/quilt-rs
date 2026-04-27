@@ -45,6 +45,9 @@ pub fn list_auth_hosts(data_dir: &Path) -> Vec<String> {
 const LINEAGE_FILE: &str = ".quilt/data.json";
 
 const INSTALLED_DIR: &str = ".quilt/installed";
+// Local cache directory under `<data_dir>`. Distinct from the S3 key
+// prefix of the same name in `quilt-uri::paths` — sharing the literal
+// value today is incidental, the two contracts can evolve independently.
 const MANIFEST_DIR: &str = ".quilt/packages";
 const OBJECTS_DIR: &str = ".quilt/objects";
 

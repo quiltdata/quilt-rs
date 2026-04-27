@@ -3,6 +3,10 @@
 
 use crate::Namespace;
 
+// S3 key prefix inside a remote bucket. Distinct from the on-disk
+// cache directory of the same name in `quilt-rs::paths` — sharing the
+// literal value today is incidental, the two contracts can evolve
+// independently (e.g. a future `manifests/v2/<hash>` remote layout).
 const MANIFEST_DIR: &str = ".quilt/packages";
 const TAGS_DIR: &str = ".quilt/named_packages";
 
