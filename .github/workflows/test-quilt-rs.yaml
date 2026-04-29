@@ -18,8 +18,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
-    name: Rust project
+  quilt-uri:
+    name: quilt-uri
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
@@ -32,15 +32,34 @@ jobs:
         uses: taiki-e/install-action@nextest
 
       - name: Check formatting
-        run: cargo fmt --check -p quilt-rs -p quilt-cli -p quilt-uri
+        run: cargo fmt --check -p quilt-uri
 
       - name: Lint
-        run: cargo clippy -p quilt-rs -p quilt-cli -p quilt-uri -- --deny warnings
+        run: cargo clippy -p quilt-uri -- --deny warnings
 
-      - name: Test quilt-uri
+      - name: Test
         run: cargo nextest run -p quilt-uri
         env:
           RUST_BACKTRACE: 1
+
+  quilt-rs:
+    name: quilt-rs
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Rust for development
+        uses: ./.github/actions/setup-rust-dev
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Check formatting
+        run: cargo fmt --check -p quilt-rs
+
+      - name: Lint
+        run: cargo clippy -p quilt-rs -- --deny warnings
 
       - name: Test library
         run: cargo nextest run -p quilt-rs
@@ -56,15 +75,28 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
+  quilt-cli:
+    name: quilt-cli
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Rust for development
+        uses: ./.github/actions/setup-rust-dev
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Check formatting
+        run: cargo fmt --check -p quilt-cli
+
+      - name: Lint
+        run: cargo clippy -p quilt-cli -- --deny warnings
+
       - name: Test CLI
         run: cargo nextest run -p quilt-cli
         env:
           RUST_BACKTRACE: 1
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-
-      - name: Build library
-        run: cargo build -p quilt-rs
-
-      - name: Build CLI
-        run: cargo build -p quilt-cli
