@@ -162,12 +162,11 @@ fn LoginContent(data: LoginData, notification: RwSignal<Option<Notification>>) -
             <buttons::SubmitLogin
                 on_click=move |_| {
                     // Programmatically submit the form
-                    if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
-                        if let Some(form) = doc.query_selector("form").ok().flatten() {
-                            if let Ok(form_el) = form.dyn_into::<web_sys::HtmlFormElement>() {
-                                let _ = form_el.request_submit();
-                            }
-                        }
+                    if let Some(doc) = web_sys::window().and_then(|w| w.document())
+                        && let Some(form) = doc.query_selector("form").ok().flatten()
+                        && let Ok(form_el) = form.dyn_into::<web_sys::HtmlFormElement>()
+                    {
+                        let _ = form_el.request_submit();
                     }
                 }
                 busy=submitting

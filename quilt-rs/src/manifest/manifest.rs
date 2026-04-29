@@ -248,10 +248,10 @@ impl Manifest {
         let mut header: ManifestHeader = serde_json::from_str(&header_str)?;
 
         // Handle user_meta field based on the raw JSON
-        if let Some(user_meta) = raw_value.get("user_meta") {
-            if user_meta.is_null() {
-                header.user_meta = Some(serde_json::Value::Null);
-            }
+        if let Some(user_meta) = raw_value.get("user_meta")
+            && user_meta.is_null()
+        {
+            header.user_meta = Some(serde_json::Value::Null);
         }
 
         if header.version != "v0" {

@@ -467,16 +467,16 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             )));
         }
         let (_, mut lineage) = self.lineage.read(&self.storage).await?;
-        if let Some(existing) = &lineage.remote_uri {
-            if !existing.hash.is_empty() {
-                let same_remote = existing.bucket == bucket && existing.origin == origin;
-                if same_remote {
-                    return Ok(());
-                }
-                return Err(Error::PackageOp(PackageOpError::Push(
-                    "Cannot change remote on a package that has already been pushed".to_string(),
-                )));
+        if let Some(existing) = &lineage.remote_uri
+            && !existing.hash.is_empty()
+        {
+            let same_remote = existing.bucket == bucket && existing.origin == origin;
+            if same_remote {
+                return Ok(());
             }
+            return Err(Error::PackageOp(PackageOpError::Push(
+                "Cannot change remote on a package that has already been pushed".to_string(),
+            )));
         }
         // Validate the bucket up front so a typo surfaces here instead of
         // later at push time as an opaque S3 routing error. This is an
@@ -497,12 +497,11 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         // works immediately without a manual re-commit.
         // This can fail (e.g. not logged in yet) — the remote is already saved,
         // so we log a warning and let the user push after logging in.
-        if let Some(origin) = origin {
-            if lineage.commit.is_some() {
-                if let Err(err) = self.recommit_for_remote(lineage, origin, bucket).await {
-                    log::warn!("Remote saved but recommit failed (will retry on push): {err}");
-                }
-            }
+        if let Some(origin) = origin
+            && lineage.commit.is_some()
+            && let Err(err) = self.recommit_for_remote(lineage, origin, bucket).await
+        {
+            log::warn!("Remote saved but recommit failed (will retry on push): {err}");
         }
 
         Ok(())

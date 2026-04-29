@@ -246,12 +246,12 @@ async fn wait_for_main_window(app_handle: &AppHandle) -> Result<()> {
     while attempts < MAX_ATTEMPTS {
         if let Some(window) = app_handle.get_webview_window("main") {
             // Check window is visible and URL is valid
-            if let Ok(true) = window.is_visible() {
-                if let Ok(url) = window.url() {
-                    // Ensure the app has loaded (not about:blank)
-                    if url.host().is_some() {
-                        return Ok(());
-                    }
+            if let Ok(true) = window.is_visible()
+                && let Ok(url) = window.url()
+            {
+                // Ensure the app has loaded (not about:blank)
+                if url.host().is_some() {
+                    return Ok(());
                 }
             }
         }

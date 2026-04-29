@@ -102,12 +102,12 @@ async fn locate_files_in_package_home(
             }
 
             let logical_key = file_path.strip_prefix(package_home)?.to_path_buf();
-            if let Some(gi) = quiltignore {
-                if let Some(pattern) = quiltignore::matched_pattern(gi, &logical_key, false) {
-                    let size = dir_entry.metadata().await.map(|m| m.len()).unwrap_or(0);
-                    ignored_files.push((logical_key, file_path, pattern, size));
-                    continue;
-                }
+            if let Some(gi) = quiltignore
+                && let Some(pattern) = quiltignore::matched_pattern(gi, &logical_key, false)
+            {
+                let size = dir_entry.metadata().await.map(|m| m.len()).unwrap_or(0);
+                ignored_files.push((logical_key, file_path, pattern, size));
+                continue;
             }
             if let Some(row) = tracked_paths.remove(&logical_key) {
                 files.push((logical_key, WorkdirFile::Tracked(file_path, row)));

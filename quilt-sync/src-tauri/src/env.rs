@@ -35,10 +35,10 @@ pub fn init() {
 /// because option_env! requires string literals, not variables.
 pub fn get_var(key: &str) -> Option<String> {
     // First try runtime environment variable
-    if let Ok(value) = std::env::var(key) {
-        if !value.is_empty() {
-            return Some(value);
-        }
+    if let Ok(value) = std::env::var(key)
+        && !value.is_empty()
+    {
+        return Some(value);
     }
 
     // Fall back to build-time environment variable

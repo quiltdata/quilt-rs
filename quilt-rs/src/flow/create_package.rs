@@ -55,10 +55,10 @@ async fn walk_source_dir(
                 queue.push_back(file_path);
             } else if file_type.is_file() {
                 let relative = file_path.strip_prefix(source)?.to_path_buf();
-                if let Some(ref gi) = quiltignore {
-                    if quiltignore::is_ignored(gi, &relative, false) {
-                        continue;
-                    }
+                if let Some(ref gi) = quiltignore
+                    && quiltignore::is_ignored(gi, &relative, false)
+                {
+                    continue;
                 }
                 files.push((relative, file_path));
             }

@@ -300,11 +300,11 @@ fn PublishSettingsPopup(
             workflow_override.get_untracked()
         };
         let meta = metadata.get_untracked();
-        if !meta.trim().is_empty() {
-            if let Err(err) = serde_json::from_str::<serde_json::Value>(&meta) {
-                metadata_error.set(Some(format!("Invalid JSON: {err}")));
-                return;
-            }
+        if !meta.trim().is_empty()
+            && let Err(err) = serde_json::from_str::<serde_json::Value>(&meta)
+        {
+            metadata_error.set(Some(format!("Invalid JSON: {err}")));
+            return;
         }
         metadata_error.set(None);
         saving.set(true);
