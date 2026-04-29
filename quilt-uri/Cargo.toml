@@ -1,13 +1,13 @@
 [package]
 name = "quilt-uri"
-description = "URI types for Quilt packages (WASM-safe, no I/O)."
+description = "Parser and types for Quilt+ URIs."
+
+version = "0.1.0"
 
 # Inherit from workspace
-version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-publish = false
 
 [features]
 # Enables test-only helpers (e.g. `Default` impls) so downstream crates

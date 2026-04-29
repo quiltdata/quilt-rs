@@ -2,26 +2,14 @@
      Follow keepachangelog.com format.
      Use GitHub autolinks for PR references.
      Use nested lists when there are multiple PR links.
+     Put quilt-uri updates under `### quilt-uri` section.
      Use alpha pre-release versions (e.g. v0.27.2-alpha1) instead of [Unreleased]
      to keep changelog in sync with Cargo.toml version.
 -->
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.30.1-alpha3] - 2026-04-29
-
-### Changed
-
-- Migrated to the Rust 2024 edition; building from source now requires Rust 1.85+ (<https://github.com/quiltdata/quilt-rs/pull/646>)
-
-## [v0.30.1-alpha2] - 2026-04-24
-
-### Changed
-
-- Extract URI types (`Host`, `S3Uri`, `S3PackageUri`, `ManifestUri`, `ObjectUri`, `TagUri`, `Namespace`, `RevisionPointer`, `UriError`) into a new WASM-safe `quilt-uri` crate; `quilt_rs::uri` and `quilt_rs::UriError` are gone — depend on `quilt-uri` directly (<https://github.com/quiltdata/quilt-rs/pull/641>)
-- `Tag::Timestamp` now wraps a `Seconds(i64)` newtype (in `quilt-uri`) instead of a raw `i64`, so the unit is enforced at the type level (<https://github.com/quiltdata/quilt-rs/pull/641>)
-
-## [v0.30.1-alpha1] - 2026-04-23
+## [v0.30.1] - 2026-04-29
 
 ### Added
 
@@ -30,10 +18,15 @@
 ### Changed
 
 - Bucket-region lookup now returns a user-facing "bucket not reachable" error instead of leaking the underlying HTTP protocol artifact (<https://github.com/quiltdata/quilt-rs/pull/640>)
+- Migrated to the Rust 2024 edition; building from source now requires Rust 1.85+ (<https://github.com/quiltdata/quilt-rs/pull/646>)
 
 ### Removed
 
 - `InstalledPackage::set_origin` — use `InstalledPackage::set_remote`, which writes host and bucket in one call (<https://github.com/quiltdata/quilt-rs/pull/640>)
+
+### quilt-uri
+
+- Added v0.1.0; URI types (formerly under `quilt_rs::uri`) moved into this crate — depend on `quilt-uri` directly (<https://github.com/quiltdata/quilt-rs/pull/641>, see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
 
 ## [v0.30.0] - 2026-04-22
 

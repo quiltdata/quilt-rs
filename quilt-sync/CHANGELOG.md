@@ -2,55 +2,35 @@
      Follow keepachangelog.com format.
      Use GitHub autolinks for PR references.
      Use nested lists when there are multiple PR links.
-     Put quilt-rs updates under `### quilt-rs` section.
+     Put quilt-rs and quilt-uri updates under their respective `###` section.
      Use alpha pre-release versions (e.g. v0.13.2-alpha1) instead of [Unreleased]
      to keep changelog in sync with Cargo.toml version.
 -->
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.17.1-alpha5] - 2026-04-29
+## [v0.17.1] - 2026-04-29
+
+### Added
+
+- Edit or view a package's remote (host + bucket) from the toolbar before push, with bucket validated at save time; UI standardized on "remote" terminology (<https://github.com/quiltdata/quilt-rs/pull/640>)
 
 ### Changed
 
+- Catalog HTTPS links are now formatted on demand by the UI instead of pre-built by the backend (<https://github.com/quiltdata/quilt-rs/pull/642>)
 - Migrated to the Rust 2024 edition; building from source now requires Rust 1.85+ (<https://github.com/quiltdata/quilt-rs/pull/646>)
 
 ### Fixed
 
-- Serialized the env-mutating tests in `env.rs` with `#[serial]` so concurrent test threads no longer race on the process-wide environment (<https://github.com/quiltdata/quilt-rs/pull/646>)
-
-## [v0.17.1-alpha4] - 2026-04-27
-
-### Changed
-
-- Per-entry catalog HTTPS URLs are now built on the UI side when the user clicks "Open in catalog" instead of being pre-formatted by the backend for every entry on every package render (<https://github.com/quiltdata/quilt-rs/pull/642>)
-
-## [v0.17.1-alpha3] - 2026-04-27
-
-### Changed
-
-- Tauri view-models now ship a single typed `S3PackageUri` per package instead of separate `originUrl`/`originHost`/`currentHost`/`currentBucket` strings; the UI formats catalog HTTPS links on demand via the WASM-friendly `quilt-uri` crate (<https://github.com/quiltdata/quilt-rs/pull/642>)
-
-## [v0.17.1-alpha2] - 2026-04-23
-
-### Added
-
-- Edit a package's remote from the Installed Package toolbar before push (with current host and bucket pre-filled for in-place correction), or view it read-only as "Show remote" once pushed, since the remote is pinned to the package's lineage after that point (<https://github.com/quiltdata/quilt-rs/pull/640>)
-
-### Changed
-
-- Standardize on "remote" in UI copy — drop "origin" from button labels and status banners (<https://github.com/quiltdata/quilt-rs/pull/640>)
-- The "Set remote" popup now validates that the bucket exists on S3 before saving, so a typo fails at save time with a clear "bucket not reachable" message instead of surfacing later as an opaque error during push (<https://github.com/quiltdata/quilt-rs/pull/640>)
+- Clicking outside a notification now dismisses it (<https://github.com/quiltdata/quilt-rs/pull/636>)
 
 ### quilt-rs
 
-- Updated [from v0.30.0 to v0.30.1-alpha2](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.30.0...quilt-rs/v0.30.1-alpha2) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+- Updated [from v0.30.0 to v0.30.1](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.30.0...quilt-rs/v0.30.1) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
-## [v0.17.1-alpha1] - 2026-04-23
+### quilt-uri
 
-### Fixed
-
-- Let clicks on the empty area around the notification fall through to the dismiss overlay so notifications can be closed by clicking outside them (<https://github.com/quiltdata/quilt-rs/pull/636>)
+- Added v0.1.0, shared with the Leptos UI (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
 
 ## [v0.17.0] - 2026-04-22
 
