@@ -72,6 +72,8 @@ pub fn mixpanel_api_secret() -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use serial_test::serial;
+
     use super::*;
 
     #[test]
@@ -81,7 +83,11 @@ mod tests {
         init(); // Second call should be safe (Once)
     }
 
+    // `set_var` / `remove_var` mutate the process-wide environment, which
+    // races with any concurrent reader (other tests, or the SDKs we link
+    // against). `#[serial]` forces these tests to run one at a time.
     #[test]
+    #[serial]
     fn test_get_var_with_runtime_env() {
         // Set a runtime env var
         unsafe {
@@ -98,6 +104,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_get_var_empty_value() {
         // Set empty value
         unsafe {
