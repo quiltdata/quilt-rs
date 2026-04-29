@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.17.1-alpha6] - 2026-04-29
+
+### Fixed
+
+- Pinned `wasm-bindgen-cli` in CI to the version locked in `Cargo.lock`, so the frontend test job no longer breaks when a new `wasm-bindgen` is published
+
 ## [v0.17.1-alpha5] - 2026-04-29
 
 ### Changed
