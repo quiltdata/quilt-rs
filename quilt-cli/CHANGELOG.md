@@ -9,12 +9,6 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.25.2-alpha1] - 2026-04-30
-
-### Added
-
-- README with installation and command overview
-
 ## [v0.25.1] - 2026-04-29
 
 ### Added
