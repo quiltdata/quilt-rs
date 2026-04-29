@@ -42,8 +42,17 @@ jobs:
       - name: Lint
         run: cargo clippy --target wasm32-unknown-unknown -p quilt-sync-ui -- --deny warnings
 
+      - name: Determine wasm-bindgen version
+        id: wasm-bindgen-version
+        run: |
+          version=$(cargo metadata --format-version 1 --locked \
+            | jq -r '.packages[] | select(.name == "wasm-bindgen") | .version')
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
       - name: Install wasm-bindgen-cli
-        uses: taiki-e/install-action@wasm-bindgen
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli@${{ steps.wasm-bindgen-version.outputs.version }}
 
       - name: Test
         run: cargo test -p quilt-sync-ui --target wasm32-unknown-unknown
