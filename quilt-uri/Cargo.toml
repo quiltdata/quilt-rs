@@ -6,8 +6,10 @@ version = "0.1.0"
 
 # Inherit from workspace
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 
 [features]
 # Enables test-only helpers (e.g. `Default` impls) so downstream crates

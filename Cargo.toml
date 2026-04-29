@@ -5,8 +5,10 @@ resolver = "2"
 
 [workspace.package]
 edition = "2024"
+rust-version = "1.85"
 license = "Apache-2.0"
 repository = "https://github.com/quiltdata/quilt-rs"
+homepage = "https://www.quiltdata.com"
 
 [workspace.dependencies]
 base64 = "0.22.1"
