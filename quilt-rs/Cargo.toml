@@ -1,14 +1,14 @@
 [package]
 name = "quilt-rs"
 description = "Rust library for accessing Quilt data packages."
-documentation = "https://docs.quiltdata.com"
-homepage = "https://www.quiltdata.com"
 
 # Inherit from workspace
 version = "0.30.1"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
 async-trait.workspace = true

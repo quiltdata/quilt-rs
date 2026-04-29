@@ -6,8 +6,10 @@ version = "0.25.1"
 
 # Inherit from workspace
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 
 [[bin]]
 name = "quilt"
