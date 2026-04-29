@@ -65,6 +65,54 @@ packages, and lineage rooted at a single directory. In code, this is represented
 by `LocalDomain` (resolving filesystem paths and tracking all installed
 packages within the `.quilt` directory).
 
+## Workspace Crate Layout
+
+The workspace splits along an I/O boundary:
+
+- **WASM-safe leaf crates** (`quilt-uri` today): no I/O, compile to
+  `wasm32-unknown-unknown`. We expect 1–2 more such extractions —
+  likely candidates are checksum / hashing helpers and manifest
+  types — but the bar is "clean API and reuse value", not a default
+  path for every portable subset.
+- **`quilt-rs`**: native-only library; depends on the leaf crates plus
+  `aws-sdk-s3`, `tempfile`, `ignore`, `tokio`.
+- **Native consumers**: `quilt-cli`, `quilt-sync/src-tauri`.
+- **WASM consumer**: `quilt-sync/ui` depends on the leaf crates only.
+
+### Why separate crates, not feature flags
+
+The serious alternative is one crate with target-gated deps and
+`#[cfg]`-stripped I/O modules — `aws-sdk-s3` and friends listed under
+`[target.'cfg(not(target_arch = "wasm32"))'.dependencies]`. That
+compiles on both targets and sidesteps Cargo's feature unification.
+Extraction is preferred when a subset has a coherent external API;
+small or tightly-coupled subsets stay as `#[cfg]`-gated modules in
+`quilt-rs`. The extraction case rests on:
+
+- **Named, discoverable surface.** `quilt-uri` has its own `cargo
+  doc`, README, and changelog. With cfg-stripping, the WASM-available
+  subset is implicit — a UI author has to grep `#[cfg]` attributes
+  across `quilt-rs` to know what compiles where.
+- **Write-time discipline.** Crate boundaries make portability
+  structural: you cannot import `tokio::fs` into `quilt-uri` because
+  it is not in `Cargo.toml`. With cfg-stripping you can import it
+  into a portable module and only learn at WASM build time.
+- **Independent versioning and reuse.** UI does not churn on
+  `quilt-rs` releases that do not touch URI logic; external Rust
+  consumers can depend on `quilt-uri` without the rest.
+
+Feature flags remain right for variant *implementations* of one fixed
+API (TLS backend, allocator). Use crates when *which* API exists
+varies by target; use flags when *how* it is implemented varies by
+build.
+
+### Crates.io status
+
+`quilt-rs` is published; crates.io requires every transitive
+dependency on the registry, so the leaf crates are published too.
+They are marked "Internal — not a stable API" in their `description`:
+public visibility is a Cargo constraint, not a stability commitment.
+
 ## Core Data Structures
 
 ### ManifestRow
