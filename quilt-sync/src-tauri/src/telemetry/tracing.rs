@@ -4,8 +4,8 @@ use tempfile::TempDir;
 use tracing_appender::rolling;
 use tracing_subscriber::prelude::*;
 
-use crate::telemetry::prelude::*;
 use crate::Result;
+use crate::telemetry::prelude::*;
 
 pub enum LogsDir {
     Permanent(PathBuf),
@@ -24,10 +24,10 @@ impl LogsDir {
 fn get_logs_dir(base_path: &Path) -> Result<LogsDir> {
     let logs_dir = base_path.join("logs");
 
-    if let Err(err) = std::fs::create_dir_all(&logs_dir) {
-        if err.kind() != std::io::ErrorKind::AlreadyExists {
-            return Ok(LogsDir::Temporary(tempfile::tempdir()?));
-        }
+    if let Err(err) = std::fs::create_dir_all(&logs_dir)
+        && err.kind() != std::io::ErrorKind::AlreadyExists
+    {
+        return Ok(LogsDir::Temporary(tempfile::tempdir()?));
     }
 
     Ok(LogsDir::Permanent(logs_dir))

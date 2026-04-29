@@ -27,8 +27,8 @@ mod uninstall;
 mod fixtures;
 
 use model::Model;
-pub use output::print;
 pub use output::Std;
+pub use output::print;
 
 const DOMAIN_DIR_NAMESPACE: &str = "com.quiltdata.quilt-rs";
 
@@ -176,11 +176,11 @@ pub async fn init(args: Args) -> Result<Std, Error> {
     //       It should come either from the lineage file itself,
     //       or provided by user (when installing first time)
 
-    if let Some(dir) = args.home {
-        if let Err(err) = m.set_home(dir).await {
-            log::error!("Failed to set home directory: {err}");
-            return Ok(Std::Err(err));
-        }
+    if let Some(dir) = args.home
+        && let Err(err) = m.set_home(dir).await
+    {
+        log::error!("Failed to set home directory: {err}");
+        return Ok(Std::Err(err));
     }
 
     // Validate the lineage

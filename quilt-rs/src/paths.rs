@@ -8,9 +8,9 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 use tracing::error;
 
+use crate::Res;
 use crate::io::storage::Storage;
 use crate::lineage::Home;
-use crate::Res;
 use quilt_uri::Host;
 use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
@@ -27,14 +27,14 @@ pub const AUTH_TOKENS: &str = "tokens.json";
 pub fn list_auth_hosts(data_dir: &Path) -> Vec<String> {
     let auth_dir = data_dir.join(AUTH_DIR);
     let mut hosts: Vec<String> = Vec::new();
-    if auth_dir.exists() {
-        if let Ok(entries) = std::fs::read_dir(&auth_dir) {
-            for entry in entries.flatten() {
-                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                    if let Some(name) = entry.file_name().to_str() {
-                        hosts.push(name.to_string());
-                    }
-                }
+    if auth_dir.exists()
+        && let Ok(entries) = std::fs::read_dir(&auth_dir)
+    {
+        for entry in entries.flatten() {
+            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
+                && let Some(name) = entry.file_name().to_str()
+            {
+                hosts.push(name.to_string());
             }
         }
     }

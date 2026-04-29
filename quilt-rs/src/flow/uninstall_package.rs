@@ -1,12 +1,12 @@
 use tracing::debug;
 use tracing::info;
 
-use crate::io::storage::Storage;
-use crate::lineage::DomainLineage;
-use crate::paths;
 use crate::Error;
 use crate::InstallPackageError;
 use crate::Res;
+use crate::io::storage::Storage;
+use crate::lineage::DomainLineage;
+use crate::paths;
 use quilt_uri::Namespace;
 
 /// Uninstall package: remove files from working directory, manifest from `.quilt` and from

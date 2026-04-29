@@ -14,8 +14,8 @@ use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::Object;
 use tokio_stream::Stream;
 
-use crate::checksum::ObjectHash;
 use crate::Res;
+use crate::checksum::ObjectHash;
 use quilt_uri::Host;
 use quilt_uri::S3Uri;
 
@@ -79,7 +79,7 @@ where
 }
 
 pub use client::HttpClient;
-pub use host::{fetch_host_config, HostChecksums, HostConfig};
+pub use host::{HostChecksums, HostConfig, fetch_host_config};
 pub use s3::RemoteS3;
 pub use workflow::resolve_workflow;
 
@@ -103,7 +103,7 @@ impl<T: Stream<Item = StreamItem>> ObjectsStream for T {}
 pub trait Remote {
     /// Checks if object exists
     fn exists(&self, host: &Option<Host>, s3_uri: &S3Uri)
-        -> impl Future<Output = Res<bool>> + Send;
+    -> impl Future<Output = Res<bool>> + Send;
 
     /// Fetches the objects contents as a `ByteStream`
     fn get_object_stream(

@@ -12,10 +12,10 @@ use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 use tokio::io::BufReader;
 
-use crate::checksum::hash::Hash;
-use crate::error::ChecksumError;
 use crate::Error;
 use crate::Res;
+use crate::checksum::hash::Hash;
+use crate::error::ChecksumError;
 
 /// Multihash code for legacy or single-chunked checksums
 pub const MULTIHASH_SHA256: u64 = 0x12;
@@ -148,8 +148,8 @@ mod tests {
 
     use aws_sdk_s3::primitives::ByteStream;
 
-    use crate::io::storage::mocks::MockStorage;
     use crate::io::storage::Storage;
+    use crate::io::storage::mocks::MockStorage;
 
     #[test]
     fn test_sha256_hash_algorithm() {
@@ -173,10 +173,12 @@ mod tests {
         let sha256_chunked_hash = multihash::Multihash::wrap(0xb510, b"test").unwrap(); // SHA256_CHUNKED code
         let result = Sha256Hash::try_from(sha256_chunked_hash);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Expected SHA256 hash"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Expected SHA256 hash")
+        );
     }
 
     #[test]

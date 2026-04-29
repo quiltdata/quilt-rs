@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 
-use crate::components::buttons;
 use crate::components::Layout;
+use crate::components::buttons;
 
 #[component]
 pub fn NotFound() -> impl IntoView {

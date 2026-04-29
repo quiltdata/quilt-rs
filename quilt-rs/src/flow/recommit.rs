@@ -3,10 +3,12 @@ use tracing::debug;
 use tracing::info;
 use url::Url;
 
+use crate::Error;
+use crate::Res;
 use crate::checksum::calculate_hash;
 use crate::error::PackageOpError;
-use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::RowsStream;
+use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::remote::HostConfig;
 use crate::io::storage::Storage;
 use crate::lineage::CommitState;
@@ -16,8 +18,6 @@ use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
 use crate::manifest::Workflow;
 use crate::paths::DomainPaths;
-use crate::Error;
-use crate::Res;
 use quilt_uri::Namespace;
 
 /// Re-hash all rows from the manifest stream, converting any rows whose

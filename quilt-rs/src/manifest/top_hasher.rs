@@ -9,6 +9,7 @@ use aws_smithy_checksums::ChecksumAlgorithm;
 use serde::Serialize;
 use serde_json_fmt::JsonFormat;
 
+use crate::Res;
 use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
 #[cfg(test)]
@@ -17,7 +18,6 @@ use crate::manifest::MetadataSchema;
 use crate::manifest::Workflow;
 #[cfg(test)]
 use crate::manifest::WorkflowId;
-use crate::Res;
 
 /// Serialize JSON to match Python's json.JSONEncoder separators=(',', ':') and ensure_ascii=True
 /// TODO: Also implement sort_keys=True to fully match Python's behavior
@@ -159,13 +159,13 @@ mod tests {
     use std::path::PathBuf;
     use test_log::test;
 
+    use crate::Res;
     use crate::checksum::Crc64Hash;
     use crate::checksum::Sha256ChunkedHash;
     use crate::checksum::Sha256Hash;
     use crate::fixtures;
     use crate::fixtures::objects;
     use crate::fixtures::top_hash;
-    use crate::Res;
 
     #[test]
     fn test_manifest_header_default_no_rows() -> Res {

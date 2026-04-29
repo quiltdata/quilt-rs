@@ -1,14 +1,14 @@
 use std::path::PathBuf;
 
+use crate::Res;
 use crate::flow;
 use crate::io::manifest::resolve_tag;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::manifest::Manifest;
-use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
-use crate::Res;
+use crate::paths::copy_cached_to_installed;
 use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
 use quilt_uri::Tag;

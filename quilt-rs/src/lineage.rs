@@ -12,13 +12,13 @@ use tracing::log;
 #[cfg(test)]
 use tempfile::TempDir;
 
+use crate::Error;
+use crate::InstallPackageError;
+use crate::Res;
 use crate::error::LineageError;
 use crate::io::storage::Storage;
 use crate::io::storage::StorageExt;
 use crate::paths;
-use crate::Error;
-use crate::InstallPackageError;
-use crate::Res;
 use quilt_uri::Namespace;
 
 mod status;
@@ -259,10 +259,12 @@ mod tests {
 
     #[test]
     fn test_wrong_value() {
-        assert!(DomainLineage::from_slice(br#"{"packages": 123}"#)
-            .unwrap_err()
-            .to_string()
-            .starts_with("Failed to parse lineage file: invalid type:"));
+        assert!(
+            DomainLineage::from_slice(br#"{"packages": 123}"#)
+                .unwrap_err()
+                .to_string()
+                .starts_with("Failed to parse lineage file: invalid type:")
+        );
     }
 
     #[test]

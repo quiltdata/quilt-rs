@@ -1,6 +1,6 @@
 [package]
 name = "quilt-sync"
-version = "0.17.1-alpha4"
+version = "0.17.1-alpha5"
 authors = ["Quilt Data, Inc."]
 description = "Cross-platform desktop application for editing Quilt data packages"
 documentation = "https://docs.quiltdata.com"
@@ -51,6 +51,7 @@ zip = { version = "4", default-features = false, features = ["deflate"] }
 custom-protocol = ["tauri/custom-protocol"]
 
 [dev-dependencies]
+serial_test = "3"
 tokio-test.workspace = true
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]

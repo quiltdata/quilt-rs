@@ -133,16 +133,16 @@ pub fn save_diagnostic_zip(info: DiagnosticInfo) -> Result<PathBuf, Error> {
     zip_writer.write_all(serde_json::to_string_pretty(&metadata)?.as_bytes())?;
 
     // Add log files
-    if info.logs_dir.exists() {
-        if let Ok(entries) = std::fs::read_dir(&info.logs_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_file() {
-                    let name = format!("logs/{}", entry.file_name().to_string_lossy());
-                    zip_writer.start_file(name, options)?;
-                    let contents = std::fs::read(&path)?;
-                    zip_writer.write_all(&contents)?;
-                }
+    if info.logs_dir.exists()
+        && let Ok(entries) = std::fs::read_dir(&info.logs_dir)
+    {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                let name = format!("logs/{}", entry.file_name().to_string_lossy());
+                zip_writer.start_file(name, options)?;
+                let contents = std::fs::read(&path)?;
+                zip_writer.write_all(&contents)?;
             }
         }
     }

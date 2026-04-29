@@ -10,10 +10,10 @@ use crate::io::storage::LocalStorage;
 use crate::io::storage::Storage;
 use crate::io::storage::StorageExt;
 
+use crate::Res;
 use crate::paths::AUTH_CLIENT;
 use crate::paths::AUTH_CREDENTIALS;
 use crate::paths::AUTH_TOKENS;
-use crate::Res;
 
 #[derive(Deserialize, Serialize)]
 pub struct Tokens {

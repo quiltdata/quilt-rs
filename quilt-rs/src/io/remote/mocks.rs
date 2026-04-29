@@ -3,6 +3,7 @@ use std::path::Path;
 use aws_sdk_s3::primitives::ByteStream;
 use tracing::log;
 
+use crate::Error;
 use crate::checksum::ObjectHash;
 use crate::checksum::Sha256ChunkedHash;
 use crate::error::FsError;
@@ -10,9 +11,8 @@ use crate::error::S3Error;
 use crate::error::S3ErrorKind;
 use crate::io::remote::HostConfig;
 use crate::io::remote::RemoteObjectStream;
-use crate::io::storage::mocks::MockStorage;
 use crate::io::storage::Storage;
-use crate::Error;
+use crate::io::storage::mocks::MockStorage;
 use quilt_uri::Host;
 use quilt_uri::S3Uri;
 

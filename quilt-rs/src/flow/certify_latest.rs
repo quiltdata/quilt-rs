@@ -1,7 +1,7 @@
+use crate::Res;
 use crate::io::manifest::tag_latest;
 use crate::io::remote::Remote;
 use crate::lineage::PackageLineage;
-use crate::Res;
 use quilt_uri::ManifestUri;
 use tracing::info;
 

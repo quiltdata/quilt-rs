@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use tracing::debug;
 use tracing::info;
 
+use crate::Res;
 use crate::flow;
 use crate::flow::push::PushResult;
 use crate::io::remote::HostConfig;
@@ -13,7 +14,6 @@ use crate::lineage::PackageLineage;
 use crate::manifest::Manifest;
 use crate::manifest::Workflow;
 use crate::paths::DomainPaths;
-use crate::Res;
 use quilt_uri::Namespace;
 
 /// Options passed to the commit half of [`publish_package`].

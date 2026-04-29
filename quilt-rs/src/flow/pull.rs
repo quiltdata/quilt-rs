@@ -5,6 +5,7 @@ use tracing::error;
 use tracing::info;
 use tracing::warn;
 
+use crate::Res;
 use crate::error::PackageOpError;
 use crate::flow;
 use crate::io::manifest::resolve_tag;
@@ -13,9 +14,8 @@ use crate::io::storage::Storage;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageLineage;
 use crate::manifest::Manifest;
-use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
-use crate::Res;
+use crate::paths::copy_cached_to_installed;
 use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
 use quilt_uri::Tag;

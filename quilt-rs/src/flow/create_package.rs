@@ -7,6 +7,9 @@ use tracing::info;
 
 use url::Url;
 
+use crate::Error;
+use crate::InstallPackageError;
+use crate::Res;
 use crate::checksum::calculate_hash;
 use crate::error::PackageOpError;
 use crate::io::manifest::build_manifest_from_rows_stream;
@@ -20,9 +23,6 @@ use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
 use crate::paths::DomainPaths;
 use crate::quiltignore;
-use crate::Error;
-use crate::InstallPackageError;
-use crate::Res;
 use quilt_uri::Namespace;
 
 /// Walk a source directory recursively, collecting `(relative_path, absolute_path)` pairs.
@@ -55,10 +55,10 @@ async fn walk_source_dir(
                 queue.push_back(file_path);
             } else if file_type.is_file() {
                 let relative = file_path.strip_prefix(source)?.to_path_buf();
-                if let Some(ref gi) = quiltignore {
-                    if quiltignore::is_ignored(gi, &relative, false) {
-                        continue;
-                    }
+                if let Some(ref gi) = quiltignore
+                    && quiltignore::is_ignored(gi, &relative, false)
+                {
+                    continue;
                 }
                 files.push((relative, file_path));
             }

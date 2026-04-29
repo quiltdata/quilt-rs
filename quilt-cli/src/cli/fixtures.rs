@@ -1,8 +1,7 @@
 pub mod packages {
     pub mod default {
         pub const URI_LATEST: &str = "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs";
-        pub const URI: &str =
-            "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7";
+        pub const URI: &str = "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7";
         pub const README_LK: &str = "one/two two/three three three/READ ME.md";
         pub const README_LK_ESCAPED: &str = "one/two%20two/three%20three%20three/READ%20ME.md";
         pub const README_PK: &str = "s3://data-yaml-spec-tests/reference/quilt-rs/one/two%20two/three%20three%20three/READ%20ME.md?versionId=aIOyttmoQaE2cMcwEEoRod5G_3TZEHAW";
@@ -32,7 +31,7 @@ pub mod packages {
     }
 
     pub mod no_workflows_message_only {
-        pub const URI: &str= "quilt+s3://data-yaml-spec-tests#package=reference/message-only@ce2ca6a39eb02725b24e3ccf158022dc80c2ab96b066e5660d87abafdbaee768";
+        pub const URI: &str = "quilt+s3://data-yaml-spec-tests#package=reference/message-only@ce2ca6a39eb02725b24e3ccf158022dc80c2ab96b066e5660d87abafdbaee768";
         pub const TOP_HASH: &str =
             "ce2ca6a39eb02725b24e3ccf158022dc80c2ab96b066e5660d87abafdbaee768";
         pub const NAMESPACE: (&str, &str) = ("reference", "message-only");

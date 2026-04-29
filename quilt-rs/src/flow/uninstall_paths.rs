@@ -6,11 +6,11 @@ use tracing::debug;
 use tracing::error;
 use tracing::info;
 
-use crate::io::storage::Storage;
-use crate::lineage::PackageLineage;
 use crate::Error;
 use crate::InstallPathError;
 use crate::Res;
+use crate::io::storage::Storage;
+use crate::lineage::PackageLineage;
 
 fn not_found_error(path: &Path) -> Error {
     Error::InstallPath(InstallPathError::Uninstall(path.to_path_buf()))

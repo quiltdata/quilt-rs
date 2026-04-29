@@ -5,14 +5,14 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 
-use serde::de;
-use serde::de::Visitor;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
-use url::form_urlencoded;
+use serde::de;
+use serde::de::Visitor;
 use url::Url;
+use url::form_urlencoded;
 
 use crate::Host;
 use crate::ManifestUri;

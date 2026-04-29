@@ -4,9 +4,9 @@ use quilt_rs::lineage::InstalledPackageStatus;
 use quilt_rs::lineage::UpstreamState;
 use quilt_uri::Namespace;
 
+use crate::cli::Error;
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
-use crate::cli::Error;
 
 #[derive(Debug)]
 pub struct Input {
@@ -165,8 +165,10 @@ mod tests {
             assert!(
                 status_new_files_str.contains("foo/bar.md                               | Added")
             );
-            assert!(status_new_files_str
-                .contains("one/two two/three three three/READ ME.md | Modified"));
+            assert!(
+                status_new_files_str
+                    .contains("one/two two/three three three/READ ME.md | Modified")
+            );
         }
 
         storage
@@ -187,10 +189,14 @@ mod tests {
 
             let file_removed_status_str = format!("{status_file_removed}");
             assert!(file_removed_status_str.contains("Installed package is up to date"));
-            assert!(file_removed_status_str
-                .contains("foo/bar.md                               | Added"));
-            assert!(file_removed_status_str
-                .contains("one/two two/three three three/READ ME.md | Removed"));
+            assert!(
+                file_removed_status_str
+                    .contains("foo/bar.md                               | Added")
+            );
+            assert!(
+                file_removed_status_str
+                    .contains("one/two two/three three three/READ ME.md | Removed")
+            );
         }
 
         {

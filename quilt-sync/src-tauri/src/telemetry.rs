@@ -43,12 +43,12 @@ impl Telemetry {
     }
 
     pub fn add_host(&self, host: &quilt_uri::Host) {
-        if let Ok(mut hosts) = self.hosts.lock() {
-            if hosts.insert(host.to_string()) {
-                Sentry::configure_scope(|scope| {
-                    scope.set_tag("quilt_host", host.to_string());
-                });
-            }
+        if let Ok(mut hosts) = self.hosts.lock()
+            && hosts.insert(host.to_string())
+        {
+            Sentry::configure_scope(|scope| {
+                scope.set_tag("quilt_host", host.to_string());
+            });
         }
     }
 

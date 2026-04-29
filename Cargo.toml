@@ -4,8 +4,8 @@ default-members = ["quilt-rs", "quilt-cli", "quilt-sync/src-tauri"]
 resolver = "2"
 
 [workspace.package]
-version = "0.25.0"
-edition = "2021"
+version = "0.25.1-alpha1"
+edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/quiltdata/quilt-rs"
 

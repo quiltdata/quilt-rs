@@ -10,6 +10,8 @@ use tokio_stream::StreamExt;
 use tracing::log;
 use url::Url;
 
+use crate::Error;
+use crate::Res;
 use crate::error::ManifestError;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
@@ -24,8 +26,6 @@ use crate::manifest::TopHasher;
 use crate::manifest::Workflow;
 #[cfg(test)]
 use crate::manifest::WorkflowId;
-use crate::Error;
-use crate::Res;
 use quilt_uri::Host;
 use quilt_uri::ManifestUri;
 use quilt_uri::ObjectUri;
@@ -275,8 +275,8 @@ mod tests {
     use crate::fixtures::objects;
     use crate::fixtures::top_hash;
     use crate::io::remote::mocks::MockRemote;
-    use crate::io::storage::mocks::MockStorage;
     use crate::io::storage::LocalStorage;
+    use crate::io::storage::mocks::MockStorage;
     use quilt_uri::S3Uri;
 
     #[test(tokio::test)]

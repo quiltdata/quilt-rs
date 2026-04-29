@@ -654,8 +654,8 @@ pub mod mocks {
 
     use tempfile::TempDir;
 
-    use crate::quilt;
     use crate::Result;
+    use crate::quilt;
 
     pub fn create() -> MockQuiltModel {
         MockQuiltModel::new()
@@ -840,7 +840,9 @@ pub mod mocks {
         let model = super::Model::create(temp_dir.path());
         model.set_home(temp_dir.path()).await?;
 
-        let uri = quilt_uri::S3PackageUri::try_from("quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7")?;
+        let uri = quilt_uri::S3PackageUri::try_from(
+            "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7",
+        )?;
 
         assert_eq!(
             install_package_only(&model, &uri).await?,

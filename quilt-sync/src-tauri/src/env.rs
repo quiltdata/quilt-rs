@@ -35,10 +35,10 @@ pub fn init() {
 /// because option_env! requires string literals, not variables.
 pub fn get_var(key: &str) -> Option<String> {
     // First try runtime environment variable
-    if let Ok(value) = std::env::var(key) {
-        if !value.is_empty() {
-            return Some(value);
-        }
+    if let Ok(value) = std::env::var(key)
+        && !value.is_empty()
+    {
+        return Some(value);
     }
 
     // Fall back to build-time environment variable
@@ -72,6 +72,8 @@ pub fn mixpanel_api_secret() -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use serial_test::serial;
+
     use super::*;
 
     #[test]
@@ -81,28 +83,41 @@ mod tests {
         init(); // Second call should be safe (Once)
     }
 
+    // `set_var` / `remove_var` mutate the process-wide environment, which
+    // races with any concurrent reader (other tests, or the SDKs we link
+    // against). `#[serial]` forces these tests to run one at a time.
     #[test]
+    #[serial]
     fn test_get_var_with_runtime_env() {
         // Set a runtime env var
-        std::env::set_var("TEST_VAR", "runtime_value");
+        unsafe {
+            std::env::set_var("TEST_VAR", "runtime_value");
+        }
 
         // Should get the runtime value
         assert_eq!(get_var("TEST_VAR"), Some("runtime_value".to_string()));
 
         // Clean up
-        std::env::remove_var("TEST_VAR");
+        unsafe {
+            std::env::remove_var("TEST_VAR");
+        }
     }
 
     #[test]
+    #[serial]
     fn test_get_var_empty_value() {
         // Set empty value
-        std::env::set_var("EMPTY_VAR", "");
+        unsafe {
+            std::env::set_var("EMPTY_VAR", "");
+        }
 
         // Should return None for empty values
         assert_eq!(get_var("EMPTY_VAR"), None);
 
         // Clean up
-        std::env::remove_var("EMPTY_VAR");
+        unsafe {
+            std::env::remove_var("EMPTY_VAR");
+        }
     }
 
     #[test]

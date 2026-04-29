@@ -21,24 +21,24 @@ use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::sync::Weak;
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use sha2::Digest;
 use sha2::Sha256;
 use tokio::sync::Mutex as AsyncMutex;
 
+use crate::Error;
+use crate::Res;
 use crate::error::AuthError;
 use crate::error::LoginError;
 use crate::io::remote::client::HttpClient;
+use crate::io::storage::LocalStorage;
+use crate::io::storage::Storage;
 use crate::io::storage::auth::AuthIo;
 use crate::io::storage::auth::Credentials;
 use crate::io::storage::auth::OAuthClient;
 use crate::io::storage::auth::Tokens;
-use crate::io::storage::LocalStorage;
-use crate::io::storage::Storage;
 use crate::paths::DomainPaths;
-use crate::Error;
-use crate::Res;
 use chrono::serde::ts_seconds;
 use quilt_uri::Host;
 use serde::Deserialize;
@@ -1184,10 +1184,12 @@ mod tests {
             assert_eq!(json["token_endpoint_auth_method"], "none");
             let redirect_uris = json["redirect_uris"].as_array().expect("redirect_uris");
             assert_eq!(redirect_uris.len(), 1);
-            assert!(redirect_uris[0]
-                .as_str()
-                .unwrap()
-                .starts_with("quilt://auth/callback?host="));
+            assert!(
+                redirect_uris[0]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("quilt://auth/callback?host=")
+            );
             Ok(serde_json::from_value(serde_json::json!({
                 "client_id": "test-dcr-client-id"
             }))?)
@@ -2000,14 +2002,15 @@ mod tests {
 
         // Dropping all strong refs leaves a dead Weak behind.
         drop(arc1);
-        assert!(auth
-            .refresh_locks
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&host)
-            .expect("entry still present before sweep")
-            .upgrade()
-            .is_none(),);
+        assert!(
+            auth.refresh_locks
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&host)
+                .expect("entry still present before sweep")
+                .upgrade()
+                .is_none(),
+        );
 
         // Next lookup sweeps the dead entry and inserts a fresh one;
         // map size stays at 1 instead of accumulating per refresh.

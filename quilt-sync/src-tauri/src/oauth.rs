@@ -6,9 +6,9 @@ use url::Url;
 use tokio::sync::Mutex;
 use tokio::time::Instant;
 
+use crate::Error;
 use crate::quilt;
 use crate::telemetry::prelude::*;
-use crate::Error;
 
 const TTL: Duration = Duration::from_secs(10 * 60);
 

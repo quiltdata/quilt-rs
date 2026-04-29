@@ -677,8 +677,8 @@ fn CommitEntryRow(
 
 // ── JSON editor integration ──
 
-use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::closure::Closure;
 
 #[wasm_bindgen::prelude::wasm_bindgen]
 extern "C" {

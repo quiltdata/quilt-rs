@@ -2,8 +2,8 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
 use crate::commands;
-use crate::components::buttons;
 use crate::components::Notification;
+use crate::components::buttons;
 use crate::util::is_valid_hostname;
 
 #[derive(Clone, Debug)]
@@ -88,12 +88,11 @@ pub fn SetRemotePopup(
     let on_host_keydown = move |ev: leptos::ev::KeyboardEvent| {
         if ev.key() == "Enter" {
             // Focus the bucket input
-            if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
-                if let Some(el) = doc.get_element_by_id("set-remote-bucket") {
-                    if let Ok(input) = el.dyn_into::<web_sys::HtmlElement>() {
-                        let _ = input.focus();
-                    }
-                }
+            if let Some(doc) = web_sys::window().and_then(|w| w.document())
+                && let Some(el) = doc.get_element_by_id("set-remote-bucket")
+                && let Ok(input) = el.dyn_into::<web_sys::HtmlElement>()
+            {
+                let _ = input.focus();
             }
         } else if ev.key() == "Escape" {
             on_close_key_host();

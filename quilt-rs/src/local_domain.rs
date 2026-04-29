@@ -4,10 +4,11 @@ use std::path::PathBuf;
 
 use tracing::{debug, info, warn};
 
+use crate::Res;
 use crate::flow;
 use crate::installed_package::InstalledPackage;
-use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::RowsStream;
+use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::remote::Remote;
 use crate::io::remote::RemoteS3;
 use crate::io::storage::LocalStorage;
@@ -18,7 +19,6 @@ use crate::lineage::Home;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestHeader;
 use crate::paths;
-use crate::Res;
 use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
 

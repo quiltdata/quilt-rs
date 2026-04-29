@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use quilt_uri::Namespace;
 
+use crate::cli::Error;
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
-use crate::cli::Error;
 
 #[derive(Debug)]
 pub struct Input {
@@ -163,11 +163,13 @@ mod tests {
 
             let installed_package = output.installed_package;
             assert_eq!(installed_package.namespace, (pkg::NAMESPACE).into());
-            assert!(installed_package
-                .lineage()
-                .await?
-                .paths
-                .contains_key(&readme_logical_key));
+            assert!(
+                installed_package
+                    .lineage()
+                    .await?
+                    .paths
+                    .contains_key(&readme_logical_key)
+            );
 
             assert_eq!(
                 installed_package.package_home().await?,

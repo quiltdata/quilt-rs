@@ -1,6 +1,6 @@
-use std::collections::hash_map::RandomState;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
+use std::collections::hash_map::RandomState;
 use std::path::PathBuf;
 
 use tokio_stream::StreamExt;
@@ -8,9 +8,12 @@ use tracing::debug;
 use tracing::info;
 use url::Url;
 
+use crate::Error;
+use crate::InstallPathError;
+use crate::Res;
 use crate::error::ManifestError;
-use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::RowsStream;
+use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
@@ -18,9 +21,6 @@ use crate::lineage::PathState;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
 use crate::paths::DomainPaths;
-use crate::Error;
-use crate::InstallPathError;
-use crate::Res;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
 use quilt_uri::S3Uri;

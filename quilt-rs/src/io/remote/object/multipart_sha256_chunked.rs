@@ -6,14 +6,14 @@ use aws_sdk_s3::types::CompletedMultipartUpload;
 use aws_sdk_s3::types::CompletedPart;
 use aws_smithy_types::byte_stream::Length;
 
-use crate::checksum::chunksize_and_parts;
+use crate::Res;
 use crate::checksum::ObjectHash;
 use crate::checksum::Sha256ChunkedHash;
+use crate::checksum::chunksize_and_parts;
 use crate::error::ChecksumError;
 use crate::error::S3Error;
 use crate::error::S3ErrorKind;
 use crate::io::remote::describe_sdk_error;
-use crate::Res;
 use quilt_uri::S3Uri;
 
 pub async fn multipart_upload_and_sha256_chunksum(

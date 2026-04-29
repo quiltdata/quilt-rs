@@ -5,11 +5,11 @@ use async_trait::async_trait;
 use reqwest::header::HeaderMap;
 use reqwest_middleware::ClientBuilder;
 use reqwest_middleware::ClientWithMiddleware;
-use reqwest_retry::policies::ExponentialBackoff;
 use reqwest_retry::DefaultRetryableStrategy;
 use reqwest_retry::RetryTransientMiddleware;
 use reqwest_retry::Retryable;
 use reqwest_retry::RetryableStrategy;
+use reqwest_retry::policies::ExponentialBackoff;
 use serde::de::DeserializeOwned;
 use tracing::warn;
 

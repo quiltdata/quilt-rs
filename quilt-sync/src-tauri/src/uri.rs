@@ -6,14 +6,14 @@ use tauri::Manager;
 use tauri_plugin_deep_link::DeepLinkExt;
 use url::Url;
 
+use crate::Error;
+use crate::Result;
 use crate::commands;
 use crate::model;
 use crate::oauth::OAuthState;
 use crate::routes;
 use crate::telemetry::mixpanel::LoginFlow;
 use crate::telemetry::prelude::*;
-use crate::Error;
-use crate::Result;
 
 fn get_remote_package_url(current_url: &Url, uri_str: &str) -> Result<Url> {
     let uri: quilt_uri::S3PackageUri = uri_str.parse()?;
@@ -246,12 +246,12 @@ async fn wait_for_main_window(app_handle: &AppHandle) -> Result<()> {
     while attempts < MAX_ATTEMPTS {
         if let Some(window) = app_handle.get_webview_window("main") {
             // Check window is visible and URL is valid
-            if let Ok(true) = window.is_visible() {
-                if let Ok(url) = window.url() {
-                    // Ensure the app has loaded (not about:blank)
-                    if url.host().is_some() {
-                        return Ok(());
-                    }
+            if let Ok(true) = window.is_visible()
+                && let Ok(url) = window.url()
+            {
+                // Ensure the app has loaded (not about:blank)
+                if url.host().is_some() {
+                    return Ok(());
                 }
             }
         }

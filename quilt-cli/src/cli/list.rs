@@ -1,6 +1,6 @@
+use crate::cli::Error;
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
-use crate::cli::Error;
 
 pub struct Output {
     installed_packages_list: Vec<quilt_rs::InstalledPackage>,

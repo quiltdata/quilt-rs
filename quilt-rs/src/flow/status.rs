@@ -8,6 +8,8 @@ use tracing::debug;
 use tracing::info;
 use tracing::warn;
 
+use crate::Error;
+use crate::Res;
 use crate::checksum::calculate_hash;
 use crate::checksum::verify_hash;
 use crate::io::manifest::resolve_tag;
@@ -22,8 +24,6 @@ use crate::lineage::PackageLineage;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
 use crate::quiltignore;
-use crate::Error;
-use crate::Res;
 use quilt_uri::Tag;
 use quilt_uri::UriError;
 
@@ -102,12 +102,12 @@ async fn locate_files_in_package_home(
             }
 
             let logical_key = file_path.strip_prefix(package_home)?.to_path_buf();
-            if let Some(gi) = quiltignore {
-                if let Some(pattern) = quiltignore::matched_pattern(gi, &logical_key, false) {
-                    let size = dir_entry.metadata().await.map(|m| m.len()).unwrap_or(0);
-                    ignored_files.push((logical_key, file_path, pattern, size));
-                    continue;
-                }
+            if let Some(gi) = quiltignore
+                && let Some(pattern) = quiltignore::matched_pattern(gi, &logical_key, false)
+            {
+                let size = dir_entry.metadata().await.map(|m| m.len()).unwrap_or(0);
+                ignored_files.push((logical_key, file_path, pattern, size));
+                continue;
             }
             if let Some(row) = tracked_paths.remove(&logical_key) {
                 files.push((logical_key, WorkdirFile::Tracked(file_path, row)));
@@ -589,9 +589,11 @@ mod tests {
         .await?;
 
         assert!(status.changes.contains_key(&PathBuf::from("keep.txt")));
-        assert!(!status
-            .changes
-            .contains_key(&PathBuf::from("cache/file.txt")));
+        assert!(
+            !status
+                .changes
+                .contains_key(&PathBuf::from("cache/file.txt"))
+        );
         Ok(())
     }
 

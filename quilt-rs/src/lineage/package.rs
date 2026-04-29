@@ -2,15 +2,15 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use multihash::Multihash;
-use serde::de;
-use serde::ser;
 use serde::Deserialize;
 use serde::Serialize;
+use serde::de;
+use serde::ser;
 
-use crate::error::LineageError;
-use crate::lineage::status::UpstreamState;
 use crate::Error;
 use crate::Res;
+use crate::error::LineageError;
+use crate::lineage::status::UpstreamState;
 use quilt_uri::ManifestUri;
 
 fn multihash_to_str<S: ser::Serializer>(

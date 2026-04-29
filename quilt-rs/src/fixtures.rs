@@ -4,8 +4,8 @@ use crate::checksum::MULTIHASH_SHA256_CHUNKED;
 use aws_smithy_types::base64;
 use multihash::Multihash;
 
-use crate::error::ChecksumError;
 use crate::Res;
+use crate::error::ChecksumError;
 
 pub mod top_hash;
 
@@ -43,9 +43,9 @@ pub mod manifest_with_objects_all_sizes {
     use super::local_uri;
     use super::objects;
 
+    use crate::Res;
     use crate::manifest::Manifest;
     use crate::manifest::ManifestRow;
-    use crate::Res;
 
     const JSONL: &str = "fixtures/ref-manifest-sizes.jsonl";
 
