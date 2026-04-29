@@ -67,57 +67,39 @@ packages within the `.quilt` directory).
 
 ## Workspace Crate Layout
 
-The workspace splits along an I/O boundary. Code that touches the filesystem
-or AWS lives in `quilt-rs`; code that the WASM frontend (`quilt-sync/ui`)
-also needs to compile lives in separate, WASM-safe leaf crates that
-`quilt-rs` depends on.
+The workspace splits along an I/O boundary:
 
-- **WASM-safe leaf crates** (no I/O, compile to `wasm32-unknown-unknown`):
-  `quilt-uri` today. Future reusable subsets (e.g. manifest types,
-  checksum logic) get extracted into sibling `quilt-*` crates with the
-  same shape.
-- **`quilt-rs`**: native-only library. Depends on the leaf crates plus
-  `aws-sdk-s3`, `tempfile`, `ignore`, and `tokio` with `full` features.
-- **Native consumers of `quilt-rs`**: `quilt-cli`, `quilt-sync/src-tauri`.
-- **WASM consumer**: `quilt-sync/ui` depends on the leaf crates only,
-  never on `quilt-rs`.
+- **WASM-safe leaf crates** (`quilt-uri` today): no I/O, compile to
+  `wasm32-unknown-unknown`. Future reusable subsets are extracted as
+  sibling `quilt-*` crates.
+- **`quilt-rs`**: native-only library; depends on the leaf crates plus
+  `aws-sdk-s3`, `tempfile`, `ignore`, `tokio`.
+- **Native consumers**: `quilt-cli`, `quilt-sync/src-tauri`.
+- **WASM consumer**: `quilt-sync/ui` depends on the leaf crates only.
 
 ### Why separate crates, not feature flags
 
-A single crate with `#[cfg(feature = "io")]` gates around the AWS / I/O
-deps is technically possible. The multi-crate layout is preferred:
+A `#[cfg(feature = "io")]`-gated single crate would work, but separate
+crates are preferred:
 
-- **Compile-time enforcement.** A WASM-safe leaf crate cannot
-  accidentally pull in `aws-sdk-s3` because it is not listed in its
-  `Cargo.toml`. With feature flags the same mistake compiles fine on
-  native and breaks only on `wasm32`, often unnoticed until CI catches
-  it (and only if a `wasm32` job exists).
-- **No Cargo feature unification surprise.** When two consumers in the
-  same workspace enable different feature sets, Cargo's resolver
-  unifies them per build invocation — the WASM consumer would silently
-  inherit `io`. `resolver = "2"` helps for target-specific features but
-  does not fully solve cross-workspace unification.
-- **Scales with extraction.** Each new reusable subset becomes its own
-  small crate, not another dimension in a feature matrix.
+- **Compile-time enforcement.** A leaf crate cannot pull in
+  `aws-sdk-s3` because it is not in its `Cargo.toml`. With feature
+  flags the same mistake compiles on native and breaks only on
+  `wasm32`.
+- **No feature unification surprise.** Cargo unifies features across
+  workspace consumers, so a WASM consumer can silently inherit `io`.
+- **Scales.** Each new reusable subset is its own small crate, not
+  another feature-matrix dimension.
 
-Configuration-style feature flags remain the right tool for variant
-*implementations* of one capability (e.g. selecting between TLS
-backends). The rule of thumb: feature flags for configuration
-variation, separate crates for architectural variation (browser vs.
-server). Quilt's UI/CLI/sync-server split is architectural.
+Feature flags remain right for variant *implementations* of one
+capability (e.g. TLS backends); architectural splits are crates.
 
-This mirrors layering used by mature Rust ecosystems — `serde` ↔
-`serde_derive`, `tokio` ↔ `tokio-stream`, `leptos` ↔ `leptos_server`
-— for the same reason.
+### Crates.io status
 
-### Crates.io status of leaf crates
-
-`quilt-rs` is published to crates.io. Because crates.io requires every
-transitive dependency to also exist on the registry, the WASM-safe
-leaf crates must be published as well — even though they are
-conceptually internal. The convention is to mark them as such in the
-crate `description` ("Internal — not a stable API"); their public
-visibility is a Cargo constraint, not a stability commitment.
+`quilt-rs` is published; crates.io requires every transitive
+dependency on the registry, so the leaf crates are published too.
+They are marked "Internal — not a stable API" in their `description`:
+public visibility is a Cargo constraint, not a stability commitment.
 
 ## Core Data Structures
 
