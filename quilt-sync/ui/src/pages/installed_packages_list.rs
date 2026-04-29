@@ -251,7 +251,7 @@ fn build_package_menu(
     ui_locked: RwSignal<bool>,
     refetch: Trigger,
     show_set_remote_popup: RwSignal<Option<SetRemotePopupData>>,
-) -> impl IntoView {
+) -> impl IntoView + use<> {
     let namespace = data.namespace.clone();
     let origin_url = data.uri.as_ref().and_then(util::catalog_url);
     let origin_host = data.uri.as_ref().and_then(util::host_str);

@@ -106,7 +106,7 @@ pub async fn track_event(
     mixpanel: &Option<Arc<Mixpanel>>,
     event: &MixpanelEvent,
 ) -> crate::Result<()> {
-    if let Some(ref mixpanel) = mixpanel {
+    if let Some(mixpanel) = mixpanel {
         let (event_name, properties) = event.clone().try_into()?;
         mixpanel.track(&event_name, properties).await?;
     }
@@ -114,7 +114,7 @@ pub async fn track_event(
 }
 
 pub fn init(mixpanel: &Option<Arc<Mixpanel>>) {
-    if let Some(ref mixpanel) = mixpanel {
+    if let Some(mixpanel) = mixpanel {
         let mixpanel_clone = mixpanel.clone();
         tauri::async_runtime::spawn(async move {
             match MixpanelEvent::AppLaunched.try_into() {

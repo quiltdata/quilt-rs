@@ -252,7 +252,7 @@ impl RemoteS3 {
                 }
                 config
             }
-            Some(ref host) => {
+            Some(host) => {
                 // Smoke-test eagerly so `Login required` surfaces now rather
                 // than inside a later S3 call. The provider below handles
                 // subsequent refreshes per-request.

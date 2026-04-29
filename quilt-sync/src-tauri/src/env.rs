@@ -84,25 +84,33 @@ mod tests {
     #[test]
     fn test_get_var_with_runtime_env() {
         // Set a runtime env var
-        std::env::set_var("TEST_VAR", "runtime_value");
+        unsafe {
+            std::env::set_var("TEST_VAR", "runtime_value");
+        }
 
         // Should get the runtime value
         assert_eq!(get_var("TEST_VAR"), Some("runtime_value".to_string()));
 
         // Clean up
-        std::env::remove_var("TEST_VAR");
+        unsafe {
+            std::env::remove_var("TEST_VAR");
+        }
     }
 
     #[test]
     fn test_get_var_empty_value() {
         // Set empty value
-        std::env::set_var("EMPTY_VAR", "");
+        unsafe {
+            std::env::set_var("EMPTY_VAR", "");
+        }
 
         // Should return None for empty values
         assert_eq!(get_var("EMPTY_VAR"), None);
 
         // Clean up
-        std::env::remove_var("EMPTY_VAR");
+        unsafe {
+            std::env::remove_var("EMPTY_VAR");
+        }
     }
 
     #[test]
