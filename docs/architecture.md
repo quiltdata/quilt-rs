@@ -110,8 +110,8 @@ build.
 
 `quilt-rs` is published; crates.io requires every transitive
 dependency on the registry, so the leaf crates are published too.
-They are marked "Internal — not a stable API" in their `description`:
-public visibility is a Cargo constraint, not a stability commitment.
+Public visibility is a Cargo constraint, not a stability commitment —
+leaf crates may evolve without SemVer guarantees independent of `quilt-rs`.
 
 ## Core Data Structures
 
