@@ -5478,7 +5478,7 @@ dependencies = [
  "serde-json-fmt",
  "serde_json",
  "serde_yaml",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "tempfile",
  "test-log",
  "thiserror 2.0.18",
