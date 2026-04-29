@@ -27,6 +27,20 @@ jobs:
 
       - uses: taiki-e/install-action@parse-changelog
 
+      - name: Resolve version and changelog notes
+        id: meta
+        env:
+          CRATE: ${{ inputs.crate }}
+        run: |
+          set -euo pipefail
+          VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r --arg c "$CRATE" '.packages[] | select(.name == $c) | .version')
+          [ -n "$VERSION" ] || { echo "::error::Could not resolve version for $CRATE"; exit 1; }
+          parse-changelog "$CRATE/CHANGELOG.md" "$VERSION" > release-notes.md
+          {
+            echo "tag=$CRATE/v$VERSION"
+            echo "title=$CRATE v$VERSION"
+          } >> "$GITHUB_OUTPUT"
+
       - uses: rust-lang/crates-io-auth-action@bbd81622f20ce9e2dd9622e3218b975523e45bbe # v1.0.4
         id: auth
 
@@ -38,12 +52,8 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          CRATE: ${{ inputs.crate }}
         run: |
-          set -euo pipefail
-          VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r --arg c "$CRATE" '.packages[] | select(.name == $c) | .version')
-          NOTES=$(parse-changelog "$CRATE/CHANGELOG.md" "$VERSION")
-          gh release create "$CRATE/v$VERSION" \
+          gh release create "${{ steps.meta.outputs.tag }}" \
             --target "$GITHUB_SHA" \
-            --title "$CRATE v$VERSION" \
-            --notes "$NOTES"
+            --title "${{ steps.meta.outputs.title }}" \
+            --notes-file release-notes.md
