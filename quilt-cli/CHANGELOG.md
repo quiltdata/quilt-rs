@@ -2,6 +2,7 @@
      Follow keepachangelog.com format.
      Use GitHub autolinks for PR references.
      Use nested lists when there are multiple PR links.
+     Put quilt-rs and quilt-uri updates under their respective `###` section.
      Use alpha pre-release versions (e.g. v0.24.1-alpha1) instead of [Unreleased]
      to keep changelog in sync with Cargo.toml version.
 -->
@@ -10,9 +11,22 @@
 
 ## [v0.25.1] - 2026-04-29
 
+### Added
+
+- First crates.io release — install with `cargo install quilt-cli`, then run `quilt`
+
 ### Changed
 
+- `quilt push` now warns when the latest tag could not be updated (remote has newer changes) instead of silently succeeding
 - Migrated to the Rust 2024 edition; building from source now requires Rust 1.85+ (<https://github.com/quiltdata/quilt-rs/pull/646>)
+
+### quilt-rs
+
+- Updated [from v0.28.0 to v0.30.1](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.28.0...quilt-rs/v0.30.1) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+### quilt-uri
+
+- Added v0.1.0 (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
 
 ## [v0.25.0] - 2026-04-07
 
