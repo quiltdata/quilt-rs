@@ -3,13 +3,13 @@ use std::fmt;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::paths;
 use crate::Host;
 use crate::Namespace;
 use crate::RevisionPointer;
 use crate::S3PackageUri;
 use crate::S3Uri;
 use crate::UriError;
+use crate::paths;
 
 /// URI for manifest.
 /// Manifests are stored in immutable files.
@@ -34,7 +34,7 @@ impl TryFrom<S3PackageUri> for ManifestUri {
                 RevisionPointer::Tag(_) => {
                     return Err(UriError::Package(
                         "Hash is required for that conversion".to_string(),
-                    ))
+                    ));
                 }
             },
         })

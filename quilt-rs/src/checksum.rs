@@ -7,12 +7,12 @@ use std::fmt;
 use std::path::Path;
 use std::path::PathBuf;
 
+use crate::Res;
 use crate::error::ChecksumError;
 use crate::io::remote::HostChecksums;
 use crate::io::remote::HostConfig;
 use crate::io::storage::Storage;
 use crate::manifest::ManifestRow;
-use crate::Res;
 
 mod crc64nvme;
 mod hash;
@@ -24,11 +24,11 @@ pub use crc64nvme::Crc64Hash;
 pub use crc64nvme::MULTIHASH_CRC64_NVME;
 pub use hash::Hash;
 pub use remote::hash_sha256_checksum;
-pub use sha256::Sha256Hash;
 pub use sha256::MULTIHASH_SHA256;
-pub(crate) use sha256_chunked::chunksize_and_parts;
-pub use sha256_chunked::Sha256ChunkedHash;
+pub use sha256::Sha256Hash;
 pub use sha256_chunked::MULTIHASH_SHA256_CHUNKED;
+pub use sha256_chunked::Sha256ChunkedHash;
+pub(crate) use sha256_chunked::chunksize_and_parts;
 
 /// Type-safe container for object's checksum using struct types
 /// You can convert it to or from `Multihash<256>`.
@@ -216,11 +216,11 @@ mod tests {
 
     use aws_sdk_s3::primitives::ByteStream;
 
-    use crate::io::storage::mocks::MockStorage;
+    use crate::Res;
     use crate::io::storage::LocalStorage;
     use crate::io::storage::Storage;
     use crate::io::storage::StorageExt;
-    use crate::Res;
+    use crate::io::storage::mocks::MockStorage;
 
     #[test]
     fn test_conversion_errors() {
@@ -228,20 +228,24 @@ mod tests {
         let sha256_hash = multihash::Multihash::wrap(MULTIHASH_SHA256, b"test").unwrap();
         let result = Sha256ChunkedHash::try_from(sha256_hash);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Expected SHA256 chunked hash"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Expected SHA256 chunked hash")
+        );
 
         // Create a SHA256Chunked hash and try to convert it to SHA256 (should fail)
         let sha256_chunked_hash =
             multihash::Multihash::wrap(MULTIHASH_SHA256_CHUNKED, b"test").unwrap();
         let result = Sha256Hash::try_from(sha256_chunked_hash);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Expected SHA256 hash"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Expected SHA256 hash")
+        );
     }
 
     #[test]
@@ -290,10 +294,12 @@ mod tests {
         let result = ObjectHash::try_from(invalid_multihash);
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Unsupported multihash code: 0x9999"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Unsupported multihash code: 0x9999")
+        );
 
         Ok(())
     }
@@ -369,7 +375,7 @@ mod tests {
             _ => {
                 return Err(crate::Error::Checksum(ChecksumError::InvalidMultihash(
                     "Expected ObjectHash::Sha256 variant".to_string(),
-                )))
+                )));
             }
         }
 
@@ -388,7 +394,7 @@ mod tests {
             _ => {
                 return Err(crate::Error::Checksum(ChecksumError::InvalidMultihash(
                     "Expected ObjectHash::Sha256Chunked variant".to_string(),
-                )))
+                )));
             }
         }
 
@@ -406,7 +412,7 @@ mod tests {
             _ => {
                 return Err(crate::Error::Checksum(ChecksumError::InvalidMultihash(
                     "Expected ObjectHash::Crc64 variant".to_string(),
-                )))
+                )));
             }
         }
 

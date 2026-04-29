@@ -27,8 +27,8 @@ mod uninstall;
 mod fixtures;
 
 use model::Model;
-pub use output::print;
 pub use output::Std;
+pub use output::print;
 
 const DOMAIN_DIR_NAMESPACE: &str = "com.quiltdata.quilt-rs";
 

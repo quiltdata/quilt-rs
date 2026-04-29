@@ -2,9 +2,9 @@ use quilt_rs::io::remote::HostConfig;
 use quilt_rs::lineage::CommitState;
 use quilt_uri::Namespace;
 
+use crate::cli::Error;
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
-use crate::cli::Error;
 
 #[derive(Clone, Debug)]
 pub struct Input {

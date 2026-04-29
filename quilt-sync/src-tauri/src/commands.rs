@@ -9,6 +9,7 @@ use tauri::Manager;
 use tauri_plugin_updater::UpdaterExt;
 use tokio::sync;
 
+use crate::Error;
 use crate::app;
 use crate::commit_message;
 use crate::model;
@@ -17,13 +18,12 @@ use crate::publish_settings::PublishSettings;
 use crate::publish_settings::SharedPublishSettings;
 use crate::quilt;
 use crate::routes;
-use crate::Error;
 
 use crate::changelog;
 use crate::model::QuiltModel;
 use crate::notify::Notify;
 use crate::telemetry::diagnostics;
-use crate::telemetry::{mixpanel::LoginFlow, prelude::*, MixpanelEvent};
+use crate::telemetry::{MixpanelEvent, mixpanel::LoginFlow, prelude::*};
 
 fn get_default_home_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, Error> {
     let path_resolver = app_handle.path();
@@ -901,9 +901,7 @@ async fn open_directory_picker_command(app_handle: &tauri::AppHandle) -> Result<
     let canonical_home = home_dir.join("QuiltSync");
     let canonical_home_already_exists = canonical_home.exists();
 
-    if !canonical_home_already_exists
-        && let Err(e) = fs::create_dir_all(&canonical_home)
-    {
+    if !canonical_home_already_exists && let Err(e) = fs::create_dir_all(&canonical_home) {
         return Err(Error::from(e));
     }
 
@@ -2072,8 +2070,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_installed_packages_list_data_with_origin_shows_cached_status(
-    ) -> Result<(), String> {
+    async fn test_installed_packages_list_data_with_origin_shows_cached_status()
+    -> Result<(), String> {
         let mut model = mocks::create();
 
         let pkgs = vec![make_installed_package(("test", "pkg"))];

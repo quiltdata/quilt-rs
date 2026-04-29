@@ -1,12 +1,12 @@
 use std::fmt;
 use std::str::FromStr;
 
-use crate::paths;
 use crate::ManifestUri;
 use crate::Namespace;
 use crate::S3PackageHandle;
 use crate::S3Uri;
 use crate::UriError;
+use crate::paths;
 
 /// Unix timestamp in seconds since the epoch.
 ///
@@ -128,10 +128,12 @@ mod tests {
     fn test_tag_from_str_invalid() {
         let result: Result<Tag, _> = "invalid-tag".parse();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Unsupported tag format"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Unsupported tag format")
+        );
     }
 
     #[test]

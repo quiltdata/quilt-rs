@@ -6,6 +6,7 @@ use tempfile::TempDir;
 
 use quilt_rs::lineage::Home;
 
+use crate::cli::Error;
 use crate::cli::browse;
 use crate::cli::commit;
 use crate::cli::create;
@@ -16,7 +17,6 @@ use crate::cli::pull;
 use crate::cli::push;
 use crate::cli::status;
 use crate::cli::uninstall;
-use crate::cli::Error;
 
 pub struct Model {
     local_domain: quilt_rs::LocalDomain,

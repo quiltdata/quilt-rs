@@ -3,13 +3,13 @@ use tracing::debug;
 use tracing::info;
 use tracing::warn;
 
+use crate::Error;
+use crate::Res;
 use crate::error::ManifestError;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::manifest::Manifest;
 use crate::paths::DomainPaths;
-use crate::Error;
-use crate::Res;
 use quilt_uri::ManifestUri;
 use quilt_uri::S3Uri;
 
@@ -114,9 +114,9 @@ mod tests {
 
     use crate::fixtures;
     use crate::io::remote::mocks::MockRemote;
-    use crate::io::storage::mocks::MockStorage;
     use crate::io::storage::LocalStorage;
     use crate::io::storage::StorageExt;
+    use crate::io::storage::mocks::MockStorage;
 
     /// Verifies that when a manifest is already cached,
     /// the `browse_remote_manifest` function retrieves it from the cache
@@ -289,9 +289,11 @@ mod tests {
         assert!(storage.exists(cache_path).await);
 
         // Verify that the cached manifest contains valid records
-        assert!(cached_manifest
-            .get_record(&PathBuf::from("e0-0.txt"))
-            .is_some());
+        assert!(
+            cached_manifest
+                .get_record(&PathBuf::from("e0-0.txt"))
+                .is_some()
+        );
 
         Ok(())
     }

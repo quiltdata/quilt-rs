@@ -11,11 +11,11 @@ use tokio::fs::File;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 
-use crate::checksum::hash::Hash;
-use crate::checksum::Sha256Hash;
-use crate::error::ChecksumError;
 use crate::Error;
 use crate::Res;
+use crate::checksum::Sha256Hash;
+use crate::checksum::hash::Hash;
+use crate::error::ChecksumError;
 
 /// Multihash code for chunksums
 pub const MULTIHASH_SHA256_CHUNKED: u64 = 0xb510;
@@ -206,10 +206,12 @@ mod tests {
         let sha256_hash = multihash::Multihash::wrap(0x12, b"test").unwrap(); // SHA256 code
         let result = Sha256ChunkedHash::try_from(sha256_hash);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Expected SHA256 chunked hash"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Expected SHA256 chunked hash")
+        );
     }
 
     #[test]

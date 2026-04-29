@@ -6,14 +6,14 @@ use tauri::Manager;
 use tauri_plugin_deep_link::DeepLinkExt;
 use url::Url;
 
+use crate::Error;
+use crate::Result;
 use crate::commands;
 use crate::model;
 use crate::oauth::OAuthState;
 use crate::routes;
 use crate::telemetry::mixpanel::LoginFlow;
 use crate::telemetry::prelude::*;
-use crate::Error;
-use crate::Result;
 
 fn get_remote_package_url(current_url: &Url, uri_str: &str) -> Result<Url> {
     let uri: quilt_uri::S3PackageUri = uri_str.parse()?;

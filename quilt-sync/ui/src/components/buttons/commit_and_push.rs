@@ -1,7 +1,7 @@
 use leptos::callback::UnsyncCallback;
 use leptos::prelude::*;
 
-use super::{base::cta::ButtonCta, ButtonKind};
+use super::{ButtonKind, base::cta::ButtonCta};
 
 const KIND: ButtonKind = ButtonKind::Publish;
 

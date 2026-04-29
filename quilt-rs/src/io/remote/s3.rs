@@ -1,14 +1,14 @@
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::RwLock;
 
 use aws_config::BehaviorVersion;
+use aws_credential_types::Credentials;
+use aws_credential_types::provider::ProvideCredentials;
 use aws_credential_types::provider::error::CredentialsError;
 use aws_credential_types::provider::future;
-use aws_credential_types::provider::ProvideCredentials;
-use aws_credential_types::Credentials;
 use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_types::region::Region;
@@ -16,6 +16,8 @@ use tracing::debug;
 use tracing::info;
 use tracing::warn;
 
+use crate::Error;
+use crate::Res;
 use crate::auth;
 use crate::auth::OAuthParams;
 use crate::checksum::ObjectHash;
@@ -23,19 +25,17 @@ use crate::error::LoginError;
 use crate::error::RemoteCatalogError;
 use crate::error::S3Error;
 use crate::error::S3ErrorKind;
-use crate::io::remote::describe_sdk_error;
-use crate::io::remote::host::fetch_host_config;
-use crate::io::remote::object::multipart_upload_and_sha256_chunksum;
-use crate::io::remote::object::put_and_request_checksum;
 use crate::io::remote::HostChecksums;
 use crate::io::remote::HostConfig;
 use crate::io::remote::HttpClient;
 use crate::io::remote::Remote;
-use crate::io::storage::auth::OAuthClient;
+use crate::io::remote::describe_sdk_error;
+use crate::io::remote::host::fetch_host_config;
+use crate::io::remote::object::multipart_upload_and_sha256_chunksum;
+use crate::io::remote::object::put_and_request_checksum;
 use crate::io::storage::LocalStorage;
+use crate::io::storage::auth::OAuthClient;
 use crate::paths::DomainPaths;
-use crate::Error;
-use crate::Res;
 use quilt_uri::Host;
 use quilt_uri::S3Uri;
 
@@ -449,10 +449,10 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
 
-    use crate::fixtures::objects::less_than_8mb;
-    use crate::fixtures::objects::zero_bytes;
     use crate::fixtures::objects::LESS_THAN_8MB_HASH_B64;
     use crate::fixtures::objects::ZERO_HASH_B64;
+    use crate::fixtures::objects::less_than_8mb;
+    use crate::fixtures::objects::zero_bytes;
     use crate::io::storage::LocalStorage;
     use crate::paths::DomainPaths;
 

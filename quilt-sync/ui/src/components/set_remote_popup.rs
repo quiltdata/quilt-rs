@@ -2,8 +2,8 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
 use crate::commands;
-use crate::components::buttons;
 use crate::components::Notification;
+use crate::components::buttons;
 use crate::util::is_valid_hostname;
 
 #[derive(Clone, Debug)]

@@ -8,9 +8,9 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 use tracing::error;
 
+use crate::Res;
 use crate::io::storage::Storage;
 use crate::lineage::Home;
-use crate::Res;
 use quilt_uri::Host;
 use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;

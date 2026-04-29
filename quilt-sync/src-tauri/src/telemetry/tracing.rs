@@ -4,8 +4,8 @@ use tempfile::TempDir;
 use tracing_appender::rolling;
 use tracing_subscriber::prelude::*;
 
-use crate::telemetry::prelude::*;
 use crate::Result;
+use crate::telemetry::prelude::*;
 
 pub enum LogsDir {
     Permanent(PathBuf),

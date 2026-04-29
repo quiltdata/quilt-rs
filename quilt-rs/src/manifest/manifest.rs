@@ -8,13 +8,13 @@ use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncRead;
 use tokio::io::BufReader;
 
+use crate::Error;
+use crate::Res;
 use crate::checksum;
 use crate::error::ManifestError;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamRowsChunk;
 use crate::io::storage::ByteStream;
-use crate::Error;
-use crate::Res;
 use quilt_uri::S3Uri;
 use quilt_uri::UriError;
 
@@ -81,7 +81,7 @@ impl<'de> Deserialize<'de> for Workflow {
                     Err(_) => {
                         return Err(serde::de::Error::custom(Error::Uri(UriError::S3(
                             schema_url.to_string(),
-                        ))))
+                        ))));
                     }
                 },
                 None => None,
@@ -400,9 +400,9 @@ mod tests {
     use crate::fixtures;
     use aws_sdk_s3::primitives::ByteStream;
 
-    use crate::io::storage::mocks::MockStorage;
     use crate::io::storage::LocalStorage;
     use crate::io::storage::Storage;
+    use crate::io::storage::mocks::MockStorage;
 
     #[test]
     fn test_matches_content_identical_rows() -> Res {
@@ -458,10 +458,12 @@ mod tests {
 
         let result = Manifest::from_reader(file).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("missing field `version`"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("missing field `version`")
+        );
         Ok(())
     }
 
@@ -495,10 +497,12 @@ mod tests {
 
         let result = Manifest::from_reader(file).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Failed to read the manifest header"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to read the manifest header")
+        );
         Ok(())
     }
 
@@ -534,10 +538,12 @@ mod tests {
 
         let result = Manifest::from_reader(file).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("missing field `logical_key`"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("missing field `logical_key`")
+        );
         Ok(())
     }
 

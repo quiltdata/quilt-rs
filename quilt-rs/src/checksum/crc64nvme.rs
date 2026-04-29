@@ -12,10 +12,10 @@ use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 use tokio::io::BufReader;
 
-use crate::checksum::hash::Hash;
-use crate::error::ChecksumError;
 use crate::Error;
 use crate::Res;
+use crate::checksum::hash::Hash;
+use crate::error::ChecksumError;
 
 /// Multihash code for CRC64-NVMe
 pub const MULTIHASH_CRC64_NVME: u64 = 0x0165;
@@ -166,8 +166,8 @@ mod tests {
 
     use aws_sdk_s3::primitives::ByteStream;
 
-    use crate::io::storage::mocks::MockStorage;
     use crate::io::storage::Storage;
+    use crate::io::storage::mocks::MockStorage;
 
     #[test]
     fn test_crc64_hash_algorithm() {
@@ -208,10 +208,12 @@ mod tests {
         let sha256_hash = multihash::Multihash::wrap(0x12, b"test").unwrap(); // SHA256 code
         let result = Crc64Hash::try_from(sha256_hash);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Expected CRC64-NVMe hash"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Expected CRC64-NVMe hash")
+        );
     }
 
     #[test]

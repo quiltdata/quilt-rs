@@ -3,14 +3,16 @@ use std::path::PathBuf;
 
 use tracing::log;
 
+use crate::Error;
+use crate::Res;
 use crate::error::LoginError;
 use crate::error::PackageOpError;
 use crate::flow;
 use crate::flow::cache_remote_manifest;
-use crate::io::remote::resolve_workflow;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
 use crate::io::remote::RemoteS3;
+use crate::io::remote::resolve_workflow;
 use crate::io::storage::LocalStorage;
 use crate::io::storage::Storage;
 use crate::lineage;
@@ -21,8 +23,6 @@ use crate::manifest::Manifest;
 use crate::manifest::Workflow;
 use crate::paths;
 use crate::paths::copy_cached_to_installed;
-use crate::Error;
-use crate::Res;
 use quilt_uri::Host;
 use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
@@ -128,7 +128,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                 Err(Error::Login(LoginError::Required(_))) => {
                     return Err(Error::Login(LoginError::Required(
                         lineage.remote_uri.as_ref().and_then(|r| r.origin.clone()),
-                    )))
+                    )));
                 }
                 Err(err) => {
                     log::warn!("Failed to refresh latest hash: {err}");
@@ -276,12 +276,12 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             Some(_) => {
                 return Err(Error::PackageOp(PackageOpError::Publish(
                     "Remote bucket not set. Use set_remote first.".to_string(),
-                )))
+                )));
             }
             None => {
                 return Err(Error::PackageOp(PackageOpError::Publish(
                     "No remote configured. Use set_remote first.".to_string(),
-                )))
+                )));
             }
         };
 
@@ -353,12 +353,12 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             Some(_) => {
                 return Err(Error::PackageOp(PackageOpError::Push(
                     "Remote bucket not set. Use set_remote first.".to_string(),
-                )))
+                )));
             }
             None => {
                 return Err(Error::PackageOp(PackageOpError::Push(
                     "No remote configured. Use set_remote first.".to_string(),
-                )))
+                )));
             }
         };
 

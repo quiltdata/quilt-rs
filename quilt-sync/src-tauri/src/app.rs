@@ -1,8 +1,8 @@
 use semver::Version;
 use tauri::PackageInfo;
 
-use crate::telemetry::prelude::*;
 use crate::telemetry::LogsDir;
+use crate::telemetry::prelude::*;
 
 pub struct App {
     pub version: Version,

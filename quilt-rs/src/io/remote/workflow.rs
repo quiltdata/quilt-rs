@@ -1,13 +1,13 @@
 use serde_yaml::Value as YamlValue;
 use tokio::io::AsyncReadExt;
 
+use crate::Error;
+use crate::Res;
 use crate::error::RemoteCatalogError;
 use crate::io::remote::Remote;
 use crate::manifest::MetadataSchema;
 use crate::manifest::Workflow;
 use crate::manifest::WorkflowId;
-use crate::Error;
-use crate::Res;
 use quilt_uri::Host;
 use quilt_uri::S3Uri;
 

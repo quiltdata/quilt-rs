@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 
-use super::{base::cta::CtaLink, ButtonKind};
+use super::{ButtonKind, base::cta::CtaLink};
 
 const KIND: ButtonKind = ButtonKind::CreateNewRevision;
 

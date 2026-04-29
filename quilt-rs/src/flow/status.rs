@@ -8,6 +8,8 @@ use tracing::debug;
 use tracing::info;
 use tracing::warn;
 
+use crate::Error;
+use crate::Res;
 use crate::checksum::calculate_hash;
 use crate::checksum::verify_hash;
 use crate::io::manifest::resolve_tag;
@@ -22,8 +24,6 @@ use crate::lineage::PackageLineage;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
 use crate::quiltignore;
-use crate::Error;
-use crate::Res;
 use quilt_uri::Tag;
 use quilt_uri::UriError;
 
@@ -589,9 +589,11 @@ mod tests {
         .await?;
 
         assert!(status.changes.contains_key(&PathBuf::from("keep.txt")));
-        assert!(!status
-            .changes
-            .contains_key(&PathBuf::from("cache/file.txt")));
+        assert!(
+            !status
+                .changes
+                .contains_key(&PathBuf::from("cache/file.txt"))
+        );
         Ok(())
     }
 

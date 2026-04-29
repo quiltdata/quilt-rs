@@ -1,8 +1,8 @@
 use quilt_rs::manifest::ManifestRow;
 
+use crate::cli::Error;
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
-use crate::cli::Error;
 
 pub struct Output {
     manifest: quilt_rs::manifest::Manifest,

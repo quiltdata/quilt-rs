@@ -8,11 +8,13 @@ use tracing::debug;
 use tracing::info;
 use url::Url;
 
+use crate::Error;
+use crate::Res;
 use crate::error::ManifestError;
 use crate::error::PackageOpError;
-use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamRowsChunk;
+use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::storage::Storage;
 use crate::lineage::Change;
 use crate::lineage::CommitState;
@@ -24,8 +26,6 @@ use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
 use crate::manifest::Workflow;
 use crate::paths::DomainPaths;
-use crate::Error;
-use crate::Res;
 use quilt_uri::Namespace;
 
 async fn stream_local_with_changes(
@@ -623,7 +623,9 @@ mod tests {
             "Initial lineage has commit already"
         );
         assert!(
-            lineage.paths.contains_key(&PathBuf::from("one/two two/three three three/READ ME.md")),
+            lineage
+                .paths
+                .contains_key(&PathBuf::from("one/two two/three three three/READ ME.md")),
             "Initial lineage doesn't have path, but should because we test installed and modified file"
         );
 
@@ -642,7 +644,9 @@ mod tests {
         .await?;
 
         assert!(
-            lineage.paths.contains_key(&PathBuf::from("one/two two/three three three/READ ME.md")),
+            lineage
+                .paths
+                .contains_key(&PathBuf::from("one/two two/three three three/READ ME.md")),
             "Commited lineage doesn't have path, but should have. We added new file and it should be there."
         );
         assert!(

@@ -1,6 +1,9 @@
 use tracing::debug;
 use tracing::info;
 
+use crate::Error;
+use crate::InstallPackageError;
+use crate::Res;
 #[cfg(test)]
 use crate::error::FsError;
 use crate::flow;
@@ -9,11 +12,8 @@ use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::DomainLineage;
 use crate::lineage::PackageLineage;
-use crate::paths::copy_cached_to_installed;
 use crate::paths::DomainPaths;
-use crate::Error;
-use crate::InstallPackageError;
-use crate::Res;
+use crate::paths::copy_cached_to_installed;
 use quilt_uri::ManifestUri;
 use quilt_uri::Tag;
 
@@ -89,8 +89,8 @@ mod tests {
     use std::str::FromStr;
 
     use crate::io::remote::mocks::MockRemote;
-    use crate::io::storage::mocks::MockStorage;
     use crate::io::storage::LocalStorage;
+    use crate::io::storage::mocks::MockStorage;
     use crate::lineage::Home;
     use quilt_uri::S3Uri;
 

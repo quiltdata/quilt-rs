@@ -1,8 +1,8 @@
 use quilt_uri::Host;
 
+use crate::cli::Error;
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
-use crate::cli::Error;
 
 #[derive(Debug)]
 pub struct Input {
