@@ -2,7 +2,7 @@
 name = "quilt-cli"
 description = "Command-line interface for Quilt data packages"
 
-version = "0.25.1-alpha1"
+version = "0.25.1"
 
 # Inherit from workspace
 edition.workspace = true
@@ -15,7 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Library dependencies
-quilt-rs = { path = "../quilt-rs" }
+quilt-rs = { path = "../quilt-rs", version = "0.30.1" }
 quilt-uri = { path = "../quilt-uri", version = "0.1.0" }
 
 # CLI-specific dependencies
