@@ -8,6 +8,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.1.1-alpha1] - 2026-04-30
+
+### Added
+
+- README with a brief overview of the URI types
+
 ## [v0.1.0] - 2026-04-29
 
 ### Added
