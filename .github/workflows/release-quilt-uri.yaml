@@ -1,4 +1,4 @@
-name: Release quilt_rs
+name: Release quilt-uri
 
 on: workflow_dispatch
 
@@ -21,7 +21,7 @@ jobs:
         uses: rust-lang/crates-io-auth-action@bbd81622f20ce9e2dd9622e3218b975523e45bbe # v1.0.4
         id: auth
 
-      - name: Publish quilt-rs
+      - name: Publish quilt-uri
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-        run: cargo publish -p quilt-rs
+        run: cargo publish -p quilt-uri
