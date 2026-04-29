@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.17.1-alpha5] - 2026-04-29
+
+### Changed
+
+- Migrated to the Rust 2024 edition; building from source now requires Rust 1.85+ (<https://github.com/quiltdata/quilt-rs/pull/646>)
+
 ## [v0.17.1-alpha4] - 2026-04-27
 
 ### Changed
