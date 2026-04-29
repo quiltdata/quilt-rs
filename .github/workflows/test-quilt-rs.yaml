@@ -7,6 +7,8 @@ on:
       - "!quilt-rs/**/*.md"
       - "quilt-cli/**"
       - "!quilt-cli/**/*.md"
+      - "quilt-uri/**"
+      - "!quilt-uri/**/*.md"
       - "Cargo.*"
       - "rust-toolchain.toml"
       - ".github/workflows/test-quilt-rs.yaml"
@@ -30,10 +32,15 @@ jobs:
         uses: taiki-e/install-action@nextest
 
       - name: Check formatting
-        run: cargo fmt --check -p quilt-rs -p quilt-cli
+        run: cargo fmt --check -p quilt-rs -p quilt-cli -p quilt-uri
 
       - name: Lint
-        run: cargo clippy -p quilt-rs -p quilt-cli -- --deny warnings
+        run: cargo clippy -p quilt-rs -p quilt-cli -p quilt-uri -- --deny warnings
+
+      - name: Test quilt-uri
+        run: cargo nextest run -p quilt-uri
+        env:
+          RUST_BACKTRACE: 1
 
       - name: Test library
         run: cargo nextest run -p quilt-rs
