@@ -159,7 +159,10 @@ impl From<S3PackageUri> for S3PackageHandle {
 
 impl From<&S3PackageUri> for S3PackageHandle {
     fn from(uri: &S3PackageUri) -> S3PackageHandle {
-        uri.clone().into()
+        S3PackageHandle {
+            bucket: uri.bucket.clone(),
+            namespace: uri.namespace.clone(),
+        }
     }
 }
 
@@ -174,7 +177,10 @@ impl From<ManifestUri> for S3PackageHandle {
 
 impl From<&ManifestUri> for S3PackageHandle {
     fn from(uri: &ManifestUri) -> S3PackageHandle {
-        uri.clone().into()
+        S3PackageHandle {
+            bucket: uri.bucket.clone(),
+            namespace: uri.namespace.clone(),
+        }
     }
 }
 
