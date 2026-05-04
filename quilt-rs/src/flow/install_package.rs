@@ -61,7 +61,7 @@ pub async fn install_package(
     let latest = resolve_tag(
         remote,
         &manifest_uri.origin,
-        &manifest_uri.into(),
+        manifest_uri,
         Tag::Latest,
     )
     .await?;

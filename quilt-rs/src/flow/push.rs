@@ -182,7 +182,7 @@ pub async fn push_package(
     lineage.latest_hash = match resolve_tag(
         remote,
         &new_manifest_uri.origin,
-        &manifest_uri.into(),
+        manifest_uri,
         Tag::Latest,
     )
     .await

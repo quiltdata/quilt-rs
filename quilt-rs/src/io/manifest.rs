@@ -116,13 +116,14 @@ async fn upload_tag(remote: &impl Remote, manifest_uri: &ManifestUri, tag_uri: T
 pub async fn resolve_tag(
     remote: &impl Remote,
     host: &Option<Host>,
-    uri: &S3PackageHandle,
+    uri: impl Into<S3PackageHandle>,
     tag: Tag,
 ) -> Res<ManifestUri> {
-    let tag_uri = TagUri::new(uri.bucket.clone(), uri.namespace.clone(), tag);
+    let handle: S3PackageHandle = uri.into();
+    let tag_uri = TagUri::new(handle.bucket.clone(), handle.namespace.clone(), tag);
     let stream = remote.get_object_stream(host, &tag_uri.into()).await?;
     let hash = bytestream_to_string(stream.body).await?;
-    let S3PackageHandle { bucket, namespace } = uri.to_owned();
+    let S3PackageHandle { bucket, namespace } = handle;
     let origin = host.to_owned();
     Ok(ManifestUri {
         hash,
@@ -143,7 +144,7 @@ async fn resolve_top_hash(
     match &uri.revision {
         RevisionPointer::Hash(top_hash) => Ok(top_hash.clone()),
         RevisionPointer::Tag(tag_str) => {
-            Ok(resolve_tag(remote, host, &uri.into(), tag_str.parse()?)
+            Ok(resolve_tag(remote, host, uri, tag_str.parse()?)
                 .await?
                 .hash)
         }
