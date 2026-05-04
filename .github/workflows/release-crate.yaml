@@ -51,6 +51,11 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: cargo publish -p ${{ inputs.crate }}
 
+      # quilt-cli releases start as drafts; the `binaries` job uploads
+      # archives to them, then a maintainer smoke-tests the assets and
+      # promotes the release manually (`gh release edit <tag> --draft=false`,
+      # matching the QuiltSync workflow). Other crates publish immediately
+      # — they don't have prebuilt binaries to wait on.
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -58,11 +63,13 @@ jobs:
           gh release create "${{ steps.meta.outputs.tag }}" \
             --target "$GITHUB_SHA" \
             --title "${{ steps.meta.outputs.title }}" \
-            --notes-file release-notes.md
+            --notes-file release-notes.md \
+            ${{ inputs.crate == 'quilt-cli' && '--draft' || '' }}
 
-  # Uploads `quilt-cli-<target>.tar.gz` for `cargo binstall`. Filename
-  # mirrors the `pkg-url` template in `quilt-cli/Cargo.toml`'s
-  # `[package.metadata.binstall]` — drift breaks `cargo binstall`.
+  # Uploads `quilt-cli-<target>.tar.gz` to the draft release for
+  # `cargo binstall`. Filename mirrors the `pkg-url` template in
+  # `quilt-cli/Cargo.toml`'s `[package.metadata.binstall]` —
+  # drift breaks `cargo binstall`.
   binaries:
     needs: publish
     if: ${{ inputs.crate == 'quilt-cli' }}
