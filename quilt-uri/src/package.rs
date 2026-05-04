@@ -139,7 +139,6 @@ impl<'de> Deserialize<'de> for Namespace {
     }
 }
 
-// TODO: From<AsRef<S3PackageHandle>> or From<AsRef<S3PackageUri>>?
 /// This is kinda URI for the package without revisions.
 /// You can use it when you don't know or don't care about revision of the package.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -159,7 +158,10 @@ impl From<S3PackageUri> for S3PackageHandle {
 
 impl From<&S3PackageUri> for S3PackageHandle {
     fn from(uri: &S3PackageUri) -> S3PackageHandle {
-        uri.clone().into()
+        S3PackageHandle {
+            bucket: uri.bucket.clone(),
+            namespace: uri.namespace.clone(),
+        }
     }
 }
 
@@ -174,7 +176,10 @@ impl From<ManifestUri> for S3PackageHandle {
 
 impl From<&ManifestUri> for S3PackageHandle {
     fn from(uri: &ManifestUri) -> S3PackageHandle {
-        uri.clone().into()
+        S3PackageHandle {
+            bucket: uri.bucket.clone(),
+            namespace: uri.namespace.clone(),
+        }
     }
 }
 
@@ -382,7 +387,13 @@ impl From<ManifestUri> for S3PackageUri {
 
 impl From<&ManifestUri> for S3PackageUri {
     fn from(uri: &ManifestUri) -> S3PackageUri {
-        S3PackageUri::from(uri.clone())
+        S3PackageUri {
+            bucket: uri.bucket.clone(),
+            catalog: uri.origin.clone(),
+            namespace: uri.namespace.clone(),
+            path: None,
+            revision: RevisionPointer::Hash(uri.hash.clone()),
+        }
     }
 }
 

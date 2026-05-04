@@ -78,7 +78,7 @@ pub async fn pull_package(
 
     debug!("⏳ Resolving latest manifest");
     let origin = remote_uri.origin.clone();
-    let manifest_uri = resolve_tag(remote, &origin, &remote_uri.into(), Tag::Latest).await?;
+    let manifest_uri = resolve_tag(remote, &origin, remote_uri, Tag::Latest).await?;
     debug!("✔️ Latest manifest resolved: {}", manifest_uri.display());
 
     debug!("⏳ Caching remote manifest");

@@ -1,8 +1,6 @@
 use std::fmt;
 use std::str::FromStr;
 
-use crate::ManifestUri;
-use crate::Namespace;
 use crate::S3PackageHandle;
 use crate::S3Uri;
 use crate::UriError;
@@ -68,40 +66,51 @@ impl FromStr for Tag {
 /// So, it is an URI for the file that contains link to immutable unnamed manifest.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TagUri {
-    bucket: String,
-    namespace: Namespace,
+    handle: S3PackageHandle,
     tag: Tag,
 }
 
 impl TagUri {
-    pub fn new(bucket: String, namespace: Namespace, tag: Tag) -> Self {
+    pub fn new(uri: impl Into<S3PackageHandle>, tag: Tag) -> Self {
         TagUri {
-            bucket,
-            namespace,
+            handle: uri.into(),
             tag,
         }
     }
 
     /// Creates TagURI for the latest revision of the package
-    pub fn latest(uri: S3PackageHandle) -> Self {
-        TagUri::new(uri.bucket, uri.namespace, Tag::Latest)
+    pub fn latest(uri: impl Into<S3PackageHandle>) -> Self {
+        TagUri::new(uri, Tag::Latest)
     }
 
     /// Creates TagURI for the revision of the package.
-    pub fn timestamp(manifest_uri: ManifestUri, seconds: Seconds) -> Self {
-        TagUri {
-            bucket: manifest_uri.bucket,
-            namespace: manifest_uri.namespace,
-            tag: Tag::Timestamp(seconds),
-        }
+    pub fn timestamp(uri: impl Into<S3PackageHandle>, seconds: Seconds) -> Self {
+        TagUri::new(uri, Tag::Timestamp(seconds))
+    }
+}
+
+impl From<TagUri> for S3PackageHandle {
+    fn from(uri: TagUri) -> S3PackageHandle {
+        uri.handle
     }
 }
 
 impl From<TagUri> for S3Uri {
     fn from(uri: TagUri) -> S3Uri {
-        let key = paths::tag_key(&uri.namespace, &uri.tag.to_string());
+        let key = paths::tag_key(&uri.handle.namespace, &uri.tag.to_string());
         S3Uri {
-            bucket: uri.bucket,
+            bucket: uri.handle.bucket,
+            key,
+            version: None,
+        }
+    }
+}
+
+impl From<&TagUri> for S3Uri {
+    fn from(uri: &TagUri) -> S3Uri {
+        let key = paths::tag_key(&uri.handle.namespace, &uri.tag.to_string());
+        S3Uri {
+            bucket: uri.handle.bucket.clone(),
             key,
             version: None,
         }

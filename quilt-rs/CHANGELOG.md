@@ -9,6 +9,16 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.31.0] - 2026-05-04
+
+### Changed
+
+- `resolve_tag` now accepts `impl Into<S3PackageHandle>` instead of `&S3PackageHandle`, letting callers pass an `S3PackageUri` or `ManifestUri` directly without a temporary handle (<https://github.com/quiltdata/quilt-rs/pull/660>)
+
+### quilt-uri
+
+- Bumped to v0.2.0 (<https://github.com/quiltdata/quilt-rs/pull/660>, see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
+
 ## [v0.30.1] - 2026-04-29
 
 ### Added

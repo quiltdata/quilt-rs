@@ -32,6 +32,7 @@ use quilt_uri::ObjectUri;
 use quilt_uri::RevisionPointer;
 use quilt_uri::S3PackageHandle;
 use quilt_uri::S3PackageUri;
+use quilt_uri::S3Uri;
 use quilt_uri::Seconds;
 use quilt_uri::Tag;
 use quilt_uri::TagUri;
@@ -89,14 +90,14 @@ pub async fn tag_timestamp(
     // create it with the value of {self.commit.hash}
     // TODO: Otherwise try again with the current timestamp as the tag
     // (e.g., try five times with exponential backoff, then Error)
-    let tag_timestamp = TagUri::timestamp(manifest_uri.clone(), Seconds(timestamp.timestamp()));
+    let tag_timestamp = TagUri::timestamp(manifest_uri, Seconds(timestamp.timestamp()));
     upload_tag(remote, manifest_uri, tag_timestamp).await
 }
 
 /// Upload file containing hash of the manifest
 /// "tagged" as "latest".
 pub async fn tag_latest(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res {
-    let tag_latest = TagUri::latest(manifest_uri.clone().into());
+    let tag_latest = TagUri::latest(manifest_uri);
     upload_tag(remote, manifest_uri, tag_latest).await
 }
 
@@ -116,13 +117,15 @@ async fn upload_tag(remote: &impl Remote, manifest_uri: &ManifestUri, tag_uri: T
 pub async fn resolve_tag(
     remote: &impl Remote,
     host: &Option<Host>,
-    uri: &S3PackageHandle,
+    uri: impl Into<S3PackageHandle>,
     tag: Tag,
 ) -> Res<ManifestUri> {
-    let tag_uri = TagUri::new(uri.bucket.clone(), uri.namespace.clone(), tag);
-    let stream = remote.get_object_stream(host, &tag_uri.into()).await?;
+    let tag_uri = TagUri::new(uri, tag);
+    let stream = remote
+        .get_object_stream(host, &S3Uri::from(&tag_uri))
+        .await?;
     let hash = bytestream_to_string(stream.body).await?;
-    let S3PackageHandle { bucket, namespace } = uri.to_owned();
+    let S3PackageHandle { bucket, namespace } = tag_uri.into();
     let origin = host.to_owned();
     Ok(ManifestUri {
         hash,
@@ -143,9 +146,7 @@ async fn resolve_top_hash(
     match &uri.revision {
         RevisionPointer::Hash(top_hash) => Ok(top_hash.clone()),
         RevisionPointer::Tag(tag_str) => {
-            Ok(resolve_tag(remote, host, &uri.into(), tag_str.parse()?)
-                .await?
-                .hash)
+            Ok(resolve_tag(remote, host, uri, tag_str.parse()?).await?.hash)
         }
     }
 }
@@ -277,7 +278,6 @@ mod tests {
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::LocalStorage;
     use crate::io::storage::mocks::MockStorage;
-    use quilt_uri::S3Uri;
 
     #[test(tokio::test)]
     async fn test_resolve_existing_hash() -> Res {

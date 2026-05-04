@@ -9,11 +9,19 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.25.2-alpha1] - 2026-04-30
+## [v0.25.2] - 2026-05-04
 
 ### Added
 
-- Publish prebuilt macOS (x86_64, aarch64) and Linux (x86_64-gnu) binaries on each release; `cargo binstall quilt-cli` now downloads them instead of compiling from source
+- Publish prebuilt macOS (x86_64, aarch64) and Linux (x86_64-gnu) binaries on each release; `cargo binstall quilt-cli` now downloads them instead of compiling from source (<https://github.com/quiltdata/quilt-rs/pull/659>)
+
+### quilt-rs
+
+- Bumped to v0.31.0 (<https://github.com/quiltdata/quilt-rs/pull/660>, see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+### quilt-uri
+
+- Bumped to v0.2.0 (<https://github.com/quiltdata/quilt-rs/pull/660>, see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
 
 ## [v0.25.1] - 2026-04-29
 
