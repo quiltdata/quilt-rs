@@ -179,21 +179,15 @@ pub async fn push_package(
     debug!("✔️ Timestamp tag added");
 
     debug!("⏳ Checking remote's latest manifest hash");
-    lineage.latest_hash = match resolve_tag(
-        remote,
-        &new_manifest_uri.origin,
-        manifest_uri,
-        Tag::Latest,
-    )
-    .await
-    {
-        Ok(uri) => uri.hash,
-        Err(e) if e.is_not_found() => {
-            debug!("✔️ No existing latest tag — first push for this package");
-            String::new()
-        }
-        Err(e) => return Err(e),
-    };
+    lineage.latest_hash =
+        match resolve_tag(remote, &new_manifest_uri.origin, manifest_uri, Tag::Latest).await {
+            Ok(uri) => uri.hash,
+            Err(e) if e.is_not_found() => {
+                debug!("✔️ No existing latest tag — first push for this package");
+                String::new()
+            }
+            Err(e) => return Err(e),
+        };
     debug!("✔️ Latest hash is: {}", lineage.latest_hash);
 
     lineage.remote_uri = Some(new_manifest_uri.clone());

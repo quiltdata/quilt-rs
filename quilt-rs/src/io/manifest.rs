@@ -146,9 +146,7 @@ async fn resolve_top_hash(
     match &uri.revision {
         RevisionPointer::Hash(top_hash) => Ok(top_hash.clone()),
         RevisionPointer::Tag(tag_str) => {
-            Ok(resolve_tag(remote, host, uri, tag_str.parse()?)
-                .await?
-                .hash)
+            Ok(resolve_tag(remote, host, uri, tag_str.parse()?).await?.hash)
         }
     }
 }

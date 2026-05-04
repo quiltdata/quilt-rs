@@ -58,13 +58,7 @@ pub async fn install_package(
     );
 
     debug!("⏳ Resolving latest hash for this package handle");
-    let latest = resolve_tag(
-        remote,
-        &manifest_uri.origin,
-        manifest_uri,
-        Tag::Latest,
-    )
-    .await?;
+    let latest = resolve_tag(remote, &manifest_uri.origin, manifest_uri, Tag::Latest).await?;
     debug!("✔️ Latest hash is {}", latest.hash);
 
     let mut lineage = lineage;
