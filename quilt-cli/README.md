@@ -9,6 +9,16 @@ The binary is named `quilt`.
 
 ## Install
 
+Recommended (downloads a prebuilt binary):
+
+```sh
+cargo binstall quilt-cli
+```
+
+Prebuilt binaries are currently published for macOS (x86_64, aarch64)
+and Linux (x86_64-gnu). On other platforms, or if `cargo-binstall` is
+not installed, build from source:
+
 ```sh
 cargo install quilt-cli
 ```

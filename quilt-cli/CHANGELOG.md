@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.25.2-alpha1] - 2026-04-30
+
+### Added
+
+- Publish prebuilt macOS (x86_64, aarch64) and Linux (x86_64-gnu) binaries on each release; `cargo binstall quilt-cli` now downloads them instead of compiling from source
+
 ## [v0.25.1] - 2026-04-29
 
 ### Added

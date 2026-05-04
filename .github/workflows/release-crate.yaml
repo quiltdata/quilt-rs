@@ -18,6 +18,8 @@ jobs:
     permissions:
       id-token: write
       contents: write
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
     steps:
       - uses: actions/checkout@v6
 
@@ -57,3 +59,45 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "${{ steps.meta.outputs.title }}" \
             --notes-file release-notes.md
+
+  binaries:
+    needs: publish
+    if: ${{ inputs.crate == 'quilt-cli' }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            os: macos-15
+          - target: aarch64-apple-darwin
+            os: macos-15
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-24.04
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ./.github/actions/setup-rust-minimal
+        with:
+          cache-target: release
+          targets: ${{ matrix.target }}
+
+      - name: Build quilt-cli
+        run: cargo build -p quilt-cli --release --target ${{ matrix.target }}
+
+      - name: Package archive
+        run: |
+          set -euo pipefail
+          STAGE="quilt-cli-${{ matrix.target }}"
+          mkdir -p "$STAGE"
+          cp "target/${{ matrix.target }}/release/quilt" "$STAGE/"
+          tar -czf "${STAGE}.tar.gz" "$STAGE"
+
+      - name: Upload asset to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ needs.publish.outputs.tag }}" \
+            "quilt-cli-${{ matrix.target }}.tar.gz" --clobber
