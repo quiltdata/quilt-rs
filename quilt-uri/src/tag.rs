@@ -1,7 +1,6 @@
 use std::fmt;
 use std::str::FromStr;
 
-use crate::Namespace;
 use crate::S3PackageHandle;
 use crate::S3Uri;
 use crate::UriError;
@@ -67,17 +66,14 @@ impl FromStr for Tag {
 /// So, it is an URI for the file that contains link to immutable unnamed manifest.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TagUri {
-    bucket: String,
-    namespace: Namespace,
+    handle: S3PackageHandle,
     tag: Tag,
 }
 
 impl TagUri {
     pub fn new(uri: impl Into<S3PackageHandle>, tag: Tag) -> Self {
-        let S3PackageHandle { bucket, namespace } = uri.into();
         TagUri {
-            bucket,
-            namespace,
+            handle: uri.into(),
             tag,
         }
     }
@@ -93,11 +89,28 @@ impl TagUri {
     }
 }
 
+impl From<TagUri> for S3PackageHandle {
+    fn from(uri: TagUri) -> S3PackageHandle {
+        uri.handle
+    }
+}
+
 impl From<TagUri> for S3Uri {
     fn from(uri: TagUri) -> S3Uri {
-        let key = paths::tag_key(&uri.namespace, &uri.tag.to_string());
+        let key = paths::tag_key(&uri.handle.namespace, &uri.tag.to_string());
         S3Uri {
-            bucket: uri.bucket,
+            bucket: uri.handle.bucket,
+            key,
+            version: None,
+        }
+    }
+}
+
+impl From<&TagUri> for S3Uri {
+    fn from(uri: &TagUri) -> S3Uri {
+        let key = paths::tag_key(&uri.handle.namespace, &uri.tag.to_string());
+        S3Uri {
+            bucket: uri.handle.bucket.clone(),
             key,
             version: None,
         }

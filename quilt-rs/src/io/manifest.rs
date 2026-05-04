@@ -32,6 +32,7 @@ use quilt_uri::ObjectUri;
 use quilt_uri::RevisionPointer;
 use quilt_uri::S3PackageHandle;
 use quilt_uri::S3PackageUri;
+use quilt_uri::S3Uri;
 use quilt_uri::Seconds;
 use quilt_uri::Tag;
 use quilt_uri::TagUri;
@@ -119,11 +120,12 @@ pub async fn resolve_tag(
     uri: impl Into<S3PackageHandle>,
     tag: Tag,
 ) -> Res<ManifestUri> {
-    let handle: S3PackageHandle = uri.into();
-    let tag_uri = TagUri::new(handle.clone(), tag);
-    let stream = remote.get_object_stream(host, &tag_uri.into()).await?;
+    let tag_uri = TagUri::new(uri, tag);
+    let stream = remote
+        .get_object_stream(host, &S3Uri::from(&tag_uri))
+        .await?;
     let hash = bytestream_to_string(stream.body).await?;
-    let S3PackageHandle { bucket, namespace } = handle;
+    let S3PackageHandle { bucket, namespace } = tag_uri.into();
     let origin = host.to_owned();
     Ok(ManifestUri {
         hash,
@@ -278,7 +280,6 @@ mod tests {
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::LocalStorage;
     use crate::io::storage::mocks::MockStorage;
-    use quilt_uri::S3Uri;
 
     #[test(tokio::test)]
     async fn test_resolve_existing_hash() -> Res {
