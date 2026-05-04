@@ -51,11 +51,15 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: cargo publish -p ${{ inputs.crate }}
 
-      # quilt-cli releases start as drafts; the `binaries` job uploads
-      # archives to them, then a maintainer smoke-tests the assets and
-      # promotes the release manually (`gh release edit <tag> --draft=false`,
-      # matching the QuiltSync workflow). Other crates publish immediately
-      # — they don't have prebuilt binaries to wait on.
+      # Every release starts as a draft and opts out of "latest":
+      # - `--draft` lets a maintainer review notes/tag placement (and, for
+      #   quilt-cli, wait for the `binaries` job to attach archives) before
+      #   promoting with `gh release edit <tag> --draft=false`, matching
+      #   the QuiltSync workflow.
+      # - `--latest=false` keeps the ecosystem-wide "Latest release" slot
+      #   reserved for QuiltSync (separate repo, the user-facing desktop
+      #   app); `make_latest=false` is sticky, so promoting the draft does
+      #   not flip it back to "latest".
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -64,7 +68,8 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "${{ steps.meta.outputs.title }}" \
             --notes-file release-notes.md \
-            ${{ inputs.crate == 'quilt-cli' && '--draft' || '' }}
+            --draft \
+            --latest=false
 
   # Uploads `quilt-cli-<target>.tar.gz` to the draft release for
   # `cargo binstall`. Filename mirrors the `pkg-url` template in
