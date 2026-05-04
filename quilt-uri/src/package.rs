@@ -387,7 +387,13 @@ impl From<ManifestUri> for S3PackageUri {
 
 impl From<&ManifestUri> for S3PackageUri {
     fn from(uri: &ManifestUri) -> S3PackageUri {
-        S3PackageUri::from(uri.clone())
+        S3PackageUri {
+            bucket: uri.bucket.clone(),
+            catalog: uri.origin.clone(),
+            namespace: uri.namespace.clone(),
+            path: None,
+            revision: RevisionPointer::Hash(uri.hash.clone()),
+        }
     }
 }
 
