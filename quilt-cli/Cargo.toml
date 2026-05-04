@@ -2,7 +2,7 @@
 name = "quilt-cli"
 description = "Command-line interface for Quilt data packages"
 
-version = "0.25.1"
+version = "0.25.2-alpha1"
 
 # Inherit from workspace
 edition.workspace = true
@@ -33,3 +33,13 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 test-log.workspace = true
+
+# pkg-url overridden: workspace tags as `quilt-cli/v<version>`, not
+# cargo-binstall's default `v<version>`. `.tar.gz` hardcoded because
+# `{ archive-suffix }` expands to `.tgz`. Asset filename mirrors the
+# `binaries` job in `.github/workflows/release-crate.yaml` —
+# drift breaks `cargo binstall`.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/{ name }/v{ version }/{ name }-{ target }.tar.gz"
+pkg-fmt = "tgz"
+bin-dir = "{ name }-{ target }/{ bin }{ binary-ext }"

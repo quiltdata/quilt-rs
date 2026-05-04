@@ -5470,7 +5470,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-cli"
-version = "0.25.1"
+version = "0.25.2-alpha1"
 dependencies = [
  "clap",
  "dirs",

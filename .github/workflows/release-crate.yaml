@@ -18,6 +18,8 @@ jobs:
     permissions:
       id-token: write
       contents: write
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
     steps:
       - uses: actions/checkout@v6
 
@@ -49,6 +51,11 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: cargo publish -p ${{ inputs.crate }}
 
+      # quilt-cli releases start as drafts; the `binaries` job uploads
+      # archives to them, then a maintainer smoke-tests the assets and
+      # promotes the release manually (`gh release edit <tag> --draft=false`,
+      # matching the QuiltSync workflow). Other crates publish immediately
+      # — they don't have prebuilt binaries to wait on.
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -56,4 +63,51 @@ jobs:
           gh release create "${{ steps.meta.outputs.tag }}" \
             --target "$GITHUB_SHA" \
             --title "${{ steps.meta.outputs.title }}" \
-            --notes-file release-notes.md
+            --notes-file release-notes.md \
+            ${{ inputs.crate == 'quilt-cli' && '--draft' || '' }}
+
+  # Uploads `quilt-cli-<target>.tar.gz` to the draft release for
+  # `cargo binstall`. Filename mirrors the `pkg-url` template in
+  # `quilt-cli/Cargo.toml`'s `[package.metadata.binstall]` —
+  # drift breaks `cargo binstall`.
+  binaries:
+    needs: publish
+    if: ${{ inputs.crate == 'quilt-cli' }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            os: macos-15
+          - target: aarch64-apple-darwin
+            os: macos-15
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-24.04
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ./.github/actions/setup-rust-minimal
+        with:
+          cache-target: release
+          targets: ${{ matrix.target }}
+
+      - name: Build quilt-cli
+        run: cargo build -p quilt-cli --release --target ${{ matrix.target }}
+
+      - name: Package archive
+        run: |
+          set -euo pipefail
+          STAGE="quilt-cli-${{ matrix.target }}"
+          mkdir -p "$STAGE"
+          cp "target/${{ matrix.target }}/release/quilt" "$STAGE/"
+          tar -czf "${STAGE}.tar.gz" "$STAGE"
+
+      - name: Upload asset to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ needs.publish.outputs.tag }}" \
+            "quilt-cli-${{ matrix.target }}.tar.gz" --clobber

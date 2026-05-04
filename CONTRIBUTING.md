@@ -49,14 +49,17 @@ cargo clippy [-- --deny warnings] [-p package-name]
 Each project has different release approaches:
 
 - **quilt-rs**: Library published to crates.io via GitHub Actions
-- **quilt-cli**: No separate releases - users compile from source
+- **quilt-cli**: Published to crates.io and as prebuilt binaries on GitHub
+  Releases for macOS (x86_64, aarch64) and Linux (x86_64-gnu);
+  install via `cargo binstall quilt-cli` or `cargo install quilt-cli`
 - **QuiltSync**: Desktop app releases with cross-platform builds via GitHub Actions
 
 ### Version Management
 
 - **Library (`quilt-rs`)**: Versioned and published to crates.io
-- **CLI (`quilt-cli`)**: Not published, inherits version from workspace but not
-  released
+- **CLI (`quilt-cli`)**: Versioned and published to crates.io; each release
+  also attaches prebuilt binary archives (`quilt-cli-<target>.tar.gz`) to
+  the corresponding GitHub Release for `cargo binstall` discovery
 - **QuiltSync (`quilt-sync`)**: Uses workspace version for Tauri app releases
 
 ### Pre-release Versioning
