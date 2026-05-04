@@ -24,7 +24,7 @@ quilt-uri = { path = "../../quilt-uri" }
 rfd = { version = "0.17.2", default-features = false, features = ["gtk3"] }
 rust-i18n = "4.0.0"
 semver = "1.0.27"
-sentry = { version = "0.47.0", features = ["tracing"] }
+sentry = { version = "0.48.0", features = ["tracing"] }
 mixpanel-rs = "0.3.1"
 serde.workspace = true
 serde_json.workspace = true
