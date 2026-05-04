@@ -1,7 +1,6 @@
 use std::fmt;
 use std::str::FromStr;
 
-use crate::ManifestUri;
 use crate::Namespace;
 use crate::S3PackageHandle;
 use crate::S3Uri;
@@ -74,7 +73,8 @@ pub struct TagUri {
 }
 
 impl TagUri {
-    pub fn new(bucket: String, namespace: Namespace, tag: Tag) -> Self {
+    pub fn new(uri: impl Into<S3PackageHandle>, tag: Tag) -> Self {
+        let S3PackageHandle { bucket, namespace } = uri.into();
         TagUri {
             bucket,
             namespace,
@@ -83,17 +83,13 @@ impl TagUri {
     }
 
     /// Creates TagURI for the latest revision of the package
-    pub fn latest(uri: S3PackageHandle) -> Self {
-        TagUri::new(uri.bucket, uri.namespace, Tag::Latest)
+    pub fn latest(uri: impl Into<S3PackageHandle>) -> Self {
+        TagUri::new(uri, Tag::Latest)
     }
 
     /// Creates TagURI for the revision of the package.
-    pub fn timestamp(manifest_uri: ManifestUri, seconds: Seconds) -> Self {
-        TagUri {
-            bucket: manifest_uri.bucket,
-            namespace: manifest_uri.namespace,
-            tag: Tag::Timestamp(seconds),
-        }
+    pub fn timestamp(uri: impl Into<S3PackageHandle>, seconds: Seconds) -> Self {
+        TagUri::new(uri, Tag::Timestamp(seconds))
     }
 }
 

@@ -89,14 +89,14 @@ pub async fn tag_timestamp(
     // create it with the value of {self.commit.hash}
     // TODO: Otherwise try again with the current timestamp as the tag
     // (e.g., try five times with exponential backoff, then Error)
-    let tag_timestamp = TagUri::timestamp(manifest_uri.clone(), Seconds(timestamp.timestamp()));
+    let tag_timestamp = TagUri::timestamp(manifest_uri, Seconds(timestamp.timestamp()));
     upload_tag(remote, manifest_uri, tag_timestamp).await
 }
 
 /// Upload file containing hash of the manifest
 /// "tagged" as "latest".
 pub async fn tag_latest(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res {
-    let tag_latest = TagUri::latest(manifest_uri.clone().into());
+    let tag_latest = TagUri::latest(manifest_uri);
     upload_tag(remote, manifest_uri, tag_latest).await
 }
 
@@ -120,7 +120,7 @@ pub async fn resolve_tag(
     tag: Tag,
 ) -> Res<ManifestUri> {
     let handle: S3PackageHandle = uri.into();
-    let tag_uri = TagUri::new(handle.bucket.clone(), handle.namespace.clone(), tag);
+    let tag_uri = TagUri::new(handle.clone(), tag);
     let stream = remote.get_object_stream(host, &tag_uri.into()).await?;
     let hash = bytestream_to_string(stream.body).await?;
     let S3PackageHandle { bucket, namespace } = handle;
