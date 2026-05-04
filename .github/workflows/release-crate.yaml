@@ -60,6 +60,9 @@ jobs:
             --title "${{ steps.meta.outputs.title }}" \
             --notes-file release-notes.md
 
+  # Uploads `quilt-cli-<target>.tar.gz` for `cargo binstall`. Filename
+  # mirrors the `pkg-url` template in `quilt-cli/Cargo.toml`'s
+  # `[package.metadata.binstall]` — drift breaks `cargo binstall`.
   binaries:
     needs: publish
     if: ${{ inputs.crate == 'quilt-cli' }}
