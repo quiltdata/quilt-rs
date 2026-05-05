@@ -127,19 +127,20 @@ jobs:
           gh release upload "${{ needs.prepare.outputs.tag }}" \
             "quilt-cli-${{ matrix.target }}.tar.gz" --clobber
 
-  # Gated by the `crates-io` GitHub Environment (configured in repo
-  # settings with required reviewers). Promotes the draft to public,
-  # then publishes to crates.io. Order matters: if `cargo publish`
-  # flakes, the GH release is public but crates.io is pending —
-  # recoverable by re-running just this job (OIDC mints a fresh token).
-  # The reverse order is irrecoverable.
+  # Gated by the `release-approval` GitHub Environment (configured in
+  # repo settings with required reviewers — shared with the QuiltSync
+  # `promote` gate). Promotes the draft to public, then publishes to
+  # crates.io. Order matters: if `cargo publish` flakes, the GH release
+  # is public but crates.io is pending — recoverable by re-running just
+  # this job (OIDC mints a fresh token). The reverse order is
+  # irrecoverable.
   publish:
     needs: [prepare, binaries]
     # Library crates (quilt-rs, quilt-uri) skip `binaries`; treat its
     # 'skipped' result as a pass so the gate still fires for them.
     if: ${{ !cancelled() && needs.prepare.result == 'success' && (needs.binaries.result == 'success' || needs.binaries.result == 'skipped') }}
     runs-on: ubuntu-24.04
-    environment: crates-io
+    environment: release-approval
     permissions:
       id-token: write
       contents: write

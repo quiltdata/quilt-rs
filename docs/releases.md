@@ -51,8 +51,9 @@ the review-and-publish step (see [Manual steps](#manual-steps-the-part-thats-not
 ## Crates.io publishing — `release-crate.yaml`
 
 Three jobs in sequence: `prepare` → `binaries` (quilt-cli only) →
-`publish`. `publish` is gated by the `crates-io` GitHub Environment
-(required reviewers configured in repo settings), so nothing reaches
+`publish`. `publish` is gated by the `release-approval` GitHub
+Environment (required reviewers configured in repo settings — the
+same env gates the QuiltSync `promote` job), so nothing reaches
 crates.io until a maintainer approves the draft.
 
 `prepare` job (`ubuntu-24.04`, no environment):
@@ -65,7 +66,7 @@ crates.io until a maintainer approves the draft.
 4. Print the draft URL to the workflow summary so the reviewer has a
    one-click link.
 
-`publish` job (`environment: crates-io`, required reviewers):
+`publish` job (`environment: release-approval`, required reviewers):
 
 1. `gh release edit <tag> --draft=false` (`--latest=false` is sticky
    from creation, so this stays opted out of "latest").

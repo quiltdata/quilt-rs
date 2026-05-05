@@ -134,7 +134,9 @@ jobs:
   promote:
     needs: release
     runs-on: ubuntu-24.04
-    environment: quilt-sync-publish
+    # Shared with the crate `publish` gate — same approval policy
+    # applies to both irreversible channels.
+    environment: release-approval
     permissions:
       contents: write
       actions: write  # required for `gh workflow run`
