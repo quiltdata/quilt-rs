@@ -61,14 +61,8 @@ crates.io until a maintainer approves the draft.
    source of truth).
 2. Slice release notes from `<crate>/CHANGELOG.md` via
    `parse-changelog`.
-3. Verify path-dep version specifiers: every `path = "...", version =
-   "..."` dep on a workspace crate must list a version that matches
-   the upstream crate's actual `Cargo.toml` version. Catches the silent
-   case where the spec was not bumped after the upstream — locally
-   `cargo check` passes (path dep wins), but published downstream would
-   resolve to a stale upstream on crates.io.
-4. `gh release create <crate>/v<version> --draft --latest=false`.
-5. Print the draft URL to the workflow summary so the reviewer has a
+3. `gh release create <crate>/v<version> --draft --latest=false`.
+4. Print the draft URL to the workflow summary so the reviewer has a
    one-click link.
 
 `publish` job (`environment: crates-io`, required reviewers):

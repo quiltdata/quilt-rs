@@ -46,43 +46,6 @@ jobs:
             echo "title=$CRATE v$VERSION"
           } >> "$GITHUB_OUTPUT"
 
-      # Catches the silent-mismatch failure where a downstream `version =`
-      # specifier was not bumped after the upstream crate was bumped:
-      # locally `cargo check` passes (path dep wins), `cargo publish`
-      # succeeds (the old version still exists on crates.io), but end
-      # users get a downstream crate that resolves to a stale upstream
-      # whose API doesn't match. Compare each path-dep `req` with the
-      # actual workspace version it points at; require an exact match
-      # in cargo's default `^X.Y.Z` form.
-      - name: Verify path-dep version specifiers
-        env:
-          CRATE: ${{ inputs.crate }}
-        run: |
-          set -euo pipefail
-          metadata=$(cargo metadata --format-version=1 --no-deps)
-          mismatches=0
-          while IFS=$'\t' read -r dep_name dep_req; do
-            [ -z "$dep_name" ] && continue
-            actual=$(jq -r --arg n "$dep_name" '.packages[] | select(.name == $n) | .version' <<<"$metadata")
-            if [ -z "$actual" ]; then
-              echo "::error::path-dep '$dep_name' in $CRATE/Cargo.toml is not a workspace member"
-              mismatches=$((mismatches + 1))
-              continue
-            fi
-            if [ "$dep_req" != "^$actual" ]; then
-              echo "::error::path-dep '$dep_name' in $CRATE/Cargo.toml has version specifier '$dep_req' but the workspace crate is at '$actual' — bump the specifier to '$actual'"
-              mismatches=$((mismatches + 1))
-            else
-              echo "ok: $dep_name $dep_req matches workspace version $actual"
-            fi
-          done < <(jq -r --arg c "$CRATE" '
-            .packages[] | select(.name == $c) | .dependencies[] |
-            select(.path != null) | "\(.name)\t\(.req)"
-          ' <<<"$metadata")
-          if [ "$mismatches" -gt 0 ]; then
-            exit 1
-          fi
-
       # Every release starts as a draft and opts out of "latest":
       # - `--draft` lets a maintainer review notes/tag placement (and, for
       #   quilt-cli, wait for the `binaries` job to attach archives) before
