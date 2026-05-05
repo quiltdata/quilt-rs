@@ -106,12 +106,8 @@ API (TLS backend, allocator). Use crates when *which* API exists
 varies by target; use flags when *how* it is implemented varies by
 build.
 
-### Crates.io status
-
-`quilt-rs` is published; crates.io requires every transitive
-dependency on the registry, so the leaf crates are published too.
-Public visibility is a Cargo constraint, not a stability commitment —
-leaf crates may evolve without SemVer guarantees independent of `quilt-rs`.
+> Release mechanics (which crates are published, where, and how) live
+> in [docs/releases.md](releases.md).
 
 ## Core Data Structures
 
