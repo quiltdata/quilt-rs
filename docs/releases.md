@@ -50,17 +50,39 @@ the review-and-publish step (see [Manual steps](#manual-steps-the-part-thats-not
 
 ## Crates.io publishing — `release-crate.yaml`
 
-`publish` job (one runner, `ubuntu-24.04`):
+Three jobs in sequence: `prepare` → `binaries` (quilt-cli only) →
+`publish`. `publish` is gated by the `crates-io` GitHub Environment
+(required reviewers configured in repo settings), so nothing reaches
+crates.io until a maintainer approves the draft.
+
+`prepare` job (`ubuntu-24.04`, no environment):
 
 1. Read the crate's version from `cargo metadata` (Cargo.toml is the
    source of truth).
 2. Slice release notes from `<crate>/CHANGELOG.md` via
    `parse-changelog`.
-3. Mint a short-lived crates.io token via
+3. Verify path-dep version specifiers: every `path = "...", version =
+   "..."` dep on a workspace crate must list a version that matches
+   the upstream crate's actual `Cargo.toml` version. Catches the silent
+   case where the spec was not bumped after the upstream — locally
+   `cargo check` passes (path dep wins), but published downstream would
+   resolve to a stale upstream on crates.io.
+4. `gh release create <crate>/v<version> --draft --latest=false`.
+5. Print the draft URL to the workflow summary so the reviewer has a
+   one-click link.
+
+`publish` job (`environment: crates-io`, required reviewers):
+
+1. `gh release edit <tag> --draft=false` (`--latest=false` is sticky
+   from creation, so this stays opted out of "latest").
+2. Mint a short-lived crates.io token via
    `rust-lang/crates-io-auth-action` (OIDC trusted publishing — no
    `CARGO_REGISTRY_TOKEN` secret).
-4. `cargo publish -p <crate>`.
-5. `gh release create <crate>/v<version> --draft --latest=false`.
+3. `cargo publish -p <crate>`.
+
+GitHub promote runs first so that if `cargo publish` flakes, the
+recoverable side (the GitHub Release) has already shipped and only the
+crates.io step needs a re-run; the reverse order is irrecoverable.
 
 `binaries` job — runs only when `crate == 'quilt-cli'`:
 
@@ -72,7 +94,10 @@ the review-and-publish step (see [Manual steps](#manual-steps-the-part-thats-not
 
 For each, `cargo build -p quilt-cli --release --target <target>`,
 package as `quilt-cli-<target>.tar.gz` (binary inside a directory
-named `quilt-cli-<target>/`), upload to the draft release.
+named `quilt-cli-<target>/`), upload to the draft release. `binaries`
+is a hard dependency for `publish`, so the gate cannot fire until
+every archive is attached — the reviewer can download and run
+`quilt --version` against the actual artifact before approving.
 
 The asset filename **must** mirror `quilt-cli/Cargo.toml`'s
 `[package.metadata.binstall]`:
@@ -194,8 +219,10 @@ For any release:
 - Replace the latest `*-alphaN` block in the matching `CHANGELOG.md`
   with a real version + today's date.
 - Run the workflow (`workflow_dispatch`).
-- Review the draft and `gh release edit <tag> --draft=false` to make
-  it public.
+- For crate releases: review the draft (download `quilt-cli` archives
+  and confirm `quilt --version` for binstall releases), then approve
+  the `publish` job in the Actions UI. The job promotes the draft and
+  publishes to crates.io. No `gh release edit` needed.
 
 QuiltSync only, when promoting the draft:
 
