@@ -28,8 +28,7 @@
     "updater": {
       "active": true,
       "endpoints": [
-        "https://www.quilt.bio/hubfs/latest.json",
-        "https://github.com/quiltdata/quilt-rs/releases/latest/download/latest.json"
+        "https://www.quilt.bio/hubfs/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFGNTdCMUVDQUJBN0U1MkUKUldRdTVhZXI3TEZYcjdYSzdPM0VidFB1bzErUnVLdmk4amV4NXZhU0lOc290Q3dZTncrZTFFQTYK"
     }
