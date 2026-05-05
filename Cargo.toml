@@ -1,5 +1,5 @@
 [workspace]
-members = ["quilt-rs", "quilt-cli", "quilt-sync/src-tauri", "quilt-sync/ui", "quilt-uri", "xtask"]
+members = ["quilt-rs", "quilt-cli", "quilt-sync/src-tauri", "quilt-sync/ui", "quilt-uri"]
 default-members = ["quilt-rs", "quilt-cli", "quilt-sync/src-tauri"]
 resolver = "2"
 

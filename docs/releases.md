@@ -208,15 +208,14 @@ and `HUBDB_COLUMN_MAP`.
 
 For any release:
 
-- Run `cargo xtask bump <crate> <new-version>` to bump the target
-  `Cargo.toml` and propagate the new version into every downstream
-  crate's path-dep `version =` specifier, patch-bump those downstream
-  crates' own versions, and replace each affected crate's topmost
-  `*-alphaN` CHANGELOG heading with the new version + today's date.
-  Use `--bump-downstream=minor|major` to override the patch default.
-  The cascade order (`quilt-uri` → `quilt-rs` → `quilt-cli`) is
-  inferred from the workspace's path-deps. The xtask runs
-  `cargo check --workspace` afterwards (skip with `--skip-check`).
+- Bump `version` in the relevant `Cargo.toml` and update path-dep
+  specifiers. The released crates are dependent on each other and
+  must be released as a cascade: `quilt-uri` → `quilt-rs` → `quilt-cli`.
+  Bumping an upstream crate requires bumping every downstream crate
+  that depends on it (and updating that downstream `Cargo.toml`'s
+  `version =` specifier for the path dep).
+- Replace the latest `*-alphaN` block in the matching `CHANGELOG.md`
+  with a real version + today's date.
 - Run the workflow (`workflow_dispatch`).
 - Review the draft (for `quilt-cli`, download the archives and confirm
   `quilt --version`; for QuiltSync, install one of the bundles), then
