@@ -28,6 +28,11 @@ jobs:
             args: ""
     runs-on: ${{ matrix.platform }}
     environment: ${{ inputs.environment }}
+    # Every matrix leg writes the same version (read from the same
+    # Cargo.toml) so the aggregate `release.outputs.version` is stable
+    # regardless of which leg finishes last.
+    outputs:
+      version: ${{ steps.tauri.outputs.appVersion }}
     env:
       # Use mold linker on Linux to avoid OOM crashes on memory-constrained CI runners
       CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
@@ -57,6 +62,7 @@ jobs:
         uses: taiki-e/install-action@trunk
 
       - name: Build the app
+        id: tauri
         uses: tauri-apps/tauri-action@v0
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -116,3 +122,39 @@ jobs:
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
           file-digest: SHA256
+
+  # Single approval gate that flips the draft to public, marks it as
+  # "latest", and dispatches `upload-to-hubspot.yaml` — the two surfaces
+  # used to be a manual `gh release edit` plus a separate Actions-tab
+  # click. The HubSpot mirror is the actual rollout switch (HubFS is
+  # the sole `latest.json` endpoint after the fallback was dropped from
+  # `tauri.conf.json`), so "GH public, HubSpot pending" is invisible to
+  # clients and re-running just this job recovers from a flake on
+  # either side.
+  promote:
+    needs: release
+    runs-on: ubuntu-24.04
+    environment: quilt-sync-publish
+    permissions:
+      contents: write
+      actions: write  # required for `gh workflow run`
+    steps:
+      - name: Promote draft and trigger HubSpot mirror
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          [ -n "$VERSION" ] || { echo "::error::release.outputs.version is empty"; exit 1; }
+          tag="QuiltSync/v$VERSION"
+          gh release edit "$tag" --draft=false --latest --repo "$REPO"
+          gh workflow run upload-to-hubspot.yaml \
+            --repo "$REPO" \
+            -f release_tag="$tag"
+          {
+            echo "## QuiltSync $tag promoted"
+            echo
+            echo "- GitHub release marked public + latest"
+            echo "- \`upload-to-hubspot.yaml\` dispatched (mirrors to HubFS + HubDB)"
+          } >> "$GITHUB_STEP_SUMMARY"

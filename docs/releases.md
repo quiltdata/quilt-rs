@@ -38,8 +38,8 @@ or schedule.
 | Workflow | Inputs | Output |
 | --- | --- | --- |
 | `release-crate.yaml` | `crate` ∈ {`quilt-rs`, `quilt-uri`, `quilt-cli`} | crates.io publish + GitHub draft release |
-| `release-quilt-sync.yaml` | `environment` (GitHub Environment) | GitHub draft release with cross-platform installers |
-| `upload-to-hubspot.yaml` | `release_tag`, `hubspot_folder` (default `/quiltsync/`) | Mirrors a published QuiltSync release to HubSpot Files + writes a HubDB row |
+| `release-quilt-sync.yaml` | `environment` (GitHub Environment) | GitHub draft release with cross-platform installers; gated `promote` job flips draft → public + dispatches `upload-to-hubspot.yaml` |
+| `upload-to-hubspot.yaml` | `release_tag`, `hubspot_folder` (default `/quiltsync/`) | Mirrors a published QuiltSync release to HubSpot Files + writes a HubDB row. Triggered automatically by the QuiltSync `promote` job; can also be re-run manually if HubSpot upload flakes. |
 
 Every release in this repo is created with `--draft` and
 `--latest=false`. `make_latest=false` is **sticky** — promoting a
@@ -162,21 +162,19 @@ Secrets / variables consumed:
 
 ## Auto-updater (QuiltSync only)
 
-`quilt-sync/src-tauri/tauri.conf.json` configures two endpoints:
+`quilt-sync/src-tauri/tauri.conf.json` configures HubFS as the sole
+endpoint:
 
 ```jsonc
 "endpoints": [
-  "https://www.quilt.bio/hubfs/latest.json",
-  "https://github.com/quiltdata/quilt-rs/releases/latest/download/latest.json"
+  "https://www.quilt.bio/hubfs/latest.json"
 ]
 ```
 
-HubFS is the **primary**. The GitHub URL is a fallback that resolves
-via `releases/latest`, which only points at a QuiltSync release because
-the QuiltSync release is manually marked as "latest" during publish
-(no workflow sets that flag — see [Manual steps](#manual-steps-the-part-thats-not-in-any-workflow)).
-The HubFS endpoint is still the load-bearing one — running
-`upload-to-hubspot.yaml` is what actually delivers updates to users.
+This makes `upload-to-hubspot.yaml` the actual rollout switch — until
+HubFS is mirrored, no client picks up the new version. Promoting the
+GitHub release is no longer enough on its own, which is the property
+that lets "GH public, HubSpot pending" stay invisible to users.
 
 ## HubSpot mirror — `upload-to-hubspot.yaml`
 
@@ -219,15 +217,14 @@ For any release:
 - Replace the latest `*-alphaN` block in the matching `CHANGELOG.md`
   with a real version + today's date.
 - Run the workflow (`workflow_dispatch`).
-- For crate releases: review the draft (download `quilt-cli` archives
-  and confirm `quilt --version` for binstall releases), then approve
-  the `publish` job in the Actions UI. The job promotes the draft and
-  publishes to crates.io. No `gh release edit` needed.
+- Review the draft (for `quilt-cli`, download the archives and confirm
+  `quilt --version`; for QuiltSync, install one of the bundles), then
+  approve the gated `publish`/`promote` job in the Actions UI. The
+  approval is the only manual step:
+  - **Crate releases** — `publish` promotes the draft and runs
+    `cargo publish`.
+  - **QuiltSync** — `promote` flips the draft to public, marks it as
+    "latest", and dispatches `upload-to-hubspot.yaml` (HubFS + HubDB
+    mirror) in one step.
 
-QuiltSync only, when promoting the draft:
-
-- Mark the release as "latest" (`gh release edit <tag> --latest`) so
-  the GitHub `releases/latest` auto-updater fallback resolves to it.
-- Run `upload-to-hubspot.yaml` with the release tag — without it,
-  the auto-updater (which polls HubFS) will not see the new version
-  and the quilt.bio download page will not show it.
+  No `gh release edit` and no separate Actions-tab click are needed.
