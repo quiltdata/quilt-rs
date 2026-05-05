@@ -13,10 +13,10 @@ on:
           - quilt-cli
 
 jobs:
-  # Stages the release: resolves version + notes, verifies path-dep version
-  # specifiers are coherent, creates a draft GitHub release. For `quilt-cli`,
-  # the `binaries` job uploads archives to the same draft. Nothing here
-  # touches crates.io — the draft is the reviewable artifact.
+  # Stages the release: resolves version + notes, creates a draft GitHub
+  # release. For `quilt-cli`, the `binaries` job uploads archives to the
+  # same draft. Nothing here touches crates.io — the draft is the
+  # reviewable artifact.
   prepare:
     runs-on: ubuntu-24.04
     permissions:
