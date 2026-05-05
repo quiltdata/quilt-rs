@@ -137,8 +137,10 @@ Build pipeline:
    `tauri.conf.json` (`["app", "deb", "dmg", "msi"]`). With
    `createUpdaterArtifacts: true` it also produces `latest.json`,
    `*.app.tar.gz`, and `*.msi.zip` updater bundles. Tag pattern:
-   `quilt-sync-v__VERSION__` (Tauri substitutes `__VERSION__` from
-   `quilt-sync/src-tauri/Cargo.toml`). Release is created as a draft.
+   `QuiltSync/v__VERSION__` (Tauri substitutes `__VERSION__` from
+   `quilt-sync/src-tauri/Cargo.toml`) — this is the final tag form,
+   matching the input `upload-to-hubspot.yaml` expects. Release is
+   created as a draft.
 4. (Windows only) `azure/login@v3` exchanges the GitHub OIDC token for
    an Azure access token, then `azure/trusted-signing-action@v1` signs
    every `.exe` and `.msi`. See
@@ -180,11 +182,9 @@ The HubFS endpoint is still the load-bearing one — running
 
 Run **after** a QuiltSync GitHub release has been promoted. Inputs:
 
-- `release_tag` — e.g. `QuiltSync/v1.2.3`. This is **not** the
-  `quilt-sync-v__VERSION__` tag the workflow emits on the draft; that
-  tag is renamed manually to the `QuiltSync/v...` form during the
-  review-and-publish step. The script accepts whatever you pass, so
-  the input must match the renamed tag.
+- `release_tag` — e.g. `QuiltSync/v1.2.3`. The QuiltSync workflow
+  emits this exact form on the draft, so the input matches without
+  any manual rename.
 - `hubspot_folder` — base path on HubFS, default `/quiltsync/`.
 
 Steps:
@@ -228,9 +228,6 @@ QuiltSync only, when promoting the draft:
 
 - Mark the release as "latest" (`gh release edit <tag> --latest`) so
   the GitHub `releases/latest` auto-updater fallback resolves to it.
-- Rename the tag from `quilt-sync-v__VERSION__` (emitted by the
-  workflow) to `QuiltSync/v<version>`. This is the tag form expected
-  as `release_tag` input to `upload-to-hubspot.yaml`.
-- Run `upload-to-hubspot.yaml` with that renamed tag — without it,
+- Run `upload-to-hubspot.yaml` with the release tag — without it,
   the auto-updater (which polls HubFS) will not see the new version
   and the quilt.bio download page will not show it.

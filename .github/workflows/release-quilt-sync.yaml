@@ -74,8 +74,11 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           # tauri-action replaces \_\_VERSION\_\_ with the app version.
-          tagName: quilt-sync-v__VERSION__
-          releaseId: quilt-sync-__VERSION__
+          # Emit the final tag form so promotion is a no-op review rather
+          # than a manual rename — `upload-to-hubspot.yaml` expects this
+          # exact form for `release_tag`.
+          tagName: QuiltSync/v__VERSION__
+          releaseId: QuiltSync-__VERSION__
           releaseName: QuiltSync v__VERSION__
           releaseBody: "See the assets to download and install this version."
           releaseDraft: true
