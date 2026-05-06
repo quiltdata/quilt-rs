@@ -45,12 +45,11 @@ pub struct Namespace {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-#[allow(clippy::derivable_impls)]
 impl Default for Namespace {
     fn default() -> Self {
         Self {
-            prefix: String::new(),
-            name: String::new(),
+            prefix: "default".to_string(),
+            name: "default".to_string(),
         }
     }
 }
@@ -789,6 +788,14 @@ mod tests {
         assert_eq!(json, r#"{"_tag":"Hash","value":"abc123"}"#);
         let parsed: RevisionPointer = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, revision);
+    }
+
+    #[test]
+    fn test_default_namespace_serde_round_trip() {
+        let ns = Namespace::default();
+        let json = serde_json::to_string(&ns).unwrap();
+        let parsed: Namespace = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, ns);
     }
 
     #[test]
