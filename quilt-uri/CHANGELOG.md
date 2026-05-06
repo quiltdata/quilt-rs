@@ -8,6 +8,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.3.0-alpha1] - 2026-05-06
+
+### Changed
+
+- Renamed `paths::get_manifest_key_legacy` to `paths::get_manifest_key`; the `_legacy` suffix had no non-legacy counterpart to disambiguate from
+
 ## [v0.2.0] - 2026-05-04
 
 ### Changed

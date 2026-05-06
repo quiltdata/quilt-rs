@@ -51,7 +51,7 @@ const INSTALLED_DIR: &str = ".quilt/installed";
 const MANIFEST_DIR: &str = ".quilt/packages";
 const OBJECTS_DIR: &str = ".quilt/objects";
 
-pub use quilt_uri::paths::get_manifest_key_legacy;
+pub use quilt_uri::paths::get_manifest_key;
 pub use quilt_uri::paths::tag_key;
 
 /// Path to the package home directory within the home directory

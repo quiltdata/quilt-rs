@@ -45,7 +45,7 @@ impl From<ManifestUri> for S3Uri {
     fn from(remote: ManifestUri) -> S3Uri {
         S3Uri {
             bucket: remote.bucket,
-            key: paths::get_manifest_key_legacy(&remote.hash),
+            key: paths::get_manifest_key(&remote.hash),
             version: None,
         }
     }
