@@ -82,10 +82,25 @@ impl TryFrom<&str> for Namespace {
     type Error = UriError;
 
     fn try_from(input: &str) -> Result<Self, Self::Error> {
-        input
-            .split_once('/')
-            .ok_or(UriError::Namespace("Failed to parse namespace".to_string()))
-            .map(|x| x.into())
+        let (prefix, name) = input.split_once('/').ok_or_else(|| {
+            UriError::Namespace(format!(
+                "namespace must be `<prefix>/<name>`; got: {input}"
+            ))
+        })?;
+        if prefix.is_empty() || name.is_empty() {
+            return Err(UriError::Namespace(format!(
+                "namespace prefix and name must be non-empty; got: {input}"
+            )));
+        }
+        if name.contains('/') {
+            return Err(UriError::Namespace(format!(
+                "namespace must contain exactly one `/`; got: {input}"
+            )));
+        }
+        Ok(Namespace {
+            prefix: prefix.to_string(),
+            name: name.to_string(),
+        })
     }
 }
 
@@ -787,5 +802,59 @@ mod tests {
             "Invalid package URI: package spec may either contain \":\" or \"@\""
         );
         Ok(())
+    }
+
+    #[test]
+    fn test_namespace_valid() -> Res {
+        assert_eq!(
+            Namespace::try_from("foo/bar")?,
+            Namespace::from(("foo", "bar"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_namespace_missing_slash() {
+        let err = Namespace::try_from("foo").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Invalid namespace: namespace must be `<prefix>/<name>`; got: foo"
+        );
+    }
+
+    #[test]
+    fn test_namespace_only_slash() {
+        let err = Namespace::try_from("/").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Invalid namespace: namespace prefix and name must be non-empty; got: /"
+        );
+    }
+
+    #[test]
+    fn test_namespace_empty_prefix() {
+        let err = Namespace::try_from("/bar").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Invalid namespace: namespace prefix and name must be non-empty; got: /bar"
+        );
+    }
+
+    #[test]
+    fn test_namespace_empty_name() {
+        let err = Namespace::try_from("foo/").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Invalid namespace: namespace prefix and name must be non-empty; got: foo/"
+        );
+    }
+
+    #[test]
+    fn test_namespace_extra_slash() {
+        let err = Namespace::try_from("foo/bar/baz").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Invalid namespace: namespace must contain exactly one `/`; got: foo/bar/baz"
+        );
     }
 }
