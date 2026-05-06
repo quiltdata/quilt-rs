@@ -32,7 +32,7 @@ impl ObjectUri {
 impl From<ObjectUri> for S3Uri {
     fn from(uri: ObjectUri) -> S3Uri {
         S3Uri {
-            bucket: uri.bucket.to_string(),
+            bucket: uri.bucket,
             key: format!("{}/{}", uri.namespace, uri.path.display()),
             version: uri.version,
         }

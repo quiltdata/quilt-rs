@@ -86,16 +86,13 @@ impl TryFrom<&str> for S3Uri {
             )));
         }
 
-        let version = match queries.first() {
+        let version = match queries.into_iter().next() {
             None => None,
-            Some((key, value)) => {
-                if key == "versionId" {
-                    Some(value.to_string())
-                } else {
-                    return Err(UriError::S3(format!(
-                        "Unknown query parameter in {input}. Only single versionId is allowed"
-                    )));
-                }
+            Some((key, value)) if key == "versionId" => Some(value),
+            Some(_) => {
+                return Err(UriError::S3(format!(
+                    "Unknown query parameter in {input}. Only single versionId is allowed"
+                )));
             }
         };
 
