@@ -58,7 +58,7 @@ pub struct InstalledPackage<S: Storage = LocalStorage, R: Remote = RemoteS3> {
 
 impl std::fmt::Display for InstalledPackage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, r##"Installed package "{}""##, self.namespace)
+        write!(f, r#"Installed package "{}""#, self.namespace)
     }
 }
 
@@ -96,7 +96,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         // If installed failed, try to recover from cache (only if we have a remote)
         match lineage.remote_uri.as_ref() {
             Some(remote_uri) => {
-                log::info!("Attempting to recover from cache at {}", remote_uri);
+                log::info!("Attempting to recover from cache at {remote_uri}");
                 let cached_manifest =
                     cache_remote_manifest(&self.paths, &self.storage, &self.remote, remote_uri)
                         .await?;
@@ -753,7 +753,7 @@ mod tests {
         };
 
         let result = package
-            .set_remote("".to_string(), Some("example.com".parse()?))
+            .set_remote(String::new(), Some("example.com".parse()?))
             .await;
 
         assert!(result.is_err());

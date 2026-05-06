@@ -43,10 +43,10 @@ impl LocalDomain {
         let storage = LocalStorage::new();
         let remote = RemoteS3::new(paths.clone(), storage.clone());
         Self {
-            lineage,
             paths,
-            remote,
+            lineage,
             storage,
+            remote,
         }
     }
 

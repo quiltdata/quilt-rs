@@ -159,7 +159,7 @@ pub fn save_diagnostic_zip(info: DiagnosticInfo) -> Result<PathBuf, Error> {
     for host in &info.auth_hosts {
         let client_json = auth_dir.join(host).join(quilt::paths::AUTH_CLIENT);
         if client_json.exists() {
-            let name = format!("auth/{}/client.json", host);
+            let name = format!("auth/{host}/client.json");
             zip_writer.start_file(name, options)?;
             let contents = std::fs::read(&client_json)?;
             zip_writer.write_all(&contents)?;

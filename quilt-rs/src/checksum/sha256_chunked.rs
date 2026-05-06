@@ -129,7 +129,7 @@ impl fmt::Display for Sha256ChunkedHash {
         // Use multibase encoding but strip the prefix to get plain base64
         let multibase_encoded = multibase::encode(multibase::Base::Base64Pad, self.digest());
         let base64_value = &multibase_encoded[1..]; // Remove the multibase prefix
-        write!(f, "{}", base64_value)
+        write!(f, "{base64_value}")
     }
 }
 
@@ -256,7 +256,7 @@ mod tests {
         let expected_base64 =
             &multibase::encode(multibase::Base::Base64Pad, sha256_chunked.digest())[1..];
         assert!(serialized.contains("\"type\":\"sha2-256-chunked\""));
-        assert!(serialized.contains(&format!("\"value\":\"{}\"", expected_base64)));
+        assert!(serialized.contains(&format!("\"value\":\"{expected_base64}\"")));
     }
 
     #[test]
@@ -266,7 +266,7 @@ mod tests {
         let sha256_chunked = Sha256ChunkedHash::try_from(original_hash).unwrap();
 
         // Test Display implementation
-        let display_string = format!("{}", sha256_chunked);
+        let display_string = format!("{sha256_chunked}");
 
         // Should be base64 without multibase prefix
         let expected_base64 = &multibase::encode(multibase::Base::Base64Pad, b"test_data")[1..];

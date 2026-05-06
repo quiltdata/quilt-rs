@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn test_missing_working_directory() {
         assert_eq!(
-            DomainLineage::from_slice(br###"{"packages":{}}"###)
+            DomainLineage::from_slice(br#"{"packages":{}}"#)
                 .unwrap_err()
                 .to_string(),
             "Domain lineage missing Home directory".to_string()
@@ -280,7 +280,7 @@ mod tests {
     #[test]
     fn test_with_working_directory() -> Res {
         let lineage =
-            DomainLineage::from_slice(br###"{"packages":{},"home":"/tmp/working_dir"}"###).unwrap();
+            DomainLineage::from_slice(br#"{"packages":{},"home":"/tmp/working_dir"}"#).unwrap();
         assert_eq!(lineage.as_ref(), &PathBuf::from("/tmp/working_dir"));
         Ok(())
     }
@@ -349,7 +349,7 @@ mod tests {
         storage
             .write_byte_stream(
                 &file_path,
-                ByteStream::from_static(br###"{"packages":{},"home":"/home/directory"}"###),
+                ByteStream::from_static(br#"{"packages":{},"home":"/home/directory"}"#),
             )
             .await?;
         let lineage = DomainLineageIo::new(file_path).read(&storage).await?;
@@ -535,7 +535,7 @@ mod tests {
         let updated_package_lineage = PackageLineage {
             commit: Some(CommitState {
                 timestamp: chrono::Utc::now(),
-                hash: "".to_string(),
+                hash: String::new(),
                 prev_hashes: Vec::new(),
             }),
             ..package_lineage.clone()

@@ -523,7 +523,10 @@ impl<S: Storage + Send + Sync> Auth<S> {
     /// longer referenced by any in-flight refresh) are swept before
     /// the lookup so the map stays bounded by active refreshes.
     fn refresh_lock_for(&self, host: &Host) -> Arc<AsyncMutex<()>> {
-        let mut locks = self.refresh_locks.lock().unwrap_or_else(|e| e.into_inner());
+        let mut locks = self
+            .refresh_locks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         locks.retain(|_, weak| weak.strong_count() > 0);
         if let Some(arc) = locks.get(host).and_then(Weak::upgrade) {
             return arc;
@@ -1489,7 +1492,7 @@ mod tests {
             refresh_token: "secret-refresh".to_string(),
             expires_at: chrono::DateTime::from_timestamp(TIMESTAMP, 0).unwrap(),
         };
-        let output = format!("{:?}", tokens);
+        let output = format!("{tokens:?}");
         assert!(output.contains("[REDACTED]"));
         assert!(!output.contains("secret-access"));
         assert!(!output.contains("secret-refresh"));
@@ -1502,7 +1505,7 @@ mod tests {
             refresh_token: Some("secret-refresh".to_string()),
             expires_in: 3600,
         };
-        let output = format!("{:?}", response);
+        let output = format!("{response:?}");
         assert!(output.contains("[REDACTED]"));
         assert!(!output.contains("secret-access"));
         assert!(!output.contains("secret-refresh"));
@@ -1515,7 +1518,7 @@ mod tests {
             refresh_token: None,
             expires_in: 3600,
         };
-        let output = format!("{:?}", response);
+        let output = format!("{response:?}");
         assert!(output.contains("refresh_token: None"));
         assert!(!output.contains("secret-access"));
     }
@@ -1528,7 +1531,7 @@ mod tests {
             secret_access_key: "secret-access-key".to_string(),
             session_token: "secret-session-token".to_string(),
         };
-        let output = format!("{:?}", creds);
+        let output = format!("{creds:?}");
         assert!(output.contains("[REDACTED]"));
         assert!(!output.contains("secret-key-id"));
         assert!(!output.contains("secret-access-key"));
@@ -1562,14 +1565,11 @@ mod tests {
     /// is no public constructor for `reqwest::Error`, so we round-trip through
     /// a real HTTP request against a canned local responder.
     async fn reqwest_error_with_status(status: u16) -> Error {
-        let body = format!(
-            "HTTP/1.1 {} X\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-            status
-        )
-        .into_bytes();
+        let body = format!("HTTP/1.1 {status} X\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .into_bytes();
         let addr = spawn_one_shot(body).await;
         reqwest::Client::new()
-            .get(format!("http://{}/", addr))
+            .get(format!("http://{addr}/"))
             .send()
             .await
             .unwrap()
@@ -1995,7 +1995,7 @@ mod tests {
         assert_eq!(
             auth.refresh_locks
                 .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .len(),
             1,
         );
@@ -2005,7 +2005,7 @@ mod tests {
         assert!(
             auth.refresh_locks
                 .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .get(&host)
                 .expect("entry still present before sweep")
                 .upgrade()
@@ -2018,7 +2018,7 @@ mod tests {
         assert_eq!(
             auth.refresh_locks
                 .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .len(),
             1,
         );

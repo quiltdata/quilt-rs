@@ -116,8 +116,7 @@ pub fn check(path: &Path) -> Option<Match> {
         // Extract the original pattern string from the match
         let pattern = m
             .inner()
-            .map(|glob| glob.original().to_string())
-            .unwrap_or_else(|| suggest_pattern(path));
+            .map_or_else(|| suggest_pattern(path), |glob| glob.original().to_string());
         return Some(Match { pattern });
     }
 

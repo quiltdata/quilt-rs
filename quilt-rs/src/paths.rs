@@ -199,7 +199,7 @@ pub async fn copy_cached_to_installed(
 /// Takes list of the required paths and create directories
 async fn scaffold_paths(storage: &impl Storage, paths: Vec<PathBuf>) -> Res {
     for path in paths {
-        storage.create_dir_all(&path).await?
+        storage.create_dir_all(&path).await?;
     }
     Ok(())
 }
@@ -221,7 +221,7 @@ mod tests {
                 PathBuf::from("foo/bar/.quilt/objects"),
                 PathBuf::from("foo/bar/.quilt/packages"),
             ]
-        )
+        );
     }
 
     #[test]

@@ -60,7 +60,7 @@ async fn stream_local_with_changes(
                         }
                     }
                     Err(err) => {
-                        all_rows.push(Err(Error::Manifest(ManifestError::Table(err.to_string()))))
+                        all_rows.push(Err(Error::Manifest(ManifestError::Table(err.to_string()))));
                     }
                 }
             }
@@ -96,8 +96,8 @@ async fn create_immutable_object_copy(
     let new_physical_key = Url::from_file_path(&object_dest)
         .map_err(|_| {
             Error::PackageOp(PackageOpError::Commit(format!(
-                "Failed to create URL from {:?}",
-                &object_dest
+                "Failed to create URL from {}",
+                object_dest.display()
             )))
         })?
         .to_string();
@@ -255,7 +255,7 @@ pub async fn commit_package(
     };
 
     let header = ManifestHeader {
-        message: Some(message.to_string()),
+        message: Some(message.clone()),
         workflow,
         user_meta: processed_user_meta,
         ..ManifestHeader::default()
@@ -278,8 +278,8 @@ pub async fn commit_package(
     );
     let mut prev_hashes = Vec::new();
     if let Some(commit) = lineage.commit {
-        prev_hashes.push(commit.hash.to_owned());
-        prev_hashes.extend(commit.prev_hashes.to_owned());
+        prev_hashes.push(commit.hash.clone());
+        prev_hashes.extend(commit.prev_hashes.clone());
     }
     let commit = CommitState {
         hash: new_top_hash,

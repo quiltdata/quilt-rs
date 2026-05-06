@@ -496,9 +496,9 @@ mod tests {
 
         // Create 1024 * 2 test paths and rows
         for i in 0..2048 {
-            let path = PathBuf::from(format!("path_{}.txt", i));
-            let place = format!("s3://bucket/path_{}.txt", i);
-            let hash = multihash::Multihash::wrap(0x12, format!("hash_{}", i).as_bytes())?;
+            let path = PathBuf::from(format!("path_{i}.txt"));
+            let place = format!("s3://bucket/path_{i}.txt");
+            let hash = multihash::Multihash::wrap(0x12, format!("hash_{i}").as_bytes())?;
 
             let row = ManifestRow {
                 logical_key: path.clone(),

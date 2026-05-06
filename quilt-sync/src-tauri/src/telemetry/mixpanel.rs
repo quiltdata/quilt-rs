@@ -88,7 +88,7 @@ pub fn mixpanel_config() -> Option<(String, Config)> {
     let secret = env::mixpanel_api_secret();
     if token.is_none() {
         eprintln!("No MIXPANEL_PROJECT_TOKEN configured, Mixpanel disabled");
-    };
+    }
     if secret.is_none() {
         eprintln!("No MIXPANEL_API_SECRET configured");
     }
@@ -120,11 +120,11 @@ pub fn init(mixpanel: &Option<Arc<Mixpanel>>) {
             match MixpanelEvent::AppLaunched.try_into() {
                 Ok((event_name, properties)) => {
                     if let Err(err) = mixpanel_clone.track(&event_name, properties).await {
-                        eprintln!("Failed to track app launch: {}", err);
+                        eprintln!("Failed to track app launch: {err}");
                     }
                 }
                 Err(err) => {
-                    eprintln!("Failed to serialize app launch event: {}", err);
+                    eprintln!("Failed to serialize app launch event: {err}");
                 }
             }
         });

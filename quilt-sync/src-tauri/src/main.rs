@@ -50,9 +50,10 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let package_info = app.package_info();
-            let enable = match cfg!(debug_assertions) {
-                true => None,
-                false => Some(()),
+            let enable = if cfg!(debug_assertions) {
+                None
+            } else {
+                Some(())
             };
             let telemetry = telemetry::Telemetry::new(&package_info.version, enable);
 

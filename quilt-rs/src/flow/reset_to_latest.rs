@@ -75,7 +75,7 @@ pub async fn reset_to_latest(
     for x in &installed_paths {
         if manifest.contains_record(x) {
             debug!("✔️ Will reinstall path: {}", x.display());
-            paths_to_install.push(x)
+            paths_to_install.push(x);
         } else {
             debug!("ℹ️ Path no longer exists in manifest: {}", x.display());
         }

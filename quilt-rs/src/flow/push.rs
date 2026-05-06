@@ -44,7 +44,7 @@ async fn use_existing_row_or_upload(
                     row.logical_key.display()
                 );
                 let updated_manifest_row = ManifestRow {
-                    physical_key: remote_row.physical_key.to_owned(),
+                    physical_key: remote_row.physical_key.clone(),
                     ..row.clone()
                 };
                 output.push(Ok(updated_manifest_row));
@@ -207,7 +207,7 @@ pub async fn push_package(
         paths::copy_cached_to_installed(paths, storage, &new_manifest_uri).await?;
         Err(Error::PackageOp(PackageOpError::Push(
             "Latest local hash is not equal to pushed manifest commit".to_string(),
-        )))?
+        )))?;
     }
 
     // Certify latest when:
@@ -385,7 +385,7 @@ mod tests {
         let file_content = b"Thu Feb 29 19:07:56 PST 2024\n";
 
         for i in 0..10 {
-            let file_path = PathBuf::from(format!("/b/a/r{}", i));
+            let file_path = PathBuf::from(format!("/b/a/r{i}"));
             remote
                 .storage
                 .write_byte_stream(&file_path, ByteStream::from_static(file_content))
@@ -393,7 +393,7 @@ mod tests {
 
             manifest
                 .insert_record(ManifestRow {
-                    logical_key: PathBuf::from(format!("e0-{}.txt", i)),
+                    logical_key: PathBuf::from(format!("e0-{i}.txt")),
                     physical_key: format!("file://{}", file_path.display()),
                     hash: crate::checksum::Sha256ChunkedHash::try_from(
                         "/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=",
