@@ -67,6 +67,7 @@ impl ManifestUri {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Tag;
 
     type Res<T = ()> = Result<T, UriError>;
 
@@ -75,7 +76,7 @@ mod tests {
         let package_uri = S3PackageUri {
             bucket: "foo".to_string(),
             namespace: ("bar", "baz").into(),
-            revision: RevisionPointer::Tag("latest".to_string()),
+            revision: RevisionPointer::Tag(Tag::Latest),
             path: None,
             catalog: None,
         };

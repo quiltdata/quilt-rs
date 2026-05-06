@@ -14,6 +14,7 @@
 
 - Renamed `paths::get_manifest_key_legacy` to `paths::get_manifest_key`; the `_legacy` suffix had no non-legacy counterpart to disambiguate from
 - `Namespace::try_from` now rejects empty prefixes, empty names, and inputs with extra slashes; existing valid namespaces are unaffected
+- `RevisionPointer::Tag` now carries a structured `Tag` instead of a raw string; URIs with arbitrary tag strings (anything other than `latest` or a Unix timestamp) now fail at parse time. Wire format unchanged
 
 ## [v0.2.0] - 2026-05-04
 

@@ -16,9 +16,8 @@ use url::form_urlencoded;
 
 use crate::Host;
 use crate::ManifestUri;
+use crate::Tag;
 use crate::UriError;
-
-pub const LATEST_TAG: &str = "latest";
 
 /// This is the revision (or "hash") of the package.
 /// "Package" itself is a handle, but each package has revision.
@@ -26,12 +25,12 @@ pub const LATEST_TAG: &str = "latest";
 #[serde(tag = "_tag", content = "value")]
 pub enum RevisionPointer {
     Hash(String),
-    Tag(String),
+    Tag(Tag),
 }
 
 impl Default for RevisionPointer {
     fn default() -> Self {
-        Self::Tag(String::from(LATEST_TAG))
+        Self::Tag(Tag::Latest)
     }
 }
 
@@ -247,7 +246,7 @@ impl TryFrom<&str> for S3PackageUri {
                     "package spec may contain only one \":\"".to_string(),
                 ));
             }
-            (namespace.into(), RevisionPointer::Tag(tag.into()))
+            (namespace.into(), RevisionPointer::Tag(tag.parse()?))
         } else if let Some((namespace, top_hash)) = pkg_spec.split_once('@') {
             if top_hash.is_empty() {
                 return Err(UriError::Package("hash must not be empty".to_string()));
@@ -301,13 +300,8 @@ impl S3PackageUri {
 
     pub fn display(&self) -> String {
         let hash = match &self.revision {
-            RevisionPointer::Tag(h) => {
-                if h == "latest" {
-                    String::new()
-                } else {
-                    format!(":{h}")
-                }
-            }
+            RevisionPointer::Tag(Tag::Latest) => String::new(),
+            RevisionPointer::Tag(tag) => format!(":{tag}"),
             RevisionPointer::Hash(h) => format!("@{}", Self::format_hash(h)),
         };
         let path_part = match &self.path {
@@ -326,8 +320,8 @@ impl S3PackageUri {
 
     pub fn display_for_host(&self, host: &Host) -> Result<url::Url, UriError> {
         let version = match &self.revision {
-            RevisionPointer::Tag(tag) => tag,
-            RevisionPointer::Hash(hash) => hash,
+            RevisionPointer::Tag(tag) => tag.to_string(),
+            RevisionPointer::Hash(hash) => hash.clone(),
         };
         let mut url = url::Url::parse(&format!(
             "https://{}/b/{}/packages/{}/tree/{}",
@@ -354,13 +348,8 @@ impl S3PackageUri {
 impl fmt::Display for S3PackageUri {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let hash = match &self.revision {
-            RevisionPointer::Tag(h) => {
-                if h == "latest" {
-                    String::new()
-                } else {
-                    format!(":{h}")
-                }
-            }
+            RevisionPointer::Tag(Tag::Latest) => String::new(),
+            RevisionPointer::Tag(tag) => format!(":{tag}"),
             RevisionPointer::Hash(h) => format!("@{h}"),
         };
         let path_part = match &self.path {
@@ -414,6 +403,7 @@ impl From<&ManifestUri> for S3PackageUri {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Seconds;
 
     type Res<T = ()> = Result<T, UriError>;
 
@@ -528,7 +518,7 @@ mod tests {
                 bucket: "bucket".to_string(),
                 catalog: None,
                 namespace: ("foo", "bar").into(),
-                revision: RevisionPointer::Tag("latest".to_string()),
+                revision: RevisionPointer::Tag(Tag::Latest),
                 path: Some(PathBuf::from("read/me.md")),
             }
         );
@@ -545,7 +535,7 @@ mod tests {
                 bucket: "bucket".to_string(),
                 catalog: Some(Host::default()),
                 namespace: ("foo", "bar").into(),
-                revision: RevisionPointer::Tag("latest".to_string()),
+                revision: RevisionPointer::Tag(Tag::Latest),
                 path: Some(PathBuf::from("read/me.md")),
             }
         );
@@ -558,7 +548,7 @@ mod tests {
             bucket: "bucket".to_string(),
             catalog: Some(Host::default()),
             namespace: ("foo", "bar").into(),
-            revision: RevisionPointer::Tag("latest".to_string()),
+            revision: RevisionPointer::Tag(Tag::Latest),
             path: Some(PathBuf::from("read/me.md")),
         };
         assert_eq!(
@@ -596,15 +586,18 @@ mod tests {
     }
 
     #[test]
-    fn test_stringify_with_tag() -> Res {
+    fn test_stringify_with_timestamp_tag() -> Res {
         let uri = S3PackageUri {
             bucket: "bucket".to_string(),
             catalog: None,
             namespace: ("foo", "bar").into(),
-            revision: RevisionPointer::Tag("foobar".to_string()),
+            revision: RevisionPointer::Tag(Tag::Timestamp(Seconds(1697916638))),
             path: None,
         };
-        assert_eq!(uri.to_string(), "quilt+s3://bucket#package=foo/bar:foobar");
+        assert_eq!(
+            uri.to_string(),
+            "quilt+s3://bucket#package=foo/bar:1697916638"
+        );
         Ok(())
     }
 
@@ -723,15 +716,15 @@ mod tests {
     }
 
     #[test]
-    fn test_tag_parsing() -> Res {
-        let uri: S3PackageUri = "quilt+s3://bucket#package=foo/bar:the-very-latest".parse()?;
+    fn test_tag_parsing_timestamp() -> Res {
+        let uri: S3PackageUri = "quilt+s3://bucket#package=foo/bar:1697916638".parse()?;
         assert_eq!(
             uri,
             S3PackageUri {
                 bucket: "bucket".to_string(),
                 catalog: None,
                 namespace: ("foo", "bar").into(),
-                revision: RevisionPointer::Tag("the-very-latest".to_string()),
+                revision: RevisionPointer::Tag(Tag::Timestamp(Seconds(1697916638))),
                 path: None,
             }
         );
@@ -747,11 +740,45 @@ mod tests {
                 bucket: "bucket".to_string(),
                 catalog: None,
                 namespace: ("foo", "bar").into(),
-                revision: RevisionPointer::Tag("latest".to_string()),
+                revision: RevisionPointer::Tag(Tag::Latest),
                 path: Some(PathBuf::from("data.csv")),
             }
         );
         Ok(())
+    }
+
+    #[test]
+    fn test_tag_parsing_unsupported() {
+        let result = S3PackageUri::try_from("quilt+s3://bucket#package=foo/bar:my-experiment");
+        let err = result.unwrap_err();
+        assert!(matches!(err, UriError::Tag(_)), "expected Tag error: {err}");
+    }
+
+    #[test]
+    fn test_revision_pointer_serde_round_trip_latest() {
+        let revision = RevisionPointer::Tag(Tag::Latest);
+        let json = serde_json::to_string(&revision).unwrap();
+        assert_eq!(json, r#"{"_tag":"Tag","value":"latest"}"#);
+        let parsed: RevisionPointer = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, revision);
+    }
+
+    #[test]
+    fn test_revision_pointer_serde_round_trip_timestamp() {
+        let revision = RevisionPointer::Tag(Tag::Timestamp(Seconds(1697916638)));
+        let json = serde_json::to_string(&revision).unwrap();
+        assert_eq!(json, r#"{"_tag":"Tag","value":"1697916638"}"#);
+        let parsed: RevisionPointer = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, revision);
+    }
+
+    #[test]
+    fn test_revision_pointer_serde_round_trip_hash() {
+        let revision = RevisionPointer::Hash("abc123".to_string());
+        let json = serde_json::to_string(&revision).unwrap();
+        assert_eq!(json, r#"{"_tag":"Hash","value":"abc123"}"#);
+        let parsed: RevisionPointer = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, revision);
     }
 
     #[test]
