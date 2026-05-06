@@ -404,14 +404,14 @@ mod tests {
 
     #[test]
     fn test_implicit_str_parsing() -> Res {
-        let uri: S3PackageUri = "quilt+s3://bucket#package=foo/bar@latest".parse()?;
+        let uri: S3PackageUri = "quilt+s3://bucket#package=foo/bar@deadbeef".parse()?;
         assert_eq!(
             uri,
             S3PackageUri {
                 bucket: "bucket".to_string(),
                 catalog: None,
                 namespace: ("foo", "bar").into(),
-                revision: RevisionPointer::Hash("latest".to_string()),
+                revision: RevisionPointer::Hash("deadbeef".to_string()),
                 path: None,
             }
         );
@@ -420,7 +420,7 @@ mod tests {
 
     #[test]
     fn test_implicit_string_parsing() -> Res {
-        let uri: S3PackageUri = "quilt+s3://bucket#package=foo/bar@latest"
+        let uri: S3PackageUri = "quilt+s3://bucket#package=foo/bar@deadbeef"
             .to_string()
             .parse()?;
         assert_eq!(
@@ -429,7 +429,7 @@ mod tests {
                 bucket: "bucket".to_string(),
                 catalog: None,
                 namespace: ("foo", "bar").into(),
-                revision: RevisionPointer::Hash("latest".to_string()),
+                revision: RevisionPointer::Hash("deadbeef".to_string()),
                 path: None,
             }
         );
@@ -490,14 +490,14 @@ mod tests {
     #[test]
     fn test_path() -> Res {
         let uri: S3PackageUri =
-            "quilt+s3://bucket#package=foo/bar@latest&path=read/me.md".parse()?;
+            "quilt+s3://bucket#package=foo/bar@deadbeef&path=read/me.md".parse()?;
         assert_eq!(
             uri,
             S3PackageUri {
                 bucket: "bucket".to_string(),
                 catalog: None,
                 namespace: ("foo", "bar").into(),
-                revision: RevisionPointer::Hash("latest".to_string()),
+                revision: RevisionPointer::Hash("deadbeef".to_string()),
                 path: Some(PathBuf::from("read/me.md")),
             }
         );
