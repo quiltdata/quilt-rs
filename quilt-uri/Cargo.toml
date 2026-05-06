@@ -2,7 +2,7 @@
 name = "quilt-uri"
 description = "Parser and types for Quilt+ URIs."
 
-version = "0.3.0-alpha1"
+version = "0.3.0"
 
 # Inherit from workspace
 edition.workspace = true
