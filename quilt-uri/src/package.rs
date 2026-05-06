@@ -288,7 +288,7 @@ impl S3PackageUri {
         let hash = match &self.revision {
             RevisionPointer::Tag(h) => {
                 if h == "latest" {
-                    "".to_string()
+                    String::new()
                 } else {
                     format!(":{h}")
                 }
@@ -297,11 +297,11 @@ impl S3PackageUri {
         };
         let path_part = match &self.path {
             Some(p) => format!("&path={}", p.display()),
-            None => "".to_string(),
+            None => String::new(),
         };
         let catalog_part = match &self.catalog {
             Some(p) => format!("&catalog={p}"),
-            None => "".to_string(),
+            None => String::new(),
         };
         format!(
             "quilt+s3://{}#package={}{}{}{}",
@@ -341,7 +341,7 @@ impl fmt::Display for S3PackageUri {
         let hash = match &self.revision {
             RevisionPointer::Tag(h) => {
                 if h == "latest" {
-                    "".to_string()
+                    String::new()
                 } else {
                     format!(":{h}")
                 }
@@ -350,11 +350,11 @@ impl fmt::Display for S3PackageUri {
         };
         let path_part = match &self.path {
             Some(p) => format!("&path={}", p.display()),
-            None => "".to_string(),
+            None => String::new(),
         };
         let catalog_part = match &self.catalog {
             Some(p) => format!("&catalog={p}"),
-            None => "".to_string(),
+            None => String::new(),
         };
         write!(
             f,
