@@ -15,7 +15,6 @@ pub use error::UriError;
 pub use host::Host;
 pub use manifest::ManifestUri;
 pub use object::ObjectUri;
-pub use package::LATEST_TAG;
 pub use package::Namespace;
 pub use package::RevisionPointer;
 pub use package::S3PackageHandle;

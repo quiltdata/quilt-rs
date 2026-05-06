@@ -37,6 +37,15 @@ jobs:
       - name: Lint
         run: cargo clippy -p quilt-uri -- --deny warnings
 
+      - name: Add wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Check WASM build (default features)
+        run: cargo check -p quilt-uri --target wasm32-unknown-unknown
+
+      - name: Check WASM build (all features)
+        run: cargo check -p quilt-uri --target wasm32-unknown-unknown --all-features
+
       - name: Test
         run: cargo nextest run -p quilt-uri
         env:

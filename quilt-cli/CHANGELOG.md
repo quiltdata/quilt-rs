@@ -9,6 +9,16 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.25.3] - 2026-05-06
+
+### quilt-rs
+
+- Bumped to v0.31.1 (<https://github.com/quiltdata/quilt-rs/pull/664>, see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+### quilt-uri
+
+- Bumped to v0.3.0 (<https://github.com/quiltdata/quilt-rs/pull/664>, see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
+
 ## [v0.25.2] - 2026-05-04
 
 ### Added

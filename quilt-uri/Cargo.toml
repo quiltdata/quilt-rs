@@ -2,7 +2,7 @@
 name = "quilt-uri"
 description = "Parser and types for Quilt+ URIs."
 
-version = "0.2.0"
+version = "0.3.0"
 
 # Inherit from workspace
 edition.workspace = true
@@ -23,4 +23,5 @@ thiserror.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
 test-log.workspace = true

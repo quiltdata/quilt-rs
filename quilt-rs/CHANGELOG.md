@@ -9,6 +9,17 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.31.1] - 2026-05-06
+
+### Changed
+
+- `installed_package::recommit_for_remote` now constructs `S3Uri` with explicit `version: None` instead of relying on `S3Uri::default()`, which is now gated to test builds (<https://github.com/quiltdata/quilt-rs/pull/664>)
+- `resolve_top_hash` no longer re-parses the tag string; `RevisionPointer::Tag` already carries a structured `Tag` (<https://github.com/quiltdata/quilt-rs/pull/664>)
+
+### quilt-uri
+
+- Bumped to v0.3.0 (<https://github.com/quiltdata/quilt-rs/pull/664>, see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
+
 ## [v0.31.0] - 2026-05-04
 
 ### Changed

@@ -1,6 +1,9 @@
 use std::fmt;
 use std::str::FromStr;
 
+use serde::Deserialize;
+use serde::Serialize;
+
 use crate::S3PackageHandle;
 use crate::S3Uri;
 use crate::UriError;
@@ -29,7 +32,8 @@ impl FromStr for Seconds {
 
 /// In theory tag can be any string
 /// But in practice we only use timestamps and "latest"
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(into = "String", try_from = "String")]
 pub enum Tag {
     Timestamp(Seconds),
     Latest,
@@ -53,8 +57,24 @@ impl FromStr for Tag {
         } else if let Ok(seconds) = s.parse::<Seconds>() {
             Ok(Tag::Timestamp(seconds))
         } else {
-            Err(UriError::Tag(format!("Unsupported tag format: {s}")))
+            Err(UriError::Tag(format!(
+                "tag must be \"latest\" or a Unix timestamp in seconds; got: {s}"
+            )))
         }
+    }
+}
+
+impl From<Tag> for String {
+    fn from(tag: Tag) -> String {
+        tag.to_string()
+    }
+}
+
+impl TryFrom<String> for Tag {
+    type Error = UriError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        value.parse()
     }
 }
 
@@ -141,8 +161,25 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("Unsupported tag format")
+                .contains("tag must be \"latest\" or a Unix timestamp")
         );
+    }
+
+    #[test]
+    fn test_tag_serde_round_trip_latest() {
+        let json = serde_json::to_string(&Tag::Latest).unwrap();
+        assert_eq!(json, "\"latest\"");
+        let parsed: Tag = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, Tag::Latest);
+    }
+
+    #[test]
+    fn test_tag_serde_round_trip_timestamp() {
+        let tag = Tag::Timestamp(Seconds(1697916638));
+        let json = serde_json::to_string(&tag).unwrap();
+        assert_eq!(json, "\"1697916638\"");
+        let parsed: Tag = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, tag);
     }
 
     #[test]

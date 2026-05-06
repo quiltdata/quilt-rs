@@ -14,12 +14,25 @@ use crate::paths;
 /// URI for manifest.
 /// Manifests are stored in immutable files.
 /// They are s3-unversioned but have hash.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManifestUri {
     pub origin: Option<Host>,
     pub bucket: String,
     pub namespace: Namespace,
     pub hash: String,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::derivable_impls)]
+impl Default for ManifestUri {
+    fn default() -> Self {
+        Self {
+            origin: None,
+            bucket: String::new(),
+            namespace: Namespace::default(),
+            hash: String::new(),
+        }
+    }
 }
 
 impl TryFrom<S3PackageUri> for ManifestUri {
@@ -45,7 +58,7 @@ impl From<ManifestUri> for S3Uri {
     fn from(remote: ManifestUri) -> S3Uri {
         S3Uri {
             bucket: remote.bucket,
-            key: paths::get_manifest_key_legacy(&remote.hash),
+            key: paths::get_manifest_key(&remote.hash),
             version: None,
         }
     }
@@ -67,6 +80,7 @@ impl ManifestUri {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Tag;
 
     type Res<T = ()> = Result<T, UriError>;
 
@@ -75,7 +89,7 @@ mod tests {
         let package_uri = S3PackageUri {
             bucket: "foo".to_string(),
             namespace: ("bar", "baz").into(),
-            revision: RevisionPointer::Tag("latest".to_string()),
+            revision: RevisionPointer::Tag(Tag::Latest),
             path: None,
             catalog: None,
         };

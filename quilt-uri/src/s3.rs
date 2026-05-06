@@ -35,11 +35,23 @@ fn extract_path_relative_to_bucket(path: &str) -> Result<&str, UriError> {
 }
 
 /// struct representation of the generic `s3://url`
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct S3Uri {
     pub bucket: String,
     pub key: String,
     pub version: Option<String>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::derivable_impls)]
+impl Default for S3Uri {
+    fn default() -> Self {
+        Self {
+            bucket: String::new(),
+            key: String::new(),
+            version: None,
+        }
+    }
 }
 
 impl S3Uri {
@@ -86,16 +98,13 @@ impl TryFrom<&str> for S3Uri {
             )));
         }
 
-        let version = match queries.first() {
+        let version = match queries.into_iter().next() {
             None => None,
-            Some((key, value)) => {
-                if key == "versionId" {
-                    Some(value.to_string())
-                } else {
-                    return Err(UriError::S3(format!(
-                        "Unknown query parameter in {input}. Only single versionId is allowed"
-                    )));
-                }
+            Some((key, value)) if key == "versionId" => Some(value),
+            Some(_) => {
+                return Err(UriError::S3(format!(
+                    "Unknown query parameter in {input}. Only single versionId is allowed"
+                )));
             }
         };
 
