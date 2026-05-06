@@ -478,7 +478,7 @@ mod tests {
             assert!(added_row.matches_content(&reference_row));
             Ok(())
         } else {
-            panic!("Expected Change::Added, got {:?}", added_file)
+            panic!("Expected Change::Added, got {added_file:?}")
         }
     }
 
@@ -517,7 +517,7 @@ mod tests {
             assert!(added_row.matches_content(&reference_row));
             Ok(())
         } else {
-            panic!("Expected Change::Added, got {:?}", added_file)
+            panic!("Expected Change::Added, got {added_file:?}")
         }
     }
 

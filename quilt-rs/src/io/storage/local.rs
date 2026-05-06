@@ -323,7 +323,7 @@ mod tests {
             .await?;
 
         let entries: Vec<_> = std::fs::read_dir(temp_dir.path())?
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
             .collect();
         assert_eq!(entries.len(), 1, "only the target file should exist");
         assert_eq!(entries[0].file_name(), "data.txt");
@@ -344,7 +344,7 @@ mod tests {
             .await;
 
         let has_tmp = std::fs::read_dir(temp_dir.path())?
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
             .any(|e| e.file_name().to_string_lossy().starts_with(".tmp-"));
         assert!(!has_tmp, "temp file should be cleaned up");
 

@@ -100,7 +100,7 @@ pub async fn pull_package(
     for x in &installed_paths {
         if manifest.contains_record(x) {
             debug!("✔️ Will reinstall path: {}", x.display());
-            paths_to_install.push(x)
+            paths_to_install.push(x);
         } else {
             warn!("❌ Path no longer exists in manifest: {}", x.display());
         }

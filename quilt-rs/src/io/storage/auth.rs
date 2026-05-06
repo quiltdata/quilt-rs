@@ -265,7 +265,7 @@ mod tests {
             refresh_token: "secret-refresh".to_string(),
             expires_at: Utc::now(),
         };
-        let output = format!("{:?}", tokens);
+        let output = format!("{tokens:?}");
         assert!(output.contains("[REDACTED]"));
         assert!(!output.contains("secret-access"));
         assert!(!output.contains("secret-refresh"));
@@ -279,7 +279,7 @@ mod tests {
             token: "secret-token".to_string(),
             expires_at: Utc::now(),
         };
-        let output = format!("{:?}", creds);
+        let output = format!("{creds:?}");
         assert!(output.contains("[REDACTED]"));
         assert!(!output.contains("secret-key"));
         assert!(!output.contains("secret-secret"));

@@ -30,7 +30,7 @@ impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut output = vec![format!("{}", self.installed_package)];
         if self.paths.is_empty() {
-            output.push("No paths installed".to_string())
+            output.push("No paths installed".to_string());
         } else {
             for path in &self.paths {
                 output.push(format!("Path: {path:?}"));

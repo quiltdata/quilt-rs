@@ -127,7 +127,7 @@ impl fmt::Display for S3Uri {
             remote_url
                 .query_pairs_mut()
                 .append_pair("versionId", version_id);
-        };
+        }
         write!(f, "{remote_url}")
     }
 }

@@ -60,9 +60,10 @@ fn file_names(paths: &[&PathBuf]) -> String {
     paths
         .iter()
         .map(|p| {
-            p.file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| p.to_string_lossy().into_owned())
+            p.file_name().map_or_else(
+                || p.to_string_lossy().into_owned(),
+                |n| n.to_string_lossy().into_owned(),
+            )
         })
         .collect::<Vec<_>>()
         .join(", ")
@@ -194,7 +195,7 @@ mod tests {
     #[test]
     fn test_many_adds() {
         let names: Vec<String> = (1..=5).map(|i| format!("file{i}.csv")).collect();
-        let name_refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+        let name_refs: Vec<&str> = names.iter().map(std::string::String::as_str).collect();
         let changes = make_changes(&name_refs, &[], &[]);
         assert_eq!(generate(&changes), "Add 5 files");
     }
@@ -205,9 +206,18 @@ mod tests {
         let modified: Vec<String> = (1..=2).map(|i| format!("mod{i}.csv")).collect();
         let removed = ["old.csv".to_string()];
         let changes = make_changes(
-            &added.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
-            &modified.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
-            &removed.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+            &added
+                .iter()
+                .map(std::string::String::as_str)
+                .collect::<Vec<_>>(),
+            &modified
+                .iter()
+                .map(std::string::String::as_str)
+                .collect::<Vec<_>>(),
+            &removed
+                .iter()
+                .map(std::string::String::as_str)
+                .collect::<Vec<_>>(),
         );
         assert_eq!(
             generate(&changes),

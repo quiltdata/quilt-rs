@@ -199,8 +199,8 @@ pub async fn upload_row(
     // "Relax" the manifest by using those new remote keys
     let physical_key = remote_url.to_string();
     Ok(ManifestRow {
-        hash,
         physical_key,
+        hash,
         ..row
     })
 }
@@ -224,7 +224,7 @@ pub async fn build_manifest_from_rows_stream(
 ) -> Res<(PathBuf, String)> {
     let temp_dir = tempfile::tempdir()?;
     let temp_path = temp_dir.path().join("manifest.jsonl");
-    log::info!("Temp path for creating manifest {temp_path:?}");
+    log::info!("Temp path for creating manifest {}", temp_path.display());
 
     // Build manifest in memory
     let mut rows = Vec::new();
@@ -753,7 +753,7 @@ mod tests {
             &storage,
             dest_dir.to_path_buf(),
             ManifestHeader {
-                message: Some("".to_string()),
+                message: Some(String::new()),
                 user_meta: Some(serde_json::json!({})),
                 workflow: Some(Workflow {
                     config: "s3://workflow/config".parse()?,
@@ -799,7 +799,7 @@ mod tests {
             &storage,
             dest_dir.to_path_buf(),
             ManifestHeader {
-                message: Some("".to_string()),
+                message: Some(String::new()),
                 user_meta: Some(serde_json::json!({})),
                 workflow: Some(Workflow {
                     config: "s3://workflow/config".parse()?,
@@ -974,7 +974,7 @@ mod tests {
             &storage,
             dest_dir.to_path_buf(),
             ManifestHeader {
-                message: Some("".to_string()),
+                message: Some(String::new()),
                 user_meta: None,
                 workflow: Some(Workflow {
                     config: "s3://workflow/config".parse()?,
@@ -1020,7 +1020,7 @@ mod tests {
             &storage,
             dest_dir.to_path_buf(),
             ManifestHeader {
-                message: Some("".to_string()),
+                message: Some(String::new()),
                 user_meta: Some(serde_json::Value::Null),
                 workflow: Some(Workflow {
                     config: "s3://workflow/config".parse()?,

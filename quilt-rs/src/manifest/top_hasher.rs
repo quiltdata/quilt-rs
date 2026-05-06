@@ -390,7 +390,7 @@ mod tests {
     #[test]
     fn test_manifest_header_empty_empty_simple_workflow_no_rows() -> Res {
         let header = ManifestHeader {
-            message: Some("".to_string()),
+            message: Some(String::new()),
             user_meta: Some(serde_json::json!({})),
             workflow: Some(Workflow {
                 config: "s3://workflow/config".parse()?,
@@ -415,7 +415,7 @@ mod tests {
     #[test]
     fn test_manifest_header_empty_empty_complex_workflow_no_rows() -> Res {
         let header = ManifestHeader {
-            message: Some("".to_string()),
+            message: Some(String::new()),
             user_meta: Some(serde_json::json!({})),
             workflow: Some(Workflow {
                 config: "s3://workflow/config".parse()?,
@@ -502,7 +502,7 @@ mod tests {
     #[test]
     fn test_manifest_header_empty_none_simple_workflow_no_rows() -> Res {
         let header = ManifestHeader {
-            message: Some("".to_string()),
+            message: Some(String::new()),
             user_meta: None,
             workflow: Some(Workflow {
                 config: "s3://workflow/config".parse()?,
@@ -527,7 +527,7 @@ mod tests {
     #[test]
     fn test_manifest_header_empty_null_simple_workflow_no_rows() -> Res {
         let header = ManifestHeader {
-            message: Some("".to_string()),
+            message: Some(String::new()),
             user_meta: Some(serde_json::Value::Null),
             workflow: Some(Workflow {
                 config: "s3://workflow/config".parse()?,
@@ -618,7 +618,7 @@ mod tests {
 
         for i in 0..10 {
             let manifest_row = ManifestRow {
-                logical_key: PathBuf::from(format!("e0-{}.txt", i)),
+                logical_key: PathBuf::from(format!("e0-{i}.txt")),
                 physical_key: "ignored".to_string(),
                 hash: Sha256ChunkedHash::try_from("/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=")?
                     .into(),

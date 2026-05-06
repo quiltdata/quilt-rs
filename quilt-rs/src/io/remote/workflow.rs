@@ -153,11 +153,11 @@ mod tests {
         let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
 
         // Put test config.yaml with workflow but no schemas section
-        let config = r#"
+        let config = r"
 workflows:
   foo:
     metadata_schema: bar
-"#;
+";
         remote
             .put_object(&None, &uri, config.as_bytes().to_vec())
             .await?;
@@ -206,14 +206,14 @@ workflows:
         let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
 
         // Put test config.yaml into mock remote storage
-        let config = r#"
+        let config = r"
 workflows:
   foo:
     metadata_schema: bar
 schemas:
   bar:
     url: s3://test-bucket/schemas/test.json
-"#;
+";
         let schema_uri: S3Uri = "s3://test-bucket/schemas/test.json".parse()?;
         let schema = b"{}";
         remote
@@ -255,7 +255,7 @@ schemas:
         assert!(err.to_string().contains("Workflow non-existent not found"));
 
         // Case 2.d: Config exists but workflow_id is empty
-        let err = resolve_workflow(&remote, &host, Some("".to_string()), &uri)
+        let err = resolve_workflow(&remote, &host, Some(String::new()), &uri)
             .await
             .unwrap_err();
         assert!(matches!(

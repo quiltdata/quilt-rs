@@ -15,7 +15,7 @@ pub fn init() {
         {
             if let Err(e) = dotenv::dotenv() {
                 // It's okay if .env file doesn't exist in development
-                eprintln!("Note: .env file not found or invalid: {}", e);
+                eprintln!("Note: .env file not found or invalid: {e}");
             }
         }
     });
@@ -45,9 +45,13 @@ pub fn get_var(key: &str) -> Option<String> {
     // Each variable must be explicitly listed because option_env!
     // requires string literals at compile time
     match key {
-        "SENTRY_DSN" => option_env!("SENTRY_DSN").map(|s| s.to_string()),
-        "MIXPANEL_PROJECT_TOKEN" => option_env!("MIXPANEL_PROJECT_TOKEN").map(|s| s.to_string()),
-        "MIXPANEL_API_SECRET" => option_env!("MIXPANEL_API_SECRET").map(|s| s.to_string()),
+        "SENTRY_DSN" => option_env!("SENTRY_DSN").map(std::string::ToString::to_string),
+        "MIXPANEL_PROJECT_TOKEN" => {
+            option_env!("MIXPANEL_PROJECT_TOKEN").map(std::string::ToString::to_string)
+        }
+        "MIXPANEL_API_SECRET" => {
+            option_env!("MIXPANEL_API_SECRET").map(std::string::ToString::to_string)
+        }
         // Add more build-time env vars here as needed:
         // "DATABASE_URL" => option_env!("DATABASE_URL").map(|s| s.to_string()),
         // "API_KEY" => option_env!("API_KEY").map(|s| s.to_string()),

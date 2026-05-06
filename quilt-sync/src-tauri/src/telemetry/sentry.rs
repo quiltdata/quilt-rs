@@ -5,7 +5,7 @@ use crate::env;
 fn get_sentry_dsn() -> Option<sentry::types::Dsn> {
     env::sentry_dsn().and_then(|dsn_str| {
         dsn_str.parse().ok().or_else(|| {
-            eprintln!("Warning: Invalid SENTRY_DSN format: {}", dsn_str);
+            eprintln!("Warning: Invalid SENTRY_DSN format: {dsn_str}");
             None
         })
     })

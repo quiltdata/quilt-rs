@@ -130,8 +130,8 @@ pub async fn create_package(
             let physical_key = Url::from_file_path(&object_dest)
                 .map_err(|_| {
                     Error::PackageOp(PackageOpError::Commit(format!(
-                        "Failed to create URL from {:?}",
-                        &object_dest
+                        "Failed to create URL from {}",
+                        object_dest.display()
                     )))
                 })?
                 .to_string();

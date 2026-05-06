@@ -75,20 +75,20 @@ fn parse_auth_params(url: &Url) -> Result<AuthParams> {
 
     let code = params
         .get("code")
-        .map(|v| v.to_string())
+        .map(std::string::ToString::to_string)
         .ok_or_else(|| Error::General("Missing 'code' parameter in auth callback".into()))?;
 
     let host_str = params
         .get("host")
-        .map(|v| v.to_string())
+        .map(std::string::ToString::to_string)
         .ok_or_else(|| Error::General("Missing 'host' parameter in auth callback".into()))?;
 
     let state = params
         .get("state")
-        .map(|v| v.to_string())
+        .map(std::string::ToString::to_string)
         .ok_or_else(|| Error::General("Missing 'state' parameter in auth callback".into()))?;
 
-    let redirect = params.get("redirect").map(|v| v.to_string());
+    let redirect = params.get("redirect").map(std::string::ToString::to_string);
 
     let host = quilt_uri::Host::from_str(&host_str)?;
     Ok(AuthParams {
@@ -151,7 +151,7 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
                                      is not a valid route: {}; \
                                      falling back to default page",
                                     loc, err
-                                )
+                                );
                             })
                             .ok()
                     })

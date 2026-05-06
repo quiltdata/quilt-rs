@@ -111,7 +111,7 @@ impl fmt::Display for Crc64Hash {
         // Use multibase encoding but strip the prefix to get plain base64
         let multibase_encoded = multibase::encode(multibase::Base::Base64Pad, self.digest());
         let base64_value = &multibase_encoded[1..]; // Remove the multibase prefix
-        write!(f, "{}", base64_value)
+        write!(f, "{base64_value}")
     }
 }
 
@@ -239,7 +239,7 @@ mod tests {
         // Test serialized format
         let expected_base64 = &multibase::encode(multibase::Base::Base64Pad, crc64.digest())[1..];
         assert!(serialized.contains("\"type\":\"CRC64NVME\""));
-        assert!(serialized.contains(&format!("\"value\":\"{}\"", expected_base64)));
+        assert!(serialized.contains(&format!("\"value\":\"{expected_base64}\"")));
     }
 
     #[test]
@@ -248,7 +248,7 @@ mod tests {
         let crc64 = Crc64Hash::try_from(original_hash).unwrap();
 
         // Test Display implementation
-        let display_string = format!("{}", crc64);
+        let display_string = format!("{crc64}");
 
         // Should be base64 without multibase prefix
         let expected_base64 = &multibase::encode(multibase::Base::Base64Pad, b"test_data")[1..];

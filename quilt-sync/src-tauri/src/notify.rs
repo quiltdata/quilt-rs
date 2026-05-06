@@ -38,7 +38,11 @@ mod tests {
     #[test]
     fn test_success() {
         let notify = Notify::new("test".to_string());
-        let result = notify.map(Ok::<(), &str>(()), "SUCCESS".to_string(), |e| e.to_string());
+        let result = notify.map(
+            Ok::<(), &str>(()),
+            "SUCCESS".to_string(),
+            std::string::ToString::to_string,
+        );
         assert_eq!(result, Ok("SUCCESS".to_string()));
     }
 
@@ -48,7 +52,7 @@ mod tests {
         let result = notify.map(
             Err::<(), &str>("something broke"),
             "unused".to_string(),
-            |e| e.to_string(),
+            std::string::ToString::to_string,
         );
         assert_eq!(result, Err("something broke".to_string()));
     }

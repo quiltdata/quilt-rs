@@ -22,7 +22,7 @@ pub struct Output {
 
 impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, r##"New commit "{}" created"##, self.commit.hash)
+        write!(f, r#"New commit "{}" created"#, self.commit.hash)
     }
 }
 

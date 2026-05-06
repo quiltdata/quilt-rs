@@ -220,7 +220,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 Some(object) => match serde_json::from_str(object)? {
                     serde_json::Value::Object(object) => Some(serde_json::Value::Object(object)),
                     _ => {
-                        return Err(Error::CommitMetaInvalid(object.to_string()));
+                        return Err(Error::CommitMetaInvalid(object.clone()));
                     }
                 },
                 None => None,
@@ -318,10 +318,10 @@ pub enum Error {
     Quilt(quilt_rs::Error),
 
     #[error(
-        r#"
+        r"
 Please visit https://{0}/code to get your code.
 Then run:
-> quilt_rs login --host {0} --code YOUR_CODE"#
+> quilt_rs login --host {0} --code YOUR_CODE"
     )]
     LoginRequired(Host),
 

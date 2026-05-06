@@ -93,7 +93,7 @@ impl fmt::Display for Sha256Hash {
         // Use multibase encoding but strip the prefix to get plain hex
         let multibase_encoded = multibase::encode(multibase::Base::Base16Lower, self.digest());
         let hex_value = &multibase_encoded[1..]; // Remove the multibase prefix
-        write!(f, "{}", hex_value)
+        write!(f, "{hex_value}")
     }
 }
 
@@ -204,7 +204,7 @@ mod tests {
         let expected_multibase = multibase::encode(multibase::Base::Base16Lower, sha256.digest());
         let expected_hex = &expected_multibase[1..]; // Remove 'f' prefix
         assert!(serialized.contains("\"type\":\"SHA256\""));
-        assert!(serialized.contains(&format!("\"value\":\"{}\"", expected_hex)));
+        assert!(serialized.contains(&format!("\"value\":\"{expected_hex}\"")));
     }
 
     #[test(tokio::test)]
@@ -332,7 +332,7 @@ mod tests {
         let sha256 = Sha256Hash::try_from(original_hash).unwrap();
 
         // Test Display implementation
-        let display_string = format!("{}", sha256);
+        let display_string = format!("{sha256}");
 
         // Should be hex without multibase prefix
         let expected_hex = hex::encode(b"test_data");

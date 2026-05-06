@@ -74,13 +74,13 @@ impl<'de> Deserialize<'de> for Workflow {
                     Ok(url) => Some(WorkflowId {
                         id: id.clone(),
                         metadata: Some(MetadataSchema {
-                            id: schema_id.to_string(),
+                            id: (*schema_id).clone(),
                             url,
                         }),
                     }),
                     Err(_) => {
                         return Err(serde::de::Error::custom(Error::Uri(UriError::S3(
-                            schema_url.to_string(),
+                            (*schema_url).clone(),
                         ))));
                     }
                 },
@@ -138,7 +138,7 @@ impl Default for ManifestHeader {
     fn default() -> Self {
         ManifestHeader {
             version: "v0".to_string(),
-            message: Some("".to_string()),
+            message: Some(String::new()),
             user_meta: Some(serde_json::Value::Object(serde_json::Map::new())),
             workflow: None,
         }
@@ -608,7 +608,7 @@ mod tests {
     fn test_manifest_header_default() -> Res {
         let header = ManifestHeader::default();
         assert_eq!(header.version, "v0");
-        assert_eq!(header.message, Some("".to_string()));
+        assert_eq!(header.message, Some(String::new()));
         assert_eq!(header.user_meta, Some(serde_json::json!({})));
         assert_eq!(header.workflow, None);
         Ok(())

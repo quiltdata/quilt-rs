@@ -1884,7 +1884,7 @@ mod tests {
     fn catalog_host(uri: &Option<quilt_uri::S3PackageUri>) -> Option<String> {
         uri.as_ref()
             .and_then(|u| u.catalog.as_ref())
-            .map(|h| h.to_string())
+            .map(std::string::ToString::to_string)
     }
 
     #[tokio::test]
@@ -2431,10 +2431,14 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data =
-            get_installed_package_data_from_model(&model, &tracing, &namespace, Default::default())
-                .await
-                .map_err(|e| e.to_string())?;
+        let data = get_installed_package_data_from_model(
+            &model,
+            &tracing,
+            &namespace,
+            routes::EntriesFilter::default(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert_eq!(data.namespace, "foo/bar");
         let uri = data.uri.as_ref().expect("URI present");
@@ -2454,9 +2458,13 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("missing", "package").into();
 
-        let result =
-            get_installed_package_data_from_model(&model, &tracing, &namespace, Default::default())
-                .await;
+        let result = get_installed_package_data_from_model(
+            &model,
+            &tracing,
+            &namespace,
+            routes::EntriesFilter::default(),
+        )
+        .await;
         assert!(result.is_err());
     }
 
@@ -2483,10 +2491,14 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data =
-            get_installed_package_data_from_model(&model, &tracing, &namespace, Default::default())
-                .await
-                .map_err(|e| e.to_string())?;
+        let data = get_installed_package_data_from_model(
+            &model,
+            &tracing,
+            &namespace,
+            routes::EntriesFilter::default(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert_eq!(data.status, "error");
         // URI is exposed (so the Set Remote popup can pre-fill bucket)
@@ -2523,10 +2535,14 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data =
-            get_installed_package_data_from_model(&model, &tracing, &namespace, Default::default())
-                .await
-                .map_err(|e| e.to_string())?;
+        let data = get_installed_package_data_from_model(
+            &model,
+            &tracing,
+            &namespace,
+            routes::EntriesFilter::default(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert_eq!(data.status, "error");
         assert_eq!(catalog_host(&data.uri).as_deref(), Some("test.quilt.dev"));
@@ -2554,10 +2570,14 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data =
-            get_installed_package_data_from_model(&model, &tracing, &namespace, Default::default())
-                .await
-                .map_err(|e| e.to_string())?;
+        let data = get_installed_package_data_from_model(
+            &model,
+            &tracing,
+            &namespace,
+            routes::EntriesFilter::default(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert_eq!(data.status, "local");
         assert!(data.uri.is_none());
@@ -2595,10 +2615,14 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data =
-            get_installed_package_data_from_model(&model, &tracing, &namespace, Default::default())
-                .await
-                .map_err(|e| e.to_string())?;
+        let data = get_installed_package_data_from_model(
+            &model,
+            &tracing,
+            &namespace,
+            routes::EntriesFilter::default(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert_eq!(data.status, "local");
         // Has origin for Push button and disabled Catalog button.
@@ -2654,10 +2678,14 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data =
-            get_installed_package_data_from_model(&model, &tracing, &namespace, Default::default())
-                .await
-                .map_err(|e| e.to_string())?;
+        let data = get_installed_package_data_from_model(
+            &model,
+            &tracing,
+            &namespace,
+            routes::EntriesFilter::default(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert_eq!(data.entries.len(), expected_sizes.len());
         for (name, expected_size) in &expected_sizes {

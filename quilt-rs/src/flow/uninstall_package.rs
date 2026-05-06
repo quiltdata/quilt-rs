@@ -24,7 +24,7 @@ pub async fn uninstall_package(
         .packages
         .remove(&namespace)
         .ok_or(Error::InstallPackage(InstallPackageError::NotInstalled(
-            namespace.to_owned(),
+            namespace.clone(),
         )))?;
     debug!("✔️ Package removed from lineage");
 

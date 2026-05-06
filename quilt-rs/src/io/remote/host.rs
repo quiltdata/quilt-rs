@@ -93,12 +93,11 @@ struct ConfigResponse {
 pub async fn fetch_host_config(client: &impl HttpClient, host: &Option<Host>) -> Res<HostConfig> {
     match host {
         Some(host) => {
-            let url = format!("https://{}/config.json", host);
+            let url = format!("https://{host}/config.json");
 
             let response: ConfigResponse = client.get(&url, None).await.map_err(|e| {
                 Error::RemoteCatalog(RemoteCatalogError::HostConfig(format!(
-                    "Failed to fetch config from {}: {}",
-                    host, e
+                    "Failed to fetch config from {host}: {e}"
                 )))
             })?;
 
@@ -156,7 +155,7 @@ mod tests {
                     error.clone(),
                 ))),
                 None => Err(Error::RemoteCatalog(RemoteCatalogError::HostConfig(
-                    format!("No mock response for URL: {}", url),
+                    format!("No mock response for URL: {url}"),
                 ))),
             }
         }
@@ -215,7 +214,7 @@ mod tests {
         let mut client = MockHttpClient::new();
         client.add_response(
             "https://test.quilt.dev/config.json".to_string(),
-            Ok(r#"{}"#.to_string()),
+            Ok(r"{}".to_string()),
         );
 
         let config = fetch_host_config(&client, &Some(Host::default())).await?;
@@ -256,7 +255,7 @@ mod tests {
         let mut client = MockHttpClient::new();
         client.add_response(
             "https://test.quilt.dev/config.json".to_string(),
-            Ok(r#"invalid json"#.to_string()),
+            Ok(r"invalid json".to_string()),
         );
 
         let result = fetch_host_config(&client, &Some(Host::default())).await;
@@ -270,10 +269,7 @@ mod tests {
             {
                 // This is expected - all client errors get wrapped
             }
-            _ => panic!(
-                "Expected HostConfig error wrapping JSON error, got: {:?}",
-                error
-            ),
+            _ => panic!("Expected HostConfig error wrapping JSON error, got: {error:?}"),
         }
     }
 
