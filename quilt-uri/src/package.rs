@@ -94,9 +94,7 @@ impl TryFrom<&str> for Namespace {
 
     fn try_from(input: &str) -> Result<Self, Self::Error> {
         let (prefix, name) = input.split_once('/').ok_or_else(|| {
-            UriError::Namespace(format!(
-                "namespace must be `<prefix>/<name>`; got: {input}"
-            ))
+            UriError::Namespace(format!("namespace must be `<prefix>/<name>`; got: {input}"))
         })?;
         if prefix.is_empty() || name.is_empty() {
             return Err(UriError::Namespace(format!(
