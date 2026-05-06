@@ -14,12 +14,25 @@ use crate::paths;
 /// URI for manifest.
 /// Manifests are stored in immutable files.
 /// They are s3-unversioned but have hash.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManifestUri {
     pub origin: Option<Host>,
     pub bucket: String,
     pub namespace: Namespace,
     pub hash: String,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::derivable_impls)]
+impl Default for ManifestUri {
+    fn default() -> Self {
+        Self {
+            origin: None,
+            bucket: String::new(),
+            namespace: Namespace::default(),
+            hash: String::new(),
+        }
+    }
 }
 
 impl TryFrom<S3PackageUri> for ManifestUri {

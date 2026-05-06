@@ -517,7 +517,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let workflows_config_uri = S3Uri {
             key: ".quilt/workflows/config.yml".to_string(),
             bucket,
-            ..S3Uri::default()
+            version: None,
         };
         let workflow =
             resolve_workflow(&self.remote, &Some(origin), None, &workflows_config_uri).await?;

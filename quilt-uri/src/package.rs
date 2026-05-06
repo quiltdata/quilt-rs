@@ -28,6 +28,7 @@ pub enum RevisionPointer {
     Tag(Tag),
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl Default for RevisionPointer {
     fn default() -> Self {
         Self::Tag(Tag::Latest)
@@ -37,10 +38,21 @@ impl Default for RevisionPointer {
 /// In theory namespace is just a string.
 /// But in practice we use "prefix/name".
 /// For ease of serializing/deserializing and for validation we put it to a struct.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Namespace {
     prefix: String,
     name: String,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::derivable_impls)]
+impl Default for Namespace {
+    fn default() -> Self {
+        Self {
+            prefix: String::new(),
+            name: String::new(),
+        }
+    }
 }
 
 impl Ord for Namespace {
@@ -258,7 +270,7 @@ impl TryFrom<&str> for S3PackageUri {
             }
             (namespace.into(), RevisionPointer::Hash(top_hash.into()))
         } else {
-            (pkg_spec, RevisionPointer::default())
+            (pkg_spec, RevisionPointer::Tag(Tag::Latest))
         };
 
         let path = params.remove("path").map(PathBuf::from);
