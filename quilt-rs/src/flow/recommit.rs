@@ -52,7 +52,7 @@ async fn rehash_rows<'a>(
                         "Invalid physical_key URL: {e}"
                     )))
                 })?;
-                let file_path = local_url.to_file_path().map_err(|_| {
+                let file_path = local_url.to_file_path().map_err(|()| {
                     Error::PackageOp(PackageOpError::Commit(format!(
                         "Cannot convert to file path: {local_url}"
                     )))
@@ -85,9 +85,8 @@ pub async fn recommit_for_remote(
     host_config: HostConfig,
     workflow: Option<Workflow>,
 ) -> Res<PackageLineage> {
-    let old_commit = match lineage.commit.take() {
-        Some(commit) => commit,
-        None => return Ok(lineage),
+    let Some(old_commit) = lineage.commit.take() else {
+        return Ok(lineage);
     };
 
     info!("⏳ Re-committing package for remote (rehashing with remote config)");

@@ -46,6 +46,7 @@ pub enum MixpanelEvent {
     ErrorOccurred { error_type: String },
 }
 
+#[allow(clippy::implicit_hasher)]
 impl TryFrom<MixpanelEvent> for (String, Option<HashMap<String, Value>>) {
     type Error = crate::Error;
 

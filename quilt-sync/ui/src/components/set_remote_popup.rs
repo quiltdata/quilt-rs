@@ -14,6 +14,7 @@ pub struct SetRemotePopupData {
 }
 
 #[component]
+#[allow(clippy::needless_pass_by_value)]
 pub fn SetRemotePopup(
     namespace: String,
     current_host: Option<String>,

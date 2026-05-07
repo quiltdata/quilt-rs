@@ -171,7 +171,7 @@ mod tests {
     use tokio::io::AsyncWriteExt;
 
     #[test(tokio::test)]
-    #[ignore] // It doesn't work in CI. In CI file has `now` date
+    #[ignore = "doesn't work in CI: in CI the file has a `now` modification date"]
     async fn test_getting_file_modified_ts() -> Res {
         let storage = LocalStorage::default();
         let timestamp = storage.modified_timestamp(Path::new("")).await?;

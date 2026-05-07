@@ -912,7 +912,7 @@ mod tests {
 
     const ACCESS_TOKEN: &str = "test-access-token";
     const REFRESH_TOKEN: &str = "test-refresh-token";
-    const TIMESTAMP: i64 = 1708444800;
+    const TIMESTAMP: i64 = 1_708_444_800;
 
     fn get_host() -> Host {
         "test.quilt.dev".parse().unwrap()
@@ -1005,7 +1005,7 @@ mod tests {
         assert_eq!(tokens.refresh_token, "new-refresh-token");
         assert_eq!(
             tokens.expires_at,
-            chrono::DateTime::from_timestamp(1708444800, 0).unwrap()
+            chrono::DateTime::from_timestamp(1_708_444_800, 0).unwrap()
         );
     }
 
@@ -1020,7 +1020,7 @@ mod tests {
         assert_eq!(credentials.token, "test-session-token");
         assert_eq!(
             credentials.expires_at,
-            chrono::DateTime::from_timestamp(1708444800, 0).unwrap()
+            chrono::DateTime::from_timestamp(1_708_444_800, 0).unwrap()
         );
     }
 

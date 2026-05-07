@@ -47,3 +47,6 @@ uuid.workspace = true
 [dev-dependencies]
 quilt-uri = { path = "../quilt-uri", version = "0.3.0", features = ["test-support"] }
 test-log.workspace = true
+
+[lints]
+workspace = true

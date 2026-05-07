@@ -105,7 +105,7 @@ fn CommitContent(
             .and_then(|w| w.id.clone())
             .unwrap_or_default(),
     );
-    let workflow_null = RwSignal::new(workflow.as_ref().map(|w| w.id.is_none()).unwrap_or(true));
+    let workflow_null = RwSignal::new(workflow.as_ref().is_none_or(|w| w.id.is_none()));
 
     // Filtered entries
     let entries_for_view = entries.clone();
@@ -262,7 +262,7 @@ fn CommitContent(
                                     "unmodified"
                                     <Show when=move || !filter_unmodified.get() && (unmodified_count > 0)>
                                         <span class="qui-filter-count">
-                                            {format!("({})", unmodified_count)}
+                                            {format!("({unmodified_count})")}
                                         </span>
                                     </Show>
                                 </label>
@@ -277,7 +277,7 @@ fn CommitContent(
                                     "ignored"
                                     <Show when=move || !filter_ignored.get() && (ignored_count > 0)>
                                         <span class="qui-filter-count">
-                                            {format!("({})", ignored_count)}
+                                            {format!("({ignored_count})")}
                                         </span>
                                     </Show>
                                 </label>
@@ -704,7 +704,7 @@ fn get_json_editor_value(target_id: &str) -> String {
         .and_then(|d| d.get_element_by_id("metadata"))
         .and_then(|el| {
             el.dyn_ref::<web_sys::HtmlTextAreaElement>()
-                .map(|ta| ta.value())
+                .map(web_sys::HtmlTextAreaElement::value)
         })
         .unwrap_or_default()
 }

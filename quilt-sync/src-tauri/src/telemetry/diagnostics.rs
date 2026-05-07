@@ -112,7 +112,7 @@ fn read_metadata_from_zip(zip_bytes: &[u8]) -> Option<serde_json::Value> {
 }
 
 /// Bundle diagnostic info, logs, and config files into a zip and reveal it.
-pub fn save_diagnostic_zip(info: DiagnosticInfo) -> Result<PathBuf, Error> {
+pub fn save_diagnostic_zip(info: &DiagnosticInfo) -> Result<PathBuf, Error> {
     let auth_dir = info.data_dir.join(quilt::paths::AUTH_DIR);
 
     let zip_path = info.data_dir.join("quiltsync-diagnostic.zip");

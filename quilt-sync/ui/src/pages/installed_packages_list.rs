@@ -336,7 +336,7 @@ fn build_package_menu(
     let current_bucket_for_popup = current_bucket.clone();
     let login_href = origin_host.as_ref().map(|host| {
         let back_encoded = urlencoding::encode("/installed-packages-list");
-        format!("/login?host={}&back={back_encoded}", host)
+        format!("/login?host={host}&back={back_encoded}")
     });
 
     view! {

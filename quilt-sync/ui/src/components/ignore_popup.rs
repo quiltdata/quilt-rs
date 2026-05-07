@@ -21,6 +21,7 @@ enum IgnoreHint {
 }
 
 #[component]
+#[allow(clippy::needless_pass_by_value)]
 pub fn IgnorePopup(
     data: IgnorePopupData,
     notification: RwSignal<Option<Notification>>,
@@ -164,6 +165,7 @@ pub struct UnignorePopupData {
 }
 
 #[component]
+#[allow(clippy::needless_pass_by_value)]
 pub fn UnignorePopup(
     data: UnignorePopupData,
     notification: RwSignal<Option<Notification>>,

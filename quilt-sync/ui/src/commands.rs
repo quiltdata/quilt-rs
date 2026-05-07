@@ -7,6 +7,7 @@ use crate::tauri;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(clippy::struct_excessive_bools)]
 pub struct InstalledPackageData {
     pub namespace: String,
     pub uri: Option<S3PackageUri>,

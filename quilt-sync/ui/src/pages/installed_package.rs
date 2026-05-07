@@ -155,7 +155,10 @@ fn InstalledPackageContent(
     let uri_for_install = uri.clone();
     let entries_for_install = entries.clone();
     let on_install_paths = move |_| {
-        let Some(uri) = uri_for_install.as_ref().map(|u| u.to_string()) else {
+        let Some(uri) = uri_for_install
+            .as_ref()
+            .map(std::string::ToString::to_string)
+        else {
             return;
         };
         let indices = checked_indices.get_untracked();
@@ -213,7 +216,7 @@ fn InstalledPackageContent(
     });
 
     // Commit button: primary when no remote entries are checked
-    let commit_href = format!("/commit?namespace={}", namespace);
+    let commit_href = format!("/commit?namespace={namespace}");
     let commit_href_clone = commit_href.clone();
 
     let ns_for_status = namespace.clone();
@@ -695,7 +698,7 @@ fn EntriesFilter(
                         "unmodified"
                         <Show when=move || !filter_unmodified.get() && (unmodified_count > 0)>
                             <span class="qui-filter-count">
-                                {format!("({})", unmodified_count)}
+                                {format!("({unmodified_count})")}
                             </span>
                         </Show>
                     </label>
@@ -710,7 +713,7 @@ fn EntriesFilter(
                         "ignored"
                         <Show when=move || !filter_ignored.get() && (ignored_count > 0)>
                             <span class="qui-filter-count">
-                                {format!("({})", ignored_count)}
+                                {format!("({ignored_count})")}
                             </span>
                         </Show>
                     </label>

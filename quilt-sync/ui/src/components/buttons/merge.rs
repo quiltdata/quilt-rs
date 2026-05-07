@@ -5,8 +5,9 @@ use super::{ButtonKind, IconLink};
 const KIND: ButtonKind = ButtonKind::Merge;
 
 #[component]
+#[allow(clippy::needless_pass_by_value)]
 pub fn Merge(namespace: String, #[prop(optional)] small: bool) -> impl IntoView {
-    let href = format!("/merge?namespace={}", namespace);
+    let href = format!("/merge?namespace={namespace}");
 
     view! {
         <IconLink href=href icon=KIND.icon() small=small primary=true>

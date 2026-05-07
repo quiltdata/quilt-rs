@@ -396,7 +396,7 @@ mod tests {
                                 PathBuf::from("foo"),
                                 PathState {
                                     timestamp: chrono::DateTime::from_timestamp_millis(
-                                        1737031820534,
+                                        1_737_031_820_534,
                                     )
                                     .unwrap(),
                                     hash: Sha256ChunkedHash::from_async_read(

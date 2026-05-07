@@ -122,7 +122,7 @@ fn LoginContent(data: LoginData, notification: RwSignal<Option<Notification>>) -
         }
     };
 
-    let instructions = format!("Or visit {} to get your code:", catalog_url);
+    let instructions = format!("Or visit {catalog_url} to get your code:");
 
     view! {
         <div class="qui-page-login container">

@@ -46,6 +46,7 @@ pub struct InstalledPackageEntryData {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(clippy::struct_excessive_bools)]
 pub struct InstalledPackageData {
     pub namespace: String,
     pub uri: Option<quilt_uri::S3PackageUri>,
@@ -339,9 +340,9 @@ pub async fn update_publish_settings(
     }
 
     let new = PublishSettings {
-        message_template: opt_from_string(message_template),
-        default_workflow: opt_from_string(default_workflow),
-        default_metadata: opt_from_string(default_metadata),
+        message_template: opt_from_string(&message_template),
+        default_workflow: opt_from_string(&default_workflow),
+        default_metadata: opt_from_string(&default_metadata),
     };
 
     let app_handle = app_handle.lock().await;
@@ -355,7 +356,7 @@ pub async fn update_publish_settings(
     Ok(())
 }
 
-fn opt_from_string(s: String) -> Option<String> {
+fn opt_from_string(s: &str) -> Option<String> {
     let trimmed = s.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
@@ -699,17 +700,14 @@ async fn load_package_item(
 ) -> Result<InstalledPackageListItem, Error> {
     let lineage = m.get_installed_package_lineage(installed_package).await?;
 
-    let remote_uri = match lineage.remote_uri.as_ref() {
-        Some(uri) => uri,
-        None => {
-            return Ok(InstalledPackageListItem {
-                namespace: installed_package.namespace.to_string(),
-                status: "local".to_string(),
-                has_changes: false,
-                uri: None,
-                remote_display: None,
-            });
-        }
+    let Some(remote_uri) = lineage.remote_uri.as_ref() else {
+        return Ok(InstalledPackageListItem {
+            namespace: installed_package.namespace.to_string(),
+            status: "local".to_string(),
+            has_changes: false,
+            uri: None,
+            remote_display: None,
+        });
     };
 
     let typed_uri = quilt_uri::S3PackageUri::from(remote_uri);
@@ -909,19 +907,16 @@ async fn open_directory_picker_command(app_handle: &tauri::AppHandle) -> Result<
         .get_webview_window("main")
         .ok_or(crate::error::TauriUiError::Window)?;
 
-    let result = match FileDialog::new()
+    let result = if let Some(path) = FileDialog::new()
         .set_directory(&canonical_home)
         .set_parent(&window)
         .pick_folder()
     {
-        Some(path) => {
-            debug!("Successfully selected {}", path.display());
-            Ok(path)
-        }
-        None => {
-            debug!("User cancelled directory selection");
-            Err(Error::TauriUi(crate::error::TauriUiError::UserCancelled))
-        }
+        debug!("Successfully selected {}", path.display());
+        Ok(path)
+    } else {
+        debug!("User cancelled directory selection");
+        Err(Error::TauriUi(crate::error::TauriUiError::UserCancelled))
     };
 
     // Cleanup logic: remove temporary canonical directory if needed
@@ -1095,7 +1090,7 @@ async fn collect_diagnostic_logs_command(
     app: &app::App,
 ) -> Result<PathBuf, Error> {
     let info = diagnostics::collect(app_handle, m, app).await?;
-    tokio::task::spawn_blocking(move || diagnostics::save_diagnostic_zip(info))
+    tokio::task::spawn_blocking(move || diagnostics::save_diagnostic_zip(&info))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -1777,8 +1772,7 @@ pub async fn handle_remote_package(
         .parse()
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
     let namespace = s3_uri.namespace.to_string();
-
-    let _tracing: &crate::telemetry::Telemetry = &tracing;
+    let _ = &tracing;
 
     match model::install_package_only(&*m, &s3_uri)
         .await
@@ -2373,7 +2367,7 @@ mod tests {
             .returning(|_, _| {
                 Ok(quilt::lineage::InstalledPackageStatus::new(
                     quilt::lineage::UpstreamState::Behind,
-                    Default::default(),
+                    quilt::lineage::ChangeSet::default(),
                 ))
             });
 

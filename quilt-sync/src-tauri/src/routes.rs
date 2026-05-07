@@ -69,13 +69,11 @@ fn parse_url(location: &str) -> Result<Url, Error> {
 
 fn parse_page(location: &str) -> Result<String, Error> {
     let uri = parse_url(location)?;
-    let mut segments = match uri.path_segments() {
-        Some(segments) => segments,
-        None => return Err(Error::Route(RouteError::NoPathSegments(uri))),
+    let Some(mut segments) = uri.path_segments() else {
+        return Err(Error::Route(RouteError::NoPathSegments(uri)));
     };
-    let page = match segments.next_back() {
-        Some(page) => page,
-        None => return Err(Error::Route(RouteError::NoPageInPath(uri))),
+    let Some(page) = segments.next_back() else {
+        return Err(Error::Route(RouteError::NoPageInPath(uri)));
     };
     Ok(page.to_string())
 }

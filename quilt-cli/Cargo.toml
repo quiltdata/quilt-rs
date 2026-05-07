@@ -43,3 +43,6 @@ test-log.workspace = true
 pkg-url = "{ repo }/releases/download/{ name }/v{ version }/{ name }-{ target }.tar.gz"
 pkg-fmt = "tgz"
 bin-dir = "{ name }-{ target }/{ bin }{ binary-ext }"
+
+[lints]
+workspace = true

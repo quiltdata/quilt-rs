@@ -3,6 +3,7 @@ use crate::telemetry::prelude::*;
 pub struct Notify;
 
 impl Notify {
+    #[allow(clippy::needless_pass_by_value)]
     pub fn new(debug_msg: String) -> Self {
         debug!("{}", debug_msg);
         Notify

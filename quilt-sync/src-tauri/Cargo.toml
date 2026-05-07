@@ -56,3 +56,6 @@ tokio-test.workspace = true
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = { version = "2.4.0", features = ["deep-link"] }
+
+[lints]
+workspace = true
