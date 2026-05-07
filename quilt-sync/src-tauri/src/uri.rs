@@ -263,7 +263,7 @@ async fn wait_for_main_window(app_handle: &AppHandle) -> Result<()> {
     Err(Error::TauriUi(crate::error::TauriUiError::Window))
 }
 
-fn handle_deep_link_navigation(app_handle: &AppHandle, urls: Vec<Url>) {
+fn handle_deep_link_navigation(app_handle: &AppHandle, urls: &[Url]) {
     let Some(first_url) = urls.first() else {
         return;
     };
@@ -304,12 +304,12 @@ pub fn setup_deep_link_handler(app_handle: &AppHandle) {
             return;
         }
         info!("Processing runtime deep link: {:?}", urls);
-        handle_deep_link_navigation(&handle_for_runtime, urls);
+        handle_deep_link_navigation(&handle_for_runtime, &urls);
     });
 
     if let Ok(Some(urls)) = deep_link.get_current() {
         info!("Processing startup deep link: {:?}", urls);
-        handle_deep_link_navigation(app_handle, urls);
+        handle_deep_link_navigation(app_handle, &urls);
     }
 }
 

@@ -33,7 +33,7 @@ impl std::fmt::Display for Output {
             output.push("No paths installed".to_string());
         } else {
             for path in &self.paths {
-                output.push(format!("Path: {path:?}"));
+                output.push(format!("Path: \"{}\"", path.display()));
             }
         }
         write!(f, "{}", output.join("\n"))

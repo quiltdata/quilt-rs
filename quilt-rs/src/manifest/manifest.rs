@@ -101,24 +101,21 @@ impl Serialize for Workflow {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        match &self.id {
-            Some(workflow_id) => {
-                let mut state = serializer.serialize_struct("Workflow", 3)?;
-                state.serialize_field("config", &self.config.to_string())?;
-                state.serialize_field("id", &workflow_id.id)?;
-                if let Some(metadata) = &workflow_id.metadata {
-                    let mut schemas = HashMap::new();
-                    schemas.insert(metadata.id.clone(), metadata.url.to_string());
-                    state.serialize_field("schemas", &schemas)?;
-                }
-                state.end()
+        if let Some(workflow_id) = &self.id {
+            let mut state = serializer.serialize_struct("Workflow", 3)?;
+            state.serialize_field("config", &self.config.to_string())?;
+            state.serialize_field("id", &workflow_id.id)?;
+            if let Some(metadata) = &workflow_id.metadata {
+                let mut schemas = HashMap::new();
+                schemas.insert(metadata.id.clone(), metadata.url.to_string());
+                state.serialize_field("schemas", &schemas)?;
             }
-            None => {
-                let mut state = serializer.serialize_struct("Workflow", 2)?;
-                state.serialize_field("config", &self.config.to_string())?;
-                state.serialize_field("id", &None::<String>)?;
-                state.end()
-            }
+            state.end()
+        } else {
+            let mut state = serializer.serialize_struct("Workflow", 2)?;
+            state.serialize_field("config", &self.config.to_string())?;
+            state.serialize_field("id", &None::<String>)?;
+            state.end()
         }
     }
 }
@@ -160,6 +157,9 @@ struct Quilt3ManifestRow {
 }
 
 fn number_to_u64<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
+    // See note on `Quilt3ManifestRow::size` — JSON numbers come through as f64;
+    // sizes within S3's 5TB cap fit losslessly in the f64 mantissa.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     f64::deserialize(deserializer).map(|n| n as u64)
 }
 

@@ -94,7 +94,7 @@ async fn create_immutable_object_copy(
     let objects_dir = paths.objects_dir();
     let object_dest = objects_dir.join(hex::encode(current.hash.digest()));
     let new_physical_key = Url::from_file_path(&object_dest)
-        .map_err(|_| {
+        .map_err(|()| {
             Error::PackageOp(PackageOpError::Commit(format!(
                 "Failed to create URL from {}",
                 object_dest.display()
@@ -111,18 +111,18 @@ async fn create_immutable_object_copy(
 
     let work_dest = working_dir.join(logical_key);
 
-    if !storage.exists(&object_dest).await {
+    if storage.exists(&object_dest).await {
+        debug!(
+            "✔️ Object already exists in storage: {}",
+            object_dest.display()
+        );
+    } else {
         debug!(
             "⏳ Copying file to objects directory: {}",
             object_dest.display()
         );
         storage.copy(&work_dest, object_dest).await?;
         debug!("✔️ File copied successfully");
-    } else {
-        debug!(
-            "✔️ Object already exists in storage: {}",
-            object_dest.display()
-        );
     }
     lineage.paths.insert(
         logical_key.clone(),

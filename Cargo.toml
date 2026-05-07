@@ -10,6 +10,34 @@ license = "Apache-2.0"
 repository = "https://github.com/quiltdata/quilt-rs"
 homepage = "https://www.quiltdata.com"
 
+[workspace.lints.rust]
+warnings = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+# Documentation pedantic lints — too noisy for our internal API surface.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+doc_markdown = "allow"
+# Stylistic / debatable — keep code as-is.
+must_use_candidate = "allow"
+module_name_repetitions = "allow"
+too_many_lines = "allow"
+items_after_statements = "allow"
+# Sometimes intentional for trait/API symmetry.
+unused_self = "allow"
+unused_async = "allow"
+ref_option = "allow"
+# Architectural — would require Box::pin sprinkled everywhere.
+large_futures = "allow"
+# Test helpers commonly return Result aliases to use `?` ergonomically.
+unnecessary_wraps = "allow"
+# Stylistic preference — `Default::default()` reads fine inline; merging
+# match arms by `|` often reduces clarity in deliberate variant lists.
+default_trait_access = "allow"
+match_same_arms = "allow"
+
 [workspace.dependencies]
 base64 = "0.22.1"
 async-trait = "0.1.89"

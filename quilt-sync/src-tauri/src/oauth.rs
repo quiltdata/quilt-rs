@@ -10,6 +10,9 @@ use crate::Error;
 use crate::quilt;
 use crate::telemetry::prelude::*;
 
+// `Duration::from_mins(10)` would read better, but is gated on Rust 1.91;
+// workspace MSRV is 1.85.
+#[allow(clippy::duration_suboptimal_units)]
 const TTL: Duration = Duration::from_secs(10 * 60);
 
 /// Pending OAuth authorization state, keyed by host.

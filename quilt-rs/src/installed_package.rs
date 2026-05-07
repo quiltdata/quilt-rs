@@ -76,9 +76,8 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
     pub async fn manifest(&self) -> Res<Manifest> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
-        let hash = match lineage.current_hash() {
-            Some(h) => h,
-            None => return Ok(Manifest::default()),
+        let Some(hash) = lineage.current_hash() else {
+            return Ok(Manifest::default());
         };
         let installed_path = self.paths.installed_manifest(&self.namespace, hash);
         match Manifest::from_path(&self.storage, &installed_path).await {

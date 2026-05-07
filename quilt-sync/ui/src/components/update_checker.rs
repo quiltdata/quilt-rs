@@ -13,17 +13,14 @@ fn local_storage() -> Option<web_sys::Storage> {
 }
 
 fn is_dismissed() -> bool {
-    let storage = match local_storage() {
-        Some(s) => s,
-        None => return false,
+    let Some(storage) = local_storage() else {
+        return false;
     };
-    let value = match storage.get_item(STORAGE_KEY).ok().flatten() {
-        Some(v) => v,
-        None => return false,
+    let Some(value) = storage.get_item(STORAGE_KEY).ok().flatten() else {
+        return false;
     };
-    let dismissed_at: f64 = match value.parse() {
-        Ok(v) => v,
-        Err(_) => return false,
+    let Ok(dismissed_at) = value.parse::<f64>() else {
+        return false;
     };
     let now = js_sys::Date::now();
     now - dismissed_at < DISMISS_DURATION_MS
@@ -79,9 +76,9 @@ pub fn UpdateChecker() -> impl IntoView {
     };
 
     let install = move |_| {
-        let version = match state.get() {
-            UpdateState::Available(v) | UpdateState::Failed { version: v, .. } => v,
-            _ => return,
+        let (UpdateState::Available(version) | UpdateState::Failed { version, .. }) = state.get()
+        else {
+            return;
         };
         state.set(UpdateState::Installing);
         leptos::task::spawn_local(async move {

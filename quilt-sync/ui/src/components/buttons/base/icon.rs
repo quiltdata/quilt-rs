@@ -2,6 +2,7 @@ use leptos::callback::UnsyncCallback;
 use leptos::prelude::*;
 
 #[component]
+#[allow(clippy::fn_params_excessive_bools)]
 pub fn IconButton(
     #[prop(optional)] icon: Option<&'static str>,
     #[prop(optional)] on_click: Option<UnsyncCallback<leptos::ev::MouseEvent>>,
@@ -36,6 +37,7 @@ pub fn IconButton(
 }
 
 #[component]
+#[allow(clippy::fn_params_excessive_bools)]
 pub fn IconLink(
     href: String,
     #[prop(optional)] icon: Option<&'static str>,

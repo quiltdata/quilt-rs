@@ -101,8 +101,11 @@ pub async fn install_paths(
     debug!("🔍 Checking for already installed paths");
     // TODO: what happens if paths are already installed? Ignore, or error?
     // Fail early if path is already installed
-    if !HashSet::<&PathBuf, RandomState>::from_iter(lineage.paths.keys())
-        .is_disjoint(&HashSet::from_iter(entries_paths.to_owned()))
+    if !lineage
+        .paths
+        .keys()
+        .collect::<HashSet<&PathBuf, RandomState>>()
+        .is_disjoint(&entries_paths.iter().copied().collect::<HashSet<_>>())
     {
         debug!("❌ Found paths that are already installed");
         return Err(Error::InstallPath(InstallPathError::AlreadyInstalled));
@@ -125,11 +128,16 @@ pub async fn install_paths(
         // TODO: Consider using a hashmap or treemap for manifest.rows
         let row = manifest
             .get_record(path)
-            .ok_or(ManifestError::Table(format!("path {path:?} not found")))?;
+            .ok_or(ManifestError::Table(format!(
+                "path \"{}\" not found",
+                path.display()
+            )))?;
 
         let object_dest = paths.object(row.hash.digest());
 
-        if !storage.exists(&object_dest).await {
+        if storage.exists(&object_dest).await {
+            debug!("✔️ Object already in cache: {}", object_dest.display());
+        } else {
             cache_immutable_object(
                 storage,
                 remote,
@@ -139,12 +147,10 @@ pub async fn install_paths(
             )
             .await?;
             debug!("✔️ Cached object: {}", object_dest.display());
-        } else {
-            debug!("✔️ Object already in cache: {}", object_dest.display());
         }
 
         let place = Url::from_file_path(&object_dest)
-            .map_err(|_| Error::InstallPath(InstallPathError::Install(object_dest.clone())))?
+            .map_err(|()| Error::InstallPath(InstallPathError::Install(object_dest.clone())))?
             .to_string();
         debug!(
             "✔️ Path {} converted to a `place` {}",

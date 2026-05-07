@@ -19,7 +19,7 @@ pub async fn invoke<A: Serialize, R: DeserializeOwned>(cmd: &str, args: &A) -> R
     let promise = tauri_invoke_raw(cmd, args_js);
     let result = JsFuture::from(promise)
         .await
-        .map_err(|e| e.as_string().unwrap_or_else(|| format!("{:?}", e)))?;
+        .map_err(|e| e.as_string().unwrap_or_else(|| format!("{e:?}")))?;
     serde_wasm_bindgen::from_value(result).map_err(|e| e.to_string())
 }
 
@@ -29,6 +29,6 @@ pub async fn invoke_unit<R: DeserializeOwned>(cmd: &str) -> Result<R, String> {
     let promise = tauri_invoke_raw(cmd, args.into());
     let result = JsFuture::from(promise)
         .await
-        .map_err(|e| e.as_string().unwrap_or_else(|| format!("{:?}", e)))?;
+        .map_err(|e| e.as_string().unwrap_or_else(|| format!("{e:?}")))?;
     serde_wasm_bindgen::from_value(result).map_err(|e| e.to_string())
 }

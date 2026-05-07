@@ -29,7 +29,7 @@ pub fn entry_catalog_url(pkg_uri: &S3PackageUri, filename: &str) -> Option<Strin
 
 /// Stringified catalog host, if set.
 pub fn host_str(uri: &S3PackageUri) -> Option<String> {
-    uri.catalog.as_ref().map(|h| h.to_string())
+    uri.catalog.as_ref().map(std::string::ToString::to_string)
 }
 
 /// Bucket name, treating an empty string as "unset" — matches the
@@ -125,6 +125,8 @@ pub fn format_size(bytes: u64) -> String {
     if bytes == 0 {
         return "0 B".to_string();
     }
+    // Display rounding only — the precision loss above ~9 PB is not user-visible.
+    #[allow(clippy::cast_precision_loss)]
     let mut value = bytes as f64;
     for unit in UNITS {
         if value < 1000.0 {

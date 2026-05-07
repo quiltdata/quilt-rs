@@ -38,6 +38,9 @@ pub async fn multipart_upload_and_sha256_chunksum(
 
     let mut parts: Vec<CompletedPart> = Vec::new();
     for chunk_idx in 0..num_chunks {
+        // S3 part numbers are i32 in the AWS SDK; chunk_idx is bounded by the
+        // S3 max-parts limit (10_000), well within i32 range.
+        #[allow(clippy::cast_possible_truncation)]
         let part_number = chunk_idx as i32 + 1;
         let offset = chunk_idx * chunksize;
         let length = chunksize.min(size - offset);

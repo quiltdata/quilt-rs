@@ -497,7 +497,7 @@ mod tests {
         let uri = S3PackageUri::try_from("quilt+s3://#package=a/b");
         assert_eq!(
             uri.unwrap_err().to_string(),
-            r#"Invalid package URI: expected host in S3 package URI, got "#.to_string(),
+            r"Invalid package URI: expected host in S3 package URI, got ".to_string(),
         );
         Ok(())
     }
@@ -601,7 +601,7 @@ mod tests {
             bucket: "bucket".to_string(),
             catalog: None,
             namespace: ("foo", "bar").into(),
-            revision: RevisionPointer::Tag(Tag::Timestamp(Seconds(1697916638))),
+            revision: RevisionPointer::Tag(Tag::Timestamp(Seconds(1_697_916_638))),
             path: None,
         };
         assert_eq!(
@@ -734,7 +734,7 @@ mod tests {
                 bucket: "bucket".to_string(),
                 catalog: None,
                 namespace: ("foo", "bar").into(),
-                revision: RevisionPointer::Tag(Tag::Timestamp(Seconds(1697916638))),
+                revision: RevisionPointer::Tag(Tag::Timestamp(Seconds(1_697_916_638))),
                 path: None,
             }
         );
@@ -775,7 +775,7 @@ mod tests {
 
     #[test]
     fn test_revision_pointer_serde_round_trip_timestamp() {
-        let revision = RevisionPointer::Tag(Tag::Timestamp(Seconds(1697916638)));
+        let revision = RevisionPointer::Tag(Tag::Timestamp(Seconds(1_697_916_638)));
         let json = serde_json::to_string(&revision).unwrap();
         assert_eq!(json, r#"{"_tag":"Tag","value":"1697916638"}"#);
         let parsed: RevisionPointer = serde_json::from_str(&json).unwrap();

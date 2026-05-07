@@ -68,7 +68,7 @@ pub mod manifest_with_objects_all_sizes {
         manifest
             .insert_record(ManifestRow {
                 logical_key: PathBuf::from("bigger-than-8mb.txt"),
-                size: 18874368,
+                size: 18_874_368,
                 hash: create_multihash(objects::MORE_THAN_8MB_HASH_B64)?.try_into()?,
                 ..ManifestRow::default()
             })
@@ -76,7 +76,7 @@ pub mod manifest_with_objects_all_sizes {
         manifest
             .insert_record(ManifestRow {
                 logical_key: PathBuf::from("equal-to-8mb.txt"),
-                size: 8388608,
+                size: 8_388_608,
                 hash: create_multihash(objects::EQUAL_TO_8MB_HASH_B64)?.try_into()?,
                 ..ManifestRow::default()
             })

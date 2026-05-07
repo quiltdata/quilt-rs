@@ -128,7 +128,7 @@ pub async fn create_package(
 
             // Build manifest row with physical_key pointing to objects
             let physical_key = Url::from_file_path(&object_dest)
-                .map_err(|_| {
+                .map_err(|()| {
                     Error::PackageOp(PackageOpError::Commit(format!(
                         "Failed to create URL from {}",
                         object_dest.display()

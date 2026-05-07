@@ -20,3 +20,6 @@ quilt-uri = { path = "../../quilt-uri" }
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
 web-sys = { version = "0.3", features = ["DomTokenList", "Element", "HtmlButtonElement", "Node"] }
+
+[lints]
+workspace = true

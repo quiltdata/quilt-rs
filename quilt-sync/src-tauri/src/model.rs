@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use mockall::predicate::*;
-use mockall::*;
+use mockall::automock;
+use mockall::predicate::str;
 
 use tokio::sync;
 
@@ -153,9 +153,8 @@ pub trait QuiltModel {
                 let package_lineage = self
                     .get_installed_package_lineage(&installed_package)
                     .await?;
-                let installed_manifest_uri = match package_lineage.remote_uri.as_ref() {
-                    Some(uri) => uri,
-                    None => return Ok(InstallCheck::LocalOnly),
+                let Some(installed_manifest_uri) = package_lineage.remote_uri.as_ref() else {
+                    return Ok(InstallCheck::LocalOnly);
                 };
                 if manifest_uri.hash == installed_manifest_uri.hash {
                     Ok(InstallCheck::AlreadyInstalled)
@@ -416,16 +415,13 @@ pub async fn install_paths(
         .await?;
 
     // Post-installation actions based on number of paths
-    match paths.len() {
-        1 => {
-            let path = &paths[0];
-            info!("Installed {:?}", path);
-            model.reveal_in_file_browser(namespace, path).await
-        }
-        _ => {
-            info!("Installed {} paths", paths.len());
-            model.open_in_file_browser(namespace).await
-        }
+    if paths.len() == 1 {
+        let path = &paths[0];
+        info!("Installed {:?}", path);
+        model.reveal_in_file_browser(namespace, path).await
+    } else {
+        info!("Installed {} paths", paths.len());
+        model.open_in_file_browser(namespace).await
     }
 }
 

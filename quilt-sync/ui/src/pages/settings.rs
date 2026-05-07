@@ -483,7 +483,7 @@ fn AuthHostRow(
                                 Ok(msg) => notification.set(Some(Notification::Success(msg))),
                                 Err(e) => {
                                     notification
-                                        .set(Some(Notification::Error(e)))
+                                        .set(Some(Notification::Error(e)));
                                 }
                             }
                             refetch.notify();
@@ -533,7 +533,7 @@ fn DiagnosticsSection(
                                     Ok(msg) => notification.set(Some(Notification::Success(msg))),
                                     Err(e) => {
                                         notification
-                                            .set(Some(Notification::Error(e)))
+                                            .set(Some(Notification::Error(e)));
                                     }
                                 }
                             });
@@ -574,7 +574,7 @@ fn DiagnosticsSection(
                                     Ok(msg) => notification.set(Some(Notification::Success(msg))),
                                     Err(e) => {
                                         notification
-                                            .set(Some(Notification::Error(e)))
+                                            .set(Some(Notification::Error(e)));
                                     }
                                 }
                             });

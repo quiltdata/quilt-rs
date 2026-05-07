@@ -186,7 +186,7 @@ pub async fn upload_row(
     }
     let file_path = local_url
         .to_file_path()
-        .map_err(|_| UriError::FileScheme(local_url))?;
+        .map_err(|()| UriError::FileScheme(local_url))?;
 
     let object_uri = ObjectUri::new(package_handle, row.logical_key.clone());
     log::info!("Uploading to S3: {object_uri}");
@@ -1278,7 +1278,7 @@ mod tests {
             logical_key: PathBuf::from("data/file.csv"),
             physical_key: "s3://bucket/data/file.csv".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::EQUAL_TO_8MB_HASH_B64)?.into(),
-            size: 8388608,
+            size: 8_388_608,
             meta: Some(serde_json::Value::Null),
         };
 
@@ -1286,7 +1286,7 @@ mod tests {
             logical_key: PathBuf::from("images/photo.jpg"),
             physical_key: "s3://bucket/images/photo.jpg".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::MORE_THAN_8MB_HASH_B64)?.into(),
-            size: 18874368,
+            size: 18_874_368,
             meta: Some(serde_json::json!({"width": 1920, "height": 1080})),
         };
 

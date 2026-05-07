@@ -150,7 +150,7 @@ mod tests {
     #[test]
     fn test_tag_from_str_timestamp() {
         let tag: Tag = "1697916638".parse().unwrap();
-        assert_eq!(tag, Tag::Timestamp(Seconds(1697916638)));
+        assert_eq!(tag, Tag::Timestamp(Seconds(1_697_916_638)));
     }
 
     #[test]
@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn test_tag_serde_round_trip_timestamp() {
-        let tag = Tag::Timestamp(Seconds(1697916638));
+        let tag = Tag::Timestamp(Seconds(1_697_916_638));
         let json = serde_json::to_string(&tag).unwrap();
         assert_eq!(json, "\"1697916638\"");
         let parsed: Tag = serde_json::from_str(&json).unwrap();
@@ -186,7 +186,7 @@ mod tests {
     fn test_tag_display() {
         assert_eq!(Tag::Latest.to_string(), "latest");
         assert_eq!(
-            Tag::Timestamp(Seconds(1697916638)).to_string(),
+            Tag::Timestamp(Seconds(1_697_916_638)).to_string(),
             "1697916638"
         );
     }

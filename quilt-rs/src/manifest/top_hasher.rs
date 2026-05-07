@@ -829,7 +829,7 @@ mod tests {
             logical_key: PathBuf::from("data/file.csv"),
             physical_key: "s3://bucket/data/file.csv".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::EQUAL_TO_8MB_HASH_B64)?.into(),
-            size: 8388608,
+            size: 8_388_608,
             meta: Some(serde_json::Value::Null),
         };
         top_hasher.append(&row2)?;
@@ -839,7 +839,7 @@ mod tests {
             logical_key: PathBuf::from("images/photo.jpg"),
             physical_key: "s3://bucket/images/photo.jpg".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::MORE_THAN_8MB_HASH_B64)?.into(),
-            size: 18874368,
+            size: 18_874_368,
             meta: Some(serde_json::json!({"width": 1920, "height": 1080})),
         };
         top_hasher.append(&row3)?;

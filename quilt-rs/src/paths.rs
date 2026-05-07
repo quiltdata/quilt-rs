@@ -31,7 +31,7 @@ pub fn list_auth_hosts(data_dir: &Path) -> Vec<String> {
         && let Ok(entries) = std::fs::read_dir(&auth_dir)
     {
         for entry in entries.flatten() {
-            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
+            if entry.file_type().is_ok_and(|t| t.is_dir())
                 && let Some(name) = entry.file_name().to_str()
             {
                 hosts.push(name.to_string());
