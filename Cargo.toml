@@ -10,7 +10,11 @@ license = "Apache-2.0"
 repository = "https://github.com/quiltdata/quilt-rs"
 homepage = "https://www.quiltdata.com"
 
+[workspace.lints.rust]
+warnings = "deny"
+
 [workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
 # Documentation pedantic lints — too noisy for our internal API surface.
 missing_errors_doc = "allow"
