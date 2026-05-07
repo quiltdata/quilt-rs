@@ -1711,8 +1711,7 @@ async fn add_to_quiltignore_command(
 
     // Read first to check trailing newline, before opening for append
     let needs_newline = std::fs::read_to_string(&quiltignore_path)
-        .map(|s| !s.is_empty() && !s.ends_with('\n'))
-        .unwrap_or(false);
+        .is_ok_and(|s| !s.is_empty() && !s.ends_with('\n'));
 
     let mut file = std::fs::OpenOptions::new()
         .create(true)
