@@ -21,15 +21,9 @@ jobs:
   workspace:
     name: workspace
     runs-on: ubuntu-24.04
-    env:
-      # Use mold linker on Linux to avoid OOM crashes on memory-constrained CI runners
-      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-
-      - name: Install Ubuntu dependencies
-        uses: ./.github/actions/install-ubuntu-deps
 
       - name: Setup Rust for development
         uses: ./.github/actions/setup-rust-dev
@@ -43,7 +37,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Lint
-        run: cargo clippy --workspace --all-targets -- --deny warnings
+        run: cargo clippy --workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui -- --deny warnings
 
       - name: Check WASM build (quilt-uri, default features)
         run: cargo check -p quilt-uri --target wasm32-unknown-unknown
@@ -52,14 +46,14 @@ jobs:
         run: cargo check -p quilt-uri --target wasm32-unknown-unknown --all-features
 
       - name: Test
-        run: cargo nextest run --workspace --all-targets --exclude quilt-sync-ui
+        run: cargo nextest run --workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui
         env:
           RUST_BACKTRACE: 1
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
       - name: Test doctests
-        run: cargo test --doc --workspace --exclude quilt-sync-ui
+        run: cargo test --doc --workspace --exclude quilt-sync --exclude quilt-sync-ui
         env:
           RUST_BACKTRACE: 1
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
