@@ -97,7 +97,10 @@ pub fn send_crash_report(zip_path: &Path) -> Result<(), Error> {
                 scope.set_extra("os", m.os.clone().into());
                 scope.set_extra("data_dir", m.data_dir.clone().into());
                 scope.set_extra("home_dir", m.home_dir.clone().into());
-                scope.set_extra("authenticated_hosts", serde_json::json!(m.authenticated_hosts));
+                scope.set_extra(
+                    "authenticated_hosts",
+                    serde_json::json!(m.authenticated_hosts),
+                );
             }
 
             scope.add_attachment(Attachment {
