@@ -234,10 +234,7 @@ mod tests {
         write_file(&logs_tmp.path().join("quiltsync.log.1"), rotated_log);
 
         let data_json = br#"{"version":1,"packages":[]}"#;
-        write_file(
-            &data_tmp.path().join(".quilt").join("data.json"),
-            data_json,
-        );
+        write_file(&data_tmp.path().join(".quilt").join("data.json"), data_json);
 
         let demo_host = "demo.quiltdata.com";
         let open_host = "open.quiltdata.com";
@@ -364,9 +361,7 @@ mod tests {
                 .expect("start_file");
             // Missing `authenticated_hosts`.
             writer
-                .write_all(
-                    br#"{"version":"x","os":"y","data_dir":"d","home_dir":"h"}"#,
-                )
+                .write_all(br#"{"version":"x","os":"y","data_dir":"d","home_dir":"h"}"#)
                 .expect("write_all");
             writer.finish().expect("finish");
         }
