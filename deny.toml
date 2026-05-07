@@ -1,0 +1,84 @@
+# cargo-deny configuration. Run `cargo deny check` locally or in CI.
+# Schema: https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+# Each ignore names the parent crate that pulls in the advisory and what
+# blocks the fix. Revisit when that parent crate is bumped.
+ignore = [
+    # --- rustls 0.21 / rustls-pemfile pulled in by aws-smithy-http-client v1.1.x ---
+    # The AWS SDK still ships rustls 0.21 transitively. Tracking via aws-sdk-rust
+    # upstream; update once aws-smithy-http-client moves to rustls 0.23+.
+    { id = "RUSTSEC-2026-0098", reason = "rustls-webpki 0.101.7 via aws-smithy-http-client; awaiting AWS SDK update" },
+    { id = "RUSTSEC-2026-0099", reason = "rustls-webpki 0.101.7 via aws-smithy-http-client; awaiting AWS SDK update" },
+    { id = "RUSTSEC-2026-0104", reason = "rustls-webpki 0.101.7 via aws-smithy-http-client; awaiting AWS SDK update" },
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile 1.x via aws-smithy-http-client; awaiting AWS SDK update" },
+
+    # --- Tauri Linux backend (GTK3 / webkit2gtk) ---
+    # Tauri 2.x has not migrated off GTK3. These advisories will clear when
+    # Tauri ships a GTK4 backend or we drop the Linux target.
+    { id = "RUSTSEC-2024-0411", reason = "gtk-rs GTK3 bindings via Tauri Linux backend" },
+    { id = "RUSTSEC-2024-0412", reason = "gtk-rs GTK3 bindings via Tauri Linux backend" },
+    { id = "RUSTSEC-2024-0413", reason = "gtk-rs GTK3 bindings via Tauri Linux backend" },
+    { id = "RUSTSEC-2024-0414", reason = "gtk-rs GTK3 bindings via Tauri Linux backend" },
+    { id = "RUSTSEC-2024-0415", reason = "gtk-rs GTK3 bindings via Tauri Linux backend" },
+    { id = "RUSTSEC-2024-0416", reason = "gtk-rs GTK3 bindings via Tauri Linux backend" },
+    { id = "RUSTSEC-2024-0417", reason = "gtk-rs GTK3 bindings via Tauri Linux backend" },
+    { id = "RUSTSEC-2024-0418", reason = "gtk-rs GTK3 bindings via Tauri Linux backend" },
+    { id = "RUSTSEC-2024-0419", reason = "gtk-rs GTK3 bindings via Tauri Linux backend" },
+    { id = "RUSTSEC-2024-0420", reason = "gtk-rs GTK3 bindings via Tauri Linux backend" },
+    { id = "RUSTSEC-2024-0436", reason = "paste unmaintained, transitive via webkit2gtk / Tauri" },
+
+    # --- Tauri tauri-utils → urlpattern → unic-* (unmaintained Unicode crates) ---
+    # Tracked upstream in urlpattern; will clear once urlpattern moves off rust-unic.
+    { id = "RUSTSEC-2025-0075", reason = "unic-char-range via tauri-utils/urlpattern" },
+    { id = "RUSTSEC-2025-0080", reason = "unic-common via tauri-utils/urlpattern" },
+    { id = "RUSTSEC-2025-0081", reason = "unic-char-property via tauri-utils/urlpattern" },
+    { id = "RUSTSEC-2025-0098", reason = "unic-ucd-version via tauri-utils/urlpattern" },
+    { id = "RUSTSEC-2025-0100", reason = "unic-ucd-ident via tauri-utils/urlpattern" },
+
+    # --- proc-macro-error via Tauri ---
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error unmaintained, transitive via Tauri" },
+
+    # --- mixpanel-rs (dotenv) ---
+    { id = "RUSTSEC-2021-0141", reason = "dotenv unmaintained, transitive via mixpanel-rs" },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.8
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# `quilt-sync`/`quilt-sync-ui` depend on workspace siblings via `path = "..."`
+# without a version, which Cargo records as `*`. That's expected for path
+# deps — only flag wildcards on registry crates.
+allow-wildcard-paths = true
+deny = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
