@@ -12,7 +12,7 @@ license = "UNLICENSED"
 
 [build-dependencies]
 # Keep the verbose notation, because it will be (re-)written by tauri-build anyway
-tauri-build = { version = "2.5.6", features = [] }
+tauri-build = { version = "2.6.1", features = [] }
 
 [dependencies]
 chrono.workspace = true
@@ -23,23 +23,23 @@ quilt-rs = { path = "../../quilt-rs" }
 quilt-uri = { path = "../../quilt-uri" }
 rfd = { version = "0.17.2", default-features = false, features = ["gtk3"] }
 rust-i18n = "4.0.0"
-semver = "1.0.27"
+semver = "1.0.28"
 sentry = { version = "0.47.0", features = ["tracing"] }
 mixpanel-rs = "0.3.1"
 serde.workspace = true
 serde_json.workspace = true
-serde_qs = "1.0.0"
-tauri = { version = "2.10.3", features = ["test", "devtools"] }
-tauri-plugin-deep-link = "2.4.7"
+serde_qs = "1.1.1"
+tauri = { version = "2.11.1", features = ["test", "devtools"] }
+tauri-plugin-deep-link = "2.4.9"
 tauri-plugin-process = "2.3.1"
 tauri-plugin-shell = "2.3.5"
-tauri-plugin-updater = "2.10.0"
+tauri-plugin-updater = "2.10.1"
 tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 tracing.workspace = true
-tracing-appender = "0.2.4"
+tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 url.workspace = true
 urlencoding = "2.1.3"
@@ -55,7 +55,7 @@ serial_test = "3"
 tokio-test.workspace = true
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-tauri-plugin-single-instance = { version = "2.4.0", features = ["deep-link"] }
+tauri-plugin-single-instance = { version = "2.4.2", features = ["deep-link"] }
 
 [lints]
 workspace = true
