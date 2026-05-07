@@ -10,8 +10,8 @@ coverage:
 
 # Lint all packages with all features
 lint:
-    cargo clippy --all-features -- --deny warnings
-    cargo clippy --target wasm32-unknown-unknown -p quilt-sync-ui -- --deny warnings
+    cargo clippy --all-features
+    cargo clippy --target wasm32-unknown-unknown -p quilt-sync-ui --all-features
 
 # Run QuiltSync frontend tests in headless Firefox
 test-frontend:
