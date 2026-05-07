@@ -2,6 +2,9 @@
 name = "quilt-sync-ui"
 version = "0.1.0"
 edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+publish = false
 
 [dependencies]
 leptos = { version = "0.8", features = ["csr"] }
@@ -10,10 +13,10 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 web-sys = { version = "0.3", features = ["Document", "HtmlElement", "HtmlFormElement", "HtmlTextAreaElement", "Storage", "Window", "Location"] }
-serde = { version = "1", features = ["derive"] }
+serde.workspace = true
 serde-wasm-bindgen = "0.6"
 console_error_panic_hook = "0.1"
-serde_json = "1"
+serde_json.workspace = true
 urlencoding = "2"
 quilt-uri = { path = "../../quilt-uri" }
 
