@@ -1494,9 +1494,16 @@ async fn package_commit_and_push_command(
     if message.trim().is_empty() {
         return Err(Error::Commit("Message is required".to_string()));
     }
-    let outcome =
-        model::package_publish(m, namespace.clone(), message, metadata, workflow, None, None)
-            .await?;
+    let outcome = model::package_publish(
+        m,
+        namespace.clone(),
+        message,
+        metadata,
+        workflow,
+        None,
+        None,
+    )
+    .await?;
     Ok((namespace, outcome))
 }
 

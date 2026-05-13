@@ -169,12 +169,18 @@ mod tests {
             unfocused_secs: 2,
             closed_secs: 3,
         };
-        assert_eq!(cadence_for_mode(&s, WindowMode::Focused), Duration::from_secs(1));
+        assert_eq!(
+            cadence_for_mode(&s, WindowMode::Focused),
+            Duration::from_secs(1)
+        );
         assert_eq!(
             cadence_for_mode(&s, WindowMode::Unfocused),
             Duration::from_secs(2)
         );
-        assert_eq!(cadence_for_mode(&s, WindowMode::Closed), Duration::from_secs(3));
+        assert_eq!(
+            cadence_for_mode(&s, WindowMode::Closed),
+            Duration::from_secs(3)
+        );
     }
 
     #[tokio::test]
@@ -197,9 +203,7 @@ mod tests {
     async fn clear_all_paused_empties_set() {
         let watcher = Watcher::new_for_test(Arc::new(LogReporter));
         let ns: Namespace = ("acme", "demo").into();
-        watcher
-            .pause_for_test(ns, PausedReason::Diverged)
-            .await;
+        watcher.pause_for_test(ns, PausedReason::Diverged).await;
         assert_eq!(watcher.paused_count().await, 1);
         watcher.clear_all_paused().await;
         assert_eq!(watcher.paused_count().await, 0);

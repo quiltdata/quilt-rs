@@ -53,18 +53,14 @@ struct TauriEventEnvelope<P> {
 /// every subsequent event delivery, so we `forget()` it — detaching
 /// would mean awaiting the unlisten Promise, and the per-page leak from
 /// one listener is small.
-pub fn listen<T: DeserializeOwned + 'static>(
-    event: &str,
-    mut callback: impl FnMut(T) + 'static,
-) {
+pub fn listen<T: DeserializeOwned + 'static>(event: &str, mut callback: impl FnMut(T) + 'static) {
     let event_name = event.to_string();
     let event_name_for_closure = event_name.clone();
     let closure: Closure<dyn FnMut(JsValue)> = Closure::new(move |raw: JsValue| {
         match serde_wasm_bindgen::from_value::<TauriEventEnvelope<T>>(raw) {
             Ok(envelope) => callback(envelope.payload),
             Err(err) => web_sys::console::error_1(
-                &format!("listen: failed to deserialize {event_name_for_closure}: {err}")
-                    .into(),
+                &format!("listen: failed to deserialize {event_name_for_closure}: {err}").into(),
             ),
         }
     });

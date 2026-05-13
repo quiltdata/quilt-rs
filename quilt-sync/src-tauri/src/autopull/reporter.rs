@@ -153,7 +153,10 @@ pub(crate) mod test_support {
         }
 
         fn report_paused(&self, namespace: &Namespace, reason: PausedReason) {
-            self.paused.lock().unwrap().push((namespace.clone(), reason));
+            self.paused
+                .lock()
+                .unwrap()
+                .push((namespace.clone(), reason));
         }
 
         fn report_login_required(&self, host: Option<&Host>) {

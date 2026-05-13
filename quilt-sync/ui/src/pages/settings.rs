@@ -507,24 +507,27 @@ fn AutopullSettingsPopup(
         let focused = match focused_secs.get_untracked().trim().parse::<u64>() {
             Ok(n) if n >= 1 => n,
             _ => {
-                parse_error
-                    .set(Some("Focused cadence must be a positive integer".to_string()));
+                parse_error.set(Some(
+                    "Focused cadence must be a positive integer".to_string(),
+                ));
                 return;
             }
         };
         let unfocused = match unfocused_secs.get_untracked().trim().parse::<u64>() {
             Ok(n) if n >= 1 => n,
             _ => {
-                parse_error
-                    .set(Some("Unfocused cadence must be a positive integer".to_string()));
+                parse_error.set(Some(
+                    "Unfocused cadence must be a positive integer".to_string(),
+                ));
                 return;
             }
         };
         let closed = match closed_secs.get_untracked().trim().parse::<u64>() {
             Ok(n) if n >= 1 => n,
             _ => {
-                parse_error
-                    .set(Some("Closed cadence must be a positive integer".to_string()));
+                parse_error.set(Some(
+                    "Closed cadence must be a positive integer".to_string(),
+                ));
                 return;
             }
         };
@@ -536,8 +539,9 @@ fn AutopullSettingsPopup(
             match commands::update_autopull_settings(enabled_val, focused, unfocused, closed).await
             {
                 Ok(()) => {
-                    notification
-                        .set(Some(Notification::Success("Autopull settings saved".into())));
+                    notification.set(Some(Notification::Success(
+                        "Autopull settings saved".into(),
+                    )));
                     on_close();
                     refetch.notify();
                 }

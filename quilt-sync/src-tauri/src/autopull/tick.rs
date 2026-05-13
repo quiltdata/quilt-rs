@@ -128,9 +128,7 @@ fn is_backoff_due(
     namespace: &Namespace,
     now: Instant,
 ) -> bool {
-    backoff
-        .get(namespace)
-        .is_none_or(|b| now >= b.next_attempt)
+    backoff.get(namespace).is_none_or(|b| now >= b.next_attempt)
 }
 
 fn bump_backoff(
@@ -151,10 +149,7 @@ fn bump_backoff(
 /// Returns `Ok(())` even when individual packages fail; per-package errors
 /// are folded into the reporter and backoff state. Only fatal "could not
 /// even list packages" errors bubble out.
-pub(crate) async fn run_once(
-    model: &impl QuiltModel,
-    inner: &WatcherInner,
-) -> Result<(), Error> {
+pub(crate) async fn run_once(model: &impl QuiltModel, inner: &WatcherInner) -> Result<(), Error> {
     if !inner.settings.read().await.enabled {
         return Ok(());
     }
@@ -382,13 +377,15 @@ mod tests {
 
         let mut model = MockQuiltModel::new();
         let lineage_for_list = lineage.clone();
-        model.expect_get_installed_packages_list().returning(move || {
-            Ok(vec![
-                quilt::LocalDomain::new(std::path::PathBuf::new())
-                    .create_installed_package(("acme", "demo").into())
-                    .unwrap(),
-            ])
-        });
+        model
+            .expect_get_installed_packages_list()
+            .returning(move || {
+                Ok(vec![
+                    quilt::LocalDomain::new(std::path::PathBuf::new())
+                        .create_installed_package(("acme", "demo").into())
+                        .unwrap(),
+                ])
+            });
         model
             .expect_get_installed_package_lineage()
             .returning(move |_| Ok(lineage_for_list.clone()));
@@ -407,17 +404,14 @@ mod tests {
                     BTreeMap::new(),
                 ))
             });
-        model
-            .expect_package_pull()
-            .times(1)
-            .returning(|_, _| {
-                Ok(quilt_uri::ManifestUri {
-                    bucket: "bucket".to_string(),
-                    namespace: ("acme", "demo").into(),
-                    hash: "h1".to_string(),
-                    origin: None,
-                })
-            });
+        model.expect_package_pull().times(1).returning(|_, _| {
+            Ok(quilt_uri::ManifestUri {
+                bucket: "bucket".to_string(),
+                namespace: ("acme", "demo").into(),
+                hash: "h1".to_string(),
+                origin: None,
+            })
+        });
 
         let reporter = Arc::new(RecordingReporter::default());
         let inner = WatcherInner {
