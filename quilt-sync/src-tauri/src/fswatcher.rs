@@ -62,6 +62,7 @@ pub fn spawn(
         signal_rx,
         subscription,
         previous_fingerprints: BTreeMap::new(),
+        last_reconcile_error_kind: None,
     };
 
     // Initial reconcile up front so existing packages are watched

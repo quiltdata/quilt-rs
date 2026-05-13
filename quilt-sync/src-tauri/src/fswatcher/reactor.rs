@@ -38,6 +38,12 @@ pub(crate) struct ReactorState {
     /// own reads (e.g. `flow::status` walking the working tree to compute
     /// the next status) trigger inotify `OPEN`/`ATTRIB` events.
     pub previous_fingerprints: BTreeMap<Namespace, String>,
+    /// Kind of the last `Err` returned by `reconcile`. A failed `add()`
+    /// doesn't insert into the subscription's watched set, so the next
+    /// reconcile retries the same namespaces and fails the same way; this
+    /// marker keeps us from emitting a fresh `inotify_limit` toast every
+    /// 5 s. Cleared whenever a reconcile returns `Ok`.
+    pub last_reconcile_error_kind: Option<&'static str>,
 }
 
 pub(crate) async fn run(mut state: ReactorState, app_handle: tauri::AppHandle) {
@@ -62,6 +68,9 @@ pub(crate) async fn run(mut state: ReactorState, app_handle: tauri::AppHandle) {
                         emit_subscriber_error(state.reporter.as_ref(), &err);
                     }
                     state.previous_fingerprints.clear();
+                    // Re-enabling later should be able to surface the
+                    // inotify-limit toast again if the limit still applies.
+                    state.last_reconcile_error_kind = None;
                 }
             }
             Some(signal) = state.signal_rx.recv() => {
@@ -186,8 +195,17 @@ async fn reconcile_from_model(state: &mut ReactorState, app_handle: &tauri::AppH
     state
         .previous_fingerprints
         .retain(|ns, _| kept.contains(ns));
-    if let Err(err) = state.subscription.reconcile(mappings) {
-        emit_subscriber_error(state.reporter.as_ref(), &err);
+    match state.subscription.reconcile(mappings) {
+        Ok(()) => {
+            state.last_reconcile_error_kind = None;
+        }
+        Err(err) => {
+            let kind = err.kind_str();
+            if state.last_reconcile_error_kind != Some(kind) {
+                emit_subscriber_error(state.reporter.as_ref(), &err);
+                state.last_reconcile_error_kind = Some(kind);
+            }
+        }
     }
 }
 
