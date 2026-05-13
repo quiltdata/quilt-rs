@@ -88,6 +88,26 @@ pub struct PublishSettingsData {
     pub default_metadata: String,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AutopullSettingsData {
+    pub enabled: bool,
+    pub focused_secs: u64,
+    pub unfocused_secs: u64,
+    pub closed_secs: u64,
+}
+
+impl Default for AutopullSettingsData {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            focused_secs: 30,
+            unfocused_secs: 120,
+            closed_secs: 600,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsData {
@@ -101,6 +121,7 @@ pub struct SettingsData {
     pub os: String,
     pub changelog: Vec<ChangelogEntry>,
     pub publish: PublishSettingsData,
+    pub autopull: AutopullSettingsData,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -222,6 +243,19 @@ pub struct RefreshedPackageStatus {
     pub has_changes: bool,
 }
 
+/// Payload of the `package-status-changed` Tauri event. Same shape as
+/// [`RefreshedPackageStatus`] plus the namespace it applies to, so the
+/// list/detail pages can match a row by namespace.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageStatusEvent {
+    pub namespace: String,
+    pub status: String,
+    pub has_changes: bool,
+}
+
+pub const PACKAGE_STATUS_EVENT: &str = "package-status-changed";
+
 pub async fn refresh_package_status(namespace: String) -> Result<RefreshedPackageStatus, String> {
     #[derive(Serialize)]
     struct Args {
@@ -337,6 +371,32 @@ pub async fn update_publish_settings(
             message_template,
             default_workflow,
             default_metadata,
+        },
+    )
+    .await
+}
+
+pub async fn update_autopull_settings(
+    enabled: bool,
+    focused_secs: u64,
+    unfocused_secs: u64,
+    closed_secs: u64,
+) -> Result<(), String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        enabled: bool,
+        focused_secs: u64,
+        unfocused_secs: u64,
+        closed_secs: u64,
+    }
+    tauri::invoke(
+        "update_autopull_settings",
+        &Args {
+            enabled,
+            focused_secs,
+            unfocused_secs,
+            closed_secs,
         },
     )
     .await

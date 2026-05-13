@@ -3,13 +3,16 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 
 use quilt_uri::S3PackageUri;
 
-use crate::commands::{self, EntryData, InstalledPackageData};
+use crate::commands::{
+    self, EntryData, InstalledPackageData, PACKAGE_STATUS_EVENT, PackageStatusEvent,
+};
 use crate::components::buttons;
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{
     IgnorePopup, IgnorePopupData, Layout, Notification, SetRemotePopup, Spinner, ToolbarActions,
     UnignorePopup, UnignorePopupData,
 };
+use crate::tauri as tauri_bridge;
 use crate::util;
 use crate::util::{format_size, make_action};
 
@@ -33,6 +36,25 @@ pub fn InstalledPackage() -> impl IntoView {
         let namespace = query.read().get("namespace").unwrap_or_default();
         let filter = query.read().get("filter");
         async move { commands::get_installed_package_data(namespace, filter).await }
+    });
+
+    // Autopull watcher → page refresh: when the backend reports a
+    // status change for the currently-open namespace, refetch the
+    // detail data so the entries list and toolbar reflect the new
+    // upstream state. Detail data is heavier than the row-level
+    // signals on the list page, so we use a full refetch rather than
+    // mutate sub-signals individually.
+    let event_holder: RwSignal<Option<PackageStatusEvent>> = RwSignal::new(None);
+    let listener = tauri_bridge::listen::<PackageStatusEvent>(PACKAGE_STATUS_EVENT, move |ev| {
+        event_holder.set(Some(ev));
+    });
+    on_cleanup(move || drop(listener));
+    Effect::new(move |_| {
+        let Some(ev) = event_holder.get() else { return };
+        let current = query.read().get("namespace").unwrap_or_default();
+        if ev.namespace == current {
+            refetch.notify();
+        }
     });
 
     view! {

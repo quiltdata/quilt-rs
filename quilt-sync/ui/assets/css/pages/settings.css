@@ -113,8 +113,10 @@
   }
 }
 
-/* Publish settings popup form (opened from Settings → Publish → Edit) */
-.publish-settings-form {
+/* Settings popup forms (opened from Settings → Edit on a section).
+   Shared by .publish-settings-form and .autopull-settings-form. */
+.publish-settings-form,
+.autopull-settings-form {
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -155,7 +157,8 @@
     resize: vertical;
   }
 
-  .radio-option {
+  .radio-option,
+  .checkbox-option {
     align-items: center;
     cursor: pointer;
     display: flex;
@@ -163,7 +166,8 @@
     gap: 6px;
   }
 
-  .radio-option input {
+  .radio-option input,
+  .checkbox-option input {
     cursor: pointer;
   }
 

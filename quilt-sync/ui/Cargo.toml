@@ -19,6 +19,7 @@ console_error_panic_hook = "0.1"
 serde_json.workspace = true
 urlencoding = "2"
 quilt-uri = { path = "../../quilt-uri" }
+send_wrapper = "0.6"
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"

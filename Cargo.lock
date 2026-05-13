@@ -5291,7 +5291,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-sync"
-version = "0.17.1"
+version = "0.17.2-alpha1"
 dependencies = [
  "chrono",
  "dotenv",
@@ -5337,6 +5337,7 @@ dependencies = [
  "leptos",
  "leptos_router",
  "quilt-uri",
+ "send_wrapper",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",

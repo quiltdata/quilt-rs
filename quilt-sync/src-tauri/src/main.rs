@@ -1,6 +1,8 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::sync::Arc;
+
 use tauri::Manager;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tokio::sync;
@@ -8,6 +10,7 @@ use tokio::sync;
 use crate::telemetry::prelude::*;
 
 mod app;
+mod autopull;
 mod changelog;
 mod commands;
 mod commit_message;
@@ -23,6 +26,10 @@ mod telemetry;
 mod uri;
 
 use app::App;
+use autopull::StatusReporter;
+use autopull::Watcher;
+use autopull::WindowMode;
+use autopull::reporter::TauriEventReporter;
 use error::Error;
 use model::Model;
 
@@ -84,6 +91,17 @@ fn main() {
                 ))
             });
 
+            let autopull_settings = tauri::async_runtime::block_on(autopull::init_settings(
+                &data_dir,
+            ))
+            .unwrap_or_else(|err| {
+                error!("Failed to load autopull settings, using defaults: {err}");
+                std::sync::Arc::new(tokio::sync::RwLock::new(
+                    autopull::AutopullSettings::default(),
+                ))
+            });
+            let window_mode = autopull::create_window_mode();
+
             app.manage(Model::create(data_dir));
             app.manage(sync::Mutex::new(app.handle().clone()));
             app.manage(App::new(package_info, logs_dir));
@@ -91,9 +109,37 @@ fn main() {
             app.manage(oauth::OAuthState::default());
             app.manage(publish_settings);
 
+            // The watcher reads `Model` via `app_handle.state::<Model>()`
+            // so it can spawn after `Model` is registered above.
+            let reporter: Arc<dyn StatusReporter> =
+                Arc::new(TauriEventReporter::new(app.handle().clone()));
+            let watcher = Watcher::spawn(
+                app.handle().clone(),
+                autopull_settings.clone(),
+                window_mode.clone(),
+                reporter,
+            );
+            app.manage(autopull_settings);
+            app.manage(window_mode);
+            app.manage(watcher);
+
             uri::setup_deep_link_handler(app.handle());
 
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Focused(focused) = event {
+                let mode = if *focused {
+                    WindowMode::Focused
+                } else {
+                    WindowMode::Unfocused
+                };
+                let handle = window.app_handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let watcher = handle.state::<Watcher>();
+                    watcher.set_window_mode(mode).await;
+                });
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::certify_latest,
@@ -125,6 +171,7 @@ fn main() {
             commands::package_pull,
             commands::package_push,
             commands::update_publish_settings,
+            commands::update_autopull_settings,
             commands::refresh_package_status,
             commands::package_uninstall,
             commands::reset_local,

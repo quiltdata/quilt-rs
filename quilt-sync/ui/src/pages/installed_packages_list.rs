@@ -3,14 +3,23 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use leptos::prelude::*;
 
-use crate::commands::{self, PackageItemData};
+use crate::commands::{self, PACKAGE_STATUS_EVENT, PackageItemData, PackageStatusEvent};
 use crate::components::buttons;
 use crate::components::layout::BreadcrumbItem;
 use crate::components::{
     Layout, Notification, SetRemotePopup, SetRemotePopupData, Spinner, ToolbarActions,
 };
+use crate::tauri as tauri_bridge;
 use crate::util;
 use crate::util::make_action;
+
+/// Latest `package-status-changed` event received from the backend.
+///
+/// One listener is registered per page mount and writes to this signal;
+/// each `PackageItem` row reads it and applies updates whose namespace
+/// matches its own. Stored in a `RwSignal<Option<...>>` — `None` is the
+/// initial "no event yet" state.
+type StatusEventSignal = RwSignal<Option<PackageStatusEvent>>;
 
 // ── Installed Packages List page ──
 
@@ -19,6 +28,15 @@ pub fn InstalledPackagesList() -> impl IntoView {
     let notification = RwSignal::new(None);
     let ui_locked = RwSignal::new(false);
     let refetch = Trigger::new();
+
+    // Page-scoped status-changed bus: the autopull watcher emits
+    // `package-status-changed` events; each row's Effect picks the
+    // matching namespace and updates its local signals in place.
+    let status_event: StatusEventSignal = RwSignal::new(None);
+    let listener = tauri_bridge::listen::<PackageStatusEvent>(PACKAGE_STATUS_EVENT, move |ev| {
+        status_event.set(Some(ev));
+    });
+    on_cleanup(move || drop(listener));
 
     let data = LocalResource::new(move || {
         refetch.track();
@@ -59,6 +77,7 @@ pub fn InstalledPackagesList() -> impl IntoView {
                                     ui_locked=ui_locked
                                     refetch=refetch
                                     show_create_popup=show_create_popup
+                                    status_event=status_event
                                 />
                             </Layout>
                         }
@@ -82,6 +101,7 @@ fn PackagesListContent(
     ui_locked: RwSignal<bool>,
     refetch: Trigger,
     show_create_popup: RwSignal<bool>,
+    status_event: StatusEventSignal,
 ) -> impl IntoView {
     let show_set_remote_popup = RwSignal::new(None::<SetRemotePopupData>);
 
@@ -108,6 +128,7 @@ fn PackagesListContent(
                                     ui_locked=ui_locked
                                     refetch=refetch
                                     show_set_remote_popup=show_set_remote_popup
+                                    status_event=status_event
                                 />
                             }
                         }).collect_view()}
@@ -151,6 +172,7 @@ fn PackageItem(
     ui_locked: RwSignal<bool>,
     refetch: Trigger,
     show_set_remote_popup: RwSignal<Option<SetRemotePopupData>>,
+    status_event: StatusEventSignal,
 ) -> impl IntoView {
     let status = RwSignal::new(data.status.clone());
     let has_changes = RwSignal::new(data.has_changes);
@@ -175,6 +197,18 @@ fn PackageItem(
             Err(err) => refresh_error.set(Some(err)),
         }
         refreshing.set(false);
+    });
+
+    // Mirror autopull watcher events into this row's local signals.
+    let ns_for_listener = data.namespace.clone();
+    Effect::new(move |_| {
+        if let Some(ev) = status_event.get()
+            && ev.namespace == ns_for_listener
+        {
+            status.set(ev.status);
+            has_changes.set(ev.has_changes);
+            refresh_error.set(None);
+        }
     });
 
     let pkg_href = format!(
