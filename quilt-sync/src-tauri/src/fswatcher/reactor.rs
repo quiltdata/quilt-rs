@@ -50,7 +50,19 @@ pub(crate) async fn run(mut state: ReactorState, app_handle: tauri::AppHandle) {
         tokio::select! {
             biased;
             _ = reconcile_tick.tick() => {
-                reconcile_from_model(&mut state, &app_handle).await;
+                let enabled = state.settings.read().await.enabled;
+                if enabled {
+                    reconcile_from_model(&mut state, &app_handle).await;
+                } else {
+                    // Disabled: drain any live watches so the OS releases
+                    // the inotify slots. Especially important when the user
+                    // toggles off in response to the inotify-limit toast.
+                    // `reconcile(Vec::new())` is a no-op if already empty.
+                    if let Err(err) = state.subscription.reconcile(Vec::new()) {
+                        emit_subscriber_error(state.reporter.as_ref(), &err);
+                    }
+                    state.previous_fingerprints.clear();
+                }
             }
             Some(signal) = state.signal_rx.recv() => {
                 if !state.settings.read().await.enabled {
@@ -132,7 +144,7 @@ fn status_fingerprint(status: &quilt::lineage::InstalledPackageStatus) -> String
             quilt::lineage::Change::Modified(r) => ("M", r),
             quilt::lineage::Change::Removed(r) => ("D", r),
         };
-        let _ = write!(out, "{}:{}:{};", path.to_string_lossy(), kind, row.hash,);
+        let _ = write!(out, "{}:{}:{};", path.to_string_lossy(), kind, row.hash);
     }
     out
 }

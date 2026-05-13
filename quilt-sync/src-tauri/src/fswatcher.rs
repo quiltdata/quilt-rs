@@ -45,7 +45,11 @@ pub fn spawn(
         |_| FsWatcherSettings::default().debounce_ms,
         |s| s.debounce_ms,
     );
-    let subscription = match Subscription::new(Duration::from_millis(debounce_ms), signal_tx) {
+    let subscription = match Subscription::new(
+        Duration::from_millis(debounce_ms),
+        signal_tx,
+        reporter,
+    ) {
         Ok(sub) => sub,
         Err(err) => {
             // We can't build a debouncer — most likely a fatal platform

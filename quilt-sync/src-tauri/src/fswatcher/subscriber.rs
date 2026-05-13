@@ -1,12 +1,11 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::fmt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
-
-use std::fmt;
 
 use notify::ErrorKind;
 use notify::RecommendedWatcher;
@@ -17,6 +16,8 @@ use notify_debouncer_full::new_debouncer;
 use quilt_uri::Namespace;
 use tokio::sync::mpsc;
 
+use crate::autopull::StatusReporter;
+use crate::autopull::reporter::SubscriberErrorEvent;
 use crate::fswatcher::filter;
 use crate::telemetry::prelude::*;
 
@@ -121,10 +122,12 @@ impl Subscription {
     pub fn new(
         debounce: Duration,
         signal_tx: mpsc::Sender<MappingSignal>,
+        reporter: &Arc<dyn StatusReporter>,
     ) -> Result<Self, SubscriberError> {
         let watched: Arc<Mutex<BTreeMap<Namespace, PathBuf>>> =
             Arc::new(Mutex::new(BTreeMap::new()));
         let watched_for_cb = Arc::clone(&watched);
+        let reporter_for_cb = Arc::clone(reporter);
         let debouncer = new_debouncer(
             debounce,
             None,
@@ -142,7 +145,7 @@ impl Subscription {
                 }
                 Err(errors) => {
                     for err in errors {
-                        warn!("fswatcher: subscriber error: {err}");
+                        handle_async_error(&watched_for_cb, reporter_for_cb.as_ref(), err);
                     }
                 }
             },
@@ -207,10 +210,12 @@ impl Subscription {
         }
         let mut first_err: Option<SubscriberError> = None;
         for (namespace, package_home) in desired_map {
-            if let Err(err) = self.add(namespace, package_home)
-                && first_err.is_none()
-            {
-                first_err = Some(err);
+            let ns_display = namespace.to_string();
+            if let Err(err) = self.add(namespace, package_home) {
+                warn!("fswatcher: reconcile add({ns_display}) failed: {err}");
+                if first_err.is_none() {
+                    first_err = Some(err);
+                }
             }
         }
         match first_err {
@@ -258,18 +263,59 @@ fn namespace_for<'a>(
         .map(|(ns, _)| ns)
 }
 
+/// Handle an error that arrived through `notify-debouncer-full`'s async
+/// callback (mid-session watch losses, OS-level queue overflow, etc.).
+/// Two responsibilities:
+/// 1. Drop the affected namespace(s) from `watched` so the next periodic
+///    `reconcile_from_model` re-adds the watch. Without this, an unmount
+///    or directory deletion would silently stop monitoring until restart.
+/// 2. Forward a `SubscriberErrorEvent` to the reporter so the UI can
+///    react (currently it only toasts `inotify_limit`; the others are
+///    logged to the console).
+fn handle_async_error(
+    watched: &Arc<Mutex<BTreeMap<Namespace, PathBuf>>>,
+    reporter: &dyn StatusReporter,
+    err: notify::Error,
+) {
+    warn!("fswatcher: async subscriber error: {err}");
+    let affected: Vec<Namespace> = {
+        let mut watched = watched.lock().unwrap();
+        let to_drop: Vec<Namespace> = watched
+            .iter()
+            .filter(|(_, root)| err.paths.iter().any(|p| p.starts_with(root)))
+            .map(|(ns, _)| ns.clone())
+            .collect();
+        for ns in &to_drop {
+            watched.remove(ns);
+        }
+        to_drop
+    };
+    let first_ns = affected.into_iter().next();
+    let classified = classify(err, first_ns.as_ref());
+    reporter.report_subscriber_error(SubscriberErrorEvent {
+        kind: classified.kind_str().to_string(),
+        message: classified.message(),
+        namespace: classified.namespace().map(ToString::to_string),
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use crate::autopull::reporter::test_support::RecordingReporter;
     use tempfile::TempDir;
     use tokio::time::Duration;
+
+    fn test_reporter() -> Arc<dyn StatusReporter> {
+        Arc::new(RecordingReporter::default())
+    }
 
     #[tokio::test]
     async fn add_and_fire_signal() -> Result<(), Box<dyn std::error::Error>> {
         let dir = TempDir::new()?;
         let (tx, mut rx) = mpsc::channel::<MappingSignal>(16);
-        let mut sub = Subscription::new(Duration::from_millis(50), tx)?;
+        let mut sub = Subscription::new(Duration::from_millis(50), tx, &test_reporter())?;
         let ns: Namespace = ("acme", "demo").into();
         sub.add(ns.clone(), dir.path().to_path_buf())?;
 
@@ -288,7 +334,7 @@ mod tests {
     async fn add_is_idempotent_same_root() -> Result<(), Box<dyn std::error::Error>> {
         let dir = TempDir::new()?;
         let (tx, _rx) = mpsc::channel::<MappingSignal>(16);
-        let mut sub = Subscription::new(Duration::from_millis(50), tx)?;
+        let mut sub = Subscription::new(Duration::from_millis(50), tx, &test_reporter())?;
         let ns: Namespace = ("acme", "demo").into();
         sub.add(ns.clone(), dir.path().to_path_buf())?;
         sub.add(ns.clone(), dir.path().to_path_buf())?;
@@ -300,7 +346,7 @@ mod tests {
     async fn remove_drops_watch() -> Result<(), Box<dyn std::error::Error>> {
         let dir = TempDir::new()?;
         let (tx, _rx) = mpsc::channel::<MappingSignal>(16);
-        let mut sub = Subscription::new(Duration::from_millis(50), tx)?;
+        let mut sub = Subscription::new(Duration::from_millis(50), tx, &test_reporter())?;
         let ns: Namespace = ("acme", "demo").into();
         sub.add(ns.clone(), dir.path().to_path_buf())?;
         sub.remove(&ns);

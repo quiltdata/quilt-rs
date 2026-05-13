@@ -653,27 +653,26 @@ fn FsWatcherSection(
     let enabled = RwSignal::new(fswatcher.enabled);
     let saving = RwSignal::new(false);
 
-    // One-shot subscriber-error toast: notify the user once if the OS
-    // rejects a watch (e.g. inotify limit hit). The same listener stays
-    // mounted for as long as the Settings page is open.
+    // Subscriber-error listener. Only `inotify_limit` is actionable inside
+    // the app (raise the sysctl limit and restart) — surface that as a
+    // toast. Other kinds (e.g. `watch_lost` from a mid-session unmount) are
+    // noisy and the reactor recovers via the next reconcile tick, so we
+    // just log them to the browser console.
     let listener =
         tauri_bridge::listen::<SubscriberErrorEvent>(FSWATCHER_SUBSCRIBER_ERROR_EVENT, move |ev| {
-            let msg = if ev.kind == "inotify_limit" {
-                "Filesystem watcher hit the OS inotify limit. \
-                 Raise it with `sudo sysctl fs.inotify.max_user_watches=524288` \
-                 and restart the app."
-                    .to_string()
-            } else {
-                let ns = ev
-                    .namespace
-                    .as_deref()
-                    .map_or(String::new(), |n| format!(" [{n}]"));
-                format!(
-                    "Filesystem watcher error ({}{}): {}",
-                    ev.kind, ns, ev.message
-                )
-            };
-            notification.set(Some(Notification::Error(msg)));
+            if ev.kind == "inotify_limit" {
+                notification.set(Some(Notification::Error(
+                    "Filesystem watcher hit the OS inotify limit. \
+                     Raise it with `sudo sysctl fs.inotify.max_user_watches=524288` \
+                     and restart the app."
+                        .to_string(),
+                )));
+                return;
+            }
+            let ns = ev.namespace.as_deref().unwrap_or("-");
+            web_sys::console::warn_1(
+                &format!("fswatcher: {} [{ns}]: {}", ev.kind, ev.message).into(),
+            );
         });
     on_cleanup(move || drop(listener));
 
