@@ -33,10 +33,9 @@ pub fn InstalledPackagesList() -> impl IntoView {
     // `package-status-changed` events; each row's Effect picks the
     // matching namespace and updates its local signals in place.
     let status_event: StatusEventSignal = RwSignal::new(None);
-    let listener =
-        tauri_bridge::listen::<PackageStatusEvent>(PACKAGE_STATUS_EVENT, move |ev| {
-            status_event.set(Some(ev));
-        });
+    let listener = tauri_bridge::listen::<PackageStatusEvent>(PACKAGE_STATUS_EVENT, move |ev| {
+        status_event.set(Some(ev));
+    });
     on_cleanup(move || drop(listener));
 
     let data = LocalResource::new(move || {
