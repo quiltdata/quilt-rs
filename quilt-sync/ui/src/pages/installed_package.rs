@@ -45,9 +45,11 @@ pub fn InstalledPackage() -> impl IntoView {
     // signals on the list page, so we use a full refetch rather than
     // mutate sub-signals individually.
     let event_holder: RwSignal<Option<PackageStatusEvent>> = RwSignal::new(None);
-    tauri_bridge::listen::<PackageStatusEvent>(PACKAGE_STATUS_EVENT, move |ev| {
-        event_holder.set(Some(ev));
-    });
+    let listener =
+        tauri_bridge::listen::<PackageStatusEvent>(PACKAGE_STATUS_EVENT, move |ev| {
+            event_holder.set(Some(ev));
+        });
+    on_cleanup(move || drop(listener));
     Effect::new(move |_| {
         let Some(ev) = event_holder.get() else { return };
         let current = query.read().get("namespace").unwrap_or_default();

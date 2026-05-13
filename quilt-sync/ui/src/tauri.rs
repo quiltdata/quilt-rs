@@ -1,3 +1,7 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use send_wrapper::SendWrapper;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use wasm_bindgen::prelude::*;
@@ -43,17 +47,12 @@ struct TauriEventEnvelope<P> {
     payload: P,
 }
 
-/// Subscribe to a Tauri event from the WASM side.
-///
-/// `__TAURI__.event.listen(event, handler)` is an async IPC call — the JS
-/// handler is wrapped, an ID is allocated, and the backend is asked to
-/// route the named event to that ID. The subscription is not live until
-/// the returned Promise resolves, so we await it inside a `spawn_local`
-/// (callers are sync). The closure must outlive the registration *and*
-/// every subsequent event delivery, so we `forget()` it — detaching
-/// would mean awaiting the unlisten Promise, and the per-page leak from
-/// one listener is small.
-pub fn listen<T: DeserializeOwned + 'static>(event: &str, mut callback: impl FnMut(T) + 'static) {
+/// Subscribe to a Tauri event. The returned `EventListener` calls the
+/// JS-side `unlisten` on drop — pair with Leptos `on_cleanup`.
+pub fn listen<T: DeserializeOwned + 'static>(
+    event: &str,
+    mut callback: impl FnMut(T) + 'static,
+) -> EventListener {
     let event_name = event.to_string();
     let event_name_for_closure = event_name.clone();
     let closure: Closure<dyn FnMut(JsValue)> = Closure::new(move |raw: JsValue| {
@@ -65,13 +64,40 @@ pub fn listen<T: DeserializeOwned + 'static>(event: &str, mut callback: impl FnM
         }
     });
     let promise = tauri_listen_raw(&event_name, closure.as_ref().unchecked_ref());
-    // Keep the JS-side callback registration alive for the app's lifetime.
-    closure.forget();
+
+    // `SendWrapper` carries the !Send JS handle across `on_cleanup`'s
+    // `Send + Sync` bound; WASM is single-threaded so it never panics.
+    let unlisten: Rc<RefCell<Option<js_sys::Function>>> = Rc::new(RefCell::new(None));
+    let unlisten_for_task = Rc::clone(&unlisten);
+    let event_name_for_task = event_name.clone();
     wasm_bindgen_futures::spawn_local(async move {
-        if let Err(err) = JsFuture::from(promise).await {
-            web_sys::console::error_1(
-                &format!("listen: failed to register {event_name}: {err:?}").into(),
-            );
+        match JsFuture::from(promise).await {
+            Ok(val) => {
+                if let Ok(f) = val.dyn_into::<js_sys::Function>() {
+                    *unlisten_for_task.borrow_mut() = Some(f);
+                }
+            }
+            Err(err) => web_sys::console::error_1(
+                &format!("listen: failed to register {event_name_for_task}: {err:?}").into(),
+            ),
         }
     });
+
+    EventListener {
+        _closure: SendWrapper::new(closure),
+        unlisten: SendWrapper::new(unlisten),
+    }
+}
+
+pub struct EventListener {
+    _closure: SendWrapper<Closure<dyn FnMut(JsValue)>>,
+    unlisten: SendWrapper<Rc<RefCell<Option<js_sys::Function>>>>,
+}
+
+impl Drop for EventListener {
+    fn drop(&mut self) {
+        if let Some(f) = self.unlisten.borrow_mut().take() {
+            let _ = f.call0(&JsValue::NULL);
+        }
+    }
 }

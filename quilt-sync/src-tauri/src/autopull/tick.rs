@@ -14,33 +14,21 @@ use crate::model::QuiltModel;
 use crate::quilt;
 use crate::telemetry::prelude::*;
 
-/// State + decision returned from `refresh_then_maybe_pull`.
 #[derive(Debug)]
 pub(crate) struct RefreshOutcome {
     pub upstream: quilt::lineage::UpstreamState,
     pub has_changes: bool,
 }
 
-/// Watcher-facing classification of pull errors.
 #[derive(Debug)]
 pub(crate) enum WatchError {
-    /// A pull-time guard refused: package needs the user (no further ticks
-    /// will attempt this namespace until they act on it).
     Conflict(PausedReason),
-    /// Refresh hit `LoginError::Required` — the user must re-auth before
-    /// any further progress is possible on this host.
     LoginRequired(Option<Host>),
-    /// Network / transient error — retry with exponential backoff.
     Transient(Error),
 }
 
-/// Map `pull_package`'s guard strings onto the watcher's `WatchError` taxonomy.
-///
-/// The guards live in `quilt-rs/src/flow/pull.rs` as
-/// `PackageOpError::Package(String)`; we match the exact strings here.
-/// Renaming them upstream should break the unit tests below loudly so the
-/// mapping stays in sync. Milestone 3 in the approach doc replaces this
-/// with a typed `PullRefusal` enum.
+// String-matches the guard messages in `quilt-rs/src/flow/pull.rs`. Open
+// question in the plan: replace with a typed `PullRefusal` enum upstream.
 pub(crate) fn classify_pull_err(err: Error) -> Result<(), WatchError> {
     match &err {
         Error::Quilt(quilt::Error::PackageOp(quilt::PackageOpError::Package(msg))) => {
@@ -63,11 +51,6 @@ pub(crate) fn classify_pull_err(err: Error) -> Result<(), WatchError> {
     }
 }
 
-/// Run the cheap refresh and, if behind-and-clean, also the heavy pull.
-///
-/// Calls the model layer directly to keep `UpstreamState` typed end-to-end
-/// — going through `commands::refresh_package_status_from_model` would
-/// stringify the state for the UI and force us to parse it back here.
 pub(crate) async fn refresh_then_maybe_pull(
     model: &impl QuiltModel,
     namespace: &Namespace,
@@ -82,10 +65,16 @@ pub(crate) async fn refresh_then_maybe_pull(
             )))
         })?;
 
+    // `status` does the cheap tag refresh; an expired token surfaces here.
     let status = model
         .get_installed_package_status(&installed, None)
         .await
-        .map_err(WatchError::Transient)?;
+        .map_err(|err| match &err {
+            Error::Quilt(quilt::Error::Login(quilt::LoginError::Required(host))) => {
+                WatchError::LoginRequired(host.clone())
+            }
+            _ => WatchError::Transient(err),
+        })?;
     let upstream = status.upstream_state;
     let has_changes = !status.changes.is_empty();
 
@@ -108,16 +97,13 @@ pub(crate) async fn refresh_then_maybe_pull(
     })
 }
 
-/// One package's transient-error backoff state.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct BackoffState {
     pub next_attempt: Instant,
     pub consecutive_failures: u32,
 }
 
-/// Exponential backoff: 2, 4, 8, 16, 32, 64 s — capped at 64 s after the
-/// 6th consecutive failure. A successful tick removes the namespace's
-/// entry, which resets the counter for the next failure.
+// 2, 4, 8, 16, 32, 64 s, then capped.
 pub(crate) fn backoff_duration(failures: u32) -> Duration {
     let exp = failures.min(6);
     Duration::from_secs(1u64 << exp)
@@ -144,11 +130,6 @@ fn bump_backoff(
     entry.next_attempt = now + backoff_duration(entry.consecutive_failures);
 }
 
-/// Execute one full pass over the installed-packages list.
-///
-/// Returns `Ok(())` even when individual packages fail; per-package errors
-/// are folded into the reporter and backoff state. Only fatal "could not
-/// even list packages" errors bubble out.
 pub(crate) async fn run_once(model: &impl QuiltModel, inner: &WatcherInner) -> Result<(), Error> {
     if !inner.settings.read().await.enabled {
         return Ok(());
@@ -171,10 +152,7 @@ pub(crate) async fn run_once(model: &impl QuiltModel, inner: &WatcherInner) -> R
     for pkg in packages {
         let namespace = pkg.namespace.clone();
 
-        // Cheap skip filters: avoid talking to the network for Local /
-        // misconfigured packages. We re-derive these at list time rather
-        // than reusing `refresh_package_status_from_model`, which would
-        // collapse the typed `UpstreamState` to a string.
+        // Skip Local / misconfigured packages without a network round-trip.
         let lineage = match model.get_installed_package_lineage(&pkg).await {
             Ok(l) => l,
             Err(err) => {
@@ -209,7 +187,8 @@ pub(crate) async fn run_once(model: &impl QuiltModel, inner: &WatcherInner) -> R
                 );
             }
             Err(WatchError::LoginRequired(host)) => {
-                inner.backoff.write().await.remove(&namespace);
+                // Backoff until the user re-auths; the Ok arm clears it.
+                bump_backoff(&mut *inner.backoff.write().await, &namespace, now);
                 inner.reporter.report_login_required(host.as_ref());
             }
             Err(WatchError::Conflict(reason)) => {
@@ -219,11 +198,8 @@ pub(crate) async fn run_once(model: &impl QuiltModel, inner: &WatcherInner) -> R
                     .await
                     .insert(namespace.clone(), reason.clone());
                 inner.reporter.report_paused(&namespace, reason.clone());
-                // One final status emit so the UI's row leaves the
-                // optimistic state it was in before the failed pull. The
-                // mapping below is a heuristic — flow::pull doesn't tell
-                // us the exact new state, but the reason is enough to pick
-                // the user-facing render.
+                // Heuristic status from the refusal reason — flow::pull
+                // doesn't expose the post-attempt state directly.
                 let (status, has_changes) = match reason {
                     PausedReason::PendingChanges => ("behind", true),
                     PausedReason::PendingCommit => ("ahead", false),
@@ -501,6 +477,79 @@ mod tests {
         assert_eq!(statuses.len(), 1);
         assert_eq!(statuses[0].1.status, "behind");
         assert!(statuses[0].1.has_changes);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
+        let ns: Namespace = ("acme", "demo").into();
+        let host: Host = "catalog.dev".parse().unwrap();
+        let remote = quilt_uri::ManifestUri {
+            bucket: "bucket".to_string(),
+            namespace: ns.clone(),
+            hash: "h0".to_string(),
+            origin: Some(host.clone()),
+        };
+        let lineage = quilt::lineage::PackageLineage::from_remote(remote, "h0".to_string());
+
+        let mut model = MockQuiltModel::new();
+        model.expect_get_installed_packages_list().returning(|| {
+            Ok(vec![
+                quilt::LocalDomain::new(std::path::PathBuf::new())
+                    .create_installed_package(("acme", "demo").into())
+                    .unwrap(),
+            ])
+        });
+        model
+            .expect_get_installed_package_lineage()
+            .returning(move |_| Ok(lineage.clone()));
+        model.expect_get_installed_package().returning(|_| {
+            Ok(Some(
+                quilt::LocalDomain::new(std::path::PathBuf::new())
+                    .create_installed_package(("acme", "demo").into())
+                    .unwrap(),
+            ))
+        });
+        // Status check itself fails with LoginRequired (mirrors what
+        // `InstalledPackage::status` surfaces when the cached token has
+        // expired).
+        let host_for_status = host.clone();
+        model
+            .expect_get_installed_package_status()
+            .returning(move |_, _| {
+                Err(Error::from(quilt::Error::Login(
+                    quilt::LoginError::Required(Some(host_for_status.clone())),
+                )))
+            });
+
+        let reporter = Arc::new(RecordingReporter::default());
+        let inner = WatcherInner {
+            settings: Arc::new(RwLock::new(enabled())),
+            window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
+            paused: RwLock::new(BTreeMap::new()),
+            backoff: RwLock::new(BTreeMap::new()),
+            reporter: reporter.clone(),
+        };
+
+        run_once(&model, &inner).await?;
+
+        // No `report_status` emit — login required surfaces through its
+        // own reporter method, and the namespace is not marked paused
+        // (an explicit user action is required, not a code-level conflict).
+        assert!(reporter.statuses.lock().unwrap().is_empty());
+        assert!(inner.paused.read().await.is_empty());
+        // Backoff entry exists and counts a failure — the next tick must
+        // wait for it instead of retrying immediately.
+        let backoff = inner.backoff.read().await;
+        let entry = backoff
+            .get(&ns)
+            .expect("backoff entry should be set for LoginRequired");
+        assert_eq!(entry.consecutive_failures, 1);
+
+        // Logins are recorded.
+        let logins = reporter.logins.lock().unwrap();
+        assert_eq!(logins.len(), 1);
+        assert_eq!(logins[0].as_ref(), Some(&host));
         Ok(())
     }
 }
