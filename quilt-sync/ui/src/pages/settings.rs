@@ -656,9 +656,8 @@ fn FsWatcherSection(
     // One-shot subscriber-error toast: notify the user once if the OS
     // rejects a watch (e.g. inotify limit hit). The same listener stays
     // mounted for as long as the Settings page is open.
-    let listener = tauri_bridge::listen::<SubscriberErrorEvent>(
-        FSWATCHER_SUBSCRIBER_ERROR_EVENT,
-        move |ev| {
+    let listener =
+        tauri_bridge::listen::<SubscriberErrorEvent>(FSWATCHER_SUBSCRIBER_ERROR_EVENT, move |ev| {
             let msg = if ev.kind == "inotify_limit" {
                 "Filesystem watcher hit the OS inotify limit. \
                  Raise it with `sudo sysctl fs.inotify.max_user_watches=524288` \
@@ -669,11 +668,13 @@ fn FsWatcherSection(
                     .namespace
                     .as_deref()
                     .map_or(String::new(), |n| format!(" [{n}]"));
-                format!("Filesystem watcher error ({}{}): {}", ev.kind, ns, ev.message)
+                format!(
+                    "Filesystem watcher error ({}{}): {}",
+                    ev.kind, ns, ev.message
+                )
             };
             notification.set(Some(Notification::Error(msg)));
-        },
-    );
+        });
     on_cleanup(move || drop(listener));
 
     let on_toggle = move |ev: leptos::ev::Event| {

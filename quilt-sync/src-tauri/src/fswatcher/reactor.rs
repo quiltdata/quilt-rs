@@ -14,8 +14,8 @@ use crate::autopull::StatusReporter;
 use crate::autopull::reporter::SubscriberErrorEvent;
 use crate::fswatcher::settings::SharedFsWatcherSettings;
 use crate::fswatcher::subscriber::MappingSignal;
-use crate::fswatcher::subscriber::Subscription;
 use crate::fswatcher::subscriber::SubscriberError;
+use crate::fswatcher::subscriber::Subscription;
 use crate::model::Model;
 use crate::model::QuiltModel;
 use crate::quilt;
@@ -132,13 +132,7 @@ fn status_fingerprint(status: &quilt::lineage::InstalledPackageStatus) -> String
             quilt::lineage::Change::Modified(r) => ("M", r),
             quilt::lineage::Change::Removed(r) => ("D", r),
         };
-        let _ = write!(
-            out,
-            "{}:{}:{};",
-            path.to_string_lossy(),
-            kind,
-            row.hash,
-        );
+        let _ = write!(out, "{}:{}:{};", path.to_string_lossy(), kind, row.hash,);
     }
     out
 }
@@ -177,7 +171,9 @@ async fn reconcile_from_model(state: &mut ReactorState, app_handle: &tauri::AppH
         return;
     };
     let kept: BTreeSet<Namespace> = mappings.iter().map(|(ns, _)| ns.clone()).collect();
-    state.previous_fingerprints.retain(|ns, _| kept.contains(ns));
+    state
+        .previous_fingerprints
+        .retain(|ns, _| kept.contains(ns));
     if let Err(err) = state.subscription.reconcile(mappings) {
         emit_subscriber_error(state.reporter.as_ref(), &err);
     }
@@ -281,12 +277,15 @@ mod tests {
             .expect_get_installed_package()
             .times(2)
             .returning(|_| Ok(Some(fresh_pkg())));
-        model.expect_recompute_local_status().times(2).returning(|_, _| {
-            Ok(quilt::lineage::InstalledPackageStatus::new(
-                quilt::lineage::UpstreamState::UpToDate,
-                changes_with_one_file("added"),
-            ))
-        });
+        model
+            .expect_recompute_local_status()
+            .times(2)
+            .returning(|_, _| {
+                Ok(quilt::lineage::InstalledPackageStatus::new(
+                    quilt::lineage::UpstreamState::UpToDate,
+                    changes_with_one_file("added"),
+                ))
+            });
         let reporter = Arc::new(RecordingReporter::default());
         let mut prev = BTreeMap::new();
         let signal = MappingSignal {

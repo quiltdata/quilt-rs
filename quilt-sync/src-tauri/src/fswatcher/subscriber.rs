@@ -130,8 +130,7 @@ impl Subscription {
             None,
             move |result: notify_debouncer_full::DebounceEventResult| match result {
                 Ok(events) => {
-                    let touched =
-                        affected_namespaces(&events, &watched_for_cb.lock().unwrap());
+                    let touched = affected_namespaces(&events, &watched_for_cb.lock().unwrap());
                     for namespace in touched {
                         let signal = MappingSignal {
                             namespace: namespace.clone(),
@@ -174,10 +173,7 @@ impl Subscription {
             .watch(&package_home, RecursiveMode::Recursive)
         {
             Ok(()) => {
-                self.watched
-                    .lock()
-                    .unwrap()
-                    .insert(namespace, package_home);
+                self.watched.lock().unwrap().insert(namespace, package_home);
                 Ok(())
             }
             Err(err) => Err(classify(err, Some(&namespace))),
@@ -196,10 +192,7 @@ impl Subscription {
     /// namespaces that are. `Subscription::add` is already idempotent
     /// for an unchanged (namespace, path) pair, so a no-op reconcile is
     /// cheap.
-    pub fn reconcile(
-        &mut self,
-        desired: Vec<(Namespace, PathBuf)>,
-    ) -> Result<(), SubscriberError> {
+    pub fn reconcile(&mut self, desired: Vec<(Namespace, PathBuf)>) -> Result<(), SubscriberError> {
         let desired_map: BTreeMap<Namespace, PathBuf> = desired.into_iter().collect();
         let stale: Vec<Namespace> = self
             .watched
