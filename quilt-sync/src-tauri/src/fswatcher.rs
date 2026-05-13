@@ -45,19 +45,16 @@ pub fn spawn(
         |_| FsWatcherSettings::default().debounce_ms,
         |s| s.debounce_ms,
     );
-    let subscription = match Subscription::new(
-        Duration::from_millis(debounce_ms),
-        signal_tx,
-        reporter,
-    ) {
-        Ok(sub) => sub,
-        Err(err) => {
-            // We can't build a debouncer — most likely a fatal platform
-            // issue. Report and return; the reactor never starts.
-            emit_subscriber_error(reporter.as_ref(), &err);
-            return;
-        }
-    };
+    let subscription =
+        match Subscription::new(Duration::from_millis(debounce_ms), signal_tx, reporter) {
+            Ok(sub) => sub,
+            Err(err) => {
+                // We can't build a debouncer — most likely a fatal platform
+                // issue. Report and return; the reactor never starts.
+                emit_subscriber_error(reporter.as_ref(), &err);
+                return;
+            }
+        };
 
     let mut state = ReactorState {
         settings,
