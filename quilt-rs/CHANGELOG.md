@@ -13,7 +13,7 @@
 
 ### Added
 
-- `InstalledPackage::recompute_local_status` refreshes working-tree state against the cached manifest without contacting the remote
+- `InstalledPackage::recompute_local_status` refreshes working-tree state against the cached manifest without contacting the remote (<https://github.com/quiltdata/quilt-rs/pull/676>)
 
 ## [v0.31.1] - 2026-05-06
 

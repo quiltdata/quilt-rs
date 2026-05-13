@@ -13,7 +13,7 @@
 
 ### Added
 
-- Filesystem watcher refreshes local package status on disk changes (default on; toggle in Settings)
+- Filesystem watcher refreshes local package status on disk changes (default on; toggle in Settings) (<https://github.com/quiltdata/quilt-rs/pull/676>)
 
 ## [v0.17.2-alpha1] - 2026-05-13
 
