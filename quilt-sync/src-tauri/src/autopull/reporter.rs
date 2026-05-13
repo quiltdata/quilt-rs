@@ -10,6 +10,7 @@ use crate::telemetry::prelude::*;
 /// Event names. Kept in lockstep with the UI's `listen(...)` calls.
 pub const STATUS_EVENT: &str = "package-status-changed";
 pub const LOGIN_REQUIRED_EVENT: &str = "autopull-login-required";
+pub const SUBSCRIBER_ERROR_EVENT: &str = "fswatcher-subscriber-error";
 
 /// Payload emitted to the UI when a package's upstream state changes after
 /// a watcher tick. Mirrors the camelCase shape of `RefreshedPackageStatus`
@@ -22,6 +23,16 @@ pub struct PackageStatusEvent {
     pub has_changes: bool,
 }
 
+/// Payload emitted when the filesystem watcher hits an OS-level error
+/// the user might want to react to (e.g. the inotify limit).
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscriberErrorEvent {
+    pub kind: String,
+    pub message: String,
+    pub namespace: Option<String>,
+}
+
 /// Backend → frontend / log surface for watcher results.
 ///
 /// The trait keeps the watcher portable: production wires a Tauri emitter,
@@ -30,6 +41,12 @@ pub trait StatusReporter: Send + Sync + 'static {
     fn report_status(&self, namespace: &Namespace, event: PackageStatusEvent);
     fn report_paused(&self, namespace: &Namespace, reason: PausedReason);
     fn report_login_required(&self, host: Option<&Host>);
+    fn report_subscriber_error(&self, event: SubscriberErrorEvent) {
+        warn!(
+            "fswatcher: kind={} namespace={:?} message={}",
+            event.kind, event.namespace, event.message
+        );
+    }
 }
 
 /// Stderr/log-only reporter. Used in tests where no Tauri runtime is
@@ -103,6 +120,16 @@ impl StatusReporter for TauriEventReporter {
             warn!("autopull: failed to emit {LOGIN_REQUIRED_EVENT}: {err}");
         }
     }
+
+    fn report_subscriber_error(&self, event: SubscriberErrorEvent) {
+        warn!(
+            "fswatcher: kind={} namespace={:?} message={}",
+            event.kind, event.namespace, event.message
+        );
+        if let Err(err) = self.handle.emit(SUBSCRIBER_ERROR_EVENT, &event) {
+            warn!("fswatcher: failed to emit {SUBSCRIBER_ERROR_EVENT}: {err}");
+        }
+    }
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -143,6 +170,7 @@ pub(crate) mod test_support {
         pub statuses: Mutex<Vec<(Namespace, PackageStatusEvent)>>,
         pub paused: Mutex<Vec<(Namespace, PausedReason)>>,
         pub logins: Mutex<Vec<Option<Host>>>,
+        pub subscriber_errors: Mutex<Vec<SubscriberErrorEvent>>,
     }
 
     impl StatusReporter for RecordingReporter {
@@ -162,6 +190,10 @@ pub(crate) mod test_support {
 
         fn report_login_required(&self, host: Option<&Host>) {
             self.logins.lock().unwrap().push(host.cloned());
+        }
+
+        fn report_subscriber_error(&self, event: SubscriberErrorEvent) {
+            self.subscriber_errors.lock().unwrap().push(event);
         }
     }
 }

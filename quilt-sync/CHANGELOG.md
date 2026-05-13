@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.17.2-alpha2] - 2026-05-13
+
+### Added
+
+- Filesystem watcher refreshes local package status on disk changes (default on; toggle in Settings) (<https://github.com/quiltdata/quilt-rs/pull/676>)
+
 ## [v0.17.2-alpha1] - 2026-05-13
 
 ### Added
