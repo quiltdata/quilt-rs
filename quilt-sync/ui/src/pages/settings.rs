@@ -1,6 +1,8 @@
 use leptos::prelude::*;
 
-use crate::commands::{self, ChangelogEntry, PublishSettingsData, SettingsData};
+use crate::commands::{
+    self, AutopullSettingsData, ChangelogEntry, PublishSettingsData, SettingsData,
+};
 use crate::components::buttons;
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{Layout, Notification, Spinner};
@@ -68,6 +70,7 @@ fn SettingsContent(
                 notification=notification
             />
             <PublishSection publish=data.publish notification=notification refetch=refetch />
+            <AutopullSection autopull=data.autopull notification=notification refetch=refetch />
             <AccountSection auth_hosts=data.auth_hosts notification=notification refetch=refetch />
             <DiagnosticsSection
                 version=data.version
@@ -424,6 +427,219 @@ fn PublishSettingsPopup(
             </div>
         </div>
     }
+}
+
+// ── Autopull section ──
+
+#[component]
+fn AutopullSection(
+    autopull: AutopullSettingsData,
+    notification: RwSignal<Option<Notification>>,
+    refetch: Trigger,
+) -> impl IntoView {
+    let show_popup = RwSignal::new(false);
+    let enabled_display = if autopull.enabled { "On" } else { "Off" };
+    let focused = autopull.focused_secs;
+    let unfocused = autopull.unfocused_secs;
+    let closed = autopull.closed_secs;
+    let current = autopull.clone();
+
+    view! {
+        <section class="settings-section qui-autopull-settings">
+            <h2 class="section-title">"Background Auto-Pull"</h2>
+            <dl class="settings-list">
+                <dt>"Status"</dt>
+                <dd><span class="value">{enabled_display}</span></dd>
+
+                <dt>"Refresh when focused"</dt>
+                <dd><span class="value">{format!("{focused} s")}</span></dd>
+
+                <dt>"Refresh when unfocused"</dt>
+                <dd><span class="value">{format!("{unfocused} s")}</span></dd>
+
+                <dt>"Refresh when window closed"</dt>
+                <dd>
+                    <span class="value">{format!("{closed} s")}</span>
+                    <span class="value default"> "(takes effect once tray icon ships)"</span>
+                </dd>
+            </dl>
+            <div class="settings-actions">
+                <button
+                    type="button"
+                    class="qui-button"
+                    on:click=move |_| show_popup.set(true)
+                >
+                    <span>"Edit"</span>
+                </button>
+            </div>
+        </section>
+
+        <Show when=move || show_popup.get()>
+            <AutopullSettingsPopup
+                current=current.clone()
+                notification=notification
+                refetch=refetch
+                on_close=move || show_popup.set(false)
+            />
+        </Show>
+    }
+}
+
+#[component]
+fn AutopullSettingsPopup(
+    current: AutopullSettingsData,
+    notification: RwSignal<Option<Notification>>,
+    refetch: Trigger,
+    on_close: impl Fn() + Clone + 'static,
+) -> impl IntoView {
+    let enabled = RwSignal::new(current.enabled);
+    let focused_secs = RwSignal::new(current.focused_secs.to_string());
+    let unfocused_secs = RwSignal::new(current.unfocused_secs.to_string());
+    let closed_secs = RwSignal::new(current.closed_secs.to_string());
+    let parse_error = RwSignal::new(None::<String>);
+    let saving = RwSignal::new(false);
+
+    let on_close_save = on_close.clone();
+    let on_save = move |_: leptos::ev::MouseEvent| {
+        if saving.get_untracked() {
+            return;
+        }
+        let focused = match focused_secs.get_untracked().trim().parse::<u64>() {
+            Ok(n) if n >= 1 => n,
+            _ => {
+                parse_error
+                    .set(Some("Focused cadence must be a positive integer".to_string()));
+                return;
+            }
+        };
+        let unfocused = match unfocused_secs.get_untracked().trim().parse::<u64>() {
+            Ok(n) if n >= 1 => n,
+            _ => {
+                parse_error
+                    .set(Some("Unfocused cadence must be a positive integer".to_string()));
+                return;
+            }
+        };
+        let closed = match closed_secs.get_untracked().trim().parse::<u64>() {
+            Ok(n) if n >= 1 => n,
+            _ => {
+                parse_error
+                    .set(Some("Closed cadence must be a positive integer".to_string()));
+                return;
+            }
+        };
+        parse_error.set(None);
+        saving.set(true);
+        let on_close = on_close_save.clone();
+        let enabled_val = enabled.get_untracked();
+        leptos::task::spawn_local(async move {
+            match commands::update_autopull_settings(enabled_val, focused, unfocused, closed).await
+            {
+                Ok(()) => {
+                    notification
+                        .set(Some(Notification::Success("Autopull settings saved".into())));
+                    on_close();
+                    refetch.notify();
+                }
+                Err(e) => notification.set(Some(Notification::Error(e))),
+            }
+            saving.set(false);
+        });
+    };
+
+    let on_reset = move |_: leptos::ev::MouseEvent| {
+        let defaults = AutopullSettingsData::default();
+        enabled.set(defaults.enabled);
+        focused_secs.set(defaults.focused_secs.to_string());
+        unfocused_secs.set(defaults.unfocused_secs.to_string());
+        closed_secs.set(defaults.closed_secs.to_string());
+        parse_error.set(None);
+    };
+
+    let on_close_cancel = on_close.clone();
+    let on_cancel = move |_: leptos::ev::MouseEvent| on_close_cancel();
+
+    view! {
+        <div class="popup-overlay" on:click={
+            let on_close = on_close.clone();
+            move |_| on_close()
+        }>
+            <div class="popup-content autopull-settings-form" on:click=|ev| ev.stop_propagation()>
+                <h2 class="section-title">"Edit autopull settings"</h2>
+
+                <div class="field">
+                    <label class="checkbox-option">
+                        <input
+                            type="checkbox"
+                            prop:checked=move || enabled.get()
+                            on:change=move |ev| enabled.set(event_target_checked(&ev))
+                        />
+                        "Enable background autopull"
+                    </label>
+                </div>
+
+                <div class="field">
+                    <label for="autopull-focused-secs">"Refresh interval (focused, seconds)"</label>
+                    <input
+                        class="input"
+                        id="autopull-focused-secs"
+                        type="number"
+                        min="1"
+                        prop:value=move || focused_secs.get()
+                        on:input=move |ev| focused_secs.set(event_target_value(&ev))
+                    />
+                </div>
+
+                <div class="field">
+                    <label for="autopull-unfocused-secs">"Refresh interval (unfocused, seconds)"</label>
+                    <input
+                        class="input"
+                        id="autopull-unfocused-secs"
+                        type="number"
+                        min="1"
+                        prop:value=move || unfocused_secs.get()
+                        on:input=move |ev| unfocused_secs.set(event_target_value(&ev))
+                    />
+                </div>
+
+                <div class="field">
+                    <label for="autopull-closed-secs">"Refresh interval (closed window, seconds)"</label>
+                    <input
+                        class="input"
+                        id="autopull-closed-secs"
+                        type="number"
+                        min="1"
+                        prop:value=move || closed_secs.get()
+                        on:input=move |ev| closed_secs.set(event_target_value(&ev))
+                    />
+                    <p class="field-description">
+                        "Takes effect once the tray-icon feature ships. Stored on disk now to keep the settings file forward-compatible."
+                    </p>
+                </div>
+
+                <Show when=move || parse_error.get().is_some()>
+                    <span class="error">{move || parse_error.get().unwrap_or_default()}</span>
+                </Show>
+
+                <div class="popup-actions">
+                    <buttons::FormPrimary on_click=on_save disabled=saving>
+                        "Save"
+                    </buttons::FormPrimary>
+                    <buttons::FormSecondary on_click=on_cancel />
+                    <button type="button" class="qui-button link" on:click=on_reset>
+                        <span>"Reset to defaults"</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+fn event_target_checked(ev: &leptos::ev::Event) -> bool {
+    use wasm_bindgen::JsCast;
+    ev.target()
+        .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
+        .is_some_and(|el| el.checked())
 }
 
 // ── Account section ──

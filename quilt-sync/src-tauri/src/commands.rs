@@ -11,6 +11,9 @@ use tokio::sync;
 
 use crate::Error;
 use crate::app;
+use crate::autopull::AutopullSettings;
+use crate::autopull::SharedAutopullSettings;
+use crate::autopull::Watcher;
 use crate::commit_message;
 use crate::model;
 use crate::oauth::OAuthState;
@@ -264,6 +267,26 @@ impl From<PublishSettings> for PublishSettingsData {
     }
 }
 
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AutopullSettingsData {
+    pub enabled: bool,
+    pub focused_secs: u64,
+    pub unfocused_secs: u64,
+    pub closed_secs: u64,
+}
+
+impl From<AutopullSettings> for AutopullSettingsData {
+    fn from(s: AutopullSettings) -> Self {
+        Self {
+            enabled: s.enabled,
+            focused_secs: s.focused_secs,
+            unfocused_secs: s.unfocused_secs,
+            closed_secs: s.closed_secs,
+        }
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsData {
@@ -277,6 +300,7 @@ pub struct SettingsData {
     pub os: String,
     pub changelog: Vec<changelog::ChangelogEntry>,
     pub publish: PublishSettingsData,
+    pub autopull: AutopullSettingsData,
 }
 
 #[tauri::command]
@@ -286,6 +310,7 @@ pub async fn get_settings_data(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     publish: tauri::State<'_, SharedPublishSettings>,
+    autopull_settings: tauri::State<'_, SharedAutopullSettings>,
 ) -> Result<SettingsData, String> {
     let app: &app::App = &app;
 
@@ -307,6 +332,7 @@ pub async fn get_settings_data(
     let auth_hosts = quilt::paths::list_auth_hosts(&data_dir);
     let log_level = tracing.log_level();
     let publish_data = PublishSettingsData::from(publish.read().await.clone());
+    let autopull_data = AutopullSettingsData::from(autopull_settings.read().await.clone());
 
     Ok(SettingsData {
         version: app.version.to_string(),
@@ -319,6 +345,7 @@ pub async fn get_settings_data(
         os: std::env::consts::OS.to_string(),
         changelog: changelog::latest_entries(),
         publish: publish_data,
+        autopull: autopull_data,
     })
 }
 
@@ -359,6 +386,45 @@ pub async fn update_publish_settings(
 fn opt_from_string(s: &str) -> Option<String> {
     let trimmed = s.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+#[tauri::command]
+pub async fn update_autopull_settings(
+    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
+    autopull_settings: tauri::State<'_, SharedAutopullSettings>,
+    watcher: tauri::State<'_, Watcher>,
+    enabled: bool,
+    focused_secs: u64,
+    unfocused_secs: u64,
+    closed_secs: u64,
+) -> Result<(), String> {
+    let new = AutopullSettings {
+        enabled,
+        focused_secs,
+        unfocused_secs,
+        closed_secs,
+    };
+
+    let app_handle = app_handle.lock().await;
+    let data_dir = app_handle
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| e.to_string())?;
+
+    new.save(&data_dir).await.map_err(|e| e.to_string())?;
+    let was_enabled = {
+        let mut current = autopull_settings.write().await;
+        let prev = current.enabled;
+        *current = new;
+        prev
+    };
+    // Flipping false → true clears the paused set: a re-enable is a
+    // signal that the user wants the watcher to retry every namespace,
+    // not just the ones they touched manually.
+    if !was_enabled && enabled {
+        watcher.clear_all_paused().await;
+    }
+    Ok(())
 }
 
 // ── Login data for Leptos UI ──
@@ -860,20 +926,21 @@ async fn package_commit_command(
     message: &str,
     metadata: &str,
     workflow: Option<String>,
-) -> Result<(), Error> {
+) -> Result<quilt_uri::Namespace, Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
     if message.is_empty() {
         return Err(Error::Commit("Message is required".to_string()));
     }
 
     model::package_commit(m, namespace.clone(), message, metadata, workflow, None).await?;
-    Ok(())
+    Ok(namespace)
 }
 
 #[tauri::command]
 pub async fn package_commit(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    watcher: tauri::State<'_, Watcher>,
     namespace: String,
     message: String,
     metadata: String,
@@ -885,11 +952,11 @@ pub async fn package_commit(
     let msg_ok = format!("Successfully committed {namespace}");
     let msg_err = |err: &Error| format!("Failed to commit: {err}");
 
-    Notify::new(msg_init).map(
-        package_commit_command(&m, &namespace, &message, &metadata, workflow).await,
-        msg_ok,
-        msg_err,
-    )
+    let result = package_commit_command(&m, &namespace, &message, &metadata, workflow).await;
+    if let Ok(ns) = &result {
+        watcher.clear_paused(ns).await;
+    }
+    Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
 }
 
 async fn open_directory_picker_command(app_handle: &tauri::AppHandle) -> Result<PathBuf, Error> {
@@ -1267,16 +1334,20 @@ pub async fn certify_latest(
     )
 }
 
-async fn reset_local_command(m: &model::Model, namespace: &str) -> Result<(), Error> {
+async fn reset_local_command(
+    m: &model::Model,
+    namespace: &str,
+) -> Result<quilt_uri::Namespace, Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
     model::package_revision_reset_local(m, namespace.clone()).await?;
-    Ok(())
+    Ok(namespace)
 }
 
 #[tauri::command]
 pub async fn reset_local(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    watcher: tauri::State<'_, Watcher>,
     namespace: String,
 ) -> Result<String, String> {
     tracing.track(MixpanelEvent::LocalReset).await;
@@ -1285,21 +1356,27 @@ pub async fn reset_local(
     let msg_ok = format!("Successfully reset local for {namespace}");
     let msg_err = |err: &Error| format!("Failed to reset local: {err}");
 
-    Notify::new(msg_init).map(reset_local_command(&m, &namespace).await, msg_ok, msg_err)
+    let result = reset_local_command(&m, &namespace).await;
+    if let Ok(ns) = &result {
+        watcher.clear_paused(ns).await;
+    }
+    Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
 }
 
 async fn package_push_command(
     m: &model::Model,
     namespace: &str,
-) -> Result<quilt::PushOutcome, Error> {
+) -> Result<(quilt_uri::Namespace, quilt::PushOutcome), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
-    model::package_push(m, &namespace, None).await
+    let outcome = model::package_push(m, &namespace, None).await?;
+    Ok((namespace, outcome))
 }
 
 #[tauri::command]
 pub async fn package_push(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    watcher: tauri::State<'_, Watcher>,
     namespace: String,
 ) -> Result<String, String> {
     tracing.track(MixpanelEvent::PackagePushed).await;
@@ -1307,11 +1384,14 @@ pub async fn package_push(
     let msg_init = format!("Pushing package {namespace}");
 
     let result = package_push_command(&m, &namespace).await;
+    if let Ok((ns, _)) = &result {
+        watcher.clear_paused(ns).await;
+    }
     // TODO: push-not-certified should be surfaced as a warning, not a success.
     // Currently both outcomes go through the success path because converting to
     // Err skips on_done()/refetch and leaves the UI stale.
     let msg_ok = match &result {
-        Ok(outcome) if outcome.certified_latest => {
+        Ok((_, outcome)) if outcome.certified_latest => {
             format!("Successfully pushed package {namespace}")
         }
         Ok(_) => {
@@ -1328,7 +1408,7 @@ async fn package_publish_command(
     m: &model::Model,
     settings: &SharedPublishSettings,
     namespace: &str,
-) -> Result<quilt::PublishOutcome, Error> {
+) -> Result<(quilt_uri::Namespace, quilt::PublishOutcome), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
     let installed = m
         .get_installed_package(&namespace)
@@ -1348,16 +1428,17 @@ async fn package_publish_command(
     let metadata = settings.default_metadata.clone().unwrap_or_default();
     let workflow = settings.default_workflow.clone();
 
-    model::package_publish(
+    let outcome = model::package_publish(
         m,
-        namespace,
+        namespace.clone(),
         &message,
         &metadata,
         workflow,
         None,
         Some(status),
     )
-    .await
+    .await?;
+    Ok((namespace, outcome))
 }
 
 #[tauri::command]
@@ -1365,12 +1446,16 @@ pub async fn package_publish(
     m: tauri::State<'_, model::Model>,
     settings: tauri::State<'_, SharedPublishSettings>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    watcher: tauri::State<'_, Watcher>,
     namespace: String,
 ) -> Result<String, String> {
     let msg_init = format!("Publishing package {namespace}");
     let result = package_publish_command(&m, &settings, &namespace).await;
+    if let Ok((ns, _)) = &result {
+        watcher.clear_paused(ns).await;
+    }
 
-    if let Ok(outcome) = &result {
+    if let Ok((_, outcome)) = &result {
         tracing.track(MixpanelEvent::PackagePublished).await;
         if matches!(outcome, quilt::PublishOutcome::CommittedAndPushed(_)) {
             tracing.track(MixpanelEvent::PackageCommitted).await;
@@ -1379,7 +1464,7 @@ pub async fn package_publish(
     }
 
     let msg_ok = match &result {
-        Ok(outcome) if outcome.push().certified_latest => {
+        Ok((_, outcome)) if outcome.push().certified_latest => {
             format!("Successfully published package {namespace}")
         }
         Ok(_) => {
@@ -1404,18 +1489,22 @@ async fn package_commit_and_push_command(
     message: &str,
     metadata: &str,
     workflow: Option<String>,
-) -> Result<quilt::PublishOutcome, Error> {
+) -> Result<(quilt_uri::Namespace, quilt::PublishOutcome), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
     if message.trim().is_empty() {
         return Err(Error::Commit("Message is required".to_string()));
     }
-    model::package_publish(m, namespace, message, metadata, workflow, None, None).await
+    let outcome =
+        model::package_publish(m, namespace.clone(), message, metadata, workflow, None, None)
+            .await?;
+    Ok((namespace, outcome))
 }
 
 #[tauri::command]
 pub async fn package_commit_and_push(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    watcher: tauri::State<'_, Watcher>,
     namespace: String,
     message: String,
     metadata: String,
@@ -1424,8 +1513,11 @@ pub async fn package_commit_and_push(
     let msg_init = format!("Publishing package {namespace}");
     let result =
         package_commit_and_push_command(&m, &namespace, &message, &metadata, workflow).await;
+    if let Ok((ns, _)) = &result {
+        watcher.clear_paused(ns).await;
+    }
 
-    if let Ok(outcome) = &result {
+    if let Ok((_, outcome)) = &result {
         tracing.track(MixpanelEvent::PackagePublished).await;
         if matches!(outcome, quilt::PublishOutcome::CommittedAndPushed(_)) {
             tracing.track(MixpanelEvent::PackageCommitted).await;
@@ -1434,7 +1526,7 @@ pub async fn package_commit_and_push(
     }
 
     let msg_ok = match &result {
-        Ok(outcome) if outcome.push().certified_latest => {
+        Ok((_, outcome)) if outcome.push().certified_latest => {
             format!("Successfully published package {namespace}")
         }
         Ok(_) => {
@@ -1447,16 +1539,20 @@ pub async fn package_commit_and_push(
     Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
 }
 
-async fn package_pull_command(m: &model::Model, namespace: &str) -> Result<(), Error> {
+async fn package_pull_command(
+    m: &model::Model,
+    namespace: &str,
+) -> Result<quilt_uri::Namespace, Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
     model::package_pull(m, &namespace, None).await?;
-    Ok(())
+    Ok(namespace)
 }
 
 #[tauri::command]
 pub async fn package_pull(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    watcher: tauri::State<'_, Watcher>,
     namespace: String,
 ) -> Result<String, String> {
     tracing.track(MixpanelEvent::PackagePulled).await;
@@ -1465,7 +1561,11 @@ pub async fn package_pull(
     let msg_ok = format!("Successfully pulled package {namespace}");
     let msg_err = |err: &Error| format!("Failed to pull package: {err}");
 
-    Notify::new(msg_init).map(package_pull_command(&m, &namespace).await, msg_ok, msg_err)
+    let result = package_pull_command(&m, &namespace).await;
+    if let Ok(ns) = &result {
+        watcher.clear_paused(ns).await;
+    }
+    Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
 }
 
 async fn package_uninstall_command(m: &model::Model, namespace: &str) -> Result<(), Error> {
@@ -1498,17 +1598,18 @@ async fn set_remote_command(
     namespace: &str,
     origin: &str,
     bucket: &str,
-) -> Result<(), Error> {
+) -> Result<quilt_uri::Namespace, Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
     let origin = quilt_uri::Host::from_str(origin)?;
     model::set_remote(m, &namespace, origin, bucket.to_string()).await?;
-    Ok(())
+    Ok(namespace)
 }
 
 #[tauri::command]
 pub async fn set_remote(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    watcher: tauri::State<'_, Watcher>,
     namespace: String,
     origin: String,
     bucket: String,
@@ -1519,11 +1620,11 @@ pub async fn set_remote(
     let msg_ok = format!("Successfully set remote for {namespace}");
     let msg_err = |err: &Error| format!("Failed to set remote: {err}");
 
-    Notify::new(msg_init).map(
-        set_remote_command(&m, &namespace, &origin, &bucket).await,
-        msg_ok,
-        msg_err,
-    )
+    let result = set_remote_command(&m, &namespace, &origin, &bucket).await;
+    if let Ok(ns) = &result {
+        watcher.clear_paused(ns).await;
+    }
+    Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
 }
 
 async fn package_create_command(

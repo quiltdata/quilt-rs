@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.17.2-alpha1] - 2026-05-13
+
+### Added
+
+- Background autopull: opt-in Settings toggle periodically refreshes installed remote packages and pulls when there are no local changes; the UI repaints in place via a `package-status-changed` event
+
 ## [v0.17.1] - 2026-04-29
 
 ### Added
