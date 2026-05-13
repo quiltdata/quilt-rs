@@ -115,6 +115,14 @@ pub trait QuiltModel {
         Ok(package.status(host_config).await?)
     }
 
+    async fn recompute_local_status(
+        &self,
+        package: &quilt::InstalledPackage,
+        host_config: Option<HostConfig>,
+    ) -> Result<quilt::lineage::InstalledPackageStatus, Error> {
+        Ok(package.recompute_local_status(host_config).await?)
+    }
+
     async fn package_commit(
         &self,
         package: &quilt::InstalledPackage,

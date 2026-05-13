@@ -117,6 +117,40 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         self.lineage.package_home(&self.storage).await
     }
 
+    /// Recompute working-tree status against the cached manifest without
+    /// contacting the remote. Caller accepts that `upstream_state` reflects
+    /// the last-known `latest_hash` rather than a freshly-resolved one;
+    /// pair with `status` (which calls `refresh_latest_hash`) when remote
+    /// freshness matters.
+    pub async fn recompute_local_status(
+        &self,
+        host_config_opt: Option<HostConfig>,
+    ) -> Res<InstalledPackageStatus> {
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        let manifest = self.manifest().await?;
+
+        let host_config = match host_config_opt {
+            Some(hc) => hc,
+            None => match lineage.remote_uri.as_ref() {
+                Some(remote_uri) if !remote_uri.bucket.is_empty() => {
+                    self.remote.host_config(&remote_uri.origin).await?
+                }
+                _ => HostConfig::default(),
+            },
+        };
+
+        let (lineage, status) = flow::status(
+            lineage,
+            &self.storage,
+            &manifest,
+            &package_home,
+            host_config,
+        )
+        .await?;
+        self.lineage.write(&self.storage, lineage).await?;
+        Ok(status)
+    }
+
     pub async fn status(&self, host_config_opt: Option<HostConfig>) -> Res<InstalledPackageStatus> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
 

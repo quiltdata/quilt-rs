@@ -1,6 +1,6 @@
 [package]
 name = "quilt-sync"
-version = "0.17.2-alpha1"
+version = "0.17.2-alpha2"
 authors = ["Quilt Data, Inc."]
 description = "Cross-platform desktop application for editing Quilt data packages"
 documentation = "https://docs.quiltdata.com"
@@ -27,6 +27,8 @@ rust-i18n = "4.0.0"
 semver = "1.0.28"
 sentry = { version = "0.48.0", features = ["tracing"] }
 mixpanel-rs = "0.3.1"
+notify = "8.2"
+notify-debouncer-full = "0.7"
 serde.workspace = true
 serde_json.workspace = true
 serde_qs = "1.1.1"

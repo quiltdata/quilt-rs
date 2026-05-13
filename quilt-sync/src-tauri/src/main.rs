@@ -16,6 +16,7 @@ mod commands;
 mod commit_message;
 mod env;
 mod error;
+mod fswatcher;
 mod model;
 mod notify;
 mod oauth;
@@ -100,6 +101,15 @@ fn main() {
                     autopull::AutopullSettings::default(),
                 ))
             });
+            let fswatcher_settings = tauri::async_runtime::block_on(fswatcher::init_settings(
+                &data_dir,
+            ))
+            .unwrap_or_else(|err| {
+                error!("Failed to load fswatcher settings, using defaults: {err}");
+                std::sync::Arc::new(tokio::sync::RwLock::new(
+                    fswatcher::FsWatcherSettings::default(),
+                ))
+            });
             let window_mode = autopull::create_window_mode();
 
             app.manage(Model::create(data_dir));
@@ -117,9 +127,11 @@ fn main() {
                 app.handle().clone(),
                 autopull_settings.clone(),
                 window_mode.clone(),
-                reporter,
+                reporter.clone(),
             );
+            fswatcher::spawn(app.handle(), fswatcher_settings.clone(), &reporter);
             app.manage(autopull_settings);
+            app.manage(fswatcher_settings);
             app.manage(window_mode);
             app.manage(watcher);
 
@@ -172,6 +184,7 @@ fn main() {
             commands::package_push,
             commands::update_publish_settings,
             commands::update_autopull_settings,
+            commands::update_fswatcher_settings,
             commands::refresh_package_status,
             commands::package_uninstall,
             commands::reset_local,

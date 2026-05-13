@@ -15,6 +15,8 @@ use crate::autopull::AutopullSettings;
 use crate::autopull::SharedAutopullSettings;
 use crate::autopull::Watcher;
 use crate::commit_message;
+use crate::fswatcher::FsWatcherSettings;
+use crate::fswatcher::SharedFsWatcherSettings;
 use crate::model;
 use crate::oauth::OAuthState;
 use crate::publish_settings::PublishSettings;
@@ -287,6 +289,18 @@ impl From<AutopullSettings> for AutopullSettingsData {
     }
 }
 
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FsWatcherSettingsData {
+    pub enabled: bool,
+}
+
+impl From<FsWatcherSettings> for FsWatcherSettingsData {
+    fn from(s: FsWatcherSettings) -> Self {
+        Self { enabled: s.enabled }
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsData {
@@ -301,6 +315,7 @@ pub struct SettingsData {
     pub changelog: Vec<changelog::ChangelogEntry>,
     pub publish: PublishSettingsData,
     pub autopull: AutopullSettingsData,
+    pub fswatcher: FsWatcherSettingsData,
 }
 
 #[tauri::command]
@@ -311,6 +326,7 @@ pub async fn get_settings_data(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     publish: tauri::State<'_, SharedPublishSettings>,
     autopull_settings: tauri::State<'_, SharedAutopullSettings>,
+    fswatcher_settings: tauri::State<'_, SharedFsWatcherSettings>,
 ) -> Result<SettingsData, String> {
     let app: &app::App = &app;
 
@@ -333,6 +349,7 @@ pub async fn get_settings_data(
     let log_level = tracing.log_level();
     let publish_data = PublishSettingsData::from(publish.read().await.clone());
     let autopull_data = AutopullSettingsData::from(autopull_settings.read().await.clone());
+    let fswatcher_data = FsWatcherSettingsData::from(fswatcher_settings.read().await.clone());
 
     Ok(SettingsData {
         version: app.version.to_string(),
@@ -346,6 +363,7 @@ pub async fn get_settings_data(
         changelog: changelog::latest_entries(),
         publish: publish_data,
         autopull: autopull_data,
+        fswatcher: fswatcher_data,
     })
 }
 
@@ -424,6 +442,32 @@ pub async fn update_autopull_settings(
     if !was_enabled && enabled {
         watcher.clear_all_paused().await;
     }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn update_fswatcher_settings(
+    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
+    fswatcher_settings: tauri::State<'_, SharedFsWatcherSettings>,
+    enabled: bool,
+) -> Result<(), String> {
+    let app_handle = app_handle.lock().await;
+    let data_dir = app_handle
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| e.to_string())?;
+
+    // Preserve the on-disk `debounce_ms` (not surfaced in the UI yet).
+    let new = {
+        let current = fswatcher_settings.read().await.clone();
+        FsWatcherSettings {
+            enabled,
+            debounce_ms: current.debounce_ms,
+        }
+    };
+
+    new.save(&data_dir).await.map_err(|e| e.to_string())?;
+    *fswatcher_settings.write().await = new;
     Ok(())
 }
 

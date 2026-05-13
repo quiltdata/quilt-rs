@@ -108,6 +108,18 @@ impl Default for AutopullSettingsData {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FsWatcherSettingsData {
+    pub enabled: bool,
+}
+
+impl Default for FsWatcherSettingsData {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsData {
@@ -122,6 +134,7 @@ pub struct SettingsData {
     pub changelog: Vec<ChangelogEntry>,
     pub publish: PublishSettingsData,
     pub autopull: AutopullSettingsData,
+    pub fswatcher: FsWatcherSettingsData,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -401,6 +414,27 @@ pub async fn update_autopull_settings(
     )
     .await
 }
+
+pub async fn update_fswatcher_settings(enabled: bool) -> Result<(), String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        enabled: bool,
+    }
+    tauri::invoke("update_fswatcher_settings", &Args { enabled }).await
+}
+
+/// Payload of the `fswatcher-subscriber-error` Tauri event. Surfaced as a
+/// one-shot toast (e.g. for `kind == "inotify_limit"` on Linux).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscriberErrorEvent {
+    pub kind: String,
+    pub message: String,
+    pub namespace: Option<String>,
+}
+
+pub const FSWATCHER_SUBSCRIBER_ERROR_EVENT: &str = "fswatcher-subscriber-error";
 
 pub async fn package_pull(namespace: String) -> Result<String, String> {
     #[derive(Serialize)]

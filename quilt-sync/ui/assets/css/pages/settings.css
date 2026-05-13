@@ -42,6 +42,17 @@
     margin: 0;
   }
 
+  .checkbox-option {
+    align-items: center;
+    cursor: pointer;
+    display: flex;
+    gap: 6px;
+  }
+
+  .checkbox-option input {
+    cursor: pointer;
+  }
+
   .path {
     overflow: hidden;
     text-overflow: ellipsis;

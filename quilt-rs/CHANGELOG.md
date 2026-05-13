@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.31.2-alpha1] - 2026-05-13
+
+### Added
+
+- `InstalledPackage::recompute_local_status` refreshes working-tree state against the cached manifest without contacting the remote
+
 ## [v0.31.1] - 2026-05-06
 
 ### Changed
