@@ -762,8 +762,7 @@ mod tests {
         // Local installed manifest at the commit hash — push reads it via
         // `self.manifest()`. Header fields chosen to round-trip to
         // EMPTY_NULL_TOP_HASH when push rebuilds.
-        let local_manifest =
-            b"{\"version\":\"v0\",\"message\":\"\",\"user_meta\":null}\n".to_vec();
+        let local_manifest = b"{\"version\":\"v0\",\"message\":\"\",\"user_meta\":null}\n".to_vec();
         storage
             .write_byte_stream(
                 &paths.installed_manifest(&namespace, local_hash),
