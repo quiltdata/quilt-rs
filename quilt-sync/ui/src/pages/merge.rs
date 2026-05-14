@@ -123,20 +123,22 @@ fn MergeContent(
             <div class="root">
                 <div class="field">
                     <p class="description">
-                        "Certify your latest commit as Quilt "
+                        "Make your "
+                        <abbr title="the hash of your most recent local commit, or the last commit you pushed">
+                            "latest revision"
+                        </abbr>
+                        " the shared "
                         <code>"latest"</code>
-                        ". This will update local and remote "
-                        <code>"latest"</code>
-                        " with your latest commit."
+                        ". The remote pointer moves to your revision; other users see it on their next pull. Local files are unchanged."
                     </p>
                     <buttons::CertifyLatest on_click=on_certify />
                 </div>
 
                 <div class="field">
                     <p class="description">
-                        "Erase local commits and make local "
+                        "Replace your local commits and local files with the remote "
                         <code>"latest"</code>
-                        " the same as remote."
+                        ". Any uncommitted edits in the working tree are lost."
                     </p>
                     <buttons::ResetLocal on_click=on_reset />
                 </div>

@@ -7,7 +7,7 @@ use super::IconButton;
 pub fn ResetLocal(on_click: impl Fn(leptos::ev::MouseEvent) + 'static) -> impl IntoView {
     view! {
         <IconButton on_click=UnsyncCallback::new(on_click)>
-            "Reset local"
+            "Overwrite local with remote"
         </IconButton>
     }
 }

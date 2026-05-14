@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.17.2-alpha3] - 2026-05-14
+
+### Changed
+
+- Renamed merge-page actions to "Promote my commit" and "Overwrite local with remote" and rewrote their descriptions to clarify which side wins and which files change on disk
+
 ## [v0.17.2-alpha2] - 2026-05-13
 
 ### Added
