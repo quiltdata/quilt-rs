@@ -151,7 +151,7 @@ impl ButtonKind {
             Self::LogInWithBrowser => "Log in with browser",
             Self::Login => "Login",
             Self::Logout => "Logout",
-            Self::Merge => "Merge",
+            Self::Merge => "Resolve conflict",
             Self::Open => "Open",
             Self::OpenLogsDir => "Open",
             Self::OpenBrowser => "Open browser",

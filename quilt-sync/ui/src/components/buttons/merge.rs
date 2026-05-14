@@ -49,7 +49,7 @@ mod tests {
             icon.get_attribute("src").unwrap(),
             "/assets/img/icons/merge.svg"
         );
-        assert_eq!(el.text_content().unwrap().trim(), "Merge");
+        assert_eq!(el.text_content().unwrap().trim(), "Resolve conflict");
     }
 
     #[wasm_bindgen_test]

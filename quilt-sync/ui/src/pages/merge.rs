@@ -42,7 +42,7 @@ pub fn Merge() -> impl IntoView {
                                 href: pkg_href,
                                 title: ns.clone(),
                             }),
-                            BreadcrumbItem::Current("Merge".to_string()),
+                            BreadcrumbItem::Current("Resolve conflict".to_string()),
                         ];
                         let actions = build_toolbar_actions(&d, notification, ui_locked);
                         view! {
