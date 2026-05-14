@@ -14,6 +14,7 @@
 ### Fixed
 
 - `InstalledPackage::certify_latest` now pushes any pending local commit before tagging it as `latest`; previously certified the last-pushed hash regardless of pending local work (<https://github.com/quiltdata/quilt-rs/pull/677>)
+- `flow::reset_to_latest` now clears `lineage.commit`; previously it kept a stale local commit around, leaving lineage self-inconsistent and allowing a later certify to resurrect the discarded revision (<https://github.com/quiltdata/quilt-rs/pull/677>)
 
 ## [v0.31.2-alpha1] - 2026-05-13
 
