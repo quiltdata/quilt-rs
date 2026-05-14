@@ -462,10 +462,25 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         Ok(lineage.remote()?.clone())
     }
 
+    /// Pushes any pending local commit, then promotes the resulting remote
+    /// hash to `latest`. Last-writer-wins: any concurrent move of the
+    /// `latest` tag between push and tag is overwritten. Invoked from the
+    /// merge page when the user resolves a `Diverged` state in favor of
+    /// their own revision.
     pub async fn certify_latest(&self) -> Res<ManifestUri> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
-        let latest_manifest_uri = lineage.remote()?.clone();
-        let lineage = flow::certify_latest(lineage, &self.remote, latest_manifest_uri).await?;
+
+        // Push first so the hash we tag exists on remote. Push mutates
+        // lineage on disk, so re-read to pick up the new remote hash.
+        let lineage = if lineage.commit.is_some() {
+            self.push(None).await?;
+            self.lineage.read(&self.storage).await?.1
+        } else {
+            lineage
+        };
+
+        let pushed_manifest_uri = lineage.remote()?.clone();
+        let lineage = flow::certify_latest(lineage, &self.remote, pushed_manifest_uri).await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(lineage.remote()?.clone())
     }
@@ -686,6 +701,235 @@ mod tests {
             commit_state.prev_hashes,
             expected_hashes.into_iter().rev().collect::<Vec<String>>()
         );
+
+        Ok(())
+    }
+
+    /// Scenario A: diverged with an unpushed local commit. The user lands on
+    /// the merge page because someone else moved `latest` past our install
+    /// base, and we have a local commit on top of that base. `certify_latest`
+    /// must push our commit and then tag the resulting remote hash as
+    /// `latest` — not roll the tag back to the install-time hash.
+    #[test(tokio::test)]
+    async fn test_certify_latest_pushes_pending_commit_then_tags() -> Res {
+        let (home, _temp_dir1) = Home::from_temp_dir()?;
+        let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+
+        let storage = LocalStorage::new();
+        let remote = MockRemote::default();
+        let namespace: Namespace = ("test", "diverged").into();
+        let bucket = "b";
+
+        // L is the rebuilt-manifest hash that push will produce from an empty
+        // manifest with header user_meta=null. Using a known fixture keeps
+        // push's "rebuilt hash must equal commit hash" check happy without
+        // wiring real objects.
+        let local_hash = crate::fixtures::top_hash::EMPTY_NULL_TOP_HASH;
+        let install_hash = "I_HASH";
+        let other_hash = "N_HASH";
+
+        paths
+            .scaffold_for_installing(&storage, &home, &namespace)
+            .await?;
+        paths.scaffold_for_caching(&storage, bucket).await?;
+
+        let lineage_json = format!(
+            r#"{{
+                "packages": {{
+                    "test/diverged": {{
+                        "commit": {{
+                            "timestamp": "2024-01-01T00:00:00Z",
+                            "hash": "{local_hash}",
+                            "prev_hashes": []
+                        }},
+                        "remote": {{
+                            "bucket": "{bucket}",
+                            "namespace": "test/diverged",
+                            "hash": "{install_hash}"
+                        }},
+                        "base_hash": "{install_hash}",
+                        "latest_hash": "{other_hash}",
+                        "paths": {{}}
+                    }}
+                }},
+                "home": "/tmp/working_dir"
+            }}"#
+        );
+        storage
+            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+            .await?;
+
+        // Local installed manifest at the commit hash — push reads it via
+        // `self.manifest()`. Header fields chosen to round-trip to
+        // EMPTY_NULL_TOP_HASH when push rebuilds.
+        let local_manifest =
+            b"{\"version\":\"v0\",\"message\":\"\",\"user_meta\":null}\n".to_vec();
+        storage
+            .write_byte_stream(
+                &paths.installed_manifest(&namespace, local_hash),
+                local_manifest.clone().into(),
+            )
+            .await?;
+
+        // Pre-cache the install-time remote manifest so push's `flow::browse`
+        // call for the previous remote_uri succeeds without a remote round-trip.
+        let install_manifest_uri = ManifestUri {
+            bucket: bucket.to_string(),
+            namespace: namespace.clone(),
+            hash: install_hash.to_string(),
+            origin: None,
+        };
+        storage
+            .write_byte_stream(
+                paths.cached_manifest(&install_manifest_uri),
+                local_manifest.into(),
+            )
+            .await?;
+
+        // Remote `latest` tag points at someone else's hash — this is what
+        // makes the state Diverged.
+        remote
+            .put_object(
+                &None,
+                &S3Uri::try_from(
+                    format!("s3://{bucket}/.quilt/named_packages/test/diverged/latest").as_str(),
+                )?,
+                other_hash.as_bytes().to_vec(),
+            )
+            .await?;
+
+        let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+        let package = InstalledPackage {
+            lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+            paths,
+            remote,
+            storage,
+            namespace,
+        };
+
+        package.certify_latest().await?;
+
+        // Remote `latest` now points at the user's revision (L), not the
+        // teammate's (N) and not the install-time hash (I).
+        let latest_uri = S3Uri::try_from(
+            format!("s3://{bucket}/.quilt/named_packages/test/diverged/latest").as_str(),
+        )?;
+        let latest_body = package
+            .remote
+            .get_object_stream(&None, &latest_uri)
+            .await?
+            .body
+            .collect()
+            .await?
+            .to_vec();
+        assert_eq!(latest_body, local_hash.as_bytes());
+
+        let lineage = package.lineage().await?;
+        assert_eq!(lineage.base_hash, local_hash);
+        assert_eq!(lineage.latest_hash, local_hash);
+        assert!(lineage.commit.is_none(), "push should have consumed commit");
+
+        Ok(())
+    }
+
+    /// Scenario B: diverged because our prior push uploaded the manifest but
+    /// `push_package` declined to certify (`latest` had moved between
+    /// `base_hash` and our push). With `commit = None`, `certify_latest`
+    /// must skip the push and tag the already-pushed hash as `latest`.
+    #[test(tokio::test)]
+    async fn test_certify_latest_skips_push_when_no_pending_commit() -> Res {
+        let (home, _temp_dir1) = Home::from_temp_dir()?;
+        let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+
+        let storage = LocalStorage::new();
+        let remote = MockRemote::default();
+        let namespace: Namespace = ("test", "pushed").into();
+        let bucket = "b";
+
+        let pushed_hash = "X_HASH";
+        let other_hash = "Y_HASH";
+
+        paths
+            .scaffold_for_installing(&storage, &home, &namespace)
+            .await?;
+        paths.scaffold_for_caching(&storage, bucket).await?;
+
+        let lineage_json = format!(
+            r#"{{
+                "packages": {{
+                    "test/pushed": {{
+                        "commit": null,
+                        "remote": {{
+                            "bucket": "{bucket}",
+                            "namespace": "test/pushed",
+                            "hash": "{pushed_hash}"
+                        }},
+                        "base_hash": "{pushed_hash}",
+                        "latest_hash": "{other_hash}",
+                        "paths": {{}}
+                    }}
+                }},
+                "home": "/tmp/working_dir"
+            }}"#
+        );
+        storage
+            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+            .await?;
+
+        // Remote `latest` tag currently points at someone else's hash.
+        remote
+            .put_object(
+                &None,
+                &S3Uri::try_from(
+                    format!("s3://{bucket}/.quilt/named_packages/test/pushed/latest").as_str(),
+                )?,
+                other_hash.as_bytes().to_vec(),
+            )
+            .await?;
+
+        let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+        let package = InstalledPackage {
+            lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+            paths,
+            remote,
+            storage,
+            namespace,
+        };
+
+        package.certify_latest().await?;
+
+        // Remote `latest` now points at the previously-pushed revision (X).
+        let latest_uri = S3Uri::try_from(
+            format!("s3://{bucket}/.quilt/named_packages/test/pushed/latest").as_str(),
+        )?;
+        let latest_body = package
+            .remote
+            .get_object_stream(&None, &latest_uri)
+            .await?
+            .body
+            .collect()
+            .await?
+            .to_vec();
+        assert_eq!(latest_body, pushed_hash.as_bytes());
+
+        // No manifest was uploaded as part of certification — push was skipped.
+        assert!(
+            !package
+                .remote
+                .exists(
+                    &None,
+                    &S3Uri::try_from(
+                        format!("s3://{bucket}/.quilt/packages/{pushed_hash}").as_str(),
+                    )?,
+                )
+                .await?,
+            "push should be skipped when there is no pending commit",
+        );
+
+        let lineage = package.lineage().await?;
+        assert_eq!(lineage.base_hash, pushed_hash);
+        assert_eq!(lineage.latest_hash, pushed_hash);
+        assert!(lineage.commit.is_none());
 
         Ok(())
     }

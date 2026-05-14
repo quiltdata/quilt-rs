@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.31.2-alpha2] - 2026-05-14
+
+### Fixed
+
+- `InstalledPackage::certify_latest` now pushes any pending local commit before tagging it as `latest`; previously certified the last-pushed hash regardless of pending local work
+
 ## [v0.31.2-alpha1] - 2026-05-13
 
 ### Added
