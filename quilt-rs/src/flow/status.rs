@@ -171,6 +171,10 @@ async fn fingerprint_files(
 
 /// Creates the status of local modifications
 /// It is used for `flow::commit` and for showing the status in UI.
+// TODO: drop `PackageLineage` from the return type. This function does not
+// mutate the input lineage; the tuple forces every caller to pattern-match
+// a dead first element, and once misled someone into persisting it from
+// `InstalledPackage::status()`, which raced with concurrent writers.
 pub async fn create_status(
     lineage: PackageLineage,
     storage: &(impl Storage + Sync),
