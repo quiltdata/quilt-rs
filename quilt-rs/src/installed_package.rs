@@ -760,8 +760,11 @@ mod tests {
             .await?;
 
         // Local installed manifest at the commit hash — push reads it via
-        // `self.manifest()`. Header fields chosen to round-trip to
-        // EMPTY_NULL_TOP_HASH when push rebuilds.
+        // `self.manifest()`. These exact bytes are what make the rebuild
+        // produce `EMPTY_NULL_TOP_HASH` (matching `local_hash` above); any
+        // change to the manifest serialization or top-hash algorithm will
+        // surface as a push-side "rebuilt hash != commit hash" failure
+        // rather than at the final `latest_body` assertion.
         let local_manifest = b"{\"version\":\"v0\",\"message\":\"\",\"user_meta\":null}\n".to_vec();
         storage
             .write_byte_stream(
