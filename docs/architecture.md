@@ -464,7 +464,107 @@ Error semantics:
 layer; it resolves `host_config` from the remote when the caller does
 not supply one, mirroring `InstalledPackage::{commit, push}`.
 
-### 10. Uninstall Phase
+### 10. Certify Latest Phase
+
+**Entry Point**: `InstalledPackage::certify_latest`
+(wraps `flow::push_package` + `flow::certify_latest`)
+**Purpose**: Make the local revision the remote's shared `latest`,
+uploading the underlying manifest first if it has not been pushed.
+
+**Direction**: local → remote. The flow may upload manifest data
+(if there's an unpushed commit) and always rewrites the remote
+`named_packages/<ns>/latest` tag.
+
+```text
+certify_latest(self)
+    ↓
+read lineage from .quilt/data.json
+    ↓
+If lineage.commit is Some:
+    flow::push_package(...)
+      → upload manifest + objects to remote
+      → set lineage.remote_uri = new manifest URI
+      → may internally certify if base == latest; harmless either way
+    ↓
+re-read lineage (post-push state)
+    ↓
+flow::certify_latest(lineage, remote, lineage.remote_uri)
+    ↓
+  tag_latest(remote, manifest_uri)
+    → write `s3://bucket/.quilt/named_packages/<ns>/latest`
+      containing manifest_uri.hash
+    ↓
+  lineage.update_latest(manifest_uri)
+    → base_hash  = manifest_uri.hash
+    → latest_hash = manifest_uri.hash
+    ↓
+persist lineage
+    ↓
+Return: updated ManifestUri
+```
+
+**Relationship to Push Phase**: Push Phase runs an inline
+`flow::certify_latest` when `base_hash == latest_hash` (or there's no
+existing latest tag) — see §8. This phase is the user-invoked
+composition of the same two primitives, run from the merge page; it
+forces certification even when push declined to (remote `latest` has
+moved since the user's base).
+
+**Concurrency**: this phase is intentionally last-writer-wins on the
+remote `named_packages/<ns>/latest` tag. If another client moves
+`latest` between the inner push (when one runs) and the outer
+`tag_latest`, the outer call silently overwrites that move. This is
+the semantic the merge page asks for — the user explicitly chose
+"promote my revision" over the remote — but it means a
+non-certifying push and the merge-page action are not symmetric:
+push respects a concurrent `latest`; the merge-page action does
+not.
+
+### 11. Reset Local Phase
+
+**Entry Point**: `flow::reset_to_latest`
+**Purpose**: Discard all local commits and working-tree state for a
+package, replacing them with the remote's current `latest` revision.
+
+**Direction**: remote → local (overwrites the working tree). Local
+commits and any uncommitted edits are dropped.
+
+```text
+reset_to_latest(lineage, manifest, paths, storage, remote, home, ns)
+    ↓
+resolve_tag(remote, "latest") → latest ManifestUri
+    ↓
+If latest.hash == lineage.remote.hash: return unchanged (no-op)
+    ↓
+flow::uninstall_paths(lineage, home, storage, installed_paths)
+  → delete working-tree files for the package
+  → drop entries from lineage.paths
+    ↓
+lineage.base_hash   = latest.hash
+lineage.latest_hash = latest.hash
+  → local commit chain is discarded
+    ↓
+cache_remote_manifest(paths, storage, remote, latest)
+  → .quilt/packages/<bucket>/<latest.hash>
+    ↓
+copy_cached_to_installed(...)
+  → .quilt/installed/<ns>/<latest.hash>
+    ↓
+For each path previously installed that still exists in the new
+manifest: flow::install_paths(...)
+  → re-download object content from remote
+  → re-populate working tree
+    ↓
+Return: updated PackageLineage
+```
+
+**Effect on local state**: working-tree files for this namespace are
+deleted and re-installed from the remote `latest`. The
+content-addressed `objects/` store is not pruned (other packages may
+share content). `.quilt/installed/<ns>/` keeps the new manifest;
+the old local manifests are not garbage-collected by this flow.
+
+### 12. Uninstall Phase
 
 **Entry Point**: `flow::uninstall_package`
 **Purpose**: Remove package from local tracking and delete working directory files
@@ -570,6 +670,12 @@ enum UpstreamState {
     Local,      // no remote configured, or remote set but never pushed
 }
 ```
+
+A `Diverged` package leaves that state via one of two remediation
+flows: `Certify Latest Phase` (§10) biases local-wins by pushing the
+local commit (if any) and tagging it as `latest`; `Reset Local Phase`
+(§11) biases remote-wins by discarding the local commit chain and
+re-installing the remote `latest`.
 
 ## Error Handling
 
