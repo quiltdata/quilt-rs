@@ -11,10 +11,13 @@
 
 ## [v0.31.2-alpha2] - 2026-05-14
 
+### Changed
+
+- `flow::reset_to_latest` now clears `lineage.commit`. Previously it preserved the commit to support an offline-commit / independent-push workflow; under autosync that no longer fits — the merge page is reachable asynchronously and a stale commit after reset would let a subsequent certify resurrect the discarded revision (<https://github.com/quiltdata/quilt-rs/pull/677>)
+
 ### Fixed
 
 - `InstalledPackage::certify_latest` now pushes any pending local commit before tagging it as `latest`; previously certified the last-pushed hash regardless of pending local work (<https://github.com/quiltdata/quilt-rs/pull/677>)
-- `flow::reset_to_latest` now clears `lineage.commit`; previously it kept a stale local commit around, leaving lineage self-inconsistent and allowing a later certify to resurrect the discarded revision (<https://github.com/quiltdata/quilt-rs/pull/677>)
 
 ## [v0.31.2-alpha1] - 2026-05-13
 

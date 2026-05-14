@@ -50,12 +50,15 @@ pub async fn reset_to_latest(
     // TODO: Should be a method of lineage
     lineage.latest_hash.clone_from(&latest.hash);
     lineage.base_hash.clone_from(&latest.hash);
-    // Discard any pending local commit. Without this the lineage stays
-    // self-inconsistent after a reset: `base_hash == latest_hash` (UpToDate)
-    // but `commit` still points at a hash the user just chose to throw
-    // away. A later Diverged state would then re-enter the merge page and
-    // `InstalledPackage::certify_latest` would push the discarded revision
-    // (its installed manifest is still on disk) and tag it as `latest`.
+    // Discard any pending local commit. The prior behavior preserved
+    // `commit` across reset to support an offline-commit / independent-push
+    // workflow: a user could reset their view of remote `latest` without
+    // throwing away work they intended to push later. With autosync the
+    // merge page is reachable asynchronously and `certify_latest` now
+    // pushes when `commit.is_some()`, so a stale commit after reset would
+    // let a subsequent certify resurrect the discarded revision (its
+    // installed manifest is still on disk). The trade-off shifted; reset
+    // now matches the UX promise of erasing local commits.
     lineage.commit = None;
     debug!("✔️ Updated lineage to latest hash: {}", latest.hash);
 
