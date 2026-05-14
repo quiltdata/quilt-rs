@@ -13,7 +13,7 @@
 
 ### Fixed
 
-- `InstalledPackage::certify_latest` now pushes any pending local commit before tagging it as `latest`; previously certified the last-pushed hash regardless of pending local work
+- `InstalledPackage::certify_latest` now pushes any pending local commit before tagging it as `latest`; previously certified the last-pushed hash regardless of pending local work (<https://github.com/quiltdata/quilt-rs/pull/677>)
 
 ## [v0.31.2-alpha1] - 2026-05-13
 
