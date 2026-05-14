@@ -677,6 +677,42 @@ local commit (if any) and tagging it as `latest`; `Reset Local Phase`
 (§11) biases remote-wins by discarding the local commit chain and
 re-installing the remote `latest`.
 
+### Resolving Diverged: differences from Git-style merge
+
+The two `Diverged` remediation flows (§10, §11) intentionally do
+**not** implement merge in the Git/Mercurial/SVN sense. Users
+familiar with those tools should expect the following gaps:
+
+- **No merge operation, no merge commit.** Resolving `Diverged` is a
+  binary, package-level choice — Promote (local wins) or Overwrite
+  (remote wins) — that produces no node combining the two sides.
+  After Promote, the previously-certified remote hash is unreachable
+  from any lineage entry; there is no graph node linking the two
+  sides of a `Diverged` resolution.
+- **No per-file granularity.** "Pick file A from mine, file B from
+  theirs" is not expressible. The manifest is the unit of choice,
+  not the file.
+- **No integrative pull from Diverged.** Pull is fast-forward only.
+  From `Diverged`, the only "remote-wins" path is Reset Local (§11),
+  which discards the local commit chain — there is no equivalent of
+  `git pull --rebase` that would replay local commits on top of
+  remote.
+- **Promote silently overwrites the remote tag.** A concurrent
+  teammate certification is overwritten last-writer-wins (§10
+  "Concurrency"); there is no `--force` opt-in gesture.
+- **Reset has no reflog.** Git's `reset --hard` is reflog-recoverable
+  for ~90 days; Reset Local (§11) has no such safety net. The
+  discarded local commit's installed manifest may linger on disk
+  under `.quilt/installed/<ns>/<hash>` but is unreachable from any
+  lineage state — effectively orphaned garbage.
+
+The design rationale is that data packages are predominantly binary
+or large (Parquet, FASTQ, HDF5), where line-level three-way merge is
+meaningless. Forcing a whole-manifest choice avoids
+"stuck-in-the-middle" partial-merge state and keeps the resolution
+model simple, at the cost of any granularity finer than "your
+manifest or theirs."
+
 ## Error Handling
 
 Custom error types are defined in two locations:
