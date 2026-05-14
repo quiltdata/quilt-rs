@@ -121,6 +121,12 @@ fn MergeContent(
     view! {
         <div class="qui-page-merge container">
             <div class="root">
+                <p class="intro">
+                    "Quilt doesn't merge file contents — there is no per-file three-way merge. Pick which side's revision becomes the new shared "
+                    <code>"latest"</code>
+                    "; the other side is discarded."
+                </p>
+
                 <div class="field">
                     <p class="description">
                         "Make your "

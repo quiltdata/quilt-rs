@@ -13,7 +13,7 @@
 
 ### Changed
 
-- Renamed merge-page actions to "Promote my revision" and "Overwrite local with remote" and rewrote their descriptions to clarify which side wins and which files change on disk (<https://github.com/quiltdata/quilt-rs/pull/677>)
+- Merge-page rewrite: actions renamed to "Promote my revision" and "Overwrite local with remote" with rewritten descriptions, plus a new intro line clarifying that Quilt does not merge file contents — pick which side's revision wins; the other is discarded (<https://github.com/quiltdata/quilt-rs/pull/677>)
 
 ## [v0.17.2-alpha2] - 2026-05-13
 
