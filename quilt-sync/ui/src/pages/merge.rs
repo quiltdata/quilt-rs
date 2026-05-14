@@ -129,7 +129,7 @@ fn MergeContent(
                         </abbr>
                         " the shared "
                         <code>"latest"</code>
-                        ". The remote pointer moves to your revision; other users see it on their next pull. Local files are unchanged."
+                        ". If it hasn't been pushed yet, it is uploaded first. The remote pointer then moves to your revision; other users see it on their next pull. Local files are unchanged."
                     </p>
                     <buttons::CertifyLatest on_click=on_certify />
                 </div>
