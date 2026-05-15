@@ -50,6 +50,16 @@ pub async fn reset_to_latest(
     // TODO: Should be a method of lineage
     lineage.latest_hash.clone_from(&latest.hash);
     lineage.base_hash.clone_from(&latest.hash);
+    // Discard any pending local commit. The prior behavior preserved
+    // `commit` across reset to support an offline-commit / independent-push
+    // workflow: a user could reset their view of remote `latest` without
+    // throwing away work they intended to push later. With autosync the
+    // merge page is reachable asynchronously and `certify_latest` now
+    // pushes when `commit.is_some()`, so a stale commit after reset would
+    // let a subsequent certify resurrect the discarded revision (its
+    // installed manifest is still on disk). The trade-off shifted; reset
+    // now matches the UX promise of erasing local commits.
+    lineage.commit = None;
     debug!("✔️ Updated lineage to latest hash: {}", latest.hash);
 
     debug!("⏳ Caching remote manifest");
@@ -206,6 +216,72 @@ mod tests {
                 }),
                 ..source_lineage
             }
+        );
+        Ok(())
+    }
+
+    /// Regression: `reset_to_latest` must clear `lineage.commit`. Otherwise
+    /// the lineage stays self-inconsistent (UpToDate on hashes, Ahead via
+    /// `current_hash()`), and a later Diverged → merge → "Promote my
+    /// revision" would push and tag the very revision the user just
+    /// discarded.
+    #[test(tokio::test)]
+    async fn test_reset_clears_pending_commit() -> Res {
+        let manifest_uri = ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("f", "a").into(),
+            hash: "OUTDATED_HASH".to_string(),
+            origin: None,
+        };
+
+        let paths = DomainPaths::default();
+        let storage = MockStorage::default();
+        paths
+            .scaffold_for_caching(&storage, &manifest_uri.bucket)
+            .await?;
+
+        let source_lineage = PackageLineage {
+            commit: Some(crate::lineage::CommitState {
+                timestamp: chrono::Utc::now(),
+                hash: "PENDING_LOCAL_COMMIT".to_string(),
+                prev_hashes: Vec::new(),
+            }),
+            remote_uri: Some(manifest_uri),
+            ..PackageLineage::default()
+        };
+
+        let test_hash: &str = "deadbeef";
+        let dummy_manifest = r#"{"version": "v0"}"#;
+        let remote = MockRemote::default();
+        remote
+            .put_object(
+                &None,
+                &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
+                test_hash.as_bytes().to_vec(),
+            )
+            .await?;
+        remote
+            .put_object(
+                &None,
+                &S3Uri::try_from(format!("s3://b/.quilt/packages/{}", &test_hash).as_str())?,
+                dummy_manifest.as_bytes().to_vec(),
+            )
+            .await?;
+
+        let resolved_lineage = reset_to_latest(
+            source_lineage,
+            &mut Manifest::default(),
+            &paths,
+            &storage,
+            &remote,
+            PathBuf::default(),
+            Namespace::default(),
+        )
+        .await?;
+        assert!(
+            resolved_lineage.commit.is_none(),
+            "reset must discard the pending local commit, got {:?}",
+            resolved_lineage.commit,
         );
         Ok(())
     }
