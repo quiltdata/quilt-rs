@@ -13,12 +13,12 @@
 
 ### Added
 
-- Autosync now publishes mapped packages automatically: when a remote-tracking package has local changes or a pending commit and the working tree has been quiet for one tick, it is committed (with message/metadata from publish settings) and pushed. Workflow / push failures pause the namespace and surface the underlying error message on the package's detail page.
-- New `autosync-paused` Tauri event carries the pause reason and a free-form message; the installed-package list renders a toast for unexpected errors and the detail page shows a persistent banner with the message. The detail page also re-hydrates that banner on navigation via a new `get_autosync_snapshot` command.
+- Autosync now publishes mapped packages automatically: when a remote-tracking package has local changes or a pending commit and the working tree has been quiet for one tick, it is committed (with message/metadata from publish settings) and pushed. Workflow / push failures pause the namespace and surface the underlying error message on the package's detail page (<https://github.com/quiltdata/quilt-rs/pull/682>)
+- New `autosync-paused` Tauri event carries the pause reason and a free-form message; the installed-package list renders a toast for unexpected errors and the detail page shows a persistent banner with the message. The detail page also re-hydrates that banner on navigation via a new `get_autosync_snapshot` command (<https://github.com/quiltdata/quilt-rs/pull/682>)
 
 ### Changed
 
-- Renamed the background pull loop to "Autosync"; the on-disk settings file moves from `autopull_settings.json` to `autosync_settings.json` (migrated automatically on first run).
+- Renamed the background pull loop to "Autosync"; the on-disk settings file moves from `autopull_settings.json` to `autosync_settings.json` (migrated automatically on first run) (<https://github.com/quiltdata/quilt-rs/pull/682>)
 
 ## [v0.17.2-alpha3] - 2026-05-14
 
