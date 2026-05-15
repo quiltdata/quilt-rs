@@ -12,7 +12,6 @@ use crate::autopull::PausedReason;
 use crate::autopull::WatcherInner;
 use crate::autopull::cadence_for_mode;
 use crate::autopull::reporter::PackageStatusEvent;
-use crate::commit_message;
 use crate::model;
 use crate::model::QuiltModel;
 use crate::publish_settings::PublishSettings;
@@ -168,33 +167,12 @@ pub(crate) async fn refresh_then_maybe_sync(
                 published: None,
             });
         }
-        let changes_summary = commit_message::generate(&status.changes);
-        let message = commit_message::render_publish_message(
-            publish.message_template.as_deref().unwrap_or_default(),
-            &commit_message::PublishMessageContext {
-                namespace,
-                changes_summary,
-            },
-        );
-        let metadata = publish.default_metadata.clone().unwrap_or_default();
-        let workflow = publish.default_workflow.clone();
-        // Going through the free function (same entry the manual
-        // Commit & Push uses) keeps metadata parsing and workflow
-        // resolution in one place. `resolve_workflow` is now on
-        // `QuiltModel`, so the mock-based tests in this file can
-        // intercept it without touching real storage.
-        return match model::package_publish(
-            model,
-            namespace.clone(),
-            &message,
-            &metadata,
-            workflow,
-            None,
-            Some(status),
-        )
-        .await
-        {
-            Ok(_) => {
+        // `publish_with_settings` is shared with the manual Commit &
+        // Push command in `commands.rs`, so a change to publish
+        // settings (new placeholder, new field) applies identically
+        // regardless of who triggered the publish.
+        return match model::publish_with_settings(model, namespace, publish, status).await {
+            Ok((_, message)) => {
                 info!("autosync: published namespace={namespace}");
                 Ok(RefreshOutcome {
                     upstream: quilt::lineage::UpstreamState::UpToDate,

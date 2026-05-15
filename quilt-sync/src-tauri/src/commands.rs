@@ -14,7 +14,6 @@ use crate::app;
 use crate::autopull::AutosyncSettings;
 use crate::autopull::SharedAutosyncSettings;
 use crate::autopull::Watcher;
-use crate::commit_message;
 use crate::fswatcher::FsWatcherSettings;
 use crate::fswatcher::SharedFsWatcherSettings;
 use crate::model;
@@ -1461,27 +1460,7 @@ async fn package_publish_command(
     let status = m.get_installed_package_status(&installed, None).await?;
 
     let settings = settings.read().await.clone();
-    let changes_summary = commit_message::generate(&status.changes);
-    let message = commit_message::render_publish_message(
-        settings.message_template.as_deref().unwrap_or_default(),
-        &commit_message::PublishMessageContext {
-            namespace: &namespace,
-            changes_summary,
-        },
-    );
-    let metadata = settings.default_metadata.clone().unwrap_or_default();
-    let workflow = settings.default_workflow.clone();
-
-    let outcome = model::package_publish(
-        m,
-        namespace.clone(),
-        &message,
-        &metadata,
-        workflow,
-        None,
-        Some(status),
-    )
-    .await?;
+    let (outcome, _message) = model::publish_with_settings(m, &namespace, &settings, status).await?;
     Ok((namespace, outcome))
 }
 

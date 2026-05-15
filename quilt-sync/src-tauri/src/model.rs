@@ -8,7 +8,9 @@ use tokio::sync;
 
 use tokio_stream::StreamExt;
 
+use crate::commit_message;
 use crate::error::Error;
+use crate::publish_settings::PublishSettings;
 use crate::quilt;
 use crate::telemetry::prelude::*;
 
@@ -552,6 +554,44 @@ pub async fn package_push(
         .await?
         .unwrap_or_else(|| panic!("Package {namespace} not found"));
     model.package_push(&installed_package, host_config).await
+}
+
+/// Render `PublishSettings` into a message / metadata / workflow triple
+/// and route through [`package_publish`].
+///
+/// Shared entry point for both the manual Commit & Push command and the
+/// autosync watcher tick — keep them in lockstep so a change to publish
+/// settings (new placeholder, new field) applies identically regardless
+/// of who triggered the publish. Returns the outcome paired with the
+/// rendered commit message; the autosync tick needs the message string
+/// for its `autosync-published` event, the manual command can discard it.
+pub async fn publish_with_settings(
+    model: &impl QuiltModel,
+    namespace: &quilt_uri::Namespace,
+    settings: &PublishSettings,
+    status: quilt::lineage::InstalledPackageStatus,
+) -> Result<(quilt::PublishOutcome, String), Error> {
+    let changes_summary = commit_message::generate(&status.changes);
+    let message = commit_message::render_publish_message(
+        settings.message_template.as_deref().unwrap_or_default(),
+        &commit_message::PublishMessageContext {
+            namespace,
+            changes_summary,
+        },
+    );
+    let metadata = settings.default_metadata.clone().unwrap_or_default();
+    let workflow = settings.default_workflow.clone();
+    let outcome = package_publish(
+        model,
+        namespace.clone(),
+        &message,
+        &metadata,
+        workflow,
+        None,
+        Some(status),
+    )
+    .await?;
+    Ok((outcome, message))
 }
 
 pub async fn package_publish(
