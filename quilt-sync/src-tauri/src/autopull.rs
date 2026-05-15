@@ -136,6 +136,22 @@ impl Watcher {
         self.inner.paused.write().await.clear();
     }
 
+    /// Point-in-time view of the paused set, used by the
+    /// `get_autosync_snapshot` Tauri command so the UI can re-hydrate
+    /// per-page banners on navigation. Read-only — the lock is released
+    /// before the function returns.
+    pub async fn snapshot(&self) -> reporter::WatcherSnapshot {
+        let paused = self
+            .inner
+            .paused
+            .read()
+            .await
+            .iter()
+            .map(|(ns, reason)| reporter::PausedEvent::from_reason(ns, reason))
+            .collect();
+        reporter::WatcherSnapshot { paused }
+    }
+
     #[cfg(test)]
     fn new_for_test(reporter: Arc<dyn StatusReporter>) -> Self {
         Self {
@@ -212,6 +228,44 @@ mod tests {
         assert_eq!(watcher.paused_count().await, 2);
         watcher.clear_paused(&ns_a).await;
         assert_eq!(watcher.paused_count().await, 1);
+    }
+
+    #[tokio::test]
+    async fn snapshot_reports_all_paused_entries() {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let ns_a: Namespace = ("acme", "demo").into();
+        let ns_b: Namespace = ("acme", "other").into();
+
+        assert!(watcher.snapshot().await.paused.is_empty());
+
+        watcher
+            .pause_for_test(ns_a.clone(), PausedReason::PendingChanges)
+            .await;
+        watcher
+            .pause_for_test(
+                ns_b.clone(),
+                PausedReason::Other("workflow rejected".to_string()),
+            )
+            .await;
+
+        let snapshot = watcher.snapshot().await;
+        assert_eq!(snapshot.paused.len(), 2);
+
+        let entry_a = snapshot
+            .paused
+            .iter()
+            .find(|p| p.namespace == ns_a.to_string())
+            .expect("acme/demo missing from snapshot");
+        assert_eq!(entry_a.reason, "pendingChanges");
+        assert!(entry_a.message.is_none());
+
+        let entry_b = snapshot
+            .paused
+            .iter()
+            .find(|p| p.namespace == ns_b.to_string())
+            .expect("acme/other missing from snapshot");
+        assert_eq!(entry_b.reason, "other");
+        assert_eq!(entry_b.message.as_deref(), Some("workflow rejected"));
     }
 
     #[tokio::test]

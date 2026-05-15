@@ -444,6 +444,19 @@ pub async fn update_autosync_settings(
     Ok(())
 }
 
+/// Point-in-time view of the autosync watcher's per-namespace state.
+///
+/// Used by the UI to re-hydrate paused-state banners after navigation:
+/// listening for the `autosync-paused` event only catches pauses that
+/// fire while a page is mounted, while the watcher's state persists
+/// across page loads.
+#[tauri::command]
+pub async fn get_autosync_snapshot(
+    watcher: tauri::State<'_, Watcher>,
+) -> Result<crate::autopull::reporter::WatcherSnapshot, String> {
+    Ok(watcher.snapshot().await)
+}
+
 #[tauri::command]
 pub async fn update_fswatcher_settings(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,

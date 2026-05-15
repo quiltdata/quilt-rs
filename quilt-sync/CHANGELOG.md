@@ -14,7 +14,7 @@
 ### Added
 
 - Autosync now publishes mapped packages automatically: when a remote-tracking package has local changes or a pending commit and the working tree has been quiet for one tick, it is committed (with message/metadata from publish settings) and pushed. Workflow / push failures pause the namespace and surface the underlying error message on the package's detail page.
-- New `autosync-paused` Tauri event carries the pause reason and a free-form message; the installed-package list renders a toast for unexpected errors and the detail page shows a persistent banner with the message.
+- New `autosync-paused` Tauri event carries the pause reason and a free-form message; the installed-package list renders a toast for unexpected errors and the detail page shows a persistent banner with the message. The detail page also re-hydrates that banner on navigation via a new `get_autosync_snapshot` command.
 
 ### Changed
 

@@ -297,6 +297,23 @@ pub struct PausedEvent {
 
 pub const AUTOSYNC_PAUSED_EVENT: &str = "autosync-paused";
 
+/// Point-in-time view of the autosync watcher's per-namespace state.
+/// Returned by `get_autosync_snapshot`; the UI uses it to re-hydrate
+/// the paused banner when a page mounts after the watcher already
+/// paused a namespace (the `autosync-paused` event alone would miss
+/// those pauses).
+#[derive(Clone, Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WatcherSnapshot {
+    pub paused: Vec<PausedEvent>,
+}
+
+pub async fn get_autosync_snapshot() -> Result<WatcherSnapshot, String> {
+    #[derive(Serialize)]
+    struct Args {}
+    tauri::invoke("get_autosync_snapshot", &Args {}).await
+}
+
 pub async fn refresh_package_status(namespace: String) -> Result<RefreshedPackageStatus, String> {
     #[derive(Serialize)]
     struct Args {

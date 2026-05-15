@@ -184,6 +184,7 @@ fn main() {
             commands::package_push,
             commands::update_publish_settings,
             commands::update_autosync_settings,
+            commands::get_autosync_snapshot,
             commands::update_fswatcher_settings,
             commands::refresh_package_status,
             commands::package_uninstall,

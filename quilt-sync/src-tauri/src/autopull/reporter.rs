@@ -73,6 +73,20 @@ impl PausedEvent {
     }
 }
 
+/// Point-in-time view of the autosync watcher's per-namespace state.
+///
+/// Returned by the `get_autosync_snapshot` Tauri command so the UI can
+/// re-hydrate per-page banners on navigation — listening for the
+/// `autosync-paused` event only catches pauses that fire while the page
+/// is mounted, but the watcher's `paused` map persists across page
+/// loads. Each entry in `paused` has the same wire shape as the
+/// `autosync-paused` event payload.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WatcherSnapshot {
+    pub paused: Vec<PausedEvent>,
+}
+
 /// Payload emitted when the filesystem watcher hits an OS-level error
 /// the user might want to react to (e.g. the inotify limit).
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
