@@ -139,7 +139,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             },
         };
 
-        let (lineage, status) = flow::status(
+        let (_, status) = flow::status(
             lineage,
             &self.storage,
             &manifest,
@@ -147,7 +147,6 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             host_config,
         )
         .await?;
-        self.lineage.write(&self.storage, lineage).await?;
         Ok(status)
     }
 
