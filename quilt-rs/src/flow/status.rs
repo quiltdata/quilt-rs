@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::path::Path;
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 use ignore::gitignore::Gitignore;
 use tracing::debug;
@@ -56,6 +57,10 @@ struct LocateResult {
     files: Vec<(PathBuf, WorkdirFile)>,
     /// Files matched by .quiltignore: (logical_key, absolute_path, matched_pattern, size)
     ignored_files: Vec<(PathBuf, PathBuf, String, u64)>,
+    /// Newest `mtime` across non-ignored files in the walk. Ignored files
+    /// are deliberately excluded — touching a file inside an
+    /// `.quiltignore`-matched cache directory must not gate autosync.
+    most_recent_mtime: Option<SystemTime>,
 }
 
 async fn locate_files_in_package_home(
@@ -71,6 +76,7 @@ async fn locate_files_in_package_home(
 
     let mut files = Vec::new();
     let mut ignored_files = Vec::new();
+    let mut most_recent_mtime: Option<SystemTime> = None;
 
     while let Some(dir) = queue.pop_front() {
         let mut dir_entries = match storage.read_dir(&dir).await {
@@ -101,13 +107,22 @@ async fn locate_files_in_package_home(
                 continue;
             }
 
+            // One `metadata()` per regular file: ignored files need `len()`
+            // and non-ignored files contribute `modified()` to the
+            // working-tree quiet-window accumulator. The walk already paid
+            // for the `DirEntry`, so this is cheaper than re-statting later.
+            let meta = dir_entry.metadata().await.ok();
+
             let logical_key = file_path.strip_prefix(package_home)?.to_path_buf();
             if let Some(gi) = quiltignore
                 && let Some(pattern) = quiltignore::matched_pattern(gi, &logical_key, false)
             {
-                let size = dir_entry.metadata().await.map_or(0, |m| m.len());
+                let size = meta.as_ref().map_or(0, std::fs::Metadata::len);
                 ignored_files.push((logical_key, file_path, pattern, size));
                 continue;
+            }
+            if let Some(mtime) = meta.and_then(|m| m.modified().ok()) {
+                most_recent_mtime = Some(most_recent_mtime.map_or(mtime, |cur| cur.max(mtime)));
             }
             if let Some(row) = tracked_paths.remove(&logical_key) {
                 files.push((logical_key, WorkdirFile::Tracked(file_path, row)));
@@ -126,6 +141,7 @@ async fn locate_files_in_package_home(
     Ok(LocateResult {
         files,
         ignored_files,
+        most_recent_mtime,
     })
 }
 
@@ -255,6 +271,7 @@ pub async fn create_status(
     let mut status = InstalledPackageStatus::new(lineage.clone().into(), changes);
     status.ignored_files = ignored_files;
     status.junky_changes = junky_changes;
+    status.most_recent_mtime = locate_result.most_recent_mtime;
     info!(
         "✔️ Status created with {} changes, {} ignored, {} junky",
         status.changes.len(),
@@ -290,6 +307,8 @@ mod tests {
         if lineage.remote_uri.is_none() {
             lineage.remote_uri = Some(ManifestUri {
                 hash: dummy_hash.clone(),
+                bucket: "test-bucket".to_string(),
+                origin: Some("catalog.dev".parse().unwrap()),
                 ..ManifestUri::default()
             });
         }
@@ -670,6 +689,39 @@ mod tests {
 
         assert!(!status.changes.contains_key(&PathBuf::from("file.tmp")));
         assert!(status.changes.contains_key(&PathBuf::from("file.txt")));
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_most_recent_mtime_equals_max_file_mtime() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("pkg");
+        let path_a = working_dir.join("a.txt");
+        let path_b = working_dir.join("b.txt");
+        storage
+            .write_byte_stream(&path_a, ByteStream::from_static(b"a"))
+            .await?;
+        // Make `b.txt` strictly newer than `a.txt` so the max is
+        // unambiguous on filesystems with low mtime resolution (HFS+,
+        // FAT32, some network shares).
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        storage
+            .write_byte_stream(&path_b, ByteStream::from_static(b"b"))
+            .await?;
+
+        let (_, status) = create_status(
+            PackageLineage::default(),
+            &storage,
+            &Manifest::default(),
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+
+        let mtime_a = std::fs::metadata(&path_a)?.modified()?;
+        let mtime_b = std::fs::metadata(&path_b)?.modified()?;
+        let expected = mtime_a.max(mtime_b);
+        assert_eq!(status.most_recent_mtime, Some(expected));
         Ok(())
     }
 

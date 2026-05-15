@@ -9,6 +9,16 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.31.2-alpha3] - 2026-05-15
+
+### Changed
+
+- Classify a remote-configured package with a non-empty `latest_hash` but empty `remote.hash` as `Diverged` instead of `Local`; surfaces the foreign-remote case where another client has already published under the same namespace, so autosync refuses to clobber it.
+
+### Added
+
+- `InstalledPackageStatus::most_recent_mtime` records the newest `mtime` across non-ignored working-tree files; new `working_tree_quiet(now, quiet_window)` helper reports whether the tree has been still long enough for autosync to publish.
+
 ## [v0.31.2-alpha2] - 2026-05-14
 
 ### Changed

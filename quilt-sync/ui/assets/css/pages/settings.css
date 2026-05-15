@@ -125,9 +125,9 @@
 }
 
 /* Settings popup forms (opened from Settings → Edit on a section).
-   Shared by .publish-settings-form and .autopull-settings-form. */
+   Shared by .publish-settings-form and .autosync-settings-form. */
 .publish-settings-form,
-.autopull-settings-form {
+.autosync-settings-form {
   display: flex;
   flex-direction: column;
   gap: 16px;

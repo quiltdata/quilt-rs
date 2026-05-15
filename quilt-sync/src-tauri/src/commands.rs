@@ -11,8 +11,8 @@ use tokio::sync;
 
 use crate::Error;
 use crate::app;
-use crate::autopull::AutopullSettings;
-use crate::autopull::SharedAutopullSettings;
+use crate::autopull::AutosyncSettings;
+use crate::autopull::SharedAutosyncSettings;
 use crate::autopull::Watcher;
 use crate::commit_message;
 use crate::fswatcher::FsWatcherSettings;
@@ -271,15 +271,15 @@ impl From<PublishSettings> for PublishSettingsData {
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct AutopullSettingsData {
+pub struct AutosyncSettingsData {
     pub enabled: bool,
     pub focused_secs: u64,
     pub unfocused_secs: u64,
     pub closed_secs: u64,
 }
 
-impl From<AutopullSettings> for AutopullSettingsData {
-    fn from(s: AutopullSettings) -> Self {
+impl From<AutosyncSettings> for AutosyncSettingsData {
+    fn from(s: AutosyncSettings) -> Self {
         Self {
             enabled: s.enabled,
             focused_secs: s.focused_secs,
@@ -314,7 +314,7 @@ pub struct SettingsData {
     pub os: String,
     pub changelog: Vec<changelog::ChangelogEntry>,
     pub publish: PublishSettingsData,
-    pub autopull: AutopullSettingsData,
+    pub autosync: AutosyncSettingsData,
     pub fswatcher: FsWatcherSettingsData,
 }
 
@@ -325,7 +325,7 @@ pub async fn get_settings_data(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     publish: tauri::State<'_, SharedPublishSettings>,
-    autopull_settings: tauri::State<'_, SharedAutopullSettings>,
+    autosync_settings: tauri::State<'_, SharedAutosyncSettings>,
     fswatcher_settings: tauri::State<'_, SharedFsWatcherSettings>,
 ) -> Result<SettingsData, String> {
     let app: &app::App = &app;
@@ -348,7 +348,7 @@ pub async fn get_settings_data(
     let auth_hosts = quilt::paths::list_auth_hosts(&data_dir);
     let log_level = tracing.log_level();
     let publish_data = PublishSettingsData::from(publish.read().await.clone());
-    let autopull_data = AutopullSettingsData::from(autopull_settings.read().await.clone());
+    let autosync_data = AutosyncSettingsData::from(autosync_settings.read().await.clone());
     let fswatcher_data = FsWatcherSettingsData::from(fswatcher_settings.read().await.clone());
 
     Ok(SettingsData {
@@ -362,7 +362,7 @@ pub async fn get_settings_data(
         os: std::env::consts::OS.to_string(),
         changelog: changelog::latest_entries(),
         publish: publish_data,
-        autopull: autopull_data,
+        autosync: autosync_data,
         fswatcher: fswatcher_data,
     })
 }
@@ -407,16 +407,16 @@ fn opt_from_string(s: &str) -> Option<String> {
 }
 
 #[tauri::command]
-pub async fn update_autopull_settings(
+pub async fn update_autosync_settings(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
-    autopull_settings: tauri::State<'_, SharedAutopullSettings>,
+    autosync_settings: tauri::State<'_, SharedAutosyncSettings>,
     watcher: tauri::State<'_, Watcher>,
     enabled: bool,
     focused_secs: u64,
     unfocused_secs: u64,
     closed_secs: u64,
 ) -> Result<(), String> {
-    let new = AutopullSettings {
+    let new = AutosyncSettings {
         enabled,
         focused_secs,
         unfocused_secs,
@@ -431,7 +431,7 @@ pub async fn update_autopull_settings(
 
     new.save(&data_dir).await.map_err(|e| e.to_string())?;
     let was_enabled = {
-        let mut current = autopull_settings.write().await;
+        let mut current = autosync_settings.write().await;
         let prev = current.enabled;
         *current = new;
         prev

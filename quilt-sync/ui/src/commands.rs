@@ -90,14 +90,14 @@ pub struct PublishSettingsData {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct AutopullSettingsData {
+pub struct AutosyncSettingsData {
     pub enabled: bool,
     pub focused_secs: u64,
     pub unfocused_secs: u64,
     pub closed_secs: u64,
 }
 
-impl Default for AutopullSettingsData {
+impl Default for AutosyncSettingsData {
     fn default() -> Self {
         Self {
             enabled: false,
@@ -133,7 +133,7 @@ pub struct SettingsData {
     pub os: String,
     pub changelog: Vec<ChangelogEntry>,
     pub publish: PublishSettingsData,
-    pub autopull: AutopullSettingsData,
+    pub autosync: AutosyncSettingsData,
     pub fswatcher: FsWatcherSettingsData,
 }
 
@@ -269,6 +269,34 @@ pub struct PackageStatusEvent {
 
 pub const PACKAGE_STATUS_EVENT: &str = "package-status-changed";
 
+/// Payload of the `autosync-published` Tauri event — emitted after a
+/// background autosync tick successfully publishes a package. UI listens
+/// for this on the installed-packages list page and surfaces it as a
+/// toast, mirroring the manual Commit & Push success notification.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishedEvent {
+    pub namespace: String,
+    pub message: String,
+}
+
+pub const AUTOSYNC_PUBLISHED_EVENT: &str = "autosync-published";
+
+/// Payload of the `autosync-paused` Tauri event — emitted when the
+/// background watcher pauses a namespace. The `reason` field is a stable
+/// string discriminant; `message` is populated only for `reason = "other"`
+/// (workflow rejection, hash mismatch, JSON parse failure, etc.) and is
+/// what the per-package banner renders so the user knows what to fix.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PausedEvent {
+    pub namespace: String,
+    pub reason: String,
+    pub message: Option<String>,
+}
+
+pub const AUTOSYNC_PAUSED_EVENT: &str = "autosync-paused";
+
 pub async fn refresh_package_status(namespace: String) -> Result<RefreshedPackageStatus, String> {
     #[derive(Serialize)]
     struct Args {
@@ -389,7 +417,7 @@ pub async fn update_publish_settings(
     .await
 }
 
-pub async fn update_autopull_settings(
+pub async fn update_autosync_settings(
     enabled: bool,
     focused_secs: u64,
     unfocused_secs: u64,
@@ -404,7 +432,7 @@ pub async fn update_autopull_settings(
         closed_secs: u64,
     }
     tauri::invoke(
-        "update_autopull_settings",
+        "update_autosync_settings",
         &Args {
             enabled,
             focused_secs,

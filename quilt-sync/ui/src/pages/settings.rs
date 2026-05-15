@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 
 use crate::commands::{
-    self, AutopullSettingsData, ChangelogEntry, FSWATCHER_SUBSCRIBER_ERROR_EVENT,
+    self, AutosyncSettingsData, ChangelogEntry, FSWATCHER_SUBSCRIBER_ERROR_EVENT,
     FsWatcherSettingsData, PublishSettingsData, SettingsData, SubscriberErrorEvent,
 };
 use crate::components::buttons;
@@ -72,7 +72,7 @@ fn SettingsContent(
                 notification=notification
             />
             <PublishSection publish=data.publish notification=notification refetch=refetch />
-            <AutopullSection autopull=data.autopull notification=notification refetch=refetch />
+            <AutosyncSection autosync=data.autosync notification=notification refetch=refetch />
             <FsWatcherSection fswatcher=data.fswatcher notification=notification refetch=refetch />
             <AccountSection auth_hosts=data.auth_hosts notification=notification refetch=refetch />
             <DiagnosticsSection
@@ -432,24 +432,27 @@ fn PublishSettingsPopup(
     }
 }
 
-// ── Autopull section ──
+// ── Autosync section ──
 
 #[component]
-fn AutopullSection(
-    autopull: AutopullSettingsData,
+fn AutosyncSection(
+    autosync: AutosyncSettingsData,
     notification: RwSignal<Option<Notification>>,
     refetch: Trigger,
 ) -> impl IntoView {
     let show_popup = RwSignal::new(false);
-    let enabled_display = if autopull.enabled { "On" } else { "Off" };
-    let focused = autopull.focused_secs;
-    let unfocused = autopull.unfocused_secs;
-    let closed = autopull.closed_secs;
-    let current = autopull.clone();
+    let enabled_display = if autosync.enabled { "On" } else { "Off" };
+    let focused = autosync.focused_secs;
+    let unfocused = autosync.unfocused_secs;
+    let closed = autosync.closed_secs;
+    let current = autosync.clone();
 
     view! {
-        <section class="settings-section qui-autopull-settings">
-            <h2 class="section-title">"Background Auto-Pull"</h2>
+        <section class="settings-section qui-autosync-settings">
+            <h2 class="section-title">"Background Autosync"</h2>
+            <p class="section-description">
+                "Autosync periodically refreshes installed remote packages and publishes mapped folders that have local changes or a pending commit."
+            </p>
             <dl class="settings-list">
                 <dt>"Status"</dt>
                 <dd><span class="value">{enabled_display}</span></dd>
@@ -478,7 +481,7 @@ fn AutopullSection(
         </section>
 
         <Show when=move || show_popup.get()>
-            <AutopullSettingsPopup
+            <AutosyncSettingsPopup
                 current=current.clone()
                 notification=notification
                 refetch=refetch
@@ -489,8 +492,8 @@ fn AutopullSection(
 }
 
 #[component]
-fn AutopullSettingsPopup(
-    current: AutopullSettingsData,
+fn AutosyncSettingsPopup(
+    current: AutosyncSettingsData,
     notification: RwSignal<Option<Notification>>,
     refetch: Trigger,
     on_close: impl Fn() + Clone + 'static,
@@ -539,11 +542,11 @@ fn AutopullSettingsPopup(
         let on_close = on_close_save.clone();
         let enabled_val = enabled.get_untracked();
         leptos::task::spawn_local(async move {
-            match commands::update_autopull_settings(enabled_val, focused, unfocused, closed).await
+            match commands::update_autosync_settings(enabled_val, focused, unfocused, closed).await
             {
                 Ok(()) => {
                     notification.set(Some(Notification::Success(
-                        "Autopull settings saved".into(),
+                        "Autosync settings saved".into(),
                     )));
                     on_close();
                     refetch.notify();
@@ -555,7 +558,7 @@ fn AutopullSettingsPopup(
     };
 
     let on_reset = move |_: leptos::ev::MouseEvent| {
-        let defaults = AutopullSettingsData::default();
+        let defaults = AutosyncSettingsData::default();
         enabled.set(defaults.enabled);
         focused_secs.set(defaults.focused_secs.to_string());
         unfocused_secs.set(defaults.unfocused_secs.to_string());
@@ -571,8 +574,8 @@ fn AutopullSettingsPopup(
             let on_close = on_close.clone();
             move |_| on_close()
         }>
-            <div class="popup-content autopull-settings-form" on:click=|ev| ev.stop_propagation()>
-                <h2 class="section-title">"Edit autopull settings"</h2>
+            <div class="popup-content autosync-settings-form" on:click=|ev| ev.stop_propagation()>
+                <h2 class="section-title">"Edit autosync settings"</h2>
 
                 <div class="field">
                     <label class="checkbox-option">
@@ -581,15 +584,15 @@ fn AutopullSettingsPopup(
                             prop:checked=move || enabled.get()
                             on:change=move |ev| enabled.set(event_target_checked(&ev))
                         />
-                        "Enable background autopull"
+                        "Enable background autosync (pull + publish)"
                     </label>
                 </div>
 
                 <div class="field">
-                    <label for="autopull-focused-secs">"Refresh interval (focused, seconds)"</label>
+                    <label for="autosync-focused-secs">"Refresh interval (focused, seconds)"</label>
                     <input
                         class="input"
-                        id="autopull-focused-secs"
+                        id="autosync-focused-secs"
                         type="number"
                         min="1"
                         prop:value=move || focused_secs.get()
@@ -598,10 +601,10 @@ fn AutopullSettingsPopup(
                 </div>
 
                 <div class="field">
-                    <label for="autopull-unfocused-secs">"Refresh interval (unfocused, seconds)"</label>
+                    <label for="autosync-unfocused-secs">"Refresh interval (unfocused, seconds)"</label>
                     <input
                         class="input"
-                        id="autopull-unfocused-secs"
+                        id="autosync-unfocused-secs"
                         type="number"
                         min="1"
                         prop:value=move || unfocused_secs.get()
@@ -610,10 +613,10 @@ fn AutopullSettingsPopup(
                 </div>
 
                 <div class="field">
-                    <label for="autopull-closed-secs">"Refresh interval (closed window, seconds)"</label>
+                    <label for="autosync-closed-secs">"Refresh interval (closed window, seconds)"</label>
                     <input
                         class="input"
-                        id="autopull-closed-secs"
+                        id="autosync-closed-secs"
                         type="number"
                         min="1"
                         prop:value=move || closed_secs.get()

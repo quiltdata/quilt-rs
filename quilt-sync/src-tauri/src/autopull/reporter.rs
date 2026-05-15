@@ -9,8 +9,10 @@ use crate::telemetry::prelude::*;
 
 /// Event names. Kept in lockstep with the UI's `listen(...)` calls.
 pub const STATUS_EVENT: &str = "package-status-changed";
-pub const LOGIN_REQUIRED_EVENT: &str = "autopull-login-required";
+pub const LOGIN_REQUIRED_EVENT: &str = "autosync-login-required";
 pub const SUBSCRIBER_ERROR_EVENT: &str = "fswatcher-subscriber-error";
+pub const PUBLISHED_EVENT: &str = "autosync-published";
+pub const PAUSED_EVENT: &str = "autosync-paused";
 
 /// Payload emitted to the UI when a package's upstream state changes after
 /// a watcher tick. Mirrors the camelCase shape of `RefreshedPackageStatus`
@@ -21,6 +23,54 @@ pub struct PackageStatusEvent {
     pub namespace: String,
     pub status: String,
     pub has_changes: bool,
+}
+
+/// Payload emitted to the UI after autosync publishes a package. The UI
+/// renders this as the same toast surface manual Commit & Push uses.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishedEvent {
+    pub namespace: String,
+    pub message: String,
+}
+
+/// Payload emitted to the UI when autosync pauses a namespace. Carries
+/// both a stable `reason` discriminant (so the UI can branch by category)
+/// and an optional free-form `message` populated for
+/// [`PausedReason::Other`] — workflow validation failures, hash mismatches,
+/// JSON parse errors, etc.
+///
+/// This is distinct from the `package-status-changed` event because the
+/// status string alone cannot disambiguate "remote unreachable" (which
+/// surfaces as `status = "error"` and a Login affordance in the UI) from
+/// "remote refused this push" (which is `status = "paused"` and renders a
+/// neutral banner showing `message`).
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PausedEvent {
+    pub namespace: String,
+    /// Stable category: `"pendingChanges"`, `"pendingCommit"`,
+    /// `"diverged"`, or `"other"`. Kept as a string so the wire format is
+    /// independent of the Rust enum's variant layout.
+    pub reason: String,
+    /// Free-form description, only populated for `reason = "other"`.
+    pub message: Option<String>,
+}
+
+impl PausedEvent {
+    pub fn from_reason(namespace: &Namespace, reason: &PausedReason) -> Self {
+        let (reason_str, message) = match reason {
+            PausedReason::PendingChanges => ("pendingChanges", None),
+            PausedReason::PendingCommit => ("pendingCommit", None),
+            PausedReason::Diverged => ("diverged", None),
+            PausedReason::Other(msg) => ("other", Some(msg.clone())),
+        };
+        Self {
+            namespace: namespace.to_string(),
+            reason: reason_str.to_string(),
+            message,
+        }
+    }
 }
 
 /// Payload emitted when the filesystem watcher hits an OS-level error
@@ -47,6 +97,11 @@ pub trait StatusReporter: Send + Sync + 'static {
             event.kind, event.namespace, event.message
         );
     }
+    /// Surface a successful autosync publish. Default implementation
+    /// logs only; `TauriEventReporter` also emits `PUBLISHED_EVENT`.
+    fn report_published(&self, namespace: &Namespace, message: &str) {
+        info!("autosync: published namespace={namespace} message={message}");
+    }
 }
 
 /// Stderr/log-only reporter. Used in tests where no Tauri runtime is
@@ -58,20 +113,20 @@ pub struct LogReporter;
 impl StatusReporter for LogReporter {
     fn report_status(&self, namespace: &Namespace, event: PackageStatusEvent) {
         info!(
-            "autopull: namespace={namespace} status={} has_changes={}",
+            "autosync: namespace={namespace} status={} has_changes={}",
             event.status, event.has_changes,
         );
     }
 
     fn report_paused(&self, namespace: &Namespace, reason: PausedReason) {
-        info!("autopull: paused namespace={namespace} reason={reason:?}");
+        info!("autosync: paused namespace={namespace} reason={reason:?}");
     }
 
     fn report_login_required(&self, host: Option<&Host>) {
         if let Some(h) = host {
-            warn!("autopull: login required for {h}");
+            warn!("autosync: login required for {h}");
         } else {
-            warn!("autopull: login required");
+            warn!("autosync: login required");
         }
     }
 }
@@ -91,33 +146,34 @@ impl TauriEventReporter {
 impl StatusReporter for TauriEventReporter {
     fn report_status(&self, namespace: &Namespace, event: PackageStatusEvent) {
         info!(
-            "autopull: namespace={namespace} status={} has_changes={}",
+            "autosync: namespace={namespace} status={} has_changes={}",
             event.status, event.has_changes,
         );
         if let Err(err) = self.handle.emit(STATUS_EVENT, &event) {
-            warn!("autopull: failed to emit {STATUS_EVENT}: {err}");
+            warn!("autosync: failed to emit {STATUS_EVENT}: {err}");
         }
     }
 
     fn report_paused(&self, namespace: &Namespace, reason: PausedReason) {
-        info!("autopull: paused namespace={namespace} reason={reason:?}");
-        // A paused namespace is conveyed to the UI via the trailing status
-        // emit in `tick.rs::run_once` — no dedicated event for now (the
-        // approach doc relies on the existing `Behind`/`Diverged` render).
+        info!("autosync: paused namespace={namespace} reason={reason:?}");
+        let payload = PausedEvent::from_reason(namespace, &reason);
+        if let Err(err) = self.handle.emit(PAUSED_EVENT, &payload) {
+            warn!("autosync: failed to emit {PAUSED_EVENT}: {err}");
+        }
     }
 
     fn report_login_required(&self, host: Option<&Host>) {
         if let Some(h) = host {
-            warn!("autopull: login required for {h}");
+            warn!("autosync: login required for {h}");
         } else {
-            warn!("autopull: login required");
+            warn!("autosync: login required");
         }
         // TODO(autosync/03-merge-conflicts.md): no UI listener yet.
         let payload = LoginRequiredEvent {
             host: host.map(ToString::to_string),
         };
         if let Err(err) = self.handle.emit(LOGIN_REQUIRED_EVENT, &payload) {
-            warn!("autopull: failed to emit {LOGIN_REQUIRED_EVENT}: {err}");
+            warn!("autosync: failed to emit {LOGIN_REQUIRED_EVENT}: {err}");
         }
     }
 
@@ -128,6 +184,17 @@ impl StatusReporter for TauriEventReporter {
         );
         if let Err(err) = self.handle.emit(SUBSCRIBER_ERROR_EVENT, &event) {
             warn!("fswatcher: failed to emit {SUBSCRIBER_ERROR_EVENT}: {err}");
+        }
+    }
+
+    fn report_published(&self, namespace: &Namespace, message: &str) {
+        info!("autosync: published namespace={namespace} message={message}");
+        let payload = PublishedEvent {
+            namespace: namespace.to_string(),
+            message: message.to_string(),
+        };
+        if let Err(err) = self.handle.emit(PUBLISHED_EVENT, &payload) {
+            warn!("autosync: failed to emit {PUBLISHED_EVENT}: {err}");
         }
     }
 }
@@ -157,6 +224,47 @@ mod tests {
         assert!(json.contains(r#""status":"up_to_date""#));
         assert!(json.contains(r#""namespace":"acme/demo""#));
     }
+
+    #[test]
+    fn paused_event_from_reason_known_variants_have_no_message() {
+        let ns = quilt_uri::Namespace::from(("acme", "demo"));
+        assert_eq!(
+            PausedEvent::from_reason(&ns, &PausedReason::PendingChanges),
+            PausedEvent {
+                namespace: "acme/demo".to_string(),
+                reason: "pendingChanges".to_string(),
+                message: None,
+            }
+        );
+        assert_eq!(
+            PausedEvent::from_reason(&ns, &PausedReason::PendingCommit).reason,
+            "pendingCommit"
+        );
+        assert_eq!(
+            PausedEvent::from_reason(&ns, &PausedReason::Diverged).reason,
+            "diverged"
+        );
+    }
+
+    #[test]
+    fn paused_event_from_reason_other_carries_message() {
+        let ns = quilt_uri::Namespace::from(("acme", "demo"));
+        let ev = PausedEvent::from_reason(
+            &ns,
+            &PausedReason::Other("workflow rejected metadata".to_string()),
+        );
+        assert_eq!(ev.reason, "other");
+        assert_eq!(ev.message.as_deref(), Some("workflow rejected metadata"));
+
+        // Serializes as camelCase, with the message visible to the UI.
+        let json = serde_json::to_string(&ev).unwrap();
+        assert!(json.contains(r#""reason":"other""#), "got: {json}");
+        assert!(
+            json.contains(r#""message":"workflow rejected metadata""#),
+            "got: {json}"
+        );
+        assert!(json.contains(r#""namespace":"acme/demo""#), "got: {json}");
+    }
 }
 
 #[cfg(test)]
@@ -171,6 +279,7 @@ pub(crate) mod test_support {
         pub paused: Mutex<Vec<(Namespace, PausedReason)>>,
         pub logins: Mutex<Vec<Option<Host>>>,
         pub subscriber_errors: Mutex<Vec<SubscriberErrorEvent>>,
+        pub published: Mutex<Vec<(Namespace, String)>>,
     }
 
     impl StatusReporter for RecordingReporter {
@@ -194,6 +303,13 @@ pub(crate) mod test_support {
 
         fn report_subscriber_error(&self, event: SubscriberErrorEvent) {
             self.subscriber_errors.lock().unwrap().push(event);
+        }
+
+        fn report_published(&self, namespace: &Namespace, message: &str) {
+            self.published
+                .lock()
+                .unwrap()
+                .push((namespace.clone(), message.to_string()));
         }
     }
 }

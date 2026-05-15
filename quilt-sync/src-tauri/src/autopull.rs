@@ -7,6 +7,7 @@ use tauri::Manager;
 use tokio::sync::RwLock;
 
 use crate::model::Model;
+use crate::publish_settings::SharedPublishSettings;
 use crate::telemetry::prelude::*;
 
 pub mod reporter;
@@ -18,8 +19,8 @@ pub use reporter::LogReporter;
 #[allow(unused_imports)]
 pub use reporter::PackageStatusEvent;
 pub use reporter::StatusReporter;
-pub use settings::AutopullSettings;
-pub use settings::SharedAutopullSettings;
+pub use settings::AutosyncSettings;
+pub use settings::SharedAutosyncSettings;
 pub use settings::init as init_settings;
 
 use tick::BackoffState;
@@ -47,6 +48,14 @@ pub enum PausedReason {
     PendingChanges,
     PendingCommit,
     Diverged,
+    /// Catch-all for non-transient errors we haven't enumerated:
+    /// workflow validation failures, hash mismatches, remote
+    /// configuration drift. The string travels to the UI in the
+    /// `autosync-paused` event payload (see
+    /// [`crate::autopull::reporter::PausedEvent`]) and is rendered in
+    /// the per-package status banner so the user knows what to fix
+    /// before clearing the pause.
+    Other(String),
 }
 
 /// Public handle to the watcher. Holds an `Arc` so command handlers can
@@ -58,8 +67,9 @@ pub struct Watcher {
 /// Shared, long-lived watcher state. `pub(crate)` so `tick.rs` can read
 /// the maps in place without round-tripping through `Watcher` methods.
 pub(crate) struct WatcherInner {
-    pub settings: SharedAutopullSettings,
+    pub settings: SharedAutosyncSettings,
     pub window_mode: SharedWindowMode,
+    pub publish_settings: SharedPublishSettings,
     pub paused: RwLock<BTreeMap<Namespace, PausedReason>>,
     pub backoff: RwLock<BTreeMap<Namespace, BackoffState>>,
     pub reporter: Arc<dyn StatusReporter>,
@@ -78,13 +88,15 @@ impl Watcher {
     /// state type from `Model` to `Arc<Model>`.
     pub fn spawn(
         app_handle: tauri::AppHandle,
-        settings: SharedAutopullSettings,
+        settings: SharedAutosyncSettings,
         window_mode: SharedWindowMode,
+        publish_settings: SharedPublishSettings,
         reporter: Arc<dyn StatusReporter>,
     ) -> Self {
         let inner = Arc::new(WatcherInner {
             settings,
             window_mode,
+            publish_settings,
             paused: RwLock::new(BTreeMap::new()),
             backoff: RwLock::new(BTreeMap::new()),
             reporter,
@@ -100,7 +112,7 @@ impl Watcher {
                 tokio::time::sleep(cadence).await;
                 let model_state = app_handle.state::<Model>();
                 if let Err(err) = run_once(&*model_state, &task_inner).await {
-                    warn!("autopull: tick error: {err}");
+                    warn!("autosync: tick error: {err}");
                 }
             }
         });
@@ -118,7 +130,7 @@ impl Watcher {
         self.inner.paused.write().await.remove(namespace);
     }
 
-    /// Drop the entire paused set. Called when `update_autopull_settings`
+    /// Drop the entire paused set. Called when `update_autosync_settings`
     /// flips `enabled` from false to true (M3).
     pub async fn clear_all_paused(&self) {
         self.inner.paused.write().await.clear();
@@ -128,8 +140,11 @@ impl Watcher {
     fn new_for_test(reporter: Arc<dyn StatusReporter>) -> Self {
         Self {
             inner: Arc::new(WatcherInner {
-                settings: Arc::new(RwLock::new(AutopullSettings::default())),
+                settings: Arc::new(RwLock::new(AutosyncSettings::default())),
                 window_mode: create_window_mode(),
+                publish_settings: Arc::new(RwLock::new(
+                    crate::publish_settings::PublishSettings::default(),
+                )),
                 paused: RwLock::new(BTreeMap::new()),
                 backoff: RwLock::new(BTreeMap::new()),
                 reporter,
@@ -148,7 +163,7 @@ impl Watcher {
     }
 }
 
-pub fn cadence_for_mode(settings: &AutopullSettings, mode: WindowMode) -> Duration {
+pub fn cadence_for_mode(settings: &AutosyncSettings, mode: WindowMode) -> Duration {
     let secs = match mode {
         WindowMode::Focused => settings.focused_secs,
         WindowMode::Unfocused => settings.unfocused_secs,
@@ -163,7 +178,7 @@ mod tests {
 
     #[test]
     fn cadence_picks_per_mode_secs() {
-        let s = AutopullSettings {
+        let s = AutosyncSettings {
             enabled: true,
             focused_secs: 1,
             unfocused_secs: 2,

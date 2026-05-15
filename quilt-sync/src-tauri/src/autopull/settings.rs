@@ -7,24 +7,28 @@ use serde::Serialize;
 use tokio::sync::RwLock;
 
 use crate::error::Error;
+use crate::telemetry::prelude::*;
 
-const FILE_NAME: &str = "autopull_settings.json";
+const FILE_NAME: &str = "autosync_settings.json";
+const LEGACY_FILE_NAME: &str = "autopull_settings.json";
 
-/// User-configurable knobs for the background autopull watcher.
+/// User-configurable knobs for the background autosync watcher.
 ///
-/// Persisted as `autopull_settings.json` in `app_local_data_dir`. `enabled`
-/// defaults to `false` — the loop is opt-in until autopush and the conflict
-/// UI ship. The `closed_secs` field is kept on disk from day one so we don't
-/// break the file format when the tray-icon milestone lands.
+/// Persisted as `autosync_settings.json` in `app_local_data_dir`. `enabled`
+/// defaults to `false` — the loop is opt-in until the autosync UX is
+/// finalised. The `closed_secs` field is kept on disk from day one so we
+/// don't break the file format when the tray-icon milestone lands.
+///
+/// `enabled` governs both the pull and the push directions of the loop.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct AutopullSettings {
+pub struct AutosyncSettings {
     pub enabled: bool,
     pub focused_secs: u64,
     pub unfocused_secs: u64,
     pub closed_secs: u64,
 }
 
-impl Default for AutopullSettings {
+impl Default for AutosyncSettings {
     fn default() -> Self {
         Self {
             enabled: false,
@@ -35,7 +39,7 @@ impl Default for AutopullSettings {
     }
 }
 
-impl AutopullSettings {
+impl AutosyncSettings {
     fn file_path(data_dir: &Path) -> PathBuf {
         data_dir.join(FILE_NAME)
     }
@@ -60,10 +64,31 @@ impl AutopullSettings {
     }
 }
 
-pub type SharedAutopullSettings = Arc<RwLock<AutopullSettings>>;
+pub type SharedAutosyncSettings = Arc<RwLock<AutosyncSettings>>;
 
-pub async fn init(data_dir: &Path) -> Result<SharedAutopullSettings, Error> {
-    let settings = AutopullSettings::load(data_dir).await?;
+pub async fn init(data_dir: &Path) -> Result<SharedAutosyncSettings, Error> {
+    // Best-effort migration from the legacy file name. The JSON shape is
+    // unchanged, so a single `rename` is byte-identical to a round-trip
+    // through serde — and avoids losing user state on a partial
+    // deserialise. `NotFound` is the normal case (fresh install or
+    // already migrated); anything else is logged and the load proceeds.
+    let legacy = data_dir.join(LEGACY_FILE_NAME);
+    let target = data_dir.join(FILE_NAME);
+    if !target.exists() {
+        match tokio::fs::rename(&legacy, &target).await {
+            Ok(()) => {
+                info!("autosync: migrated {LEGACY_FILE_NAME} → {FILE_NAME}");
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                warn!(
+                    "autosync: failed to migrate {LEGACY_FILE_NAME} → {FILE_NAME}: {err}; \
+                     continuing with whatever exists",
+                );
+            }
+        }
+    }
+    let settings = AutosyncSettings::load(data_dir).await?;
     Ok(Arc::new(RwLock::new(settings)))
 }
 
@@ -74,16 +99,17 @@ mod tests {
     use tempfile::TempDir;
 
     #[tokio::test]
-    async fn roundtrip() -> Result<(), Error> {
+    async fn roundtrip_under_new_name() -> Result<(), Error> {
         let dir = TempDir::new().unwrap();
-        let settings = AutopullSettings {
+        let settings = AutosyncSettings {
             enabled: true,
             focused_secs: 5,
             unfocused_secs: 60,
             closed_secs: 300,
         };
         settings.save(dir.path()).await?;
-        let loaded = AutopullSettings::load(dir.path()).await?;
+        assert!(dir.path().join(FILE_NAME).exists());
+        let loaded = AutosyncSettings::load(dir.path()).await?;
         assert_eq!(loaded, settings);
         Ok(())
     }
@@ -91,9 +117,28 @@ mod tests {
     #[tokio::test]
     async fn missing_file_returns_default() -> Result<(), Error> {
         let dir = TempDir::new().unwrap();
-        let loaded = AutopullSettings::load(dir.path()).await?;
-        assert_eq!(loaded, AutopullSettings::default());
+        let loaded = AutosyncSettings::load(dir.path()).await?;
+        assert_eq!(loaded, AutosyncSettings::default());
         assert!(!loaded.enabled);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn legacy_file_is_migrated() -> Result<(), Error> {
+        let dir = TempDir::new().unwrap();
+        let legacy_path = dir.path().join(LEGACY_FILE_NAME);
+        let new_path = dir.path().join(FILE_NAME);
+
+        // Write an arbitrary JSON blob — migration is a single `rename`,
+        // so the test does not need a typed `AutosyncSettings`.
+        let payload = br#"{"enabled":true,"focused_secs":7,"unfocused_secs":70,"closed_secs":700}"#;
+        tokio::fs::write(&legacy_path, payload).await?;
+
+        let _shared = init(dir.path()).await?;
+
+        assert!(!legacy_path.exists(), "legacy file should be gone");
+        let migrated = tokio::fs::read(&new_path).await?;
+        assert_eq!(migrated, payload, "migration must be byte-identical");
         Ok(())
     }
 }

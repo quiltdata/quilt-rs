@@ -207,6 +207,19 @@ pub trait QuiltModel {
             .await?)
     }
 
+    /// Resolve a workflow id (`Option<String>`) into the materialised
+    /// [`quilt::manifest::Workflow`] the remote enforces. Wrapping the
+    /// `InstalledPackage` method on the trait lets the autosync tick
+    /// path go through `model::package_publish` (free function) without
+    /// hitting real storage in mock-based unit tests.
+    async fn resolve_workflow(
+        &self,
+        package: &quilt::InstalledPackage,
+        workflow: Option<String>,
+    ) -> Result<Option<quilt::manifest::Workflow>, Error> {
+        Ok(package.resolve_workflow(workflow).await?)
+    }
+
     async fn package_revision_certify_latest(
         &self,
         package: &quilt::InstalledPackage,
@@ -363,7 +376,13 @@ impl Model {
 }
 
 fn parse_metadata(input: &str) -> Result<Option<serde_json::Value>, Error> {
-    if input.is_empty() {
+    // Whitespace-only is treated as "no metadata" — the UI form
+    // (`update_publish_settings`) trims before validating and saves the
+    // normalised value, so this branch only fires for hand-edited
+    // `publish_settings.json` files. Without it the two entry points
+    // (manual Commit & Push vs. autosync) diverged: autosync would
+    // pause on the same input the UI validation accepts.
+    if input.trim().is_empty() {
         return Ok(None);
     }
     let metadata_json: Result<serde_json::Value, serde_json::Error> = serde_json::from_str(input);
@@ -555,7 +574,7 @@ pub async fn package_publish(
         .await?
         .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace)))?;
 
-    let workflow = installed_package.resolve_workflow(workflow).await?;
+    let workflow = model.resolve_workflow(&installed_package, workflow).await?;
     model
         .package_publish(
             &installed_package,

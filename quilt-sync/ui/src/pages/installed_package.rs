@@ -4,7 +4,8 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 use quilt_uri::S3PackageUri;
 
 use crate::commands::{
-    self, EntryData, InstalledPackageData, PACKAGE_STATUS_EVENT, PackageStatusEvent,
+    self, AUTOSYNC_PAUSED_EVENT, EntryData, InstalledPackageData, PACKAGE_STATUS_EVENT,
+    PackageStatusEvent, PausedEvent,
 };
 use crate::components::buttons;
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
@@ -38,7 +39,7 @@ pub fn InstalledPackage() -> impl IntoView {
         async move { commands::get_installed_package_data(namespace, filter).await }
     });
 
-    // Autopull watcher → page refresh: when the backend reports a
+    // Autosync watcher → page refresh: when the backend reports a
     // status change for the currently-open namespace, refetch the
     // detail data so the entries list and toolbar reflect the new
     // upstream state. Detail data is heavier than the row-level
@@ -49,10 +50,31 @@ pub fn InstalledPackage() -> impl IntoView {
         event_holder.set(Some(ev));
     });
     on_cleanup(move || drop(listener));
+
+    // Autosync pause event for the currently-open namespace: drives the
+    // "paused" status banner. The autosync watcher emits this in
+    // addition to the status event so the UI can render a per-pause
+    // reason message that the status string alone cannot carry.
+    let paused_event: RwSignal<Option<PausedEvent>> = RwSignal::new(None);
+    let paused_listener = tauri_bridge::listen::<PausedEvent>(AUTOSYNC_PAUSED_EVENT, move |ev| {
+        let current = query.read_untracked().get("namespace").unwrap_or_default();
+        if ev.namespace == current {
+            paused_event.set(Some(ev));
+        }
+    });
+    on_cleanup(move || drop(paused_listener));
+
     Effect::new(move |_| {
         let Some(ev) = event_holder.get() else { return };
         let current = query.read().get("namespace").unwrap_or_default();
         if ev.namespace == current {
+            // Any status emit other than `"paused"` for this namespace
+            // means the watcher has progressed past the pause (or the
+            // user manually cleared it via Publish / Pull / Set Remote).
+            // Drop the cached message so the banner reverts.
+            if ev.status != "paused" {
+                paused_event.set(None);
+            }
             refetch.notify();
         }
     });
@@ -93,6 +115,7 @@ pub fn InstalledPackage() -> impl IntoView {
                                         refetch=refetch
                                         page_warning
                                         show_set_remote_popup=show_set_remote_popup
+                                        paused_event=paused_event
                                     />
                                 </Layout>
                             }
@@ -118,6 +141,7 @@ fn InstalledPackageContent(
     refetch: Trigger,
     page_warning: Option<String>,
     show_set_remote_popup: RwSignal<bool>,
+    paused_event: RwSignal<Option<PausedEvent>>,
 ) -> impl IntoView {
     let filter_unmodified = RwSignal::new(data.filter_unmodified);
     let filter_ignored = RwSignal::new(data.filter_ignored);
@@ -269,6 +293,7 @@ fn InstalledPackageContent(
                     status=status_clone
                     origin_host=origin_host_for_status
                     has_changes=has_changes
+                    paused_event=paused_event
                     notification=notification
                     ui_locked=ui_locked
                     refetch=refetch
@@ -495,6 +520,7 @@ fn StatusBanner(
     status: String,
     origin_host: Option<String>,
     has_changes: bool,
+    paused_event: RwSignal<Option<PausedEvent>>,
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
     refetch: Trigger,
@@ -608,7 +634,29 @@ fn StatusBanner(
         _ => None,
     };
 
+    // Autosync `paused` is rendered *in addition to* the
+    // upstream-state banner so we can show a reason message the
+    // status string alone cannot carry (workflow rejection text, hash
+    // mismatch, etc.). When the next non-paused status emit comes in,
+    // `paused_event` clears and only the upstream banner remains.
     view! {
+        <Show when=move || paused_event.get().is_some()>
+            {move || paused_event.get().map(|ev| {
+                let description = ev.message.unwrap_or_else(|| match ev.reason.as_str() {
+                    "pendingChanges" => "Autosync paused: package has pending changes".to_string(),
+                    "pendingCommit" => "Autosync paused: package has pending commits".to_string(),
+                    "diverged" => "Autosync paused: package has diverged from the remote".to_string(),
+                    _ => "Autosync paused".to_string(),
+                });
+                view! {
+                    <div class="qui-status">
+                        <div class="root">
+                            <h2 class="description">{description}</h2>
+                        </div>
+                    </div>
+                }
+            })}
+        </Show>
         {content}
     }
 }
