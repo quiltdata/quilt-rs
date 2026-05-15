@@ -1473,7 +1473,8 @@ async fn package_publish_command(
     let status = m.get_installed_package_status(&installed, None).await?;
 
     let settings = settings.read().await.clone();
-    let (outcome, _message) = model::publish_with_settings(m, &namespace, &settings, status).await?;
+    let (outcome, _message) =
+        model::publish_with_settings(m, &namespace, &settings, status).await?;
     Ok((namespace, outcome))
 }
 

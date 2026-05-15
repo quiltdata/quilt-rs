@@ -74,7 +74,9 @@ pub fn InstalledPackage() -> impl IntoView {
     // watcher's current paused map and seed `paused_event` if our
     // namespace is in it.
     leptos::task::spawn_local(async move {
-        let Ok(snapshot) = commands::get_autosync_snapshot().await else { return };
+        let Ok(snapshot) = commands::get_autosync_snapshot().await else {
+            return;
+        };
         let current = query.read_untracked().get("namespace").unwrap_or_default();
         if let Some(entry) = snapshot.paused.into_iter().find(|p| p.namespace == current) {
             // Don't overwrite a fresher value the live listener may have

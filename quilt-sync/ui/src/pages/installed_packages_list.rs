@@ -56,21 +56,20 @@ pub fn InstalledPackagesList() -> impl IntoView {
     // reason. The detail page reads the same event to drive its
     // persistent banner, so the user sees both the immediate toast
     // (here) and a stable indicator when they open the package.
-    let paused_listener =
-        tauri_bridge::listen::<PausedEvent>(AUTOSYNC_PAUSED_EVENT, move |ev| {
-            // The classic refusal kinds (pendingChanges, pendingCommit,
-            // diverged) are already legible from the per-row status
-            // string. Only the `other` reason carries information the
-            // status string drops, so only toast for that.
-            if ev.reason != "other" {
-                return;
-            }
-            let msg = ev.message.unwrap_or_else(|| "Autosync paused".to_string());
-            notification.set(Some(Notification::Error(format!(
-                "Autosync paused {} — {}",
-                ev.namespace, msg,
-            ))));
-        });
+    let paused_listener = tauri_bridge::listen::<PausedEvent>(AUTOSYNC_PAUSED_EVENT, move |ev| {
+        // The classic refusal kinds (pendingChanges, pendingCommit,
+        // diverged) are already legible from the per-row status
+        // string. Only the `other` reason carries information the
+        // status string drops, so only toast for that.
+        if ev.reason != "other" {
+            return;
+        }
+        let msg = ev.message.unwrap_or_else(|| "Autosync paused".to_string());
+        notification.set(Some(Notification::Error(format!(
+            "Autosync paused {} — {}",
+            ev.namespace, msg,
+        ))));
+    });
     on_cleanup(move || drop(paused_listener));
 
     let data = LocalResource::new(move || {

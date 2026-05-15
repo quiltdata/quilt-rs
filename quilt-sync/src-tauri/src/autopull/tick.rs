@@ -371,7 +371,6 @@ mod tests {
         }
     }
 
-
     fn enabled() -> AutosyncSettings {
         AutosyncSettings {
             enabled: true,
@@ -757,9 +756,7 @@ mod tests {
         // M1 ignores `default_workflow` in publish settings; the per-
         // remote workflow gets enforced by `flow::publish_package` from
         // the remote-side config regardless.
-        model
-            .expect_resolve_workflow()
-            .returning(|_, _| Ok(None));
+        model.expect_resolve_workflow().returning(|_, _| Ok(None));
         (model, ns)
     }
 
@@ -821,16 +818,18 @@ mod tests {
         let lineage =
             quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
 
-        let (mut model, _) =
-            fixture_with_lineage_and_status(lineage, quiet_status(UpstreamState::UpToDate, changes));
+        let (mut model, _) = fixture_with_lineage_and_status(
+            lineage,
+            quiet_status(UpstreamState::UpToDate, changes),
+        );
         let ns_for_push = ns.clone();
         model
             .expect_package_publish()
             .times(1)
             .returning(move |_, _, _, _, _, _| {
-                Ok(quilt::PublishOutcome::CommittedAndPushed(fake_push_outcome(
-                    &ns_for_push,
-                )))
+                Ok(quilt::PublishOutcome::CommittedAndPushed(
+                    fake_push_outcome(&ns_for_push),
+                ))
             });
 
         let reporter = Arc::new(RecordingReporter::default());
@@ -868,10 +867,8 @@ mod tests {
             ..quilt::lineage::PackageLineage::default()
         };
         // No changes → working_tree_quiet passes trivially.
-        let status = quilt::lineage::InstalledPackageStatus::new(
-            UpstreamState::Ahead,
-            BTreeMap::new(),
-        );
+        let status =
+            quilt::lineage::InstalledPackageStatus::new(UpstreamState::Ahead, BTreeMap::new());
 
         let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
         let ns_for_push = ns.clone();
@@ -984,9 +981,9 @@ mod tests {
             .expect_package_publish()
             .times(1)
             .returning(move |_, _, _, _, _, _| {
-                Ok(quilt::PublishOutcome::CommittedAndPushed(fake_push_outcome(
-                    &ns_for_push,
-                )))
+                Ok(quilt::PublishOutcome::CommittedAndPushed(
+                    fake_push_outcome(&ns_for_push),
+                ))
             });
 
         let reporter = Arc::new(RecordingReporter::default());
