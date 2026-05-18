@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.26.0] - 2026-05-18
+
+### quilt-rs
+
+- Updated [from v0.31.1 to v0.32.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.31.1...quilt-rs/v0.32.0) — breaking changes to `InstalledPackage::status` / `::certify_latest` and `flow::reset_to_latest` behavior, plus a new public field on `InstalledPackageStatus`; the CLI itself is unaffected (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.25.3] - 2026-05-06
 
 ### quilt-rs

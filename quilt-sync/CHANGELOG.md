@@ -9,36 +9,20 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.17.2-alpha4] - 2026-05-15
+## [v0.18.0] - 2026-05-18
 
 ### Added
 
-- Autosync now publishes mapped packages automatically: when a remote-tracking package has local changes or a pending commit and the working tree has been quiet for one tick, it is committed (with message/metadata from publish settings) and pushed. Workflow / push failures pause the namespace and surface the underlying error message on the package's detail page (<https://github.com/quiltdata/quilt-rs/pull/682>)
-- New `autosync-paused` Tauri event carries the pause reason and a free-form message; the installed-package list renders a toast for unexpected errors and the detail page shows a persistent banner with the message. The detail page also re-hydrates that banner on navigation via a new `get_autosync_snapshot` command (<https://github.com/quiltdata/quilt-rs/pull/682>)
+- Autosync: a unified background loop (formerly "Autopull") that pulls remote-tracking packages and, once the working tree has been quiet for a tick, commits and pushes mapped packages with local changes. Settings expose pull and push as independent checkboxes (existing `autopull_settings.json` migrates to `autosync_settings.json` with `push_enabled: false`, so adopters do not silently opt into autopush). An optional filesystem watcher refreshes local status on disk changes. Workflow / push failures pause the namespace and emit a new `autosync-paused` Tauri event — the list shows a toast for unexpected errors and the detail page shows a persistent banner, re-hydrated on navigation via the new `get_autosync_snapshot` command (<https://github.com/quiltdata/quilt-rs/pull/675>, <https://github.com/quiltdata/quilt-rs/pull/676>, <https://github.com/quiltdata/quilt-rs/pull/682>)
 
 ### Changed
 
-- Renamed the background pull loop to "Autosync"; the on-disk settings file moves from `autopull_settings.json` to `autosync_settings.json` (migrated automatically on first run) (<https://github.com/quiltdata/quilt-rs/pull/682>)
-- Settings "Background Autosync" now exposes pull and push as independent checkboxes — many users want background pulls without unattended pushes. The alpha3 single-toggle file (`{"enabled": true}`) migrates transparently to `pull_enabled: true, push_enabled: false`, so existing autopull adopters do not silently opt into autopush (<https://github.com/quiltdata/quilt-rs/pull/682>)
-- Rewrote the detail-page "behind" banner. The old wording ("Your commits are behind the remote") asserted commits the user might not have — `Behind` is reachable from a pristine install + remote movement with no local commit at all. New wording states the fact ("The remote has newer revisions") and, when working-tree changes block the pull, inlines the action ("Commit or discard your local changes to pull") in the banner itself instead of in a hover-only popover (<https://github.com/quiltdata/quilt-rs/pull/682>)
+- Renamed the `Diverged`-state entry button from "Merge" to "Resolve conflict", relabeled the on-page actions to "Promote my revision" / "Overwrite local with remote", and clarified in the intro that Quilt does not merge file contents — pick which side's revision wins; the other is discarded (<https://github.com/quiltdata/quilt-rs/pull/677>)
+- Rewrote the detail-page "behind" banner: "The remote has newer revisions" (was "Your commits are behind the remote", which asserted commits the user might not have), and inlined the "commit or discard your local changes to pull" action when working-tree changes block the pull (<https://github.com/quiltdata/quilt-rs/pull/682>)
 
-## [v0.17.2-alpha3] - 2026-05-14
+### quilt-rs
 
-### Changed
-
-- Renamed the `Diverged`-state entry button from "Merge" to "Resolve conflict", relabeled the on-page actions to "Promote my revision" and "Overwrite local with remote" with rewritten descriptions, and added an intro line clarifying that Quilt does not merge file contents — pick which side's revision wins; the other is discarded (<https://github.com/quiltdata/quilt-rs/pull/677>)
-
-## [v0.17.2-alpha2] - 2026-05-13
-
-### Added
-
-- Filesystem watcher refreshes local package status on disk changes (default on; toggle in Settings) (<https://github.com/quiltdata/quilt-rs/pull/676>)
-
-## [v0.17.2-alpha1] - 2026-05-13
-
-### Added
-
-- Background autopull: opt-in Settings toggle periodically refreshes installed remote packages and pulls when there are no local changes; the UI repaints in place via a `package-status-changed` event (<https://github.com/quiltdata/quilt-rs/pull/675>)
+- Updated [from v0.31.1 to v0.32.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.31.1...quilt-rs/v0.32.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.17.1] - 2026-04-29
 
