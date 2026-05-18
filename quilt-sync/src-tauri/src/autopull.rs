@@ -195,7 +195,8 @@ mod tests {
     #[test]
     fn cadence_picks_per_mode_secs() {
         let s = AutosyncSettings {
-            enabled: true,
+            pull_enabled: true,
+            push_enabled: true,
             focused_secs: 1,
             unfocused_secs: 2,
             closed_secs: 3,

@@ -91,7 +91,8 @@ pub struct PublishSettingsData {
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AutosyncSettingsData {
-    pub enabled: bool,
+    pub pull_enabled: bool,
+    pub push_enabled: bool,
     pub focused_secs: u64,
     pub unfocused_secs: u64,
     pub closed_secs: u64,
@@ -100,7 +101,8 @@ pub struct AutosyncSettingsData {
 impl Default for AutosyncSettingsData {
     fn default() -> Self {
         Self {
-            enabled: false,
+            pull_enabled: false,
+            push_enabled: false,
             focused_secs: 30,
             unfocused_secs: 120,
             closed_secs: 600,
@@ -435,7 +437,8 @@ pub async fn update_publish_settings(
 }
 
 pub async fn update_autosync_settings(
-    enabled: bool,
+    pull_enabled: bool,
+    push_enabled: bool,
     focused_secs: u64,
     unfocused_secs: u64,
     closed_secs: u64,
@@ -443,7 +446,8 @@ pub async fn update_autosync_settings(
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {
-        enabled: bool,
+        pull_enabled: bool,
+        push_enabled: bool,
         focused_secs: u64,
         unfocused_secs: u64,
         closed_secs: u64,
@@ -451,7 +455,8 @@ pub async fn update_autosync_settings(
     tauri::invoke(
         "update_autosync_settings",
         &Args {
-            enabled,
+            pull_enabled,
+            push_enabled,
             focused_secs,
             unfocused_secs,
             closed_secs,

@@ -19,6 +19,7 @@
 ### Changed
 
 - Renamed the background pull loop to "Autosync"; the on-disk settings file moves from `autopull_settings.json` to `autosync_settings.json` (migrated automatically on first run) (<https://github.com/quiltdata/quilt-rs/pull/682>)
+- Settings "Background Autosync" now exposes pull and push as independent checkboxes — many users want background pulls without unattended pushes. The alpha3 single-toggle file (`{"enabled": true}`) migrates transparently to `pull_enabled: true, push_enabled: false`, so existing autopull adopters do not silently opt into autopush (<https://github.com/quiltdata/quilt-rs/pull/682>)
 
 ## [v0.17.2-alpha3] - 2026-05-14
 

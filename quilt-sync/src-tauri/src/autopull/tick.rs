@@ -84,6 +84,8 @@ pub(crate) async fn refresh_then_maybe_sync(
     lineage: &quilt::lineage::PackageLineage,
     publish: &PublishSettings,
     quiet_window: Duration,
+    pull_enabled: bool,
+    push_enabled: bool,
 ) -> Result<RefreshOutcome, WatchError> {
     let installed = model
         .get_installed_package(namespace)
@@ -133,7 +135,11 @@ pub(crate) async fn refresh_then_maybe_sync(
     // explicit at the call site — if the `From` conversion ever changes
     // shape, this gate is what stops a pull and a publish from racing on
     // the same package in the same tick.
-    if upstream == quilt::lineage::UpstreamState::Behind && !has_changes && !has_pending_commit {
+    if pull_enabled
+        && upstream == quilt::lineage::UpstreamState::Behind
+        && !has_changes
+        && !has_pending_commit
+    {
         return match model.package_pull(&installed, None).await {
             Ok(_) => {
                 info!("autosync: pulled namespace={namespace}");
@@ -152,12 +158,14 @@ pub(crate) async fn refresh_then_maybe_sync(
     }
 
     // Publish branch.
-    let publish_eligible = matches!(
-        upstream,
-        quilt::lineage::UpstreamState::UpToDate
-            | quilt::lineage::UpstreamState::Ahead
-            | quilt::lineage::UpstreamState::Local,
-    ) && (has_changes || has_pending_commit);
+    let publish_eligible = push_enabled
+        && matches!(
+            upstream,
+            quilt::lineage::UpstreamState::UpToDate
+                | quilt::lineage::UpstreamState::Ahead
+                | quilt::lineage::UpstreamState::Local,
+        )
+        && (has_changes || has_pending_commit);
     if publish_eligible {
         let now = SystemTime::now();
         if !status.working_tree_quiet(now, quiet_window) {
@@ -230,7 +238,15 @@ fn bump_backoff(
 }
 
 pub(crate) async fn run_once(model: &impl QuiltModel, inner: &WatcherInner) -> Result<(), Error> {
-    if !inner.settings.read().await.enabled {
+    // Cheap pre-check: if both directions are off we have nothing to
+    // do. Per-direction gating lives inside `refresh_then_maybe_sync`
+    // so a single-direction config (pull only / push only) still
+    // exercises the cheap status refresh and the skip rules.
+    let (pull_enabled, push_enabled) = {
+        let settings = inner.settings.read().await;
+        (settings.pull_enabled, settings.push_enabled)
+    };
+    if !pull_enabled && !push_enabled {
         return Ok(());
     }
 
@@ -293,7 +309,17 @@ pub(crate) async fn run_once(model: &impl QuiltModel, inner: &WatcherInner) -> R
             continue;
         }
 
-        match refresh_then_maybe_sync(model, &namespace, &lineage, &publish, quiet_window).await {
+        match refresh_then_maybe_sync(
+            model,
+            &namespace,
+            &lineage,
+            &publish,
+            quiet_window,
+            pull_enabled,
+            push_enabled,
+        )
+        .await
+        {
             Ok(outcome) => {
                 inner.backoff.write().await.remove(&namespace);
                 if let Some(message) = outcome.published.as_deref() {
@@ -384,7 +410,8 @@ mod tests {
 
     fn enabled() -> AutosyncSettings {
         AutosyncSettings {
-            enabled: true,
+            pull_enabled: true,
+            push_enabled: true,
             ..AutosyncSettings::default()
         }
     }
@@ -818,6 +845,25 @@ mod tests {
         }
     }
 
+    fn make_inner_with_flags(
+        reporter: Arc<RecordingReporter>,
+        pull_enabled: bool,
+        push_enabled: bool,
+    ) -> WatcherInner {
+        WatcherInner {
+            settings: Arc::new(RwLock::new(AutosyncSettings {
+                pull_enabled,
+                push_enabled,
+                ..AutosyncSettings::default()
+            })),
+            window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
+            publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
+            paused: RwLock::new(BTreeMap::new()),
+            backoff: RwLock::new(BTreeMap::new()),
+            reporter,
+        }
+    }
+
     #[tokio::test]
     async fn run_once_publishes_on_changes() -> Result<(), Error> {
         let ns: Namespace = ("acme", "demo").into();
@@ -1199,6 +1245,80 @@ mod tests {
         let logins = reporter.logins.lock().unwrap();
         assert_eq!(logins.len(), 1);
         assert_eq!(logins[0].as_ref(), Some(&host));
+        Ok(())
+    }
+
+    // ── per-direction flag gating (pull_enabled / push_enabled) ─────────
+
+    #[tokio::test]
+    async fn run_once_pull_only_does_not_publish_changes() -> Result<(), Error> {
+        // pull_enabled=true, push_enabled=false: an UpToDate package
+        // with local changes must not be auto-published. The pull-side
+        // gate doesn't fire either (UpToDate isn't Behind), so this is
+        // a no-action tick.
+        let ns: Namespace = ("acme", "demo").into();
+        let mut changes = BTreeMap::new();
+        changes.insert(
+            std::path::PathBuf::from("file.txt"),
+            quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+        );
+        let lineage =
+            quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
+        let (mut model, _) =
+            fixture_with_lineage_and_status(lineage, quiet_status(UpstreamState::UpToDate, changes));
+        model.expect_package_publish().times(0);
+        model.expect_package_pull().times(0);
+
+        let reporter = Arc::new(RecordingReporter::default());
+        let inner = make_inner_with_flags(reporter.clone(), true, false);
+        run_once(&model, &inner).await?;
+
+        assert!(reporter.published.lock().unwrap().is_empty());
+        let statuses = reporter.statuses.lock().unwrap();
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].1.status, "up_to_date");
+        assert!(statuses[0].1.has_changes);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn run_once_push_only_does_not_pull_behind() -> Result<(), Error> {
+        // pull_enabled=false, push_enabled=true: a Behind/clean package
+        // (the pull branch's home turf) must not be auto-pulled. The
+        // publish branch doesn't fire either (no local changes, no
+        // pending commit).
+        let ns: Namespace = ("acme", "demo").into();
+        let lineage =
+            quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h1".to_string());
+        let status = quilt::lineage::InstalledPackageStatus::new(
+            UpstreamState::Behind,
+            BTreeMap::new(),
+        );
+        let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
+        model.expect_package_pull().times(0);
+        model.expect_package_publish().times(0);
+
+        let reporter = Arc::new(RecordingReporter::default());
+        let inner = make_inner_with_flags(reporter.clone(), false, true);
+        run_once(&model, &inner).await?;
+
+        let statuses = reporter.statuses.lock().unwrap();
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].1.status, "behind");
+        assert!(!statuses[0].1.has_changes);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn run_once_both_off_is_a_noop() -> Result<(), Error> {
+        // Both flags off: run_once short-circuits before touching the
+        // model. The mock has zero expectations to prove no calls are
+        // made.
+        let model = MockQuiltModel::new();
+        let reporter = Arc::new(RecordingReporter::default());
+        let inner = make_inner_with_flags(reporter.clone(), false, false);
+        run_once(&model, &inner).await?;
+        assert!(reporter.statuses.lock().unwrap().is_empty());
         Ok(())
     }
 }

@@ -14,24 +14,45 @@ const LEGACY_FILE_NAME: &str = "autopull_settings.json";
 
 /// User-configurable knobs for the background autosync watcher.
 ///
-/// Persisted as `autosync_settings.json` in `app_local_data_dir`. `enabled`
-/// defaults to `false` — the loop is opt-in until the autosync UX is
-/// finalised. The `closed_secs` field is kept on disk from day one so we
-/// don't break the file format when the tray-icon milestone lands.
+/// Persisted as `autosync_settings.json` in `app_local_data_dir`. Both
+/// directions default to `false` — the loop is opt-in. The `closed_secs`
+/// field is kept on disk from day one so we don't break the file format
+/// when the tray-icon milestone lands.
 ///
-/// `enabled` governs both the pull and the push directions of the loop.
+/// `pull_enabled` and `push_enabled` are independent because most users
+/// want background pulls (cheap, idempotent) without unattended pushes
+/// (commits a snapshot of whatever is on disk to the remote). Splitting
+/// them lets pull turn on by default in a future release without
+/// implicitly opting users into autopush.
+///
+/// Migration: alpha3 persisted a single `enabled` field meaning "pull
+/// only". The `#[serde(alias = "enabled")]` on `pull_enabled` lets
+/// alpha3 files load transparently — old `{"enabled": true}` becomes
+/// `pull_enabled: true, push_enabled: false`.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct AutosyncSettings {
-    pub enabled: bool,
+    #[serde(default, alias = "enabled")]
+    pub pull_enabled: bool,
+    #[serde(default)]
+    pub push_enabled: bool,
     pub focused_secs: u64,
     pub unfocused_secs: u64,
     pub closed_secs: u64,
 }
 
+impl AutosyncSettings {
+    /// Whether either direction is on. Used by the tick to short-circuit
+    /// when the entire loop is opted out.
+    pub fn any_enabled(&self) -> bool {
+        self.pull_enabled || self.push_enabled
+    }
+}
+
 impl Default for AutosyncSettings {
     fn default() -> Self {
         Self {
-            enabled: false,
+            pull_enabled: false,
+            push_enabled: false,
             focused_secs: 30,
             unfocused_secs: 120,
             closed_secs: 600,
@@ -102,7 +123,8 @@ mod tests {
     async fn roundtrip_under_new_name() -> Result<(), Error> {
         let dir = TempDir::new().unwrap();
         let settings = AutosyncSettings {
-            enabled: true,
+            pull_enabled: true,
+            push_enabled: true,
             focused_secs: 5,
             unfocused_secs: 60,
             closed_secs: 300,
@@ -119,7 +141,26 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let loaded = AutosyncSettings::load(dir.path()).await?;
         assert_eq!(loaded, AutosyncSettings::default());
-        assert!(!loaded.enabled);
+        assert!(!loaded.any_enabled());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn legacy_enabled_field_maps_to_pull_only() -> Result<(), Error> {
+        // alpha3 persisted a single `enabled` flag meaning "pull only".
+        // `#[serde(alias)]` should load such a file as `pull_enabled =
+        // true, push_enabled = false` so an alpha3 → alpha4 upgrade does
+        // not implicitly opt the user into autopush.
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join(FILE_NAME);
+        let payload =
+            br#"{"enabled":true,"focused_secs":42,"unfocused_secs":420,"closed_secs":4200}"#;
+        tokio::fs::write(&path, payload).await?;
+
+        let loaded = AutosyncSettings::load(dir.path()).await?;
+        assert!(loaded.pull_enabled, "alpha3 enabled=true should map to pull_enabled");
+        assert!(!loaded.push_enabled, "alpha3 had no push concept");
+        assert_eq!(loaded.focused_secs, 42);
         Ok(())
     }
 

@@ -271,7 +271,8 @@ impl From<PublishSettings> for PublishSettingsData {
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AutosyncSettingsData {
-    pub enabled: bool,
+    pub pull_enabled: bool,
+    pub push_enabled: bool,
     pub focused_secs: u64,
     pub unfocused_secs: u64,
     pub closed_secs: u64,
@@ -280,7 +281,8 @@ pub struct AutosyncSettingsData {
 impl From<AutosyncSettings> for AutosyncSettingsData {
     fn from(s: AutosyncSettings) -> Self {
         Self {
-            enabled: s.enabled,
+            pull_enabled: s.pull_enabled,
+            push_enabled: s.push_enabled,
             focused_secs: s.focused_secs,
             unfocused_secs: s.unfocused_secs,
             closed_secs: s.closed_secs,
@@ -406,17 +408,20 @@ fn opt_from_string(s: &str) -> Option<String> {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri commands flatten state + args; splitting would just hide the wire shape.
 pub async fn update_autosync_settings(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     autosync_settings: tauri::State<'_, SharedAutosyncSettings>,
     watcher: tauri::State<'_, Watcher>,
-    enabled: bool,
+    pull_enabled: bool,
+    push_enabled: bool,
     focused_secs: u64,
     unfocused_secs: u64,
     closed_secs: u64,
 ) -> Result<(), String> {
     let new = AutosyncSettings {
-        enabled,
+        pull_enabled,
+        push_enabled,
         focused_secs,
         unfocused_secs,
         closed_secs,
@@ -429,16 +434,19 @@ pub async fn update_autosync_settings(
         .map_err(|e| e.to_string())?;
 
     new.save(&data_dir).await.map_err(|e| e.to_string())?;
-    let was_enabled = {
+    let prev_any_enabled = {
         let mut current = autosync_settings.write().await;
-        let prev = current.enabled;
+        let prev = current.any_enabled();
         *current = new;
         prev
     };
-    // Flipping false → true clears the paused set: a re-enable is a
-    // signal that the user wants the watcher to retry every namespace,
-    // not just the ones they touched manually.
-    if !was_enabled && enabled {
+    // Flipping the overall "off → on" edge clears the paused set: a
+    // re-enable in either direction is a signal that the user wants
+    // the watcher to retry every namespace, not just the ones they
+    // touched manually. Per-direction toggles (e.g. push off → on
+    // while pull was already on) do not clear; nothing about the
+    // watcher's pause-set was suppressed in that case.
+    if !prev_any_enabled && (pull_enabled || push_enabled) {
         watcher.clear_all_paused().await;
     }
     Ok(())
