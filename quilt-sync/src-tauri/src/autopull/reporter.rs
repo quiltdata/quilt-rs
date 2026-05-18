@@ -72,8 +72,7 @@ pub struct PausedEvent {
 ///    changed publish settings (via the Settings UI form, which does
 ///    update the in-memory cache), the *current* state may no longer
 ///    match what the message describes.
-const OTHER_PAUSED_HINT: &str =
-    "Autopush is paused on this package — the watcher will not retry until you click \
+const OTHER_PAUSED_HINT: &str = "Autopush is paused on this package — the watcher will not retry until you click \
      Commit & Push manually. The message above may be stale if you have already updated \
      publish settings.";
 
@@ -83,10 +82,7 @@ impl PausedEvent {
             PausedReason::PendingChanges => ("pendingChanges", None),
             PausedReason::PendingCommit => ("pendingCommit", None),
             PausedReason::Diverged => ("diverged", None),
-            PausedReason::Other(msg) => (
-                "other",
-                Some(format!("{msg}. {OTHER_PAUSED_HINT}")),
-            ),
+            PausedReason::Other(msg) => ("other", Some(format!("{msg}. {OTHER_PAUSED_HINT}"))),
         };
         Self {
             namespace: namespace.to_string(),

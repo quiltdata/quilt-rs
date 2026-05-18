@@ -1695,10 +1695,8 @@ mod tests {
             .put_object(
                 &None,
                 &S3Uri::try_from(
-                    format!(
-                        "s3://{bucket}/.quilt/named_packages/test/pull_refresh/latest"
-                    )
-                    .as_str(),
+                    format!("s3://{bucket}/.quilt/named_packages/test/pull_refresh/latest")
+                        .as_str(),
                 )?,
                 new_hash.as_bytes().to_vec(),
             )

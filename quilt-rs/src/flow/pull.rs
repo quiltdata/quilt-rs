@@ -104,9 +104,11 @@ pub async fn pull_package(
     // OLD object content over the (just-deleted) working-tree files —
     // pull would update lineage hashes but leave file bytes stale.
     debug!("⏳ Reloading newly-installed manifest");
-    *manifest =
-        Manifest::from_path(storage, &paths.installed_manifest(&namespace, &manifest_uri.hash))
-            .await?;
+    *manifest = Manifest::from_path(
+        storage,
+        &paths.installed_manifest(&namespace, &manifest_uri.hash),
+    )
+    .await?;
 
     debug!("⏳ Checking which paths to reinstall");
     let mut paths_to_install = Vec::new();
