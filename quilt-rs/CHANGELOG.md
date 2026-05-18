@@ -22,6 +22,7 @@
 ### Fixed
 
 - `InstalledPackage::pull` now refreshes `latest_hash` from the remote before evaluating `flow::pull`'s `base_hash == latest_hash` guard. Stopping the lineage write inside `status` (<https://github.com/quiltdata/quilt-rs/pull/677>) had also stopped persisting the refreshed `latest_hash`, so `pull` was reading a disk-stale value and always short-circuiting with "already up-to-date" — breaking both the autosync watcher and the manual Pull button (<https://github.com/quiltdata/quilt-rs/pull/682>)
+- `flow::pull_package` now reloads the manifest from the newly-installed location after `copy_cached_to_installed` and before handing it to `install_paths`. Previously it kept using the install-time manifest passed in by the caller, so `install_paths` read row hashes / physical_keys from the OLD revision: the working-tree file was uninstalled and then re-copied from the OLD object cache, leaving stale bytes on disk after a "successful" pull (<https://github.com/quiltdata/quilt-rs/pull/682>)
 
 ## [v0.31.2-alpha2] - 2026-05-14
 

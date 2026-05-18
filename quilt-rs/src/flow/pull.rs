@@ -90,10 +90,23 @@ pub async fn pull_package(
         storage,
         &ManifestUri {
             namespace: namespace.clone(),
-            ..manifest_uri
+            ..manifest_uri.clone()
         },
     )
     .await?;
+
+    // Swap `manifest` to the freshly-installed revision. The caller
+    // passed in the manifest at the install-time hash; `install_paths`
+    // below reads `row.hash` and `row.physical_key` from this manifest
+    // to fetch the actual object bytes, and `manifest.contains_record`
+    // is used to decide which paths still belong in the new revision.
+    // Without this reload, install_paths would re-cache and copy the
+    // OLD object content over the (just-deleted) working-tree files —
+    // pull would update lineage hashes but leave file bytes stale.
+    debug!("⏳ Reloading newly-installed manifest");
+    *manifest =
+        Manifest::from_path(storage, &paths.installed_manifest(&namespace, &manifest_uri.hash))
+            .await?;
 
     debug!("⏳ Checking which paths to reinstall");
     let mut paths_to_install = Vec::new();
