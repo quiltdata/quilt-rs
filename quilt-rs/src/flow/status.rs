@@ -701,10 +701,14 @@ mod tests {
         storage
             .write_byte_stream(&path_a, ByteStream::from_static(b"a"))
             .await?;
-        // Make `b.txt` strictly newer than `a.txt` so the max is
-        // unambiguous on filesystems with low mtime resolution (HFS+,
-        // FAT32, some network shares).
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        // Make `b.txt` strictly newer than `a.txt`. The sleep must
+        // exceed the mtime resolution of the underlying filesystem,
+        // otherwise both writes share an mtime and `mtime_a.max(mtime_b)
+        // == mtime_a == mtime_b` — the assertion below would then pass
+        // vacuously even if `most_recent_mtime` returned `min` instead
+        // of `max`. 1.1 s covers HFS+ (1 s); FAT32 (2 s) is left
+        // uncovered — out of scope for CI which runs on ext4 / APFS.
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
         storage
             .write_byte_stream(&path_b, ByteStream::from_static(b"b"))
             .await?;
