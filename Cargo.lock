@@ -1841,7 +1841,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ccc2776f0c61eca1ca32528f85548abd1a4be8fb53d1b21c013e4f18da1e7090"
 dependencies = [
  "data-encoding",
- "syn 2.0.117",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -5406,7 +5406,7 @@ dependencies = [
  "sentry",
  "serde",
  "serde_json",
- "serde_qs 1.1.1",
+ "serde_qs 1.1.2",
  "serial_test",
  "tauri",
  "tauri-build",
@@ -6553,9 +6553,9 @@ dependencies = [
 
 [[package]]
 name = "serde_qs"
-version = "1.1.1"
+version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2316d01592c3382277c5062105510e35e0a6bfb2851e30028485f7af8cf1240"
+checksum = "67d525c8ff68aa99e5818302259bdd02d86d0303710616f39c0f44846ff6d332"
 dependencies = [
  "itoa",
  "percent-encoding",
@@ -7090,6 +7090,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b64191b275b66ffe2469e8af2c1cfe3bafa67b529ead792a6d0160888b4237"
 dependencies = [
  "proc-macro2",
+ "quote",
  "unicode-ident",
 ]
 
