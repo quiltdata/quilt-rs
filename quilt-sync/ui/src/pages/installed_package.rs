@@ -585,19 +585,22 @@ fn StatusBanner(
                 Some(ui_locked),
                 move || refetch.notify(),
             );
+            // The old wording assumed local commits ("Your commits are
+            // behind the remote") but `Behind` is reachable from a
+            // pristine install + remote movement — there may be no
+            // commits at all. State the actual fact: the remote has
+            // newer revisions. If working-tree changes block pull, say
+            // so up-front (in the banner, not in a hover popover) so
+            // autosync's reason for not auto-pulling is visible.
+            let description: &'static str = if has_changes {
+                "The remote has newer revisions. Commit or discard your local changes to pull."
+            } else {
+                "The remote has newer revisions."
+            };
             Some(
                 view! {
-                    <StatusBannerInner description="Your commits are behind the remote">
-                        <div class="qui-popover">
-                            <buttons::Pull on_click=on_pull busy=pull_busy disabled=has_changes />
-                            {has_changes.then(|| view! {
-                                <div class="popover-wrapper">
-                                    <div class="popover">
-                                        "Commit or discard local changes before pulling"
-                                    </div>
-                                </div>
-                            })}
-                        </div>
+                    <StatusBannerInner description=description>
+                        <buttons::Pull on_click=on_pull busy=pull_busy disabled=has_changes />
                     </StatusBannerInner>
                 }
                 .into_any(),
