@@ -1264,8 +1264,10 @@ mod tests {
         );
         let lineage =
             quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
-        let (mut model, _) =
-            fixture_with_lineage_and_status(lineage, quiet_status(UpstreamState::UpToDate, changes));
+        let (mut model, _) = fixture_with_lineage_and_status(
+            lineage,
+            quiet_status(UpstreamState::UpToDate, changes),
+        );
         model.expect_package_publish().times(0);
         model.expect_package_pull().times(0);
 
@@ -1290,10 +1292,8 @@ mod tests {
         let ns: Namespace = ("acme", "demo").into();
         let lineage =
             quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h1".to_string());
-        let status = quilt::lineage::InstalledPackageStatus::new(
-            UpstreamState::Behind,
-            BTreeMap::new(),
-        );
+        let status =
+            quilt::lineage::InstalledPackageStatus::new(UpstreamState::Behind, BTreeMap::new());
         let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
         model.expect_package_pull().times(0);
         model.expect_package_publish().times(0);

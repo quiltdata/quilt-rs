@@ -548,10 +548,8 @@ fn AutosyncSettingsPopup(
         let pull_val = pull_enabled.get_untracked();
         let push_val = push_enabled.get_untracked();
         leptos::task::spawn_local(async move {
-            match commands::update_autosync_settings(
-                pull_val, push_val, focused, unfocused, closed,
-            )
-            .await
+            match commands::update_autosync_settings(pull_val, push_val, focused, unfocused, closed)
+                .await
             {
                 Ok(()) => {
                     notification.set(Some(Notification::Success(

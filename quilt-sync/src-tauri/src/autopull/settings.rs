@@ -158,7 +158,10 @@ mod tests {
         tokio::fs::write(&path, payload).await?;
 
         let loaded = AutosyncSettings::load(dir.path()).await?;
-        assert!(loaded.pull_enabled, "alpha3 enabled=true should map to pull_enabled");
+        assert!(
+            loaded.pull_enabled,
+            "alpha3 enabled=true should map to pull_enabled"
+        );
         assert!(!loaded.push_enabled, "alpha3 had no push concept");
         assert_eq!(loaded.focused_secs, 42);
         Ok(())
