@@ -9,6 +9,21 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.31.2-alpha3] - 2026-05-15
+
+### Changed
+
+- Classify a remote-configured package with a non-empty `latest_hash` but empty `remote.hash` as `Diverged` instead of `Local`; surfaces the foreign-remote case where another client has already published under the same namespace, so autosync refuses to clobber it (<https://github.com/quiltdata/quilt-rs/pull/682>)
+
+### Added
+
+- `InstalledPackageStatus::most_recent_mtime` records the newest `mtime` across non-ignored working-tree files; new `working_tree_quiet(now, quiet_window)` helper reports whether the tree has been still long enough for autosync to publish (<https://github.com/quiltdata/quilt-rs/pull/682>)
+
+### Fixed
+
+- `InstalledPackage::pull` now refreshes `latest_hash` from the remote before evaluating `flow::pull`'s `base_hash == latest_hash` guard. Stopping the lineage write inside `status` (<https://github.com/quiltdata/quilt-rs/pull/677>) had also stopped persisting the refreshed `latest_hash`, so `pull` was reading a disk-stale value and always short-circuiting with "already up-to-date" — breaking both the autosync watcher and the manual Pull button (<https://github.com/quiltdata/quilt-rs/pull/682>)
+- `flow::pull_package` now reloads the manifest from the newly-installed location after `copy_cached_to_installed` and before handing it to `install_paths`. Previously it kept using the install-time manifest passed in by the caller, so `install_paths` read row hashes / physical_keys from the OLD revision: the working-tree file was uninstalled and then re-copied from the OLD object cache, leaving stale bytes on disk after a "successful" pull (<https://github.com/quiltdata/quilt-rs/pull/682>)
+
 ## [v0.31.2-alpha2] - 2026-05-14
 
 ### Changed

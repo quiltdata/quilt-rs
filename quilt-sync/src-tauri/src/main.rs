@@ -92,13 +92,13 @@ fn main() {
                 ))
             });
 
-            let autopull_settings = tauri::async_runtime::block_on(autopull::init_settings(
+            let autosync_settings = tauri::async_runtime::block_on(autopull::init_settings(
                 &data_dir,
             ))
             .unwrap_or_else(|err| {
-                error!("Failed to load autopull settings, using defaults: {err}");
+                error!("Failed to load autosync settings, using defaults: {err}");
                 std::sync::Arc::new(tokio::sync::RwLock::new(
-                    autopull::AutopullSettings::default(),
+                    autopull::AutosyncSettings::default(),
                 ))
             });
             let fswatcher_settings = tauri::async_runtime::block_on(fswatcher::init_settings(
@@ -117,20 +117,20 @@ fn main() {
             app.manage(App::new(package_info, logs_dir));
             app.manage(telemetry);
             app.manage(oauth::OAuthState::default());
-            app.manage(publish_settings);
-
             // The watcher reads `Model` via `app_handle.state::<Model>()`
             // so it can spawn after `Model` is registered above.
             let reporter: Arc<dyn StatusReporter> =
                 Arc::new(TauriEventReporter::new(app.handle().clone()));
             let watcher = Watcher::spawn(
                 app.handle().clone(),
-                autopull_settings.clone(),
+                autosync_settings.clone(),
                 window_mode.clone(),
+                publish_settings.clone(),
                 reporter.clone(),
             );
             fswatcher::spawn(app.handle(), fswatcher_settings.clone(), &reporter);
-            app.manage(autopull_settings);
+            app.manage(publish_settings);
+            app.manage(autosync_settings);
             app.manage(fswatcher_settings);
             app.manage(window_mode);
             app.manage(watcher);
@@ -183,7 +183,8 @@ fn main() {
             commands::package_pull,
             commands::package_push,
             commands::update_publish_settings,
-            commands::update_autopull_settings,
+            commands::update_autosync_settings,
+            commands::get_autosync_snapshot,
             commands::update_fswatcher_settings,
             commands::refresh_package_status,
             commands::package_uninstall,

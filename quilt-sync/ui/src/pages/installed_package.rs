@@ -4,7 +4,8 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 use quilt_uri::S3PackageUri;
 
 use crate::commands::{
-    self, EntryData, InstalledPackageData, PACKAGE_STATUS_EVENT, PackageStatusEvent,
+    self, AUTOSYNC_PAUSED_EVENT, EntryData, InstalledPackageData, PACKAGE_STATUS_EVENT,
+    PackageStatusEvent, PausedEvent,
 };
 use crate::components::buttons;
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
@@ -38,7 +39,7 @@ pub fn InstalledPackage() -> impl IntoView {
         async move { commands::get_installed_package_data(namespace, filter).await }
     });
 
-    // Autopull watcher → page refresh: when the backend reports a
+    // Autosync watcher → page refresh: when the backend reports a
     // status change for the currently-open namespace, refetch the
     // detail data so the entries list and toolbar reflect the new
     // upstream state. Detail data is heavier than the row-level
@@ -49,10 +50,70 @@ pub fn InstalledPackage() -> impl IntoView {
         event_holder.set(Some(ev));
     });
     on_cleanup(move || drop(listener));
+
+    // Autosync pause event for the currently-open namespace: drives the
+    // dedicated paused banner. We only render this banner for `Other(_)`
+    // pauses — the regular status banner (`"diverged"`, `"behind"`,
+    // `"ahead"`) already conveys the per-state-machine reasons, and
+    // stacking the autosync paused banner on top would double up the
+    // same information (this was a Greptile finding on the
+    // get_autosync_snapshot hydration). Filtering at both ingress
+    // points — the live listener AND the snapshot replay — keeps the
+    // detail page from showing two banners side-by-side for any
+    // non-Other paused namespace.
+    let paused_event: RwSignal<Option<PausedEvent>> = RwSignal::new(None);
+    // Register the listener BEFORE fetching the snapshot so a pause
+    // event that fires between the two doesn't get dropped. If the
+    // listener wins the race the snapshot won't overwrite a fresher
+    // value — see the `slot.is_none()` check on the seed below.
+    let paused_listener = tauri_bridge::listen::<PausedEvent>(AUTOSYNC_PAUSED_EVENT, move |ev| {
+        if ev.reason != "other" {
+            return;
+        }
+        let current = query.read_untracked().get("namespace").unwrap_or_default();
+        if ev.namespace == current {
+            paused_event.set(Some(ev));
+        }
+    });
+    on_cleanup(move || drop(paused_listener));
+
+    // Re-hydrate the paused banner on page mount: the watcher may have
+    // paused our namespace before this page existed, in which case the
+    // listener above will never fire for that pause. Fetch the
+    // watcher's current paused map and seed `paused_event` if our
+    // namespace appears with a reason that warrants the dedicated
+    // banner (i.e. `other`).
+    leptos::task::spawn_local(async move {
+        let Ok(snapshot) = commands::get_autosync_snapshot().await else {
+            return;
+        };
+        let current = query.read_untracked().get("namespace").unwrap_or_default();
+        if let Some(entry) = snapshot
+            .paused
+            .into_iter()
+            .find(|p| p.namespace == current && p.reason == "other")
+        {
+            // Don't overwrite a fresher value the live listener may have
+            // already set between listener registration and now.
+            paused_event.update(|slot| {
+                if slot.is_none() {
+                    *slot = Some(entry);
+                }
+            });
+        }
+    });
+
     Effect::new(move |_| {
         let Some(ev) = event_holder.get() else { return };
         let current = query.read().get("namespace").unwrap_or_default();
         if ev.namespace == current {
+            // Any status emit other than `"paused"` for this namespace
+            // means the watcher has progressed past the pause (or the
+            // user manually cleared it via Publish / Pull / Set Remote).
+            // Drop the cached message so the banner reverts.
+            if ev.status != "paused" {
+                paused_event.set(None);
+            }
             refetch.notify();
         }
     });
@@ -93,6 +154,7 @@ pub fn InstalledPackage() -> impl IntoView {
                                         refetch=refetch
                                         page_warning
                                         show_set_remote_popup=show_set_remote_popup
+                                        paused_event=paused_event
                                     />
                                 </Layout>
                             }
@@ -118,6 +180,7 @@ fn InstalledPackageContent(
     refetch: Trigger,
     page_warning: Option<String>,
     show_set_remote_popup: RwSignal<bool>,
+    paused_event: RwSignal<Option<PausedEvent>>,
 ) -> impl IntoView {
     let filter_unmodified = RwSignal::new(data.filter_unmodified);
     let filter_ignored = RwSignal::new(data.filter_ignored);
@@ -269,6 +332,7 @@ fn InstalledPackageContent(
                     status=status_clone
                     origin_host=origin_host_for_status
                     has_changes=has_changes
+                    paused_event=paused_event
                     notification=notification
                     ui_locked=ui_locked
                     refetch=refetch
@@ -495,6 +559,7 @@ fn StatusBanner(
     status: String,
     origin_host: Option<String>,
     has_changes: bool,
+    paused_event: RwSignal<Option<PausedEvent>>,
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
     refetch: Trigger,
@@ -534,19 +599,22 @@ fn StatusBanner(
                 Some(ui_locked),
                 move || refetch.notify(),
             );
+            // The old wording assumed local commits ("Your commits are
+            // behind the remote") but `Behind` is reachable from a
+            // pristine install + remote movement — there may be no
+            // commits at all. State the actual fact: the remote has
+            // newer revisions. If working-tree changes block pull, say
+            // so up-front (in the banner, not in a hover popover) so
+            // autosync's reason for not auto-pulling is visible.
+            let description: &'static str = if has_changes {
+                "The remote has newer revisions. Commit or discard your local changes to pull."
+            } else {
+                "The remote has newer revisions."
+            };
             Some(
                 view! {
-                    <StatusBannerInner description="Your commits are behind the remote">
-                        <div class="qui-popover">
-                            <buttons::Pull on_click=on_pull busy=pull_busy disabled=has_changes />
-                            {has_changes.then(|| view! {
-                                <div class="popover-wrapper">
-                                    <div class="popover">
-                                        "Commit or discard local changes before pulling"
-                                    </div>
-                                </div>
-                            })}
-                        </div>
+                    <StatusBannerInner description=description>
+                        <buttons::Pull on_click=on_pull busy=pull_busy disabled=has_changes />
                     </StatusBannerInner>
                 }
                 .into_any(),
@@ -608,7 +676,34 @@ fn StatusBanner(
         _ => None,
     };
 
+    // Autosync `paused` is rendered *in addition to* the
+    // upstream-state banner so we can show a reason message the
+    // status string alone cannot carry (workflow rejection text, hash
+    // mismatch, etc.). When the next non-paused status emit comes in,
+    // `paused_event` clears and only the upstream banner remains.
     view! {
+        <Show when=move || paused_event.get().is_some()>
+            {move || paused_event.get().map(|ev| {
+                // Only `reason = "other"` reaches us — the listener in
+                // `InstalledPackage` filters everything else out so we
+                // don't double-banner Diverged / Behind / Ahead, which
+                // are already covered by the status-driven `content`
+                // below. `Other(_)` always populates `message` with the
+                // raw error plus the `OTHER_PAUSED_HINT` suffix, so we
+                // render it verbatim. The `unwrap_or_else` is a
+                // belt-and-braces fallback for malformed events.
+                let description = ev
+                    .message
+                    .unwrap_or_else(|| "Autosync paused".to_string());
+                view! {
+                    <div class="qui-status">
+                        <div class="root">
+                            <h2 class="description">{description}</h2>
+                        </div>
+                    </div>
+                }
+            })}
+        </Show>
         {content}
     }
 }

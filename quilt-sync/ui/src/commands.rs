@@ -90,17 +90,19 @@ pub struct PublishSettingsData {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct AutopullSettingsData {
-    pub enabled: bool,
+pub struct AutosyncSettingsData {
+    pub pull_enabled: bool,
+    pub push_enabled: bool,
     pub focused_secs: u64,
     pub unfocused_secs: u64,
     pub closed_secs: u64,
 }
 
-impl Default for AutopullSettingsData {
+impl Default for AutosyncSettingsData {
     fn default() -> Self {
         Self {
-            enabled: false,
+            pull_enabled: false,
+            push_enabled: false,
             focused_secs: 30,
             unfocused_secs: 120,
             closed_secs: 600,
@@ -133,7 +135,7 @@ pub struct SettingsData {
     pub os: String,
     pub changelog: Vec<ChangelogEntry>,
     pub publish: PublishSettingsData,
-    pub autopull: AutopullSettingsData,
+    pub autosync: AutosyncSettingsData,
     pub fswatcher: FsWatcherSettingsData,
 }
 
@@ -269,6 +271,51 @@ pub struct PackageStatusEvent {
 
 pub const PACKAGE_STATUS_EVENT: &str = "package-status-changed";
 
+/// Payload of the `autosync-published` Tauri event — emitted after a
+/// background autosync tick successfully publishes a package. UI listens
+/// for this on the installed-packages list page and surfaces it as a
+/// toast, mirroring the manual Commit & Push success notification.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishedEvent {
+    pub namespace: String,
+    pub message: String,
+}
+
+pub const AUTOSYNC_PUBLISHED_EVENT: &str = "autosync-published";
+
+/// Payload of the `autosync-paused` Tauri event — emitted when the
+/// background watcher pauses a namespace. The `reason` field is a stable
+/// string discriminant; `message` is populated only for `reason = "other"`
+/// (workflow rejection, hash mismatch, JSON parse failure, etc.) and is
+/// what the per-package banner renders so the user knows what to fix.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PausedEvent {
+    pub namespace: String,
+    pub reason: String,
+    pub message: Option<String>,
+}
+
+pub const AUTOSYNC_PAUSED_EVENT: &str = "autosync-paused";
+
+/// Point-in-time view of the autosync watcher's per-namespace state.
+/// Returned by `get_autosync_snapshot`; the UI uses it to re-hydrate
+/// the paused banner when a page mounts after the watcher already
+/// paused a namespace (the `autosync-paused` event alone would miss
+/// those pauses).
+#[derive(Clone, Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WatcherSnapshot {
+    pub paused: Vec<PausedEvent>,
+}
+
+pub async fn get_autosync_snapshot() -> Result<WatcherSnapshot, String> {
+    #[derive(Serialize)]
+    struct Args {}
+    tauri::invoke("get_autosync_snapshot", &Args {}).await
+}
+
 pub async fn refresh_package_status(namespace: String) -> Result<RefreshedPackageStatus, String> {
     #[derive(Serialize)]
     struct Args {
@@ -389,8 +436,9 @@ pub async fn update_publish_settings(
     .await
 }
 
-pub async fn update_autopull_settings(
-    enabled: bool,
+pub async fn update_autosync_settings(
+    pull_enabled: bool,
+    push_enabled: bool,
     focused_secs: u64,
     unfocused_secs: u64,
     closed_secs: u64,
@@ -398,15 +446,17 @@ pub async fn update_autopull_settings(
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {
-        enabled: bool,
+        pull_enabled: bool,
+        push_enabled: bool,
         focused_secs: u64,
         unfocused_secs: u64,
         closed_secs: u64,
     }
     tauri::invoke(
-        "update_autopull_settings",
+        "update_autosync_settings",
         &Args {
-            enabled,
+            pull_enabled,
+            push_enabled,
             focused_secs,
             unfocused_secs,
             closed_secs,

@@ -11,10 +11,9 @@ use tokio::sync;
 
 use crate::Error;
 use crate::app;
-use crate::autopull::AutopullSettings;
-use crate::autopull::SharedAutopullSettings;
+use crate::autopull::AutosyncSettings;
+use crate::autopull::SharedAutosyncSettings;
 use crate::autopull::Watcher;
-use crate::commit_message;
 use crate::fswatcher::FsWatcherSettings;
 use crate::fswatcher::SharedFsWatcherSettings;
 use crate::model;
@@ -271,17 +270,19 @@ impl From<PublishSettings> for PublishSettingsData {
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct AutopullSettingsData {
-    pub enabled: bool,
+pub struct AutosyncSettingsData {
+    pub pull_enabled: bool,
+    pub push_enabled: bool,
     pub focused_secs: u64,
     pub unfocused_secs: u64,
     pub closed_secs: u64,
 }
 
-impl From<AutopullSettings> for AutopullSettingsData {
-    fn from(s: AutopullSettings) -> Self {
+impl From<AutosyncSettings> for AutosyncSettingsData {
+    fn from(s: AutosyncSettings) -> Self {
         Self {
-            enabled: s.enabled,
+            pull_enabled: s.pull_enabled,
+            push_enabled: s.push_enabled,
             focused_secs: s.focused_secs,
             unfocused_secs: s.unfocused_secs,
             closed_secs: s.closed_secs,
@@ -314,7 +315,7 @@ pub struct SettingsData {
     pub os: String,
     pub changelog: Vec<changelog::ChangelogEntry>,
     pub publish: PublishSettingsData,
-    pub autopull: AutopullSettingsData,
+    pub autosync: AutosyncSettingsData,
     pub fswatcher: FsWatcherSettingsData,
 }
 
@@ -325,7 +326,7 @@ pub async fn get_settings_data(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     publish: tauri::State<'_, SharedPublishSettings>,
-    autopull_settings: tauri::State<'_, SharedAutopullSettings>,
+    autosync_settings: tauri::State<'_, SharedAutosyncSettings>,
     fswatcher_settings: tauri::State<'_, SharedFsWatcherSettings>,
 ) -> Result<SettingsData, String> {
     let app: &app::App = &app;
@@ -348,7 +349,7 @@ pub async fn get_settings_data(
     let auth_hosts = quilt::paths::list_auth_hosts(&data_dir);
     let log_level = tracing.log_level();
     let publish_data = PublishSettingsData::from(publish.read().await.clone());
-    let autopull_data = AutopullSettingsData::from(autopull_settings.read().await.clone());
+    let autosync_data = AutosyncSettingsData::from(autosync_settings.read().await.clone());
     let fswatcher_data = FsWatcherSettingsData::from(fswatcher_settings.read().await.clone());
 
     Ok(SettingsData {
@@ -362,7 +363,7 @@ pub async fn get_settings_data(
         os: std::env::consts::OS.to_string(),
         changelog: changelog::latest_entries(),
         publish: publish_data,
-        autopull: autopull_data,
+        autosync: autosync_data,
         fswatcher: fswatcher_data,
     })
 }
@@ -407,17 +408,20 @@ fn opt_from_string(s: &str) -> Option<String> {
 }
 
 #[tauri::command]
-pub async fn update_autopull_settings(
+#[allow(clippy::too_many_arguments)] // Tauri commands flatten state + args; splitting would just hide the wire shape.
+pub async fn update_autosync_settings(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
-    autopull_settings: tauri::State<'_, SharedAutopullSettings>,
+    autosync_settings: tauri::State<'_, SharedAutosyncSettings>,
     watcher: tauri::State<'_, Watcher>,
-    enabled: bool,
+    pull_enabled: bool,
+    push_enabled: bool,
     focused_secs: u64,
     unfocused_secs: u64,
     closed_secs: u64,
 ) -> Result<(), String> {
-    let new = AutopullSettings {
-        enabled,
+    let new = AutosyncSettings {
+        pull_enabled,
+        push_enabled,
         focused_secs,
         unfocused_secs,
         closed_secs,
@@ -430,19 +434,35 @@ pub async fn update_autopull_settings(
         .map_err(|e| e.to_string())?;
 
     new.save(&data_dir).await.map_err(|e| e.to_string())?;
-    let was_enabled = {
-        let mut current = autopull_settings.write().await;
-        let prev = current.enabled;
+    let prev_any_enabled = {
+        let mut current = autosync_settings.write().await;
+        let prev = current.any_enabled();
         *current = new;
         prev
     };
-    // Flipping false → true clears the paused set: a re-enable is a
-    // signal that the user wants the watcher to retry every namespace,
-    // not just the ones they touched manually.
-    if !was_enabled && enabled {
+    // Flipping the overall "off → on" edge clears the paused set: a
+    // re-enable in either direction is a signal that the user wants
+    // the watcher to retry every namespace, not just the ones they
+    // touched manually. Per-direction toggles (e.g. push off → on
+    // while pull was already on) do not clear; nothing about the
+    // watcher's pause-set was suppressed in that case.
+    if !prev_any_enabled && (pull_enabled || push_enabled) {
         watcher.clear_all_paused().await;
     }
     Ok(())
+}
+
+/// Point-in-time view of the autosync watcher's per-namespace state.
+///
+/// Used by the UI to re-hydrate paused-state banners after navigation:
+/// listening for the `autosync-paused` event only catches pauses that
+/// fire while a page is mounted, while the watcher's state persists
+/// across page loads.
+#[tauri::command]
+pub async fn get_autosync_snapshot(
+    watcher: tauri::State<'_, Watcher>,
+) -> Result<crate::autopull::reporter::WatcherSnapshot, String> {
+    Ok(watcher.snapshot().await)
 }
 
 #[tauri::command]
@@ -1461,27 +1481,8 @@ async fn package_publish_command(
     let status = m.get_installed_package_status(&installed, None).await?;
 
     let settings = settings.read().await.clone();
-    let changes_summary = commit_message::generate(&status.changes);
-    let message = commit_message::render_publish_message(
-        settings.message_template.as_deref().unwrap_or_default(),
-        &commit_message::PublishMessageContext {
-            namespace: &namespace,
-            changes_summary,
-        },
-    );
-    let metadata = settings.default_metadata.clone().unwrap_or_default();
-    let workflow = settings.default_workflow.clone();
-
-    let outcome = model::package_publish(
-        m,
-        namespace.clone(),
-        &message,
-        &metadata,
-        workflow,
-        None,
-        Some(status),
-    )
-    .await?;
+    let (outcome, _message) =
+        model::publish_with_settings(m, &namespace, &settings, status).await?;
     Ok((namespace, outcome))
 }
 

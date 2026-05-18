@@ -9,6 +9,19 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.17.2-alpha4] - 2026-05-15
+
+### Added
+
+- Autosync now publishes mapped packages automatically: when a remote-tracking package has local changes or a pending commit and the working tree has been quiet for one tick, it is committed (with message/metadata from publish settings) and pushed. Workflow / push failures pause the namespace and surface the underlying error message on the package's detail page (<https://github.com/quiltdata/quilt-rs/pull/682>)
+- New `autosync-paused` Tauri event carries the pause reason and a free-form message; the installed-package list renders a toast for unexpected errors and the detail page shows a persistent banner with the message. The detail page also re-hydrates that banner on navigation via a new `get_autosync_snapshot` command (<https://github.com/quiltdata/quilt-rs/pull/682>)
+
+### Changed
+
+- Renamed the background pull loop to "Autosync"; the on-disk settings file moves from `autopull_settings.json` to `autosync_settings.json` (migrated automatically on first run) (<https://github.com/quiltdata/quilt-rs/pull/682>)
+- Settings "Background Autosync" now exposes pull and push as independent checkboxes — many users want background pulls without unattended pushes. The alpha3 single-toggle file (`{"enabled": true}`) migrates transparently to `pull_enabled: true, push_enabled: false`, so existing autopull adopters do not silently opt into autopush (<https://github.com/quiltdata/quilt-rs/pull/682>)
+- Rewrote the detail-page "behind" banner. The old wording ("Your commits are behind the remote") asserted commits the user might not have — `Behind` is reachable from a pristine install + remote movement with no local commit at all. New wording states the fact ("The remote has newer revisions") and, when working-tree changes block the pull, inlines the action ("Commit or discard your local changes to pull") in the banner itself instead of in a hover-only popover (<https://github.com/quiltdata/quilt-rs/pull/682>)
+
 ## [v0.17.2-alpha3] - 2026-05-14
 
 ### Changed

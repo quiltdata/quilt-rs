@@ -428,6 +428,15 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        // `flow::pull`'s `base_hash == latest_hash` guard reads
+        // `latest_hash` from the lineage we pass in. Before the
+        // `Stop writing lineage from InstalledPackage::status` refactor,
+        // a prior `status` call would have refreshed-and-persisted
+        // `latest_hash`, so disk was reliably fresh when `pull` ran.
+        // That implicit persist is gone now, so `pull` must refresh
+        // on its own — otherwise a moved remote always trips the
+        // "already up-to-date" branch and the user sees no pull.
+        let lineage = flow::refresh_latest_hash(lineage, &self.remote).await?;
         let remote_uri = lineage.remote()?.clone();
 
         self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
@@ -1615,6 +1624,106 @@ mod tests {
         assert!(
             matches!(result, Err(Error::Login(LoginError::Required(_)))),
             "Expected LoginRequired error, got: {result:?}"
+        );
+
+        Ok(())
+    }
+
+    /// Pull must refresh `latest_hash` from the remote before evaluating
+    /// `flow::pull`'s `base_hash == latest_hash` guard. Before the
+    /// "Stop writing lineage from InstalledPackage::status" refactor, a
+    /// prior `status` call would persist the refreshed `latest_hash`, so
+    /// disk was reliably fresh when `pull` ran. Without that persist,
+    /// the disk-stale `latest_hash` always equalled `base_hash` and
+    /// pull short-circuited with "already up-to-date" — both the
+    /// autosync watcher's pull branch and the manual Pull button were
+    /// affected.
+    #[test(tokio::test)]
+    async fn test_pull_refreshes_latest_hash_when_remote_moved() -> Res {
+        let (home, _temp_dir1) = Home::from_temp_dir()?;
+        let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+        let storage = LocalStorage::new();
+        let remote = MockRemote::default();
+        let namespace: Namespace = ("test", "pull_refresh").into();
+        let bucket = "bkt";
+        let install_hash = "INSTALL_HASH";
+        let new_hash = "NEW_HASH";
+
+        paths
+            .scaffold_for_installing(&storage, &home, &namespace)
+            .await?;
+
+        // Disk lineage at the install-time hash: latest_hash == base_hash
+        // == remote.hash. Without the refresh inside `pull` this state
+        // alone short-circuits the up-to-date guard.
+        let lineage_json = format!(
+            r#"{{
+                "packages": {{
+                    "test/pull_refresh": {{
+                        "commit": null,
+                        "remote": {{
+                            "bucket": "{bucket}",
+                            "namespace": "test/pull_refresh",
+                            "hash": "{install_hash}",
+                            "catalog": "test.quilt.dev"
+                        }},
+                        "base_hash": "{install_hash}",
+                        "latest_hash": "{install_hash}",
+                        "paths": {{}}
+                    }}
+                }},
+                "home": "{}"
+            }}"#,
+            home.as_ref().display(),
+        );
+        storage
+            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+            .await?;
+
+        // Installed manifest at the install-time hash so `package.manifest()`
+        // can resolve.
+        storage
+            .write_byte_stream(
+                paths.installed_manifest(&namespace, install_hash),
+                ByteStream::from_static(br#"{"version": "v0"}"#),
+            )
+            .await?;
+
+        // Remote `latest` tag has moved past the install — this is the
+        // exact state that broke after the read-only-status refactor.
+        remote
+            .put_object(
+                &None,
+                &S3Uri::try_from(
+                    format!("s3://{bucket}/.quilt/named_packages/test/pull_refresh/latest")
+                        .as_str(),
+                )?,
+                new_hash.as_bytes().to_vec(),
+            )
+            .await?;
+
+        let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+        let package = InstalledPackage {
+            lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+            paths,
+            remote,
+            storage,
+            namespace,
+        };
+
+        // Pull will eventually fail downstream — we have not staged the
+        // manifest at `new_hash`, so `cache_remote_manifest` will return a
+        // NotFound — but the *specific* error we are guarding against is
+        // "package is already up-to-date". Any other failure mode proves
+        // the refresh-then-check path ran.
+        let err = package
+            .pull(None)
+            .await
+            .expect_err("pull should fail downstream on the missing NEW_HASH manifest");
+        let msg = err.to_string();
+        assert!(
+            !msg.contains("already up-to-date"),
+            "pull must refresh latest_hash before the up-to-date guard; got: {msg}"
         );
 
         Ok(())

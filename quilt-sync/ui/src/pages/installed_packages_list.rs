@@ -3,7 +3,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use leptos::prelude::*;
 
-use crate::commands::{self, PACKAGE_STATUS_EVENT, PackageItemData, PackageStatusEvent};
+use crate::commands::{
+    self, AUTOSYNC_PAUSED_EVENT, AUTOSYNC_PUBLISHED_EVENT, PACKAGE_STATUS_EVENT, PackageItemData,
+    PackageStatusEvent, PausedEvent, PublishedEvent,
+};
 use crate::components::buttons;
 use crate::components::layout::BreadcrumbItem;
 use crate::components::{
@@ -29,7 +32,7 @@ pub fn InstalledPackagesList() -> impl IntoView {
     let ui_locked = RwSignal::new(false);
     let refetch = Trigger::new();
 
-    // Page-scoped status-changed bus: the autopull watcher emits
+    // Page-scoped status-changed bus: the autosync watcher emits
     // `package-status-changed` events; each row's Effect picks the
     // matching namespace and updates its local signals in place.
     let status_event: StatusEventSignal = RwSignal::new(None);
@@ -37,6 +40,37 @@ pub fn InstalledPackagesList() -> impl IntoView {
         status_event.set(Some(ev));
     });
     on_cleanup(move || drop(listener));
+
+    // Autosync publish events — emit a toast mirroring the manual
+    // Commit & Push success notification.
+    let publish_listener =
+        tauri_bridge::listen::<PublishedEvent>(AUTOSYNC_PUBLISHED_EVENT, move |ev| {
+            notification.set(Some(Notification::Success(format!(
+                "Autosync published {} — {}",
+                ev.namespace, ev.message,
+            ))));
+        });
+    on_cleanup(move || drop(publish_listener));
+
+    // Autosync pause events — surface as a warning toast carrying the
+    // reason. The detail page reads the same event to drive its
+    // persistent banner, so the user sees both the immediate toast
+    // (here) and a stable indicator when they open the package.
+    let paused_listener = tauri_bridge::listen::<PausedEvent>(AUTOSYNC_PAUSED_EVENT, move |ev| {
+        // The classic refusal kinds (pendingChanges, pendingCommit,
+        // diverged) are already legible from the per-row status
+        // string. Only the `other` reason carries information the
+        // status string drops, so only toast for that.
+        if ev.reason != "other" {
+            return;
+        }
+        let msg = ev.message.unwrap_or_else(|| "Autosync paused".to_string());
+        notification.set(Some(Notification::Error(format!(
+            "Autosync paused {} — {}",
+            ev.namespace, msg,
+        ))));
+    });
+    on_cleanup(move || drop(paused_listener));
 
     let data = LocalResource::new(move || {
         refetch.track();

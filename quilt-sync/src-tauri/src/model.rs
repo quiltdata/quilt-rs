@@ -8,7 +8,9 @@ use tokio::sync;
 
 use tokio_stream::StreamExt;
 
+use crate::commit_message;
 use crate::error::Error;
+use crate::publish_settings::PublishSettings;
 use crate::quilt;
 use crate::telemetry::prelude::*;
 
@@ -207,6 +209,19 @@ pub trait QuiltModel {
             .await?)
     }
 
+    /// Resolve a workflow id (`Option<String>`) into the materialised
+    /// [`quilt::manifest::Workflow`] the remote enforces. Wrapping the
+    /// `InstalledPackage` method on the trait lets the autosync tick
+    /// path go through `model::package_publish` (free function) without
+    /// hitting real storage in mock-based unit tests.
+    async fn resolve_workflow(
+        &self,
+        package: &quilt::InstalledPackage,
+        workflow: Option<String>,
+    ) -> Result<Option<quilt::manifest::Workflow>, Error> {
+        Ok(package.resolve_workflow(workflow).await?)
+    }
+
     async fn package_revision_certify_latest(
         &self,
         package: &quilt::InstalledPackage,
@@ -363,7 +378,13 @@ impl Model {
 }
 
 fn parse_metadata(input: &str) -> Result<Option<serde_json::Value>, Error> {
-    if input.is_empty() {
+    // Whitespace-only is treated as "no metadata" — the UI form
+    // (`update_publish_settings`) trims before validating and saves the
+    // normalised value, so this branch only fires for hand-edited
+    // `publish_settings.json` files. Without it the two entry points
+    // (manual Commit & Push vs. autosync) diverged: autosync would
+    // pause on the same input the UI validation accepts.
+    if input.trim().is_empty() {
         return Ok(None);
     }
     let metadata_json: Result<serde_json::Value, serde_json::Error> = serde_json::from_str(input);
@@ -535,6 +556,44 @@ pub async fn package_push(
     model.package_push(&installed_package, host_config).await
 }
 
+/// Render `PublishSettings` into a message / metadata / workflow triple
+/// and route through [`package_publish`].
+///
+/// Shared entry point for both the manual Commit & Push command and the
+/// autosync watcher tick — keep them in lockstep so a change to publish
+/// settings (new placeholder, new field) applies identically regardless
+/// of who triggered the publish. Returns the outcome paired with the
+/// rendered commit message; the autosync tick needs the message string
+/// for its `autosync-published` event, the manual command can discard it.
+pub async fn publish_with_settings(
+    model: &impl QuiltModel,
+    namespace: &quilt_uri::Namespace,
+    settings: &PublishSettings,
+    status: quilt::lineage::InstalledPackageStatus,
+) -> Result<(quilt::PublishOutcome, String), Error> {
+    let changes_summary = commit_message::generate(&status.changes);
+    let message = commit_message::render_publish_message(
+        settings.message_template.as_deref().unwrap_or_default(),
+        &commit_message::PublishMessageContext {
+            namespace,
+            changes_summary,
+        },
+    );
+    let metadata = settings.default_metadata.clone().unwrap_or_default();
+    let workflow = settings.default_workflow.clone();
+    let outcome = package_publish(
+        model,
+        namespace.clone(),
+        &message,
+        &metadata,
+        workflow,
+        None,
+        Some(status),
+    )
+    .await?;
+    Ok((outcome, message))
+}
+
 pub async fn package_publish(
     model: &impl QuiltModel,
     namespace: quilt_uri::Namespace,
@@ -555,7 +614,7 @@ pub async fn package_publish(
         .await?
         .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace)))?;
 
-    let workflow = installed_package.resolve_workflow(workflow).await?;
+    let workflow = model.resolve_workflow(&installed_package, workflow).await?;
     model
         .package_publish(
             &installed_package,

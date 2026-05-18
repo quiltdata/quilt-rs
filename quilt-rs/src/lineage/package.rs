@@ -101,14 +101,37 @@ pub struct PackageLineage {
 
 impl From<PackageLineage> for UpstreamState {
     fn from(lineage: PackageLineage) -> Self {
-        // Both "no remote" and "remote configured but never pushed" are Local
-        if lineage.remote_uri.is_none()
-            || lineage
-                .remote_uri
-                .as_ref()
-                .is_some_and(|r| r.hash.is_empty())
-        {
+        let Some(remote) = lineage.remote_uri.as_ref() else {
             return Self::Local;
+        };
+        // `set_remote` rejects empty buckets, so on a production-written
+        // `data.json` this branch is unreachable. It exists to keep
+        // hand-edited or test-fixture lineages from falling through to
+        // the `hash.is_empty()` arm below, which would mis-classify a
+        // bucket-less remote with a non-empty `latest_hash` as
+        // `Diverged`. Covered by
+        // `test_empty_bucket_is_local_even_with_latest_hash`.
+        if remote.bucket.is_empty() {
+            return Self::Local;
+        }
+        if remote.hash.is_empty() {
+            // `remote.hash` empty + `latest_hash` empty: truly first push,
+            // the remote bucket has no revision for this namespace yet.
+            // `remote.hash` empty + `latest_hash` non-empty: a teammate has
+            // already published under this namespace, so we are not really
+            // local — autosync must refuse to push and surface the conflict.
+            //
+            // Note: this classification deliberately ignores `origin`. A
+            // bucket-only (no-catalog) CLI push leaves `origin = None` but
+            // is otherwise a normal remote-tracking package. The autosync
+            // watcher applies its own `origin.is_none()` skip rule when
+            // deciding whether to act on a package; the state classifier
+            // here just reports what is.
+            return if lineage.latest_hash.is_empty() {
+                Self::Local
+            } else {
+                Self::Diverged
+            };
         }
         let behind = lineage.base_hash != lineage.latest_hash;
         let ahead = lineage.base_hash != lineage.current_hash().unwrap_or_default();
@@ -202,6 +225,42 @@ mod tests {
             ..PackageLineage::default()
         };
         assert_eq!(UpstreamState::from(lineage), UpstreamState::Local);
+    }
+
+    #[test]
+    fn test_empty_bucket_is_local_even_with_latest_hash() {
+        // `set_remote` rejects empty buckets at the only production
+        // write site, so this state should not occur from normal use.
+        // The guard exists for hand-edited `data.json` files: without
+        // it, the next arm would classify a bucket-less remote with a
+        // non-empty `latest_hash` as `Diverged`, which is nonsense (no
+        // real remote to be diverged from).
+        let lineage = PackageLineage {
+            remote_uri: Some(ManifestUri {
+                hash: String::new(),
+                bucket: String::new(),
+                namespace: ("foo", "bar").into(),
+                origin: Some("catalog.dev".parse().unwrap()),
+            }),
+            latest_hash: "abc".to_string(),
+            ..PackageLineage::default()
+        };
+        assert_eq!(UpstreamState::from(lineage), UpstreamState::Local);
+    }
+
+    #[test]
+    fn test_foreign_remote_with_latest_is_diverged() {
+        let lineage = PackageLineage {
+            remote_uri: Some(ManifestUri {
+                hash: String::new(),
+                bucket: "test-bucket".to_string(),
+                namespace: ("foo", "bar").into(),
+                origin: Some("catalog.dev".parse().unwrap()),
+            }),
+            latest_hash: "abc".to_string(),
+            ..PackageLineage::default()
+        };
+        assert_eq!(UpstreamState::from(lineage), UpstreamState::Diverged);
     }
 
     #[test]
