@@ -79,9 +79,9 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
             | quilt::PackageOpError::Commit(msg)
             | quilt::PackageOpError::Publish(msg),
         )) => Err(WatchError::Conflict(PausedReason::Other(msg.clone()))),
-        Error::Quilt(
-            quilt::Error::Reqwest(_) | quilt::Error::Io(_) | quilt::Error::S3(_),
-        ) => Err(WatchError::Transient(err)),
+        Error::Quilt(quilt::Error::Reqwest(_) | quilt::Error::Io(_) | quilt::Error::S3(_)) => {
+            Err(WatchError::Transient(err))
+        }
         Error::Quilt(quilt::Error::Login(quilt::LoginError::Required(host))) => {
             Err(WatchError::LoginRequired(host.clone()))
         }
