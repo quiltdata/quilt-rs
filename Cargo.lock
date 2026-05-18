@@ -5389,10 +5389,11 @@ dependencies = [
 
 [[package]]
 name = "quilt-sync"
-version = "0.17.2-alpha4"
+version = "0.17.2-alpha5"
 dependencies = [
  "chrono",
  "dotenv",
+ "dunce",
  "mixpanel-rs",
  "mockall",
  "notify",
