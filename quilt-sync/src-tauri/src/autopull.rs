@@ -266,7 +266,14 @@ mod tests {
             .find(|p| p.namespace == ns_b.to_string())
             .expect("acme/other missing from snapshot");
         assert_eq!(entry_b.reason, "other");
-        assert_eq!(entry_b.message.as_deref(), Some("workflow rejected"));
+        let msg_b = entry_b
+            .message
+            .as_deref()
+            .expect("Other should carry a message");
+        assert!(
+            msg_b.starts_with("workflow rejected"),
+            "raw error should lead the message, got: {msg_b}"
+        );
     }
 
     #[tokio::test]

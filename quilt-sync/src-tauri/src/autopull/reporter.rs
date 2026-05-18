@@ -57,13 +57,36 @@ pub struct PausedEvent {
     pub message: Option<String>,
 }
 
+/// Trailing hint we append to every `Other(_)` paused message.
+///
+/// Two distinct gotchas this addresses:
+/// 1. **Pause persistence.** Once a namespace is in `inner.paused` the
+///    watcher's tick `continue`s past it, so it never re-evaluates with
+///    fresh settings — the user must click an explicit action
+///    (Commit & Push / Pull / Push / Set Remote) for `clear_paused` to
+///    fire. Without this hint, users see the banner sitting there even
+///    after they've fixed the underlying issue and assume the app is
+///    stuck.
+/// 2. **Stale message.** The text in this banner is the error from the
+///    publish attempt that paused the namespace. If the user has since
+///    changed publish settings (via the Settings UI form, which does
+///    update the in-memory cache), the *current* state may no longer
+///    match what the message describes.
+const OTHER_PAUSED_HINT: &str =
+    "Autopush is paused on this package — the watcher will not retry until you click \
+     Commit & Push manually. The message above may be stale if you have already updated \
+     publish settings.";
+
 impl PausedEvent {
     pub fn from_reason(namespace: &Namespace, reason: &PausedReason) -> Self {
         let (reason_str, message) = match reason {
             PausedReason::PendingChanges => ("pendingChanges", None),
             PausedReason::PendingCommit => ("pendingCommit", None),
             PausedReason::Diverged => ("diverged", None),
-            PausedReason::Other(msg) => ("other", Some(msg.clone())),
+            PausedReason::Other(msg) => (
+                "other",
+                Some(format!("{msg}. {OTHER_PAUSED_HINT}")),
+            ),
         };
         Self {
             namespace: namespace.to_string(),
@@ -261,22 +284,42 @@ mod tests {
     }
 
     #[test]
-    fn paused_event_from_reason_other_carries_message() {
+    fn paused_event_from_reason_other_carries_message_with_hint() {
         let ns = quilt_uri::Namespace::from(("acme", "demo"));
         let ev = PausedEvent::from_reason(
             &ns,
             &PausedReason::Other("workflow rejected metadata".to_string()),
         );
         assert_eq!(ev.reason, "other");
-        assert_eq!(ev.message.as_deref(), Some("workflow rejected metadata"));
 
-        // Serializes as camelCase, with the message visible to the UI.
+        // The raw error string is preserved at the front of the
+        // message so the user sees what went wrong, and the
+        // restart-cached-settings hint is appended so they aren't
+        // stuck wondering why hand-editing publish_settings.json had
+        // no effect.
+        let msg = ev.message.as_deref().expect("Other should carry a message");
+        assert!(
+            msg.starts_with("workflow rejected metadata"),
+            "raw error should lead the message, got: {msg}"
+        );
+        assert!(
+            msg.contains("Autopush is paused"),
+            "hint should make the paused-direction explicit, got: {msg}"
+        );
+        assert!(
+            msg.contains("Commit & Push"),
+            "hint should name the retry action, got: {msg}"
+        );
+        assert!(
+            msg.contains("may be stale"),
+            "hint should warn the error string may be stale, got: {msg}"
+        );
+
+        // Serializes as camelCase, with the full message (raw error + hint).
         let json = serde_json::to_string(&ev).unwrap();
         assert!(json.contains(r#""reason":"other""#), "got: {json}");
-        assert!(
-            json.contains(r#""message":"workflow rejected metadata""#),
-            "got: {json}"
-        );
+        assert!(json.contains("workflow rejected metadata"), "got: {json}");
+        assert!(json.contains("Autopush is paused"), "got: {json}");
         assert!(json.contains(r#""namespace":"acme/demo""#), "got: {json}");
     }
 }
