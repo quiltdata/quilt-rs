@@ -81,6 +81,7 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
 pub(crate) async fn refresh_then_maybe_sync(
     model: &impl QuiltModel,
     namespace: &Namespace,
+    lineage: &quilt::lineage::PackageLineage,
     publish: &PublishSettings,
     quiet_window: Duration,
 ) -> Result<RefreshOutcome, WatchError> {
@@ -106,10 +107,10 @@ pub(crate) async fn refresh_then_maybe_sync(
         })?;
     let upstream = status.upstream_state;
     let has_changes = !status.changes.is_empty();
-    let lineage = model
-        .get_installed_package_lineage(&installed)
-        .await
-        .map_err(WatchError::Transient)?;
+    // `lineage` comes from `run_once`'s skip-filter read — re-reading it
+    // here would cost an extra trait call per tick and open a narrow
+    // race window where a commit landing between the two reads would
+    // make `has_pending_commit` stale relative to `upstream`.
     let has_pending_commit = lineage.commit.is_some();
 
     // A `Diverged` state needs explicit user action (Certify Latest or
@@ -247,8 +248,18 @@ pub(crate) async fn run_once(model: &impl QuiltModel, inner: &WatcherInner) -> R
         .retain(|ns, _| current.contains(ns));
 
     // Snapshot publish settings once per tick so we don't reacquire the
-    // RwLock per package. Same lifetime for `quiet_window`: the cadence
-    // the spawn loop slept for is the threshold we test against.
+    // RwLock per package. Same lifetime for `quiet_window`.
+    //
+    // `quiet_window` is computed from the *current* settings and window
+    // mode, not from the cadence the spawn loop actually slept for. If
+    // the user changes `focused_secs` while a sleep is in progress the
+    // two diverge for one tick — e.g. going 30 s → 300 s, the first
+    // tick after the change applies a 300 s quiet window even though
+    // only 30 s elapsed, deferring once. The drift self-corrects on
+    // the next tick (the spawn loop will then sleep for 300 s), so it
+    // is cosmetic, not a data-loss risk; plumbing the slept cadence
+    // through `run_once` to fix it would be ~15 lines for a settings-
+    // change-only edge case.
     let publish = inner.publish_settings.read().await.clone();
     let quiet_window = {
         let settings = inner.settings.read().await;
@@ -282,7 +293,7 @@ pub(crate) async fn run_once(model: &impl QuiltModel, inner: &WatcherInner) -> R
             continue;
         }
 
-        match refresh_then_maybe_sync(model, &namespace, &publish, quiet_window).await {
+        match refresh_then_maybe_sync(model, &namespace, &lineage, &publish, quiet_window).await {
             Ok(outcome) => {
                 inner.backoff.write().await.remove(&namespace);
                 if let Some(message) = outcome.published.as_deref() {
