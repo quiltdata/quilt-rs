@@ -45,7 +45,18 @@ pub(crate) enum WatchError {
 // - `Push` / `Commit` / `Publish` variants almost always reflect
 //   user-actionable trouble (workflow rejected, hash mismatch, ...),
 //   so we pause with `Other(_)` carrying the message.
-// - Anything HTTP/IO-shaped is `Transient` (retry with backoff).
+// - HTTP / IO / S3 — including the AWS SDK `S3Error` family —
+//   are `Transient` (retry with backoff). S3 is a peer variant of
+//   `PackageOp` on `quilt::Error`, not nested inside it: `PutObject`,
+//   `UploadFile`, throttling, 5xx, and the like all propagate as
+//   `Error::S3(_)` straight through the publish flow. Treating them
+//   as `Other(_)` would permanently pause the namespace on a single
+//   network blip — exactly the wrong shape for autopush. Truly
+//   permanent S3 sub-kinds (`NotFound`, `PermissionDenied`-like) are
+//   either caught upstream (`Error::is_not_found` in `flow::push`) or
+//   accepted as "retry every 64 s until the user fixes it" via the
+//   capped backoff — annoying but not catastrophic, and far better
+//   than silently pausing on every transient blip.
 // - Everything else lands in `Other(_)` — the new default arm flips the
 //   bias from "keep trying quietly" to "stop and surface."
 pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
@@ -68,9 +79,9 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
             | quilt::PackageOpError::Commit(msg)
             | quilt::PackageOpError::Publish(msg),
         )) => Err(WatchError::Conflict(PausedReason::Other(msg.clone()))),
-        Error::Quilt(quilt::Error::Reqwest(_) | quilt::Error::Io(_)) => {
-            Err(WatchError::Transient(err))
-        }
+        Error::Quilt(
+            quilt::Error::Reqwest(_) | quilt::Error::Io(_) | quilt::Error::S3(_),
+        ) => Err(WatchError::Transient(err)),
         Error::Quilt(quilt::Error::Login(quilt::LoginError::Required(host))) => {
             Err(WatchError::LoginRequired(host.clone()))
         }
@@ -508,6 +519,25 @@ mod tests {
         let err = Error::from(quilt::Error::Io(std::io::Error::new(
             std::io::ErrorKind::ConnectionRefused,
             "connection refused",
+        )));
+        match classify_sync_err(err) {
+            Err(WatchError::Transient(_)) => {}
+            other => panic!("expected Transient(_), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_s3_is_transient() {
+        // Greptile P1 regression: `quilt::Error::S3(_)` is a peer
+        // variant of `PackageOp` on `quilt::Error`, *not* nested
+        // inside it. Every autopush attempt runs S3 ops (`PutObject`,
+        // `UploadFile`, `ListObjects`, …), and a network blip /
+        // throttling / 5xx must back off rather than permanently
+        // pause the namespace — pausing on a single transient S3
+        // hiccup would silently break autopush at the rate AWS hiccups
+        // in real workloads.
+        let err = Error::from(quilt::Error::S3(quilt::S3Error::new(
+            quilt::S3ErrorKind::PutObject("connection reset by peer".to_string()),
         )));
         match classify_sync_err(err) {
             Err(WatchError::Transient(_)) => {}
