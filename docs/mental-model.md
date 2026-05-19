@@ -1,4 +1,3 @@
-<!-- markdownlint-disable MD013 -->
 # State Mental Model
 
 This document describes the state model of an installed quilt-rs
