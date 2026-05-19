@@ -9,12 +9,6 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.17.2-alpha5] - 2026-05-18
-
-### Fixed
-
-- Filesystem watcher no longer misses change signals on macOS — the watched root is now stored in its canonical (`/private/var/...`) form so it matches the paths FSEvents reports
-
 ## [v0.17.2-alpha4] - 2026-05-15
 
 ### Added
