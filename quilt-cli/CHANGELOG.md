@@ -9,6 +9,17 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.26.0] - 2026-05-19
+
+### Changed
+
+- `quilt status` now prints "Your commits are detached from the remote" (was "Local-only package") for a package whose configured remote already has revisions published by another client (<https://github.com/quiltdata/quilt-rs/pull/682>)
+- `quilt status` no longer refreshes the on-disk lineage as a side effect; the `latest_hash` refresh moved into operations that actually need it (<https://github.com/quiltdata/quilt-rs/pull/682>)
+
+### quilt-rs
+
+- Updated [from v0.31.1 to v0.32.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.31.1...quilt-rs/v0.32.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.25.3] - 2026-05-06
 
 ### quilt-rs
