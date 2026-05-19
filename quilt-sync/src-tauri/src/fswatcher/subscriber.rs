@@ -165,7 +165,13 @@ impl Subscription {
         // canonical root so namespace_for() can match those events. `dunce` is
         // used instead of `std::fs::canonicalize` to avoid `\\?\` UNC prefixes
         // on Windows.
-        let package_home = dunce::canonicalize(&package_home).unwrap_or(package_home);
+        let package_home = dunce::canonicalize(&package_home).unwrap_or_else(|err| {
+            debug!(
+                "fswatcher: canonicalize({}) failed, using path as-is: {err}",
+                package_home.display(),
+            );
+            package_home
+        });
         let existing_path = {
             let watched = self.watched.lock().unwrap();
             watched.get(&namespace).cloned()
