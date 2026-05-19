@@ -93,11 +93,6 @@ Bucket `b`, namespace `f/a`, remote has revision `H1` tagged `latest`.
 | Promote (Certify Latest) | — | `H2` | `H2` | `H2` | UpToDate |
 | Overwrite (Reset Local) — alternate exit from Diverged | — | `H3` | `H3` | `H3` | UpToDate |
 
-Before #677 the first-push case where someone else had already
-published under the same namespace classified as `Local` rather than
-`Diverged`, which is how a teammate could silently lose work on the
-very first push.
-
 ## Writer invariants
 
 Hashes are `String`; these are conventions, not type-enforced rules.
