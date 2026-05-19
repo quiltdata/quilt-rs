@@ -598,7 +598,7 @@ divergence.
 ### Auxiliary: Refresh Latest
 
 **Entry Point**: `flow::refresh_latest_hash` (re-exported from
-`quilt-rs/src/flow.rs:37`).
+`quilt-rs/src/flow.rs`).
 
 Resolves the remote `latest` tag for an installed package and writes
 the result to `lineage.latest_hash`. Touches no files, no objects, no

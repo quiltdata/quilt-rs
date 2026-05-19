@@ -34,8 +34,7 @@ express `Behind`.
 
 ## Classifier truth table
 
-The `UpstreamState::from(&PackageLineage)` impl
-(`quilt-rs/src/lineage/package.rs:102`) is a short cascade:
+The `UpstreamState::from(&PackageLineage)` impl is a short cascade:
 
 ```text
 remote_uri = None                     → Local
@@ -52,7 +51,7 @@ otherwise:
 ```
 
 with `current_hash() = commit.hash ?? remote.hash ?? base_hash`
-(empty `base_hash` reads as `None`, not `""`; same file, `:173`).
+(empty `base_hash` reads as `None`, not `""`).
 
 The enum has a sixth variant, `Error`, that the `From` impl does not
 produce — it is surfaced by `InstalledPackageStatus::error()` when
@@ -78,8 +77,8 @@ mutates*.
 
 Only `latest_hash` moves passively: a background autopull tick can
 update it without any user action. `commit.hash` is cleared on push
-by `.take()` (`flow/push.rs:105`), which is why `current_hash()`
-falls back through `commit → remote.hash → base_hash`.
+by `.take()`, which is why `current_hash()` falls back through
+`commit → remote.hash → base_hash`.
 
 ## Walkthrough
 
@@ -103,14 +102,13 @@ Hashes are `String`; these are conventions, not type-enforced rules.
 - `remote.hash` and `base_hash` both empty ⇔ first push has not been
   made.
 - `set_remote` rejects empty buckets at the write boundary; the
-  classifier still defends against the hand-edited case anyway
-  (`lineage/package.rs:114`).
+  classifier still defends against the hand-edited case anyway.
 - `flow::reset_to_latest` clears `lineage.commit` (since #677). A
   stale commit would let a subsequent `certify_latest` resurrect the
   discarded revision — its installed manifest is still on disk.
 - `latest_hash` has no freshness model: it is whatever
   `resolve_tag("latest")` returned the last time *anything* asked.
 
-See `quilt-rs/src/lineage/package.rs` for the classifier (`:102`)
-and `current_hash()` (`:173`); field-write sites are the `flow::*`
-functions referenced in the lifecycle table.
+See `quilt-rs/src/lineage/package.rs` for the classifier and
+`current_hash()`; field-write sites are the `flow::*` functions
+referenced in the lifecycle table.
