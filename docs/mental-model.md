@@ -34,7 +34,7 @@ express `Behind`.
 
 ## Classifier truth table
 
-The `UpstreamState::from(&PackageLineage)` impl is a short cascade:
+The `UpstreamState::from(PackageLineage)` impl is a short cascade:
 
 ```text
 remote_uri = None                     → Local

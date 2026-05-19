@@ -641,13 +641,18 @@ flow::uninstall_paths(lineage, home, storage, installed_paths)
     ↓
 lineage.base_hash   = latest.hash
 lineage.latest_hash = latest.hash
-  → local commit chain is discarded
+lineage.commit      = None
+  → local commit chain is discarded (since #677)
     ↓
 cache_remote_manifest(paths, storage, remote, latest)
   → .quilt/packages/<bucket>/<latest.hash>
     ↓
 copy_cached_to_installed(...)
   → .quilt/installed/<ns>/<latest.hash>
+    ↓
+lineage.remote_uri  = Some(latest)
+  → remote.hash now matches latest.hash, so a subsequent reset
+    short-circuits at the no-op guard above
     ↓
 For each path previously installed that still exists in the new
 manifest: flow::install_paths(...)
