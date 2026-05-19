@@ -11,6 +11,11 @@
 > subtle pipeline differences (byte ordering, JSON canonicalization, line
 > endings) produce a different hash and break compatibility — so precise
 > knowledge of what happens at each phase matters.
+>
+> **See also**: [`docs/mental-model.md`](mental-model.md) for the four-hash
+> state model (`commit`, `remote.hash`, `base_hash`, `latest_hash`) and the
+> `UpstreamState` classifier — content that changes far less often than the
+> phase walkthroughs below.
 
 ## Overview
 
@@ -164,6 +169,13 @@ the remote and apply it to the manifest before upload.
 
 ## Operational Phases
 
+Phase headings use the public `flow::<name>` paths re-exported from
+`quilt-rs/src/flow.rs`. Those short names (`flow::commit`, `flow::push`,
+`flow::status`, …) are aliases; the underlying function may have a
+longer name (`commit_package`, `push_package`, `create_status`). The
+short form is the canonical public path and is what every call site
+uses.
+
 ### 1. Browse Phase
 
 **Entry Point**: `flow::browse`
@@ -295,8 +307,15 @@ fingerprint_files():
   - Compare with lineage.paths[file] hash
   - Generate Change enum: Modified, Added, Removed
     ↓
-Return: InstalledPackageStatus with ChangeSet
+Return: (PackageLineage, InstalledPackageStatus)
 ```
+
+**Return shape**: the tuple is a remnant — `flow::status` does not
+mutate the input lineage, and a TODO in `quilt-rs/src/flow/status.rs`
+plans to drop the first element. New callers should treat the lineage
+as opaque and discard it. The `InstalledPackageStatus` carries
+`upstream_state`, `changes` (a `ChangeSet`), `ignored_files`,
+`junky_changes`, and `most_recent_mtime`.
 
 **Interaction with `.quiltignore`**: Ignored files are excluded from the
 directory walk. If a previously tracked file matches a new `.quiltignore`
@@ -307,11 +326,11 @@ from `.gitignore`, which does not untrack already-tracked files.
 
 ### 6. Commit Phase
 
-**Entry Point**: `flow::commit_package`
+**Entry Point**: `flow::commit`
 **Purpose**: Create new local package version with changes
 
 ```text
-flow::commit_package(lineage, changes, message, user_meta)
+flow::commit(lineage, changes, message, user_meta)
     ↓
 For each change:
   - Added/Modified: create_immutable_object_copy()
@@ -378,11 +397,11 @@ commit, causing a hash mismatch error.
 
 ### 8. Push Phase
 
-**Entry Point**: `flow::push_package`
+**Entry Point**: `flow::push`
 **Purpose**: Upload local changes to remote storage
 
 ```text
-flow::push_package(lineage, local_manifest, remote)
+flow::push(lineage, local_manifest, remote)
     ↓
 Check: lineage.commit exists (has changes to push)
     ↓
@@ -421,12 +440,12 @@ Return: PushResult { lineage, certified_latest }
 
 ### 9. Publish Phase
 
-**Entry Point**: `flow::publish_package`
+**Entry Point**: `flow::publish`
 **Purpose**: Commit any pending working-directory changes and push the
 resulting revision to the remote in a single call
 
 ```text
-flow::publish_package(lineage, manifest, …, status, namespace, host_config, commit_opts)
+flow::publish(lineage, manifest, …, status, namespace, host_config, commit_opts)
     ↓
 Classify state:
     (A) status.changes non-empty           → commit + push
@@ -434,16 +453,16 @@ Classify state:
                                             → push only
     (C) no changes and no pending commit   → Err(PackageOpError::Publish)
     ↓
-(A) flow::commit_package(…, commit_opts.message, user_meta, workflow)
+(A) flow::commit(…, commit_opts.message, user_meta, workflow)
     ↓
    reload manifest from disk at the new commit hash so push uploads
    the post-commit rows, not the stale pre-commit manifest
     ↓
-(A)/(B) flow::push_package(…, host_config)
+(A)/(B) flow::push(…, host_config)
     ↓
 Return: PublishOutcome {
           committed,   // true in state (A), false in state (B)
-          push,        // PushResult from flow::push_package
+          push,        // PushResult from flow::push
         }
 ```
 
@@ -467,7 +486,7 @@ not supply one, mirroring `InstalledPackage::{commit, push}`.
 ### 10. Certify Latest Phase
 
 **Entry Point**: `InstalledPackage::certify_latest`
-(wraps `flow::push_package` + `flow::certify_latest`)
+(wraps `flow::push` + `flow::certify_latest`)
 **Purpose**: Make the local revision the remote's shared `latest`,
 uploading the underlying manifest first if it has not been pushed.
 
@@ -481,7 +500,7 @@ certify_latest(self)
 read lineage from .quilt/data.json
     ↓
 If lineage.commit is Some:
-    flow::push_package(...)
+    flow::push(...)
       → upload manifest + objects to remote
       → set lineage.remote_uri = new manifest URI
       → may internally certify if base == latest; harmless either way
@@ -520,7 +539,77 @@ non-certifying push and the merge-page action are not symmetric:
 push respects a concurrent `latest`; the merge-page action does
 not.
 
-### 11. Reset Local Phase
+### 11. Pull Phase
+
+**Entry Point**: `flow::pull`
+**Purpose**: Fast-forward an installed package whose `base_hash` still
+matches `remote.hash` to the remote's current `latest`.
+
+**Direction**: remote → local. Pull only succeeds on a clean working
+tree with no pending commit; the diverged case is handled by
+`Reset Local Phase` (§12), not here.
+
+**Preconditions** (each surfaces as `PackageOpError::Package`):
+
+- `status.changes` is empty (no unstaged edits).
+- `lineage.commit` is `None` (no pending commit).
+- `remote.hash == base_hash` (otherwise the package has diverged).
+- `base_hash != latest_hash` (otherwise nothing to do).
+
+```text
+flow::pull(lineage, manifest, paths, storage, remote, home, status, ns)
+    ↓
+guard: no changes, no pending commit, base == remote.hash, base ≠ latest
+    ↓
+uninstall_paths()
+  → delete working-tree files for the package
+  → drop entries from lineage.paths
+    ↓
+lineage.remote.hash = latest_hash
+lineage.base_hash   = latest_hash
+    ↓
+resolve_tag("latest")      → ManifestUri for the new revision
+cache_remote_manifest()    → .quilt/packages/<bucket>/<latest>
+copy_cached_to_installed() → .quilt/installed/<ns>/<latest>
+    ↓
+reload manifest from disk at the new hash
+  → required so install_paths reads row hashes from the NEW revision;
+    without this, install_paths would copy OLD object bytes over the
+    (just-deleted) working-tree files
+    ↓
+install_paths()
+  → for each previously-installed path that still exists in the new
+    manifest: re-download object content and re-populate working tree
+  → paths that no longer exist in `latest` are logged but not errored
+    ↓
+Return: updated PackageLineage
+```
+
+**Effect on local state**: working-tree files for this namespace are
+replaced with bytes from the new revision. The content-addressed
+`objects/` cache is not pruned (other packages may share content).
+Old local manifests under `.quilt/installed/<ns>/` are not
+garbage-collected.
+
+**Cross-reference**: `Reset Local Phase` (§12) is the force-remote-wins
+variant — it discards the local commit chain instead of erroring on
+divergence.
+
+### Auxiliary: Refresh Latest
+
+**Entry Point**: `flow::refresh_latest_hash` (re-exported from
+`quilt-rs/src/flow.rs:37`).
+
+Resolves the remote `latest` tag for an installed package and writes
+the result to `lineage.latest_hash`. Touches no files, no objects, no
+working tree — only the lineage. Used by autosync's autopull tick to
+keep `latest_hash` current between explicit pull or install
+operations. This is the only path that mutates `latest_hash` without
+an explicit user action, which is why the classifier in §"Upstream
+Tracking" treats `latest_hash` as authoritative for `Behind`/`Diverged`
+even though it has no freshness model.
+
+### 12. Reset Local Phase
 
 **Entry Point**: `flow::reset_to_latest`
 **Purpose**: Discard all local commits and working-tree state for a
@@ -564,7 +653,7 @@ content-addressed `objects/` store is not pruned (other packages may
 share content). `.quilt/installed/<ns>/` keeps the new manifest;
 the old local manifests are not garbage-collected by this flow.
 
-### 12. Uninstall Phase
+### 13. Uninstall Phase
 
 **Entry Point**: `flow::uninstall_package`
 **Purpose**: Remove package from local tracking and delete working directory files
@@ -668,18 +757,20 @@ enum UpstreamState {
     Behind,     // remote has newer version
     Diverged,   // both local and remote have changes
     Local,      // no remote configured, or remote set but never pushed
+    Error,      // surfaced when status computation itself fails
 }
 ```
 
 A `Diverged` package leaves that state via one of two remediation
 flows: `Certify Latest Phase` (§10) biases local-wins by pushing the
 local commit (if any) and tagging it as `latest`; `Reset Local Phase`
-(§11) biases remote-wins by discarding the local commit chain and
-re-installing the remote `latest`.
+(§12) biases remote-wins by discarding the local commit chain and
+re-installing the remote `latest`. `Pull Phase` (§11) is the
+non-conflict path from `Behind` to `UpToDate` — fast-forward only.
 
 ### Resolving Diverged: differences from Git-style merge
 
-The two `Diverged` remediation flows (§10, §11) intentionally do
+The two `Diverged` remediation flows (§10, §12) intentionally do
 **not** implement merge in the Git/Mercurial/SVN sense. Users
 familiar with those tools should expect the following gaps:
 
@@ -693,7 +784,7 @@ familiar with those tools should expect the following gaps:
   theirs" is not expressible. The manifest is the unit of choice,
   not the file.
 - **No integrative pull from Diverged.** Pull is fast-forward only.
-  From `Diverged`, the only "remote-wins" path is Reset Local (§11),
+  From `Diverged`, the only "remote-wins" path is Reset Local (§12),
   which discards the local commit chain — there is no equivalent of
   `git pull --rebase` that would replay local commits on top of
   remote.
@@ -701,7 +792,7 @@ familiar with those tools should expect the following gaps:
   teammate certification is overwritten last-writer-wins (§10
   "Concurrency"); there is no `--force` opt-in gesture.
 - **Reset has no reflog.** Git's `reset --hard` is reflog-recoverable
-  for ~90 days; Reset Local (§11) has no such safety net. The
+  for ~90 days; Reset Local (§12) has no such safety net. The
   discarded local commit's installed manifest may linger on disk
   under `.quilt/installed/<ns>/<hash>` but is unreachable from any
   lineage state — effectively orphaned garbage.
