@@ -602,12 +602,22 @@ divergence.
 
 Resolves the remote `latest` tag for an installed package and writes
 the result to `lineage.latest_hash`. Touches no files, no objects, no
-working tree — only the lineage. Used by autosync's autopull tick to
-keep `latest_hash` current between explicit pull or install
-operations. This is the only path that mutates `latest_hash` without
-an explicit user action, which is why the classifier in §"Upstream
-Tracking" treats `latest_hash` as authoritative for `Behind`/`Diverged`
-even though it has no freshness model.
+working tree — only the lineage. It is the primitive every status
+check uses to keep `latest_hash` current.
+
+Autosync's autopull tick is a state-driven dispatcher built on this
+primitive: each tick calls `refresh_latest_hash`, classifies via
+`UpstreamState`, then routes to `flow::pull` (when `Behind` and the
+working tree is clean) or to `flow::publish` (when there are changes
+or a pending commit and the working tree is quiet) — both the same
+operations the manual UI buttons invoke. `Diverged` pauses the
+namespace and surfaces in the UI; resolution is user-action only
+(§10 Certify Latest or §12 Reset Local).
+
+`refresh_latest_hash` is the only path that mutates `latest_hash`
+without an explicit user action, which is why the classifier in
+§"Upstream Tracking" treats `latest_hash` as authoritative for
+`Behind`/`Diverged` even though it has no freshness model.
 
 ### 12. Reset Local Phase
 

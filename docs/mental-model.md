@@ -73,12 +73,16 @@ mutates*.
 | `flow::certify_latest` | — (cleared by inner push) | already set | ← `latest_hash` (via `update_latest`) | ← new manifest hash |
 | `flow::pull` (fast-forward) | must be `None` | ← `latest_hash` | ← `latest_hash` | already advanced |
 | `flow::reset_to_latest` | **`None`** (cleared since #677) | ← `latest.hash` | ← `latest.hash` | ← `latest.hash` |
-| autopull tick (`flow::refresh_latest_hash`) | — | — | — | ← `resolve_tag("latest")` |
+| `flow::refresh_latest_hash` | — | — | — | ← `resolve_tag("latest")` |
 
-Only `latest_hash` moves passively: a background autopull tick can
-update it without any user action. `commit.hash` is cleared on push
-by `.take()`, which is why `current_hash()` falls back through
-`commit → remote.hash → base_hash`.
+Only `latest_hash` moves passively: every status check refreshes it
+via `flow::refresh_latest_hash`. Autosync's autopull tick is a
+state-driven dispatcher on top of that primitive — it refreshes,
+classifies, then routes to `flow::pull` or `flow::publish` when the
+state allows; both call the same code paths the manual UI buttons
+invoke. `commit.hash` is cleared on push by `.take()`, which is why
+`current_hash()` falls back through `commit → remote.hash →
+base_hash`.
 
 ## Walkthrough
 
