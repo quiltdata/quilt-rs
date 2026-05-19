@@ -431,7 +431,7 @@ Form for the two direction toggles and three refresh cadences.
 +---------------------------------------------------------+
 |  Edit autosync settings                                 |
 |                                                         |
-|  [x] Auto-pull updates from the remote                  |
+|  [ ] Auto-pull updates from the remote                  |
 |  hint: pull when remote moves ahead and local is clean  |
 |                                                         |
 |  [ ] Auto-publish local changes                         |
