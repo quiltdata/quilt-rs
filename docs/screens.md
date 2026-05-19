@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD013 -->
 # Screens & Flows
 
 ASCII wireframes for Quilt Sync's UI pages and user journeys.
@@ -123,6 +124,12 @@ Empty state:
 - Click [Set Remote] -> opens **Set Remote** popup
 - Click [gear] -> **Settings**
 
+Rows update live from the background autopull watcher: when a
+tick changes a package's `UpstreamState` or pauses / un-pauses a
+namespace, the row's status pill and contextual button refresh
+without a page reload. Status changes propagate via
+`PackageStatusEvent`; pause / un-pause via `AUTOSYNC_PAUSED_EVENT`.
+
 ---
 
 ### Installed Package
@@ -182,6 +189,27 @@ with checkboxes, status indicator, and a toolbar.
   (uncommitted changes or a pending commit that has not been pushed).
   Equivalent to the `[Commit and Push]` button on the Installed
   Packages List.
+
+**Autosync paused (variant)**: when the background autopull watcher
+refuses to act for a `PausedReason::Other(_)` reason (workflow
+rejection, persistent push/commit error after backoff, etc.), an
+additional banner stacks above the standard status banner:
+
+```text
++--[autosync paused]-------------------------------------+
+| Autosync paused: <message from PausedReason::Other(_)> |
+|                                              [Dismiss] |
++--------------------------------------------------------+
+```
+
+- Suppressed for `Diverged` and `Behind` paused reasons — the
+  standard status banner already surfaces those with their own
+  action (`[Merge]` / `[Pull]`).
+- Re-hydrated on page mount from `get_autosync_snapshot()`; live
+  updated via the `AUTOSYNC_PAUSED_EVENT` Tauri event.
+- `[Dismiss]` only hides the banner locally; the underlying
+  refusal is cleared when the next watcher tick succeeds or when
+  the user resolves the upstream condition.
 
 ---
 
@@ -394,6 +422,52 @@ uses for every package (no per-package overrides).
 
 ---
 
+### Edit Autosync Settings Popup
+
+Shown when clicking `[Edit]` in Settings → Background Autosync.
+Form for the two direction toggles and three refresh cadences.
+
+```text
++---------------------------------------------------------+
+|  Edit autosync settings                                 |
+|                                                         |
+|  [x] Auto-pull updates from the remote                  |
+|  hint: pull when remote moves ahead and local is clean  |
+|                                                         |
+|  [ ] Auto-publish local changes                         |
+|  hint: commit and push once the working tree is quiet   |
+|                                                         |
+|  Refresh interval (focused, seconds)                    |
+|  [ 30 ]                                                 |
+|                                                         |
+|  Refresh interval (unfocused, seconds)                  |
+|  [ 120 ]                                                |
+|                                                         |
+|  Refresh interval (closed window, seconds)              |
+|  [ 600 ]                                                |
+|  hint: takes effect once tray icon ships                |
+|                                                         |
+|  [Save]  [Cancel]   Reset to defaults                   |
+|                                                         |
++---------------------------------------------------------+
+```
+
+- The two checkboxes are independent: many users want background
+  pulls without unattended pushes. Either toggle being on starts
+  the watcher; both off stops it.
+- Intervals are positive integers; the form rejects non-numeric
+  or zero input before saving.
+- Auto-publish refuses on `Diverged` and on foreign-remote
+  conflicts — those still require explicit user action via
+  **Merge** or **Set Remote**.
+- `Reset to defaults` restores the shipped defaults (both off,
+  30 / 120 / 600 s) but does not save — user still has to click
+  `[Save]`.
+- After save -> popup closes, watcher cadence updates immediately,
+  Settings page reloads.
+
+---
+
 ### Settings
 
 Application settings and diagnostics.
@@ -416,6 +490,22 @@ Application settings and diagnostics.
 |  Default metadata   Default — none                      |
 |                                                         |
 |  [Edit]                                                 |
+|                                                         |
+|  Background Autosync                                    |
+|  -------------------                                    |
+|  Pull (remote -> local)        Off                      |
+|  Push (local -> remote)        Off                      |
+|  Refresh when focused          30 s                     |
+|  Refresh when unfocused        120 s                    |
+|  Refresh when window closed    600 s                    |
+|  hint: closed-window cadence pending tray-icon feature  |
+|                                                         |
+|  [Edit]                                                 |
+|                                                         |
+|  Filesystem Watcher                                     |
+|  ------------------                                     |
+|  Enable filesystem watcher     [x]                      |
+|  hint: refreshes local status when files change         |
 |                                                         |
 |  Account                                                |
 |  -------                                                |
