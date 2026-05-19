@@ -1,4 +1,3 @@
-<!-- markdownlint-disable MD013 -->
 # Releases
 
 What ships, where it goes, and which workflow puts it there. For why
