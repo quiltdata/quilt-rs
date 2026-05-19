@@ -93,6 +93,10 @@ pub struct PackageLineage {
     pub base_hash: String,
     /// Latest tracked hash. In other words, what was the remote hash when we last checked.
     /// It can be different from the `remote.hash`, because we can install not the latest package.
+    ///
+    /// TODO: pair with `checked_at: DateTime<Utc>`. The classifier treats
+    /// this as authoritative for `Behind`/`Diverged` with no notion of
+    /// staleness.
     pub latest_hash: String,
     /// Installed paths (or files in other words)
     #[serde(default = "BTreeMap::new")]
