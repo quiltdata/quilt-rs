@@ -13,7 +13,7 @@
 
 ### Changed
 
-- Autosync: pull cadence and push quiet window are now independent knobs. The settings popup collapses to two numeric inputs — pull interval (seconds) and wait after last edit before publishing (seconds, new key `idle_timeout_secs`, default 30) — and the focused-vs-unfocused split is hidden from the UI (still on disk for forward compatibility with the tray-icon milestone). For users running an unfocused window on 0.18.0 the quiet window shrinks from 120 s to a constant 30 s in the direction the new knob asks for. The Tauri `update_autosync_settings` command rejects zero in either field before persisting (<https://github.com/quiltdata/quilt-rs/pull/REPLACE_WITH_PR_NUMBER>)
+- Autosync: pull cadence and push quiet window are now independent knobs. The settings popup collapses to two numeric inputs — pull interval (seconds) and wait after last edit before publishing (seconds, new key `idle_timeout_secs`, default 30) — and the focused-vs-unfocused split is hidden from the UI (still on disk for forward compatibility with the tray-icon milestone). For users running an unfocused window on 0.18.0 the quiet window shrinks from 120 s to a constant 30 s in the direction the new knob asks for. The Tauri `update_autosync_settings` command rejects zero in either field before persisting (<https://github.com/quiltdata/quilt-rs/pull/690>)
 
 ## [v0.18.0] - 2026-05-19
 
