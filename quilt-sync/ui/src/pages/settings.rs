@@ -510,9 +510,7 @@ fn AutosyncSettingsPopup(
         let pull_interval = match pull_interval_secs.get_untracked().trim().parse::<u64>() {
             Ok(n) if n >= 1 => n,
             _ => {
-                parse_error.set(Some(
-                    "Pull interval must be a positive integer".to_string(),
-                ));
+                parse_error.set(Some("Pull interval must be a positive integer".to_string()));
                 return;
             }
         };

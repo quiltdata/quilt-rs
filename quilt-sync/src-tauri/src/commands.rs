@@ -3185,8 +3185,14 @@ mod tests {
             assert!(!merged.pull.enabled);
             assert!(merged.push.enabled);
             assert_eq!(merged.pull.focused_secs, 7);
-            assert_eq!(merged.pull.unfocused_secs, 7, "UI ties focused == unfocused");
-            assert_eq!(merged.pull.closed_secs, 999, "closed_secs must flow through untouched");
+            assert_eq!(
+                merged.pull.unfocused_secs, 7,
+                "UI ties focused == unfocused"
+            );
+            assert_eq!(
+                merged.pull.closed_secs, 999,
+                "closed_secs must flow through untouched"
+            );
             assert_eq!(merged.push.idle_timeout_secs, 9);
             Ok(())
         }
