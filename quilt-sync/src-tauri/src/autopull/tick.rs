@@ -277,8 +277,8 @@ pub(crate) async fn run_once(model: &impl QuiltModel, inner: &WatcherInner) -> R
     // RwLock per package. Same lifetime for `quiet_window`.
     //
     // `quiet_window` is the constant `push.idle_timeout_secs`. It does
-    // not depend on window mode anymore — that coupling was the bug
-    // (`06-settings`). The sleep loop in `Watcher::spawn` still reads
+    // not depend on window mode anymore — that coupling was the bug.
+    // The sleep loop in `Watcher::spawn` still reads
     // `cadence_for_mode(&settings.pull, mode)`, so pull frequency and
     // push quiet window can be tuned independently.
     let publish = inner.publish_settings.read().await.clone();
