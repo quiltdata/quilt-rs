@@ -437,15 +437,11 @@ Form for the two direction toggles and three refresh cadences.
 |  [ ] Auto-publish local changes                         |
 |  hint: commit and push once the working tree is quiet   |
 |                                                         |
-|  Refresh interval (focused, seconds)                    |
+|  Pull interval (seconds)                                |
 |  [ 30 ]                                                 |
 |                                                         |
-|  Refresh interval (unfocused, seconds)                  |
-|  [ 120 ]                                                |
-|                                                         |
-|  Refresh interval (closed window, seconds)              |
-|  [ 600 ]                                                |
-|  hint: takes effect once tray icon ships                |
+|  Wait after last edit before publishing (seconds)       |
+|  [ 30 ]                                                 |
 |                                                         |
 |  [Save]  [Cancel]   Reset to defaults                   |
 |                                                         |
@@ -456,13 +452,14 @@ Form for the two direction toggles and three refresh cadences.
   pulls without unattended pushes. Either toggle being on starts
   the watcher; both off stops it.
 - Intervals are positive integers; the form rejects non-numeric
-  or zero input before saving.
+  or zero input before saving, and the Tauri command rejects zero
+  again as a backstop.
 - Auto-publish refuses on `Diverged` and on foreign-remote
   conflicts — those still require explicit user action via
   **Merge** or **Set Remote**.
 - `Reset to defaults` restores the shipped defaults (both off,
-  30 / 120 / 600 s) but does not save — user still has to click
-  `[Save]`.
+  30 s pull interval, 30 s wait) but does not save — user still
+  has to click `[Save]`.
 - After save -> popup closes, watcher cadence updates immediately,
   Settings page reloads.
 
@@ -495,10 +492,8 @@ Application settings and diagnostics.
 |  -------------------                                    |
 |  Pull (remote -> local)        Off                      |
 |  Push (local -> remote)        Off                      |
-|  Refresh when focused          30 s                     |
-|  Refresh when unfocused        120 s                    |
-|  Refresh when window closed    600 s                    |
-|  hint: closed-window cadence pending tray-icon feature  |
+|  Pull interval                 30 s                     |
+|  Wait after last edit          30 s                     |
 |                                                         |
 |  [Edit]                                                 |
 |                                                         |
