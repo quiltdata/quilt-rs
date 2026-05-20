@@ -7,57 +7,70 @@ use serde::Serialize;
 use tokio::sync::RwLock;
 
 use crate::error::Error;
-use crate::telemetry::prelude::*;
 
 const FILE_NAME: &str = "autosync_settings.json";
-const LEGACY_FILE_NAME: &str = "autopull_settings.json";
 
 /// User-configurable knobs for the background autosync watcher.
 ///
 /// Persisted as `autosync_settings.json` in `app_local_data_dir`. Both
-/// directions default to `false` — the loop is opt-in. The `closed_secs`
-/// field is kept on disk from day one so we don't break the file format
-/// when the tray-icon milestone lands.
+/// directions default to `false` — the loop is opt-in.
 ///
-/// `pull_enabled` and `push_enabled` are independent because most users
-/// want background pulls (cheap, idempotent) without unattended pushes
-/// (commits a snapshot of whatever is on disk to the remote). Splitting
-/// them lets pull turn on by default in a future release without
-/// implicitly opting users into autopush.
+/// `pull` and `push` are independent because most users want background
+/// pulls (cheap, idempotent) without unattended pushes (commits a
+/// snapshot of whatever is on disk to the remote). Splitting them lets
+/// pull turn on by default in a future release without implicitly
+/// opting users into autopush.
 ///
-/// Migration: alpha3 persisted a single `enabled` field meaning "pull
-/// only". The `#[serde(alias = "enabled")]` on `pull_enabled` lets
-/// alpha3 files load transparently — old `{"enabled": true}` becomes
-/// `pull_enabled: true, push_enabled: false`.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+/// On disk the JSON is flat — `#[serde(flatten)]` projects the nested
+/// Rust struct onto the same keys 0.18.0 wrote, so no migration is
+/// required.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct AutosyncSettings {
-    #[serde(default, alias = "enabled")]
-    pub pull_enabled: bool,
-    #[serde(default)]
-    pub push_enabled: bool,
+    #[serde(flatten)]
+    pub pull: PullSettings,
+    #[serde(flatten)]
+    pub push: PushSettings,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct PullSettings {
+    #[serde(default, rename = "pull_enabled")]
+    pub enabled: bool,
     pub focused_secs: u64,
     pub unfocused_secs: u64,
     pub closed_secs: u64,
 }
 
-impl AutosyncSettings {
-    /// Whether either direction is on. Used by the tick to short-circuit
-    /// when the entire loop is opted out.
-    pub fn any_enabled(&self) -> bool {
-        self.pull_enabled || self.push_enabled
-    }
-}
-
-impl Default for AutosyncSettings {
+impl Default for PullSettings {
     fn default() -> Self {
         Self {
-            pull_enabled: false,
-            push_enabled: false,
+            enabled: false,
             focused_secs: 30,
             unfocused_secs: 120,
             closed_secs: 600,
         }
     }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct PushSettings {
+    #[serde(default, rename = "push_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_idle_timeout_secs")]
+    pub idle_timeout_secs: u64,
+}
+
+impl Default for PushSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            idle_timeout_secs: default_idle_timeout_secs(),
+        }
+    }
+}
+
+const fn default_idle_timeout_secs() -> u64 {
+    30
 }
 
 impl AutosyncSettings {
@@ -88,27 +101,6 @@ impl AutosyncSettings {
 pub type SharedAutosyncSettings = Arc<RwLock<AutosyncSettings>>;
 
 pub async fn init(data_dir: &Path) -> Result<SharedAutosyncSettings, Error> {
-    // Best-effort migration from the legacy file name. The JSON shape is
-    // unchanged, so a single `rename` is byte-identical to a round-trip
-    // through serde — and avoids losing user state on a partial
-    // deserialise. `NotFound` is the normal case (fresh install or
-    // already migrated); anything else is logged and the load proceeds.
-    let legacy = data_dir.join(LEGACY_FILE_NAME);
-    let target = data_dir.join(FILE_NAME);
-    if !target.exists() {
-        match tokio::fs::rename(&legacy, &target).await {
-            Ok(()) => {
-                info!("autosync: migrated {LEGACY_FILE_NAME} → {FILE_NAME}");
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => {
-                warn!(
-                    "autosync: failed to migrate {LEGACY_FILE_NAME} → {FILE_NAME}: {err}; \
-                     continuing with whatever exists",
-                );
-            }
-        }
-    }
     let settings = AutosyncSettings::load(data_dir).await?;
     Ok(Arc::new(RwLock::new(settings)))
 }
@@ -119,16 +111,25 @@ mod tests {
 
     use tempfile::TempDir;
 
+    fn nondefault() -> AutosyncSettings {
+        AutosyncSettings {
+            pull: PullSettings {
+                enabled: true,
+                focused_secs: 5,
+                unfocused_secs: 60,
+                closed_secs: 300,
+            },
+            push: PushSettings {
+                enabled: true,
+                idle_timeout_secs: 45,
+            },
+        }
+    }
+
     #[tokio::test]
-    async fn roundtrip_under_new_name() -> Result<(), Error> {
+    async fn roundtrip_under_new_shape() -> Result<(), Error> {
         let dir = TempDir::new().unwrap();
-        let settings = AutosyncSettings {
-            pull_enabled: true,
-            push_enabled: true,
-            focused_secs: 5,
-            unfocused_secs: 60,
-            closed_secs: 300,
-        };
+        let settings = nondefault();
         settings.save(dir.path()).await?;
         assert!(dir.path().join(FILE_NAME).exists());
         let loaded = AutosyncSettings::load(dir.path()).await?;
@@ -141,48 +142,81 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let loaded = AutosyncSettings::load(dir.path()).await?;
         assert_eq!(loaded, AutosyncSettings::default());
-        assert!(!loaded.any_enabled());
+        assert!(!loaded.pull.enabled);
+        assert!(!loaded.push.enabled);
         Ok(())
     }
 
     #[tokio::test]
-    async fn legacy_enabled_field_maps_to_pull_only() -> Result<(), Error> {
-        // alpha3 persisted a single `enabled` flag meaning "pull only".
-        // `#[serde(alias)]` should load such a file as `pull_enabled =
-        // true, push_enabled = false` so an alpha3 → alpha4 upgrade does
-        // not implicitly opt the user into autopush.
+    async fn flat_json_round_trips() -> Result<(), Error> {
+        // The disk shape is flat — `#[serde(flatten)]` projects the nested
+        // Rust struct onto the same JSON keys the 0.18.0 release wrote.
         let dir = TempDir::new().unwrap();
         let path = dir.path().join(FILE_NAME);
-        let payload =
-            br#"{"enabled":true,"focused_secs":42,"unfocused_secs":420,"closed_secs":4200}"#;
+        let payload = br#"{
+            "pull_enabled": true,
+            "push_enabled": false,
+            "focused_secs": 30,
+            "unfocused_secs": 120,
+            "closed_secs": 600,
+            "idle_timeout_secs": 45
+        }"#;
         tokio::fs::write(&path, payload).await?;
-
         let loaded = AutosyncSettings::load(dir.path()).await?;
-        assert!(
-            loaded.pull_enabled,
-            "alpha3 enabled=true should map to pull_enabled"
-        );
-        assert!(!loaded.push_enabled, "alpha3 had no push concept");
-        assert_eq!(loaded.focused_secs, 42);
+        assert!(loaded.pull.enabled);
+        assert!(!loaded.push.enabled);
+        assert_eq!(loaded.pull.focused_secs, 30);
+        assert_eq!(loaded.pull.unfocused_secs, 120);
+        assert_eq!(loaded.pull.closed_secs, 600);
+        assert_eq!(loaded.push.idle_timeout_secs, 45);
         Ok(())
     }
 
     #[tokio::test]
-    async fn legacy_file_is_migrated() -> Result<(), Error> {
+    async fn missing_idle_timeout_defaults_to_30() -> Result<(), Error> {
+        // 0.18.0 JSON shape: no `idle_timeout_secs` key.
+        // `#[serde(default = "default_idle_timeout_secs")]` must fill in 30.
         let dir = TempDir::new().unwrap();
-        let legacy_path = dir.path().join(LEGACY_FILE_NAME);
-        let new_path = dir.path().join(FILE_NAME);
+        let path = dir.path().join(FILE_NAME);
+        let payload = br#"{
+            "pull_enabled": true,
+            "push_enabled": true,
+            "focused_secs": 30,
+            "unfocused_secs": 120,
+            "closed_secs": 600
+        }"#;
+        tokio::fs::write(&path, payload).await?;
+        let loaded = AutosyncSettings::load(dir.path()).await?;
+        assert_eq!(
+            loaded.push.idle_timeout_secs, 30,
+            "0.18.0 files (no idle_timeout_secs) must load with the 30s default"
+        );
+        // Other fields preserved verbatim.
+        assert!(loaded.pull.enabled);
+        assert!(loaded.push.enabled);
+        assert_eq!(loaded.pull.focused_secs, 30);
+        assert_eq!(loaded.pull.unfocused_secs, 120);
+        assert_eq!(loaded.pull.closed_secs, 600);
+        Ok(())
+    }
 
-        // Write an arbitrary JSON blob — migration is a single `rename`,
-        // so the test does not need a typed `AutosyncSettings`.
-        let payload = br#"{"enabled":true,"focused_secs":7,"unfocused_secs":70,"closed_secs":700}"#;
-        tokio::fs::write(&legacy_path, payload).await?;
-
-        let _shared = init(dir.path()).await?;
-
-        assert!(!legacy_path.exists(), "legacy file should be gone");
-        let migrated = tokio::fs::read(&new_path).await?;
-        assert_eq!(migrated, payload, "migration must be byte-identical");
+    #[tokio::test]
+    async fn missing_enabled_keys_default_to_false() -> Result<(), Error> {
+        // Today's behavior: a JSON file missing `pull_enabled` / `push_enabled`
+        // loads as `false` rather than erroring. `#[serde(default)]` on the
+        // two `enabled` fields preserves that.
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join(FILE_NAME);
+        let payload = br#"{
+            "focused_secs": 30,
+            "unfocused_secs": 120,
+            "closed_secs": 600,
+            "idle_timeout_secs": 30
+        }"#;
+        tokio::fs::write(&path, payload).await?;
+        let loaded = AutosyncSettings::load(dir.path()).await?;
+        assert!(!loaded.pull.enabled);
+        assert!(!loaded.push.enabled);
         Ok(())
     }
 }
