@@ -215,7 +215,7 @@ impl<T: Stream<Item = StreamItem>> RowsStream for T {}
 
 /// Builds the manifest from `Stream<Result<Row>>`
 /// It writes the manifest to temporary file using JSONL format.
-/// Then it calclutates top_hash and move the temporary file to the destination path.
+/// Then it calculates `top_hash` and move the temporary file to the destination path.
 pub async fn build_manifest_from_rows_stream(
     storage: &impl Storage,
     dest_dir: PathBuf,

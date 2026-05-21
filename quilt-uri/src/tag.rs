@@ -98,12 +98,12 @@ impl TagUri {
         }
     }
 
-    /// Creates TagURI for the latest revision of the package
+    /// Creates `TagURI` for the latest revision of the package
     pub fn latest(uri: impl Into<S3PackageHandle>) -> Self {
         TagUri::new(uri, Tag::Latest)
     }
 
-    /// Creates TagURI for the revision of the package.
+    /// Creates `TagURI` for the revision of the package.
     pub fn timestamp(uri: impl Into<S3PackageHandle>, seconds: Seconds) -> Self {
         TagUri::new(uri, Tag::Timestamp(seconds))
     }

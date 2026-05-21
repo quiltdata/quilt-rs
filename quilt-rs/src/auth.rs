@@ -572,7 +572,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
         Ok(())
     }
 
-    /// Get a stored OAuth client_id for the host, or register a new one via DCR.
+    /// Get a stored OAuth `client_id` for the host, or register a new one via DCR.
     pub async fn get_or_register_client<T: HttpClient>(
         &self,
         http_client: &T,

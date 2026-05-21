@@ -53,7 +53,7 @@ pub struct InstalledPackageStatus {
     pub upstream_state: UpstreamState,
     /// File changes vs current commit (visible + junky files only)
     pub changes: ChangeSet,
-    /// Files matched by .quiltignore — (path, matched_by pattern, size in bytes)
+    /// Files matched by `.quiltignore` — (path, `matched_by` pattern, size in bytes)
     pub ignored_files: Vec<(PathBuf, String, u64)>,
     /// Files in changes that are also flagged as junk — (path, suggested pattern)
     pub junky_changes: Vec<(PathBuf, String)>,

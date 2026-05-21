@@ -19,7 +19,7 @@ extern "C" {
 /// Call a Tauri command with typed arguments and return type.
 ///
 /// Tauri's `invoke` expects camelCase argument keys (the proc macro
-/// converts snake_case Rust parameter names to camelCase on the JS
+/// converts `snake_case` Rust parameter names to `camelCase` on the JS
 /// side). Use `#[serde(rename_all = "camelCase")]` on arg structs.
 pub async fn invoke<A: Serialize, R: DeserializeOwned>(cmd: &str, args: &A) -> Result<R, String> {
     let args_js = serde_wasm_bindgen::to_value(args).map_err(|e| e.to_string())?;

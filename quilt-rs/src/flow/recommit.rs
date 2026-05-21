@@ -133,7 +133,7 @@ mod tests {
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::PathState;
 
-    /// Helper: create a local package with a single file using the given host_config,
+    /// Helper: create a local package with a single file using the given `host_config`,
     /// returning (lineage, manifest, storage, paths, namespace).
     async fn create_test_package(
         host_config: &HostConfig,

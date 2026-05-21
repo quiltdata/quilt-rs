@@ -311,7 +311,7 @@ pub enum Error {
 }
 
 impl Error {
-    /// Returns `true` if this error represents an S3 "not found" (NoSuchKey) response.
+    /// Returns `true` if this error represents an S3 "not found" (`NoSuchKey`) response.
     pub fn is_not_found(&self) -> bool {
         matches!(self, Error::S3(s3) if s3.is_not_found())
     }

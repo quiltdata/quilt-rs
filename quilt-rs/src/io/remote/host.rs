@@ -15,7 +15,7 @@ use quilt_uri::Host;
 /// Supported checksum algorithms for a host
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HostChecksums {
-    /// CRC64 checksums (NVMe variant)
+    /// CRC64 checksums (`NVMe` variant)
     Crc64,
     /// SHA256 checksums
     // Sha256, Legacy, we dont' use it
@@ -52,7 +52,7 @@ impl Default for HostConfig {
 }
 
 impl HostConfig {
-    /// Create a HostConfig with CRC64 checksums
+    /// Create a `HostConfig` with CRC64 checksums
     pub fn default_crc64() -> Self {
         Self {
             checksums: HostChecksums::Crc64,
@@ -60,7 +60,7 @@ impl HostConfig {
         }
     }
 
-    /// Create a HostConfig with SHA256 chunked checksums
+    /// Create a `HostConfig` with SHA256 chunked checksums
     pub fn default_sha256_chunked() -> Self {
         Self {
             checksums: HostChecksums::Sha256Chunked,

@@ -2128,7 +2128,7 @@ mod tests {
         Ok(())
     }
 
-    /// Helper: create a quilt::InstalledPackage with a given namespace.
+    /// Helper: create a `quilt::InstalledPackage` with a given namespace.
     fn make_installed_package(
         namespace: impl Into<quilt_uri::Namespace>,
     ) -> quilt::InstalledPackage {
@@ -2137,7 +2137,7 @@ mod tests {
             .expect("Failed to create installed package")
     }
 
-    /// Helper: create a ManifestUri with origin for a given namespace.
+    /// Helper: create a `ManifestUri` with origin for a given namespace.
     fn make_manifest_uri(namespace: &str) -> quilt_uri::ManifestUri {
         quilt_uri::ManifestUri {
             origin: Some("test.quilt.dev".parse().unwrap()),
@@ -2147,7 +2147,7 @@ mod tests {
         }
     }
 
-    /// Helper: create a ManifestUri **without** origin (triggers error state).
+    /// Helper: create a `ManifestUri` **without** origin (triggers error state).
     fn make_manifest_uri_no_origin(namespace: &str) -> quilt_uri::ManifestUri {
         quilt_uri::ManifestUri {
             origin: None,
