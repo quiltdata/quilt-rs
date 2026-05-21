@@ -10,7 +10,6 @@ use quilt_uri::Namespace;
 use crate::Error;
 use crate::autopull::PausedReason;
 use crate::autopull::WatcherInner;
-use crate::autopull::cadence_for_mode;
 use crate::autopull::reporter::PackageStatusEvent;
 use crate::model;
 use crate::model::QuiltModel;
@@ -255,7 +254,7 @@ pub(crate) async fn run_once(model: &impl QuiltModel, inner: &WatcherInner) -> R
     // exercises the cheap status refresh and the skip rules.
     let (pull_enabled, push_enabled) = {
         let settings = inner.settings.read().await;
-        (settings.pull_enabled, settings.push_enabled)
+        (settings.pull.enabled, settings.push.enabled)
     };
     if !pull_enabled && !push_enabled {
         return Ok(());
@@ -277,21 +276,15 @@ pub(crate) async fn run_once(model: &impl QuiltModel, inner: &WatcherInner) -> R
     // Snapshot publish settings once per tick so we don't reacquire the
     // RwLock per package. Same lifetime for `quiet_window`.
     //
-    // `quiet_window` is computed from the *current* settings and window
-    // mode, not from the cadence the spawn loop actually slept for. If
-    // the user changes `focused_secs` while a sleep is in progress the
-    // two diverge for one tick — e.g. going 30 s → 300 s, the first
-    // tick after the change applies a 300 s quiet window even though
-    // only 30 s elapsed, deferring once. The drift self-corrects on
-    // the next tick (the spawn loop will then sleep for 300 s), so it
-    // is cosmetic, not a data-loss risk; plumbing the slept cadence
-    // through `run_once` to fix it would be ~15 lines for a settings-
-    // change-only edge case.
+    // `quiet_window` is the constant `push.idle_timeout_secs`. It does
+    // not depend on window mode anymore — that coupling was the bug.
+    // The sleep loop in `Watcher::spawn` still reads
+    // `cadence_for_mode(&settings.pull, mode)`, so pull frequency and
+    // push quiet window can be tuned independently.
     let publish = inner.publish_settings.read().await.clone();
     let quiet_window = {
         let settings = inner.settings.read().await;
-        let mode = *inner.window_mode.read().await;
-        cadence_for_mode(&settings, mode)
+        Duration::from_secs(settings.push.idle_timeout_secs)
     };
 
     let now = Instant::now();
@@ -402,6 +395,8 @@ mod tests {
     use tokio::sync::RwLock;
 
     use crate::autopull::AutosyncSettings;
+    use crate::autopull::PullSettings;
+    use crate::autopull::PushSettings;
     use crate::autopull::WindowMode;
     use crate::autopull::reporter::LogReporter;
     use crate::autopull::reporter::test_support::RecordingReporter;
@@ -421,9 +416,14 @@ mod tests {
 
     fn enabled() -> AutosyncSettings {
         AutosyncSettings {
-            pull_enabled: true,
-            push_enabled: true,
-            ..AutosyncSettings::default()
+            pull: PullSettings {
+                enabled: true,
+                ..PullSettings::default()
+            },
+            push: PushSettings {
+                enabled: true,
+                ..PushSettings::default()
+            },
         }
     }
 
@@ -882,9 +882,14 @@ mod tests {
     ) -> WatcherInner {
         WatcherInner {
             settings: Arc::new(RwLock::new(AutosyncSettings {
-                pull_enabled,
-                push_enabled,
-                ..AutosyncSettings::default()
+                pull: PullSettings {
+                    enabled: pull_enabled,
+                    ..PullSettings::default()
+                },
+                push: PushSettings {
+                    enabled: push_enabled,
+                    ..PushSettings::default()
+                },
             })),
             window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
             publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
@@ -1275,6 +1280,61 @@ mod tests {
         let logins = reporter.logins.lock().unwrap();
         assert_eq!(logins.len(), 1);
         assert_eq!(logins[0].as_ref(), Some(&host));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn publish_quiet_window_reads_idle_timeout_not_pull_cadence() -> Result<(), Error> {
+        // The push-side quiet window must come from
+        // `push.idle_timeout_secs`, not `cadence_for_mode(...)`.
+        // Concretely: with focused_secs=5 and idle_timeout_secs=60, a
+        // tick taken with most_recent_mtime=30s-ago must NOT publish
+        // (still inside the 60s idle window), even though the pull
+        // cadence (5s) has long elapsed.
+        let ns: Namespace = ("acme", "demo").into();
+        let mut changes = BTreeMap::new();
+        changes.insert(
+            std::path::PathBuf::from("file.txt"),
+            quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+        );
+        let mut status =
+            quilt::lineage::InstalledPackageStatus::new(UpstreamState::UpToDate, changes);
+        status.most_recent_mtime = Some(SystemTime::now() - Duration::from_secs(30));
+
+        let lineage =
+            quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
+        let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
+        // Mockall panics if package_publish is called — that's the assertion.
+        model.expect_package_publish().times(0);
+
+        let settings = AutosyncSettings {
+            pull: PullSettings {
+                enabled: true,
+                focused_secs: 5,
+                unfocused_secs: 5,
+                closed_secs: 5,
+            },
+            push: PushSettings {
+                enabled: true,
+                idle_timeout_secs: 60,
+            },
+        };
+        let reporter = Arc::new(RecordingReporter::default());
+        let inner = WatcherInner {
+            settings: Arc::new(RwLock::new(settings)),
+            window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
+            publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
+            paused: RwLock::new(BTreeMap::new()),
+            backoff: RwLock::new(BTreeMap::new()),
+            reporter: reporter.clone(),
+        };
+
+        run_once(&model, &inner).await?;
+
+        assert!(
+            reporter.published.lock().unwrap().is_empty(),
+            "tick must defer publish while inside the 60s idle window"
+        );
         Ok(())
     }
 

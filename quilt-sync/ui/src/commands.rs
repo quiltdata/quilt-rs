@@ -88,14 +88,13 @@ pub struct PublishSettingsData {
     pub default_metadata: String,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AutosyncSettingsData {
     pub pull_enabled: bool,
     pub push_enabled: bool,
-    pub focused_secs: u64,
-    pub unfocused_secs: u64,
-    pub closed_secs: u64,
+    pub pull_interval_secs: u64,
+    pub idle_timeout_secs: u64,
 }
 
 impl Default for AutosyncSettingsData {
@@ -103,9 +102,8 @@ impl Default for AutosyncSettingsData {
         Self {
             pull_enabled: false,
             push_enabled: false,
-            focused_secs: 30,
-            unfocused_secs: 120,
-            closed_secs: 600,
+            pull_interval_secs: 30,
+            idle_timeout_secs: 300,
         }
     }
 }
@@ -436,33 +434,13 @@ pub async fn update_publish_settings(
     .await
 }
 
-pub async fn update_autosync_settings(
-    pull_enabled: bool,
-    push_enabled: bool,
-    focused_secs: u64,
-    unfocused_secs: u64,
-    closed_secs: u64,
-) -> Result<(), String> {
+pub async fn update_autosync_settings(settings: AutosyncSettingsData) -> Result<(), String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {
-        pull_enabled: bool,
-        push_enabled: bool,
-        focused_secs: u64,
-        unfocused_secs: u64,
-        closed_secs: u64,
+        settings: AutosyncSettingsData,
     }
-    tauri::invoke(
-        "update_autosync_settings",
-        &Args {
-            pull_enabled,
-            push_enabled,
-            focused_secs,
-            unfocused_secs,
-            closed_secs,
-        },
-    )
-    .await
+    tauri::invoke("update_autosync_settings", &Args { settings }).await
 }
 
 pub async fn update_fswatcher_settings(enabled: bool) -> Result<(), String> {

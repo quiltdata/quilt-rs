@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.18.1] - 2026-05-21
+
+### Changed
+
+- Autosync: pull cadence and push quiet window are now independent — the popup shows two inputs (**Pull interval** and **Wait after last edit before publishing**), and autopush now waits a constant 5 min after the last edit (new key `idle_timeout_secs`, default 300 s) instead of the previous 30 s / 120 s window-dependent wait (<https://github.com/quiltdata/quilt-rs/pull/690>)
+
 ## [v0.18.0] - 2026-05-19
 
 ### Added
