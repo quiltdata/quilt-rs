@@ -14,14 +14,10 @@ pub mod reporter;
 pub mod settings;
 pub mod tick;
 
-#[allow(unused_imports)]
-pub use reporter::LogReporter;
-#[allow(unused_imports)]
 pub use reporter::PackageStatusEvent;
 pub use reporter::StatusReporter;
 pub use settings::AutosyncSettings;
 pub use settings::PullSettings;
-#[allow(unused_imports)]
 pub use settings::PushSettings;
 pub use settings::SharedAutosyncSettings;
 pub use settings::init as init_settings;
@@ -194,6 +190,7 @@ pub fn cadence_for_mode(pull: &PullSettings, mode: WindowMode) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reporter::LogReporter;
 
     #[test]
     fn cadence_picks_per_mode_secs() {
