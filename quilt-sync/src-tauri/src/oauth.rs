@@ -39,11 +39,11 @@ pub struct AuthorizeRequest {
     pub authorize_url: String,
 }
 
-/// The redirect URI for QuiltSync OAuth callbacks.
+/// The redirect URI for `QuiltSync` OAuth callbacks.
 ///
 /// The Connect server redirects here after the user authorizes.
 /// The `quilt://` scheme is registered as a deep link, so the OS
-/// routes the callback to QuiltSync where `uri::login_with_code` handles it.
+/// routes the callback to `QuiltSync` where `uri::login_with_code` handles it.
 pub fn redirect_uri(host: &quilt_uri::Host) -> String {
     format!(
         "quilt://auth/callback?host={}",

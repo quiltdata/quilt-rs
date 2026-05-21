@@ -348,8 +348,8 @@ impl Manifest {
     }
 
     /// Create a stream of rows compatible with Table API
-    /// Returns a stream of Row chunks for compatibility with io::manifest streaming functions
-    /// Sorted by logical_key to match Table's BTreeMap behavior and uses proper TryFrom conversion
+    /// Returns a stream of Row chunks for compatibility with `io::manifest` streaming functions
+    /// Sorted by `logical_key` to match `Table`'s `BTreeMap` behavior and uses proper `TryFrom` conversion
     pub async fn records_stream(&self) -> impl RowsStream {
         // Sort by logical_key to match Table's BTreeMap ordering
         let mut indices: Vec<usize> = (0..self.rows.len()).collect();

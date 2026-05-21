@@ -19,7 +19,6 @@ pedantic = { level = "deny", priority = -1 }
 # Documentation pedantic lints — too noisy for our internal API surface.
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
-doc_markdown = "allow"
 # Stylistic / debatable — keep code as-is.
 must_use_candidate = "allow"
 module_name_repetitions = "allow"

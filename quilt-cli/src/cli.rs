@@ -97,14 +97,14 @@ enum Commands {
         #[arg(short, long)]
         namespace: String,
         /// Workflow ID
-        /// Ex. "my_workflow"
+        /// Ex. `"my_workflow"`
         #[arg(short, long)]
         workflow: Option<String>,
     },
     /// Install package locally
     Install {
         /// Source URI for the package.
-        /// Ex. quilt+s3://bucket#package=foo/bar
+        /// Ex. `quilt+s3://bucket#package=foo/bar`
         #[arg(value_name = "PKG_URI")]
         uri: String,
         /// Namespace for the package, ex. foo/bar.
@@ -117,7 +117,7 @@ enum Commands {
     },
     /// List installed packages
     Login {
-        /// Code from the https://QUILT_STACK/code page
+        /// Code from the `https://QUILT_STACK/code` page
         #[arg(short, long)]
         code: Option<String>,
         #[arg(long)]

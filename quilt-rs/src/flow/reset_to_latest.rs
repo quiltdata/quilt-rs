@@ -221,7 +221,7 @@ mod tests {
     }
 
     /// Regression: `reset_to_latest` must clear `lineage.commit`. Otherwise
-    /// the lineage stays self-inconsistent (UpToDate on hashes, Ahead via
+    /// the lineage stays self-inconsistent (`UpToDate` on hashes, Ahead via
     /// `current_hash()`), and a later Diverged → merge → "Promote my
     /// revision" would push and tag the very revision the user just
     /// discarded.
