@@ -449,7 +449,7 @@ fn AutosyncSection(
 
     view! {
         <section class="settings-section qui-autosync-settings">
-            <h2 class="section-title">"Background Autosync"</h2>
+            <h2 class="section-title">"Autosync"</h2>
             <p class="section-description">
                 "Autosync periodically refreshes installed remote packages and, if you opt in, publishes mapped folders that have local changes or a pending commit. The two directions are toggled independently — many users want background pulls without unattended pushes."
             </p>

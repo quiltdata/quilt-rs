@@ -424,8 +424,9 @@ uses for every package (no per-package overrides).
 
 ### Edit Autosync Settings Popup
 
-Shown when clicking `[Edit]` in Settings → Background Autosync.
-Form for the two direction toggles and three refresh cadences.
+Shown when clicking `[Edit]` in Settings → Autosync.
+Form for the two direction toggles, the pull interval, and the
+publish quiet window.
 
 ```text
 +---------------------------------------------------------+
@@ -488,8 +489,8 @@ Application settings and diagnostics.
 |                                                         |
 |  [Edit]                                                 |
 |                                                         |
-|  Background Autosync                                    |
-|  -------------------                                    |
+|  Autosync                                               |
+|  --------                                               |
 |  Pull (remote -> local)        Off                      |
 |  Push (local -> remote)        Off                      |
 |  Pull interval                 30 s                     |
