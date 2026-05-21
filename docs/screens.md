@@ -442,7 +442,7 @@ publish quiet window.
 |  [ 30 ]                                                 |
 |                                                         |
 |  Wait after last edit before publishing (seconds)       |
-|  [ 30 ]                                                 |
+|  [ 300 ]                                                |
 |                                                         |
 |  [Save]  [Cancel]   Reset to defaults                   |
 |                                                         |
@@ -459,7 +459,7 @@ publish quiet window.
   conflicts — those still require explicit user action via
   **Merge** or **Set Remote**.
 - `Reset to defaults` restores the shipped defaults (both off,
-  30 s pull interval, 30 s wait) but does not save — user still
+  30 s pull interval, 300 s wait) but does not save — user still
   has to click `[Save]`.
 - After save -> popup closes, watcher cadence updates immediately,
   Settings page reloads.
@@ -494,7 +494,7 @@ Application settings and diagnostics.
 |  Pull (remote -> local)        Off                      |
 |  Push (local -> remote)        Off                      |
 |  Pull interval                 30 s                     |
-|  Wait after last edit          30 s                     |
+|  Wait after last edit          300 s                    |
 |                                                         |
 |  [Edit]                                                 |
 |                                                         |

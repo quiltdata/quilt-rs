@@ -70,7 +70,7 @@ impl Default for PushSettings {
 }
 
 const fn default_idle_timeout_secs() -> u64 {
-    30
+    300
 }
 
 impl AutosyncSettings {
@@ -173,9 +173,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_idle_timeout_defaults_to_30() -> Result<(), Error> {
+    async fn missing_idle_timeout_uses_default() -> Result<(), Error> {
         // 0.18.0 JSON shape: no `idle_timeout_secs` key.
-        // `#[serde(default = "default_idle_timeout_secs")]` must fill in 30.
+        // `#[serde(default = "default_idle_timeout_secs")]` must fill in 300.
         let dir = TempDir::new().unwrap();
         let path = dir.path().join(FILE_NAME);
         let payload = br#"{
@@ -188,8 +188,8 @@ mod tests {
         tokio::fs::write(&path, payload).await?;
         let loaded = AutosyncSettings::load(dir.path()).await?;
         assert_eq!(
-            loaded.push.idle_timeout_secs, 30,
-            "0.18.0 files (no idle_timeout_secs) must load with the 30s default"
+            loaded.push.idle_timeout_secs, 300,
+            "0.18.0 files (no idle_timeout_secs) must load with the 300s default"
         );
         // Other fields preserved verbatim.
         assert!(loaded.pull.enabled);
