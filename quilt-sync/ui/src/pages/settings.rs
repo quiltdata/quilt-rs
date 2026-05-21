@@ -443,14 +443,13 @@ fn AutosyncSection(
     let show_popup = RwSignal::new(false);
     let pull_display = if autosync.pull_enabled { "On" } else { "Off" };
     let push_display = if autosync.push_enabled { "On" } else { "Off" };
-    let focused = autosync.focused_secs;
-    let unfocused = autosync.unfocused_secs;
-    let closed = autosync.closed_secs;
+    let pull_interval = autosync.pull_interval_secs;
+    let idle_timeout = autosync.idle_timeout_secs;
     let current = autosync.clone();
 
     view! {
         <section class="settings-section qui-autosync-settings">
-            <h2 class="section-title">"Background Autosync"</h2>
+            <h2 class="section-title">"Autosync"</h2>
             <p class="section-description">
                 "Autosync periodically refreshes installed remote packages and, if you opt in, publishes mapped folders that have local changes or a pending commit. The two directions are toggled independently — many users want background pulls without unattended pushes."
             </p>
@@ -461,17 +460,11 @@ fn AutosyncSection(
                 <dt>"Push (local → remote)"</dt>
                 <dd><span class="value">{push_display}</span></dd>
 
-                <dt>"Refresh when focused"</dt>
-                <dd><span class="value">{format!("{focused} s")}</span></dd>
+                <dt>"Pull interval"</dt>
+                <dd><span class="value">{format!("{pull_interval} s")}</span></dd>
 
-                <dt>"Refresh when unfocused"</dt>
-                <dd><span class="value">{format!("{unfocused} s")}</span></dd>
-
-                <dt>"Refresh when window closed"</dt>
-                <dd>
-                    <span class="value">{format!("{closed} s")}</span>
-                    <span class="value default"> "(takes effect once tray icon ships)"</span>
-                </dd>
+                <dt>"Wait after last edit before publishing"</dt>
+                <dd><span class="value">{format!("{idle_timeout} s")}</span></dd>
             </dl>
             <div class="settings-actions">
                 <button
@@ -504,9 +497,8 @@ fn AutosyncSettingsPopup(
 ) -> impl IntoView {
     let pull_enabled = RwSignal::new(current.pull_enabled);
     let push_enabled = RwSignal::new(current.push_enabled);
-    let focused_secs = RwSignal::new(current.focused_secs.to_string());
-    let unfocused_secs = RwSignal::new(current.unfocused_secs.to_string());
-    let closed_secs = RwSignal::new(current.closed_secs.to_string());
+    let pull_interval_secs = RwSignal::new(current.pull_interval_secs.to_string());
+    let idle_timeout_secs = RwSignal::new(current.idle_timeout_secs.to_string());
     let parse_error = RwSignal::new(None::<String>);
     let saving = RwSignal::new(false);
 
@@ -515,29 +507,18 @@ fn AutosyncSettingsPopup(
         if saving.get_untracked() {
             return;
         }
-        let focused = match focused_secs.get_untracked().trim().parse::<u64>() {
+        let pull_interval = match pull_interval_secs.get_untracked().trim().parse::<u64>() {
             Ok(n) if n >= 1 => n,
             _ => {
-                parse_error.set(Some(
-                    "Focused cadence must be a positive integer".to_string(),
-                ));
+                parse_error.set(Some("Pull interval must be a positive integer".to_string()));
                 return;
             }
         };
-        let unfocused = match unfocused_secs.get_untracked().trim().parse::<u64>() {
+        let idle_timeout = match idle_timeout_secs.get_untracked().trim().parse::<u64>() {
             Ok(n) if n >= 1 => n,
             _ => {
                 parse_error.set(Some(
-                    "Unfocused cadence must be a positive integer".to_string(),
-                ));
-                return;
-            }
-        };
-        let closed = match closed_secs.get_untracked().trim().parse::<u64>() {
-            Ok(n) if n >= 1 => n,
-            _ => {
-                parse_error.set(Some(
-                    "Closed cadence must be a positive integer".to_string(),
+                    "Wait after last edit must be a positive integer".to_string(),
                 ));
                 return;
             }
@@ -545,12 +526,14 @@ fn AutosyncSettingsPopup(
         parse_error.set(None);
         saving.set(true);
         let on_close = on_close_save.clone();
-        let pull_val = pull_enabled.get_untracked();
-        let push_val = push_enabled.get_untracked();
+        let settings = AutosyncSettingsData {
+            pull_enabled: pull_enabled.get_untracked(),
+            push_enabled: push_enabled.get_untracked(),
+            pull_interval_secs: pull_interval,
+            idle_timeout_secs: idle_timeout,
+        };
         leptos::task::spawn_local(async move {
-            match commands::update_autosync_settings(pull_val, push_val, focused, unfocused, closed)
-                .await
-            {
+            match commands::update_autosync_settings(settings).await {
                 Ok(()) => {
                     notification.set(Some(Notification::Success(
                         "Autosync settings saved".into(),
@@ -568,9 +551,8 @@ fn AutosyncSettingsPopup(
         let defaults = AutosyncSettingsData::default();
         pull_enabled.set(defaults.pull_enabled);
         push_enabled.set(defaults.push_enabled);
-        focused_secs.set(defaults.focused_secs.to_string());
-        unfocused_secs.set(defaults.unfocused_secs.to_string());
-        closed_secs.set(defaults.closed_secs.to_string());
+        pull_interval_secs.set(defaults.pull_interval_secs.to_string());
+        idle_timeout_secs.set(defaults.idle_timeout_secs.to_string());
         parse_error.set(None);
     };
 
@@ -614,42 +596,27 @@ fn AutosyncSettingsPopup(
                 </div>
 
                 <div class="field">
-                    <label for="autosync-focused-secs">"Refresh interval (focused, seconds)"</label>
+                    <label for="autosync-pull-interval-secs">"Pull interval (seconds)"</label>
                     <input
                         class="input"
-                        id="autosync-focused-secs"
+                        id="autosync-pull-interval-secs"
                         type="number"
                         min="1"
-                        prop:value=move || focused_secs.get()
-                        on:input=move |ev| focused_secs.set(event_target_value(&ev))
+                        prop:value=move || pull_interval_secs.get()
+                        on:input=move |ev| pull_interval_secs.set(event_target_value(&ev))
                     />
                 </div>
 
                 <div class="field">
-                    <label for="autosync-unfocused-secs">"Refresh interval (unfocused, seconds)"</label>
+                    <label for="autosync-idle-timeout-secs">"Wait after last edit before publishing (seconds)"</label>
                     <input
                         class="input"
-                        id="autosync-unfocused-secs"
+                        id="autosync-idle-timeout-secs"
                         type="number"
                         min="1"
-                        prop:value=move || unfocused_secs.get()
-                        on:input=move |ev| unfocused_secs.set(event_target_value(&ev))
+                        prop:value=move || idle_timeout_secs.get()
+                        on:input=move |ev| idle_timeout_secs.set(event_target_value(&ev))
                     />
-                </div>
-
-                <div class="field">
-                    <label for="autosync-closed-secs">"Refresh interval (closed window, seconds)"</label>
-                    <input
-                        class="input"
-                        id="autosync-closed-secs"
-                        type="number"
-                        min="1"
-                        prop:value=move || closed_secs.get()
-                        on:input=move |ev| closed_secs.set(event_target_value(&ev))
-                    />
-                    <p class="field-description">
-                        "Takes effect once the tray-icon feature ships. Stored on disk now to keep the settings file forward-compatible."
-                    </p>
                 </div>
 
                 <Show when=move || parse_error.get().is_some()>

@@ -14,12 +14,11 @@ pub mod reporter;
 pub mod settings;
 pub mod tick;
 
-#[allow(unused_imports)]
-pub use reporter::LogReporter;
-#[allow(unused_imports)]
 pub use reporter::PackageStatusEvent;
 pub use reporter::StatusReporter;
 pub use settings::AutosyncSettings;
+pub use settings::PullSettings;
+pub use settings::PushSettings;
 pub use settings::SharedAutosyncSettings;
 pub use settings::init as init_settings;
 
@@ -107,7 +106,7 @@ impl Watcher {
                 let cadence = {
                     let settings = task_inner.settings.read().await;
                     let mode = *task_inner.window_mode.read().await;
-                    cadence_for_mode(&settings, mode)
+                    cadence_for_mode(&settings.pull, mode)
                 };
                 tokio::time::sleep(cadence).await;
                 let model_state = app_handle.state::<Model>();
@@ -179,11 +178,11 @@ impl Watcher {
     }
 }
 
-pub fn cadence_for_mode(settings: &AutosyncSettings, mode: WindowMode) -> Duration {
+pub fn cadence_for_mode(pull: &PullSettings, mode: WindowMode) -> Duration {
     let secs = match mode {
-        WindowMode::Focused => settings.focused_secs,
-        WindowMode::Unfocused => settings.unfocused_secs,
-        WindowMode::Closed => settings.closed_secs,
+        WindowMode::Focused => pull.focused_secs,
+        WindowMode::Unfocused => pull.unfocused_secs,
+        WindowMode::Closed => pull.closed_secs,
     };
     Duration::from_secs(secs)
 }
@@ -191,27 +190,27 @@ pub fn cadence_for_mode(settings: &AutosyncSettings, mode: WindowMode) -> Durati
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reporter::LogReporter;
 
     #[test]
     fn cadence_picks_per_mode_secs() {
-        let s = AutosyncSettings {
-            pull_enabled: true,
-            push_enabled: true,
+        let pull = settings::PullSettings {
+            enabled: true,
             focused_secs: 1,
             unfocused_secs: 2,
             closed_secs: 3,
         };
         assert_eq!(
-            cadence_for_mode(&s, WindowMode::Focused),
-            Duration::from_secs(1)
+            cadence_for_mode(&pull, WindowMode::Focused),
+            Duration::from_secs(1),
         );
         assert_eq!(
-            cadence_for_mode(&s, WindowMode::Unfocused),
-            Duration::from_secs(2)
+            cadence_for_mode(&pull, WindowMode::Unfocused),
+            Duration::from_secs(2),
         );
         assert_eq!(
-            cadence_for_mode(&s, WindowMode::Closed),
-            Duration::from_secs(3)
+            cadence_for_mode(&pull, WindowMode::Closed),
+            Duration::from_secs(3),
         );
     }
 

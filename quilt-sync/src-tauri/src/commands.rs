@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use rfd::FileDialog;
+use serde::Deserialize;
 use serde::Serialize;
 use tauri::Manager;
 use tauri_plugin_updater::UpdaterExt;
@@ -12,6 +13,8 @@ use tokio::sync;
 use crate::Error;
 use crate::app;
 use crate::autopull::AutosyncSettings;
+use crate::autopull::PullSettings;
+use crate::autopull::PushSettings;
 use crate::autopull::SharedAutosyncSettings;
 use crate::autopull::Watcher;
 use crate::fswatcher::FsWatcherSettings;
@@ -268,25 +271,59 @@ impl From<PublishSettings> for PublishSettingsData {
     }
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AutosyncSettingsData {
     pub pull_enabled: bool,
     pub push_enabled: bool,
-    pub focused_secs: u64,
-    pub unfocused_secs: u64,
-    pub closed_secs: u64,
+    pub pull_interval_secs: u64,
+    pub idle_timeout_secs: u64,
 }
 
 impl From<AutosyncSettings> for AutosyncSettingsData {
     fn from(s: AutosyncSettings) -> Self {
+        // `pull_interval_secs` projects `focused_secs`. On a hand-edited
+        // JSON where focused != unfocused, the UI shows the focused value
+        // — what an active user experiences — and a Save will write both
+        // fields to the same value via `merge_autosync_settings_data`.
         Self {
-            pull_enabled: s.pull_enabled,
-            push_enabled: s.push_enabled,
-            focused_secs: s.focused_secs,
-            unfocused_secs: s.unfocused_secs,
-            closed_secs: s.closed_secs,
+            pull_enabled: s.pull.enabled,
+            push_enabled: s.push.enabled,
+            pull_interval_secs: s.pull.focused_secs,
+            idle_timeout_secs: s.push.idle_timeout_secs,
         }
+    }
+}
+
+fn validate_autosync_settings_data(data: &AutosyncSettingsData) -> Result<(), String> {
+    if data.pull_interval_secs == 0 {
+        return Err("pull_interval_secs must be > 0".to_string());
+    }
+    if data.idle_timeout_secs == 0 {
+        return Err("idle_timeout_secs must be > 0".to_string());
+    }
+    Ok(())
+}
+
+/// Project `AutosyncSettingsData` onto a full `AutosyncSettings` by
+/// overwriting only the UI-owned fields on top of the current disk
+/// state. `closed_secs` — and any future disk-only field — flows
+/// through untouched.
+fn merge_autosync_settings_data(
+    current: &AutosyncSettings,
+    incoming: &AutosyncSettingsData,
+) -> AutosyncSettings {
+    AutosyncSettings {
+        pull: PullSettings {
+            enabled: incoming.pull_enabled,
+            focused_secs: incoming.pull_interval_secs,
+            unfocused_secs: incoming.pull_interval_secs,
+            closed_secs: current.pull.closed_secs,
+        },
+        push: PushSettings {
+            enabled: incoming.push_enabled,
+            idle_timeout_secs: incoming.idle_timeout_secs,
+        },
     }
 }
 
@@ -408,24 +445,13 @@ fn opt_from_string(s: &str) -> Option<String> {
 }
 
 #[tauri::command]
-#[allow(clippy::too_many_arguments)] // Tauri commands flatten state + args; splitting would just hide the wire shape.
 pub async fn update_autosync_settings(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     autosync_settings: tauri::State<'_, SharedAutosyncSettings>,
     watcher: tauri::State<'_, Watcher>,
-    pull_enabled: bool,
-    push_enabled: bool,
-    focused_secs: u64,
-    unfocused_secs: u64,
-    closed_secs: u64,
+    settings: AutosyncSettingsData,
 ) -> Result<(), String> {
-    let new = AutosyncSettings {
-        pull_enabled,
-        push_enabled,
-        focused_secs,
-        unfocused_secs,
-        closed_secs,
-    };
+    validate_autosync_settings_data(&settings)?;
 
     let app_handle = app_handle.lock().await;
     let data_dir = app_handle
@@ -433,20 +459,19 @@ pub async fn update_autosync_settings(
         .app_local_data_dir()
         .map_err(|e| e.to_string())?;
 
-    new.save(&data_dir).await.map_err(|e| e.to_string())?;
     let prev_any_enabled = {
         let mut current = autosync_settings.write().await;
-        let prev = current.any_enabled();
-        *current = new;
+        let merged = merge_autosync_settings_data(&current, &settings);
+        merged.save(&data_dir).await.map_err(|e| e.to_string())?;
+        let prev = current.pull.enabled || current.push.enabled;
+        *current = merged;
         prev
     };
     // Flipping the overall "off → on" edge clears the paused set: a
     // re-enable in either direction is a signal that the user wants
     // the watcher to retry every namespace, not just the ones they
-    // touched manually. Per-direction toggles (e.g. push off → on
-    // while pull was already on) do not clear; nothing about the
-    // watcher's pause-set was suppressed in that case.
-    if !prev_any_enabled && (pull_enabled || push_enabled) {
+    // touched manually.
+    if !prev_any_enabled && (settings.pull_enabled || settings.push_enabled) {
         watcher.clear_all_paused().await;
     }
     Ok(())
@@ -3093,4 +3118,116 @@ mod tests {
     }
 
     // ── has_changes tests ──
+
+    // ── autosync settings IPC tests ──
+
+    mod autosync_settings {
+        use super::super::*;
+
+        use tempfile::TempDir;
+
+        use crate::autopull::AutosyncSettings;
+        use crate::autopull::PullSettings;
+        use crate::autopull::PushSettings;
+
+        #[test]
+        fn data_from_settings_projects_focused_onto_pull_interval() {
+            let s = AutosyncSettings {
+                pull: PullSettings {
+                    enabled: true,
+                    focused_secs: 45,
+                    unfocused_secs: 999, // hand-edited divergence
+                    closed_secs: 600,
+                },
+                push: PushSettings {
+                    enabled: true,
+                    idle_timeout_secs: 22,
+                },
+            };
+            let data = AutosyncSettingsData::from(s);
+            assert!(data.pull_enabled);
+            assert!(data.push_enabled);
+            assert_eq!(
+                data.pull_interval_secs, 45,
+                "focused wins on divergent files — that is what an active user feels",
+            );
+            assert_eq!(data.idle_timeout_secs, 22);
+        }
+
+        #[tokio::test]
+        async fn merge_preserves_closed_secs() -> Result<(), Error> {
+            // Save a settings file with a non-default `closed_secs`, then run
+            // the merge logic with arbitrary UI-owned values, and verify
+            // `closed_secs` survives on disk.
+            let dir = TempDir::new().unwrap();
+            let initial = AutosyncSettings {
+                pull: PullSettings {
+                    enabled: true,
+                    focused_secs: 30,
+                    unfocused_secs: 120,
+                    closed_secs: 999,
+                },
+                push: PushSettings {
+                    enabled: false,
+                    idle_timeout_secs: 30,
+                },
+            };
+            initial.save(dir.path()).await?;
+
+            let incoming = AutosyncSettingsData {
+                pull_enabled: false,
+                push_enabled: true,
+                pull_interval_secs: 7,
+                idle_timeout_secs: 9,
+            };
+            let merged = merge_autosync_settings_data(&initial, &incoming);
+
+            assert!(!merged.pull.enabled);
+            assert!(merged.push.enabled);
+            assert_eq!(merged.pull.focused_secs, 7);
+            assert_eq!(
+                merged.pull.unfocused_secs, 7,
+                "UI ties focused == unfocused"
+            );
+            assert_eq!(
+                merged.pull.closed_secs, 999,
+                "closed_secs must flow through untouched"
+            );
+            assert_eq!(merged.push.idle_timeout_secs, 9);
+            Ok(())
+        }
+
+        #[test]
+        fn validate_rejects_zero_pull_interval() {
+            let bad = AutosyncSettingsData {
+                pull_enabled: true,
+                push_enabled: true,
+                pull_interval_secs: 0,
+                idle_timeout_secs: 30,
+            };
+            assert!(validate_autosync_settings_data(&bad).is_err());
+        }
+
+        #[test]
+        fn validate_rejects_zero_idle_timeout() {
+            let bad = AutosyncSettingsData {
+                pull_enabled: true,
+                push_enabled: true,
+                pull_interval_secs: 30,
+                idle_timeout_secs: 0,
+            };
+            assert!(validate_autosync_settings_data(&bad).is_err());
+        }
+
+        #[test]
+        fn validate_accepts_positive_values() {
+            let ok = AutosyncSettingsData {
+                pull_enabled: true,
+                push_enabled: true,
+                pull_interval_secs: 1,
+                idle_timeout_secs: 1,
+            };
+            assert!(validate_autosync_settings_data(&ok).is_ok());
+        }
+    }
 }
