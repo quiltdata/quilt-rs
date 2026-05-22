@@ -141,13 +141,26 @@ impl SyncTrayAggregator {
     }
 
     /// Drop both the error and dirty entries for a namespace. Used by
-    /// the user-initiated unpause and by the package-uninstalled
-    /// reconciliation step in `tick.rs`.
+    /// the user-initiated unpause path.
     pub fn note_cleared(&self, ns: &Namespace) {
         {
             let mut state = self.state.lock().expect("aggregator lock");
             state.errors.remove(ns);
             state.dirty.remove(ns);
+        }
+        self.publish();
+    }
+
+    /// Drop every namespace that is **not** in `keep`. Called once per
+    /// tick so the aggregator's per-namespace maps stay in lockstep
+    /// with the installed package set — without this, an uninstalled
+    /// package would leave the tray stuck in `Paused`/`Error` mode or
+    /// keep its dirty bit counted in `pending_changes`.
+    pub fn retain_namespaces(&self, keep: &std::collections::BTreeSet<Namespace>) {
+        {
+            let mut state = self.state.lock().expect("aggregator lock");
+            state.errors.retain(|ns, _| keep.contains(ns));
+            state.dirty.retain(|ns, _| keep.contains(ns));
         }
         self.publish();
     }
@@ -352,6 +365,38 @@ mod tests {
         assert_eq!(
             after.pending_changes, 1,
             "dirty bit must survive a clear_error call",
+        );
+    }
+
+    #[test]
+    fn retain_namespaces_drops_orphan_errors_and_dirty() {
+        use std::collections::BTreeSet;
+
+        let (agg, rx) = new_aggregator();
+        let ns_keep: Namespace = ("acme", "keep").into();
+        let ns_paused_drop: Namespace = ("acme", "uninstalled-paused").into();
+        let ns_dirty_drop: Namespace = ("acme", "uninstalled-dirty").into();
+
+        agg.note_paused(&ns_keep, "still here");
+        agg.note_status(&ns_keep, true);
+        agg.note_paused(&ns_paused_drop, "stale");
+        agg.note_status(&ns_dirty_drop, true);
+        assert_eq!(rx.borrow().pending_changes, 2);
+        assert_eq!(rx.borrow().mode, TrayMode::Paused);
+
+        let mut keep = BTreeSet::new();
+        keep.insert(ns_keep.clone());
+        agg.retain_namespaces(&keep);
+
+        let after = rx.borrow().clone();
+        assert_eq!(
+            after.error.as_deref(),
+            Some("still here"),
+            "uninstalled namespaces must not leak their pause message",
+        );
+        assert_eq!(
+            after.pending_changes, 1,
+            "orphan dirty entries must be dropped on reconciliation",
         );
     }
 }

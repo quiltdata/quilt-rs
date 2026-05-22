@@ -272,19 +272,12 @@ pub(crate) async fn run_once(model: &impl QuiltModel, inner: &WatcherInner) -> R
         .write()
         .await
         .retain(|ns, _| current.contains(ns));
-    {
-        let mut login = inner.login_blocked.write().await;
-        let dropped: Vec<Namespace> = login
-            .keys()
-            .filter(|ns| !current.contains(ns))
-            .cloned()
-            .collect();
-        login.retain(|ns, _| current.contains(ns));
-        drop(login);
-        for ns in dropped {
-            inner.aggregator.note_cleared(&ns);
-        }
-    }
+    inner
+        .login_blocked
+        .write()
+        .await
+        .retain(|ns, _| current.contains(ns));
+    inner.aggregator.retain_namespaces(&current);
 
     // Snapshot publish settings once per tick so we don't reacquire the
     // RwLock per package. Same lifetime for `quiet_window`.
