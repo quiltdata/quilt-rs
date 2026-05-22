@@ -342,10 +342,8 @@ mod tests {
     async fn clear_paused_also_clears_aggregator_error() {
         let (tx, rx) = watch::channel(SyncTrayStatus::default());
         let aggregator = Arc::new(SyncTrayAggregator::new(tx));
-        let watcher = Watcher::new_for_test_with_aggregator(
-            Arc::new(LogReporter),
-            aggregator.clone(),
-        );
+        let watcher =
+            Watcher::new_for_test_with_aggregator(Arc::new(LogReporter), aggregator.clone());
         let ns: Namespace = ("acme", "demo").into();
         watcher
             .pause_for_test(ns.clone(), PausedReason::Diverged)

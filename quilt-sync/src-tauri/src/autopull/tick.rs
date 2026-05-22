@@ -432,9 +432,8 @@ mod tests {
     use crate::quilt::lineage::UpstreamState;
 
     fn test_aggregator() -> Arc<crate::autopull::status::SyncTrayAggregator> {
-        let (tx, _) = tokio::sync::watch::channel(
-            crate::autopull::status::SyncTrayStatus::default(),
-        );
+        let (tx, _) =
+            tokio::sync::watch::channel(crate::autopull::status::SyncTrayStatus::default());
         Arc::new(crate::autopull::status::SyncTrayAggregator::new(tx))
     }
 
@@ -1519,10 +1518,8 @@ mod tests {
         );
         let lineage =
             quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h1".to_string());
-        let (model, _) = fixture_with_lineage_and_status(
-            lineage,
-            quiet_status(UpstreamState::Behind, changes),
-        );
+        let (model, _) =
+            fixture_with_lineage_and_status(lineage, quiet_status(UpstreamState::Behind, changes));
         let reporter = Arc::new(RecordingReporter::default());
         let (tx, rx) =
             tokio::sync::watch::channel(crate::autopull::status::SyncTrayStatus::default());
