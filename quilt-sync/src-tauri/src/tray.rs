@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use tauri::AppHandle;
 use tauri::Manager;
 use tauri::WindowEvent;
@@ -141,13 +143,14 @@ fn apply_status(tray: &TrayIcon, status: &SyncTrayStatus) {
     };
     let mut tooltip = label.to_string();
     if status.pending_changes > 0 {
-        tooltip.push_str(&format!(
+        let _ = write!(
+            tooltip,
             "\n{} package(s) with local changes",
             status.pending_changes,
-        ));
+        );
     }
     if let Some(error) = status.error.as_deref() {
-        tooltip.push_str(&format!("\n{error}"));
+        let _ = write!(tooltip, "\n{error}");
     }
     let _ = tray.set_tooltip(Some(&tooltip));
 }
