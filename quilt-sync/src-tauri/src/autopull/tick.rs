@@ -351,6 +351,7 @@ pub(crate) async fn run_once(model: &impl QuiltModel, inner: &WatcherInner) -> R
                         has_changes: outcome.has_changes,
                     },
                 );
+                inner.aggregator.clear_error(&namespace);
                 inner
                     .aggregator
                     .note_status(&namespace, outcome.has_changes);
@@ -404,13 +405,8 @@ pub(crate) async fn run_once(model: &impl QuiltModel, inner: &WatcherInner) -> R
                     PausedReason::Diverged => "diverged",
                     PausedReason::Other(msg) => msg.as_str(),
                 };
-                // `note_status` updates the per-namespace dirty count but
-                // also clears that namespace's error entry. Bracket the
-                // status update between two `note_paused` calls so the
-                // sticky pause survives the dirty-count update.
                 inner.aggregator.note_paused(&namespace, aggregator_message);
                 inner.aggregator.note_status(&namespace, has_changes);
-                inner.aggregator.note_paused(&namespace, aggregator_message);
             }
             Err(WatchError::Transient(err)) => {
                 bump_backoff(&mut *inner.backoff.write().await, &namespace, now);

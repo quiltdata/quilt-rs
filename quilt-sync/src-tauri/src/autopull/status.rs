@@ -104,13 +104,14 @@ impl SyncTrayAggregator {
         self.publish();
     }
 
+    /// Update the per-namespace dirty bit. Does **not** touch the error
+    /// map — call [`Self::clear_error`] on the success path or
+    /// [`Self::note_paused`] / [`Self::note_login_required`] alongside
+    /// it on the failure path.
     pub fn note_status(&self, ns: &Namespace, has_changes: bool) {
         {
             let mut state = self.state.lock().expect("aggregator lock");
             state.dirty.insert(ns.clone(), has_changes);
-            // Successful per-namespace status implies no current error for
-            // that namespace — clear it.
-            state.errors.remove(ns);
         }
         self.publish();
     }
@@ -127,6 +128,21 @@ impl SyncTrayAggregator {
         self.upsert_error(ns, ErrorKind::Hard, message);
     }
 
+    /// Drop only the per-namespace error entry. Use this on the
+    /// success path; the dirty count is left intact so a clean refresh
+    /// of a package with local changes still surfaces them in the
+    /// tooltip.
+    pub fn clear_error(&self, ns: &Namespace) {
+        {
+            let mut state = self.state.lock().expect("aggregator lock");
+            state.errors.remove(ns);
+        }
+        self.publish();
+    }
+
+    /// Drop both the error and dirty entries for a namespace. Used by
+    /// the user-initiated unpause and by the package-uninstalled
+    /// reconciliation step in `tick.rs`.
     pub fn note_cleared(&self, ns: &Namespace) {
         {
             let mut state = self.state.lock().expect("aggregator lock");
@@ -306,5 +322,36 @@ mod tests {
         // Clearing ns_b falls back to ns_a's message.
         agg.note_cleared(&ns_b);
         assert_eq!(rx.borrow().error.as_deref(), Some("first"));
+    }
+
+    #[test]
+    fn note_status_does_not_drop_pause() {
+        // The Conflict arm in tick.rs calls note_paused followed by
+        // note_status. note_status must update the dirty count without
+        // clearing the sticky pause set just before it.
+        let (agg, rx) = new_aggregator();
+        let ns: Namespace = ("acme", "demo").into();
+        agg.note_paused(&ns, "stuck");
+        agg.note_status(&ns, true);
+        let after = rx.borrow().clone();
+        assert_eq!(after.mode, TrayMode::Paused);
+        assert_eq!(after.error.as_deref(), Some("stuck"));
+        assert_eq!(after.pending_changes, 1);
+    }
+
+    #[test]
+    fn clear_error_drops_error_but_keeps_dirty() {
+        let (agg, rx) = new_aggregator();
+        let ns: Namespace = ("acme", "demo").into();
+        agg.note_paused(&ns, "stuck");
+        agg.note_status(&ns, true);
+        agg.clear_error(&ns);
+        let after = rx.borrow().clone();
+        assert_eq!(after.mode, TrayMode::Idle);
+        assert!(after.error.is_none());
+        assert_eq!(
+            after.pending_changes, 1,
+            "dirty bit must survive a clear_error call",
+        );
     }
 }
