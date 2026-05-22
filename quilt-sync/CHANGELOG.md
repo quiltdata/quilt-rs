@@ -13,7 +13,7 @@
 
 ### Added
 
-- Tray icon with status indicator and `Close to tray` setting in Settings → Autosync — keeps autosync running on the closed-window cadence when enabled (default off).
+- Tray icon with status indicator and `Close to tray` setting in Settings → Autosync — keeps autosync running on the closed-window cadence when enabled (default off) (<https://github.com/quiltdata/quilt-rs/pull/693>)
 
 ## [v0.18.1] - 2026-05-21
 
