@@ -30,6 +30,12 @@ pub struct AutosyncSettings {
     pub pull: PullSettings,
     #[serde(flatten)]
     pub push: PushSettings,
+    /// Opt-in close-to-tray. Defaults to `false` so users on
+    /// environments without a working tray (stock GNOME) never see
+    /// the close button vanish their window. Flat in JSON to keep
+    /// the disk shape backwards-compatible.
+    #[serde(default)]
+    pub close_to_tray: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -123,6 +129,7 @@ mod tests {
                 enabled: true,
                 idle_timeout_secs: 45,
             },
+            close_to_tray: false,
         }
     }
 
@@ -217,6 +224,44 @@ mod tests {
         let loaded = AutosyncSettings::load(dir.path()).await?;
         assert!(!loaded.pull.enabled);
         assert!(!loaded.push.enabled);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn close_to_tray_defaults_to_false_and_round_trips() -> Result<(), Error> {
+        let dir = TempDir::new().unwrap();
+        let loaded = AutosyncSettings::load(dir.path()).await?;
+        assert!(
+            !loaded.close_to_tray,
+            "missing file must yield close_to_tray = false",
+        );
+
+        let mut settings = nondefault();
+        settings.close_to_tray = true;
+        settings.save(dir.path()).await?;
+        let reloaded = AutosyncSettings::load(dir.path()).await?;
+        assert!(reloaded.close_to_tray);
+        assert_eq!(reloaded, settings);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn missing_close_to_tray_key_loads_as_false() -> Result<(), Error> {
+        // 0.18.1 JSON shape: no close_to_tray key. `#[serde(default)]`
+        // must fill in false so existing files load unchanged.
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join(FILE_NAME);
+        let payload = br#"{
+            "pull_enabled": true,
+            "push_enabled": false,
+            "focused_secs": 30,
+            "unfocused_secs": 120,
+            "closed_secs": 600,
+            "idle_timeout_secs": 45
+        }"#;
+        tokio::fs::write(&path, payload).await?;
+        let loaded = AutosyncSettings::load(dir.path()).await?;
+        assert!(!loaded.close_to_tray);
         Ok(())
     }
 }

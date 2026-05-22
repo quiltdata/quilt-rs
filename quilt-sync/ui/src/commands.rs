@@ -95,6 +95,7 @@ pub struct AutosyncSettingsData {
     pub push_enabled: bool,
     pub pull_interval_secs: u64,
     pub idle_timeout_secs: u64,
+    pub close_to_tray: bool,
 }
 
 impl Default for AutosyncSettingsData {
@@ -104,6 +105,7 @@ impl Default for AutosyncSettingsData {
             push_enabled: false,
             pull_interval_secs: 30,
             idle_timeout_secs: 300,
+            close_to_tray: false,
         }
     }
 }
