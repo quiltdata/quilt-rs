@@ -77,7 +77,7 @@ impl TrayController {
             })
             .build(app)?;
 
-        let listener = spawn_status_listener(app.clone(), tray.clone(), status_rx);
+        let listener = spawn_status_listener(tray.clone(), status_rx);
         let _ = open_item;
         let _ = quit_item;
 
@@ -118,7 +118,6 @@ fn show_main_window(app: &AppHandle) {
 }
 
 fn spawn_status_listener(
-    _app: AppHandle,
     tray: TrayIcon,
     mut status_rx: watch::Receiver<SyncTrayStatus>,
 ) -> async_runtime::JoinHandle<()> {
