@@ -152,11 +152,8 @@ impl Watcher {
     pub async fn clear_all_paused(&self) {
         let mut paused = self.inner.paused.write().await;
         let mut login_blocked = self.inner.login_blocked.write().await;
-        let namespaces: BTreeSet<Namespace> = paused
-            .keys()
-            .chain(login_blocked.keys())
-            .cloned()
-            .collect();
+        let namespaces: BTreeSet<Namespace> =
+            paused.keys().chain(login_blocked.keys()).cloned().collect();
         paused.clear();
         login_blocked.clear();
         drop(paused);
