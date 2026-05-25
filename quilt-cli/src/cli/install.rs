@@ -212,17 +212,21 @@ mod tests {
         // README.md
         assert!(
             storage
-                .exists(domain_paths.objects_dir().join(
-                    "3e5e75033079a0b5bfaeff79c8f10dbc3f461e283ad8126c333cd74792e62ea7"
-                ))
+                .exists(
+                    domain_paths
+                        .objects_dir()
+                        .join("3e5e75033079a0b5bfaeff79c8f10dbc3f461e283ad8126c333cd74792e62ea7")
+                )
                 .await
         );
         // timestamp.txt
         assert!(
             storage
-                .exists(domain_paths.objects_dir().join(
-                    "dc3ea61d9a4aaf7d822eed1de089db83d46aa29f3fbdd99466f7e5e216c91c8a"
-                ))
+                .exists(
+                    domain_paths
+                        .objects_dir()
+                        .join("dc3ea61d9a4aaf7d822eed1de089db83d46aa29f3fbdd99466f7e5e216c91c8a")
+                )
                 .await
         );
 
