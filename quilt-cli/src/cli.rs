@@ -30,7 +30,7 @@ use model::Model;
 pub use output::Std;
 pub use output::print;
 
-const DOMAIN_DIR_NAMESPACE: &str = "com.quiltdata.quilt-rs";
+const DOMAIN_DIR_NAMESPACE: &str = "com.quiltdata.quilt-sync";
 
 fn parse_optional_namespace(namespace: Option<String>) -> Result<Option<Namespace>, Error> {
     Ok(match namespace {
@@ -167,7 +167,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
     //       because domain stores credentials
     //       It's optional for user, but we use one anyway.
     //       If it is None, we use:
-    //         * home directory ~/.local/share/com.quiltdata.quilt-rs`
+    //         * home directory ~/.local/share/com.quiltdata.quilt-sync`
     //         * or temporary directory
     let root_dir = get_domain_dir(args.domain)?;
     let m = Model::from(root_dir);
