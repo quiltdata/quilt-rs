@@ -20,6 +20,10 @@ pub const AUTH_CREDENTIALS: &str = "credentials.json";
 pub const AUTH_DIR: &str = ".auth";
 pub const AUTH_TOKENS: &str = "tokens.json";
 
+/// Name of the `.quilt` directory that holds Quilt's bookkeeping inside a
+/// data dir (lineage, installed manifests, cached manifests, objects).
+pub const DOT_QUILT_DIR: &str = ".quilt";
+
 /// List authenticated host directories under the given data directory.
 ///
 /// Returns a sorted list of directory names found in `<data_dir>/.auth/`.
@@ -76,6 +80,11 @@ impl DomainPaths {
         self.root_dir
             .join(AUTH_DIR)
             .join(PathBuf::from(host.to_string()))
+    }
+
+    /// Path to the `.quilt` bookkeeping directory under the root.
+    pub fn dot_quilt_dir(&self) -> PathBuf {
+        self.root_dir.join(DOT_QUILT_DIR)
     }
 
     /// Path to the installed manifest.
