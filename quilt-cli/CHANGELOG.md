@@ -13,7 +13,7 @@
 
 ### Changed
 
-- `quilt` now stores its default data directory under `com.quiltdata.quilt-sync` so state is shared with QuiltSync; users with an existing `com.quiltdata.quilt-rs` directory should move it manually (see release notes for per-OS commands)
+- `quilt` now stores its default data directory under `com.quiltdata.quilt-sync` so state is shared with QuiltSync; users with an existing `com.quiltdata.quilt-rs` directory should move it manually (see release notes for per-OS commands) (<https://github.com/quiltdata/quilt-rs/pull/696>)
 
 ## [v0.26.0] - 2026-05-19
 
