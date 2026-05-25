@@ -9,11 +9,15 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.27.0-alpha1] - 2026-05-25
+## [v0.27.0] - 2026-05-25
 
 ### Changed
 
 - `quilt` now stores its default data directory under `com.quiltdata.quilt-sync` so state is shared with QuiltSync; users with an existing `com.quiltdata.quilt-rs` directory should move it manually (<https://github.com/quiltdata/quilt-rs/pull/696>)
+
+### Fixed
+
+- `quilt login --help` now describes the subcommand correctly (was "List installed packages") (<https://github.com/quiltdata/quilt-rs/pull/695>)
 
 ## [v0.26.0] - 2026-05-19
 

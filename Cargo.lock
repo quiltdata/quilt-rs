@@ -5370,7 +5370,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-cli"
-version = "0.27.0-alpha1"
+version = "0.27.0"
 dependencies = [
  "clap",
  "dirs",
@@ -5427,7 +5427,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-sync"
-version = "0.18.2-alpha1"
+version = "0.18.2"
 dependencies = [
  "chrono",
  "dotenv",
