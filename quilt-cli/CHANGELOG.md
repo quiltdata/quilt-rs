@@ -9,7 +9,7 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.26.1-alpha1] - 2026-05-25
+## [v0.27.0-alpha1] - 2026-05-25
 
 ### Changed
 
