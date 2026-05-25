@@ -445,6 +445,7 @@ fn AutosyncSection(
     let push_display = if autosync.push_enabled { "On" } else { "Off" };
     let pull_interval = autosync.pull_interval_secs;
     let idle_timeout = autosync.idle_timeout_secs;
+    let close_to_tray_display = if autosync.close_to_tray { "On" } else { "Off" };
     let current = autosync.clone();
 
     view! {
@@ -465,6 +466,9 @@ fn AutosyncSection(
 
                 <dt>"Wait after last edit before publishing"</dt>
                 <dd><span class="value">{format!("{idle_timeout} s")}</span></dd>
+
+                <dt>"Close to tray"</dt>
+                <dd><span class="value">{close_to_tray_display}</span></dd>
             </dl>
             <div class="settings-actions">
                 <button
@@ -499,6 +503,7 @@ fn AutosyncSettingsPopup(
     let push_enabled = RwSignal::new(current.push_enabled);
     let pull_interval_secs = RwSignal::new(current.pull_interval_secs.to_string());
     let idle_timeout_secs = RwSignal::new(current.idle_timeout_secs.to_string());
+    let close_to_tray = RwSignal::new(current.close_to_tray);
     let parse_error = RwSignal::new(None::<String>);
     let saving = RwSignal::new(false);
 
@@ -531,6 +536,7 @@ fn AutosyncSettingsPopup(
             push_enabled: push_enabled.get_untracked(),
             pull_interval_secs: pull_interval,
             idle_timeout_secs: idle_timeout,
+            close_to_tray: close_to_tray.get_untracked(),
         };
         leptos::task::spawn_local(async move {
             match commands::update_autosync_settings(settings).await {
@@ -553,6 +559,7 @@ fn AutosyncSettingsPopup(
         push_enabled.set(defaults.push_enabled);
         pull_interval_secs.set(defaults.pull_interval_secs.to_string());
         idle_timeout_secs.set(defaults.idle_timeout_secs.to_string());
+        close_to_tray.set(defaults.close_to_tray);
         parse_error.set(None);
     };
 
@@ -617,6 +624,20 @@ fn AutosyncSettingsPopup(
                         prop:value=move || idle_timeout_secs.get()
                         on:input=move |ev| idle_timeout_secs.set(event_target_value(&ev))
                     />
+                </div>
+
+                <div class="field">
+                    <label class="checkbox-option">
+                        <input
+                            type="checkbox"
+                            prop:checked=move || close_to_tray.get()
+                            on:change=move |ev| close_to_tray.set(event_target_checked(&ev))
+                        />
+                        "Close to tray (keep autosync running when the window is closed)"
+                    </label>
+                    <p class="field-description">
+                        "Leave off on systems without a working tray (e.g. stock GNOME without a tray extension)."
+                    </p>
                 </div>
 
                 <Show when=move || parse_error.get().is_some()>

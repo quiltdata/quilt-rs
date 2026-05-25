@@ -278,6 +278,7 @@ pub struct AutosyncSettingsData {
     pub push_enabled: bool,
     pub pull_interval_secs: u64,
     pub idle_timeout_secs: u64,
+    pub close_to_tray: bool,
 }
 
 impl From<AutosyncSettings> for AutosyncSettingsData {
@@ -291,6 +292,7 @@ impl From<AutosyncSettings> for AutosyncSettingsData {
             push_enabled: s.push.enabled,
             pull_interval_secs: s.pull.focused_secs,
             idle_timeout_secs: s.push.idle_timeout_secs,
+            close_to_tray: s.close_to_tray,
         }
     }
 }
@@ -324,6 +326,7 @@ fn merge_autosync_settings_data(
             enabled: incoming.push_enabled,
             idle_timeout_secs: incoming.idle_timeout_secs,
         },
+        close_to_tray: incoming.close_to_tray,
     }
 }
 
@@ -3143,6 +3146,7 @@ mod tests {
                     enabled: true,
                     idle_timeout_secs: 22,
                 },
+                close_to_tray: false,
             };
             let data = AutosyncSettingsData::from(s);
             assert!(data.pull_enabled);
@@ -3171,6 +3175,7 @@ mod tests {
                     enabled: false,
                     idle_timeout_secs: 30,
                 },
+                close_to_tray: false,
             };
             initial.save(dir.path()).await?;
 
@@ -3179,6 +3184,7 @@ mod tests {
                 push_enabled: true,
                 pull_interval_secs: 7,
                 idle_timeout_secs: 9,
+                close_to_tray: false,
             };
             let merged = merge_autosync_settings_data(&initial, &incoming);
 
@@ -3204,6 +3210,7 @@ mod tests {
                 push_enabled: true,
                 pull_interval_secs: 0,
                 idle_timeout_secs: 30,
+                close_to_tray: false,
             };
             assert!(validate_autosync_settings_data(&bad).is_err());
         }
@@ -3215,6 +3222,7 @@ mod tests {
                 push_enabled: true,
                 pull_interval_secs: 30,
                 idle_timeout_secs: 0,
+                close_to_tray: false,
             };
             assert!(validate_autosync_settings_data(&bad).is_err());
         }
@@ -3226,8 +3234,31 @@ mod tests {
                 push_enabled: true,
                 pull_interval_secs: 1,
                 idle_timeout_secs: 1,
+                close_to_tray: false,
             };
             assert!(validate_autosync_settings_data(&ok).is_ok());
+        }
+
+        #[test]
+        fn autosync_settings_data_preserves_close_to_tray() {
+            let mut s = AutosyncSettings::default();
+            s.close_to_tray = true;
+            let data = AutosyncSettingsData::from(s);
+            assert!(data.close_to_tray);
+        }
+
+        #[test]
+        fn merge_preserves_close_to_tray_from_incoming() {
+            let initial = AutosyncSettings::default();
+            let incoming = AutosyncSettingsData {
+                pull_enabled: true,
+                push_enabled: false,
+                pull_interval_secs: 30,
+                idle_timeout_secs: 60,
+                close_to_tray: true,
+            };
+            let merged = merge_autosync_settings_data(&initial, &incoming);
+            assert!(merged.close_to_tray);
         }
     }
 }
