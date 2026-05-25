@@ -233,6 +233,52 @@ mod tests {
         );
     }
 
+    /// Pin the on-disk layout each `DomainPaths` accessor produces, so a
+    /// drift in `DOT_QUILT_DIR` / `LINEAGE_FILE` / `INSTALLED_DIR` /
+    /// `MANIFEST_DIR` / `OBJECTS_DIR` / `AUTH_DIR` fails here rather than
+    /// silently changing behavior in every downstream test that builds
+    /// paths through these helpers.
+    #[test]
+    fn test_domain_paths_layout() {
+        let paths = DomainPaths::new(PathBuf::from("foo/bar"));
+        let namespace = Namespace::from(("test", "package"));
+        let host: Host = "example.com".parse().unwrap();
+        let manifest_uri = ManifestUri {
+            bucket: "my-bucket".to_string(),
+            namespace: namespace.clone(),
+            hash: "deadbeef".to_string(),
+            origin: None,
+        };
+
+        assert_eq!(paths.dot_quilt_dir(), PathBuf::from("foo/bar/.quilt"));
+        assert_eq!(paths.lineage(), PathBuf::from("foo/bar/.quilt/data.json"));
+        assert_eq!(
+            paths.installed_manifests_dir(&namespace),
+            PathBuf::from("foo/bar/.quilt/installed/test/package"),
+        );
+        assert_eq!(
+            paths.installed_manifest(&namespace, "deadbeef"),
+            PathBuf::from("foo/bar/.quilt/installed/test/package/deadbeef"),
+        );
+        assert_eq!(
+            paths.cached_manifests_dir("my-bucket"),
+            PathBuf::from("foo/bar/.quilt/packages/my-bucket"),
+        );
+        assert_eq!(
+            paths.cached_manifest(&manifest_uri),
+            PathBuf::from("foo/bar/.quilt/packages/my-bucket/deadbeef"),
+        );
+        assert_eq!(paths.objects_dir(), PathBuf::from("foo/bar/.quilt/objects"));
+        assert_eq!(
+            paths.object(&[0xde, 0xad, 0xbe, 0xef]),
+            PathBuf::from("foo/bar/.quilt/objects/deadbeef"),
+        );
+        assert_eq!(
+            paths.auth_host(&host),
+            PathBuf::from("foo/bar/.auth/example.com"),
+        );
+    }
+
     #[test]
     fn test_package_home() -> Res {
         let home = Home::from("/home/user/quilt");
