@@ -19,8 +19,8 @@ use crate::manifest::Workflow;
 #[cfg(test)]
 use crate::manifest::WorkflowId;
 
-/// Serialize JSON to match Python's json.JSONEncoder separators=(',', ':') and ensure_ascii=True
-/// TODO: Also implement sort_keys=True to fully match Python's behavior
+/// Serialize JSON to match Python's `json.JSONEncoder` `separators=(',', ':')` and `ensure_ascii=True`
+/// TODO: Also implement `sort_keys=True` to fully match Python's behavior
 fn serialize_like_python<T: Serialize>(value: &T) -> Res<String> {
     // Use serde-json-fmt to configure JSON formatting to match Python's behavior
     // JsonFormat::new() defaults to compact format (comma:",", colon":") which matches Python

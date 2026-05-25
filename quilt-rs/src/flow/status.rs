@@ -55,7 +55,7 @@ enum WorkdirFile {
 /// Located files and ignored files collected during the directory walk.
 struct LocateResult {
     files: Vec<(PathBuf, WorkdirFile)>,
-    /// Files matched by .quiltignore: (logical_key, absolute_path, matched_pattern, size)
+    /// Files matched by `.quiltignore`: (`logical_key`, `absolute_path`, `matched_pattern`, size)
     ignored_files: Vec<(PathBuf, PathBuf, String, u64)>,
     /// Newest `mtime` across non-ignored files in the walk. Ignored files
     /// are deliberately excluded — touching a file inside an
@@ -300,7 +300,7 @@ mod tests {
     use crate::lineage::UpstreamState;
     use quilt_uri::ManifestUri;
 
-    /// Helper to create a PackageLineage with a dummy remote (avoids Local state).
+    /// Helper to create a `PackageLineage` with a dummy remote (avoids Local state).
     /// Uses a non-empty hash so the lineage isn't treated as "never pushed".
     fn lineage_with_remote(mut lineage: PackageLineage) -> PackageLineage {
         let dummy_hash = "deadbeef".to_string();

@@ -149,14 +149,14 @@ impl From<PackageLineage> for UpstreamState {
 }
 
 impl PackageLineage {
-    /// Returns the remote ManifestUri, or an error if this is a local-only package.
+    /// Returns the remote `ManifestUri`, or an error if this is a local-only package.
     pub fn remote(&self) -> Res<&ManifestUri> {
         self.remote_uri
             .as_ref()
             .ok_or(Error::Lineage(LineageError::NoRemote))
     }
 
-    /// Returns a mutable reference to the remote ManifestUri,
+    /// Returns a mutable reference to the remote `ManifestUri`,
     /// or an error if this is a local-only package.
     pub fn remote_mut(&mut self) -> Res<&mut ManifestUri> {
         self.remote_uri

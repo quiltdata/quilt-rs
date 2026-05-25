@@ -1,8 +1,8 @@
 /// Environment variable handling for both development and production builds.
 ///
 /// This module provides a unified interface for accessing environment variables:
-/// - Development: Uses dotenv to load .env files + runtime env::var
-/// - Production: Uses build-time option_env! for embedded values
+/// - Development: Uses dotenv to load .env files + runtime `env::var`
+/// - Production: Uses build-time `option_env!` for embedded values
 use std::sync::Once;
 
 static INIT: Once = Once::new();
@@ -24,15 +24,15 @@ pub fn init() {
 /// Get an environment variable value, trying runtime first, then build-time.
 ///
 /// This function:
-/// 1. First tries to get the value from runtime environment (env::var)
-/// 2. Falls back to build-time embedded value (option_env!)
+/// 1. First tries to get the value from runtime environment (`env::var`)
+/// 2. Falls back to build-time embedded value (`option_env!`)
 ///
 /// This allows:
 /// - Development: Use .env files loaded by dotenv
 /// - Production: Use values embedded at build time
 ///
 /// Note: Build-time fallbacks must be explicitly added in the match statement
-/// because option_env! requires string literals, not variables.
+/// because `option_env!` requires string literals, not variables.
 pub fn get_var(key: &str) -> Option<String> {
     // First try runtime environment variable
     if let Ok(value) = std::env::var(key)
@@ -59,17 +59,17 @@ pub fn get_var(key: &str) -> Option<String> {
     }
 }
 
-/// Get the SENTRY_DSN environment variable as a string.
+/// Get the `SENTRY_DSN` environment variable as a string.
 pub fn sentry_dsn() -> Option<String> {
     get_var("SENTRY_DSN")
 }
 
-/// Get the MIXPANEL_PROJECT_TOKEN environment variable as a string.
+/// Get the `MIXPANEL_PROJECT_TOKEN` environment variable as a string.
 pub fn mixpanel_project_token() -> Option<String> {
     get_var("MIXPANEL_PROJECT_TOKEN")
 }
 
-/// Get the MIXPANEL_API_SECRET environment variable as a string.
+/// Get the `MIXPANEL_API_SECRET` environment variable as a string.
 pub fn mixpanel_api_secret() -> Option<String> {
     get_var("MIXPANEL_API_SECRET")
 }

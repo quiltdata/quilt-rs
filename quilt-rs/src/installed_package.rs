@@ -1058,7 +1058,7 @@ mod tests {
     async fn test_set_remote_rejects_unreachable_bucket() -> Res {
         use crate::error::RemoteCatalogError;
 
-        /// Remote that rejects any verify_bucket call — models the case
+        /// Remote that rejects any `verify_bucket` call — models the case
         /// where the user typed a bucket that doesn't resolve on S3.
         struct BadBucketRemote;
 
@@ -1534,7 +1534,7 @@ mod tests {
         Ok(())
     }
 
-    /// A remote that always returns LoginRequired, simulating a logged-out user.
+    /// A remote that always returns `LoginRequired`, simulating a logged-out user.
     struct LoggedOutRemote;
 
     impl crate::io::remote::Remote for LoggedOutRemote {
@@ -1631,7 +1631,7 @@ mod tests {
 
     /// Pull must refresh `latest_hash` from the remote before evaluating
     /// `flow::pull`'s `base_hash == latest_hash` guard. Before the
-    /// "Stop writing lineage from InstalledPackage::status" refactor, a
+    /// "Stop writing lineage from `InstalledPackage::status`" refactor, a
     /// prior `status` call would persist the refreshed `latest_hash`, so
     /// disk was reliably fresh when `pull` ran. Without that persist,
     /// the disk-stale `latest_hash` always equalled `base_hash` and

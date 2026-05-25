@@ -1,17 +1,22 @@
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
+use quilt_uri::Host;
 use quilt_uri::Namespace;
 use tauri::Manager;
 use tokio::sync::RwLock;
+use tokio::sync::watch;
 
+use crate::autopull::status::SyncTrayAggregator;
 use crate::model::Model;
 use crate::publish_settings::SharedPublishSettings;
 use crate::telemetry::prelude::*;
 
 pub mod reporter;
 pub mod settings;
+pub mod status;
 pub mod tick;
 
 pub use reporter::PackageStatusEvent;
@@ -21,6 +26,8 @@ pub use settings::PullSettings;
 pub use settings::PushSettings;
 pub use settings::SharedAutosyncSettings;
 pub use settings::init as init_settings;
+pub use status::SyncTrayStatus;
+pub use status::TrayMode;
 
 use tick::BackoffState;
 use tick::run_once;
@@ -34,9 +41,7 @@ pub enum WindowMode {
     Focused,
     Unfocused,
     /// Window has been closed but the app stays alive via the tray icon.
-    /// Wired in milestone 4 (`05-trayicon.md`); kept here so the cadence
-    /// table and the on-disk settings file are forward-compatible.
-    #[allow(dead_code)]
+    /// Set when the user closes the main window with `close_to_tray` on.
     Closed,
 }
 
@@ -71,7 +76,9 @@ pub(crate) struct WatcherInner {
     pub publish_settings: SharedPublishSettings,
     pub paused: RwLock<BTreeMap<Namespace, PausedReason>>,
     pub backoff: RwLock<BTreeMap<Namespace, BackoffState>>,
+    pub login_blocked: RwLock<BTreeMap<Namespace, Option<Host>>>,
     pub reporter: Arc<dyn StatusReporter>,
+    pub aggregator: Arc<SyncTrayAggregator>,
 }
 
 pub fn create_window_mode() -> SharedWindowMode {
@@ -91,14 +98,18 @@ impl Watcher {
         window_mode: SharedWindowMode,
         publish_settings: SharedPublishSettings,
         reporter: Arc<dyn StatusReporter>,
-    ) -> Self {
+    ) -> (Self, watch::Receiver<SyncTrayStatus>) {
+        let (tx, rx) = watch::channel(SyncTrayStatus::default());
+        let aggregator = Arc::new(SyncTrayAggregator::new(tx));
         let inner = Arc::new(WatcherInner {
             settings,
             window_mode,
             publish_settings,
             paused: RwLock::new(BTreeMap::new()),
             backoff: RwLock::new(BTreeMap::new()),
+            login_blocked: RwLock::new(BTreeMap::new()),
             reporter,
+            aggregator,
         });
         let task_inner = Arc::clone(&inner);
         tauri::async_runtime::spawn(async move {
@@ -109,13 +120,18 @@ impl Watcher {
                     cadence_for_mode(&settings.pull, mode)
                 };
                 tokio::time::sleep(cadence).await;
+                task_inner.aggregator.note_tick_started();
                 let model_state = app_handle.state::<Model>();
-                if let Err(err) = run_once(&*model_state, &task_inner).await {
-                    warn!("autosync: tick error: {err}");
+                match run_once(&*model_state, &task_inner).await {
+                    Ok(()) => task_inner.aggregator.note_tick_ended_ok(),
+                    Err(err) => {
+                        warn!("autosync: tick error: {err}");
+                        task_inner.aggregator.note_tick_ended_err();
+                    }
                 }
             }
         });
-        Self { inner }
+        (Self { inner }, rx)
     }
 
     pub async fn set_window_mode(&self, mode: WindowMode) {
@@ -127,12 +143,24 @@ impl Watcher {
     /// remote) that resolves the underlying conflict.
     pub async fn clear_paused(&self, namespace: &Namespace) {
         self.inner.paused.write().await.remove(namespace);
+        self.inner.login_blocked.write().await.remove(namespace);
+        self.inner.aggregator.note_cleared(namespace);
     }
 
     /// Drop the entire paused set. Called when `update_autosync_settings`
     /// flips `enabled` from false to true (M3).
     pub async fn clear_all_paused(&self) {
-        self.inner.paused.write().await.clear();
+        let mut paused = self.inner.paused.write().await;
+        let mut login_blocked = self.inner.login_blocked.write().await;
+        let namespaces: BTreeSet<Namespace> =
+            paused.keys().chain(login_blocked.keys()).cloned().collect();
+        paused.clear();
+        login_blocked.clear();
+        drop(paused);
+        drop(login_blocked);
+        for ns in &namespaces {
+            self.inner.aggregator.note_cleared(ns);
+        }
     }
 
     /// Point-in-time view of the paused set, used by the
@@ -153,6 +181,15 @@ impl Watcher {
 
     #[cfg(test)]
     fn new_for_test(reporter: Arc<dyn StatusReporter>) -> Self {
+        let (tx, _) = watch::channel(SyncTrayStatus::default());
+        Self::new_for_test_with_aggregator(reporter, Arc::new(SyncTrayAggregator::new(tx)))
+    }
+
+    #[cfg(test)]
+    fn new_for_test_with_aggregator(
+        reporter: Arc<dyn StatusReporter>,
+        aggregator: Arc<SyncTrayAggregator>,
+    ) -> Self {
         Self {
             inner: Arc::new(WatcherInner {
                 settings: Arc::new(RwLock::new(AutosyncSettings::default())),
@@ -162,14 +199,30 @@ impl Watcher {
                 )),
                 paused: RwLock::new(BTreeMap::new()),
                 backoff: RwLock::new(BTreeMap::new()),
+                login_blocked: RwLock::new(BTreeMap::new()),
                 reporter,
+                aggregator,
             }),
         }
     }
 
     #[cfg(test)]
+    async fn login_blocked_for_test(&self) -> BTreeMap<Namespace, Option<Host>> {
+        self.inner.login_blocked.read().await.clone()
+    }
+
+    #[cfg(test)]
     async fn pause_for_test(&self, namespace: Namespace, reason: PausedReason) {
         self.inner.paused.write().await.insert(namespace, reason);
+    }
+
+    #[cfg(test)]
+    async fn login_block_for_test(&self, namespace: Namespace, host: Option<Host>) {
+        self.inner
+            .login_blocked
+            .write()
+            .await
+            .insert(namespace, host);
     }
 
     #[cfg(test)]
@@ -191,6 +244,7 @@ pub fn cadence_for_mode(pull: &PullSettings, mode: WindowMode) -> Duration {
 mod tests {
     use super::*;
     use reporter::LogReporter;
+    use status::TrayMode;
 
     #[test]
     fn cadence_picks_per_mode_secs() {
@@ -283,5 +337,57 @@ mod tests {
         assert_eq!(watcher.paused_count().await, 1);
         watcher.clear_all_paused().await;
         assert_eq!(watcher.paused_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn new_for_test_starts_with_idle_status() {
+        let (tx, rx) = watch::channel(SyncTrayStatus::default());
+        let watcher = Watcher::new_for_test_with_aggregator(
+            Arc::new(LogReporter),
+            Arc::new(SyncTrayAggregator::new(tx)),
+        );
+        let status = rx.borrow().clone();
+        assert_eq!(status.mode, TrayMode::Idle);
+        assert!(watcher.login_blocked_for_test().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn clear_all_paused_clears_login_blocked_only_aggregator_error() {
+        // Regression: a namespace that hit `LoginRequired` lives in
+        // `login_blocked` and in the aggregator's error map but never
+        // enters `paused`. Re-enabling autosync must still drop the
+        // aggregator error so the tray doesn't stay stuck in Error.
+        let (tx, rx) = watch::channel(SyncTrayStatus::default());
+        let aggregator = Arc::new(SyncTrayAggregator::new(tx));
+        let watcher =
+            Watcher::new_for_test_with_aggregator(Arc::new(LogReporter), aggregator.clone());
+        let ns: Namespace = ("acme", "demo").into();
+
+        watcher.login_block_for_test(ns.clone(), None).await;
+        aggregator.note_login_required(&ns, None);
+        assert_eq!(rx.borrow().mode, TrayMode::Error);
+
+        watcher.clear_all_paused().await;
+        assert!(watcher.login_blocked_for_test().await.is_empty());
+        assert!(rx.borrow().error.is_none());
+        assert_eq!(rx.borrow().mode, TrayMode::Idle);
+    }
+
+    #[tokio::test]
+    async fn clear_paused_also_clears_aggregator_error() {
+        let (tx, rx) = watch::channel(SyncTrayStatus::default());
+        let aggregator = Arc::new(SyncTrayAggregator::new(tx));
+        let watcher =
+            Watcher::new_for_test_with_aggregator(Arc::new(LogReporter), aggregator.clone());
+        let ns: Namespace = ("acme", "demo").into();
+        watcher
+            .pause_for_test(ns.clone(), PausedReason::Diverged)
+            .await;
+        aggregator.note_paused(&ns, "diverged");
+        assert_eq!(rx.borrow().mode, TrayMode::Paused);
+
+        watcher.clear_paused(&ns).await;
+        assert!(rx.borrow().error.is_none());
+        assert_eq!(rx.borrow().mode, TrayMode::Idle);
     }
 }

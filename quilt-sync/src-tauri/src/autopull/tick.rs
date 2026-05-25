@@ -272,6 +272,12 @@ pub(crate) async fn run_once(model: &impl QuiltModel, inner: &WatcherInner) -> R
         .write()
         .await
         .retain(|ns, _| current.contains(ns));
+    inner
+        .login_blocked
+        .write()
+        .await
+        .retain(|ns, _| current.contains(ns));
+    inner.aggregator.retain_namespaces(&current);
 
     // Snapshot publish settings once per tick so we don't reacquire the
     // RwLock per package. Same lifetime for `quiet_window`.
@@ -326,6 +332,7 @@ pub(crate) async fn run_once(model: &impl QuiltModel, inner: &WatcherInner) -> R
         {
             Ok(outcome) => {
                 inner.backoff.write().await.remove(&namespace);
+                inner.login_blocked.write().await.remove(&namespace);
                 if let Some(message) = outcome.published.as_deref() {
                     inner.reporter.report_published(&namespace, message);
                 }
@@ -337,11 +344,21 @@ pub(crate) async fn run_once(model: &impl QuiltModel, inner: &WatcherInner) -> R
                         has_changes: outcome.has_changes,
                     },
                 );
+                inner.aggregator.clear_error(&namespace);
+                inner
+                    .aggregator
+                    .note_status(&namespace, outcome.has_changes);
             }
             Err(WatchError::LoginRequired(host)) => {
                 // Backoff until the user re-auths; the Ok arm clears it.
                 bump_backoff(&mut *inner.backoff.write().await, &namespace, now);
+                inner
+                    .login_blocked
+                    .write()
+                    .await
+                    .insert(namespace.clone(), host.clone());
                 inner.reporter.report_login_required(host.as_ref());
+                inner.aggregator.note_login_required(&namespace, host);
             }
             Err(WatchError::Conflict(reason)) => {
                 inner
@@ -375,10 +392,21 @@ pub(crate) async fn run_once(model: &impl QuiltModel, inner: &WatcherInner) -> R
                         has_changes,
                     },
                 );
+                let aggregator_message = match &reason {
+                    PausedReason::PendingChanges => "pending changes",
+                    PausedReason::PendingCommit => "pending commits",
+                    PausedReason::Diverged => "diverged",
+                    PausedReason::Other(msg) => msg.as_str(),
+                };
+                inner.aggregator.note_paused(&namespace, aggregator_message);
+                inner.aggregator.note_status(&namespace, has_changes);
             }
             Err(WatchError::Transient(err)) => {
                 bump_backoff(&mut *inner.backoff.write().await, &namespace, now);
                 warn!("autosync: transient error for {namespace}: {err}");
+                // Transient: don't touch the aggregator's error map — a
+                // network blip should not flip the tray to Error. The
+                // next tick either clears or escalates.
             }
         }
     }
@@ -403,6 +431,12 @@ mod tests {
     use crate::model::MockQuiltModel;
     use crate::quilt::lineage::UpstreamState;
 
+    fn test_aggregator() -> Arc<crate::autopull::status::SyncTrayAggregator> {
+        let (tx, _) =
+            tokio::sync::watch::channel(crate::autopull::status::SyncTrayStatus::default());
+        Arc::new(crate::autopull::status::SyncTrayAggregator::new(tx))
+    }
+
     fn make_inner(settings: AutosyncSettings) -> WatcherInner {
         WatcherInner {
             settings: Arc::new(RwLock::new(settings)),
@@ -410,7 +444,9 @@ mod tests {
             publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
             paused: RwLock::new(BTreeMap::new()),
             backoff: RwLock::new(BTreeMap::new()),
+            login_blocked: RwLock::new(BTreeMap::new()),
             reporter: Arc::new(LogReporter),
+            aggregator: test_aggregator(),
         }
     }
 
@@ -424,6 +460,7 @@ mod tests {
                 enabled: true,
                 ..PushSettings::default()
             },
+            close_to_tray: false,
         }
     }
 
@@ -623,7 +660,9 @@ mod tests {
             publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
             paused: RwLock::new(BTreeMap::new()),
             backoff: RwLock::new(BTreeMap::new()),
+            login_blocked: RwLock::new(BTreeMap::new()),
             reporter: reporter.clone(),
+            aggregator: test_aggregator(),
         };
 
         run_once(&model, &inner).await?;
@@ -692,7 +731,9 @@ mod tests {
             publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
             paused: RwLock::new(BTreeMap::new()),
             backoff: RwLock::new(BTreeMap::new()),
+            login_blocked: RwLock::new(BTreeMap::new()),
             reporter: reporter.clone(),
+            aggregator: test_aggregator(),
         };
 
         run_once(&model, &inner).await?;
@@ -758,7 +799,9 @@ mod tests {
             publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
             paused: RwLock::new(BTreeMap::new()),
             backoff: RwLock::new(BTreeMap::new()),
+            login_blocked: RwLock::new(BTreeMap::new()),
             reporter: reporter.clone(),
+            aggregator: test_aggregator(),
         };
 
         run_once(&model, &inner).await?;
@@ -871,7 +914,9 @@ mod tests {
             publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
             paused: RwLock::new(BTreeMap::new()),
             backoff: RwLock::new(BTreeMap::new()),
+            login_blocked: RwLock::new(BTreeMap::new()),
             reporter,
+            aggregator: test_aggregator(),
         }
     }
 
@@ -890,12 +935,15 @@ mod tests {
                     enabled: push_enabled,
                     ..PushSettings::default()
                 },
+                close_to_tray: false,
             })),
             window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
             publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
             paused: RwLock::new(BTreeMap::new()),
             backoff: RwLock::new(BTreeMap::new()),
+            login_blocked: RwLock::new(BTreeMap::new()),
             reporter,
+            aggregator: test_aggregator(),
         }
     }
 
@@ -1318,6 +1366,7 @@ mod tests {
                 enabled: true,
                 idle_timeout_secs: 60,
             },
+            close_to_tray: false,
         };
         let reporter = Arc::new(RecordingReporter::default());
         let inner = WatcherInner {
@@ -1326,7 +1375,9 @@ mod tests {
             publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
             paused: RwLock::new(BTreeMap::new()),
             backoff: RwLock::new(BTreeMap::new()),
+            login_blocked: RwLock::new(BTreeMap::new()),
             reporter: reporter.clone(),
+            aggregator: test_aggregator(),
         };
 
         run_once(&model, &inner).await?;
@@ -1409,6 +1460,82 @@ mod tests {
         let inner = make_inner_with_flags(reporter.clone(), false, false);
         run_once(&model, &inner).await?;
         assert!(reporter.statuses.lock().unwrap().is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn run_once_publishes_aggregator_status_on_pause() -> Result<(), Error> {
+        let ns: Namespace = ("acme", "demo").into();
+        let mut changes = BTreeMap::new();
+        changes.insert(
+            std::path::PathBuf::from("file.txt"),
+            quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+        );
+        let status = quiet_status(UpstreamState::UpToDate, changes);
+        let lineage =
+            quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
+        let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
+        model
+            .expect_package_publish()
+            .times(1)
+            .returning(|_, _, _, _, _, _| {
+                Err(Error::from(quilt::Error::PackageOp(
+                    quilt::PackageOpError::Push("workflow rejected".to_string()),
+                )))
+            });
+
+        let reporter = Arc::new(RecordingReporter::default());
+        let (tx, rx) =
+            tokio::sync::watch::channel(crate::autopull::status::SyncTrayStatus::default());
+        let aggregator = Arc::new(crate::autopull::status::SyncTrayAggregator::new(tx));
+        let inner = WatcherInner {
+            settings: Arc::new(RwLock::new(enabled())),
+            window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
+            publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
+            paused: RwLock::new(BTreeMap::new()),
+            backoff: RwLock::new(BTreeMap::new()),
+            login_blocked: RwLock::new(BTreeMap::new()),
+            reporter: reporter.clone(),
+            aggregator,
+        };
+        run_once(&model, &inner).await?;
+        let after = rx.borrow().clone();
+        assert_eq!(after.mode, crate::autopull::status::TrayMode::Paused);
+        assert_eq!(after.error.as_deref(), Some("workflow rejected"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn run_once_publishes_pending_changes_count() -> Result<(), Error> {
+        // Behind + has_changes path: refresh_then_maybe_sync returns
+        // has_changes = true and tick.rs must propagate that to the
+        // aggregator as pending_changes = 1.
+        let ns: Namespace = ("acme", "demo").into();
+        let mut changes = BTreeMap::new();
+        changes.insert(
+            std::path::PathBuf::from("file.txt"),
+            quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+        );
+        let lineage =
+            quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h1".to_string());
+        let (model, _) =
+            fixture_with_lineage_and_status(lineage, quiet_status(UpstreamState::Behind, changes));
+        let reporter = Arc::new(RecordingReporter::default());
+        let (tx, rx) =
+            tokio::sync::watch::channel(crate::autopull::status::SyncTrayStatus::default());
+        let aggregator = Arc::new(crate::autopull::status::SyncTrayAggregator::new(tx));
+        let inner = WatcherInner {
+            settings: Arc::new(RwLock::new(enabled())),
+            window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
+            publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
+            paused: RwLock::new(BTreeMap::new()),
+            backoff: RwLock::new(BTreeMap::new()),
+            login_blocked: RwLock::new(BTreeMap::new()),
+            reporter: reporter.clone(),
+            aggregator,
+        };
+        run_once(&model, &inner).await?;
+        assert_eq!(rx.borrow().pending_changes, 1);
         Ok(())
     }
 }

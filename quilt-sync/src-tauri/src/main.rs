@@ -24,6 +24,7 @@ mod publish_settings;
 mod quilt;
 mod routes;
 mod telemetry;
+mod tray;
 mod uri;
 
 use app::App;
@@ -121,7 +122,7 @@ fn main() {
             // so it can spawn after `Model` is registered above.
             let reporter: Arc<dyn StatusReporter> =
                 Arc::new(TauriEventReporter::new(app.handle().clone()));
-            let watcher = Watcher::spawn(
+            let (watcher, status_rx) = Watcher::spawn(
                 app.handle().clone(),
                 autosync_settings.clone(),
                 window_mode.clone(),
@@ -135,12 +136,32 @@ fn main() {
             app.manage(window_mode);
             app.manage(watcher);
 
+            // The tray controller needs the autosync settings (for
+            // close_to_tray) and the window-mode state — both are now
+            // in `app.state::<...>()`.
+            match tray::TrayController::install(app.handle(), status_rx) {
+                Ok(controller) => {
+                    app.manage(controller);
+                }
+                Err(err) => {
+                    // On Linux without an SNI/AppIndicator host the
+                    // tray won't appear, but the app must still run.
+                    warn!("tray icon unavailable: {err}");
+                }
+            }
+
             uri::setup_deep_link_handler(app.handle());
 
             Ok(())
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Focused(focused) = event {
+                // If the window is hidden, leave window_mode at
+                // WindowMode::Closed — a focus event during the
+                // hide-to-tray transition would otherwise overwrite it.
+                if !window.is_visible().unwrap_or(true) {
+                    return;
+                }
                 let mode = if *focused {
                     WindowMode::Focused
                 } else {

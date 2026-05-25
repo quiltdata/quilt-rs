@@ -1,6 +1,6 @@
 [package]
 name = "quilt-sync"
-version = "0.18.1"
+version = "0.18.2-alpha1"
 authors = ["Quilt Data, Inc."]
 description = "Cross-platform desktop application for editing Quilt data packages"
 documentation = "https://docs.quiltdata.com"
@@ -33,7 +33,7 @@ notify-debouncer-full = "0.7"
 serde.workspace = true
 serde_json.workspace = true
 serde_qs = "1.1.1"
-tauri = { version = "2.11.1", features = ["test", "devtools"] }
+tauri = { version = "2.11.1", features = ["test", "devtools", "tray-icon", "image-png"] }
 tauri-plugin-deep-link = "2.4.9"
 tauri-plugin-process = "2.3.1"
 tauri-plugin-shell = "2.3.5"
