@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.26.1-alpha1] - 2026-05-25
+
+### Changed
+
+- `quilt` now stores its default data directory under `com.quiltdata.quilt-sync` so state is shared with QuiltSync; users with an existing `com.quiltdata.quilt-rs` directory should move it manually (see release notes for per-OS commands)
+
 ## [v0.26.0] - 2026-05-19
 
 ### Changed
