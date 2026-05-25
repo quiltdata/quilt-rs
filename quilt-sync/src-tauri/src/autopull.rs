@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -150,12 +151,18 @@ impl Watcher {
     /// flips `enabled` from false to true (M3).
     pub async fn clear_all_paused(&self) {
         let mut paused = self.inner.paused.write().await;
-        let namespaces: Vec<Namespace> = paused.keys().cloned().collect();
+        let mut login_blocked = self.inner.login_blocked.write().await;
+        let namespaces: BTreeSet<Namespace> = paused
+            .keys()
+            .chain(login_blocked.keys())
+            .cloned()
+            .collect();
         paused.clear();
+        login_blocked.clear();
         drop(paused);
-        self.inner.login_blocked.write().await.clear();
-        for ns in namespaces {
-            self.inner.aggregator.note_cleared(&ns);
+        drop(login_blocked);
+        for ns in &namespaces {
+            self.inner.aggregator.note_cleared(ns);
         }
     }
 
@@ -210,6 +217,15 @@ impl Watcher {
     #[cfg(test)]
     async fn pause_for_test(&self, namespace: Namespace, reason: PausedReason) {
         self.inner.paused.write().await.insert(namespace, reason);
+    }
+
+    #[cfg(test)]
+    async fn login_block_for_test(&self, namespace: Namespace, host: Option<Host>) {
+        self.inner
+            .login_blocked
+            .write()
+            .await
+            .insert(namespace, host);
     }
 
     #[cfg(test)]
@@ -336,6 +352,28 @@ mod tests {
         let status = rx.borrow().clone();
         assert_eq!(status.mode, TrayMode::Idle);
         assert!(watcher.login_blocked_for_test().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn clear_all_paused_clears_login_blocked_only_aggregator_error() {
+        // Regression: a namespace that hit `LoginRequired` lives in
+        // `login_blocked` and in the aggregator's error map but never
+        // enters `paused`. Re-enabling autosync must still drop the
+        // aggregator error so the tray doesn't stay stuck in Error.
+        let (tx, rx) = watch::channel(SyncTrayStatus::default());
+        let aggregator = Arc::new(SyncTrayAggregator::new(tx));
+        let watcher =
+            Watcher::new_for_test_with_aggregator(Arc::new(LogReporter), aggregator.clone());
+        let ns: Namespace = ("acme", "demo").into();
+
+        watcher.login_block_for_test(ns.clone(), None).await;
+        aggregator.note_login_required(&ns, None);
+        assert_eq!(rx.borrow().mode, TrayMode::Error);
+
+        watcher.clear_all_paused().await;
+        assert!(watcher.login_blocked_for_test().await.is_empty());
+        assert!(rx.borrow().error.is_none());
+        assert_eq!(rx.borrow().mode, TrayMode::Idle);
     }
 
     #[tokio::test]
