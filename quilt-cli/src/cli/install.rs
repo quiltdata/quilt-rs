@@ -191,11 +191,10 @@ mod tests {
         );
 
         let domain_paths = DomainPaths::new(temp_dir.path().to_path_buf());
-        let namespace = pkg::NAMESPACE.into();
 
         assert!(
             storage
-                .exists(domain_paths.installed_manifest(&namespace, pkg::TOP_HASH))
+                .exists(domain_paths.installed_manifest(&pkg::NAMESPACE.into(), pkg::TOP_HASH))
                 .await
         );
 
