@@ -15,7 +15,7 @@ with features for viewing status and handling workflows.
 This is a Cargo workspace containing:
 
 - **`quilt-rs/`** - Library crate (published to [crates.io](https://crates.io/crates/quilt-rs))
-- **`quilt-cli/`** - CLI application (compile from source)
+- **`quilt-cli/`** - CLI application (published to [crates.io](https://crates.io/crates/quilt-cli))
 - **`quilt-sync/`** - Cross-platform desktop GUI application (QuiltSync)
 
 ## Usage
