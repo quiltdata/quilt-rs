@@ -3241,8 +3241,10 @@ mod tests {
 
         #[test]
         fn autosync_settings_data_preserves_close_to_tray() {
-            let mut s = AutosyncSettings::default();
-            s.close_to_tray = true;
+            let s = AutosyncSettings {
+                close_to_tray: true,
+                ..Default::default()
+            };
             let data = AutosyncSettingsData::from(s);
             assert!(data.close_to_tray);
         }
