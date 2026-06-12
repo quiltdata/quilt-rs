@@ -716,7 +716,7 @@ mod tests {
         let mut top_hasher1 = TopHasher::new();
         top_hasher1.append_header(&header1)?;
 
-        let row1a = ManifestRow {
+        let empty_obj_meta_row = ManifestRow {
             logical_key: PathBuf::from("test1.txt"),
             physical_key: "s3://bucket/test1.txt".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
@@ -724,7 +724,7 @@ mod tests {
             meta: Some(serde_json::json!({})), // Empty object
         };
 
-        let row1b = ManifestRow {
+        let sorted_keys_meta_row = ManifestRow {
             logical_key: PathBuf::from("test2.txt"),
             physical_key: "s3://bucket/test2.txt".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
@@ -732,8 +732,8 @@ mod tests {
             meta: Some(serde_json::json!({"alpha": "first", "beta": "second"})), // Keys in alphabetical order
         };
 
-        top_hasher1.append(&row1a)?;
-        top_hasher1.append(&row1b)?;
+        top_hasher1.append(&empty_obj_meta_row)?;
+        top_hasher1.append(&sorted_keys_meta_row)?;
         let hash1 = top_hasher1.finalize();
 
         // Second manifest: meta: null (becomes {}), different key order, field order doesn't matter for hashing
@@ -741,7 +741,7 @@ mod tests {
         let mut top_hasher2 = TopHasher::new();
         top_hasher2.append_header(&header2)?;
 
-        let row2a = ManifestRow {
+        let null_meta_row = ManifestRow {
             logical_key: PathBuf::from("test1.txt"),
             physical_key: "s3://bucket/test1.txt".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
@@ -749,7 +749,7 @@ mod tests {
             meta: Some(serde_json::Value::Null), // Null becomes {}
         };
 
-        let row2b = ManifestRow {
+        let unsorted_keys_meta_row = ManifestRow {
             logical_key: PathBuf::from("test2.txt"),
             physical_key: "s3://bucket/test2.txt".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
@@ -757,8 +757,8 @@ mod tests {
             meta: Some(serde_json::json!({"beta": "second", "alpha": "first"})), // Keys in different order
         };
 
-        top_hasher2.append(&row2a)?;
-        top_hasher2.append(&row2b)?;
+        top_hasher2.append(&null_meta_row)?;
+        top_hasher2.append(&unsorted_keys_meta_row)?;
         let hash2 = top_hasher2.finalize();
 
         // Third manifest: meta: None (becomes {})
@@ -766,7 +766,7 @@ mod tests {
         let mut top_hasher3 = TopHasher::new();
         top_hasher3.append_header(&header3)?;
 
-        let row3a = ManifestRow {
+        let missing_meta_row = ManifestRow {
             logical_key: PathBuf::from("test1.txt"),
             physical_key: "s3://bucket/test1.txt".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::ZERO_HASH_B64)?.into(),
@@ -774,7 +774,7 @@ mod tests {
             meta: None, // None becomes {}
         };
 
-        let row3b = ManifestRow {
+        let reordered_keys_meta_row = ManifestRow {
             logical_key: PathBuf::from("test2.txt"),
             physical_key: "s3://bucket/test2.txt".to_string(),
             hash: Sha256ChunkedHash::try_from(objects::LESS_THAN_8MB_HASH_B64)?.into(),
@@ -782,8 +782,8 @@ mod tests {
             meta: Some(serde_json::json!({"beta": "second", "alpha": "first"})), // Same as above after normalization
         };
 
-        top_hasher3.append(&row3a)?;
-        top_hasher3.append(&row3b)?;
+        top_hasher3.append(&missing_meta_row)?;
+        top_hasher3.append(&reordered_keys_meta_row)?;
         let hash3 = top_hasher3.finalize();
 
         // All three should produce the same hash despite different representations
