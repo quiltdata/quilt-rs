@@ -289,6 +289,7 @@ mod tests {
         };
 
         let storage = MockStorage::default();
+        let paths = DomainPaths::new(PathBuf::from("/foo"));
         storage
             .write_byte_stream(PathBuf::from("/working-dir/foo"), ByteStream::default())
             .await?;
@@ -310,7 +311,7 @@ mod tests {
         let err = publish_package(
             lineage,
             &mut manifest,
-            &DomainPaths::new(PathBuf::from("/")),
+            &paths,
             &storage,
             &remote,
             PathBuf::from("/working-dir"),
@@ -337,17 +338,20 @@ mod tests {
     /// Seeds working-dir and remote object storage with an empty file at
     /// `{hash_hex}`, and returns a `(storage, remote)` pair ready for use
     /// by `publish_package` with a first-push lineage.
-    async fn setup_storages_for_commit_and_push(hash_hex: &str) -> Res<(MockStorage, MockRemote)> {
+    async fn setup_storages_for_commit_and_push(
+        paths: &DomainPaths,
+        hash_hex: &str,
+    ) -> Res<(MockStorage, MockRemote)> {
         let storage = MockStorage::default();
         storage
             .write_byte_stream(PathBuf::from("/working-dir/foo"), ByteStream::default())
             .await?;
 
         let remote = MockRemote::default();
-        // Commit rewrites the row's physical_key to file:///.quilt/objects/{hash}.
+        // Commit rewrites the row's physical_key to file://<objects_dir>/{hash}.
         // Push reads that path through MockRemote's own storage
         // (see MockRemote::upload_file), so seed the same empty file there too.
-        let object_path = PathBuf::from(format!("/.quilt/objects/{hash_hex}"));
+        let object_path = paths.objects_dir().join(hash_hex);
         remote
             .storage
             .write_byte_stream(object_path, ByteStream::default())
@@ -413,8 +417,9 @@ mod tests {
         let manifest_src = fixtures::manifest_with_objects_all_sizes::manifest().await?;
         let added = row_from_fixture(&manifest_src, "0mb.bin");
 
+        let paths = DomainPaths::new(PathBuf::from("/foo"));
         let (storage, remote) =
-            setup_storages_for_commit_and_push(fixtures::objects::ZERO_HASH_HEX).await?;
+            setup_storages_for_commit_and_push(&paths, fixtures::objects::ZERO_HASH_HEX).await?;
 
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(PathBuf::from("foo"), Change::Added(added))]),
@@ -426,7 +431,7 @@ mod tests {
         let outcome = publish_package(
             first_push_lineage_with_foo(),
             &mut manifest,
-            &DomainPaths::new(PathBuf::from("/")),
+            &paths,
             &storage,
             &remote,
             PathBuf::from("/working-dir"),
@@ -471,10 +476,10 @@ mod tests {
             )
             .await?;
         let remote = MockRemote::default();
-        let object_path = PathBuf::from(format!(
-            "/.quilt/objects/{}",
-            fixtures::objects::LESS_THAN_8MB_HASH_HEX
-        ));
+        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let object_path = paths
+            .objects_dir()
+            .join(fixtures::objects::LESS_THAN_8MB_HASH_HEX);
         remote
             .storage
             .write_byte_stream(
@@ -498,7 +503,7 @@ mod tests {
         let outcome = publish_package(
             first_push_lineage_with_foo(),
             &mut manifest,
-            &DomainPaths::new(PathBuf::from("/")),
+            &paths,
             &storage,
             &remote,
             PathBuf::from("/working-dir"),
@@ -533,8 +538,9 @@ mod tests {
 
         // Remove has nothing to copy into the object store, but setup still
         // seeds /working-dir/foo so the helper stays uniform across tests.
+        let paths = DomainPaths::new(PathBuf::from("/foo"));
         let (storage, remote) =
-            setup_storages_for_commit_and_push(fixtures::objects::ZERO_HASH_HEX).await?;
+            setup_storages_for_commit_and_push(&paths, fixtures::objects::ZERO_HASH_HEX).await?;
 
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(PathBuf::from("foo"), Change::Removed(existing.clone()))]),
@@ -547,7 +553,7 @@ mod tests {
         let outcome = publish_package(
             first_push_lineage_with_foo(),
             &mut manifest,
-            &DomainPaths::new(PathBuf::from("/")),
+            &paths,
             &storage,
             &remote,
             PathBuf::from("/working-dir"),
@@ -584,8 +590,9 @@ mod tests {
         let manifest_src = fixtures::manifest_with_objects_all_sizes::manifest().await?;
         let added = row_from_fixture(&manifest_src, "0mb.bin");
 
+        let paths = DomainPaths::new(PathBuf::from("/foo"));
         let (storage, remote) =
-            setup_storages_for_commit_and_push(fixtures::objects::ZERO_HASH_HEX).await?;
+            setup_storages_for_commit_and_push(&paths, fixtures::objects::ZERO_HASH_HEX).await?;
 
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(PathBuf::from("foo"), Change::Added(added))]),
@@ -597,7 +604,7 @@ mod tests {
         let outcome = publish_package(
             first_push_lineage_with_foo(),
             &mut manifest,
-            &DomainPaths::new(PathBuf::from("/")),
+            &paths,
             &storage,
             &remote,
             PathBuf::from("/working-dir"),
