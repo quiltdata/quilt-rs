@@ -118,6 +118,7 @@ mod tests {
 
     use quilt_rs::io::storage::LocalStorage;
     use quilt_rs::io::storage::Storage;
+    use quilt_rs::paths::DomainPaths;
 
     use crate::cli::fixtures::packages::default as pkg;
     use crate::cli::model::create_model_in_temp_dir;
@@ -189,20 +190,20 @@ mod tests {
                 .await
         );
 
+        let domain_paths = DomainPaths::new(temp_dir.path().to_path_buf());
+
         assert!(
             storage
-                .exists(temp_dir.path().join(format!(
-                    ".quilt/installed/{}/{}",
-                    pkg::NAMESPACE_STR,
-                    pkg::TOP_HASH
-                )))
+                .exists(domain_paths.installed_manifest(&pkg::NAMESPACE.into(), pkg::TOP_HASH))
                 .await
         );
 
         assert!(
             storage
                 .exists(
-                    temp_dir.path().join(".quilt/packages/data-yaml-spec-tests/a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7")
+                    domain_paths
+                        .cached_manifests_dir("data-yaml-spec-tests")
+                        .join(pkg::TOP_HASH)
                 )
                 .await
         );
@@ -211,7 +212,9 @@ mod tests {
         assert!(
             storage
                 .exists(
-                    temp_dir.path().join(".quilt/objects/3e5e75033079a0b5bfaeff79c8f10dbc3f461e283ad8126c333cd74792e62ea7")
+                    domain_paths
+                        .objects_dir()
+                        .join("3e5e75033079a0b5bfaeff79c8f10dbc3f461e283ad8126c333cd74792e62ea7")
                 )
                 .await
         );
@@ -219,7 +222,9 @@ mod tests {
         assert!(
             storage
                 .exists(
-                    temp_dir.path().join(".quilt/objects/dc3ea61d9a4aaf7d822eed1de089db83d46aa29f3fbdd99466f7e5e216c91c8a")
+                    domain_paths
+                        .objects_dir()
+                        .join("dc3ea61d9a4aaf7d822eed1de089db83d46aa29f3fbdd99466f7e5e216c91c8a")
                 )
                 .await
         );

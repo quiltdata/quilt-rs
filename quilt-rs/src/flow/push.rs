@@ -282,13 +282,13 @@ mod tests {
             remote_uri: Some(manifest_uri),
             ..PackageLineage::default()
         };
-        let manifest_key = format!(
-            ".quilt/packages/b/{}",
-            fixtures::top_hash::EMPTY_NULL_TOP_HASH
-        );
+        let paths = paths::DomainPaths::new(PathBuf::from("/foo"));
+        let manifest_key = paths
+            .cached_manifests_dir("b")
+            .join(fixtures::top_hash::EMPTY_NULL_TOP_HASH);
         let storage = MockStorage::default();
         storage
-            .write_byte_stream(PathBuf::from(manifest_key), ByteStream::from_static(b"foo"))
+            .write_byte_stream(manifest_key, ByteStream::from_static(b"foo"))
             .await?;
 
         let remote = MockRemote::default();
@@ -312,7 +312,7 @@ mod tests {
         let result = push_package(
             lineage,
             manifest,
-            &paths::DomainPaths::default(),
+            &paths,
             &storage,
             &remote,
             None,

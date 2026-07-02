@@ -1,10 +1,15 @@
 use std::path::Path;
 
+use crate::quilt;
+
 /// Returns true if a path should be ignored even when `notify` reports an
 /// event for it. Intentionally a small static deny-list — gitignore-style
 /// user filters wait for evidence they are needed.
 pub fn is_ignored(path: &Path) -> bool {
-    if path.components().any(|c| c.as_os_str() == ".quilt") {
+    if path
+        .components()
+        .any(|c| c.as_os_str() == quilt::paths::DOT_QUILT_DIR)
+    {
         return true;
     }
     let Some(name) = path.file_name().and_then(|s| s.to_str()) else {

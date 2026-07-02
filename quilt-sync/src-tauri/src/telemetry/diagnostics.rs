@@ -10,6 +10,7 @@ use crate::error::Error;
 use crate::model::Model;
 use crate::model::QuiltModel;
 use crate::quilt;
+use crate::quilt::paths::DomainPaths;
 
 /// Collected diagnostic metadata shared by crash reports and diagnostic log exports.
 pub struct DiagnosticInfo {
@@ -128,6 +129,7 @@ fn read_metadata_from_zip(zip_bytes: &[u8]) -> Option<DiagnosticMetadata> {
 
 /// Bundle diagnostic info, logs, and config files into a zip and reveal it.
 pub fn save_diagnostic_zip(info: &DiagnosticInfo) -> Result<PathBuf, Error> {
+    let domain_paths = DomainPaths::new(info.data_dir.clone());
     let auth_dir = info.data_dir.join(quilt::paths::AUTH_DIR);
 
     let zip_path = info.data_dir.join("quiltsync-diagnostic.zip");
@@ -157,7 +159,7 @@ pub fn save_diagnostic_zip(info: &DiagnosticInfo) -> Result<PathBuf, Error> {
     }
 
     // Add data.json (lineage file)
-    let data_json = info.data_dir.join(".quilt").join("data.json");
+    let data_json = domain_paths.lineage();
     if data_json.exists() {
         zip_writer.start_file("data.json", options)?;
         let contents = std::fs::read(&data_json)?;
@@ -235,7 +237,8 @@ mod tests {
         write_file(&logs_tmp.path().join("quiltsync.log.1"), rotated_log);
 
         let data_json = br#"{"version":1,"packages":[]}"#;
-        write_file(&data_tmp.path().join(".quilt").join("data.json"), data_json);
+        let domain_paths = DomainPaths::new(data_tmp.path().to_path_buf());
+        write_file(&domain_paths.lineage(), data_json);
 
         let demo_host = "demo.quiltdata.com";
         let open_host = "open.quiltdata.com";

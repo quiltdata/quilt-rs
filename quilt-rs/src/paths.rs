@@ -20,6 +20,10 @@ pub const AUTH_CREDENTIALS: &str = "credentials.json";
 pub const AUTH_DIR: &str = ".auth";
 pub const AUTH_TOKENS: &str = "tokens.json";
 
+/// Name of the `.quilt` directory that holds Quilt's bookkeeping inside a
+/// data dir (lineage, installed manifests, cached manifests, objects).
+pub const DOT_QUILT_DIR: &str = ".quilt";
+
 /// List authenticated host directories under the given data directory.
 ///
 /// Returns a sorted list of directory names found in `<data_dir>/.auth/`.
@@ -42,14 +46,17 @@ pub fn list_auth_hosts(data_dir: &Path) -> Vec<String> {
     hosts
 }
 
-const LINEAGE_FILE: &str = ".quilt/data.json";
+// Paths below are relative to `DOT_QUILT_DIR`; every accessor joins them onto
+// `dot_quilt_dir()`, so `DOT_QUILT_DIR` stays the single source of the prefix
+// and a rename propagates without touching these.
+const LINEAGE_FILE: &str = "data.json";
 
-const INSTALLED_DIR: &str = ".quilt/installed";
-// Local cache directory under `<data_dir>`. Distinct from the S3 key
+const INSTALLED_DIR: &str = "installed";
+// Local cache directory under `<data_dir>/.quilt`. Distinct from the S3 key
 // prefix of the same name in `quilt-uri::paths` — sharing the literal
 // value today is incidental, the two contracts can evolve independently.
-const MANIFEST_DIR: &str = ".quilt/packages";
-const OBJECTS_DIR: &str = ".quilt/objects";
+const MANIFEST_DIR: &str = "packages";
+const OBJECTS_DIR: &str = "objects";
 
 pub use quilt_uri::paths::get_manifest_key;
 pub use quilt_uri::paths::tag_key;
@@ -62,6 +69,11 @@ pub fn package_home(home: &Home, namespace: &Namespace) -> PathBuf {
 /// Helper for getting paths.
 /// We heavily rely on where we put files,
 /// and this struct contains info of the directory structure .
+///
+/// TODO: Avoid `DomainPaths::default()` — the empty root produces relative
+/// `.quilt/...` paths that read like magic and only work by coincidence with
+/// in-memory storage. Prefer an explicit root via `DomainPaths::new(...)`.
+/// Once the remaining test call sites are converted, drop the `Default` derive.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DomainPaths {
     root_dir: PathBuf,
@@ -78,6 +90,11 @@ impl DomainPaths {
             .join(PathBuf::from(host.to_string()))
     }
 
+    /// Path to the `.quilt` bookkeeping directory under the root.
+    pub fn dot_quilt_dir(&self) -> PathBuf {
+        self.root_dir.join(DOT_QUILT_DIR)
+    }
+
     /// Path to the installed manifest.
     ///
     /// Takes `(namespace, hash)` rather than `&ManifestUri` because the
@@ -92,19 +109,19 @@ impl DomainPaths {
 
     /// Directory for storing installed manifests
     pub fn installed_manifests_dir(&self, namespace: &Namespace) -> PathBuf {
-        self.root_dir
+        self.dot_quilt_dir()
             .join(INSTALLED_DIR)
             .join(namespace.to_string())
     }
 
     /// Path to the lineage file
     pub fn lineage(&self) -> PathBuf {
-        self.root_dir.join(LINEAGE_FILE)
+        self.dot_quilt_dir().join(LINEAGE_FILE)
     }
 
     /// Path to the manifest cached in semi-temporary directory
     pub fn cached_manifest(&self, uri: &ManifestUri) -> PathBuf {
-        self.root_dir
+        self.dot_quilt_dir()
             .join(MANIFEST_DIR)
             .join(&uri.bucket)
             .join(&uri.hash)
@@ -112,12 +129,12 @@ impl DomainPaths {
 
     /// Directory for storing cached manifests for a bucket
     pub fn cached_manifests_dir(&self, bucket: &str) -> PathBuf {
-        self.root_dir.join(MANIFEST_DIR).join(bucket)
+        self.dot_quilt_dir().join(MANIFEST_DIR).join(bucket)
     }
 
     /// Directory for storing pristine hashed files
     pub fn objects_dir(&self) -> PathBuf {
-        self.root_dir.join(OBJECTS_DIR)
+        self.dot_quilt_dir().join(OBJECTS_DIR)
     }
 
     /// Path to the pristine hashed file
@@ -128,9 +145,9 @@ impl DomainPaths {
     /// What directories are essential when we initiate `LocalDomain`
     fn required(&self) -> Vec<PathBuf> {
         vec![
-            self.root_dir.join(INSTALLED_DIR),
+            self.dot_quilt_dir().join(INSTALLED_DIR),
             self.objects_dir(),
-            self.root_dir.join(MANIFEST_DIR),
+            self.dot_quilt_dir().join(MANIFEST_DIR),
         ]
     }
 
@@ -221,6 +238,52 @@ mod tests {
                 PathBuf::from("foo/bar/.quilt/objects"),
                 PathBuf::from("foo/bar/.quilt/packages"),
             ]
+        );
+    }
+
+    /// Pin the on-disk layout each `DomainPaths` accessor produces, so a
+    /// drift in `DOT_QUILT_DIR` / `LINEAGE_FILE` / `INSTALLED_DIR` /
+    /// `MANIFEST_DIR` / `OBJECTS_DIR` / `AUTH_DIR` fails here rather than
+    /// silently changing behavior in every downstream test that builds
+    /// paths through these helpers.
+    #[test]
+    fn test_domain_paths_layout() {
+        let paths = DomainPaths::new(PathBuf::from("foo/bar"));
+        let namespace = Namespace::from(("test", "package"));
+        let host: Host = "example.com".parse().unwrap();
+        let manifest_uri = ManifestUri {
+            bucket: "my-bucket".to_string(),
+            namespace: namespace.clone(),
+            hash: "deadbeef".to_string(),
+            origin: None,
+        };
+
+        assert_eq!(paths.dot_quilt_dir(), PathBuf::from("foo/bar/.quilt"));
+        assert_eq!(paths.lineage(), PathBuf::from("foo/bar/.quilt/data.json"));
+        assert_eq!(
+            paths.installed_manifests_dir(&namespace),
+            PathBuf::from("foo/bar/.quilt/installed/test/package"),
+        );
+        assert_eq!(
+            paths.installed_manifest(&namespace, "deadbeef"),
+            PathBuf::from("foo/bar/.quilt/installed/test/package/deadbeef"),
+        );
+        assert_eq!(
+            paths.cached_manifests_dir("my-bucket"),
+            PathBuf::from("foo/bar/.quilt/packages/my-bucket"),
+        );
+        assert_eq!(
+            paths.cached_manifest(&manifest_uri),
+            PathBuf::from("foo/bar/.quilt/packages/my-bucket/deadbeef"),
+        );
+        assert_eq!(paths.objects_dir(), PathBuf::from("foo/bar/.quilt/objects"));
+        assert_eq!(
+            paths.object(&[0xde, 0xad, 0xbe, 0xef]),
+            PathBuf::from("foo/bar/.quilt/objects/deadbeef"),
+        );
+        assert_eq!(
+            paths.auth_host(&host),
+            PathBuf::from("foo/bar/.auth/example.com"),
         );
     }
 

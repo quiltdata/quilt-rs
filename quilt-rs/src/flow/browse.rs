@@ -282,10 +282,7 @@ mod tests {
             cache_remote_manifest(&paths, &storage, &remote, &manifest_uri).await?;
 
         // Verify that the JSONL manifest is cached locally.
-        let cache_path = PathBuf::from(format!(
-            ".quilt/packages/{}/{}",
-            manifest_uri.bucket, manifest_uri.hash
-        ));
+        let cache_path = paths.cached_manifest(&manifest_uri);
         assert!(storage.exists(cache_path).await);
 
         // Verify that the cached manifest contains valid records
