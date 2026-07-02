@@ -313,12 +313,13 @@ mod tests {
     #[test(tokio::test)]
     async fn test_commit_empty() -> Res {
         let storage = MockStorage::default();
+        let paths = DomainPaths::new(PathBuf::from("/foo"));
         let lineage = PackageLineage::default();
         assert!(lineage.commit.is_none());
         let (_lineage, commit) = commit_package(
             lineage,
             &mut Manifest::default(),
-            &DomainPaths::default(),
+            &paths,
             &storage,
             PathBuf::default(),
             InstalledPackageStatus::default(),
@@ -331,7 +332,7 @@ mod tests {
         let hash = fixtures::top_hash::EMPTY_NONE_TOP_HASH;
         assert!(
             storage
-                .exists(&PathBuf::from(format!(".quilt/installed/foo/bar/{hash}")))
+                .exists(&paths.installed_manifest(&("foo", "bar").into(), hash))
                 .await
         );
         assert_eq!(commit.hash, hash);
@@ -349,12 +350,13 @@ mod tests {
             serde_json::Value::String("ipsum".to_string()),
         );
 
+        let paths = DomainPaths::new(PathBuf::from("/foo"));
         let lineage = PackageLineage::default();
         assert!(lineage.commit.is_none());
         let (_lineage, commit) = commit_package(
             lineage,
             &mut Manifest::default(),
-            &DomainPaths::default(),
+            &paths,
             &storage,
             PathBuf::default(),
             InstalledPackageStatus::default(),
@@ -367,7 +369,7 @@ mod tests {
         let hash = "56c329d2390c9c6efedb698f47b75f096112c89a7751d55a426507ec6c432897";
         assert!(
             storage
-                .exists(&PathBuf::from(format!(".quilt/installed/foo/bar/{hash}")))
+                .exists(&paths.installed_manifest(&("foo", "bar").into(), hash))
                 .await
         );
         assert_eq!(commit.hash, hash);
@@ -409,10 +411,11 @@ mod tests {
             "Initial lineage doesn't have testing path"
         );
 
+        let paths = DomainPaths::new(PathBuf::from("/foo"));
         let (lineage, commit) = commit_package(
             lineage,
             &mut manifest,
-            &DomainPaths::default(),
+            &paths,
             &storage,
             PathBuf::default(),
             status,
@@ -432,7 +435,7 @@ mod tests {
         );
         assert!(
             storage
-                .exists(&PathBuf::from(format!(".quilt/installed/foo/bar/{hash}")))
+                .exists(&paths.installed_manifest(&("foo", "bar").into(), hash))
                 .await,
             "Registry doesn't have installed package with a new hash"
         );
@@ -475,10 +478,11 @@ mod tests {
             "Initial lineage has path, but shouldn't because we test _new_ file"
         );
 
+        let paths = DomainPaths::new(PathBuf::from("/foo"));
         let (lineage, commit) = commit_package(
             lineage,
             &mut manifest,
-            &DomainPaths::new(PathBuf::from("/")),
+            &paths,
             &storage,
             PathBuf::from("/working-dir"),
             status,
@@ -496,7 +500,7 @@ mod tests {
         );
         assert!(
             storage
-                .exists(&PathBuf::from(format!("/.quilt/objects/{hash}")))
+                .exists(&paths.objects_dir().join(hash))
                 .await,
             "Registry doesn't have installed path"
         );
@@ -528,6 +532,7 @@ mod tests {
         let hash = added_file.hash.clone();
 
         let storage = MockStorage::default();
+        let paths = DomainPaths::new(PathBuf::from("/foo"));
         storage
             .write_byte_stream(
                 PathBuf::from("one/two two/three three three/READ ME.md"),
@@ -536,7 +541,7 @@ mod tests {
             .await?;
         storage
             .write_byte_stream(
-                PathBuf::from(format!(".quilt/objects/{}", hex::encode(hash.digest()))),
+                paths.object(hash.digest()),
                 ByteStream::from_static(b"This is the README."),
             )
             .await?;
@@ -561,7 +566,7 @@ mod tests {
         let result = commit_package(
             lineage,
             &mut manifest,
-            &DomainPaths::new(PathBuf::from("/")),
+            &paths,
             &storage,
             PathBuf::default(),
             status,
@@ -583,6 +588,7 @@ mod tests {
     #[test(tokio::test)]
     async fn test_modifying_and_commit() -> Res {
         let storage = MockStorage::default();
+        let paths = DomainPaths::new(PathBuf::from("/foo"));
         storage
             .write_byte_stream(
                 PathBuf::from("/working-dir/one/two two/three three three/READ ME.md"),
@@ -632,7 +638,7 @@ mod tests {
         let (lineage, commit) = commit_package(
             lineage,
             &mut manifest,
-            &DomainPaths::new(PathBuf::from("/")),
+            &paths,
             &storage,
             PathBuf::from("/working-dir"),
             status,
@@ -651,10 +657,7 @@ mod tests {
         );
         assert!(
             storage
-                .exists(&PathBuf::from(format!(
-                    "/.quilt/objects/{}",
-                    fixtures::objects::LESS_THAN_8MB_HASH_HEX
-                )))
+                .exists(&paths.objects_dir().join(fixtures::objects::LESS_THAN_8MB_HASH_HEX))
                 .await,
             "Registry doesn't have installed path"
         );
