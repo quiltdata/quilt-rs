@@ -415,7 +415,10 @@ mod tests {
         m.commit(commit::Input {
             message: "Initial commit".to_string(),
             namespace: namespace.clone(),
-            user_meta: UserMeta::Keep,
+            // The original revision has no package-level metadata, so the
+            // revert must clear step 3's — `Keep` would inherit it and the
+            // final top hash would no longer match the original.
+            user_meta: UserMeta::Clear,
             workflow: None,
             host_config: host_config.clone(),
         })
