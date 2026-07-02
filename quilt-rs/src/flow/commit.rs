@@ -143,6 +143,10 @@ async fn create_immutable_object_copy(
 
 /// Commit new commit with new `message`, `user_meta` and all changes got from calling `flow::status`
 ///
+/// `user_meta` is the package-level metadata for the new revision. Passing
+/// `None` preserves the previous revision's metadata (from `manifest`'s
+/// header); pass `Some(serde_json::json!({}))` to clear it deliberately.
+///
 /// On `Ok`, the returned `CommitState` is also stored in `lineage.commit` —
 /// callers that need the new top hash should read it from the tuple rather
 /// than unwrapping `lineage.commit`.
@@ -254,10 +258,18 @@ pub async fn commit_package(
         other => other,
     };
 
+    // Preserve the previous revision's package-level metadata when the caller
+    // supplies none. `None` means "leave the metadata unchanged"; to clear it
+    // deliberately, pass an explicit empty object (`Some({})`). Without this,
+    // committing with an empty metadata field would silently drop the existing
+    // package metadata (data loss). `flow::recommit` and `flow::push` already
+    // carry the header forward — this brings `flow::commit` in line.
+    let user_meta = processed_user_meta.or_else(|| manifest.header.user_meta.clone());
+
     let header = ManifestHeader {
         message: Some(message.clone()),
         workflow,
-        user_meta: processed_user_meta,
+        user_meta,
         ..ManifestHeader::default()
     };
 
@@ -310,15 +322,29 @@ mod tests {
 
     // NOTE: Tests use "/" path for working directory, because it then parsed with Url and have to be absolute path
 
+    /// A manifest whose header carries the given package-level metadata and no
+    /// rows — a minimal stand-in for a previously committed revision.
+    fn manifest_with_meta(user_meta: Option<serde_json::Value>) -> Manifest {
+        Manifest {
+            header: ManifestHeader {
+                user_meta,
+                ..ManifestHeader::default()
+            },
+            ..Manifest::default()
+        }
+    }
+
     #[test(tokio::test)]
     async fn test_commit_empty() -> Res {
         let storage = MockStorage::default();
         let paths = DomainPaths::new(PathBuf::from("/foo"));
         let lineage = PackageLineage::default();
         assert!(lineage.commit.is_none());
+        // No previous metadata and none supplied -> the new header has no
+        // `user_meta` (absent field), yielding the empty/none top hash.
         let (_lineage, commit) = commit_package(
             lineage,
-            &mut Manifest::default(),
+            &mut manifest_with_meta(None),
             &paths,
             &storage,
             PathBuf::default(),
@@ -336,6 +362,109 @@ mod tests {
                 .await
         );
         assert_eq!(commit.hash, hash);
+        Ok(())
+    }
+
+    /// Committing with `user_meta: None` preserves the previous revision's
+    /// package-level metadata instead of dropping it (regression test for the
+    /// silent metadata data-loss bug). Verified by equivalence: inheriting the
+    /// previous metadata must produce the same manifest (top hash) as passing
+    /// that same metadata explicitly.
+    #[test(tokio::test)]
+    async fn test_commit_preserves_existing_meta() -> Res {
+        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let meta = serde_json::json!({"kept": "value"});
+
+        let inherited = {
+            let storage = MockStorage::default();
+            let (_lineage, commit) = commit_package(
+                PackageLineage::default(),
+                &mut manifest_with_meta(Some(meta.clone())),
+                &paths,
+                &storage,
+                PathBuf::default(),
+                InstalledPackageStatus::default(),
+                ("foo", "bar").into(),
+                String::default(),
+                None,
+                None,
+            )
+            .await?;
+            commit.hash
+        };
+
+        let explicit = {
+            let storage = MockStorage::default();
+            let (_lineage, commit) = commit_package(
+                PackageLineage::default(),
+                &mut manifest_with_meta(Some(meta.clone())),
+                &paths,
+                &storage,
+                PathBuf::default(),
+                InstalledPackageStatus::default(),
+                ("foo", "bar").into(),
+                String::default(),
+                Some(meta),
+                None,
+            )
+            .await?;
+            commit.hash
+        };
+
+        assert_eq!(
+            inherited, explicit,
+            "committing None must inherit the previous header's user_meta"
+        );
+        Ok(())
+    }
+
+    /// Passing an explicit empty object clears the metadata rather than
+    /// inheriting the previous revision's — the deliberate opt-out.
+    #[test(tokio::test)]
+    async fn test_commit_explicit_empty_clears_meta() -> Res {
+        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let meta = serde_json::json!({"kept": "value"});
+
+        let inherited = {
+            let storage = MockStorage::default();
+            let (_lineage, commit) = commit_package(
+                PackageLineage::default(),
+                &mut manifest_with_meta(Some(meta.clone())),
+                &paths,
+                &storage,
+                PathBuf::default(),
+                InstalledPackageStatus::default(),
+                ("foo", "bar").into(),
+                String::default(),
+                None,
+                None,
+            )
+            .await?;
+            commit.hash
+        };
+
+        let cleared = {
+            let storage = MockStorage::default();
+            let (_lineage, commit) = commit_package(
+                PackageLineage::default(),
+                &mut manifest_with_meta(Some(meta)),
+                &paths,
+                &storage,
+                PathBuf::default(),
+                InstalledPackageStatus::default(),
+                ("foo", "bar").into(),
+                String::default(),
+                Some(serde_json::json!({})),
+                None,
+            )
+            .await?;
+            commit.hash
+        };
+
+        assert_ne!(
+            inherited, cleared,
+            "an explicit empty object must clear metadata, not inherit it"
+        );
         Ok(())
     }
 
