@@ -46,14 +46,17 @@ pub fn list_auth_hosts(data_dir: &Path) -> Vec<String> {
     hosts
 }
 
-const LINEAGE_FILE: &str = ".quilt/data.json";
+// Paths below are relative to `DOT_QUILT_DIR`; every accessor joins them onto
+// `dot_quilt_dir()`, so `DOT_QUILT_DIR` stays the single source of the prefix
+// and a rename propagates without touching these.
+const LINEAGE_FILE: &str = "data.json";
 
-const INSTALLED_DIR: &str = ".quilt/installed";
-// Local cache directory under `<data_dir>`. Distinct from the S3 key
+const INSTALLED_DIR: &str = "installed";
+// Local cache directory under `<data_dir>/.quilt`. Distinct from the S3 key
 // prefix of the same name in `quilt-uri::paths` — sharing the literal
 // value today is incidental, the two contracts can evolve independently.
-const MANIFEST_DIR: &str = ".quilt/packages";
-const OBJECTS_DIR: &str = ".quilt/objects";
+const MANIFEST_DIR: &str = "packages";
+const OBJECTS_DIR: &str = "objects";
 
 pub use quilt_uri::paths::get_manifest_key;
 pub use quilt_uri::paths::tag_key;
@@ -106,19 +109,19 @@ impl DomainPaths {
 
     /// Directory for storing installed manifests
     pub fn installed_manifests_dir(&self, namespace: &Namespace) -> PathBuf {
-        self.root_dir
+        self.dot_quilt_dir()
             .join(INSTALLED_DIR)
             .join(namespace.to_string())
     }
 
     /// Path to the lineage file
     pub fn lineage(&self) -> PathBuf {
-        self.root_dir.join(LINEAGE_FILE)
+        self.dot_quilt_dir().join(LINEAGE_FILE)
     }
 
     /// Path to the manifest cached in semi-temporary directory
     pub fn cached_manifest(&self, uri: &ManifestUri) -> PathBuf {
-        self.root_dir
+        self.dot_quilt_dir()
             .join(MANIFEST_DIR)
             .join(&uri.bucket)
             .join(&uri.hash)
@@ -126,12 +129,12 @@ impl DomainPaths {
 
     /// Directory for storing cached manifests for a bucket
     pub fn cached_manifests_dir(&self, bucket: &str) -> PathBuf {
-        self.root_dir.join(MANIFEST_DIR).join(bucket)
+        self.dot_quilt_dir().join(MANIFEST_DIR).join(bucket)
     }
 
     /// Directory for storing pristine hashed files
     pub fn objects_dir(&self) -> PathBuf {
-        self.root_dir.join(OBJECTS_DIR)
+        self.dot_quilt_dir().join(OBJECTS_DIR)
     }
 
     /// Path to the pristine hashed file
@@ -142,9 +145,9 @@ impl DomainPaths {
     /// What directories are essential when we initiate `LocalDomain`
     fn required(&self) -> Vec<PathBuf> {
         vec![
-            self.root_dir.join(INSTALLED_DIR),
+            self.dot_quilt_dir().join(INSTALLED_DIR),
             self.objects_dir(),
-            self.root_dir.join(MANIFEST_DIR),
+            self.dot_quilt_dir().join(MANIFEST_DIR),
         ]
     }
 
