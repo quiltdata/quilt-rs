@@ -40,7 +40,7 @@ jobs:
         working-directory: ./quilt-sync/src-tauri
 
       - name: Lint
-        run: cargo clippy -- --deny warnings
+        run: cargo clippy --all-targets --all-features -- --deny warnings
         working-directory: ./quilt-sync/src-tauri
 
       - name: Test

@@ -38,7 +38,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Lint
-        run: cargo clippy --workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui -- --deny warnings
+        run: cargo clippy --workspace --all-targets --all-features --exclude quilt-sync --exclude quilt-sync-ui -- --deny warnings
 
       - name: Check WASM build (quilt-uri, default features)
         run: cargo check -p quilt-uri --target wasm32-unknown-unknown
