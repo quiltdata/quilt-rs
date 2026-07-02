@@ -24,6 +24,7 @@ use crate::oauth::OAuthState;
 use crate::publish_settings::PublishSettings;
 use crate::publish_settings::SharedPublishSettings;
 use crate::quilt;
+use crate::quilt::paths::DomainPaths;
 use crate::routes;
 
 use crate::changelog;
@@ -1159,7 +1160,7 @@ pub async fn erase_auth(
 
 async fn debug_dot_quilt_command(app_handle: &tauri::AppHandle) -> Result<(), Error> {
     let local_data_dir = app_handle.path().app_local_data_dir()?;
-    let dot_quilt_dir = quilt::paths::DomainPaths::new(local_data_dir).dot_quilt_dir();
+    let dot_quilt_dir = DomainPaths::new(local_data_dir).dot_quilt_dir();
 
     opener::open_browser(&dot_quilt_dir)?;
     Ok(())

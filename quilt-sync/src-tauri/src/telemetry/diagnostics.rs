@@ -10,6 +10,7 @@ use crate::error::Error;
 use crate::model::Model;
 use crate::model::QuiltModel;
 use crate::quilt;
+use crate::quilt::paths::DomainPaths;
 
 /// Collected diagnostic metadata shared by crash reports and diagnostic log exports.
 pub struct DiagnosticInfo {
@@ -128,7 +129,7 @@ fn read_metadata_from_zip(zip_bytes: &[u8]) -> Option<DiagnosticMetadata> {
 
 /// Bundle diagnostic info, logs, and config files into a zip and reveal it.
 pub fn save_diagnostic_zip(info: &DiagnosticInfo) -> Result<PathBuf, Error> {
-    let domain_paths = quilt::paths::DomainPaths::new(info.data_dir.clone());
+    let domain_paths = DomainPaths::new(info.data_dir.clone());
     let auth_dir = info.data_dir.join(quilt::paths::AUTH_DIR);
 
     let zip_path = info.data_dir.join("quiltsync-diagnostic.zip");
@@ -236,7 +237,7 @@ mod tests {
         write_file(&logs_tmp.path().join("quiltsync.log.1"), rotated_log);
 
         let data_json = br#"{"version":1,"packages":[]}"#;
-        let domain_paths = quilt::paths::DomainPaths::new(data_tmp.path().to_path_buf());
+        let domain_paths = DomainPaths::new(data_tmp.path().to_path_buf());
         write_file(&domain_paths.lineage(), data_json);
 
         let demo_host = "demo.quiltdata.com";
