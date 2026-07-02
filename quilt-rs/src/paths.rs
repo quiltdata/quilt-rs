@@ -66,6 +66,11 @@ pub fn package_home(home: &Home, namespace: &Namespace) -> PathBuf {
 /// Helper for getting paths.
 /// We heavily rely on where we put files,
 /// and this struct contains info of the directory structure .
+///
+/// TODO: Avoid `DomainPaths::default()` — the empty root produces relative
+/// `.quilt/...` paths that read like magic and only work by coincidence with
+/// in-memory storage. Prefer an explicit root via `DomainPaths::new(...)`.
+/// Once the remaining test call sites are converted, drop the `Default` derive.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DomainPaths {
     root_dir: PathBuf,

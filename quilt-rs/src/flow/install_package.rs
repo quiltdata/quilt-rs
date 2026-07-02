@@ -162,14 +162,8 @@ mod tests {
             .await?;
 
         let storage = MockStorage::default();
-        let result = install_package(
-            lineage,
-            &DomainPaths::default(),
-            &storage,
-            &remote,
-            &manifest_uri,
-        )
-        .await?;
+        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let result = install_package(lineage, &paths, &storage, &remote, &manifest_uri).await?;
 
         let installed_package = result.packages.get(&("f", "b").into()).unwrap();
         let tracked = installed_package.remote().unwrap().clone();
@@ -180,17 +174,11 @@ mod tests {
         assert_eq!(tracked, manifest_uri);
 
         // Verify that the manifest is stored locally in the immutable manifest directory
-        let installed_manifest_path = PathBuf::from(format!(
-            ".quilt/installed/{}/{}",
-            tracked.namespace, tracked.hash
-        ));
+        let installed_manifest_path = paths.installed_manifest(&tracked.namespace, &tracked.hash);
         assert!(storage.exists(&installed_manifest_path).await);
 
         // Verify that the manifest is cached locally
-        let cached_manifest_path = PathBuf::from(format!(
-            ".quilt/packages/{}/{}",
-            tracked.bucket, tracked.hash
-        ));
+        let cached_manifest_path = paths.cached_manifest(&tracked);
         assert!(storage.exists(&cached_manifest_path).await);
         Ok(())
     }
