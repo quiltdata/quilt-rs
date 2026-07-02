@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.32.1-alpha1] - 2026-07-02
+
+### Fixed
+
+- `flow::commit` now preserves the previous revision's package-level metadata when the caller supplies none; pass an explicit empty object to clear it deliberately (<https://github.com/quiltdata/quilt-rs/pull/734>)
+
 ## [v0.32.0] - 2026-05-19
 
 ### Added
