@@ -231,10 +231,11 @@ mod tests {
             ..PackageLineage::default()
         };
 
+        let paths = DomainPaths::new(PathBuf::from("/foo"));
         let storage = MockStorage::default();
         storage
             .write_byte_stream(
-                PathBuf::from(format!(".quilt/packages/b/{hash}")),
+                paths.cached_manifests_dir("b").join(&hash),
                 ByteStream::from_static(b"foo"),
             )
             .await?;
@@ -248,7 +249,7 @@ mod tests {
         let outcome = publish_package(
             lineage,
             &mut manifest,
-            &DomainPaths::default(),
+            &paths,
             &storage,
             &remote,
             PathBuf::default(),
