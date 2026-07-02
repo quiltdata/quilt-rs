@@ -499,9 +499,7 @@ mod tests {
             "Commited lineage doesn't have path, but should have. We added new file and it should be there."
         );
         assert!(
-            storage
-                .exists(&paths.objects_dir().join(hash))
-                .await,
+            storage.exists(&paths.objects_dir().join(hash)).await,
             "Registry doesn't have installed path"
         );
         assert_eq!(
@@ -657,7 +655,11 @@ mod tests {
         );
         assert!(
             storage
-                .exists(&paths.objects_dir().join(fixtures::objects::LESS_THAN_8MB_HASH_HEX))
+                .exists(
+                    &paths
+                        .objects_dir()
+                        .join(fixtures::objects::LESS_THAN_8MB_HASH_HEX)
+                )
                 .await,
             "Registry doesn't have installed path"
         );
