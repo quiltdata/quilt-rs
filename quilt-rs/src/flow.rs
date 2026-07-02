@@ -21,6 +21,7 @@ mod uninstall_paths;
 pub use browse::browse_remote_manifest as browse;
 pub use browse::cache_remote_manifest;
 pub use certify_latest::certify_latest;
+pub use commit::UserMeta;
 pub use commit::commit_package as commit;
 pub use create_package::create_package as create;
 pub use install_package::install_package;

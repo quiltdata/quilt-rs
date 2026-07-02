@@ -5,6 +5,7 @@ use tracing::info;
 
 use crate::Res;
 use crate::flow;
+use crate::flow::UserMeta;
 use crate::flow::push::PushResult;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
@@ -23,7 +24,8 @@ use quilt_uri::Namespace;
 /// about templates or UI state.
 pub struct CommitOptions {
     pub message: String,
-    pub user_meta: Option<serde_json::Value>,
+    /// See [`UserMeta`]: `Keep` inherits, `Clear` removes, `Set` replaces.
+    pub user_meta: UserMeta,
     pub workflow: Option<Workflow>,
 }
 
@@ -199,7 +201,7 @@ mod tests {
             HostConfig::default(),
             CommitOptions {
                 message: "Custom message".to_string(),
-                user_meta: None,
+                user_meta: UserMeta::Clear,
                 workflow: None,
             },
         )
@@ -258,7 +260,7 @@ mod tests {
             HostConfig::default(),
             CommitOptions {
                 message: String::new(),
-                user_meta: None,
+                user_meta: UserMeta::Clear,
                 workflow: None,
             },
         )
@@ -320,7 +322,7 @@ mod tests {
             HostConfig::default(),
             CommitOptions {
                 message: "published".to_string(),
-                user_meta: None,
+                user_meta: UserMeta::Clear,
                 workflow: None,
             },
         )
@@ -440,7 +442,7 @@ mod tests {
             HostConfig::default(),
             CommitOptions {
                 message: "published".to_string(),
-                user_meta: None,
+                user_meta: UserMeta::Clear,
                 workflow: None,
             },
         )
@@ -512,7 +514,7 @@ mod tests {
             HostConfig::default(),
             CommitOptions {
                 message: "modified".to_string(),
-                user_meta: None,
+                user_meta: UserMeta::Clear,
                 workflow: None,
             },
         )
@@ -562,7 +564,7 @@ mod tests {
             HostConfig::default(),
             CommitOptions {
                 message: "removed".to_string(),
-                user_meta: None,
+                user_meta: UserMeta::Clear,
                 workflow: None,
             },
         )
@@ -613,7 +615,7 @@ mod tests {
             HostConfig::default(),
             CommitOptions {
                 message: "Lorem ipsum".to_string(),
-                user_meta: Some(serde_json::json!({"lorem": "ipsum"})),
+                user_meta: UserMeta::Set(serde_json::json!({"lorem": "ipsum"})),
                 workflow: None,
             },
         )

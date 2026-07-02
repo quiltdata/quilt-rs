@@ -8,6 +8,7 @@ use crate::Res;
 use crate::error::LoginError;
 use crate::error::PackageOpError;
 use crate::flow;
+use crate::flow::UserMeta;
 use crate::flow::cache_remote_manifest;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
@@ -232,10 +233,15 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         unimplemented!()
     }
 
+    /// Commit the package's pending changes as a new revision.
+    ///
+    /// See [`UserMeta`] for the metadata contract: `Keep` inherits the
+    /// previous revision's package-level metadata, `Clear` removes it,
+    /// `Set` replaces it.
     pub async fn commit(
         &self,
         message: String,
-        user_meta: Option<serde_json::Value>,
+        user_meta: UserMeta,
         workflow: Option<Workflow>,
         host_config_opt: Option<HostConfig>,
     ) -> Res<CommitState> {
@@ -294,7 +300,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     pub async fn publish(
         &self,
         message: String,
-        user_meta: Option<serde_json::Value>,
+        user_meta: UserMeta,
         workflow: Option<Workflow>,
         host_config_opt: Option<HostConfig>,
         status_opt: Option<InstalledPackageStatus>,
@@ -689,7 +695,7 @@ mod tests {
             let commit = package
                 .commit(
                     format!("Commit new1 {i}"),
-                    Some(serde_json::json!({ "count": i })),
+                    UserMeta::Set(serde_json::json!({ "count": i })),
                     None,
                     None,
                 )
@@ -1479,7 +1485,7 @@ mod tests {
         let commit = package
             .commit(
                 "Initial commit".to_string(),
-                Some(serde_json::json!({"key": "value"})),
+                UserMeta::Set(serde_json::json!({"key": "value"})),
                 None,
                 None,
             )

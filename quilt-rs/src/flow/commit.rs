@@ -141,11 +141,24 @@ async fn create_immutable_object_copy(
 //     workflow: Option<Workflow>,
 // }
 
+/// What to do with the package-level metadata of the revision being committed.
+///
+/// The manifest header stores metadata as an optional JSON value; this enum
+/// is the caller-facing contract for changing it. `Keep` carries the previous
+/// revision's metadata forward verbatim. `Clear` produces a header without a
+/// `user_meta` field. `Set` replaces it (objects are stored with sorted keys).
+#[derive(Debug, Clone, PartialEq)]
+pub enum UserMeta {
+    Keep,
+    Clear,
+    Set(serde_json::Value),
+}
+
 /// Commit new commit with new `message`, `user_meta` and all changes got from calling `flow::status`
 ///
-/// `user_meta` is the package-level metadata for the new revision. Passing
-/// `None` preserves the previous revision's metadata (from `manifest`'s
-/// header); pass `Some(serde_json::json!({}))` to clear it deliberately.
+/// `user_meta` selects the new revision's package-level metadata — see
+/// [`UserMeta`]: `Keep` inherits the previous revision's, `Clear` removes it,
+/// `Set` replaces it.
 ///
 /// On `Ok`, the returned `CommitState` is also stored in `lineage.commit` —
 /// callers that need the new top hash should read it from the tuple rather
@@ -161,7 +174,7 @@ pub async fn commit_package(
     status: InstalledPackageStatus,
     namespace: Namespace,
     message: String,
-    user_meta: Option<serde_json::Value>,
+    user_meta: UserMeta,
     workflow: Option<Workflow>,
 ) -> Res<(PackageLineage, CommitState)> {
     info!(
@@ -250,21 +263,15 @@ pub async fn commit_package(
         }
     }
 
-    let processed_user_meta = match user_meta {
-        Some(serde_json::Value::Object(mut m)) => {
+    let user_meta = match user_meta {
+        UserMeta::Keep => manifest.header.user_meta.clone(),
+        UserMeta::Clear => None,
+        UserMeta::Set(serde_json::Value::Object(mut m)) => {
             m.sort_keys();
             Some(m.into())
         }
-        other => other,
+        UserMeta::Set(other) => Some(other),
     };
-
-    // Preserve the previous revision's package-level metadata when the caller
-    // supplies none. `None` means "leave the metadata unchanged"; to clear it
-    // deliberately, pass an explicit empty object (`Some({})`). Without this,
-    // committing with an empty metadata field would silently drop the existing
-    // package metadata (data loss). `flow::recommit` and `flow::push` already
-    // carry the header forward — this brings `flow::commit` in line.
-    let user_meta = processed_user_meta.or_else(|| manifest.header.user_meta.clone());
 
     let header = ManifestHeader {
         message: Some(message.clone()),
@@ -340,18 +347,16 @@ mod tests {
         let paths = DomainPaths::new(PathBuf::from("/foo"));
         let lineage = PackageLineage::default();
         assert!(lineage.commit.is_none());
-        // No previous metadata and none supplied -> the new header has no
-        // `user_meta` (absent field), yielding the empty/none top hash.
         let (_lineage, commit) = commit_package(
             lineage,
-            &mut manifest_with_meta(None),
+            &mut Manifest::default(),
             &paths,
             &storage,
             PathBuf::default(),
             InstalledPackageStatus::default(),
             ("foo", "bar").into(),
             String::default(),
-            None,
+            UserMeta::Clear,
             None,
         )
         .await?;
@@ -365,105 +370,57 @@ mod tests {
         Ok(())
     }
 
-    /// Committing with `user_meta: None` preserves the previous revision's
-    /// package-level metadata instead of dropping it (regression test for the
-    /// silent metadata data-loss bug). Verified by equivalence: inheriting the
-    /// previous metadata must produce the same manifest (top hash) as passing
-    /// that same metadata explicitly.
-    #[test(tokio::test)]
-    async fn test_commit_preserves_existing_meta() -> Res {
+    /// Commit a package whose previous revision carried `initial_meta`,
+    /// passing `passed_meta` as the new metadata; returns the new top hash.
+    async fn commit_hash(
+        initial_meta: Option<serde_json::Value>,
+        passed_meta: UserMeta,
+    ) -> Res<String> {
+        let storage = MockStorage::default();
         let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let (_lineage, commit) = commit_package(
+            PackageLineage::default(),
+            &mut manifest_with_meta(initial_meta),
+            &paths,
+            &storage,
+            PathBuf::default(),
+            InstalledPackageStatus::default(),
+            ("foo", "bar").into(),
+            String::default(),
+            passed_meta,
+            None,
+        )
+        .await?;
+        Ok(commit.hash)
+    }
+
+    /// `Keep` carries the previous revision's package-level metadata forward:
+    /// it must produce the same top hash as passing that metadata explicitly.
+    #[test(tokio::test)]
+    async fn test_commit_keep_preserves_existing_meta() -> Res {
         let meta = serde_json::json!({"kept": "value"});
-
-        let inherited = {
-            let storage = MockStorage::default();
-            let (_lineage, commit) = commit_package(
-                PackageLineage::default(),
-                &mut manifest_with_meta(Some(meta.clone())),
-                &paths,
-                &storage,
-                PathBuf::default(),
-                InstalledPackageStatus::default(),
-                ("foo", "bar").into(),
-                String::default(),
-                None,
-                None,
-            )
-            .await?;
-            commit.hash
-        };
-
-        let explicit = {
-            let storage = MockStorage::default();
-            let (_lineage, commit) = commit_package(
-                PackageLineage::default(),
-                &mut manifest_with_meta(Some(meta.clone())),
-                &paths,
-                &storage,
-                PathBuf::default(),
-                InstalledPackageStatus::default(),
-                ("foo", "bar").into(),
-                String::default(),
-                Some(meta),
-                None,
-            )
-            .await?;
-            commit.hash
-        };
-
         assert_eq!(
-            inherited, explicit,
-            "committing None must inherit the previous header's user_meta"
+            commit_hash(Some(meta.clone()), UserMeta::Keep).await?,
+            commit_hash(Some(meta.clone()), UserMeta::Set(meta)).await?,
+            "Keep must inherit the previous header's user_meta"
         );
         Ok(())
     }
 
-    /// Passing an explicit empty object clears the metadata rather than
-    /// inheriting the previous revision's — the deliberate opt-out.
+    /// `Clear` removes the metadata: the result differs from `Keep` and is
+    /// identical to committing a package that never had metadata.
     #[test(tokio::test)]
-    async fn test_commit_explicit_empty_clears_meta() -> Res {
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+    async fn test_commit_clear_removes_meta() -> Res {
         let meta = serde_json::json!({"kept": "value"});
-
-        let inherited = {
-            let storage = MockStorage::default();
-            let (_lineage, commit) = commit_package(
-                PackageLineage::default(),
-                &mut manifest_with_meta(Some(meta.clone())),
-                &paths,
-                &storage,
-                PathBuf::default(),
-                InstalledPackageStatus::default(),
-                ("foo", "bar").into(),
-                String::default(),
-                None,
-                None,
-            )
-            .await?;
-            commit.hash
-        };
-
-        let cleared = {
-            let storage = MockStorage::default();
-            let (_lineage, commit) = commit_package(
-                PackageLineage::default(),
-                &mut manifest_with_meta(Some(meta)),
-                &paths,
-                &storage,
-                PathBuf::default(),
-                InstalledPackageStatus::default(),
-                ("foo", "bar").into(),
-                String::default(),
-                Some(serde_json::json!({})),
-                None,
-            )
-            .await?;
-            commit.hash
-        };
-
         assert_ne!(
-            inherited, cleared,
-            "an explicit empty object must clear metadata, not inherit it"
+            commit_hash(Some(meta.clone()), UserMeta::Keep).await?,
+            commit_hash(Some(meta.clone()), UserMeta::Clear).await?,
+            "Clear must remove metadata, not inherit it"
+        );
+        assert_eq!(
+            commit_hash(Some(meta), UserMeta::Clear).await?,
+            commit_hash(None, UserMeta::Clear).await?,
+            "a cleared package must hash like one that never had metadata"
         );
         Ok(())
     }
@@ -491,7 +448,7 @@ mod tests {
             InstalledPackageStatus::default(),
             ("foo", "bar").into(),
             commit_message,
-            Some(serde_json::Value::Object(user_meta)),
+            UserMeta::Set(serde_json::Value::Object(user_meta)),
             None,
         )
         .await?;
@@ -550,7 +507,7 @@ mod tests {
             status,
             ("foo", "bar").into(),
             String::from("Initial"),
-            Some(serde_json::json!({"A": "b", "z": "Y", "a": "B", "Z": "y"})),
+            UserMeta::Set(serde_json::json!({"A": "b", "z": "Y", "a": "B", "Z": "y"})),
             None,
         )
         .await?;
@@ -617,7 +574,7 @@ mod tests {
             status,
             ("foo", "bar").into(),
             String::from("Initial"),
-            Some(serde_json::json!({"A": "b", "z": "Y", "a": "B", "Z": "y"})),
+            UserMeta::Set(serde_json::json!({"A": "b", "z": "Y", "a": "B", "Z": "y"})),
             None,
         )
         .await?;
@@ -699,7 +656,7 @@ mod tests {
             status,
             ("foo", "bar").into(),
             String::from("Initial"),
-            Some(serde_json::json!({"A": "b", "z": "Y", "a": "B", "Z": "y"})),
+            UserMeta::Set(serde_json::json!({"A": "b", "z": "Y", "a": "B", "Z": "y"})),
             None,
         )
         .await;
@@ -771,7 +728,7 @@ mod tests {
             status,
             ("foo", "bar").into(),
             String::from("Initial"),
-            Some(serde_json::json!({"A": "b", "z": "Y", "a": "B", "Z": "y"})),
+            UserMeta::Set(serde_json::json!({"A": "b", "z": "Y", "a": "B", "Z": "y"})),
             None,
         )
         .await?;
