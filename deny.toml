@@ -9,6 +9,12 @@ version = 2
 yanked = "deny"
 # Each ignore names the parent crate that pulls in the advisory and what
 # blocks the fix. Revisit when that parent crate is bumped.
+#
+# To prune stale ignores (e.g. after bumping Tauri / Leptos / the AWS SDK),
+# temporarily add `unused-ignored-advisory = "warn"` under [advisories] and run
+# `cargo deny check advisories`; delete any entry it flags with
+# `warning[advisory-not-detected]`. Kept out of the committed config so CI logs
+# stay free of warning noise.
 ignore = [
     # --- rustls-pemfile pulled in by aws-smithy-http-client v1.1.x ---
     # Tracking via aws-sdk-rust upstream; update once aws-smithy-http-client
