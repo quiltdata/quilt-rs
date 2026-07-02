@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust-dev
@@ -40,7 +40,7 @@ jobs:
         run: cargo fmt --check -p quilt-sync-ui
 
       - name: Lint
-        run: cargo clippy --target wasm32-unknown-unknown -p quilt-sync-ui -- --deny warnings
+        run: cargo clippy --target wasm32-unknown-unknown -p quilt-sync-ui --all-targets --all-features -- --deny warnings
 
       - name: Determine wasm-bindgen version
         id: wasm-bindgen-version

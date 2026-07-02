@@ -68,45 +68,55 @@ jobs:
           ls -la ./release-assets/
 
       - name: Modify latest.json URLs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Using HUBFS_ROOT_URL: ${HUBFS_ROOT_URL}"
           echo "Using HUBFS_BASE_PATH: ${HUBFS_BASE_PATH}"
 
-          if [ ! -f "./release-assets/latest.json" ]; then
+          f=./release-assets/latest.json
+          if [ ! -f "$f" ]; then
             echo "❌ latest.json not found in release assets"
             exit 1
           fi
 
-          echo "Found latest.json, modifying URLs..."
-
-          # Show original file
           echo "=== Original latest.json ==="
-          cat ./release-assets/latest.json
+          cat "$f"
 
-          # Modify URLs using jq - HUBFS_BASE_PATH includes full path to release folder
-          jq --arg hubfs_root_url "${HUBFS_ROOT_URL}" --arg hubfs_base_path "${HUBFS_BASE_PATH}" '
-            def replace_url(value):
-              if (value | type) == "string" then
-                (value | split("/")[-1]) as $basename |
-                "\($hubfs_root_url)\($hubfs_base_path)/\($basename)"
-              else
-                value
-              end;
+          # Repoint each platform's updater URL at the HubFS mirror. Every
+          # release asset is uploaded to HubFS under its original filename, so
+          # each URL must resolve to that filename. How we recover the filename
+          # depends on what tauri-action wrote:
+          #   - tauri-action <1.0.0: the URL is the browser download URL whose
+          #     last path segment IS the filename.
+          #   - tauri-action >=1.0.0: the URL is a GitHub API asset endpoint
+          #     (.../releases/assets/<id>) carrying a numeric id instead of the
+          #     filename, so we resolve the id to the filename via the API.
+          platforms=$(jq -r '.platforms // {} | keys[]' "$f")
+          if [ -z "$platforms" ]; then
+            echo "❌ latest.json has no platforms to rewrite"
+            exit 1
+          fi
 
-            walk(
-              if type == "object" and has("url") then
-                .url |= replace_url(.)
-              else
-                .
-              end
-            )
-          ' ./release-assets/latest.json > ./release-assets/latest.json.tmp
-
-          mv ./release-assets/latest.json.tmp ./release-assets/latest.json
+          while IFS= read -r key; do
+            url=$(jq -r --arg k "$key" '.platforms[$k].url' "$f")
+            case "$url" in
+              */releases/assets/*) filename=$(gh api "$url" --jq '.name') ;;
+              *)                   filename="${url##*/}" ;;
+            esac
+            if [ -z "$filename" ] || [ "$filename" = "null" ]; then
+              echo "❌ could not resolve filename for $key ($url)"
+              exit 1
+            fi
+            new_url="${HUBFS_ROOT_URL}${HUBFS_BASE_PATH}/${filename}"
+            echo "  $key: $url -> $new_url"
+            jq --arg k "$key" --arg u "$new_url" \
+              '.platforms[$k].url = $u' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+          done <<< "$platforms"
 
           echo ""
           echo "=== Modified latest.json ==="
-          cat ./release-assets/latest.json
+          cat "$f"
 
       - name: Upload assets to HubSpot
         env:

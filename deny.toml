@@ -9,13 +9,16 @@ version = 2
 yanked = "deny"
 # Each ignore names the parent crate that pulls in the advisory and what
 # blocks the fix. Revisit when that parent crate is bumped.
+#
+# To prune stale ignores (e.g. after bumping Tauri / Leptos / the AWS SDK),
+# temporarily add `unused-ignored-advisory = "warn"` under [advisories] and run
+# `cargo deny check advisories`; delete any entry it flags with
+# `warning[advisory-not-detected]`. Kept out of the committed config so CI logs
+# stay free of warning noise.
 ignore = [
-    # --- rustls 0.21 / rustls-pemfile pulled in by aws-smithy-http-client v1.1.x ---
-    # The AWS SDK still ships rustls 0.21 transitively. Tracking via aws-sdk-rust
-    # upstream; update once aws-smithy-http-client moves to rustls 0.23+.
-    { id = "RUSTSEC-2026-0098", reason = "rustls-webpki 0.101.7 via aws-smithy-http-client; awaiting AWS SDK update" },
-    { id = "RUSTSEC-2026-0099", reason = "rustls-webpki 0.101.7 via aws-smithy-http-client; awaiting AWS SDK update" },
-    { id = "RUSTSEC-2026-0104", reason = "rustls-webpki 0.101.7 via aws-smithy-http-client; awaiting AWS SDK update" },
+    # --- rustls-pemfile pulled in by aws-smithy-http-client v1.1.x ---
+    # Tracking via aws-sdk-rust upstream; update once aws-smithy-http-client
+    # drops rustls-pemfile 1.x.
     { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile 1.x via aws-smithy-http-client; awaiting AWS SDK update" },
 
     # --- Tauri Linux backend (GTK3 / webkit2gtk) ---
@@ -44,8 +47,20 @@ ignore = [
     # --- proc-macro-error via Tauri ---
     { id = "RUSTSEC-2024-0370", reason = "proc-macro-error unmaintained, transitive via Tauri" },
 
+    # --- proc-macro-error2 via Leptos ---
+    # Leptos (leptos_macro, leptos_router_macro, reactive_stores_macro, rstml)
+    # still depends on it as of 0.8.16 / 0.9.0-alpha. Revisit on Leptos bumps.
+    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 unmaintained, transitive via Leptos" },
+
     # --- mixpanel-rs (dotenv) ---
     { id = "RUSTSEC-2021-0141", reason = "dotenv unmaintained, transitive via mixpanel-rs" },
+
+    # --- quick-xml 0.39.x via plist → tauri-utils ---
+    # plist 1.9.0 pins quick-xml to "0.39.2" (<0.40); the fixes ship in
+    # quick-xml >=0.41.0. Only reached from build-time Info.plist parsing, not
+    # untrusted runtime XML. Revisit once plist relaxes the quick-xml bound.
+    { id = "RUSTSEC-2026-0194", reason = "quick-xml <0.40 via plist/tauri-utils; awaiting plist bump" },
+    { id = "RUSTSEC-2026-0195", reason = "quick-xml <0.40 via plist/tauri-utils; awaiting plist bump" },
 ]
 
 [licenses]

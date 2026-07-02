@@ -19,7 +19,7 @@ tauri-build = { version = "2.6.1", features = [] }
 chrono.workspace = true
 dotenv = "0.15"
 dunce = "1"
-mockall = "0.14.0"
+mockall = "0.15.0"
 opener = { version = "0.8.4", features = ["reveal"] }
 quilt-rs = { path = "../../quilt-rs" }
 quilt-uri = { path = "../../quilt-uri" }
