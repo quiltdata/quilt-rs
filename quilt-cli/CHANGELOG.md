@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.27.1-alpha1] - 2026-07-02
+
+### Fixed
+
+- `quilt commit` without `--user-meta` now preserves the package's existing metadata instead of silently dropping it (<https://github.com/quiltdata/quilt-rs/pull/734>)
+
 ## [v0.27.0] - 2026-05-25
 
 ### Changed

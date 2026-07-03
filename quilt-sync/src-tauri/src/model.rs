@@ -14,6 +14,7 @@ use crate::publish_settings::PublishSettings;
 use crate::quilt;
 use crate::telemetry::prelude::*;
 
+use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::HostConfig;
 
 /// Result of checking whether a package is already installed.
@@ -129,7 +130,7 @@ pub trait QuiltModel {
         &self,
         package: &quilt::InstalledPackage,
         message: String,
-        metadata: Option<serde_json::Value>,
+        metadata: UserMeta,
         workflow: Option<quilt::manifest::Workflow>,
         host_config: Option<HostConfig>,
     ) -> Result<quilt::lineage::CommitState, Error> {
@@ -199,7 +200,7 @@ pub trait QuiltModel {
         &self,
         package: &quilt::InstalledPackage,
         message: String,
-        metadata: Option<serde_json::Value>,
+        metadata: UserMeta,
         workflow: Option<quilt::manifest::Workflow>,
         host_config: Option<HostConfig>,
         status: Option<quilt::lineage::InstalledPackageStatus>,
@@ -377,19 +378,16 @@ impl Model {
     }
 }
 
-fn parse_metadata(input: &str) -> Result<Option<serde_json::Value>, Error> {
-    // Whitespace-only is treated as "no metadata" — the UI form
-    // (`update_publish_settings`) trims before validating and saves the
-    // normalised value, so this branch only fires for hand-edited
-    // `publish_settings.json` files. Without it the two entry points
-    // (manual Commit & Push vs. autosync) diverged: autosync would
-    // pause on the same input the UI validation accepts.
+fn parse_metadata(input: &str) -> Result<UserMeta, Error> {
+    // Whitespace-only is treated as "no opinion" — keep the package's
+    // existing metadata. The UI form (`update_publish_settings`) trims
+    // before validating and saves the normalised value, so this branch
+    // also covers hand-edited `publish_settings.json` files.
     if input.trim().is_empty() {
-        return Ok(None);
+        return Ok(UserMeta::Keep);
     }
-    let metadata_json: Result<serde_json::Value, serde_json::Error> = serde_json::from_str(input);
-    match metadata_json {
-        Ok(json) => Ok(Some(json)),
+    match serde_json::from_str(input) {
+        Ok(json) => Ok(UserMeta::Set(json)),
         Err(err) => Err(Error::Json(err)),
     }
 }

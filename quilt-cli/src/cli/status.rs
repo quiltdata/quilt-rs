@@ -98,6 +98,8 @@ mod tests {
 
     use test_log::test;
 
+    use quilt_rs::flow::UserMeta;
+
     use crate::cli::model::install_package_into_temp_dir;
 
     use quilt_rs::io::storage::ByteStream;
@@ -214,7 +216,7 @@ mod tests {
         }
 
         installed_package
-            .commit("Anything".to_string(), None, None, None)
+            .commit("Anything".to_string(), UserMeta::Keep, None, None)
             .await?;
         {
             let local_domain = m.get_local_domain();
@@ -261,7 +263,7 @@ mod tests {
         }
 
         installed_package
-            .commit("Anything".to_string(), None, None, None)
+            .commit("Anything".to_string(), UserMeta::Keep, None, None)
             .await?;
 
         {
