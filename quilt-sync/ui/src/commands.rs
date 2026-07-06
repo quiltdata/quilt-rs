@@ -110,7 +110,7 @@ impl Default for AutosyncSettingsData {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct FsWatcherSettingsData {
     pub enabled: bool,
