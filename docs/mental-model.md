@@ -69,7 +69,7 @@ mutates*.
 | `flow::create` (local-only) | initial top hash | — | `""` | `""` |
 | `InstalledPackage::set_remote` | unchanged | `""` (empty until first push) | unchanged | unchanged |
 | `flow::commit` | new top hash | unchanged | unchanged | unchanged |
-| `flow::push` | `None` (taken) | new uploaded hash | first push only → new hash | only if push certified |
+| `flow::push` | `None` (taken) | new uploaded hash | first push → new hash; certifying push → via `update_latest` | re-resolved from remote mid-push; ← new hash if certified |
 | `flow::certify_latest` | — (cleared by inner push) | already set | ← `latest_hash` (via `update_latest`) | ← new manifest hash |
 | `flow::pull` (fast-forward) | must be `None` | ← `latest_hash` | ← `latest_hash` | already advanced |
 | `flow::reset_to_latest` | **`None`** (cleared since #677) | ← `latest.hash` | ← `latest.hash` | ← `latest.hash` |
@@ -95,6 +95,25 @@ Bucket `b`, namespace `f/a`, remote has revision `H1` tagged `latest`.
 | teammate pushes `H3`; autopull tick | `H2` | `H1` | `H1` | `H3` | Diverged |
 | Promote (Certify Latest) | — | `H2` | `H2` | `H2` | UpToDate |
 | Overwrite (Reset Local) — alternate exit from Diverged | — | `H3` | `H3` | `H3` | UpToDate |
+
+### First-push race
+
+Local-only package created as `H1`; a teammate has already pushed
+`H2` (tagged `latest`) to the same namespace.
+
+| Action | `commit.hash` | `remote.hash` | `base_hash` | `latest_hash` | State |
+| --- | --- | --- | --- | --- | --- |
+| create → `H1` | `H1` | — | `""` | `""` | Local |
+| `set_remote` (recommit → `H1'`) | `H1'` | `""` | `""` | `""` | Local |
+| status refresh sees teammate's `H2` | `H1'` | `""` | `""` | `H2` | Diverged |
+| push | — | `H1'` | `H1'` | `H1'` | UpToDate |
+
+Push exits this `Diverged` unaided: an empty `base_hash` on entry
+marks the push as first, which short-circuits the certify guard —
+the first push always certifies, de-certifying the teammate's `H2`
+without a merge-page gesture. Only non-first pushes decline the
+tag and report `certified_latest: false` (see the Push Phase in
+[`docs/architecture.md`](architecture.md)).
 
 ## Writer invariants
 

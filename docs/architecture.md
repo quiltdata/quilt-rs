@@ -403,7 +403,8 @@ commit, causing a hash mismatch error.
 ```text
 flow::push(lineage, local_manifest, remote)
     ↓
-Check: lineage.commit exists (has changes to push)
+If lineage.commit is None: return early — a no-op success
+  (certified_latest = true), not an error
     ↓
 If remote_uri.hash is empty (first push):
   Use empty Manifest as remote_manifest
@@ -422,10 +423,17 @@ upload_manifest() → remote .quilt/packages/bucket/new_hash
     ↓
 tag_timestamp() → remote .quilt/named_packages/namespace/timestamp
     ↓
+resolve_tag("latest") → latest_hash re-read from the remote
+  (the certify decision below uses this fresh value, not the
+  possibly-stale one from the last status check)
+    ↓
 If first push (base_hash empty):
   Set base_hash = new_hash (prevents Diverged status)
     ↓
-certify_latest() if base_hash == latest_hash OR no existing latest tag
+certify_latest() if any of:
+  - first push (base_hash was empty on entry)
+  - base_hash == latest_hash (we were tracking the tip)
+  - no existing latest tag
     ↓
 Update lineage:
   - remote.hash = new_hash
@@ -437,6 +445,15 @@ Return: PushResult { lineage, certified_latest }
   - certified_latest = false → push succeeded but someone else
     pushed in the meantime, so the "latest" tag was not updated
 ```
+
+**First push always certifies.** `is_first_push` is captured before
+`base_hash` is filled in, and it short-circuits the tracking check: the
+very first push of a package certifies its revision as `latest`
+unconditionally — even when the remote already carries a different
+`latest` (the state the classifier reports as `Diverged` when a teammate
+published the same namespace first). The rationale recorded in the code:
+the user explicitly pushed this version. Only *subsequent* pushes respect
+a moved `latest` and return `certified_latest: false` instead.
 
 ### 9. Publish Phase
 
@@ -727,6 +744,13 @@ of the format:
 Each new algorithm became the default for freshly created packages, but all
 three remain fully supported for reading existing packages. The `ObjectHash`
 enum provides a unified interface across them.
+
+Which algorithm a new upload is *written* with is not a client-side
+choice: the remote host's config declares the algorithm it expects, and
+the client conforms. This is why `Set Remote Phase` (§7) re-hashes an
+existing local commit before the first push — a local-only package was
+hashed under the local default, which may differ from what its new
+remote requires.
 
 ### Network Resilience
 
