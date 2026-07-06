@@ -201,35 +201,6 @@ impl Manifest {
         buf
     }
 
-    // pub fn find_path(&self, path: impl AsRef<str>) -> Option<usize> {
-    //     let path = path.as_ref();
-    //     self.rows
-    //         .binary_search_by(|row| row.logical_key.cmp(path))
-    //         .ok()
-    // }
-
-    // pub fn get(&self, path: impl AsRef<str>) -> Option<&ManifestRow> {
-    //     let idx = self.find_path(path)?;
-    //     Some(&self.rows[idx])
-    // }
-
-    // pub fn get_mut(&mut self, path: impl AsRef<str>) -> Option<&mut ManifestRow> {
-    //     let idx = self.find_path(path)?;
-    //     Some(&mut self.rows[idx])
-    // }
-
-    // pub fn has_path(&self, path: impl AsRef<str>) -> bool {
-    //     // TODO: handle directories
-    //     self.find_path(path).is_some()
-    // }
-
-    // pub fn rows_map(&self) -> BTreeMap<String, ManifestRow> {
-    //     self.rows
-    //         .iter()
-    //         .map(|row| (row.logical_key.clone(), row.to_owned()))
-    //         .collect()
-    // }
-
     /// Read manifest from a file path, converting from Table format if needed
     pub async fn from_path(
         storage: &impl crate::io::storage::Storage,
