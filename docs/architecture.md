@@ -149,8 +149,10 @@ the client conforms. A local-only package was hashed under the local
 default, so binding it to a remote re-hashes the existing commit
 ("recommit") before the first push; without this the push would fail with
 a hash mismatch. The remote binding is persisted even when the recommit
-itself fails — the recommit is retried on push rather than failing
-Set Remote.
+itself fails (e.g. not logged in yet), so Set Remote still succeeds —
+but push does not redo the recommit; it fails with that top-hash
+mismatch until Set Remote is re-run (idempotent while the package has
+never been pushed).
 
 ### Commit
 
