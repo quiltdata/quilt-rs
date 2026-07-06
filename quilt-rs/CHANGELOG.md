@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.33.0-alpha1] - 2026-07-02
+
+### Changed
+
+- `flow::commit`, `CommitOptions`, and `InstalledPackage::{commit, publish}` now take an explicit `UserMeta` (`Keep`/`Clear`/`Set`) instead of `Option<serde_json::Value>`, so package-level metadata is preserved unless deliberately cleared or replaced (<https://github.com/quiltdata/quilt-rs/pull/734>)
+
 ## [v0.32.0] - 2026-05-19
 
 ### Added

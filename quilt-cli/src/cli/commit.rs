@@ -1,3 +1,4 @@
+use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::HostConfig;
 use quilt_rs::lineage::CommitState;
 use quilt_uri::Namespace;
@@ -10,7 +11,7 @@ use crate::cli::output::Std;
 pub struct Input {
     pub message: String,
     pub namespace: Namespace,
-    pub user_meta: Option<serde_json::Value>,
+    pub user_meta: UserMeta,
     pub workflow: Option<String>,
     pub host_config: Option<HostConfig>,
 }
@@ -34,7 +35,7 @@ async fn commit_package(
     local_domain: &quilt_rs::LocalDomain,
     namespace: Namespace,
     message: String,
-    user_meta: Option<serde_json::Value>,
+    user_meta: UserMeta,
     workflow_id: Option<String>,
     host_config: Option<HostConfig>,
 ) -> Result<CommitState, Error> {
@@ -104,7 +105,7 @@ mod tests {
                 Input {
                     message: pkg::MESSAGE.to_string(),
                     namespace: pkg::NAMESPACE.into(),
-                    user_meta: None,
+                    user_meta: UserMeta::Keep,
                     workflow: None,
                     host_config: None,
                 },
@@ -131,7 +132,7 @@ mod tests {
                 Input {
                     message: pkg::MESSAGE.to_string(),
                     namespace: pkg::NAMESPACE.into(),
-                    user_meta: Some(serde_json::json!({
+                    user_meta: UserMeta::Set(serde_json::json!({
                         "Date": "2025-12-31",
                         "Name": "Foo",
                         "Owner": "Kevin",
@@ -167,7 +168,7 @@ mod tests {
                 Input {
                     message: pkg::MESSAGE.to_string(),
                     namespace: pkg::NAMESPACE.into(),
-                    user_meta: None,
+                    user_meta: UserMeta::Keep,
                     workflow: None,
                     host_config: None,
                 },
@@ -194,7 +195,7 @@ mod tests {
                 Input {
                     message: pkg::MESSAGE.to_string(),
                     namespace: pkg::NAMESPACE.into(),
-                    user_meta: None,
+                    user_meta: UserMeta::Keep,
                     workflow: Some("Anything".to_string()),
                     host_config: None,
                 },
@@ -224,7 +225,7 @@ mod tests {
                 Input {
                     message: "Initial".to_string(),
                     namespace: pkg::NAMESPACE.into(),
-                    user_meta: Some(serde_json::json!({
+                    user_meta: UserMeta::Set(serde_json::json!({
                         // NOTE: will be sorted
                         "C": "D",
                         "c": "d",
@@ -259,7 +260,7 @@ mod tests {
         let first_input = Input {
             message: "Test message".to_string(),
             namespace: ("spec", "quilt-rs").into(),
-            user_meta: None,
+            user_meta: UserMeta::Clear,
             workflow: None,
             host_config: None,
         };
@@ -299,7 +300,7 @@ mod tests {
                 Input {
                     message: "New commit message".to_string(),
                     namespace: ("spec", "quilt-rs").into(),
-                    user_meta: Some(serde_json::json!({"key": "value"})),
+                    user_meta: UserMeta::Set(serde_json::json!({"key": "value"})),
                     workflow: None,
                     host_config: None,
                 },
@@ -324,7 +325,7 @@ mod tests {
                 Input {
                     message: "Anything".to_string(),
                     namespace: ("a", "b").into(),
-                    user_meta: None,
+                    user_meta: UserMeta::Keep,
                     workflow: None,
                     host_config: None,
                 },
@@ -350,7 +351,7 @@ mod tests {
                 Input {
                     message: "Test message".to_string(),
                     namespace: ("spec", "quilt-rs").into(),
-                    user_meta: None,
+                    user_meta: UserMeta::Clear,
                     workflow: None,
                     host_config: None,
                 },
@@ -363,6 +364,32 @@ mod tests {
             );
         }
 
+        Ok(())
+    }
+
+    /// `Keep` (the CLI default when `--user-meta` is absent) inherits the
+    /// installed revision's package-level metadata, so the hash covers the
+    /// fixture's meta (`{"A": "B", "c": "d", "e": 123}`).
+    #[test(tokio::test)]
+    async fn test_model_keep_inherits_fixture_meta() -> Result<(), Error> {
+        let uri = "quilt+s3://udp-spec#package=spec/quilt-rs@11c5f6dbd1bf1d8675c18aaaa963b2f0dced2f892c7406fa36c9cd17d3d31b73";
+        let (m, _installed_package, _temp_dir) = install_package_into_temp_dir(uri).await?;
+        let local_domain = m.get_local_domain();
+        let output = model(
+            local_domain,
+            Input {
+                message: "Test message".to_string(),
+                namespace: ("spec", "quilt-rs").into(),
+                user_meta: UserMeta::Keep,
+                workflow: None,
+                host_config: None,
+            },
+        )
+        .await?;
+        assert_eq!(
+            output.commit.hash,
+            "b9853f32d9b87b28a617a51acbdb3dffdb0974053a3415dedfef3950c6e239ef"
+        );
         Ok(())
     }
 }

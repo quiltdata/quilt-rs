@@ -83,6 +83,7 @@ mod tests {
 
     use test_log::test;
 
+    use quilt_rs::flow::UserMeta;
     use quilt_rs::io::storage::ByteStream;
 
     use quilt_rs::io::storage::LocalStorage;
@@ -187,7 +188,7 @@ mod tests {
         m.commit(commit::Input {
             message: "Unbounded Defy 2 Landmine".to_string(),
             namespace: namespace.clone(),
-            user_meta: Some(serde_json::json!({"Naturist": "Conjure"})),
+            user_meta: UserMeta::Set(serde_json::json!({"Naturist": "Conjure"})),
             workflow: None,
             host_config: None,
         })
@@ -220,7 +221,7 @@ mod tests {
         m.commit(commit::Input {
             message: "Equate 1 Fragment Grimace".to_string(),
             namespace: namespace.clone(),
-            user_meta: Some(serde_json::json!({"Antitoxic": "Mankind"})),
+            user_meta: UserMeta::Set(serde_json::json!({"Antitoxic": "Mankind"})),
             workflow: None,
             host_config: None,
         })
@@ -283,7 +284,7 @@ mod tests {
         m.commit(commit::Input {
             message: "Add data".to_string(),
             namespace: namespace.clone(),
-            user_meta: None,
+            user_meta: UserMeta::Keep,
             workflow: None,
             host_config: None,
         })
@@ -381,7 +382,7 @@ mod tests {
         m.commit(commit::Input {
             message: "Unbounded Defy 2 Landmine".to_string(),
             namespace: namespace.clone(),
-            user_meta: Some(serde_json::json!({"Naturist": "Conjure"})),
+            user_meta: UserMeta::Set(serde_json::json!({"Naturist": "Conjure"})),
             workflow: None,
             host_config: host_config.clone(),
         })
@@ -414,7 +415,10 @@ mod tests {
         m.commit(commit::Input {
             message: "Initial commit".to_string(),
             namespace: namespace.clone(),
-            user_meta: None,
+            // The original revision has no package-level metadata, so the
+            // revert must clear step 3's — `Keep` would inherit it and the
+            // final top hash would no longer match the original.
+            user_meta: UserMeta::Clear,
             workflow: None,
             host_config: host_config.clone(),
         })

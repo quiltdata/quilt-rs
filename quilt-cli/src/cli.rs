@@ -7,6 +7,7 @@ use clap::Parser;
 use clap::Subcommand;
 use tracing::log;
 
+use quilt_rs::flow::UserMeta;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
 
@@ -218,12 +219,14 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         } => {
             let user_meta = match &user_meta {
                 Some(object) => match serde_json::from_str(object)? {
-                    serde_json::Value::Object(object) => Some(serde_json::Value::Object(object)),
+                    serde_json::Value::Object(object) => {
+                        UserMeta::Set(serde_json::Value::Object(object))
+                    }
                     _ => {
                         return Err(Error::CommitMetaInvalid(object.clone()));
                     }
                 },
-                None => None,
+                None => UserMeta::Keep,
             };
             let args = commit::Input {
                 message,
