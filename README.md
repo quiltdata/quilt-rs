@@ -37,7 +37,7 @@ cargo build -p quilt-cli --release
 
 ## Documentation
 
-- [Architecture](docs/architecture.md) — system design, data structures, and workflow internals
+- [Architecture](docs/architecture.md) — design commitments, invariants, and operation contracts
 - [Artifacts](docs/artifacts.md) — file and directory inventory (local and remote)
 - [Verification](docs/verification.md) — SHA256-chunked, CRC64/NVMe, and manifest hash recipes
 - [Windows Signing](docs/windows-signing.md) — Azure Trusted Signing setup for QuiltSync
