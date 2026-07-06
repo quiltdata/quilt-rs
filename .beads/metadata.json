@@ -1,7 +1,0 @@
-{
-  "database": "dolt",
-  "backend": "dolt",
-  "dolt_mode": "embedded",
-  "dolt_database": "quilt_rs",
-  "project_id": "1ee0618b-5975-4915-88bd-5df88724d270"
-}
