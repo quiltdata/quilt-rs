@@ -3,8 +3,10 @@
 This document describes the state model of an installed quilt-rs
 package: what fields encode that state, how the `UpstreamState`
 classifier derives a verdict from them, and which operations move
-which fields. Phase mechanics, on-disk layout, hash algorithms, and
-network behavior live in [`docs/architecture.md`](architecture.md).
+which fields. Design commitments, operation contracts, hash
+algorithms, and network behavior live in
+[`docs/architecture.md`](architecture.md); the step-by-step mechanics
+live in the code.
 
 ## The four hashes
 
@@ -44,6 +46,7 @@ remote.hash = "" ∧ latest_hash ≠ ""   → Diverged      (teammate already pu
 otherwise:
   ahead  = (base_hash ≠ current_hash())
   behind = (base_hash ≠ latest_hash)
+  (ahead, behind):
   (false, false) → UpToDate
   (false, true ) → Behind
   (true,  false) → Ahead
@@ -60,10 +63,10 @@ status computation itself fails.
 ## Lifecycle: who writes each field, when
 
 Cross-reference [`docs/architecture.md`](architecture.md) for the
-phase definitions; this table only names *which fields each phase
-mutates*.
+operation contracts; this table only names *which fields each
+operation mutates*.
 
-| Phase | `commit.hash` | `remote.hash` | `base_hash` | `latest_hash` |
+| Operation | `commit.hash` | `remote.hash` | `base_hash` | `latest_hash` |
 | --- | --- | --- | --- | --- |
 | `flow::install_package` | — | install-time hash | install-time hash | `resolve_tag("latest")` |
 | `flow::create` (local-only) | initial top hash | — | `""` | `""` |
@@ -112,7 +115,7 @@ Push exits this `Diverged` unaided: an empty `base_hash` on entry
 marks the push as first, which short-circuits the certify guard —
 the first push always certifies, de-certifying the teammate's `H2`
 without a merge-page gesture. Only non-first pushes decline the
-tag and report `certified_latest: false` (see the Push Phase in
+tag and report `certified_latest: false` (see the Push contract in
 [`docs/architecture.md`](architecture.md)).
 
 ## Writer invariants
