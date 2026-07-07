@@ -13,6 +13,7 @@ use crate::flow::cache_remote_manifest;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
 use crate::io::remote::RemoteS3;
+use crate::io::remote::WorkflowIntent;
 use crate::io::remote::resolve_workflow;
 use crate::io::storage::LocalStorage;
 use crate::io::storage::Storage;
@@ -580,8 +581,13 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             bucket,
             version: None,
         };
-        let workflow =
-            resolve_workflow(&self.remote, &Some(origin), None, &workflows_config_uri).await?;
+        let workflow = resolve_workflow(
+            &self.remote,
+            &Some(origin),
+            WorkflowIntent::NoWorkflow,
+            &workflows_config_uri,
+        )
+        .await?;
         let manifest = self.manifest().await?;
         let lineage = flow::recommit(
             lineage,
@@ -607,10 +613,14 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             key: ".quilt/workflows/config.yml".to_string(),
             ..S3Uri::from(remote_uri.clone())
         };
+        let intent = match workflow_id {
+            Some(id) => WorkflowIntent::Named(id),
+            None => WorkflowIntent::NoWorkflow,
+        };
         resolve_workflow(
             &self.remote,
             &remote_uri.origin,
-            workflow_id,
+            intent,
             &workflows_config_uri,
         )
         .await
