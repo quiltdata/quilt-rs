@@ -57,6 +57,22 @@ pub struct WorkflowData {
     pub url: Option<String>,
 }
 
+/// Caller intent for resolving a package's workflow, sent with a commit.
+///
+/// UI-side mirror of `quilt_rs::io::remote::WorkflowIntent`. The serde
+/// attributes MUST stay identical to the backend so the tagged JSON crosses
+/// the Tauri boundary unchanged:
+/// - `{"kind":"bucket-default"}` — no opinion; honour the bucket default.
+/// - `{"kind":"no-workflow"}` — explicit opt-out.
+/// - `{"kind":"named","id":"x"}` — an exact workflow id.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "id", rename_all = "kebab-case")]
+pub enum WorkflowIntent {
+    BucketDefault,
+    NoWorkflow,
+    Named(String),
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MergeData {
@@ -349,7 +365,7 @@ pub async fn package_commit(
     namespace: String,
     message: String,
     metadata: String,
-    workflow: Option<String>,
+    workflow: WorkflowIntent,
 ) -> Result<String, String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -357,7 +373,7 @@ pub async fn package_commit(
         namespace: String,
         message: String,
         metadata: String,
-        workflow: Option<String>,
+        workflow: WorkflowIntent,
     }
     tauri::invoke(
         "package_commit",
@@ -391,7 +407,7 @@ pub async fn package_commit_and_push(
     namespace: String,
     message: String,
     metadata: String,
-    workflow: Option<String>,
+    workflow: WorkflowIntent,
 ) -> Result<String, String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -399,7 +415,7 @@ pub async fn package_commit_and_push(
         namespace: String,
         message: String,
         metadata: String,
-        workflow: Option<String>,
+        workflow: WorkflowIntent,
     }
     tauri::invoke(
         "package_commit_and_push",
@@ -685,4 +701,31 @@ pub async fn send_crash_report(zip_path: String) -> Result<String, String> {
         zip_path: String,
     }
     tauri::invoke("send_crash_report", &Args { zip_path }).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WorkflowIntent;
+
+    /// The mirror enum must serialize to the exact tagged JSON the backend
+    /// (`quilt_rs::io::remote::WorkflowIntent`) deserializes, and round-trip
+    /// back. If these strings drift, the Tauri commit boundary breaks silently.
+    #[test]
+    fn workflow_intent_wire_form_is_verbatim() {
+        let cases = [
+            (WorkflowIntent::BucketDefault, r#"{"kind":"bucket-default"}"#),
+            (WorkflowIntent::NoWorkflow, r#"{"kind":"no-workflow"}"#),
+            (
+                WorkflowIntent::Named("x".to_string()),
+                r#"{"kind":"named","id":"x"}"#,
+            ),
+        ];
+        for (intent, json) in cases {
+            assert_eq!(serde_json::to_string(&intent).unwrap(), json);
+            assert_eq!(
+                serde_json::from_str::<WorkflowIntent>(json).unwrap(),
+                intent
+            );
+        }
+    }
 }

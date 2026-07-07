@@ -3,7 +3,7 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 
 use quilt_uri::S3PackageUri;
 
-use crate::commands::{self, CommitData, EntryData, WorkflowData};
+use crate::commands::{self, CommitData, EntryData, WorkflowData, WorkflowIntent};
 use crate::components::buttons;
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{
@@ -98,14 +98,17 @@ fn CommitContent(
 
     // Workflow state
     let workflow = data.workflow.clone();
-    let has_workflow = workflow.is_some();
     let workflow_id = RwSignal::new(
         workflow
             .as_ref()
             .and_then(|w| w.id.clone())
             .unwrap_or_default(),
     );
-    let workflow_null = RwSignal::new(workflow.as_ref().is_none_or(|w| w.id.is_none()));
+    // Pre-check "No workflow" ONLY when the previous revision explicitly
+    // recorded a null-id workflow. A never-pushed package (`None`) seeds
+    // unchecked → submits `BucketDefault`, letting it pick up the bucket
+    // default from the dialog.
+    let workflow_null = RwSignal::new(workflow.as_ref().is_some_and(|w| w.id.is_none()));
 
     // Filtered entries
     let entries_for_view = entries.clone();
@@ -150,11 +153,7 @@ fn CommitContent(
         ui_locked.set(true);
         let ns = ns_for_action.clone();
         let meta = get_json_editor_value("metadata-editor");
-        let wf = if has_workflow && !workflow_null.get_untracked() {
-            Some(workflow_id.get_untracked())
-        } else {
-            None
-        };
+        let wf = workflow_intent(workflow_null.get_untracked(), &workflow_id.get_untracked());
         leptos::task::spawn_local(async move {
             let result = if push {
                 commands::package_commit_and_push(ns.clone(), msg, meta, wf).await
@@ -351,6 +350,29 @@ fn CommitContent(
     }
 }
 
+// ── Workflow intent construction ──
+
+/// Map the dialog's two-signal workflow state onto a single [`WorkflowIntent`].
+///
+/// One uniform mapping — no `has_workflow` special case:
+/// - "No workflow" checked → [`WorkflowIntent::NoWorkflow`] (explicit opt-out);
+/// - unchecked, trimmed id non-empty → [`WorkflowIntent::Named`];
+/// - unchecked, id empty (or whitespace-only) → [`WorkflowIntent::BucketDefault`].
+///
+/// A [`WorkflowIntent::Named`] is NEVER constructed with an empty id — that
+/// used to submit `Workflow  not found` downstream.
+fn workflow_intent(workflow_null: bool, id: &str) -> WorkflowIntent {
+    if workflow_null {
+        return WorkflowIntent::NoWorkflow;
+    }
+    let id = id.trim();
+    if id.is_empty() {
+        WorkflowIntent::BucketDefault
+    } else {
+        WorkflowIntent::Named(id.to_string())
+    }
+}
+
 // ── Workflow section ──
 
 #[component]
@@ -376,6 +398,9 @@ fn WorkflowSection(
                             prop:disabled=move || workflow_null.get()
                             on:input=move |ev| workflow_id.set(event_target_value(&ev))
                         />
+                    </p>
+                    <p class="field-description">
+                        "Leave empty to use the bucket's default workflow (if configured)."
                     </p>
                     <div class="workflow-null">
                         <input
@@ -417,10 +442,21 @@ fn WorkflowSection(
             <div class="workflow">
                 <p class="field">
                     <label class="label" for="workflow">"Workflow ID"</label>
-                    <input class="input" disabled prop:value="Workflow not available" />
+                    <input
+                        class="input"
+                        disabled
+                        prop:value="Bucket's default workflow (if configured)"
+                    />
                 </p>
                 <div class="workflow-null">
-                    <input id="workflow-null" type="checkbox" checked disabled />
+                    <input
+                        id="workflow-null"
+                        type="checkbox"
+                        prop:checked=move || workflow_null.get()
+                        on:change=move |_| {
+                            workflow_null.set(!workflow_null.get_untracked());
+                        }
+                    />
                     <label class="workflow-null-label" for="workflow-null">
                         "No workflow"
                     </label>
@@ -728,5 +764,42 @@ fn JsonEditor(id: &'static str, initial_value: String) -> impl IntoView {
 
     view! {
         <div class="metadata" id=id></div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::workflow_intent;
+    use crate::commands::WorkflowIntent;
+
+    #[test]
+    fn checked_is_no_workflow() {
+        assert_eq!(workflow_intent(true, ""), WorkflowIntent::NoWorkflow);
+        // The id in the box is irrelevant while "No workflow" is checked.
+        assert_eq!(workflow_intent(true, "foo"), WorkflowIntent::NoWorkflow);
+    }
+
+    #[test]
+    fn unchecked_with_id_is_named() {
+        assert_eq!(
+            workflow_intent(false, "my-wf"),
+            WorkflowIntent::Named("my-wf".to_string())
+        );
+    }
+
+    #[test]
+    fn unchecked_empty_is_bucket_default() {
+        assert_eq!(workflow_intent(false, ""), WorkflowIntent::BucketDefault);
+    }
+
+    #[test]
+    fn unchecked_whitespace_only_is_bucket_default_never_named_empty() {
+        // Whitespace-only must collapse to BucketDefault, not Named("") — the
+        // latter errors downstream as `Workflow  not found`.
+        assert_eq!(workflow_intent(false, "   "), WorkflowIntent::BucketDefault);
+        assert_eq!(
+            workflow_intent(false, "\t\n"),
+            WorkflowIntent::BucketDefault
+        );
     }
 }
