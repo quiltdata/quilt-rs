@@ -581,10 +581,15 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             bucket,
             version: None,
         };
+        // Set Remote is a no-gesture path: the user expresses no workflow
+        // choice here, and publish later pushes this pending recommit
+        // *without* re-resolving the workflow. So recommit must stamp the
+        // bucket default now — otherwise a locally-created package's first
+        // publish would silently miss the bucket's `default_workflow`.
         let workflow = resolve_workflow(
             &self.remote,
             &Some(origin),
-            WorkflowIntent::NoWorkflow,
+            WorkflowIntent::BucketDefault,
             &workflows_config_uri,
         )
         .await?;
@@ -603,7 +608,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         Ok(())
     }
 
-    pub async fn resolve_workflow(&self, workflow_id: Option<String>) -> Res<Option<Workflow>> {
+    pub async fn resolve_workflow(&self, intent: WorkflowIntent) -> Res<Option<Workflow>> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
         let remote_uri = match lineage.remote_uri.as_ref() {
             Some(uri) if !uri.bucket.is_empty() => uri.clone(),
@@ -612,10 +617,6 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let workflows_config_uri = S3Uri {
             key: ".quilt/workflows/config.yml".to_string(),
             ..S3Uri::from(remote_uri.clone())
-        };
-        let intent = match workflow_id {
-            Some(id) => WorkflowIntent::Named(id),
-            None => WorkflowIntent::NoWorkflow,
         };
         resolve_workflow(
             &self.remote,

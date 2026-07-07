@@ -1,5 +1,6 @@
 use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::HostConfig;
+use quilt_rs::io::remote::WorkflowIntent;
 use quilt_rs::lineage::CommitState;
 use quilt_uri::Namespace;
 
@@ -41,7 +42,11 @@ async fn commit_package(
 ) -> Result<CommitState, Error> {
     match local_domain.get_installed_package(&namespace).await? {
         Some(installed_package) => {
-            let workflow = installed_package.resolve_workflow(workflow_id).await?;
+            let intent = match workflow_id {
+                Some(id) => WorkflowIntent::Named(id),
+                None => WorkflowIntent::NoWorkflow,
+            };
+            let workflow = installed_package.resolve_workflow(intent).await?;
             Ok(installed_package
                 .commit(message, user_meta, workflow, host_config)
                 .await?)

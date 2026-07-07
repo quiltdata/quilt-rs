@@ -10,6 +10,7 @@ use crate::telemetry::prelude::*;
 
 use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::HostConfig;
+use quilt_rs::io::remote::WorkflowIntent;
 
 use super::{InstallCheck, InstallOutcome, QuiltModel};
 
@@ -46,7 +47,11 @@ pub async fn package_commit(
         .await?
         .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace)))?;
 
-    let workflow = installed_package.resolve_workflow(workflow).await?;
+    let intent = match workflow {
+        Some(id) => WorkflowIntent::Named(id),
+        None => WorkflowIntent::NoWorkflow,
+    };
+    let workflow = installed_package.resolve_workflow(intent).await?;
     model
         .package_commit(
             &installed_package,

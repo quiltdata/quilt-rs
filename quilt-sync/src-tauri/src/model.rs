@@ -14,6 +14,7 @@ use crate::telemetry::prelude::*;
 
 use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::HostConfig;
+use quilt_rs::io::remote::WorkflowIntent;
 
 /// Result of checking whether a package is already installed.
 #[derive(Debug)]
@@ -218,7 +219,11 @@ pub trait QuiltModel {
         package: &quilt::InstalledPackage,
         workflow: Option<String>,
     ) -> Result<Option<quilt::manifest::Workflow>, Error> {
-        Ok(package.resolve_workflow(workflow).await?)
+        let intent = match workflow {
+            Some(id) => WorkflowIntent::Named(id),
+            None => WorkflowIntent::NoWorkflow,
+        };
+        Ok(package.resolve_workflow(intent).await?)
     }
 
     async fn package_revision_certify_latest(
