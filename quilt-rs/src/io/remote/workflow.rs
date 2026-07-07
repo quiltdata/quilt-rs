@@ -461,6 +461,42 @@ workflows:
             err,
             Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
         ));
+        assert!(err.to_string().contains("must be a string"));
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_bucket_default_explicit_null_key() -> Res<()> {
+        let remote = MockRemote::default();
+        let host = None;
+        let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
+
+        // `default_workflow:` with no value is a YAML explicit null — not a string,
+        // so the bucket-default intent errors loudly rather than governing silently.
+        //
+        // quilt3 agrees in direction: its config JSON schema types `default_workflow`
+        // as a string and quilt3 schema-validates the whole config on load, so this
+        // config fails every push there. quilt-rs rejecting only the bucket-default
+        // intent is the narrower behavior.
+        let config = r"
+default_workflow:
+workflows:
+  foo:
+    metadata_schema: bar
+";
+        remote
+            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .await?;
+
+        let err = resolve_workflow(&remote, &host, WorkflowIntent::BucketDefault, &uri)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
+        ));
+        assert!(err.to_string().contains("must be a string"));
 
         Ok(())
     }

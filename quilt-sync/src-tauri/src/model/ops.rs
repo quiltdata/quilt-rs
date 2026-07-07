@@ -215,9 +215,10 @@ pub async fn publish_with_settings(
         },
     );
     let metadata = settings.default_metadata.clone().unwrap_or_default();
-    // A missing or empty `default_workflow` means "no opinion" — honour the
-    // bucket's default workflow; a non-empty id enforces that named workflow.
-    let workflow = match settings.default_workflow.as_deref() {
+    // A missing, empty, or whitespace-only `default_workflow` means "no opinion"
+    // — honour the bucket's default workflow; a non-empty id (after trimming)
+    // enforces that named workflow.
+    let workflow = match settings.default_workflow.as_deref().map(str::trim) {
         Some(id) if !id.is_empty() => WorkflowIntent::Named(id.to_string()),
         _ => WorkflowIntent::BucketDefault,
     };
@@ -407,6 +408,19 @@ mod tests {
         let model = model_expecting_intent(WorkflowIntent::Named("x".to_string()));
         let settings = PublishSettings {
             default_workflow: Some("x".to_string()),
+            ..PublishSettings::default()
+        };
+        let status = quilt::lineage::InstalledPackageStatus::default();
+        publish_with_settings(&model, &namespace, &settings, status).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn publish_with_settings_whitespace_maps_to_bucket_default() -> Result<(), Error> {
+        let namespace: quilt_uri::Namespace = ("acme", "demo").into();
+        let model = model_expecting_intent(WorkflowIntent::BucketDefault);
+        let settings = PublishSettings {
+            default_workflow: Some("   ".into()),
             ..PublishSettings::default()
         };
         let status = quilt::lineage::InstalledPackageStatus::default();
