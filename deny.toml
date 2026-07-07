@@ -54,13 +54,6 @@ ignore = [
 
     # --- mixpanel-rs (dotenv) ---
     { id = "RUSTSEC-2021-0141", reason = "dotenv unmaintained, transitive via mixpanel-rs" },
-
-    # --- quick-xml 0.39.x via plist → tauri-utils ---
-    # plist 1.9.0 pins quick-xml to "0.39.2" (<0.40); the fixes ship in
-    # quick-xml >=0.41.0. Only reached from build-time Info.plist parsing, not
-    # untrusted runtime XML. Revisit once plist relaxes the quick-xml bound.
-    { id = "RUSTSEC-2026-0194", reason = "quick-xml <0.40 via plist/tauri-utils; awaiting plist bump" },
-    { id = "RUSTSEC-2026-0195", reason = "quick-xml <0.40 via plist/tauri-utils; awaiting plist bump" },
 ]
 
 [licenses]
