@@ -7,6 +7,8 @@ use std::str::FromStr;
 
 use serde::Serialize;
 
+use quilt_rs::io::remote::WorkflowIntent;
+
 use crate::Error;
 use crate::autopull::Watcher;
 use crate::model;
@@ -21,7 +23,7 @@ async fn package_commit_command(
     namespace: &str,
     message: &str,
     metadata: &str,
-    workflow: Option<String>,
+    workflow: WorkflowIntent,
 ) -> Result<quilt_uri::Namespace, Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
     if message.is_empty() {
@@ -40,7 +42,7 @@ pub async fn package_commit(
     namespace: String,
     message: String,
     metadata: String,
-    workflow: Option<String>,
+    workflow: WorkflowIntent,
 ) -> Result<String, String> {
     tracing.track(MixpanelEvent::PackageCommitted).await;
 
@@ -215,7 +217,7 @@ async fn package_commit_and_push_command(
     namespace: &str,
     message: &str,
     metadata: &str,
-    workflow: Option<String>,
+    workflow: WorkflowIntent,
 ) -> Result<(quilt_uri::Namespace, quilt::PublishOutcome), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
     if message.trim().is_empty() {
@@ -242,7 +244,7 @@ pub async fn package_commit_and_push(
     namespace: String,
     message: String,
     metadata: String,
-    workflow: Option<String>,
+    workflow: WorkflowIntent,
 ) -> Result<String, String> {
     let msg_init = format!("Publishing package {namespace}");
     let result =

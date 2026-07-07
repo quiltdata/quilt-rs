@@ -14,7 +14,8 @@ const FILE_NAME: &str = "publish_settings.json";
 ///
 /// Persisted as `publish_settings.json` in `app_local_data_dir`. All fields
 /// are optional — when missing, Publish falls back to `commit_message::generate`
-/// and sends no workflow / no metadata.
+/// and sends no metadata. A missing or empty `default_workflow` means the
+/// bucket's default workflow.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct PublishSettings {
     pub message_template: Option<String>,

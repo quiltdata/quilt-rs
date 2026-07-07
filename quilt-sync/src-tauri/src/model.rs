@@ -209,7 +209,7 @@ pub trait QuiltModel {
             .await?)
     }
 
-    /// Resolve a workflow id (`Option<String>`) into the materialised
+    /// Resolve a [`WorkflowIntent`] into the materialised
     /// [`quilt::manifest::Workflow`] the remote enforces. Wrapping the
     /// `InstalledPackage` method on the trait lets the autosync tick
     /// path go through `model::package_publish` (free function) without
@@ -217,13 +217,9 @@ pub trait QuiltModel {
     async fn resolve_workflow(
         &self,
         package: &quilt::InstalledPackage,
-        workflow: Option<String>,
+        workflow: WorkflowIntent,
     ) -> Result<Option<quilt::manifest::Workflow>, Error> {
-        let intent = match workflow {
-            Some(id) => WorkflowIntent::Named(id),
-            None => WorkflowIntent::NoWorkflow,
-        };
-        Ok(package.resolve_workflow(intent).await?)
+        Ok(package.resolve_workflow(workflow).await?)
     }
 
     async fn package_revision_certify_latest(

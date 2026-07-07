@@ -186,8 +186,8 @@ pub(crate) async fn refresh_then_maybe_sync(
                 published: None,
             });
         }
-        // `publish_with_settings` is shared with the manual Commit &
-        // Push command in `commands.rs`, so a change to publish
+        // `publish_with_settings` is shared with the manual one-click
+        // Publish command in `commands.rs`, so a change to publish
         // settings (new placeholder, new field) applies identically
         // regardless of who triggered the publish.
         return match model::publish_with_settings(model, namespace, publish, status).await {

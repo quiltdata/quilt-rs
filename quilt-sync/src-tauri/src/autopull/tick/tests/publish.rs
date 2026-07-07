@@ -37,11 +37,12 @@ fn fixture_with_lineage_and_status(
     model
         .expect_get_installed_package_status()
         .returning(move |_, _| Ok(status_mutex.lock().unwrap().take().unwrap()));
-    // `model::package_publish` (free fn) now routes the workflow
-    // lookup through the trait. Default to "no workflow" — autosync
-    // M1 ignores `default_workflow` in publish settings; the per-
-    // remote workflow gets enforced by `flow::publish_package` from
-    // the remote-side config regardless.
+    // `model::package_publish` (free fn) routes the workflow lookup
+    // through the trait. These fixtures use default publish settings, so
+    // `publish_with_settings` sends `WorkflowIntent::BucketDefault`; the
+    // per-remote workflow gets enforced by `flow::publish_package` from
+    // the remote-side config regardless. The mock ignores the intent and
+    // returns "no workflow".
     model.expect_resolve_workflow().returning(|_, _| Ok(None));
     (model, ns)
 }
