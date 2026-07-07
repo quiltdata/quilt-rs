@@ -713,7 +713,10 @@ mod tests {
     #[test]
     fn workflow_intent_wire_form_is_verbatim() {
         let cases = [
-            (WorkflowIntent::BucketDefault, r#"{"kind":"bucket-default"}"#),
+            (
+                WorkflowIntent::BucketDefault,
+                r#"{"kind":"bucket-default"}"#,
+            ),
             (WorkflowIntent::NoWorkflow, r#"{"kind":"no-workflow"}"#),
             (
                 WorkflowIntent::Named("x".to_string()),

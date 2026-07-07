@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.33.0-alpha2] - 2026-07-07
+
+### Changed
+
+- `resolve_workflow` and the commit/publish surface now take an explicit `WorkflowIntent` (`BucketDefault`/`NoWorkflow`/`Named`) instead of `Option<String>`, and the bucket-default intent honors the workflow config's top-level `default_workflow` (<https://github.com/quiltdata/quilt-rs/pull/743>)
+
 ## [v0.33.0-alpha1] - 2026-07-02
 
 ### Changed
