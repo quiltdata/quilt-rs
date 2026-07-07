@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.18.3-alpha2] - 2026-07-07
+
+### Changed
+
+- Publishing or committing without choosing a workflow now applies the bucket's default workflow from its workflows config, and the per-user "Default workflow" setting acts as an override (<https://github.com/quiltdata/quilt-rs/pull/743>)
+
 ## [v0.18.3-alpha1] - 2026-07-02
 
 ### Fixed

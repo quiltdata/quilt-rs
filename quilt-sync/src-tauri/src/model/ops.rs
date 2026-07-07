@@ -10,6 +10,7 @@ use crate::telemetry::prelude::*;
 
 use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::HostConfig;
+use quilt_rs::io::remote::WorkflowIntent;
 
 use super::{InstallCheck, InstallOutcome, QuiltModel};
 
@@ -32,7 +33,7 @@ pub async fn package_commit(
     namespace: quilt_uri::Namespace,
     message: &str,
     metadata: &str,
-    workflow: Option<String>,
+    workflow: WorkflowIntent,
     host_config: Option<HostConfig>,
 ) -> Result<(), Error> {
     debug!(
@@ -192,12 +193,13 @@ pub async fn package_push(
 /// Render `PublishSettings` into a message / metadata / workflow triple
 /// and route through [`package_publish`].
 ///
-/// Shared entry point for both the manual Commit & Push command and the
-/// autosync watcher tick — keep them in lockstep so a change to publish
-/// settings (new placeholder, new field) applies identically regardless
-/// of who triggered the publish. Returns the outcome paired with the
-/// rendered commit message; the autosync tick needs the message string
-/// for its `autosync-published` event, the manual command can discard it.
+/// Shared entry point for both the manual one-click Publish command and
+/// the autosync watcher tick — keep them in lockstep so a change to
+/// publish settings (new placeholder, new field) applies identically
+/// regardless of who triggered the publish. Returns the outcome paired
+/// with the rendered commit message; the autosync tick needs the message
+/// string for its `autosync-published` event, the manual command can
+/// discard it.
 pub async fn publish_with_settings(
     model: &impl QuiltModel,
     namespace: &quilt_uri::Namespace,
@@ -213,7 +215,13 @@ pub async fn publish_with_settings(
         },
     );
     let metadata = settings.default_metadata.clone().unwrap_or_default();
-    let workflow = settings.default_workflow.clone();
+    // A missing, empty, or whitespace-only `default_workflow` means "no opinion"
+    // — honour the bucket's default workflow; a non-empty id (after trimming)
+    // enforces that named workflow.
+    let workflow = match settings.default_workflow.as_deref().map(str::trim) {
+        Some(id) if !id.is_empty() => WorkflowIntent::Named(id.to_string()),
+        _ => WorkflowIntent::BucketDefault,
+    };
     let outcome = package_publish(
         model,
         namespace.clone(),
@@ -232,7 +240,7 @@ pub async fn package_publish(
     namespace: quilt_uri::Namespace,
     message: &str,
     metadata: &str,
-    workflow: Option<String>,
+    workflow: WorkflowIntent,
     host_config: Option<HostConfig>,
     status: Option<quilt::lineage::InstalledPackageStatus>,
 ) -> Result<quilt::PublishOutcome, Error> {
@@ -339,4 +347,84 @@ pub async fn get_or_register_client(
         .get_or_register_client(host, redirect_uri)
         .await?;
     Ok(client.client_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use mockall::predicate::{always, eq};
+
+    use crate::model::MockQuiltModel;
+
+    fn fake_publish_outcome(namespace: &quilt_uri::Namespace) -> quilt::PublishOutcome {
+        quilt::PublishOutcome::PushedOnly(quilt::PushOutcome {
+            manifest_uri: quilt_uri::ManifestUri {
+                bucket: "bucket".to_string(),
+                namespace: namespace.clone(),
+                hash: "h1".to_string(),
+                origin: None,
+            },
+            certified_latest: true,
+        })
+    }
+
+    /// A `MockQuiltModel` that asserts `publish_with_settings` resolves the
+    /// workflow with exactly `expected` and then publishes once.
+    fn model_expecting_intent(expected: WorkflowIntent) -> MockQuiltModel {
+        let mut model = MockQuiltModel::new();
+        model.expect_get_installed_package().returning(|_| {
+            Ok(Some(
+                quilt::LocalDomain::new(std::path::PathBuf::new())
+                    .create_installed_package(("acme", "demo").into())
+                    .unwrap(),
+            ))
+        });
+        model
+            .expect_resolve_workflow()
+            .times(1)
+            .with(always(), eq(expected))
+            .returning(|_, _| Ok(None));
+        model
+            .expect_package_publish()
+            .times(1)
+            .returning(|_, _, _, _, _, _| Ok(fake_publish_outcome(&("acme", "demo").into())));
+        model
+    }
+
+    #[tokio::test]
+    async fn publish_with_settings_empty_maps_to_bucket_default() -> Result<(), Error> {
+        let namespace: quilt_uri::Namespace = ("acme", "demo").into();
+        let model = model_expecting_intent(WorkflowIntent::BucketDefault);
+        let settings = PublishSettings::default();
+        let status = quilt::lineage::InstalledPackageStatus::default();
+        publish_with_settings(&model, &namespace, &settings, status).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn publish_with_settings_named_workflow() -> Result<(), Error> {
+        let namespace: quilt_uri::Namespace = ("acme", "demo").into();
+        let model = model_expecting_intent(WorkflowIntent::Named("x".to_string()));
+        let settings = PublishSettings {
+            default_workflow: Some("x".to_string()),
+            ..PublishSettings::default()
+        };
+        let status = quilt::lineage::InstalledPackageStatus::default();
+        publish_with_settings(&model, &namespace, &settings, status).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn publish_with_settings_whitespace_maps_to_bucket_default() -> Result<(), Error> {
+        let namespace: quilt_uri::Namespace = ("acme", "demo").into();
+        let model = model_expecting_intent(WorkflowIntent::BucketDefault);
+        let settings = PublishSettings {
+            default_workflow: Some("   ".into()),
+            ..PublishSettings::default()
+        };
+        let status = quilt::lineage::InstalledPackageStatus::default();
+        publish_with_settings(&model, &namespace, &settings, status).await?;
+        Ok(())
+    }
 }

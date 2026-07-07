@@ -6,6 +6,7 @@ use test_log::test;
 
 use aws_sdk_s3::primitives::ByteStream;
 
+use crate::io::remote::WorkflowIntent;
 use crate::io::remote::mocks::MockRemote;
 use crate::lineage::DomainLineageIo;
 use crate::lineage::Home;
@@ -506,6 +507,161 @@ async fn test_set_remote_recommits_existing_commit() -> Res {
         manifest.header.user_meta,
         Some(serde_json::json!({"key": "value"})),
         "User meta should be preserved after recommit"
+    );
+
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn test_resolve_workflow_without_remote_is_none_for_every_intent() -> Res {
+    let (home, _temp_dir1) = Home::from_temp_dir()?;
+    let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+
+    let storage = LocalStorage::new();
+    let remote = MockRemote::default();
+    let namespace: Namespace = ("test", "noremote").into();
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+
+    let lineage_json = r#"{
+        "packages": {
+            "test/noremote": {
+                "commit": null,
+                "remote": null,
+                "base_hash": "",
+                "latest_hash": "",
+                "paths": {}
+            }
+        },
+        "home": "/tmp/working_dir"
+    }"#;
+    storage
+        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+        .await?;
+
+    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+        paths,
+        remote,
+        storage,
+        namespace,
+    };
+
+    for intent in [
+        WorkflowIntent::BucketDefault,
+        WorkflowIntent::NoWorkflow,
+        WorkflowIntent::Named("foo".to_string()),
+    ] {
+        assert!(
+            package.resolve_workflow(intent.clone()).await?.is_none(),
+            "no-remote short-circuit should return None for {intent:?}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn test_set_remote_recommit_picks_up_bucket_default() -> Res {
+    let (home, _temp_dir1) = Home::from_temp_dir()?;
+    let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+
+    let storage = LocalStorage::new();
+    let remote = MockRemote::default();
+    let namespace: Namespace = ("test", "bucketdefault").into();
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+
+    // The target bucket declares a `default_workflow`.
+    let config_uri: S3Uri = "s3://my-bucket/.quilt/workflows/config.yml".parse()?;
+    let config = r"
+default_workflow: foo
+workflows:
+  foo:
+    metadata_schema: bar
+schemas:
+  bar:
+    url: s3://my-bucket/schemas/test.json
+";
+    let schema_uri: S3Uri = "s3://my-bucket/schemas/test.json".parse()?;
+    remote
+        .put_object(&None, &config_uri, config.as_bytes().to_vec())
+        .await?;
+    remote
+        .put_object(&None, &schema_uri, b"{}".to_vec())
+        .await?;
+
+    // Start with no remote and no commit
+    let lineage_json = r#"{
+        "packages": {
+            "test/bucketdefault": {
+                "commit": null,
+                "remote": null,
+                "base_hash": "",
+                "latest_hash": "",
+                "paths": {}
+            }
+        },
+        "home": "/tmp/working_dir"
+    }"#;
+    storage
+        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+        .await?;
+
+    // Write a file to package home so commit has something to pick up
+    let package_home = home.join(namespace.to_string());
+    storage.create_dir_all(&package_home).await?;
+    storage
+        .write_byte_stream(
+            package_home.join("data.txt"),
+            ByteStream::from_static(b"hello world"),
+        )
+        .await?;
+
+    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+        paths,
+        remote,
+        storage,
+        namespace: namespace.clone(),
+    };
+
+    // Commit the package locally (no remote yet, so no workflow stamped)
+    package
+        .commit(
+            "Initial commit".to_string(),
+            UserMeta::Set(serde_json::json!({"key": "value"})),
+            None,
+            None,
+        )
+        .await?;
+
+    // set_remote triggers recommit, which must stamp the bucket default.
+    package
+        .set_remote("my-bucket".to_string(), Some("example.com".parse()?))
+        .await?;
+
+    let lineage = package.lineage().await?;
+    let new_commit = lineage.commit.as_ref().expect("commit should exist");
+    let manifest_path = package
+        .paths
+        .installed_manifest(&namespace, &new_commit.hash);
+    let manifest = Manifest::from_path(&package.storage, &manifest_path).await?;
+
+    let workflow = manifest
+        .header
+        .workflow
+        .expect("recommit should stamp a workflow from the bucket default");
+    assert_eq!(
+        workflow.id.expect("workflow id should be set").id,
+        "foo",
+        "recommit should pick up the bucket's default_workflow"
     );
 
     Ok(())

@@ -13,6 +13,7 @@ use crate::flow::cache_remote_manifest;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
 use crate::io::remote::RemoteS3;
+use crate::io::remote::WorkflowIntent;
 use crate::io::remote::resolve_workflow;
 use crate::io::storage::LocalStorage;
 use crate::io::storage::Storage;
@@ -580,8 +581,18 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             bucket,
             version: None,
         };
-        let workflow =
-            resolve_workflow(&self.remote, &Some(origin), None, &workflows_config_uri).await?;
+        // Set Remote is a no-gesture path: the user expresses no workflow
+        // choice here, and publish later pushes this pending recommit
+        // *without* re-resolving the workflow. So recommit must stamp the
+        // bucket default now — otherwise a locally-created package's first
+        // publish would silently miss the bucket's `default_workflow`.
+        let workflow = resolve_workflow(
+            &self.remote,
+            &Some(origin),
+            WorkflowIntent::BucketDefault,
+            &workflows_config_uri,
+        )
+        .await?;
         let manifest = self.manifest().await?;
         let lineage = flow::recommit(
             lineage,
@@ -597,7 +608,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         Ok(())
     }
 
-    pub async fn resolve_workflow(&self, workflow_id: Option<String>) -> Res<Option<Workflow>> {
+    pub async fn resolve_workflow(&self, intent: WorkflowIntent) -> Res<Option<Workflow>> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
         let remote_uri = match lineage.remote_uri.as_ref() {
             Some(uri) if !uri.bucket.is_empty() => uri.clone(),
@@ -610,7 +621,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         resolve_workflow(
             &self.remote,
             &remote_uri.origin,
-            workflow_id,
+            intent,
             &workflows_config_uri,
         )
         .await

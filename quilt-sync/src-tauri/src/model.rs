@@ -14,6 +14,7 @@ use crate::telemetry::prelude::*;
 
 use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::HostConfig;
+use quilt_rs::io::remote::WorkflowIntent;
 
 /// Result of checking whether a package is already installed.
 #[derive(Debug)]
@@ -208,7 +209,7 @@ pub trait QuiltModel {
             .await?)
     }
 
-    /// Resolve a workflow id (`Option<String>`) into the materialised
+    /// Resolve a [`WorkflowIntent`] into the materialised
     /// [`quilt::manifest::Workflow`] the remote enforces. Wrapping the
     /// `InstalledPackage` method on the trait lets the autosync tick
     /// path go through `model::package_publish` (free function) without
@@ -216,7 +217,7 @@ pub trait QuiltModel {
     async fn resolve_workflow(
         &self,
         package: &quilt::InstalledPackage,
-        workflow: Option<String>,
+        workflow: WorkflowIntent,
     ) -> Result<Option<quilt::manifest::Workflow>, Error> {
         Ok(package.resolve_workflow(workflow).await?)
     }

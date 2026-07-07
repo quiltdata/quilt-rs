@@ -1,3 +1,5 @@
+use serde::Deserialize;
+use serde::Serialize;
 use serde_yaml::Value as YamlValue;
 use tokio::io::AsyncReadExt;
 
@@ -10,6 +12,28 @@ use crate::manifest::Workflow;
 use crate::manifest::WorkflowId;
 use quilt_uri::Host;
 use quilt_uri::S3Uri;
+
+/// Caller intent for resolving a package's workflow (the per-bucket quality-gate
+/// reference stored in the manifest header).
+///
+/// - [`WorkflowIntent::BucketDefault`] — the caller has no opinion. Honour the
+///   config's top-level `default_workflow` when it is declared; otherwise fall
+///   back to today's outcome (a workflow record with `id: null` when a config
+///   is present, or nothing when there is no config).
+/// - [`WorkflowIntent::NoWorkflow`] — an explicit opt-out. Produces an `id: null`
+///   record when a config is present, or nothing when there is no config.
+/// - [`WorkflowIntent::Named`] — an exact workflow id, resolved against the
+///   config or an error if it cannot be found.
+///
+/// Note: the config's `is_workflow_required` flag is deliberately **not**
+/// enforced here — enforcement is a separate slice.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "id", rename_all = "kebab-case")]
+pub enum WorkflowIntent {
+    BucketDefault,
+    NoWorkflow,
+    Named(String),
+}
 
 fn get_schema_id(yaml: &YamlValue, workflow_id: &str) -> Res<Option<String>> {
     match &yaml.get("workflows") {
@@ -83,59 +107,74 @@ async fn fetch_workflows_config<R: Remote>(
     }
 }
 
-/// 1. No `workflows/config.yaml`
+/// Resolve a named workflow id against an already-fetched config, attaching the
+/// referenced metadata schema when the workflow declares one.
+async fn resolve_named<R: Remote>(
+    remote: &R,
+    host: &Option<Host>,
+    yaml: &YamlValue,
+    config: S3Uri,
+    id: String,
+) -> Res<Option<Workflow>> {
+    if let Some((metadata_id, metadata_url)) = get_schema_url(remote, host, yaml, &id).await? {
+        Ok(Some(Workflow {
+            config,
+            id: Some(WorkflowId {
+                id,
+                metadata: Some(MetadataSchema {
+                    id: metadata_id,
+                    url: metadata_url,
+                }),
+            }),
+        }))
+    } else {
+        Ok(Some(Workflow {
+            config,
+            id: Some(WorkflowId { id, metadata: None }),
+        }))
+    }
+}
+
+/// Resolve the workflow to attach to a manifest header, given the caller's
+/// [`WorkflowIntent`] and the presence/contents of `workflows/config.yaml`.
 ///
-///    Return `None` or `Err`
-///
-///    1.a. `workflow_id` is null/None              → None
-///    1.b. `workflow_id` is set                    → Err
-///
-/// 2. `workflows/config.yaml` is present
-///
-///    Return `Some(Workflow)` with `config` property
-///    And the `id` is:
-///
-///    2.a. `workflow_id` is set and valid          → Some(WorkflowId)
-///    2.b. `workflow_id` is null/None              → None
-///    2.c. `workflow_id` is set but not found      → Err
-///    2.d. `workflow_id` is "" (edge case for 2.c) → Err
+/// - [`WorkflowIntent::Named`] — a config is required; the id is resolved against
+///   it (`""` and any unknown id error), otherwise it is an error.
+/// - [`WorkflowIntent::NoWorkflow`] — `Some(Workflow { id: None })` when a config
+///   is present, `None` when there is no config.
+/// - [`WorkflowIntent::BucketDefault`] — `None` when there is no config;
+///   otherwise the config's top-level `default_workflow` decides: absent →
+///   `Some(Workflow { id: None })`; a string → resolved like [`WorkflowIntent::Named`]
+///   (a missing referenced workflow errors — misconfiguration must be loud, not
+///   silently ungoverned); a non-string value → error.
 pub async fn resolve_workflow<R: Remote>(
     remote: &R,
     host: &Option<Host>,
-    workflow_id: Option<String>,
+    intent: WorkflowIntent,
     uri: &S3Uri,
 ) -> Res<Option<Workflow>> {
     let (config, yaml) = fetch_workflows_config(remote, host, uri).await?;
-    match yaml {
-        Some(yaml) => match workflow_id {
-            Some(id) => {
-                if let Some((metadata_id, metadata_url)) =
-                    get_schema_url(remote, host, &yaml, &id).await?
-                {
-                    Ok(Some(Workflow {
-                        config,
-                        id: Some(WorkflowId {
-                            id,
-                            metadata: Some(MetadataSchema {
-                                id: metadata_id,
-                                url: metadata_url,
-                            }),
-                        }),
-                    }))
-                } else {
-                    Ok(Some(Workflow {
-                        config,
-                        id: Some(WorkflowId { id, metadata: None }),
-                    }))
-                }
-            }
+    match (yaml, intent) {
+        (Some(yaml), WorkflowIntent::Named(id)) => {
+            resolve_named(remote, host, &yaml, config, id).await
+        }
+        (None, WorkflowIntent::Named(id)) => {
+            Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
+                "There is no workflows config, but the workflow \"{id}\" is set"
+            ))))
+        }
+        (Some(_), WorkflowIntent::NoWorkflow) => Ok(Some(Workflow { config, id: None })),
+        (None, WorkflowIntent::NoWorkflow) => Ok(None),
+        (None, WorkflowIntent::BucketDefault) => Ok(None),
+        (Some(yaml), WorkflowIntent::BucketDefault) => match yaml.get("default_workflow") {
             None => Ok(Some(Workflow { config, id: None })),
-        },
-        None => match workflow_id {
-            Some(workflow_id) => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
-                "There is no workflows config, but the workflow \"{workflow_id}\" is set"
-            )))),
-            None => Ok(None),
+            Some(YamlValue::String(id)) => {
+                let id = id.clone();
+                resolve_named(remote, host, &yaml, config, id).await
+            }
+            Some(_) => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(
+                "`default_workflow` in workflows/config.yaml must be a string".to_string(),
+            ))),
         },
     }
 }
@@ -163,9 +202,14 @@ workflows:
             .await?;
 
         // Should error when trying to resolve a workflow with missing schema section
-        let err = resolve_workflow(&remote, &host, Some("foo".to_string()), &uri)
-            .await
-            .unwrap_err();
+        let err = resolve_workflow(
+            &remote,
+            &host,
+            WorkflowIntent::Named("foo".to_string()),
+            &uri,
+        )
+        .await
+        .unwrap_err();
 
         assert!(matches!(
             err,
@@ -183,13 +227,18 @@ workflows:
         let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
 
         // Case 1.a: No config.yaml and workflow_id is None
-        let result = resolve_workflow(&remote, &host, None, &uri).await?;
+        let result = resolve_workflow(&remote, &host, WorkflowIntent::NoWorkflow, &uri).await?;
         assert!(result.is_none());
 
         // Case 1.b: No config.yaml but workflow_id is set
-        let err = resolve_workflow(&remote, &host, Some("test-workflow".to_string()), &uri)
-            .await
-            .unwrap_err();
+        let err = resolve_workflow(
+            &remote,
+            &host,
+            WorkflowIntent::Named("test-workflow".to_string()),
+            &uri,
+        )
+        .await
+        .unwrap_err();
         assert!(matches!(
             err,
             Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
@@ -224,7 +273,124 @@ schemas:
             .await?;
 
         // Case 2.a: Config exists, workflow_id is set and valid
-        let result = resolve_workflow(&remote, &host, Some("foo".to_string()), &uri)
+        let result = resolve_workflow(
+            &remote,
+            &host,
+            WorkflowIntent::Named("foo".to_string()),
+            &uri,
+        )
+        .await?
+        .unwrap();
+        assert_eq!(result.config, uri);
+        assert_eq!(
+            result.id.unwrap(),
+            WorkflowId {
+                id: "foo".to_string(),
+                metadata: Some(MetadataSchema {
+                    id: "bar".to_string(),
+                    url: "s3://test-bucket/schemas/test.json".parse()?
+                })
+            }
+        );
+
+        // Case 2.b: Config exists but workflow_id is None
+        let result = resolve_workflow(&remote, &host, WorkflowIntent::NoWorkflow, &uri)
+            .await?
+            .unwrap();
+        assert_eq!(result.config, uri);
+        assert!(result.id.is_none());
+
+        // Case 2.c: Config exists but workflow_id is not found
+        let err = resolve_workflow(
+            &remote,
+            &host,
+            WorkflowIntent::Named("non-existent".to_string()),
+            &uri,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
+        ));
+        assert!(err.to_string().contains("Workflow non-existent not found"));
+
+        // Case 2.d: Config exists but workflow_id is empty
+        let err = resolve_workflow(&remote, &host, WorkflowIntent::Named(String::new()), &uri)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
+        ));
+        assert!(err.to_string().contains("Workflow  not found"));
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_bucket_default_no_config() -> Res<()> {
+        let remote = MockRemote::default();
+        let host = None;
+        let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
+
+        // No config.yaml: bucket-default resolves to nothing.
+        let result = resolve_workflow(&remote, &host, WorkflowIntent::BucketDefault, &uri).await?;
+        assert!(result.is_none());
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_bucket_default_without_key() -> Res<()> {
+        let remote = MockRemote::default();
+        let host = None;
+        let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
+
+        // Config present but no `default_workflow` key → today's null-id record.
+        let config = r"
+workflows:
+  foo:
+    metadata_schema: bar
+";
+        remote
+            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .await?;
+
+        let result = resolve_workflow(&remote, &host, WorkflowIntent::BucketDefault, &uri)
+            .await?
+            .unwrap();
+        assert_eq!(result.config, uri);
+        assert!(result.id.is_none());
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_bucket_default_with_valid_key() -> Res<()> {
+        let remote = MockRemote::default();
+        let host = None;
+        let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
+
+        // Config declares a `default_workflow` pointing at a valid workflow.
+        let config = r"
+default_workflow: foo
+workflows:
+  foo:
+    metadata_schema: bar
+schemas:
+  bar:
+    url: s3://test-bucket/schemas/test.json
+";
+        let schema_uri: S3Uri = "s3://test-bucket/schemas/test.json".parse()?;
+        remote
+            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .await?;
+        remote
+            .put_object(&None, &schema_uri, b"{}".to_vec())
+            .await?;
+
+        let result = resolve_workflow(&remote, &host, WorkflowIntent::BucketDefault, &uri)
             .await?
             .unwrap();
         assert_eq!(result.config, uri);
@@ -239,30 +405,121 @@ schemas:
             }
         );
 
-        // Case 2.b: Config exists but workflow_id is None
-        let result = resolve_workflow(&remote, &host, None, &uri).await?.unwrap();
-        assert_eq!(result.config, uri);
-        assert!(result.id.is_none());
+        Ok(())
+    }
 
-        // Case 2.c: Config exists but workflow_id is not found
-        let err = resolve_workflow(&remote, &host, Some("non-existent".to_string()), &uri)
+    #[test(tokio::test)]
+    async fn test_bucket_default_missing_referenced_workflow() -> Res<()> {
+        let remote = MockRemote::default();
+        let host = None;
+        let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
+
+        // `default_workflow` names a workflow that is not declared → loud error.
+        let config = r"
+default_workflow: ghost
+workflows:
+  foo:
+    metadata_schema: bar
+";
+        remote
+            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .await?;
+
+        let err = resolve_workflow(&remote, &host, WorkflowIntent::BucketDefault, &uri)
             .await
             .unwrap_err();
         assert!(matches!(
             err,
             Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
         ));
-        assert!(err.to_string().contains("Workflow non-existent not found"));
+        assert!(err.to_string().contains("Workflow ghost not found"));
 
-        // Case 2.d: Config exists but workflow_id is empty
-        let err = resolve_workflow(&remote, &host, Some(String::new()), &uri)
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_bucket_default_non_string_key() -> Res<()> {
+        let remote = MockRemote::default();
+        let host = None;
+        let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
+
+        // `default_workflow` present but not a string → loud error.
+        let config = r"
+default_workflow: [not, a, string]
+workflows:
+  foo:
+    metadata_schema: bar
+";
+        remote
+            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .await?;
+
+        let err = resolve_workflow(&remote, &host, WorkflowIntent::BucketDefault, &uri)
             .await
             .unwrap_err();
         assert!(matches!(
             err,
             Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
         ));
-        assert!(err.to_string().contains("Workflow  not found"));
+        assert!(err.to_string().contains("must be a string"));
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_bucket_default_explicit_null_key() -> Res<()> {
+        let remote = MockRemote::default();
+        let host = None;
+        let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
+
+        // `default_workflow:` with no value is a YAML explicit null — not a string,
+        // so the bucket-default intent errors loudly rather than governing silently.
+        //
+        // quilt3 agrees in direction: its config JSON schema types `default_workflow`
+        // as a string and quilt3 schema-validates the whole config on load, so this
+        // config fails every push there. quilt-rs rejecting only the bucket-default
+        // intent is the narrower behavior.
+        let config = r"
+default_workflow:
+workflows:
+  foo:
+    metadata_schema: bar
+";
+        remote
+            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .await?;
+
+        let err = resolve_workflow(&remote, &host, WorkflowIntent::BucketDefault, &uri)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
+        ));
+        assert!(err.to_string().contains("must be a string"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_workflow_intent_serde_round_trip() -> Res<()> {
+        for (intent, wire) in [
+            (
+                WorkflowIntent::BucketDefault,
+                serde_json::json!({ "kind": "bucket-default" }),
+            ),
+            (
+                WorkflowIntent::NoWorkflow,
+                serde_json::json!({ "kind": "no-workflow" }),
+            ),
+            (
+                WorkflowIntent::Named("foo".to_string()),
+                serde_json::json!({ "kind": "named", "id": "foo" }),
+            ),
+        ] {
+            assert_eq!(serde_json::to_value(&intent)?, wire);
+            assert_eq!(serde_json::from_value::<WorkflowIntent>(wire)?, intent);
+        }
 
         Ok(())
     }
