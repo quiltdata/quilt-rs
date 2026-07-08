@@ -35,6 +35,18 @@ pub enum WorkflowIntent {
     Named(String),
 }
 
+impl WorkflowIntent {
+    /// Map an optional workflow id to an intent: absent or blank → `BucketDefault`
+    /// (never `Named("")`); a non-blank id → `Named` with surrounding whitespace
+    /// trimmed. The shared normalization used by both frontends.
+    pub fn from_optional_id(id: Option<&str>) -> Self {
+        match id.map(str::trim) {
+            Some(id) if !id.is_empty() => Self::Named(id.to_string()),
+            _ => Self::BucketDefault,
+        }
+    }
+}
+
 /// A single workflow entry as declared under `workflows:` in
 /// `.quilt/workflows/config.yml`, carrying its display metadata.
 #[derive(Debug, Clone, PartialEq)]
@@ -682,6 +694,30 @@ workflows:
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_from_optional_id() {
+        assert_eq!(
+            WorkflowIntent::from_optional_id(None),
+            WorkflowIntent::BucketDefault
+        );
+        assert_eq!(
+            WorkflowIntent::from_optional_id(Some("x")),
+            WorkflowIntent::Named("x".to_string())
+        );
+        assert_eq!(
+            WorkflowIntent::from_optional_id(Some("")),
+            WorkflowIntent::BucketDefault
+        );
+        assert_eq!(
+            WorkflowIntent::from_optional_id(Some("  ")),
+            WorkflowIntent::BucketDefault
+        );
+        assert_eq!(
+            WorkflowIntent::from_optional_id(Some("  x  ")),
+            WorkflowIntent::Named("x".to_string())
+        );
     }
 
     #[test]

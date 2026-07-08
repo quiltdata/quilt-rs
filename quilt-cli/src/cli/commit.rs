@@ -13,7 +13,7 @@ pub struct Input {
     pub message: String,
     pub namespace: Namespace,
     pub user_meta: UserMeta,
-    pub workflow: Option<String>,
+    pub workflow: WorkflowIntent,
     pub host_config: Option<HostConfig>,
 }
 
@@ -37,16 +37,12 @@ async fn commit_package(
     namespace: Namespace,
     message: String,
     user_meta: UserMeta,
-    workflow_id: Option<String>,
+    workflow: WorkflowIntent,
     host_config: Option<HostConfig>,
 ) -> Result<CommitState, Error> {
     match local_domain.get_installed_package(&namespace).await? {
         Some(installed_package) => {
-            let intent = match workflow_id {
-                Some(id) => WorkflowIntent::Named(id),
-                None => WorkflowIntent::NoWorkflow,
-            };
-            let workflow = installed_package.resolve_workflow(intent).await?;
+            let workflow = installed_package.resolve_workflow(workflow).await?;
             Ok(installed_package
                 .commit(message, user_meta, workflow, host_config)
                 .await?)
@@ -111,12 +107,50 @@ mod tests {
                     message: pkg::MESSAGE.to_string(),
                     namespace: pkg::NAMESPACE.into(),
                     user_meta: UserMeta::Keep,
-                    workflow: None,
+                    workflow: WorkflowIntent::NoWorkflow,
                     host_config: None,
                 },
             )
             .await?;
 
+            assert_eq!(output.commit.hash, pkg::TOP_HASH);
+        }
+
+        Ok(())
+    }
+
+    /// Bucket-default intent (`workflow: None, no_workflow: false`) against a
+    /// bucket whose `workflows/config.yml` is present but declares no top-level
+    /// `default_workflow` (the `udp-spec` bucket used by `workflow_null`).
+    ///
+    /// In that case `resolve_workflow` produces the same null-id workflow record
+    /// as an explicit `NoWorkflow` opt-out, so the manifest bytes — and thus the
+    /// top-hash — are byte-identical to the `NoWorkflow` case pinned by
+    /// [`test_commit_package_with_message_and_null_workflow`]. This documents the
+    /// equivalence rather than introducing a new anchor.
+    #[test(tokio::test)]
+    async fn test_commit_package_bucket_default_equals_null_workflow() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::workflow_null as pkg;
+
+        let uri = pkg::URI;
+        let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
+        {
+            let local_domain = m.get_local_domain();
+
+            let output = model(
+                local_domain,
+                Input {
+                    message: pkg::MESSAGE.to_string(),
+                    namespace: pkg::NAMESPACE.into(),
+                    user_meta: UserMeta::Keep,
+                    workflow: WorkflowIntent::BucketDefault,
+                    host_config: None,
+                },
+            )
+            .await?;
+
+            // Same hash as the explicit `NoWorkflow` commit: the config has no
+            // `default_workflow`, so bucket-default resolves to the null-id record.
             assert_eq!(output.commit.hash, pkg::TOP_HASH);
         }
 
@@ -143,7 +177,7 @@ mod tests {
                         "Owner": "Kevin",
                         "Type": "NGS"
                     })),
-                    workflow: Some("my-workflow".to_string()),
+                    workflow: WorkflowIntent::Named("my-workflow".to_string()),
                     host_config: None,
                 },
             )
@@ -174,7 +208,7 @@ mod tests {
                     message: pkg::MESSAGE.to_string(),
                     namespace: pkg::NAMESPACE.into(),
                     user_meta: UserMeta::Keep,
-                    workflow: None,
+                    workflow: WorkflowIntent::NoWorkflow,
                     host_config: None,
                 },
             )
@@ -201,7 +235,7 @@ mod tests {
                     message: pkg::MESSAGE.to_string(),
                     namespace: pkg::NAMESPACE.into(),
                     user_meta: UserMeta::Keep,
-                    workflow: Some("Anything".to_string()),
+                    workflow: WorkflowIntent::Named("Anything".to_string()),
                     host_config: None,
                 },
             )
@@ -239,7 +273,7 @@ mod tests {
                         "e": 123,
                         "f": null
                     })),
-                    workflow: None,
+                    workflow: WorkflowIntent::NoWorkflow,
                     host_config: None,
                 },
             )
@@ -266,7 +300,7 @@ mod tests {
             message: "Test message".to_string(),
             namespace: ("spec", "quilt-rs").into(),
             user_meta: UserMeta::Clear,
-            workflow: None,
+            workflow: WorkflowIntent::NoWorkflow,
             host_config: None,
         };
         let hash_for_initial_test_commit =
@@ -306,7 +340,7 @@ mod tests {
                     message: "New commit message".to_string(),
                     namespace: ("spec", "quilt-rs").into(),
                     user_meta: UserMeta::Set(serde_json::json!({"key": "value"})),
-                    workflow: None,
+                    workflow: WorkflowIntent::NoWorkflow,
                     host_config: None,
                 },
             )
@@ -331,7 +365,7 @@ mod tests {
                     message: "Anything".to_string(),
                     namespace: ("a", "b").into(),
                     user_meta: UserMeta::Keep,
-                    workflow: None,
+                    workflow: WorkflowIntent::NoWorkflow,
                     host_config: None,
                 },
             )
@@ -357,7 +391,7 @@ mod tests {
                     message: "Test message".to_string(),
                     namespace: ("spec", "quilt-rs").into(),
                     user_meta: UserMeta::Clear,
-                    workflow: None,
+                    workflow: WorkflowIntent::NoWorkflow,
                     host_config: None,
                 },
             )
@@ -386,7 +420,7 @@ mod tests {
                 message: "Test message".to_string(),
                 namespace: ("spec", "quilt-rs").into(),
                 user_meta: UserMeta::Keep,
-                workflow: None,
+                workflow: WorkflowIntent::NoWorkflow,
                 host_config: None,
             },
         )

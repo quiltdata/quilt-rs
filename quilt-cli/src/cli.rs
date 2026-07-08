@@ -8,6 +8,7 @@ use clap::Subcommand;
 use tracing::log;
 
 use quilt_rs::flow::UserMeta;
+use quilt_rs::io::remote::WorkflowIntent;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
 
@@ -32,6 +33,29 @@ pub use output::Std;
 pub use output::print;
 
 const DOMAIN_DIR_NAMESPACE: &str = "com.quiltdata.quilt-sync";
+
+/// Resolve the commit command's `(--workflow, --no-workflow)` flag pair into a
+/// [`WorkflowIntent`] at the clap boundary.
+///
+/// * `--no-workflow` → [`WorkflowIntent::NoWorkflow`] (explicit opt-out).
+/// * an explicitly-passed but blank `--workflow` (empty or whitespace) → error:
+///   a scripted unset-variable footgun is rejected loudly rather than silently
+///   falling back to the bucket default.
+/// * otherwise the id is normalized by [`WorkflowIntent::from_optional_id`]:
+///   omitting `--workflow` → [`WorkflowIntent::BucketDefault`], a non-blank id →
+///   [`WorkflowIntent::Named`] (trimmed).
+fn commit_workflow_intent(
+    workflow: Option<&str>,
+    no_workflow: bool,
+) -> Result<WorkflowIntent, Error> {
+    if no_workflow {
+        Ok(WorkflowIntent::NoWorkflow)
+    } else if matches!(workflow, Some(id) if id.trim().is_empty()) {
+        Err(Error::WorkflowEmpty)
+    } else {
+        Ok(WorkflowIntent::from_optional_id(workflow))
+    }
+}
 
 fn parse_optional_namespace(namespace: Option<String>) -> Result<Option<Namespace>, Error> {
     Ok(match namespace {
@@ -99,8 +123,12 @@ enum Commands {
         namespace: String,
         /// Workflow ID
         /// Ex. `"my_workflow"`
+        /// Omit to use the bucket's default workflow.
         #[arg(short, long)]
         workflow: Option<String>,
+        /// Commit with no workflow (explicit opt-out)
+        #[arg(long, conflicts_with = "workflow")]
+        no_workflow: bool,
     },
     /// Install package locally
     Install {
@@ -146,7 +174,12 @@ enum Commands {
         /// Ex. open.quiltdata.com
         #[arg(short, long, requires = "bucket")]
         origin: Option<Host>,
-        // FIXME: add workflow?
+        // No workflow flag here: push uploads an already-created commit and does
+        // not re-run recommit. The one exception is the first push of a
+        // local-only package, where set_remote→recommit resolves the bucket
+        // default, overriding any commit-time workflow choice. Letting the
+        // caller pick a workflow there is a deferred cross-client change, not
+        // part of this CLI slice.
     },
     /// Status of the package: modified, up-to-date, outdated
     Status {
@@ -216,6 +249,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             message,
             user_meta,
             workflow,
+            no_workflow,
         } => {
             let user_meta = match &user_meta {
                 Some(object) => match serde_json::from_str(object)? {
@@ -228,6 +262,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 },
                 None => UserMeta::Keep,
             };
+            let workflow = commit_workflow_intent(workflow.as_deref(), no_workflow)?;
             let args = commit::Input {
                 message,
                 namespace: namespace.try_into()?,
@@ -334,6 +369,9 @@ Then run:
     #[error("Invalid JSON for user_meta object. Object is required")]
     CommitMetaInvalid(String),
 
+    #[error("workflow id cannot be empty; omit --workflow to use the bucket's default workflow")]
+    WorkflowEmpty,
+
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
@@ -364,6 +402,42 @@ mod tests {
 
     use crate::cli::model::create_model_in_temp_dir;
     use crate::cli::model::install_package_into_temp_dir;
+
+    #[test]
+    fn commit_workflow_intent_omit_maps_to_bucket_default() {
+        assert_eq!(
+            commit_workflow_intent(None, false).unwrap(),
+            WorkflowIntent::BucketDefault
+        );
+    }
+
+    #[test]
+    fn commit_workflow_intent_no_workflow_flag_opts_out() {
+        assert_eq!(
+            commit_workflow_intent(None, true).unwrap(),
+            WorkflowIntent::NoWorkflow
+        );
+    }
+
+    #[test]
+    fn commit_workflow_intent_named_id_maps_to_named() {
+        assert_eq!(
+            commit_workflow_intent(Some("x"), false).unwrap(),
+            WorkflowIntent::Named("x".to_string())
+        );
+    }
+
+    #[test]
+    fn commit_workflow_intent_blank_id_is_rejected() {
+        assert!(matches!(
+            commit_workflow_intent(Some(""), false),
+            Err(Error::WorkflowEmpty)
+        ));
+        assert!(matches!(
+            commit_workflow_intent(Some("   "), false),
+            Err(Error::WorkflowEmpty)
+        ));
+    }
 
     #[test]
     fn test_parse_optional_namespace() -> Result<(), Error> {
@@ -449,6 +523,7 @@ mod tests {
                 namespace: pkg::NAMESPACE_STR.to_string(),
                 user_meta: None,
                 workflow: None,
+                no_workflow: true,
             },
         };
 
@@ -479,6 +554,7 @@ mod tests {
                 namespace: "in/valid".to_string(),
                 user_meta: None,
                 workflow: None,
+                no_workflow: true,
             },
         };
 
