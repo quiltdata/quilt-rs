@@ -83,8 +83,8 @@ pub use host::{HostChecksums, HostConfig, fetch_host_config};
 pub use s3::RemoteS3;
 pub(crate) use workflow::fetch_workflows_config;
 pub use workflow::{
-    WorkflowInfo, WorkflowIntent, WorkflowsConfig, fetch_workflows_config_for_bucket,
-    resolve_workflow,
+    WorkflowInfo, WorkflowIntent, WorkflowsConfig, fetch_workflow_rules,
+    fetch_workflows_config_for_bucket, resolve_workflow,
 };
 
 #[cfg(test)]

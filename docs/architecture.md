@@ -60,10 +60,12 @@ still addresses.
 The workspace splits along an I/O boundary:
 
 - **WASM-safe leaf crates** (`quilt-uri` today): no I/O, compile to
-  `wasm32-unknown-unknown`. We expect 1–2 more such extractions —
-  likely candidates are checksum / hashing helpers and manifest
-  types — but the bar is "clean API and reuse value", not a default
-  path for every portable subset.
+  `wasm32-unknown-unknown`. We expect a few more such extractions —
+  likely candidates are checksum / hashing helpers, manifest types, and
+  workflow validation (a pure `quilt-workflow`: the config model plus
+  the rules-checking gate, no I/O — with reuse value for live
+  client-side validation in the UI) — but the bar is "clean API and
+  reuse value", not a default path for every portable subset.
 - **`quilt-rs`**: native-only library; depends on the leaf crates plus
   `aws-sdk-s3`, `tempfile`, `ignore`, `tokio`.
 - **Native consumers**: `quilt-cli`, `quilt-sync/src-tauri`.

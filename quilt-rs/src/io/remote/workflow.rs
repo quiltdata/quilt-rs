@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use serde::Serialize;
+use serde_json::Value;
 use serde_yaml::Value as YamlValue;
 use tokio::io::AsyncReadExt;
 
@@ -10,6 +11,7 @@ use crate::io::remote::Remote;
 use crate::manifest::MetadataSchema;
 use crate::manifest::Workflow;
 use crate::manifest::WorkflowId;
+use crate::workflow::WorkflowRules;
 use quilt_uri::Host;
 use quilt_uri::S3Uri;
 
@@ -122,16 +124,39 @@ impl WorkflowsConfig {
         })
     }
 
-    /// Metadata-schema id declared by the named workflow, mirroring the legacy
-    /// lazy lookup (including its error variants) exactly.
-    fn schema_id(&self, workflow_id: &str) -> Res<Option<String>> {
+    /// The raw mapping for a named workflow, if declared.
+    fn workflow_entry(&self, workflow_id: &str) -> Option<&YamlValue> {
+        self.raw.get("workflows")?.get(workflow_id)
+    }
+
+    /// The `handle_pattern` regex declared by a workflow, if any. Lenient:
+    /// a non-string value degrades to `None`, matching the parser's stance.
+    fn handle_pattern(&self, workflow_id: &str) -> Option<String> {
+        self.workflow_entry(workflow_id)?
+            .get("handle_pattern")
+            .and_then(YamlValue::as_str)
+            .map(String::from)
+    }
+
+    /// A workflow's `is_message_required` flag; defaults to `false` (matches quilt3).
+    fn is_message_required(&self, workflow_id: &str) -> bool {
+        self.workflow_entry(workflow_id)
+            .and_then(|workflow| workflow.get("is_message_required"))
+            .and_then(YamlValue::as_bool)
+            .unwrap_or(false)
+    }
+
+    /// The schema id a workflow declares under `key` (`metadata_schema` or
+    /// `entries_schema`), mirroring the legacy lazy lookup (including its
+    /// error variants) exactly.
+    fn schema_id(&self, workflow_id: &str, key: &str) -> Res<Option<String>> {
         match self.raw.get("workflows") {
             Some(YamlValue::Mapping(workflows)) => match workflows.get(workflow_id) {
-                Some(YamlValue::Mapping(workflow)) => match workflow.get("metadata_schema") {
+                Some(YamlValue::Mapping(workflow)) => match workflow.get(key) {
                     Some(YamlValue::String(schema_id)) => Ok(Some(schema_id.clone())),
                     None => Ok(None),
                     _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
-                        "`metadata_schema` not found for workflow ID: {workflow_id}"
+                        "`{key}` not found for workflow ID: {workflow_id}"
                     )))),
                 },
                 _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
@@ -144,33 +169,49 @@ impl WorkflowsConfig {
         }
     }
 
-    /// Resolve the URL of the schema referenced by the named workflow.
+    /// Resolve the URL of a schema by its id, looking it up in the `schemas`
+    /// section. `workflow_id` is used only for error context.
+    async fn resolve_schema_url<R: Remote>(
+        &self,
+        remote: &R,
+        host: &Option<Host>,
+        workflow_id: &str,
+        schema_id: &str,
+    ) -> Res<S3Uri> {
+        match self.raw.get("schemas") {
+            Some(YamlValue::Mapping(schemas)) => match schemas.get(schema_id) {
+                Some(YamlValue::Mapping(schema)) => match schema.get("url") {
+                    Some(YamlValue::String(url)) => {
+                        Ok(remote.resolve_url(host, &url.parse()?).await?)
+                    }
+                    _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
+                        "Schema {schema_id} doesn't have URL"
+                    )))),
+                },
+                _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
+                    "Schema {schema_id}, referenced by workflow {workflow_id} not found in workflows/config.yaml",
+                )))),
+            },
+            _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(
+                "Schemas not found in workflows/config.yaml".to_string(),
+            ))),
+        }
+    }
+
+    /// Resolve the id and URL of the metadata schema referenced by a workflow.
     async fn schema_url<R: Remote>(
         &self,
         remote: &R,
         host: &Option<Host>,
         workflow_id: &str,
     ) -> Res<Option<(String, S3Uri)>> {
-        match self.schema_id(workflow_id)? {
-            Some(schema_id) => match self.raw.get("schemas") {
-                Some(YamlValue::Mapping(schemas)) => match schemas.get(&schema_id) {
-                    Some(YamlValue::Mapping(schema)) => match schema.get("url") {
-                        Some(YamlValue::String(url)) => Ok(Some((
-                            schema_id,
-                            remote.resolve_url(host, &url.parse()?).await?,
-                        ))),
-                        _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
-                            "Schema {schema_id} doesn't have URL"
-                        )))),
-                    },
-                    _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
-                        "Schema {schema_id}, referenced by workflow {workflow_id} not found in workflows/config.yaml",
-                    )))),
-                },
-                _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(
-                    "Schemas not found in workflows/config.yaml".to_string(),
-                ))),
-            },
+        match self.schema_id(workflow_id, "metadata_schema")? {
+            Some(schema_id) => {
+                let url = self
+                    .resolve_schema_url(remote, host, workflow_id, &schema_id)
+                    .await?;
+                Ok(Some((schema_id, url)))
+            }
             None => Ok(None),
         }
     }
@@ -262,6 +303,65 @@ pub async fn fetch_workflows_config_for_bucket<R: Remote>(
     };
     let (_, config) = fetch_workflows_config(remote, host, &uri).await?;
     Ok(config)
+}
+
+/// Fetch a schema document from the remote and parse it as JSON.
+async fn fetch_schema_doc<R: Remote>(remote: &R, host: &Option<Host>, uri: &S3Uri) -> Res<Value> {
+    let stream = remote.get_object_stream(host, uri).await?;
+    let mut bytes = Vec::new();
+    stream
+        .body
+        .into_async_read()
+        .read_to_end(&mut bytes)
+        .await?;
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
+/// Assemble the pure-validator [`WorkflowRules`] for a named workflow: read the
+/// `handle_pattern` / `is_message_required` flags straight from the parsed
+/// config (no fetch), and fetch the `metadata_schema` / `entries_schema`
+/// documents referenced by the workflow as `serde_json::Value`.
+///
+/// This is the I/O boundary between the remote layer and the pure gate in
+/// `crate::workflow`: it turns config + S3 into the plain inputs
+/// [`crate::workflow::validate_package`] consumes.
+pub async fn fetch_workflow_rules<R: Remote>(
+    remote: &R,
+    host: &Option<Host>,
+    config: &WorkflowsConfig,
+    workflow_id: &str,
+) -> Res<WorkflowRules> {
+    let metadata_schema =
+        fetch_schema_for_key(remote, host, config, workflow_id, "metadata_schema").await?;
+    let entries_schema =
+        fetch_schema_for_key(remote, host, config, workflow_id, "entries_schema").await?;
+
+    Ok(WorkflowRules {
+        handle_pattern: config.handle_pattern(workflow_id),
+        is_message_required: config.is_message_required(workflow_id),
+        metadata_schema,
+        entries_schema,
+    })
+}
+
+/// Fetch the schema document a workflow declares under `key`, or `None` when
+/// the workflow declares no such schema.
+async fn fetch_schema_for_key<R: Remote>(
+    remote: &R,
+    host: &Option<Host>,
+    config: &WorkflowsConfig,
+    workflow_id: &str,
+    key: &str,
+) -> Res<Option<Value>> {
+    match config.schema_id(workflow_id, key)? {
+        Some(schema_id) => {
+            let uri = config
+                .resolve_schema_url(remote, host, workflow_id, &schema_id)
+                .await?;
+            Ok(Some(fetch_schema_doc(remote, host, &uri).await?))
+        }
+        None => Ok(None),
+    }
 }
 
 /// Resolve the workflow to attach to a manifest header, given the caller's
@@ -756,6 +856,95 @@ workflows:
         // No config object for this bucket → None.
         let result = fetch_workflows_config_for_bucket(&remote, &host, "empty-bucket").await?;
         assert!(result.is_none());
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_fetch_workflow_rules() -> Res<()> {
+        let remote = MockRemote::default();
+        let host = None;
+        let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
+
+        let config = r#"
+workflows:
+  foo:
+    name: Foo
+    handle_pattern: "^team/"
+    is_message_required: true
+    metadata_schema: meta
+    entries_schema: entries
+schemas:
+  meta:
+    url: s3://test-bucket/schemas/meta.json
+  entries:
+    url: s3://test-bucket/schemas/entries.json
+"#;
+        let meta_uri: S3Uri = "s3://test-bucket/schemas/meta.json".parse()?;
+        let entries_uri: S3Uri = "s3://test-bucket/schemas/entries.json".parse()?;
+        remote
+            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .await?;
+        remote
+            .put_object(
+                &None,
+                &meta_uri,
+                br#"{"type": "object", "required": ["owner"]}"#.to_vec(),
+            )
+            .await?;
+        remote
+            .put_object(&None, &entries_uri, br#"{"type": "array"}"#.to_vec())
+            .await?;
+
+        let (_, parsed) = fetch_workflows_config(&remote, &host, &uri).await?;
+        let parsed = parsed.expect("config present");
+        let rules = fetch_workflow_rules(&remote, &host, &parsed, "foo").await?;
+
+        assert_eq!(
+            rules,
+            WorkflowRules {
+                handle_pattern: Some("^team/".to_string()),
+                is_message_required: true,
+                metadata_schema: Some(serde_json::json!({
+                    "type": "object", "required": ["owner"]
+                })),
+                entries_schema: Some(serde_json::json!({ "type": "array" })),
+            }
+        );
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_fetch_workflow_rules_no_schemas() -> Res<()> {
+        // A workflow declaring neither schema nor the optional flags yields
+        // empty rules: no fetch attempted, defaults applied.
+        let remote = MockRemote::default();
+        let host = None;
+        let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
+
+        let config = r"
+workflows:
+  bare:
+    name: Bare
+";
+        remote
+            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .await?;
+
+        let (_, parsed) = fetch_workflows_config(&remote, &host, &uri).await?;
+        let parsed = parsed.expect("config present");
+        let rules = fetch_workflow_rules(&remote, &host, &parsed, "bare").await?;
+
+        assert_eq!(
+            rules,
+            WorkflowRules {
+                handle_pattern: None,
+                is_message_required: false,
+                metadata_schema: None,
+                entries_schema: None,
+            }
+        );
 
         Ok(())
     }

@@ -7,6 +7,7 @@ use reqwest::header::ToStrError;
 use thiserror::Error;
 
 use crate::io::remote::HostChecksums;
+use crate::workflow::WorkflowValidationError;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
 use quilt_uri::UriError;
@@ -305,6 +306,9 @@ pub enum Error {
 
     #[error("UTF-8 error: {0}")]
     Utf8(#[from] Utf8Error),
+
+    #[error(transparent)]
+    WorkflowValidation(#[from] WorkflowValidationError),
 
     #[error("YAML error: {0}")]
     Yaml(#[from] serde_yaml::Error),
