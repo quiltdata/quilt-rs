@@ -431,22 +431,39 @@ fn workflow_options(
 /// Index (into [`workflow_options`]'s output) that should start selected in the
 /// [`CommitWorkflows::Available`] state.
 ///
-/// The previous revision's `workflow.id` if it appears in the list, else the
-/// bucket default's id if present, else index 0 (the `None` item). Options are
-/// laid out as `[None, workflows..]`, so a workflow at position `p` maps to
-/// option index `p + 1`.
+/// The bucket default always wins over the previous revision's pick — that is
+/// what makes it the default. Options are laid out as `[None, workflows..]`, so
+/// a workflow at position `p` maps to option index `p + 1`. The rule mirrors the
+/// `(default)` marker that [`workflow_options`] applies:
+///
+/// 1. A named `default_workflow` present in the list → its index (ignoring the
+///    previous pick).
+/// 2. No named default and the bucket doesn't require a workflow → index 0, the
+///    `None` head, which is itself labeled `None (default)` and so is the
+///    effective default.
+/// 3. Required bucket with no usable default (genuinely no default): the
+///    previous revision's workflow if present, else index 0 (`None`, disabled).
 fn preselected_index(
     workflows: &[WorkflowInfo],
     previous_workflow_id: Option<&str>,
     default_workflow: Option<&str>,
+    is_workflow_required: bool,
 ) -> usize {
-    if let Some(prev) = previous_workflow_id
-        && let Some(pos) = workflows.iter().position(|w| w.id == prev)
+    // 1. A named default in the list wins outright.
+    if let Some(def) = default_workflow
+        && let Some(pos) = workflows.iter().position(|w| w.id == def)
     {
         return pos + 1;
     }
-    if let Some(def) = default_workflow
-        && let Some(pos) = workflows.iter().position(|w| w.id == def)
+    // 2. No named default and no requirement: `None` is itself the default
+    //    (labeled "None (default)"), so it wins too — keeping "the default
+    //    always wins" uniform.
+    if !is_workflow_required {
+        return 0;
+    }
+    // 3. Required with genuinely no default: fall back to the previous pick.
+    if let Some(prev) = previous_workflow_id
+        && let Some(pos) = workflows.iter().position(|w| w.id == prev)
     {
         return pos + 1;
     }
@@ -504,6 +521,7 @@ fn build_workflow_view(
                 workflows,
                 previous_workflow_id,
                 default_workflow.as_deref(),
+                *is_workflow_required,
             ),
         },
         // Ungoverned bucket: a single disabled `None`. Submit sends
@@ -1101,11 +1119,12 @@ mod tests {
             }
         );
         // Options + preselection match the pure builders for the Available case.
+        // Previous picked "beta", but the named default "alpha" wins.
         assert_eq!(view.options.len(), 3);
-        assert_eq!(view.initial, 2);
+        assert_eq!(view.initial, 1);
         assert_eq!(
             view.options[view.initial].intent,
-            WorkflowIntent::Named("beta".to_string())
+            WorkflowIntent::Named("alpha".to_string())
         );
     }
 
@@ -1134,31 +1153,80 @@ mod tests {
         assert_eq!(view.options[0].intent, WorkflowIntent::BucketDefault);
     }
 
-    // ── Preselection ──
+    // ── Preselection: the bucket default always wins over the previous pick ──
 
     #[test]
-    fn preselect_previous_id_when_in_list() {
+    fn preselect_named_default_wins_over_previous() {
         let wfs = vec![wf("alpha", None), wf("beta", None)];
-        // Options: [None=0, alpha=1, beta=2].
-        assert_eq!(preselected_index(&wfs, Some("beta"), Some("alpha")), 2);
+        // Options: [None=0, alpha=1, beta=2]. Previous picked beta, but the
+        // named default alpha wins — that's why it is the default.
+        assert_eq!(
+            preselected_index(&wfs, Some("beta"), Some("alpha"), false),
+            1
+        );
+        // Requiredness doesn't change it: a named default still wins.
+        assert_eq!(
+            preselected_index(&wfs, Some("beta"), Some("alpha"), true),
+            1
+        );
     }
 
     #[test]
-    fn preselect_prev_not_in_list_uses_default() {
+    fn preselect_none_default_wins_when_not_required() {
         let wfs = vec![wf("alpha", None), wf("beta", None)];
-        // Previous id absent, default present → the default's index.
-        assert_eq!(preselected_index(&wfs, Some("ghost"), Some("beta")), 2);
-        // No previous id, default present → the default's index.
-        assert_eq!(preselected_index(&wfs, None, Some("alpha")), 1);
+        // No named default, not required → `None` is the effective default
+        // ("None (default)") and wins over the previous pick.
+        assert_eq!(preselected_index(&wfs, Some("beta"), None, false), 0);
+        // A named default absent from the list is no usable default; not
+        // required → `None` still wins.
+        assert_eq!(
+            preselected_index(&wfs, Some("beta"), Some("ghost"), false),
+            0
+        );
     }
 
     #[test]
-    fn preselect_no_usable_default_is_none_head() {
-        let wfs = vec![wf("alpha", None)];
-        // No previous id and no default → the `None` head (0).
-        assert_eq!(preselected_index(&wfs, None, None), 0);
-        // Default set but absent from the list → the `None` head (0).
-        assert_eq!(preselected_index(&wfs, Some("ghost"), Some("ghost")), 0);
+    fn preselect_required_no_default_falls_back_to_previous() {
+        let wfs = vec![wf("alpha", None), wf("beta", None)];
+        // Required with genuinely no default: the previous revision's workflow.
+        assert_eq!(preselected_index(&wfs, Some("beta"), None, true), 2);
+        // A named default absent from the list is still no default.
+        assert_eq!(
+            preselected_index(&wfs, Some("beta"), Some("ghost"), true),
+            2
+        );
+        // Required, no default, no previous → the `None` head (disabled).
+        assert_eq!(preselected_index(&wfs, None, None, true), 0);
+        // Required, no default, previous absent from the list → `None` head.
+        assert_eq!(preselected_index(&wfs, Some("ghost"), None, true), 0);
+    }
+
+    // ── Consistency invariant: preselection lands on the "(default)" option ──
+
+    #[test]
+    fn preselect_agrees_with_default_label() {
+        let wfs = vec![wf("alpha", Some("Alpha WF")), wf("beta", None)];
+
+        // Case 1: named default present → selected option bears "(default)".
+        let opts = workflow_options(&wfs, Some("alpha"), false);
+        let idx = preselected_index(&wfs, Some("beta"), Some("alpha"), false);
+        assert!(opts[idx].label.ends_with("(default)"));
+        assert_eq!(opts[idx].intent, WorkflowIntent::Named("alpha".to_string()));
+
+        // Case 2: no named default, not required → the `None` head is
+        // "None (default)" and is the selection.
+        let opts = workflow_options(&wfs, None, false);
+        let idx = preselected_index(&wfs, Some("beta"), None, false);
+        assert_eq!(idx, 0);
+        assert_eq!(opts[0].label, "None (default)");
+
+        // Case 3: required, no default → no option bears "(default)"; the
+        // selection is the previous pick (or `None`).
+        let opts = workflow_options(&wfs, None, true);
+        assert!(opts.iter().all(|o| !o.label.ends_with("(default)")));
+        let idx = preselected_index(&wfs, Some("beta"), None, true);
+        assert_eq!(idx, 2);
+        assert_eq!(opts[idx].intent, WorkflowIntent::Named("beta".to_string()));
     }
 
     // ── Display == submit invariant, guarded at the pure-fn level ──
@@ -1167,12 +1235,13 @@ mod tests {
     fn preselected_index_maps_to_submitted_intent_normal() {
         let wfs = vec![wf("alpha", Some("Alpha WF")), wf("beta", None)];
         let opts = workflow_options(&wfs, Some("alpha"), false);
-        // Previous revision picked "beta": the rendered+submitted option is beta.
-        let idx = preselected_index(&wfs, Some("beta"), Some("alpha"));
-        assert_eq!(opts[idx].intent, WorkflowIntent::Named("beta".to_string()));
-        assert_eq!(opts[idx].label, "beta");
-        // No previous id: preselection lands on the labeled default.
-        let idx = preselected_index(&wfs, None, Some("alpha"));
+        // Previous revision picked "beta", but the named default "alpha" wins:
+        // the rendered+submitted option is the labeled default.
+        let idx = preselected_index(&wfs, Some("beta"), Some("alpha"), false);
+        assert_eq!(opts[idx].intent, WorkflowIntent::Named("alpha".to_string()));
+        assert_eq!(opts[idx].label, "Alpha WF (default)");
+        // No previous id: preselection still lands on the labeled default.
+        let idx = preselected_index(&wfs, None, Some("alpha"), false);
         assert_eq!(opts[idx].intent, WorkflowIntent::Named("alpha".to_string()));
         assert_eq!(opts[idx].label, "Alpha WF (default)");
     }
