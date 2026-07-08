@@ -81,7 +81,7 @@ where
 pub use client::HttpClient;
 pub use host::{HostChecksums, HostConfig, fetch_host_config};
 pub use s3::RemoteS3;
-pub use workflow::{WorkflowIntent, resolve_workflow};
+pub use workflow::{WorkflowInfo, WorkflowIntent, WorkflowsConfig, resolve_workflow};
 
 #[cfg(test)]
 pub mod mocks;

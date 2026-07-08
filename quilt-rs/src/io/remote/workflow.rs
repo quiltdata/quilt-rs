@@ -35,53 +35,172 @@ pub enum WorkflowIntent {
     Named(String),
 }
 
-fn get_schema_id(yaml: &YamlValue, workflow_id: &str) -> Res<Option<String>> {
-    match &yaml.get("workflows") {
-        Some(YamlValue::Mapping(workflows)) => match &workflows.get(workflow_id) {
-            Some(YamlValue::Mapping(workflow)) => match &workflow.get("metadata_schema") {
-                Some(YamlValue::String(schema_id)) => Ok(Some(schema_id.clone())),
-                None => Ok(None),
-                _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
-                    "`metadata_schema` not found for workflow ID: {workflow_id}"
-                )))),
-            },
-            _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
-                "Workflow {workflow_id} not found in workflows/config.yaml"
-            )))),
-        },
-        _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(
-            "Workflows not found in workflows/config.yaml".to_string(),
-        ))),
-    }
+/// A single workflow entry as declared under `workflows:` in
+/// `.quilt/workflows/config.yml`, carrying its display metadata.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkflowInfo {
+    pub id: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
 }
 
-async fn get_schema_url<R: Remote>(
-    remote: &R,
-    host: &Option<Host>,
-    yaml: &YamlValue,
-    workflow_id: &str,
-) -> Res<Option<(String, S3Uri)>> {
-    match get_schema_id(yaml, workflow_id)? {
-        Some(schema_id) => match &yaml.get("schemas") {
-            Some(YamlValue::Mapping(schemas)) => match &schemas.get(&schema_id) {
-                Some(YamlValue::Mapping(schema)) => match &schema.get("url") {
-                    Some(YamlValue::String(url)) => Ok(Some((
-                        schema_id,
-                        remote.resolve_url(host, &url.parse()?).await?,
-                    ))),
+/// Typed view of `.quilt/workflows/config.yml`.
+///
+/// Parsing is deliberately lenient: [`WorkflowsConfig::from_yaml`] never rejects
+/// a malformed config (config-format validation is a separate slice). The typed
+/// fields (`default_workflow`, `is_workflow_required`, `workflows`) surface what
+/// the commit dialog needs, while the resolution helpers reproduce today's lazy,
+/// ad-hoc digging by consulting the retained raw YAML — so a misconfiguration
+/// only surfaces (and only as loudly as before) when a workflow is resolved.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkflowsConfig {
+    /// Top-level `default_workflow`, when declared as a string.
+    pub default_workflow: Option<String>,
+    /// `is_workflow_required`; defaults to `true` when the key is absent (matches quilt3).
+    pub is_workflow_required: bool,
+    /// The declared workflows, in file order.
+    pub workflows: Vec<WorkflowInfo>,
+    /// Retained source, used to resolve schemas exactly as the legacy helpers did.
+    raw: YamlValue,
+}
+
+impl WorkflowsConfig {
+    /// Parse an already-decoded `config.yml` value into the typed view.
+    ///
+    /// Never fails for well-formed YAML: unexpected shapes degrade to defaults
+    /// rather than errors, preserving today's behaviour where malformed configs
+    /// only bite at resolution time.
+    pub fn from_yaml(yaml: &YamlValue) -> Res<WorkflowsConfig> {
+        let default_workflow = yaml
+            .get("default_workflow")
+            .and_then(YamlValue::as_str)
+            .map(String::from);
+        let is_workflow_required = yaml
+            .get("is_workflow_required")
+            .and_then(YamlValue::as_bool)
+            .unwrap_or(true);
+        let workflows = yaml
+            .get("workflows")
+            .and_then(YamlValue::as_mapping)
+            .map(|workflows| {
+                workflows
+                    .iter()
+                    .filter_map(|(id, entry)| {
+                        Some(WorkflowInfo {
+                            id: id.as_str()?.to_string(),
+                            name: entry.get("name").and_then(YamlValue::as_str).map(String::from),
+                            description: entry
+                                .get("description")
+                                .and_then(YamlValue::as_str)
+                                .map(String::from),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(WorkflowsConfig {
+            default_workflow,
+            is_workflow_required,
+            workflows,
+            raw: yaml.clone(),
+        })
+    }
+
+    /// Metadata-schema id declared by the named workflow, mirroring the legacy
+    /// lazy lookup (including its error variants) exactly.
+    fn schema_id(&self, workflow_id: &str) -> Res<Option<String>> {
+        match self.raw.get("workflows") {
+            Some(YamlValue::Mapping(workflows)) => match workflows.get(workflow_id) {
+                Some(YamlValue::Mapping(workflow)) => match workflow.get("metadata_schema") {
+                    Some(YamlValue::String(schema_id)) => Ok(Some(schema_id.clone())),
+                    None => Ok(None),
                     _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
-                        "Schema {schema_id} doesn't have URL"
+                        "`metadata_schema` not found for workflow ID: {workflow_id}"
                     )))),
                 },
                 _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
-                    "Schema {schema_id}, referenced by workflow {workflow_id} not found in workflows/config.yaml",
+                    "Workflow {workflow_id} not found in workflows/config.yaml"
                 )))),
             },
             _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(
-                "Schemas not found in workflows/config.yaml".to_string(),
+                "Workflows not found in workflows/config.yaml".to_string(),
             ))),
-        },
-        None => Ok(None),
+        }
+    }
+
+    /// Resolve the URL of the schema referenced by the named workflow.
+    async fn schema_url<R: Remote>(
+        &self,
+        remote: &R,
+        host: &Option<Host>,
+        workflow_id: &str,
+    ) -> Res<Option<(String, S3Uri)>> {
+        match self.schema_id(workflow_id)? {
+            Some(schema_id) => match self.raw.get("schemas") {
+                Some(YamlValue::Mapping(schemas)) => match schemas.get(&schema_id) {
+                    Some(YamlValue::Mapping(schema)) => match schema.get("url") {
+                        Some(YamlValue::String(url)) => Ok(Some((
+                            schema_id,
+                            remote.resolve_url(host, &url.parse()?).await?,
+                        ))),
+                        _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
+                            "Schema {schema_id} doesn't have URL"
+                        )))),
+                    },
+                    _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
+                        "Schema {schema_id}, referenced by workflow {workflow_id} not found in workflows/config.yaml",
+                    )))),
+                },
+                _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(
+                    "Schemas not found in workflows/config.yaml".to_string(),
+                ))),
+            },
+            None => Ok(None),
+        }
+    }
+
+    /// Interpret the top-level `default_workflow` key for the bucket-default intent.
+    ///
+    /// - key absent → `Ok(None)`: caller produces a null-id record.
+    /// - string → `Ok(Some(id))`: caller resolves it like a named workflow.
+    /// - anything else (including explicit null) → `Err`: misconfiguration.
+    fn bucket_default_id(&self) -> Res<Option<String>> {
+        match self.raw.get("default_workflow") {
+            None => Ok(None),
+            Some(YamlValue::String(id)) => Ok(Some(id.clone())),
+            Some(_) => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(
+                "`default_workflow` in workflows/config.yaml must be a string".to_string(),
+            ))),
+        }
+    }
+
+    /// Resolve a named workflow id against this config, attaching the referenced
+    /// metadata schema when the workflow declares one.
+    async fn resolve_named<R: Remote>(
+        &self,
+        remote: &R,
+        host: &Option<Host>,
+        config: S3Uri,
+        id: String,
+    ) -> Res<Option<Workflow>> {
+        if let Some((metadata_id, metadata_url)) = self.schema_url(remote, host, &id).await? {
+            Ok(Some(Workflow {
+                config,
+                id: Some(WorkflowId {
+                    id,
+                    metadata: Some(MetadataSchema {
+                        id: metadata_id,
+                        url: metadata_url,
+                    }),
+                }),
+            }))
+        } else {
+            Ok(Some(Workflow {
+                config,
+                id: Some(WorkflowId { id, metadata: None }),
+            }))
+        }
     }
 }
 
@@ -89,7 +208,7 @@ async fn fetch_workflows_config<R: Remote>(
     remote: &R,
     host: &Option<Host>,
     uri: &S3Uri,
-) -> Res<(S3Uri, Option<YamlValue>)> {
+) -> Res<(S3Uri, Option<WorkflowsConfig>)> {
     if !remote.exists(host, uri).await? {
         return Ok((uri.clone(), None));
     }
@@ -101,37 +220,12 @@ async fn fetch_workflows_config<R: Remote>(
                 .into_async_read()
                 .read_to_end(&mut bytes)
                 .await?;
-            Ok((stream.uri, serde_yaml::from_slice(&bytes)?))
+            let config = serde_yaml::from_slice::<Option<YamlValue>>(&bytes)?
+                .map(|yaml| WorkflowsConfig::from_yaml(&yaml))
+                .transpose()?;
+            Ok((stream.uri, config))
         }
         Err(err) => Err(err),
-    }
-}
-
-/// Resolve a named workflow id against an already-fetched config, attaching the
-/// referenced metadata schema when the workflow declares one.
-async fn resolve_named<R: Remote>(
-    remote: &R,
-    host: &Option<Host>,
-    yaml: &YamlValue,
-    config: S3Uri,
-    id: String,
-) -> Res<Option<Workflow>> {
-    if let Some((metadata_id, metadata_url)) = get_schema_url(remote, host, yaml, &id).await? {
-        Ok(Some(Workflow {
-            config,
-            id: Some(WorkflowId {
-                id,
-                metadata: Some(MetadataSchema {
-                    id: metadata_id,
-                    url: metadata_url,
-                }),
-            }),
-        }))
-    } else {
-        Ok(Some(Workflow {
-            config,
-            id: Some(WorkflowId { id, metadata: None }),
-        }))
     }
 }
 
@@ -153,10 +247,10 @@ pub async fn resolve_workflow<R: Remote>(
     intent: WorkflowIntent,
     uri: &S3Uri,
 ) -> Res<Option<Workflow>> {
-    let (config, yaml) = fetch_workflows_config(remote, host, uri).await?;
-    match (yaml, intent) {
-        (Some(yaml), WorkflowIntent::Named(id)) => {
-            resolve_named(remote, host, &yaml, config, id).await
+    let (config, parsed) = fetch_workflows_config(remote, host, uri).await?;
+    match (parsed, intent) {
+        (Some(parsed), WorkflowIntent::Named(id)) => {
+            parsed.resolve_named(remote, host, config, id).await
         }
         (None, WorkflowIntent::Named(id)) => {
             Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
@@ -166,15 +260,9 @@ pub async fn resolve_workflow<R: Remote>(
         (Some(_), WorkflowIntent::NoWorkflow) => Ok(Some(Workflow { config, id: None })),
         (None, WorkflowIntent::NoWorkflow) => Ok(None),
         (None, WorkflowIntent::BucketDefault) => Ok(None),
-        (Some(yaml), WorkflowIntent::BucketDefault) => match yaml.get("default_workflow") {
+        (Some(parsed), WorkflowIntent::BucketDefault) => match parsed.bucket_default_id()? {
             None => Ok(Some(Workflow { config, id: None })),
-            Some(YamlValue::String(id)) => {
-                let id = id.clone();
-                resolve_named(remote, host, &yaml, config, id).await
-            }
-            Some(_) => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(
-                "`default_workflow` in workflows/config.yaml must be a string".to_string(),
-            ))),
+            Some(id) => parsed.resolve_named(remote, host, config, id).await,
         },
     }
 }
@@ -497,6 +585,98 @@ workflows:
             Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
         ));
         assert!(err.to_string().contains("must be a string"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_workflows_config_parse_rich() -> Res<()> {
+        // Fixture mirroring a sandbox bucket: several workflows with names and
+        // descriptions, a declared default, and the required flag set true.
+        let yaml: YamlValue = serde_yaml::from_str(
+            r#"
+version: "1"
+is_workflow_required: true
+default_workflow: dummy
+workflows:
+  dummy:
+    name: Dummy workflow
+    description: Do nothing.
+  alpha:
+    name: Alpha
+    description: First workflow.
+    metadata_schema: alpha-schema
+schemas:
+  alpha-schema:
+    url: s3://sandbox/schemas/alpha.json
+"#,
+        )?;
+
+        let config = WorkflowsConfig::from_yaml(&yaml)?;
+
+        assert_eq!(config.default_workflow, Some("dummy".to_string()));
+        assert!(config.is_workflow_required);
+        assert_eq!(
+            config.workflows,
+            vec![
+                WorkflowInfo {
+                    id: "dummy".to_string(),
+                    name: Some("Dummy workflow".to_string()),
+                    description: Some("Do nothing.".to_string()),
+                },
+                WorkflowInfo {
+                    id: "alpha".to_string(),
+                    name: Some("Alpha".to_string()),
+                    description: Some("First workflow.".to_string()),
+                },
+            ]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_workflows_config_required_defaults_true() -> Res<()> {
+        // `is_workflow_required` absent → defaults to true (matches quilt3).
+        let yaml: YamlValue = serde_yaml::from_str(
+            r"
+workflows:
+  foo:
+    metadata_schema: bar
+",
+        )?;
+
+        let config = WorkflowsConfig::from_yaml(&yaml)?;
+
+        assert!(config.is_workflow_required);
+        assert_eq!(config.default_workflow, None);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_workflows_config_required_explicit_false() -> Res<()> {
+        // Explicit `is_workflow_required: false` → false.
+        let yaml: YamlValue = serde_yaml::from_str(
+            r"
+is_workflow_required: false
+workflows:
+  foo:
+    name: Foo
+",
+        )?;
+
+        let config = WorkflowsConfig::from_yaml(&yaml)?;
+
+        assert!(!config.is_workflow_required);
+        assert_eq!(
+            config.workflows,
+            vec![WorkflowInfo {
+                id: "foo".to_string(),
+                name: Some("Foo".to_string()),
+                description: None,
+            }]
+        );
 
         Ok(())
     }
