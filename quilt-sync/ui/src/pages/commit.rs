@@ -432,7 +432,11 @@ fn workflow_options(
 /// [`CommitWorkflows::Available`] state.
 ///
 /// The bucket default always wins over the previous revision's pick — that is
-/// what makes it the default. Options are laid out as `[None, workflows..]`, so
+/// what makes it the default. This intentionally diverges from the web catalog,
+/// which preselects the previous revision's workflow first; that rule was an
+/// unexamined default carried since the 2020 package-update dialog (quilt#1856),
+/// not a considered decision, so we prefer the bucket default here instead.
+/// Options are laid out as `[None, workflows..]`, so
 /// a workflow at position `p` maps to option index `p + 1`. The rule mirrors the
 /// `(default)` marker that [`workflow_options`] applies:
 ///
