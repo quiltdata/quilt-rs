@@ -116,12 +116,15 @@ pub fn SetRemotePopup(
     // No previous revision on a first push, so the divergence note never shows.
     let workflow_note = Memo::new(|_| None::<String>);
 
-    // True while a valid target's workflow config isn't ready yet — either the
-    // debounce timer is still pending or the fetch is in flight. Mirrors the
-    // "Loading workflows…" display branch below, so the Save action can be
-    // blocked until the submitted intent matches the currently-shown config.
-    let workflow_loading =
-        Memo::new(move |_| valid_target.get().is_some() && wf_view.get().is_none());
+    // True while a valid target's workflow config isn't ready yet — the fetch is
+    // in flight (`wf_view` is `None`) OR the debounce hasn't caught up so the
+    // shown view still belongs to the previous bucket (`valid_target` has moved
+    // ahead of `debounced_target`). Blocking Save on both keeps the submitted
+    // intent matched to the currently-typed bucket, never a stale one.
+    let workflow_loading = Memo::new(move |_| {
+        valid_target.get().is_some()
+            && (wf_view.get().is_none() || valid_target.get() != debounced_target.get())
+    });
     // Disable Save while submitting or while the workflow config is loading, so
     // the submitted intent always corresponds to the displayed bucket's config
     // and never a stale one from an earlier keystroke.
