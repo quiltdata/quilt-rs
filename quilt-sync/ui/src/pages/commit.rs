@@ -386,9 +386,14 @@ fn workflow_label(w: &WorkflowInfo) -> String {
 ///
 /// Normal path (workflows non-empty), matching the web catalog's order:
 /// - index 0: `None` → [`WorkflowIntent::NoWorkflow`], disabled when a workflow
-///   is required;
+///   is required. Its label gains `" (default)"` when the config names no
+///   default and no workflow is required — then `None` is itself the bucket
+///   default (the resolver treats `BucketDefault` and `NoWorkflow` alike);
 /// - one entry per declared workflow (label = name or id, with `" (default)"`
 ///   appended to the bucket default) → [`WorkflowIntent::Named`].
+///
+/// Exactly one option ever bears `" (default)"`: whichever is the bucket's
+/// actual default. A required-but-defaultless bucket has none.
 ///
 /// There is deliberately no `Bucket default` item on the normal path — the
 /// catalog offers only `None` plus the concrete workflows.
@@ -419,8 +424,19 @@ fn workflow_options(
         ];
     }
 
+    // When the config names no default and doesn't require a workflow, `None`
+    // IS the bucket default (the resolver treats `BucketDefault` and
+    // `NoWorkflow` identically then), so it bears the `(default)` marker.
+    // A required-but-defaultless bucket leaves `None` disabled with the
+    // required error, so it must not be labeled default.
+    let none_is_default = default_workflow.is_none() && !is_workflow_required;
+    let none_label = if none_is_default {
+        "None (default)".to_string()
+    } else {
+        "None".to_string()
+    };
     let mut options = vec![WorkflowOption {
-        label: "None".to_string(),
+        label: none_label,
         intent: WorkflowIntent::NoWorkflow,
         disabled: is_workflow_required,
     }];
@@ -899,11 +915,60 @@ mod tests {
     }
 
     #[test]
-    fn options_no_default_has_no_suffix() {
+    fn options_no_default_not_required_labels_none_as_default() {
+        // No named default and not required → `None` IS the bucket default, so
+        // it carries the suffix; the concrete workflow does not.
         let wfs = vec![wf("alpha", Some("Alpha WF"))];
         let opts = workflow_options(&wfs, None, false);
-        assert_eq!(opts[0].label, "None");
+        assert_eq!(opts[0].label, "None (default)");
         assert_eq!(opts[1].label, "Alpha WF");
+    }
+
+    /// Number of labels ending in the `(default)` marker across the option list.
+    fn default_marker_count(opts: &[WorkflowOption]) -> usize {
+        opts.iter()
+            .filter(|o| o.label.ends_with("(default)"))
+            .count()
+    }
+
+    #[test]
+    fn options_exactly_one_default_marker_when_named_default_present() {
+        let wfs = vec![wf("alpha", Some("Alpha WF")), wf("beta", None)];
+        let opts = workflow_options(&wfs, Some("alpha"), false);
+        // The named default is the real workflow; `None` stays plain.
+        assert_eq!(opts[0].label, "None");
+        assert_eq!(default_marker_count(&opts), 1);
+        assert_eq!(opts[1].label, "Alpha WF (default)");
+    }
+
+    #[test]
+    fn options_exactly_one_default_marker_when_no_default_not_required() {
+        // No named default and not required → `None` is the only default.
+        let wfs = vec![wf("alpha", Some("Alpha WF")), wf("beta", None)];
+        let opts = workflow_options(&wfs, None, false);
+        assert_eq!(default_marker_count(&opts), 1);
+        assert_eq!(opts[0].label, "None (default)");
+    }
+
+    #[test]
+    fn options_no_default_marker_when_no_default_but_required() {
+        // Required with no named default → `None` is disabled with the required
+        // error, so it must NOT be labeled default; there genuinely is none.
+        let wfs = vec![wf("alpha", Some("Alpha WF")), wf("beta", None)];
+        let opts = workflow_options(&wfs, None, true);
+        assert_eq!(default_marker_count(&opts), 0);
+        assert_eq!(opts[0].label, "None");
+        assert!(opts[0].disabled);
+    }
+
+    #[test]
+    fn options_no_default_marker_when_named_default_absent_from_list() {
+        // Stale/misconfigured default id not in the list → the real-workflow
+        // branch adds no marker, and `None` gets none either (default is Some).
+        let wfs = vec![wf("alpha", Some("Alpha WF")), wf("beta", None)];
+        let opts = workflow_options(&wfs, Some("ghost"), false);
+        assert_eq!(default_marker_count(&opts), 0);
+        assert_eq!(opts[0].label, "None");
     }
 
     #[test]
