@@ -16,6 +16,7 @@ use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::HostConfig;
 use quilt_rs::io::remote::WorkflowIntent;
 use quilt_rs::io::remote::WorkflowsConfig;
+use quilt_rs::io::remote::fetch_workflows_config_for_bucket;
 
 /// Result of checking whether a package is already installed.
 #[derive(Debug)]
@@ -233,6 +234,19 @@ pub trait QuiltModel {
         Ok(package.workflows_config().await?)
     }
 
+    /// Fetch and parse a bucket's declared workflows directly from its
+    /// `.quilt/workflows/config.yml`, independent of any package's remote.
+    /// Lets the set-remote popup preview a bucket's governance before the
+    /// choice is committed. Returns `Ok(None)` when the bucket has no config.
+    async fn get_bucket_workflows_config(
+        &self,
+        host: Option<quilt_uri::Host>,
+        bucket: &str,
+    ) -> Result<Option<WorkflowsConfig>, Error> {
+        let quilt = self.get_quilt().lock().await;
+        Ok(fetch_workflows_config_for_bucket(quilt.get_remote(), &host, bucket).await?)
+    }
+
     async fn package_revision_certify_latest(
         &self,
         package: &quilt::InstalledPackage,
@@ -252,8 +266,9 @@ pub trait QuiltModel {
         package: &quilt::InstalledPackage,
         origin: quilt_uri::Host,
         bucket: String,
+        workflow: WorkflowIntent,
     ) -> Result<(), Error> {
-        Ok(package.set_remote(bucket, Some(origin)).await?)
+        Ok(package.set_remote(bucket, Some(origin), workflow).await?)
     }
 
     async fn package_create(

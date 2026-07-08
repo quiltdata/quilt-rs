@@ -1,6 +1,10 @@
 //! `get_merge_data` / `get_commit_data` — commit-workflow queries for the Leptos UI.
 
+use std::str::FromStr;
+
 use serde::Serialize;
+
+use quilt_rs::io::remote::WorkflowsConfig;
 
 use crate::Error;
 use crate::model;
@@ -116,6 +120,37 @@ pub enum CommitWorkflows {
     },
     NotConfigured,
     Unavailable,
+}
+
+/// Map a fetched workflows config to the UI's tri-state. Shared by the commit
+/// dialog and the pre-set-remote bucket preview so both present the same shape:
+/// `Ok(Some)` → `Available`, `Ok(None)` → `NotConfigured`, `Err` →
+/// `Unavailable` (logged; never fatal, so the caller degrades gracefully).
+fn workflows_config_to_commit_workflows(
+    config: Result<Option<WorkflowsConfig>, Error>,
+) -> CommitWorkflows {
+    match config {
+        Ok(Some(config)) => CommitWorkflows::Available {
+            workflows: config
+                .workflows
+                .into_iter()
+                .map(|w| CommitWorkflowInfo {
+                    id: w.id,
+                    name: w.name,
+                    description: w.description,
+                })
+                .collect(),
+            default_workflow: config.default_workflow,
+            is_workflow_required: config.is_workflow_required,
+        },
+        Ok(None) => CommitWorkflows::NotConfigured,
+        Err(e) => {
+            tracing::warn!(
+                "Failed to fetch the bucket's workflows config; the caller will fall back to the bucket default: {e}"
+            );
+            CommitWorkflows::Unavailable
+        }
+    }
 }
 
 async fn get_commit_data_from_model(
@@ -264,28 +299,8 @@ async fn get_commit_data_from_model(
     // Fetch the bucket's declared workflows for the commit dialog. A fetch
     // failure (or a package with no remote) must NOT fail the command — the
     // dialog still opens, and the UI presents the honest fallback state.
-    let workflows = match m.get_workflows_config(&installed_package).await {
-        Ok(Some(config)) => CommitWorkflows::Available {
-            workflows: config
-                .workflows
-                .into_iter()
-                .map(|w| CommitWorkflowInfo {
-                    id: w.id,
-                    name: w.name,
-                    description: w.description,
-                })
-                .collect(),
-            default_workflow: config.default_workflow,
-            is_workflow_required: config.is_workflow_required,
-        },
-        Ok(None) => CommitWorkflows::NotConfigured,
-        Err(e) => {
-            tracing::warn!(
-                "Failed to fetch the bucket's workflows config; the commit dialog will fall back to the bucket default: {e}"
-            );
-            CommitWorkflows::Unavailable
-        }
-    };
+    let workflows =
+        workflows_config_to_commit_workflows(m.get_workflows_config(&installed_package).await);
 
     Ok(CommitData {
         namespace: namespace.to_string(),
@@ -315,6 +330,33 @@ pub async fn get_commit_data(
     get_commit_data_from_model(&*m, &tracing, &namespace)
         .await
         .map_err(|e| e.to_frontend_string())
+}
+
+// ── Bucket workflows preview for the set-remote popup ──
+
+async fn get_bucket_workflows_from_model(
+    m: &impl model::QuiltModel,
+    host: Option<quilt_uri::Host>,
+    bucket: &str,
+) -> CommitWorkflows {
+    workflows_config_to_commit_workflows(m.get_bucket_workflows_config(host, bucket).await)
+}
+
+/// Fetch a bucket's declared workflows before its remote is set, so the popup
+/// can present the same tri-state (`Available` / `NotConfigured` /
+/// `Unavailable`) the commit dialog uses. A fetch failure maps to
+/// `Unavailable` rather than an error, so the popup still opens.
+#[tauri::command]
+pub async fn get_bucket_workflows(
+    m: tauri::State<'_, model::Model>,
+    host: Option<String>,
+    bucket: String,
+) -> Result<CommitWorkflows, String> {
+    let host = match host {
+        Some(host) => Some(quilt_uri::Host::from_str(&host).map_err(|e| e.to_string())?),
+        None => None,
+    };
+    Ok(get_bucket_workflows_from_model(&*m, host, &bucket).await)
 }
 
 #[cfg(test)]
@@ -742,5 +784,76 @@ workflows:
             serde_json::to_value(CommitWorkflows::Unavailable).unwrap(),
             serde_json::json!({"state": "unavailable"})
         );
+    }
+
+    // ── Bucket workflows preview (set-remote popup) ──
+
+    #[tokio::test]
+    async fn test_get_bucket_workflows_available() -> Result<(), String> {
+        // `Ok(Some(cfg))` → Available, carrying the bucket's declared workflows.
+        let mut model = mocks::create();
+        let yaml: serde_yaml::Value = serde_yaml::from_str(
+            r#"
+version: "1"
+is_workflow_required: true
+default_workflow: dummy
+workflows:
+  dummy:
+    name: Dummy workflow
+    description: Do nothing.
+  alpha:
+    name: Alpha
+    description: First workflow.
+"#,
+        )
+        .map_err(|e| e.to_string())?;
+        let config =
+            quilt::io::remote::WorkflowsConfig::from_yaml(&yaml).map_err(|e| e.to_string())?;
+        model
+            .expect_get_bucket_workflows_config()
+            .return_once(move |_, _| Ok(Some(config)));
+
+        let workflows = get_bucket_workflows_from_model(&model, None, "my-bucket").await;
+
+        let CommitWorkflows::Available {
+            workflows,
+            default_workflow,
+            is_workflow_required,
+        } = workflows
+        else {
+            return Err("expected Available".to_string());
+        };
+        assert_eq!(default_workflow, Some("dummy".to_string()));
+        assert!(is_workflow_required);
+        let ids: Vec<_> = workflows.iter().map(|w| w.id.as_str()).collect();
+        assert_eq!(ids, vec!["dummy", "alpha"]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_bucket_workflows_not_configured() {
+        // `Ok(None)` (ungoverned bucket) → NotConfigured.
+        let mut model = mocks::create();
+        model
+            .expect_get_bucket_workflows_config()
+            .returning(|_, _| Ok(None));
+
+        let workflows = get_bucket_workflows_from_model(&model, None, "my-bucket").await;
+        assert!(matches!(workflows, CommitWorkflows::NotConfigured));
+    }
+
+    #[tokio::test]
+    async fn test_get_bucket_workflows_unavailable() {
+        // `Err(_)` must NOT fail the command: the popup still opens with the
+        // Unavailable fallback state.
+        let mut model = mocks::create();
+        model.expect_get_bucket_workflows_config().returning(|_, _| {
+            Err(Error::from(quilt::InstallPackageError::NotInstalled(
+                ("foo", "bar").into(),
+            )))
+        });
+
+        let workflows = get_bucket_workflows_from_model(&model, None, "my-bucket").await;
+        assert!(matches!(workflows, CommitWorkflows::Unavailable));
     }
 }

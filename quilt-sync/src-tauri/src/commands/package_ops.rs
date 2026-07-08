@@ -334,10 +334,11 @@ async fn set_remote_command(
     namespace: &str,
     origin: &str,
     bucket: &str,
+    workflow: WorkflowIntent,
 ) -> Result<quilt_uri::Namespace, Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
     let origin = quilt_uri::Host::from_str(origin)?;
-    model::set_remote(m, &namespace, origin, bucket.to_string()).await?;
+    model::set_remote(m, &namespace, origin, bucket.to_string(), workflow).await?;
     Ok(namespace)
 }
 
@@ -349,6 +350,7 @@ pub async fn set_remote(
     namespace: String,
     origin: String,
     bucket: String,
+    workflow: WorkflowIntent,
 ) -> Result<String, String> {
     tracing.track(MixpanelEvent::RemoteSet).await;
 
@@ -356,7 +358,7 @@ pub async fn set_remote(
     let msg_ok = format!("Successfully set remote for {namespace}");
     let msg_err = |err: &Error| format!("Failed to set remote: {err}");
 
-    let result = set_remote_command(&m, &namespace, &origin, &bucket).await;
+    let result = set_remote_command(&m, &namespace, &origin, &bucket, workflow).await;
     if let Ok(ns) = &result {
         watcher.clear_paused(ns).await;
     }
