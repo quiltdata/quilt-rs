@@ -174,12 +174,16 @@ enum Commands {
         /// Ex. open.quiltdata.com
         #[arg(short, long, requires = "bucket")]
         origin: Option<Host>,
-        // No workflow flag here: push uploads an already-created commit and does
-        // not re-run recommit. The one exception is the first push of a
-        // local-only package, where set_remote→recommit resolves the bucket
-        // default, overriding any commit-time workflow choice. Letting the
-        // caller pick a workflow there is a deferred cross-client change, not
-        // part of this CLI slice.
+        /// Workflow ID for the first push (requires --bucket/--origin).
+        /// Ex. `"my_workflow"`
+        /// Omit to use the bucket's default workflow.
+        /// Meaningful only on a first push: a subsequent push uploads an
+        /// already-created commit whose workflow was chosen at commit time.
+        #[arg(short, long)]
+        workflow: Option<String>,
+        /// First push with no workflow (explicit opt-out; requires --bucket/--origin)
+        #[arg(long, conflicts_with = "workflow")]
+        no_workflow: bool,
     },
     /// Status of the package: modified, up-to-date, outdated
     Status {
@@ -316,12 +320,23 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             namespace,
             bucket,
             origin,
+            workflow,
+            no_workflow,
         } => {
+            // The workflow flags only take effect on a first push, where
+            // set_remote→recommit resolves them. On a subsequent push the
+            // workflow was already decided at commit time, so reject the flags
+            // here rather than silently ignore them.
+            if bucket.is_none() && (workflow.is_some() || no_workflow) {
+                return Err(Error::WorkflowRequiresBucket);
+            }
+            let workflow = commit_workflow_intent(workflow.as_deref(), no_workflow)?;
             let args = push::Input {
                 namespace: namespace.try_into()?,
                 host_config: None,
                 bucket,
                 origin,
+                workflow,
             };
 
             log::info!("Pushing {args:?}");
@@ -372,6 +387,11 @@ Then run:
     #[error("workflow id cannot be empty; omit --workflow to use the bucket's default workflow")]
     WorkflowEmpty,
 
+    #[error(
+        "--workflow/--no-workflow apply only to a first push; pass --bucket and --origin to set the remote, or omit them (the workflow was chosen at commit time)"
+    )]
+    WorkflowRequiresBucket,
+
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
@@ -398,6 +418,7 @@ impl From<quilt_uri::UriError> for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
     use test_log::test;
 
     use crate::cli::model::create_model_in_temp_dir;
@@ -564,6 +585,86 @@ mod tests {
         print(result, &mut Vec::new(), &mut output)?;
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(output_str, "Package in/valid not found\n".to_string());
+
+        Ok(())
+    }
+
+    /// The workflow flags are first-push-only: without `--bucket` there is no
+    /// remote to set, so `--workflow` is rejected at the dispatch boundary.
+    #[test(tokio::test)]
+    async fn test_push_workflow_without_bucket_errors() -> Result<(), Error> {
+        let (_, temp_dir) = create_model_in_temp_dir().await?;
+
+        let push_args = Args {
+            domain: Some(temp_dir.path().to_path_buf()),
+            home: Some(temp_dir.path().to_path_buf()),
+            command: Commands::Push {
+                namespace: "foo/bar".to_string(),
+                bucket: None,
+                origin: None,
+                workflow: Some("x".to_string()),
+                no_workflow: false,
+            },
+        };
+
+        assert!(matches!(
+            init(push_args).await,
+            Err(Error::WorkflowRequiresBucket)
+        ));
+
+        Ok(())
+    }
+
+    /// `--no-workflow` is likewise first-push-only and rejected without `--bucket`.
+    #[test(tokio::test)]
+    async fn test_push_no_workflow_without_bucket_errors() -> Result<(), Error> {
+        let (_, temp_dir) = create_model_in_temp_dir().await?;
+
+        let push_args = Args {
+            domain: Some(temp_dir.path().to_path_buf()),
+            home: Some(temp_dir.path().to_path_buf()),
+            command: Commands::Push {
+                namespace: "foo/bar".to_string(),
+                bucket: None,
+                origin: None,
+                workflow: None,
+                no_workflow: true,
+            },
+        };
+
+        assert!(matches!(
+            init(push_args).await,
+            Err(Error::WorkflowRequiresBucket)
+        ));
+
+        Ok(())
+    }
+
+    /// With `--bucket`/`--origin` present the workflow flag is accepted: the
+    /// boundary check passes and the command threads the intent into
+    /// `push::Input`, reaching `push_package` (which then reports the missing
+    /// local package rather than a workflow error).
+    #[test(tokio::test)]
+    async fn test_push_workflow_with_bucket_is_accepted() -> Result<(), Error> {
+        let (_, temp_dir) = create_model_in_temp_dir().await?;
+
+        let push_args = Args {
+            domain: Some(temp_dir.path().to_path_buf()),
+            home: Some(temp_dir.path().to_path_buf()),
+            command: Commands::Push {
+                namespace: "foo/bar".to_string(),
+                bucket: Some("some-bucket".to_string()),
+                origin: Some(Host::from_str("open.quiltdata.com").unwrap()),
+                workflow: Some("x".to_string()),
+                no_workflow: false,
+            },
+        };
+
+        let mut output = Vec::new();
+        let result = init(push_args).await?;
+        print(result, &mut Vec::new(), &mut output)?;
+        let output_str = String::from_utf8(output).unwrap();
+        assert_eq!(output_str, "Package foo/bar not found\n");
 
         Ok(())
     }

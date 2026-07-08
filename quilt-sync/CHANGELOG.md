@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.18.3-alpha4] - 2026-07-08
+
+### Changed
+
+- The Set-remote dialog now lets you pick the workflow to apply on a package's first push, instead of always using the bucket's default (<https://github.com/quiltdata/quilt-rs/pull/748>)
+
 ## [v0.18.3-alpha3] - 2026-07-08
 
 ### Changed

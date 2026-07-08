@@ -177,6 +177,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::certify_latest,
             commands::erase_auth,
+            commands::get_bucket_workflows,
             commands::get_commit_data,
             commands::get_installed_package_data,
             commands::get_installed_packages_list_data,

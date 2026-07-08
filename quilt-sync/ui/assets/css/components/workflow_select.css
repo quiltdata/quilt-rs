@@ -1,0 +1,59 @@
+/* Shared workflow-selection control (components::workflow_select).
+ *
+ * Used by both the commit dialog (pages::commit) and the Set-remote popup
+ * (components::set_remote_popup). The rules were previously scoped under
+ * .qui-page-commit, so the control rendered unstyled outside that page. They
+ * live here under a dedicated `qui-workflow` namespace so the control looks
+ * identical wherever it is rendered, without depending on a page container and
+ * without clashing with the generic .field/.input classes on the commit page.
+ */
+
+.qui-workflow {
+  position: relative;
+}
+
+.qui-workflow-field {
+  border: 1px solid var(--q-ui-palette-border);
+  border-radius: 4px;
+  margin: 0;
+  position: relative;
+}
+
+.qui-workflow-label {
+  background: var(--q-ui-palette-background-primary);
+  left: 0;
+  padding: 0 4px;
+  position: absolute;
+  top: -12px;
+  transform: scale(0.75);
+}
+
+.qui-workflow-select {
+  appearance: auto;
+  background: transparent;
+  border: 0;
+  box-sizing: border-box;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 8px 14px;
+  width: 100%;
+}
+
+.qui-workflow-select[disabled] {
+  cursor: not-allowed;
+  opacity: 0.3;
+}
+
+.qui-workflow-hint {
+  color: var(--q-ui-palette-text-secondary);
+  display: block;
+  font-size: var(--q-ui-font-size-small);
+  margin-top: var(--q-ui-size-0-5);
+}
+
+.qui-workflow-error {
+  bottom: -8px;
+  color: var(--q-ui-palette-error);
+  left: 16px;
+  position: absolute;
+}

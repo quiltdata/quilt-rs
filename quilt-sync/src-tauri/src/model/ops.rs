@@ -283,12 +283,15 @@ pub async fn set_remote(
     namespace: &quilt_uri::Namespace,
     origin: quilt_uri::Host,
     bucket: String,
+    workflow: WorkflowIntent,
 ) -> Result<(), Error> {
     let installed_package = model
         .get_installed_package(namespace)
         .await?
         .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone())))?;
-    model.set_remote(&installed_package, origin, bucket).await?;
+    model
+        .set_remote(&installed_package, origin, bucket, workflow)
+        .await?;
     Ok(())
 }
 
@@ -422,6 +425,37 @@ mod tests {
         };
         let status = quilt::lineage::InstalledPackageStatus::default();
         publish_with_settings(&model, &namespace, &settings, status).await?;
+        Ok(())
+    }
+
+    /// `set_remote` must forward the caller's `WorkflowIntent` verbatim to the
+    /// model layer (and thence to the package), so the popup's choice governs
+    /// the recommit.
+    #[tokio::test]
+    async fn set_remote_forwards_workflow_intent() -> Result<(), Error> {
+        let namespace: quilt_uri::Namespace = ("acme", "demo").into();
+        let intent = WorkflowIntent::Named("nightly".to_string());
+        let mut model = MockQuiltModel::new();
+        model.expect_get_installed_package().returning(|_| {
+            Ok(Some(
+                quilt::LocalDomain::new(std::path::PathBuf::new())
+                    .create_installed_package(("acme", "demo").into())
+                    .unwrap(),
+            ))
+        });
+        model
+            .expect_set_remote()
+            .times(1)
+            .with(
+                always(),
+                always(),
+                eq("my-bucket".to_string()),
+                eq(intent.clone()),
+            )
+            .returning(|_, _, _, _| Ok(()));
+
+        let origin: quilt_uri::Host = "test.quilt.dev".parse().unwrap();
+        set_remote(&model, &namespace, origin, "my-bucket".to_string(), intent).await?;
         Ok(())
     }
 }

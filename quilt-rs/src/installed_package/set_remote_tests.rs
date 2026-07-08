@@ -11,6 +11,7 @@ use crate::io::remote::mocks::MockRemote;
 use crate::lineage::DomainLineageIo;
 use crate::lineage::Home;
 use crate::lineage::PackageLineageIo;
+use crate::manifest::ManifestHeader;
 use crate::paths::DomainPaths;
 
 #[test(tokio::test)]
@@ -52,7 +53,11 @@ async fn test_set_remote_on_local_package() -> Res {
     };
 
     package
-        .set_remote("my-bucket".to_string(), Some("example.com".parse()?))
+        .set_remote(
+            "my-bucket".to_string(),
+            Some("example.com".parse()?),
+            WorkflowIntent::BucketDefault,
+        )
         .await?;
 
     let lineage = package.lineage().await?;
@@ -109,7 +114,11 @@ async fn test_set_remote_empty_bucket_error() -> Res {
     };
 
     let result = package
-        .set_remote(String::new(), Some("example.com".parse()?))
+        .set_remote(
+            String::new(),
+            Some("example.com".parse()?),
+            WorkflowIntent::BucketDefault,
+        )
         .await;
 
     assert!(result.is_err());
@@ -207,7 +216,11 @@ async fn test_set_remote_rejects_unreachable_bucket() -> Res {
     };
 
     let result = package
-        .set_remote("typo-bucket".to_string(), Some("example.com".parse()?))
+        .set_remote(
+            "typo-bucket".to_string(),
+            Some("example.com".parse()?),
+            WorkflowIntent::BucketDefault,
+        )
         .await;
 
     assert!(result.is_err());
@@ -272,7 +285,11 @@ async fn test_set_remote_rejects_change_on_pushed_package() -> Res {
     };
 
     let result = package
-        .set_remote("new-bucket".to_string(), Some("new.host".parse()?))
+        .set_remote(
+            "new-bucket".to_string(),
+            Some("new.host".parse()?),
+            WorkflowIntent::BucketDefault,
+        )
         .await;
 
     assert!(result.is_err());
@@ -332,7 +349,11 @@ async fn test_set_remote_is_idempotent_on_pushed_package() -> Res {
 
     // Same bucket+origin as existing — should be a no-op
     package
-        .set_remote("my-bucket".to_string(), Some("my.host".parse()?))
+        .set_remote(
+            "my-bucket".to_string(),
+            Some("my.host".parse()?),
+            WorkflowIntent::BucketDefault,
+        )
         .await?;
 
     let lineage = package.lineage().await?;
@@ -389,7 +410,11 @@ async fn test_set_remote_overwrites_unpushed_remote() -> Res {
     };
 
     package
-        .set_remote("new-bucket".to_string(), Some("new.host".parse()?))
+        .set_remote(
+            "new-bucket".to_string(),
+            Some("new.host".parse()?),
+            WorkflowIntent::BucketDefault,
+        )
         .await?;
 
     let lineage = package.lineage().await?;
@@ -469,7 +494,11 @@ async fn test_set_remote_recommits_existing_commit() -> Res {
     // initial commit, so the row hashes stay the same. But the manifest is
     // rebuilt (e.g. workflow may change), and the lineage prev_hashes are updated.
     package
-        .set_remote("my-bucket".to_string(), Some("example.com".parse()?))
+        .set_remote(
+            "my-bucket".to_string(),
+            Some("example.com".parse()?),
+            WorkflowIntent::BucketDefault,
+        )
         .await?;
 
     let lineage = package.lineage().await?;
@@ -644,7 +673,11 @@ schemas:
 
     // set_remote triggers recommit, which must stamp the bucket default.
     package
-        .set_remote("my-bucket".to_string(), Some("example.com".parse()?))
+        .set_remote(
+            "my-bucket".to_string(),
+            Some("example.com".parse()?),
+            WorkflowIntent::BucketDefault,
+        )
         .await?;
 
     let lineage = package.lineage().await?;
@@ -662,6 +695,277 @@ schemas:
         workflow.id.expect("workflow id should be set").id,
         "foo",
         "recommit should pick up the bucket's default_workflow"
+    );
+
+    Ok(())
+}
+
+/// Set up a locally-committed package against a bucket whose config declares a
+/// `foo` workflow but no `default_workflow`, run `set_remote` with `intent`, and
+/// return the recommitted manifest's header. The absence of `default_workflow`
+/// is what lets the assertions distinguish the caller's chosen intent from the
+/// bucket-default fallback.
+async fn recommit_manifest_for_intent(slug: &str, intent: WorkflowIntent) -> Res<ManifestHeader> {
+    let (home, _temp_dir1) = Home::from_temp_dir()?;
+    let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+
+    let storage = LocalStorage::new();
+    let remote = MockRemote::default();
+    let namespace: Namespace = ("test", slug).into();
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+
+    // The target bucket declares `foo` but no `default_workflow`, so the
+    // no-gesture (BucketDefault) path would stamp an id-less record.
+    let config_uri: S3Uri = "s3://my-bucket/.quilt/workflows/config.yml".parse()?;
+    let config = r"
+workflows:
+  foo:
+    metadata_schema: bar
+schemas:
+  bar:
+    url: s3://my-bucket/schemas/test.json
+";
+    let schema_uri: S3Uri = "s3://my-bucket/schemas/test.json".parse()?;
+    remote
+        .put_object(&None, &config_uri, config.as_bytes().to_vec())
+        .await?;
+    remote
+        .put_object(&None, &schema_uri, b"{}".to_vec())
+        .await?;
+
+    let lineage_json = format!(
+        r#"{{
+        "packages": {{
+            "test/{slug}": {{
+                "commit": null,
+                "remote": null,
+                "base_hash": "",
+                "latest_hash": "",
+                "paths": {{}}
+            }}
+        }},
+        "home": "/tmp/working_dir"
+    }}"#
+    );
+    storage
+        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+        .await?;
+
+    let package_home = home.join(namespace.to_string());
+    storage.create_dir_all(&package_home).await?;
+    storage
+        .write_byte_stream(
+            package_home.join("data.txt"),
+            ByteStream::from_static(b"hello world"),
+        )
+        .await?;
+
+    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+        paths,
+        remote,
+        storage,
+        namespace: namespace.clone(),
+    };
+
+    package
+        .commit(
+            "Initial commit".to_string(),
+            UserMeta::Set(serde_json::json!({"key": "value"})),
+            None,
+            None,
+        )
+        .await?;
+
+    package
+        .set_remote(
+            "my-bucket".to_string(),
+            Some("example.com".parse()?),
+            intent,
+        )
+        .await?;
+
+    let lineage = package.lineage().await?;
+    let new_commit = lineage.commit.as_ref().expect("commit should exist");
+    let manifest_path = package
+        .paths
+        .installed_manifest(&namespace, &new_commit.hash);
+    let manifest = Manifest::from_path(&package.storage, &manifest_path).await?;
+    Ok(manifest.header)
+}
+
+/// Build a locally-committed package against a bucket whose config declares a
+/// `foo` workflow but no `default_workflow`, ready for a `set_remote` call. The
+/// returned temp-dir guards must be kept alive for the package's storage to
+/// remain valid.
+async fn package_with_foo_config(
+    slug: &str,
+) -> Res<(
+    InstalledPackage<LocalStorage, MockRemote>,
+    tempfile::TempDir,
+    tempfile::TempDir,
+)> {
+    let (home, temp_dir1) = Home::from_temp_dir()?;
+    let (paths, temp_dir2) = DomainPaths::from_temp_dir()?;
+
+    let storage = LocalStorage::new();
+    let remote = MockRemote::default();
+    let namespace: Namespace = ("test", slug).into();
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+
+    // The target bucket declares `foo` but no `default_workflow`.
+    let config_uri: S3Uri = "s3://my-bucket/.quilt/workflows/config.yml".parse()?;
+    let config = r"
+workflows:
+  foo:
+    metadata_schema: bar
+schemas:
+  bar:
+    url: s3://my-bucket/schemas/test.json
+";
+    let schema_uri: S3Uri = "s3://my-bucket/schemas/test.json".parse()?;
+    remote
+        .put_object(&None, &config_uri, config.as_bytes().to_vec())
+        .await?;
+    remote
+        .put_object(&None, &schema_uri, b"{}".to_vec())
+        .await?;
+
+    let lineage_json = format!(
+        r#"{{
+        "packages": {{
+            "test/{slug}": {{
+                "commit": null,
+                "remote": null,
+                "base_hash": "",
+                "latest_hash": "",
+                "paths": {{}}
+            }}
+        }},
+        "home": "/tmp/working_dir"
+    }}"#
+    );
+    storage
+        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+        .await?;
+
+    let package_home = home.join(namespace.to_string());
+    storage.create_dir_all(&package_home).await?;
+    storage
+        .write_byte_stream(
+            package_home.join("data.txt"),
+            ByteStream::from_static(b"hello world"),
+        )
+        .await?;
+
+    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+        paths,
+        remote,
+        storage,
+        namespace,
+    };
+
+    package
+        .commit(
+            "Initial commit".to_string(),
+            UserMeta::Set(serde_json::json!({"key": "value"})),
+            None,
+            None,
+        )
+        .await?;
+
+    Ok((package, temp_dir1, temp_dir2))
+}
+
+#[test(tokio::test)]
+async fn test_set_remote_propagates_named_workflow_error() -> Res {
+    // An explicit `Named` gesture whose id isn't in the bucket config must make
+    // `set_remote` fail loudly rather than silently swallowing the recommit
+    // error (the user's workflow choice would otherwise be dropped).
+    let (package, _t1, _t2) = package_with_foo_config("named-error").await?;
+
+    let result = package
+        .set_remote(
+            "my-bucket".to_string(),
+            Some("example.com".parse()?),
+            WorkflowIntent::Named("nope".to_string()),
+        )
+        .await;
+
+    assert!(
+        result.is_err(),
+        "an explicit Named intent with an unknown id must surface the recommit error"
+    );
+    assert!(
+        result.unwrap_err().to_string().contains("Workflow nope"),
+        "error should name the unresolved workflow"
+    );
+
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn test_set_remote_swallows_bucket_default_recommit_error() -> Res {
+    // The no-gesture `BucketDefault` path stays best-effort: even against the
+    // same config (with no `default_workflow`), `set_remote` succeeds — the
+    // remote is saved and any recommit hiccup is only logged.
+    let (package, _t1, _t2) = package_with_foo_config("bucketdefault-ok").await?;
+
+    package
+        .set_remote(
+            "my-bucket".to_string(),
+            Some("example.com".parse()?),
+            WorkflowIntent::BucketDefault,
+        )
+        .await?;
+
+    let lineage = package.lineage().await?;
+    assert!(
+        lineage.remote_uri.is_some(),
+        "remote should be persisted on the BucketDefault path"
+    );
+
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn test_set_remote_stamps_named_workflow() -> Res {
+    // `Named("foo")` must stamp `foo` even though the bucket declares no default.
+    let header =
+        recommit_manifest_for_intent("named", WorkflowIntent::Named("foo".to_string())).await?;
+
+    let workflow = header
+        .workflow
+        .expect("recommit should stamp the named workflow");
+    assert_eq!(
+        workflow.id.expect("workflow id should be set").id,
+        "foo",
+        "recommit should stamp the caller's chosen workflow, not the bucket default"
+    );
+
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn test_set_remote_stamps_no_workflow() -> Res {
+    // `NoWorkflow` must produce an explicit id-less record when a config exists.
+    let header = recommit_manifest_for_intent("noworkflow", WorkflowIntent::NoWorkflow).await?;
+
+    let workflow = header
+        .workflow
+        .expect("recommit should stamp an id-less workflow when a config is present");
+    assert!(
+        workflow.id.is_none(),
+        "NoWorkflow must not resolve any workflow id"
     );
 
     Ok(())

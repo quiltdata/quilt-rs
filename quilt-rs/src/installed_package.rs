@@ -524,7 +524,12 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         Ok(lineage.remote()?.clone())
     }
 
-    pub async fn set_remote(&self, bucket: String, origin: Option<Host>) -> Res {
+    pub async fn set_remote(
+        &self,
+        bucket: String,
+        origin: Option<Host>,
+        workflow: WorkflowIntent,
+    ) -> Res {
         if bucket.is_empty() {
             return Err(Error::PackageOp(PackageOpError::Push(
                 "Bucket cannot be empty".to_string(),
@@ -557,15 +562,31 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         // the remote is still saved and the user can retry.
         self.lineage.write(&self.storage, lineage.clone()).await?;
 
+        // An explicit workflow gesture (`Named`/`NoWorkflow`) must not be
+        // silently dropped: if the recommit that stamps it fails, surface the
+        // error. The no-gesture `BucketDefault` path stays best-effort.
+        let explicit_workflow = !matches!(&workflow, WorkflowIntent::BucketDefault);
+
         // Re-commit with the remote's host_config and workflow so push
         // works immediately without a manual re-commit.
         // This can fail (e.g. not logged in yet) — the remote is already saved,
         // so we log a warning and let the user push after logging in.
         if let Some(origin) = origin
             && lineage.commit.is_some()
-            && let Err(err) = self.recommit_for_remote(lineage, origin, bucket).await
+            && let Err(err) = self
+                .recommit_for_remote(lineage, origin, bucket, workflow)
+                .await
         {
-            log::warn!("Remote saved but recommit failed (will retry on push): {err}");
+            if explicit_workflow {
+                // The remote is persisted, but the chosen workflow could not be
+                // applied (e.g. an unknown workflow id, or not logged in).
+                // Fail loudly so the user can fix the workflow id or log in and
+                // re-run Set Remote instead of pushing with the wrong workflow.
+                return Err(err);
+            }
+            log::warn!(
+                "Remote saved but recommit failed ({err}); re-run Set Remote (e.g. after logging in) to complete it before pushing."
+            );
         }
 
         Ok(())
@@ -576,6 +597,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         lineage: lineage::PackageLineage,
         origin: Host,
         bucket: String,
+        workflow: WorkflowIntent,
     ) -> Res {
         let host_config = self.remote.host_config(&Some(origin.clone())).await?;
         let workflows_config_uri = S3Uri {
@@ -583,18 +605,13 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             bucket,
             version: None,
         };
-        // Set Remote is a no-gesture path: the user expresses no workflow
-        // choice here, and publish later pushes this pending recommit
-        // *without* re-resolving the workflow. So recommit must stamp the
-        // bucket default now — otherwise a locally-created package's first
-        // publish would silently miss the bucket's `default_workflow`.
-        let workflow = resolve_workflow(
-            &self.remote,
-            &Some(origin),
-            WorkflowIntent::BucketDefault,
-            &workflows_config_uri,
-        )
-        .await?;
+        // Publish later pushes this pending recommit *without* re-resolving the
+        // workflow, so recommit must stamp the caller's chosen workflow now.
+        // With `WorkflowIntent::BucketDefault` (the no-gesture path) this picks
+        // up the bucket's `default_workflow`, so a locally-created package's
+        // first publish is governed even when the user expresses no choice.
+        let workflow =
+            resolve_workflow(&self.remote, &Some(origin), workflow, &workflows_config_uri).await?;
         let manifest = self.manifest().await?;
         let lineage = flow::recommit(
             lineage,
