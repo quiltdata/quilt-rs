@@ -40,17 +40,17 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 /// * `(Some(id), false)` with an empty-or-whitespace `id` → `BucketDefault`
 /// * `(None, false)` → `BucketDefault`
 ///
-/// A blank `--workflow` value is treated as "no id given" (matching the GUI's
-/// care), so we never construct `Named("")` — which would otherwise resolve
-/// downstream to a confusing "Workflow  not found" error. `--no-workflow`
-/// remains the real opt-out.
+/// The id is trimmed, matching the GUI: a blank value is treated as "no id
+/// given" (so we never construct `Named("")`, which would resolve downstream to
+/// a confusing "Workflow  not found" error), and surrounding whitespace on a
+/// real id is stripped. `--no-workflow` remains the real opt-out.
 ///
 /// clap's `conflicts_with` makes `(Some, true)` unreachable; the arm order
 /// handles it safely regardless.
 fn workflow_intent(workflow_id: Option<String>, no_workflow: bool) -> WorkflowIntent {
     match (workflow_id, no_workflow) {
         (_, true) => WorkflowIntent::NoWorkflow,
-        (Some(id), false) if !id.trim().is_empty() => WorkflowIntent::Named(id),
+        (Some(id), false) if !id.trim().is_empty() => WorkflowIntent::Named(id.trim().to_string()),
         (_, false) => WorkflowIntent::BucketDefault,
     }
 }
@@ -114,6 +114,14 @@ mod intent_tests {
     fn named_id_maps_to_named() {
         assert_eq!(
             workflow_intent(Some("x".to_string()), false),
+            WorkflowIntent::Named("x".to_string())
+        );
+    }
+
+    #[test]
+    fn padded_id_is_trimmed() {
+        assert_eq!(
+            workflow_intent(Some("  x  ".to_string()), false),
             WorkflowIntent::Named("x".to_string())
         );
     }
