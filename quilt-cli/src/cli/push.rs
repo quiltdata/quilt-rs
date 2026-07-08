@@ -78,8 +78,15 @@ pub async fn model(
         workflow,
     }: Input,
 ) -> Result<Output, Error> {
-    let outcome =
-        push_package(local_domain, namespace, host_config, bucket, origin, workflow).await?;
+    let outcome = push_package(
+        local_domain,
+        namespace,
+        host_config,
+        bucket,
+        origin,
+        workflow,
+    )
+    .await?;
     Ok(Output {
         hash: outcome.manifest_uri.hash,
         certified_latest: outcome.certified_latest,

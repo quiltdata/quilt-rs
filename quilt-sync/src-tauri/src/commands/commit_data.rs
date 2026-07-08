@@ -847,11 +847,13 @@ workflows:
         // `Err(_)` must NOT fail the command: the popup still opens with the
         // Unavailable fallback state.
         let mut model = mocks::create();
-        model.expect_get_bucket_workflows_config().returning(|_, _| {
-            Err(Error::from(quilt::InstallPackageError::NotInstalled(
-                ("foo", "bar").into(),
-            )))
-        });
+        model
+            .expect_get_bucket_workflows_config()
+            .returning(|_, _| {
+                Err(Error::from(quilt::InstallPackageError::NotInstalled(
+                    ("foo", "bar").into(),
+                )))
+            });
 
         let workflows = get_bucket_workflows_from_model(&model, None, "my-bucket").await;
         assert!(matches!(workflows, CommitWorkflows::Unavailable));

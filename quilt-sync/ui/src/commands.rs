@@ -591,12 +591,14 @@ pub async fn set_remote(
     namespace: String,
     origin: String,
     bucket: String,
+    workflow: WorkflowIntent,
 ) -> Result<String, String> {
     #[derive(Serialize)]
     struct Args {
         namespace: String,
         origin: String,
         bucket: String,
+        workflow: WorkflowIntent,
     }
     tauri::invoke(
         "set_remote",
@@ -604,9 +606,23 @@ pub async fn set_remote(
             namespace,
             origin,
             bucket,
+            workflow,
         },
     )
     .await
+}
+
+/// Fetch a bucket's declared workflows before its remote is set, so the
+/// set-remote popup can present the same tri-state control the commit dialog
+/// uses. Mirrors the backend `get_bucket_workflows` command; a fetch failure
+/// maps to [`CommitWorkflows::Unavailable`] rather than an error.
+pub async fn get_bucket_workflows(host: String, bucket: String) -> Result<CommitWorkflows, String> {
+    #[derive(Serialize)]
+    struct Args {
+        host: String,
+        bucket: String,
+    }
+    tauri::invoke("get_bucket_workflows", &Args { host, bucket }).await
 }
 
 // ── Auth ────────────────────────────────────────────────────

@@ -446,7 +446,12 @@ mod tests {
         model
             .expect_set_remote()
             .times(1)
-            .with(always(), always(), eq("my-bucket".to_string()), eq(intent.clone()))
+            .with(
+                always(),
+                always(),
+                eq("my-bucket".to_string()),
+                eq(intent.clone()),
+            )
             .returning(|_, _, _, _| Ok(()));
 
         let origin: quilt_uri::Host = "test.quilt.dev".parse().unwrap();
